@@ -75,6 +75,23 @@ function readOverrides(): Record<string, AgentOverride> {
   }
 }
 
+/**
+ * Return the effective tool list for an agent, applying overrides from settings.json.
+ * If the override has a `tools` array, that completely replaces the original tool list.
+ * If the override sets tools to `false`, the agent has no tools.
+ * Otherwise the original tools are returned unchanged.
+ */
+function getEffectiveTools(
+  agent: AgentInfo,
+  overrides: Record<string, AgentOverride>,
+): string[] {
+  const override = overrides[agent.name];
+  if (!override) return agent.tools;
+  if (override.tools === false) return [];
+  if (Array.isArray(override.tools)) return override.tools;
+  return agent.tools;
+}
+
 function readBuiltinAgents(): AgentInfo[] {
   const agents: AgentInfo[] = [];
   const builtinNames = [
@@ -164,9 +181,13 @@ function buildWidgetLine(): string {
   const total = builtins.length + users.length;
   const overrideCount = Object.keys(overrides).length;
 
-  // Agents with safe_bash only (no plain bash)
+  // Agents with safe_bash only (no plain bash) — applying overrides
   const safeBashAgents = [...builtins, ...users]
-    .filter((a) => a.tools.includes("safe_bash") && !a.tools.includes("bash"))
+    .filter(
+      (a) =>
+        getEffectiveTools(a, overrides).includes("safe_bash") &&
+        !getEffectiveTools(a, overrides).includes("bash"),
+    )
     .map((a) => a.name);
 
   const safeBashPart =
@@ -314,15 +335,17 @@ function formatOverview(): string {
   lines.push(`  Total agents: ${totalAgents}`);
   lines.push(`    Builtin: ${builtins.length}  |  User: ${users.length}`);
 
+  // Agents with execution tools (applying overrides from settings.json)
   const execTools = ["bash", "safe_bash"];
-  const agentsWithExec = [...builtins, ...users].filter((a) =>
-    a.tools.some((t) => execTools.includes(t)),
+  const allAgents = [...builtins, ...users];
+  const agentsWithExec = allAgents.filter((a) =>
+    getEffectiveTools(a, overrides).some((t) => execTools.includes(t)),
   );
-  const agentsWithSafeBash = [...builtins, ...users].filter((a) =>
-    a.tools.includes("safe_bash"),
+  const agentsWithSafeBash = agentsWithExec.filter((a) =>
+    getEffectiveTools(a, overrides).includes("safe_bash"),
   );
   const agentsWithPlainBash = agentsWithExec.filter((a) =>
-    a.tools.includes("bash"),
+    getEffectiveTools(a, overrides).includes("bash"),
   );
 
   lines.push(
