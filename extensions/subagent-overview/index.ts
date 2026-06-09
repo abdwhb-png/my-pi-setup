@@ -12,6 +12,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 
 // ── ANSI color constants ──────────────────────────────
 
@@ -424,6 +425,21 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("subagent-view", {
     description: "Show details for a specific subagent: /subagent-view <name>",
+    getArgumentCompletions: (prefix: string): AutocompleteItem[] => {
+      const builtins = readBuiltinAgents();
+      const users = readUserAgents();
+      const allAgents = [...builtins, ...users];
+
+      const lowerPrefix = prefix.toLowerCase();
+      return allAgents
+        .filter((a) => a.name.toLowerCase().includes(lowerPrefix))
+        .map((a) => ({
+          value: a.name,
+          label: a.name,
+          description: `${a.source} — ${a.description.substring(0, 60)}`,
+        }))
+        .slice(0, 30);
+    },
     handler: async (args, _ctx) => {
       const name = args.trim();
       if (!name) {
