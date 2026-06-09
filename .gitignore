@@ -4,6 +4,8 @@ node_modules
 tx9/jobs
 
 .env
+.env.*
+!.env.example
 
 sessions
 
@@ -23,4 +25,6 @@ run-history.jsonl
 trust.json
 npm/
 pi-hermes-memory/
+
+**.log
 
