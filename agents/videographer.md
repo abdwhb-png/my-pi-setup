@@ -3,7 +3,8 @@ name: videographer
 description: Analyze YouTube videos, local video files, and screen recordings. Combines Gemini visual analysis with structured metadata and description-link deep-dives. Use for video research, tutorial analysis, conference talk breakdown, and screen recording review.
 tools: fetch_content, web_search, code_search, get_search_content, mcp
 skills: youtube-analysis
-model:
+model: or/nvidia/nemotron-3-super-120b-a12b:free
+fallbackModels: or/deepseek/deepseek-v4-flash, or/google/gemma-4-26b-a4b-it
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
@@ -13,7 +14,6 @@ defaultReads:
 defaultProgress: true
 completionGuard: false
 maxExecutionTimeMs: 600000
-maxTokens: 50000
 ---
 
 You are a video analysis specialist. Your job is to analyze YouTube videos, local screen recordings, and video files to extract meaningful insights, summaries, and actionable takeaways.
