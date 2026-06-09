@@ -1,16 +1,19 @@
 /**
- * Subagents Overview — /subagents command
+ * Subagents Overview — /subagents-overview command + persistent widget
  *
  * Fully programmatic. No LLM involvement.
  * Reads agent configs, settings overrides, parses frontmatter,
  * and renders the overview directly into the conversation.
+ * Also shows a persistent status widget in the Pi UI.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+
+const WIDGET_ID = "subagent-overview-widget";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -151,6 +154,44 @@ function readUserAgents(): AgentInfo[] {
   return agents;
 }
 
+// ── Widget formatting ─────────────────────────────────
+
+function buildWidgetLine(): string {
+  const overrides = readOverrides();
+  const builtins = readBuiltinAgents();
+  const users = readUserAgents();
+
+  const total = builtins.length + users.length;
+  const overrideCount = Object.keys(overrides).length;
+
+  // Agents with safe_bash only (no plain bash)
+  const safeBashAgents = [...builtins, ...users]
+    .filter((a) => a.tools.includes("safe_bash") && !a.tools.includes("bash"))
+    .map((a) => a.name);
+
+  const safeBashPart =
+    safeBashAgents.length > 0 ? ` · 🔒 sb: ${safeBashAgents.join(",")}` : "";
+
+  const overridePart =
+    overrideCount > 0 ? ` · ${overrideCount} ovr` : "";
+
+  // Check if videographer agent exists
+  const hasVideographer = users.some((a) => a.name === "videographer");
+  const videoPart = hasVideographer ? " · 🎬 video" : "";
+
+  return `🧠 Subagents: ${builtins.length}B/${users.length}U${safeBashPart}${overridePart}${videoPart} (total ${total})`;
+}
+
+function updateWidget(ctx: ExtensionContext): void {
+  if (!ctx.hasUI) return;
+  try {
+    const line = buildWidgetLine();
+    ctx.ui.setWidget(WIDGET_ID, [line]);
+  } catch {
+    ctx.ui.setWidget(WIDGET_ID, undefined);
+  }
+}
+
 // ── Formatting ─────────────────────────────────────────
 
 function formatAgentBlock(
@@ -210,7 +251,6 @@ function formatOverview(): string {
     lines.push("  No user agents configured.");
     lines.push("");
   } else {
-    // Always show videographer first if present
     const videographer = users.find((a) => a.name === "videographer");
     const others = users.filter((a) => a.name !== "videographer");
 
@@ -220,13 +260,10 @@ function formatOverview(): string {
     }
 
     if (others.length > 0) {
-      // Show up to 3 notable ones (those with custom tools or skills)
       const notable = others.filter(
         (a) =>
           a.tools.length > 0 &&
-          !(
-            a.tools.length === 1 && a.tools[0] === "read"
-          ),
+          !(a.tools.length === 1 && a.tools[0] === "read"),
       );
       const shown = notable.length > 3 ? notable.slice(0, 3) : notable;
 
@@ -256,9 +293,7 @@ function formatOverview(): string {
   } else {
     for (const [agentName, ov] of Object.entries(overrides)) {
       const overriddenFields = Object.entries(ov)
-        .filter(
-          ([_key, val]) => val !== undefined && val !== null && val !== false,
-        )
+        .filter(([_key, val]) => val !== undefined && val !== null && val !== false)
         .map(([key, val]) => {
           if (Array.isArray(val)) return `    ${key}: ${val.join(", ")}`;
           return `    ${key}: ${String(val)}`;
@@ -279,7 +314,6 @@ function formatOverview(): string {
   lines.push(`  Total agents: ${totalAgents}`);
   lines.push(`    Builtin: ${builtins.length}  |  User: ${users.length}`);
 
-  // Agents with execution tools
   const execTools = ["bash", "safe_bash"];
   const agentsWithExec = [...builtins, ...users].filter((a) =>
     a.tools.some((t) => execTools.includes(t)),
@@ -296,9 +330,7 @@ function formatOverview(): string {
   );
   lines.push(
     `  Agents with safe_bash only (no plain bash): ${agentsWithSafeBash
-      .filter(
-        (a) => !a.tools.includes("bash"),
-      )
+      .filter((a) => !a.tools.includes("bash"))
       .map((a) => a.name)
       .join(", ") || "none"}`,
   );
@@ -306,7 +338,6 @@ function formatOverview(): string {
     `  Agents with plain bash (not restricted): ${agentsWithPlainBash.map((a) => a.name).join(", ") || "none"}`,
   );
 
-  // Skills summary
   const allSkills = [...builtins, ...users].flatMap((a) => a.skills);
   const uniqueSkills = [...new Set(allSkills)].filter(Boolean);
   const hasYoutube = uniqueSkills.includes("youtube-analysis");
@@ -342,9 +373,11 @@ export default function (pi: ExtensionAPI) {
     };
   });
 
-  pi.registerCommand("subagents", {
+  // ── Commands ──
+
+  pi.registerCommand("subagents-overview", {
     description: "Show a clean overview of all subagents with tools, models, overrides, and stats",
-    handler: async (_args, ctx) => {
+    handler: async (_args, _ctx) => {
       const overview = formatOverview();
       pi.sendMessage(
         {
@@ -357,15 +390,16 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("subagent", {
-    description: "Show details for a specific subagent: /subagent <name>",
-    handler: async (args, ctx) => {
+  pi.registerCommand("subagent-view", {
+    description: "Show details for a specific subagent: /subagent-view <name>",
+    handler: async (args, _ctx) => {
       const name = args.trim();
       if (!name) {
         pi.sendMessage(
           {
             customType: "subagent-overview",
-            content: "Usage: /subagent <name>\nExample: /subagent worker\n\nRun /subagents to see all available agents.",
+            content:
+              "Usage: /subagent-view <name>\nExample: /subagent-view worker\n\nRun /subagents-overview to see all available agents.",
             display: true,
           },
           { triggerTurn: false },
@@ -381,7 +415,7 @@ export default function (pi: ExtensionAPI) {
         pi.sendMessage(
           {
             customType: "subagent-overview",
-            content: `Agent "${name}" not found.\nRun /subagents to see all available agents.`,
+            content: `Agent "${name}" not found.\nRun /subagents-overview to see all available agents.`,
             display: true,
           },
           { triggerTurn: false },
@@ -390,9 +424,9 @@ export default function (pi: ExtensionAPI) {
       }
 
       const lines: string[] = [];
-      lines.push(`╔══════════════════════════════════════════════╗`);
+      lines.push("╔══════════════════════════════════════════════╗");
       lines.push(`║  Agent: ${agent.name.padEnd(37)}║`);
-      lines.push(`╚══════════════════════════════════════════════╝`);
+      lines.push("╚══════════════════════════════════════════════╝");
       lines.push("");
       lines.push(`  Description: ${agent.description}`);
       lines.push(`  Source: ${agent.source}`);
@@ -404,7 +438,7 @@ export default function (pi: ExtensionAPI) {
       const override = overrides[agent.name];
       if (override) {
         lines.push("");
-        lines.push(`  🔧 Active overrides:`);
+        lines.push("  🔧 Active overrides:");
         for (const [key, val] of Object.entries(override)) {
           if (val === undefined || val === null || val === false) continue;
           const valStr = Array.isArray(val) ? val.join(", ") : String(val);
@@ -412,7 +446,6 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // Show frontmatter file path for user agents
       if (agent.source === "user") {
         const filePath = path.join(USER_AGENTS_DIR, `${agent.name}.md`);
         if (fs.existsSync(filePath)) {
@@ -430,5 +463,27 @@ export default function (pi: ExtensionAPI) {
         { triggerTurn: false },
       );
     },
+  });
+
+  // ── Persistent Widget ──
+
+  // Initial update
+  pi.on("session_start", async (_event, ctx) => {
+    updateWidget(ctx);
+  });
+
+  // Refresh on user input and tool execution
+  pi.on("input", async (_event, ctx) => {
+    updateWidget(ctx);
+    return { action: "continue" };
+  });
+
+  pi.on("tool_execution_end", async (_event, ctx) => {
+    updateWidget(ctx);
+  });
+
+  // Clean up on shutdown
+  pi.on("session_shutdown", async (_event, ctx) => {
+    if (ctx.hasUI) ctx.ui.setWidget(WIDGET_ID, undefined);
   });
 }

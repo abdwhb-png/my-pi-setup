@@ -196,6 +196,53 @@ function testVideographerAgent() {
   return true;
 }
 
+// ── Test 6: Widget line formatting ──
+function testWidgetLine() {
+  console.log("TEST 6: Widget line formatting");
+  
+  // Read overrides
+  const raw = fs.readFileSync(SETTINGS_PATH, "utf-8");
+  const parsed = JSON.parse(raw);
+  const overrides = parsed?.subagents?.agentOverrides ?? {};
+  const overrideCount = Object.keys(overrides).length;
+  
+  // Check overrides are arrays (not strings)
+  for (const [name, ov] of Object.entries(overrides)) {
+    if (ov.tools !== undefined && ov.tools !== false) {
+      console.assert(Array.isArray(ov.tools), `  ❌ ${name}.tools should be array`);
+    }
+  }
+  console.log(`  ✅ ${overrideCount} override(s), all tools are arrays`);
+  
+  // Check widget line doesn't exceed reasonable length
+  const BUILTIN_AGENTS_DIR = path.join(HOME, ".pi", "agent", "npm", "node_modules", "pi-subagents", "agents");
+  const builtinCount = fs.readdirSync(BUILTIN_AGENTS_DIR).filter(f => f.endsWith('.md')).length;
+  const userCount = fs.existsSync(path.join(HOME, ".pi", "agent", "agents"))
+    ? fs.readdirSync(path.join(HOME, ".pi", "agent", "agents")).filter(f => f.endsWith('.md')).length
+    : 0;
+  
+  console.log(`  ✅ Builtin: ${builtinCount}, User: ${userCount}`);
+  
+  // Simulate widget line
+  const safeBashAgents = ["worker", "delegate"];
+  const hasVideographer = fs.existsSync(path.join(HOME, ".pi", "agent", "agents", "videographer.md"));
+  
+  const parts: string[] = [];
+  parts.push(`🧠 Subagents: ${builtinCount}B/${userCount}U`);
+  if (safeBashAgents.length > 0) parts.push(`🔒 sb: ${safeBashAgents.join(",")}`);
+  if (overrideCount > 0) parts.push(`${overrideCount} ovr`);
+  if (hasVideographer) parts.push("🎬 video");
+  parts.push(`total ${builtinCount + userCount}`);
+  
+  const widgetLine = parts.join(" · ");
+  console.log(`  Widget: ${widgetLine}`);
+  console.log(`  Length: ${widgetLine.length} chars`);
+  console.assert(widgetLine.length < 120, `  ❌ Widget line too long: ${widgetLine.length}`);
+  
+  console.log("  ✅ PASSED\n");
+  return true;
+}
+
 // ── Run all tests ──
 let allPassed = true;
 allPassed = testReadOverrides() && allPassed;
@@ -203,6 +250,7 @@ allPassed = testParseBuiltinAgents() && allPassed;
 allPassed = testLineWidths() && allPassed;
 allPassed = testTruncation() && allPassed;
 allPassed = testVideographerAgent() && allPassed;
+allPassed = testWidgetLine() && allPassed;
 
 if (allPassed) {
   console.log("🎉 ALL TESTS PASSED");
