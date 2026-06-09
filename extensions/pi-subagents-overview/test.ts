@@ -1,5 +1,5 @@
 /**
- * Test for subagent-overview extension core logic.
+ * Test for pi-subagents-overview extension core logic.
  *
  * Self-contained: no imports from pi packages (they use jiti which isn't
  * available in standalone Node). Tests the formatting invariants directly.

@@ -30,7 +30,7 @@ const RED = "\x1b[31m";
 const BLUE = "\x1b[34m";
 const RESET = "\x1b[0m"
 
-const WIDGET_ID = "subagent-overview-widget";
+const WIDGET_ID = "pi-subagents-overview-widget";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -497,7 +497,7 @@ function buildSkillAgentFilterPattern(skillNames: Set<string>): RegExp | null {
 
 export default function (pi: ExtensionAPI) {
   // Register a renderer for the custom message type
-  pi.registerMessageRenderer("subagent-overview", (message, _options, _theme) => {
+  pi.registerMessageRenderer("pi-subagents-overview", (message, _options, _theme) => {
     const content = typeof message.content === "string" ? message.content : "";
     const lines = content.split("\n");
 
@@ -562,7 +562,7 @@ export default function (pi: ExtensionAPI) {
       const overview = formatOverview();
       pi.sendMessage(
         {
-          customType: "subagent-overview",
+          customType: "pi-subagents-overview",
           content: overview,
           display: true,
         },
@@ -593,7 +593,7 @@ export default function (pi: ExtensionAPI) {
       if (!name) {
         pi.sendMessage(
           {
-            customType: "subagent-overview",
+            customType: "pi-subagents-overview",
             content:
               "Usage: /subagent-view <name>\nExample: /subagent-view worker\n\nRun /subagents-overview to see all available agents.",
             display: true,
@@ -610,7 +610,7 @@ export default function (pi: ExtensionAPI) {
       if (!agent) {
         pi.sendMessage(
           {
-            customType: "subagent-overview",
+            customType: "pi-subagents-overview",
             content: `Agent "${name}" not found.\nRun /subagents-overview to see all available agents.`,
             display: true,
           },
@@ -652,7 +652,7 @@ export default function (pi: ExtensionAPI) {
 
       pi.sendMessage(
         {
-          customType: "subagent-overview",
+          customType: "pi-subagents-overview",
           content: lines.join("\n"),
           display: true,
         },
