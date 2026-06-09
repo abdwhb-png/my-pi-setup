@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "lint": "oxlint",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "oxlint": "^1.69.0",
     "typescript": "^6.0.3"
   }
 }
