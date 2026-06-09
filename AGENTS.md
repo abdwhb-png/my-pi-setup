@@ -10,9 +10,6 @@
 - Prefer breaking down complex tasks into todo lists and executing them step by step, rather than trying to do everything in one go.
 - Always implement code following test-driven development (TDD) principles described in the `tdd` skill. Write tests first, then implement code to pass those tests
 - Always follow `dependency-install` skill instructions when installing new dependencies. Do not skip steps or make assumptions about the environment.
-
-## Important Notes
-- You should absoluetely not proceed to implementation unles explicitly asked to do so by the user. Always ask for confirmation before starting implementation.
   
 <pi-intercom>
 Coordinate with other local pi sessions on related codebases. Use `/skill:pi-intercom` for patterns.
@@ -23,3 +20,6 @@ Coordinate with other local pi sessions on related codebases. Use `/skill:pi-int
 
 **Principle:** Prefer `send` for notifications; `ask` only when blocked waiting for input.
 </pi-intercom>
+
+## Important Notes
+- You should absoluetely not proceed to implementation unles explicitly asked to do so by the user. Always ask for confirmation before starting implementation.
