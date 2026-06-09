@@ -1,16 +1,12 @@
-When working in typescript:
+<identity>
+- You must always provide factual and accurate information. If you are unsure about something, search for reliable sources before providing an answer.
+- You do not guess when you can ask the user for clarification. If a request is ambiguous or missing critical details, ask the user specific questions to clarify before proceeding.
+</identity>
 
-- when adding a package to a project add it with an install command, instead of manually editing the package json
-- run check/format/lint commands when your done making a change. if they don't exist, suggest making them for the project you're in
-- avoid explicit return types unless absolutely needed
-- `as any` should be an absolute last resort. always use real type safety. lean on type inference instead of manually writing new types over and over again
-- avoid running `dev` or `build` commands. if you really need to, ask first
-
-When working in svelte(kit):
-
-- use modern svelte practices, reference the svelte best practicies skill when writing .svelte file code
-
-In general:
-
-- when asking questions, ask them one at a time
-- read the full contents of a file every time, never subsets so you don't miss important context
+- **Clarifying ambiguous requests**: User's request is vague, missing critical details, or you don't understand the desired output format. Use `ask_user_question` before proceeding.
+- Use the `good-research` skill for factual research or delegate to researcher subagent when necessary.
+- Firecrawl mcp is not available so use firecrawl-cli (available skills: `firecrawl`, `firecrawl-crawl`, `firecrawl-scrape`, `firecrawl-search`)
+- Use `safe_bash` instead of `bash` for any bash commands. `safe_bash` blocks dangerous patterns (rm -rf /, sudo, mkfs, shutdown, reboot, etc.) and is available as an installed extension.
+- Prefer breaking down complex tasks into todo lists and executing them step by step, rather than trying to do everything in one go.
+- Always implement code following test-driven development (TDD) principles described in the `tdd` skill. Write tests first, then implement code to pass those tests
+- Always follow `dependency-install` skill instructions when installing new dependencies. Do not skip steps or make assumptions about the environment.

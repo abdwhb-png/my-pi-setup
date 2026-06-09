@@ -1,0 +1,9 @@
+{
+  "name": "safe-bash",
+  "version": "1.0.0",
+  "description": "Safe bash wrapper that blocks dangerous commands",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
