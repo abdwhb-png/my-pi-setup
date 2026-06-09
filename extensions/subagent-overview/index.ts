@@ -5,6 +5,11 @@
  * Reads agent configs, settings overrides, parses frontmatter,
  * and renders the overview directly into the conversation.
  * Also shows a persistent status widget in the Pi UI.
+ *
+ * Handles agent discovery filtering:
+ * - Excludes `.agents/skills/` subdirectory (skill files aren't agents)
+ * - Intercepts subagent({ action: "list" }) tool results to filter
+ *   skill-derived agents from the LLM-visible agent list
  */
 
 import * as fs from "node:fs";
@@ -23,7 +28,6 @@ const GREEN = "\x1b[32m";
 const YELLOW = "\x1b[33m";
 const RED = "\x1b[31m";
 const BLUE = "\x1b[34m";
-const MAGENTA = "\x1b[35m";
 const RESET = "\x1b[0m"
 
 const WIDGET_ID = "subagent-overview-widget";
@@ -61,6 +65,8 @@ const BUILTIN_AGENTS_DIR = path.join(
   "pi-subagents",
   "agents",
 );
+const PROJECT_AGENTS_DIR = path.join(HOME, ".agents");
+const SKILLS_DIR = path.join(HOME, ".agents", "skills");
 
 // ── Frontmatter Parsing ────────────────────────────────
 
@@ -72,6 +78,54 @@ function parseAgentFile(filePath: string): Record<string, string> | null {
   } catch {
     return null;
   }
+}
+
+// ── Skill Agent Names ─────────────────────────────────
+// Cache of agent names derived from `.agents/skills/` files.
+// These are skill reference docs, not real agents.
+
+let cachedSkillAgentNames: Set<string> | null = null;
+
+function getSkillAgentNames(): Set<string> {
+  if (cachedSkillAgentNames) return cachedSkillAgentNames;
+
+  const names = new Set<string>();
+
+  if (!fs.existsSync(SKILLS_DIR)) {
+    cachedSkillAgentNames = names;
+    return names;
+  }
+
+  function walkDir(dir: string): void {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walkDir(fullPath);
+        continue;
+      }
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      if (!entry.name.endsWith(".md")) continue;
+
+      const fm = parseAgentFile(fullPath);
+      if (fm && fm.name && fm.description) {
+        names.add(fm.name);
+      }
+    }
+  }
+
+  walkDir(SKILLS_DIR);
+  cachedSkillAgentNames = names;
+  return names;
+}
+
+function clearSkillAgentCache(): void {
+  cachedSkillAgentNames = null;
 }
 
 // ── Data Collection ────────────────────────────────────
@@ -90,9 +144,6 @@ function readOverrides(): Record<string, AgentOverride> {
 
 /**
  * Return the effective tool list for an agent, applying overrides from settings.json.
- * If the override has a `tools` array, that completely replaces the original tool list.
- * If the override sets tools to `false`, the agent has no tools.
- * Otherwise the original tools are returned unchanged.
  */
 function getEffectiveTools(
   agent: AgentInfo,
@@ -129,18 +180,13 @@ function readBuiltinAgents(): AgentInfo[] {
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
-    const skillsRaw = fm.skills || "";
-    const skills = skillsRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
 
     agents.push({
       name: fm.name || name,
       description: fm.description || "",
       tools,
       model: fm.model || null,
-      skills,
+      skills: [],
       source: "builtin",
       context: fm.defaultContext || null,
     });
@@ -159,28 +205,67 @@ function readUserAgents(): AgentInfo[] {
     const fm = parseAgentFile(filePath);
     if (!fm) continue;
 
-    const toolsRaw = fm.tools || "";
-    const tools = toolsRaw
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-    const skillsRaw = fm.skills || "";
-    const skills = skillsRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
     agents.push({
       name: fm.name || entry.replace(/\.md$/, ""),
       description: fm.description || "",
-      tools,
+      tools: (fm.tools || "").split(",").map((t) => t.trim()).filter(Boolean),
       model: fm.model || null,
-      skills,
+      skills: (fm.skills || "").split(",").map((s) => s.trim()).filter(Boolean),
       source: "user",
       context: fm.defaultContext || null,
     });
   }
 
+  return agents;
+}
+
+/**
+ * Read project agents from `.agents/` directory, EXCLUDING the `skills/`
+ * subdirectory (those are skill definitions, not agents).
+ */
+function readProjectAgents(): AgentInfo[] {
+  const agents: AgentInfo[] = [];
+  if (!fs.existsSync(PROJECT_AGENTS_DIR)) return agents;
+
+  function walkDir(dir: string, depth: number): void {
+    if (depth > 5) return;
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      // Skip the skills/ subdirectory entirely
+      if (entry.isDirectory()) {
+        if (entry.name === "skills" && dir === PROJECT_AGENTS_DIR) continue;
+        walkDir(fullPath, depth + 1);
+        continue;
+      }
+
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      if (!entry.name.endsWith(".md")) continue;
+
+      const fm = parseAgentFile(fullPath);
+      if (!fm || !fm.name || !fm.description) continue;
+
+      agents.push({
+        name: fm.name,
+        description: fm.description || "",
+        tools: (fm.tools || "").split(",").map((t) => t.trim()).filter(Boolean),
+        model: fm.model || null,
+        skills: (fm.skills || "").split(",").map((s) => s.trim()).filter(Boolean),
+        source: "project",
+        context: fm.defaultContext || null,
+      });
+    }
+  }
+
+  walkDir(PROJECT_AGENTS_DIR, 0);
   return agents;
 }
 
@@ -353,9 +438,6 @@ function formatOverview(): string {
   // Agents with execution tools (applying overrides from settings.json)
   const execTools = ["bash", "safe_bash"];
   const allAgents = [...builtins, ...users];
-  const agentsWithExec = allAgents.filter((a) =>
-    getEffectiveTools(a, overrides).some((t) => execTools.includes(t)),
-  );
   const agentsWithSafeBash = allAgents.filter((a) =>
     getEffectiveTools(a, overrides).includes("safe_bash") &&
     !getEffectiveTools(a, overrides).includes("bash"),
@@ -383,8 +465,32 @@ function formatOverview(): string {
   lines.push(
     `  ${DIM}* Tools marked with ← OVERRIDDEN have been modified via settings.json.${RESET}`,
   );
+  lines.push(
+    `  ${DIM}* Skill-derived agents (from .agents/skills/) are hidden from the LLM list.${RESET}`,
+  );
 
   return lines.join("\n");
+}
+
+// ── Tool Result Interception ──────────────────────────
+
+/**
+ * Build a regex pattern that matches lines containing skill-derived agent names
+ * in the subagent list output.
+ * Pattern matches lines like: "- agent-name (project):" or "- agent-name (user):"
+ */
+function buildSkillAgentFilterPattern(skillNames: Set<string>): RegExp | null {
+  if (skillNames.size === 0) return null;
+
+  // Escape special regex characters in agent names
+  const escapedNames: string[] = [];
+  for (const name of skillNames) {
+    escapedNames.push(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  }
+
+  // Match lines that start with "- <name> (" (the subagent list format)
+  const pattern = `^- (${escapedNames.join("|")})\\s*\\(`;
+  return new RegExp(pattern, "m");
 }
 
 // ── Extension ──────────────────────────────────────────
@@ -404,6 +510,48 @@ export default function (pi: ExtensionAPI) {
         }),
       invalidate: () => {},
     };
+  });
+
+  // ── Intercept subagent tool results ──
+
+  pi.on("tool_result", (event) => {
+    // Check if this is the subagent tool's list action
+    // CustomToolResultEvent has toolName: string
+    const ev = event as Record<string, unknown>;
+    if (ev.toolName !== "subagent") return;
+
+    const input = ev.input as Record<string, unknown> | undefined;
+    if (!input || input.action !== "list") return;
+
+    const content = ev.content as Array<Record<string, unknown>> | undefined;
+    if (!content || content.length === 0) return;
+
+    const skillNames = getSkillAgentNames();
+    if (skillNames.size === 0) return;
+
+    const filterPattern = buildSkillAgentFilterPattern(skillNames);
+    if (!filterPattern) return;
+
+    const filteredContent = content.map((entry) => {
+      if (entry.type !== "text") return entry;
+
+      const text = entry.text as string;
+      if (!text.includes("(project)") && !text.includes("(user)")) {
+        return entry; // Only filter list entries with scope markers
+      }
+
+      // Filter out lines matching skill-derived agent names
+      const lines = text.split("\n");
+      const filteredLines = lines.filter((line) => {
+        const trimmed = line.trim();
+        // Check if line matches "- <skill-agent-name> ("
+        return !filterPattern.test(trimmed);
+      });
+
+      return { ...entry, text: filteredLines.join("\n") };
+    });
+
+    return { content: filteredContent };
   });
 
   // ── Commands ──
@@ -478,22 +626,13 @@ export default function (pi: ExtensionAPI) {
       lines.push("");
       lines.push(`  ${DIM}Description:${RESET} ${agent.description}`);
       lines.push(`  ${DIM}Source:${RESET} ${agent.source}`);
-
-      // Show effective tools (with overrides applied)
-      const effectiveTools = getEffectiveTools(agent, overrides);
-      const override = overrides[agent.name];
-      const hasOverride = override !== undefined;
-      const toolsStr = effectiveTools.join(", ") || "—";
-      const overrideMarker = hasOverride
-        ? `  ${YELLOW}← OVERRIDDEN${RESET}`
-        : "";
-      lines.push(`  ${DIM}Tools:${RESET} ${toolsStr}${overrideMarker}`);
-
+      lines.push(`  ${DIM}Tools:${RESET} ${getEffectiveTools(agent, overrides).join(", ") || "—"}`);
       lines.push(`  ${DIM}Model:${RESET} ${agent.model ?? `${DIM}(inherited from default)${RESET}`}`);
       lines.push(`  ${DIM}Skills:${RESET} ${agent.skills.join(", ") || `${DIM}—${RESET}`}`);
       if (agent.context) lines.push(`  ${DIM}Default context:${RESET} ${agent.context}`);
 
-      if (hasOverride) {
+      const override = overrides[agent.name];
+      if (override) {
         lines.push("");
         lines.push(`  ${YELLOW}🔧 Active overrides:${RESET}`);
         for (const [key, val] of Object.entries(override)) {
@@ -524,12 +663,11 @@ export default function (pi: ExtensionAPI) {
 
   // ── Persistent Widget ──
 
-  // Initial update
   pi.on("session_start", async (_event, ctx) => {
+    clearSkillAgentCache();
     updateWidget(ctx);
   });
 
-  // Refresh on user input and tool execution
   pi.on("input", async (_event, ctx) => {
     updateWidget(ctx);
     return { action: "continue" };
@@ -539,7 +677,6 @@ export default function (pi: ExtensionAPI) {
     updateWidget(ctx);
   });
 
-  // Clean up on shutdown
   pi.on("session_shutdown", async (_event, ctx) => {
     if (ctx.hasUI) ctx.ui.setWidget(WIDGET_ID, undefined);
   });
