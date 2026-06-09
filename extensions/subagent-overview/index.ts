@@ -13,6 +13,18 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
+// ── ANSI color constants ──────────────────────────────
+
+const BOLD = "\x1b[1m";
+const DIM = "\x1b[2m";
+const CYAN = "\x1b[36m";
+const GREEN = "\x1b[32m";
+const YELLOW = "\x1b[33m";
+const RED = "\x1b[31m";
+const BLUE = "\x1b[34m";
+const MAGENTA = "\x1b[35m";
+const RESET = "\x1b[0m"
+
 const WIDGET_ID = "subagent-overview-widget";
 
 // ── Types ──────────────────────────────────────────────
@@ -224,21 +236,23 @@ function formatAgentBlock(
   const hasOverride = override !== undefined;
 
   const paddedName = agent.name.padEnd(16);
-  lines.push(`${paddedName}${agent.description}`);
+  lines.push(`${BOLD}${paddedName}${RESET}${agent.description}`);
 
   const toolsLabel = hasOverride ? "Tools*" : "Tools";
   const toolsStr = agent.tools.length > 0 ? agent.tools.join(", ") : "—";
-  const overrideMarker = hasOverride ? "  ← OVERRIDDEN" : "";
-  lines.push(`  ${toolsLabel}: ${toolsStr}${overrideMarker}`);
+  const overrideMarker = hasOverride
+    ? `  ${YELLOW}← OVERRIDDEN${RESET}`
+    : "";
+  lines.push(`  ${DIM}${toolsLabel}:${RESET} ${toolsStr}${overrideMarker}`);
 
-  const modelStr = agent.model ?? "(inherited from default)";
-  lines.push(`  Model: ${modelStr}`);
+  const modelStr = agent.model ?? `${DIM}(inherited from default)${RESET}`;
+  lines.push(`  ${DIM}Model:${RESET} ${modelStr}`);
 
-  const skillsStr = agent.skills.length > 0 ? agent.skills.join(", ") : "—";
-  lines.push(`  Skills: ${skillsStr}`);
+  const skillsStr = agent.skills.length > 0 ? agent.skills.join(", ") : `${DIM}—${RESET}`;
+  lines.push(`  ${DIM}Skills:${RESET} ${skillsStr}`);
 
   if (agent.context) {
-    lines.push(`  Context: ${agent.context}`);
+    lines.push(`  ${DIM}Context:${RESET} ${agent.context}`);
   }
 
   return lines;
@@ -252,12 +266,12 @@ function formatOverview(): string {
   const lines: string[] = [];
 
   lines.push("╔══════════════════════════════════════════════════════════╗");
-  lines.push("║                    Subagents Overview                   ║");
+  lines.push(`${CYAN}║                    Subagents Overview                   ║${RESET}`);
   lines.push("╚══════════════════════════════════════════════════════════╝");
   lines.push("");
 
   // ── Builtin Agents ──
-  lines.push("🏗️  BUILTIN AGENTS");
+  lines.push(`${BOLD}${CYAN}🏗️  BUILTIN AGENTS${RESET}`);
   lines.push("");
   for (const agent of builtins) {
     lines.push(...formatAgentBlock(agent, overrides));
@@ -265,7 +279,7 @@ function formatOverview(): string {
   }
 
   // ── User Agents ──
-  lines.push("👤  USER AGENTS");
+  lines.push(`${BOLD}${CYAN}👤  USER AGENTS${RESET}`);
   lines.push("");
 
   if (users.length === 0) {
@@ -306,21 +320,21 @@ function formatOverview(): string {
 
   // ── Active Overrides ──
   const overrideKeys = Object.keys(overrides);
-  lines.push("🔧  ACTIVE SETTINGS OVERRIDES");
+  lines.push(`${BOLD}${YELLOW}🔧  ACTIVE SETTINGS OVERRIDES${RESET}`);
   lines.push("");
 
   if (overrideKeys.length === 0) {
-    lines.push("  No overrides configured.");
+    lines.push(`  ${DIM}No overrides configured.${RESET}`);
   } else {
     for (const [agentName, ov] of Object.entries(overrides)) {
       const overriddenFields = Object.entries(ov)
         .filter(([_key, val]) => val !== undefined && val !== null && val !== false)
         .map(([key, val]) => {
-          if (Array.isArray(val)) return `    ${key}: ${val.join(", ")}`;
-          return `    ${key}: ${String(val)}`;
+          if (Array.isArray(val)) return `    ${DIM}${key}:${RESET} ${val.join(", ")}`;
+          return `    ${DIM}${key}:${RESET} ${String(val)}`;
         });
       if (overriddenFields.length > 0) {
-        lines.push(`  ${agentName}`);
+        lines.push(`  ${BOLD}${agentName}${RESET}`);
         lines.push(...overriddenFields);
         lines.push("");
       }
@@ -328,12 +342,12 @@ function formatOverview(): string {
   }
 
   // ── Quick Stats ──
-  lines.push("📊  QUICK STATS");
+  lines.push(`${BOLD}${GREEN}📊  QUICK STATS${RESET}`);
   lines.push("");
 
   const totalAgents = builtins.length + users.length;
-  lines.push(`  Total agents: ${totalAgents}`);
-  lines.push(`    Builtin: ${builtins.length}  |  User: ${users.length}`);
+  lines.push(`  Total agents: ${BOLD}${totalAgents}${RESET}`);
+  lines.push(`    ${BLUE}${builtins.length}${RESET} builtin  |  ${BLUE}${users.length}${RESET} user`);
 
   // Agents with execution tools (applying overrides from settings.json)
   const execTools = ["bash", "safe_bash"];
@@ -341,24 +355,19 @@ function formatOverview(): string {
   const agentsWithExec = allAgents.filter((a) =>
     getEffectiveTools(a, overrides).some((t) => execTools.includes(t)),
   );
-  const agentsWithSafeBash = agentsWithExec.filter((a) =>
-    getEffectiveTools(a, overrides).includes("safe_bash"),
+  const agentsWithSafeBash = allAgents.filter((a) =>
+    getEffectiveTools(a, overrides).includes("safe_bash") &&
+    !getEffectiveTools(a, overrides).includes("bash"),
   );
-  const agentsWithPlainBash = agentsWithExec.filter((a) =>
+  const agentsWithPlainBash = allAgents.filter((a) =>
     getEffectiveTools(a, overrides).includes("bash"),
   );
 
   lines.push(
-    `  Agents with execution tools: ${agentsWithExec.map((a) => a.name).join(", ") || "none"}`,
+    `  ${GREEN}🔒${RESET} safe_bash enforced: ${BOLD}${agentsWithSafeBash.map((a) => a.name).join(", ") || "none"}${RESET}`,
   );
   lines.push(
-    `  Agents with safe_bash only (no plain bash): ${agentsWithSafeBash
-      .filter((a) => !a.tools.includes("bash"))
-      .map((a) => a.name)
-      .join(", ") || "none"}`,
-  );
-  lines.push(
-    `  Agents with plain bash (not restricted): ${agentsWithPlainBash.map((a) => a.name).join(", ") || "none"}`,
+    `  ${RED}⚠${RESET} plain bash (not restricted): ${BOLD}${agentsWithPlainBash.map((a) => a.name).join(", ") || "none"}${RESET}`,
   );
 
   const allSkills = [...builtins, ...users].flatMap((a) => a.skills);
@@ -369,9 +378,9 @@ function formatOverview(): string {
   );
 
   lines.push("");
-  lines.push("─".repeat(56));
+  lines.push(`${DIM}${'─'.repeat(56)}${RESET}`);
   lines.push(
-    "  * Tools marked with ← OVERRIDDEN have been modified via settings.json.",
+    `  ${DIM}* Tools marked with ← OVERRIDDEN have been modified via settings.json.${RESET}`,
   );
 
   return lines.join("\n");
@@ -448,24 +457,33 @@ export default function (pi: ExtensionAPI) {
 
       const lines: string[] = [];
       lines.push("╔══════════════════════════════════════════════╗");
-      lines.push(`║  Agent: ${agent.name.padEnd(37)}║`);
+      lines.push(`${CYAN}║  Agent: ${BOLD}${agent.name.padEnd(37)}${RESET}${CYAN}║${RESET}`);
       lines.push("╚══════════════════════════════════════════════╝");
       lines.push("");
-      lines.push(`  Description: ${agent.description}`);
-      lines.push(`  Source: ${agent.source}`);
-      lines.push(`  Tools: ${agent.tools.join(", ") || "—"}`);
-      lines.push(`  Model: ${agent.model ?? "(inherited from default)"}`);
-      lines.push(`  Skills: ${agent.skills.join(", ") || "—"}`);
-      if (agent.context) lines.push(`  Default context: ${agent.context}`);
+      lines.push(`  ${DIM}Description:${RESET} ${agent.description}`);
+      lines.push(`  ${DIM}Source:${RESET} ${agent.source}`);
 
+      // Show effective tools (with overrides applied)
+      const effectiveTools = getEffectiveTools(agent, overrides);
       const override = overrides[agent.name];
-      if (override) {
+      const hasOverride = override !== undefined;
+      const toolsStr = effectiveTools.join(", ") || "—";
+      const overrideMarker = hasOverride
+        ? `  ${YELLOW}← OVERRIDDEN${RESET}`
+        : "";
+      lines.push(`  ${DIM}Tools:${RESET} ${toolsStr}${overrideMarker}`);
+
+      lines.push(`  ${DIM}Model:${RESET} ${agent.model ?? `${DIM}(inherited from default)${RESET}`}`);
+      lines.push(`  ${DIM}Skills:${RESET} ${agent.skills.join(", ") || `${DIM}—${RESET}`}`);
+      if (agent.context) lines.push(`  ${DIM}Default context:${RESET} ${agent.context}`);
+
+      if (hasOverride) {
         lines.push("");
-        lines.push("  🔧 Active overrides:");
+        lines.push(`  ${YELLOW}🔧 Active overrides:${RESET}`);
         for (const [key, val] of Object.entries(override)) {
           if (val === undefined || val === null || val === false) continue;
           const valStr = Array.isArray(val) ? val.join(", ") : String(val);
-          lines.push(`    ${key}: ${valStr}`);
+          lines.push(`    ${DIM}${key}:${RESET} ${valStr}`);
         }
       }
 

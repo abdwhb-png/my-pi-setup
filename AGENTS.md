@@ -10,3 +10,6 @@
 - Prefer breaking down complex tasks into todo lists and executing them step by step, rather than trying to do everything in one go.
 - Always implement code following test-driven development (TDD) principles described in the `tdd` skill. Write tests first, then implement code to pass those tests
 - Always follow `dependency-install` skill instructions when installing new dependencies. Do not skip steps or make assumptions about the environment.
+
+## Important Notes
+- You should absoluetely not proceed to implementation unles explicitly asked to do so by the user. Always ask for confirmation before starting implementation.
