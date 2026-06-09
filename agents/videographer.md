@@ -8,7 +8,7 @@ systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
 defaultContext: fresh
-output: analysis.md
+output: video-analysis.md
 defaultReads:
 defaultProgress: true
 completionGuard: false
