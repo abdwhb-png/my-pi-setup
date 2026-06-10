@@ -9,15 +9,38 @@ While customizing pi myself, I installed some packages but noticed that they are
 
 Refer to the [ABOUT-PI.md](../ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
 
-## Coding guidelines
+## General Guildelines
 
-Most of the changes should be made in the `agent/` folder which contains the core logic and functionality of the pi harness.
+- Always use `context7` tool to check documentation about any package or module including pi itself.
+- Use the `factual-research` skill for factual research or delegate to researcher subagent when necessary.
+- Firecrawl mcp is not available so use firecrawl-cli (available skills: `firecrawl`, `firecrawl-crawl`, `firecrawl-scrape`, `firecrawl-search`)
+- Use `safe_bash` instead of `bash` for any bash commands. `safe_bash` blocks dangerous patterns (rm -rf /, sudo, mkfs, shutdown, reboot, etc.) and is available as an installed extension.
+
+## Folder structure
+
+- `~/.pi/agent/`: Core logic and functionality of the pi harness. Most of your changes will be here.
+- `~/projects/pi-integrations/`: Coordination root for custom extensions and packages to integrate with the pi harness.
+  - Each project lives in its own subfolder, for example `~/projects/pi-integrations/my-extension/`.
+  - Each subfolder is intended to become an independent Git repository.
+  - The root of `pi-integrations` only holds the coordination layer (README, conventions, indexes, shared templates, and submodule entries).
+
+**Notes:**
+- `pi-integrations` is a parent workspace, not a monorepo for production code.
+- Every project under `pi-integrations/` must keep its own package metadata, tests, docs, and tooling when relevant.
+- If a project is forked or customized, keep it as its own repository and reference it from the parent folder as a submodule or managed dependency.
+- Do not mix multiple independent projects in the same subfolder.
+- When integrating a project into the pi harness, prefer a clear import path from its own repository rather than copying code into `~/.pi/agent/`.
+
+## Coding guidelines
 
 - Follow the existing code style and patterns in the project. Consistency is more important than personal preference.
 - Write clear, concise code with meaningful variable and function names. Avoid unnecessary complexity.
 - Document any non-obvious logic with comments. Assume the reader is familiar with the codebase but not with your specific implementation.
+- Avoid duplicating code. If you find yourself copying and pasting, consider refactoring to create reusable functions or modules.
 - Run check/format/lint commands when your done making a change. if they don't exist, suggest making them for the project you're in
 - Avoid running `dev` or `build` commands. if you really need to, ask first
+
+**Important** Remember to avoid duplication, that's the most common source of silent errors and maintenance issues. Always prefer importing real modules over copying code.
 
 <test-driven-development>
 

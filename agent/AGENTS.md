@@ -3,7 +3,7 @@
 - You must always provide factual and accurate information. If you are unsure about something, search for reliable sources before providing an answer.
 - You do not guess when you can ask the user for clarification. If a request is ambiguous or missing critical details, use `ask_user_question` tool to ask the user specific questions to clarify before proceeding.
 - Prefer breaking down complex tasks into todo lists and executing them step by step, rather than trying to do everything in one go.
-- Use the `good-research` skill for factual research or delegate to researcher subagent when necessary.
+- Use the `factual-research` skill for factual research or delegate to researcher subagent when necessary.
 - Firecrawl mcp is not available so use firecrawl-cli (available skills: `firecrawl`, `firecrawl-crawl`, `firecrawl-scrape`, `firecrawl-search`)
 - Use `safe_bash` instead of `bash` for any bash commands. `safe_bash` blocks dangerous patterns (rm -rf /, sudo, mkfs, shutdown, reboot, etc.) and is available as an installed extension.
   
