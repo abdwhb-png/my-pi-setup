@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { applySelection } from "./apply.ts";
 import { scanCatalog } from "./catalog.ts";
-import { getCatalogManifestWarnings, readProjectState } from "./project-state.ts";
+import { getCatalogManifestWarnings } from "./policy.ts";
+import { readProjectState } from "./project-state.ts";
 import type { CatalogData, EphemeralCategory, ProjectState } from "./types.ts";
 import { pluralize } from "./util.ts";
 import { showEphemeralUi } from "./ui.ts";

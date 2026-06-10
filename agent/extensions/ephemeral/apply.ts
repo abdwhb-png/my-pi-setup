@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import type { ApplyConflict, ApplyResult, CatalogData, CatalogItem, EphemeralManifest, ManifestEntry, ProjectSettingsJson, ProjectState } from "./types.ts";
 import { writeManifest } from "./manifest.ts";
 import { cloneProjectMcp, writeProjectMcp } from "./mcp.ts";
-import { getInstallConflict } from "./project-state.ts";
+import { getInstallConflict, getRemovalConflict } from "./policy.ts";
 import { ensureTrailingNewline, getProjectPaths, resolveProjectPath } from "./util.ts";
 
 export async function applySelection(
@@ -69,16 +69,6 @@ export async function applySelection(
     conflicts: Array.from(conflictByKey.values()),
     warnings: [],
   };
-}
-
-function getRemovalConflict(entry: ManifestEntry, state: ProjectState): string | undefined {
-  if (entry.settingsChanges.length > 0 && state.settingsError) {
-    return `managed extension '${entry.label}' cannot be removed because .pi/settings.json is invalid`;
-  }
-  if (entry.type === "mcp" && state.mcpError) {
-    return `managed mcp server '${entry.label}' cannot be removed because .pi/mcp.json is invalid`;
-  }
-  return undefined;
 }
 
 async function installCatalogItem(item: CatalogItem, cwd: string, state: ProjectState): Promise<ManifestEntry> {

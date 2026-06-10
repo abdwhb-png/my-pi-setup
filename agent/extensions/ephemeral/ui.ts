@@ -2,7 +2,7 @@ import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { CatalogData, CatalogItem, EphemeralCategory, ManifestEntry, ProjectState } from "./types.ts";
 import { renderPreviewLines, renderPreviewMeta } from "./preview.ts";
-import { getLiveWarnings, getManagedEntriesByCategory } from "./project-state.ts";
+import { getLiveWarnings, getManagedEntriesByCategory } from "./policy.ts";
 import { categoryLabel, clamp, pluralize } from "./util.ts";
 
 export interface EphemeralUiApplyResult {
