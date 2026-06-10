@@ -5,7 +5,8 @@ const YEET_PROMPT = `Commit the current repository changes.
 Steps:
 1. Add all unstaged changes with \`git add -A\`.
 2. Inspect the staged changes and write a concise commit message that accurately summarizes them.
-3. Commit the changes with that message.
+3. Check for draft or proposal files that should not be commited and clean them up.
+4. Commit the changes with that message.
 
 Keep the commit message concise.
 
