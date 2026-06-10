@@ -8,7 +8,7 @@
  * Plannotator browser UI for review, and return the result.
  */
 
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve, relative, extname, isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
@@ -20,7 +20,7 @@ import {
 
 // ── Pure helper functions (also tested independently in test.ts) ──
 
-function validatePlanPath(inputPath: string, cwd: string): string | null {
+export function validatePlanPath(inputPath: string, cwd: string): string | null {
   if (!inputPath || !inputPath.trim()) {
     return "Path is required";
   }
@@ -48,7 +48,7 @@ function validatePlanPath(inputPath: string, cwd: string): string | null {
   return null;
 }
 
-function validateAnnotatePath(inputPath: string, cwd: string): string | null {
+export function validateAnnotatePath(inputPath: string, cwd: string): string | null {
   if (!inputPath || !inputPath.trim()) {
     return "Path is required";
   }
@@ -71,7 +71,7 @@ function validateAnnotatePath(inputPath: string, cwd: string): string | null {
   return null;
 }
 
-function readPlanFile(inputPath: string, cwd: string): { ok: true; content: string } | { ok: false; error: string } {
+export function readPlanFile(inputPath: string, cwd: string): { ok: true; content: string } | { ok: false; error: string } {
   const validationError = validatePlanPath(inputPath, cwd);
   if (validationError) {
     return { ok: false, error: validationError };
@@ -88,6 +88,29 @@ function readPlanFile(inputPath: string, cwd: string): { ok: true; content: stri
   } catch (err) {
     return { ok: false, error: `Failed to read file: ${err instanceof Error ? err.message : String(err)}` };
   }
+}
+
+export function formatReviewResult(decision: { approved: boolean; feedback?: string }): string {
+  if (decision.approved) {
+    const notes = decision.feedback ? `\n\n**Reviewer notes:**\n${decision.feedback}` : "";
+    return `## Plan Approved ✓${notes}\n\nProceed with execution. Mark completed steps with [DONE:n].`;
+  }
+
+  const feedback = decision.feedback || "No specific feedback provided.";
+  return `## Plan Requires Revision\n\n**Feedback:**\n${feedback}\n\nEdit the plan file and re-submit via plan_submit.`;
+}
+
+export function formatAnnotationResult(result: { feedback?: string; exit?: boolean; approved?: boolean }): string {
+  if (result.approved) {
+    return "## Annotation Approved ✓";
+  }
+  if (result.exit) {
+    return "## Annotation Closed\n\nThe annotation session was closed without feedback.";
+  }
+  if (result.feedback) {
+    return `## Annotation Feedback\n\n${result.feedback}`;
+  }
+  return "## Annotation Closed\n\nNo feedback was provided.";
 }
 
 // ── Extension entry point ──

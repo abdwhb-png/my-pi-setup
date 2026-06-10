@@ -106,7 +106,7 @@ export function getFirstNonEmptyLine(text: string): string {
 
 export function uniqueSorted<T>(values: Iterable<T>, sorter?: (left: T, right: T) => number): T[] {
   const unique = Array.from(new Set(values));
-  return sorter ? unique.sort(sorter) : unique;
+  return sorter ? unique.toSorted(sorter) : unique;
 }
 
 export function computeFingerprint(path: string): Promise<string> {
@@ -183,7 +183,7 @@ export async function listImmediateDirectories(root: string): Promise<string[]> 
         directories.push(join(root, entry.name));
       }
     }
-    return directories.sort((left, right) => left.localeCompare(right));
+    return directories.toSorted((left, right) => left.localeCompare(right));
   } catch {
     return [];
   }
@@ -198,7 +198,7 @@ export async function listImmediateFiles(root: string, predicate?: (fileName: st
       if (predicate && !predicate(entry.name)) continue;
       files.push(join(root, entry.name));
     }
-    return files.sort((left, right) => left.localeCompare(right));
+    return files.toSorted((left, right) => left.localeCompare(right));
   } catch {
     return [];
   }
@@ -207,7 +207,7 @@ export async function listImmediateFiles(root: string, predicate?: (fileName: st
 export async function getDirectoryEntryNames(root: string): Promise<string[]> {
   try {
     const entries = await readdir(root);
-    return entries.sort((left, right) => left.localeCompare(right));
+    return entries.toSorted((left, right) => left.localeCompare(right));
   } catch {
     return [];
   }

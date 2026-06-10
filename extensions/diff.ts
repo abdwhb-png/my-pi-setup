@@ -95,7 +95,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const files = [...changedFiles].sort((a, b) => toRelative(ctx.cwd, a).localeCompare(toRelative(ctx.cwd, b)));
+      const files = [...changedFiles].toSorted((a, b) => toRelative(ctx.cwd, a).localeCompare(toRelative(ctx.cwd, b)));
       if (files.length === 0) {
         ctx.ui.notify("No changed files tracked from the last agent run", "info");
         return;

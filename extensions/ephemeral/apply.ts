@@ -235,7 +235,7 @@ async function removeManagedEntry(entry: ManifestEntry, state: ProjectState): Pr
 async function addExtensionSetting(settingsPath: string, value: string, initialSettings?: ProjectSettingsJson): Promise<ProjectSettingsJson> {
   const settings = cloneProjectSettings(initialSettings);
   const nextValues = Array.from(new Set<string>([...(settings.extensions ?? []), value]))
-    .sort((left, right) => left.localeCompare(right));
+    .toSorted((left, right) => left.localeCompare(right));
   settings.extensions = nextValues;
   await writeSettings(settingsPath, settings);
   return settings;
@@ -250,7 +250,7 @@ async function removeExtensionSettings(
   const valuesToRemoveSet = new Set(valuesToRemove);
   const nextValues = (settings.extensions ?? [])
     .filter((entry) => !valuesToRemoveSet.has(entry))
-    .sort((left, right) => left.localeCompare(right));
+    .toSorted((left, right) => left.localeCompare(right));
 
   if (nextValues.length > 0) settings.extensions = nextValues;
   else delete settings.extensions;

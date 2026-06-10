@@ -125,7 +125,7 @@ async function scanMcp(): Promise<ScanResult<McpCatalogItem>> {
     const warnings: string[] = [];
     const items: McpCatalogItem[] = [];
     const servers = (mcpServersValue ?? {}) as Record<string, ProjectMcpServerConfig>;
-    const sortedServers = Object.entries(servers).sort(([left], [right]) => left.localeCompare(right));
+    const sortedServers = Object.entries(servers).toSorted(([left], [right]) => left.localeCompare(right));
 
     for (const [serverName, serverConfig] of sortedServers) {
       if (!isJsonObject(serverConfig)) {
