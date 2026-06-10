@@ -85,13 +85,16 @@ plan_submit("PLAN.md")
 ```
 
 This opens the plan in a browser-based UI where the user can:
-- **Approve** — switches to execution mode
+- **Approve** — the plan is accepted, the decision is returned to you
 - **Annotate** — add inline annotations on specific sections
 - **Deny with feedback** — you revise and resubmit
 
+NOTE: `plan_submit` is a slim tool — it does NOT auto-switch phases or
+auto-trigger execution. You remain in control after approval.
+
 #### If approved:
-The plan is accepted. Proceed to execution. Mark completed steps with `[DONE:n]`
-in your response where n is the step number. Example:
+The plan is accepted. You may now proceed with execution. Mark completed steps
+with `[DONE:n]` in your response where n is the step number. Example:
 ```
 [DONE:1] Implemented the auth module
 ```
