@@ -1,0 +1,9 @@
+{
+  "name": "pi-subagents-overview",
+  "version": "1.0.0",
+  "description": "Clean /subagents command for readable overviews of all configured subagents",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

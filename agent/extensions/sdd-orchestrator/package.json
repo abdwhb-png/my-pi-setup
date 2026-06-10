@@ -1,0 +1,9 @@
+{
+  "name": "sdd-orchestrator",
+  "version": "1.0.0",
+  "description": "Programmatic SDD orchestrator - submits plans, tracks execution, retrieves results via file-based protocol with background orchestrator agent",
+  "keywords": ["pi-package", "sdd", "orchestrator", "subagent"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
