@@ -9,12 +9,10 @@ While customizing pi myself, I installed some packages but noticed that they are
 
 Refer to the [ABOUT-PI.md](../ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
 
-## General Guildelines
+## General Instructions
 
 - Always use `context7` tool to check documentation about any package or module including pi itself.
-- Use the `factual-research` skill for factual research or delegate to researcher subagent when necessary.
-- Firecrawl mcp is not available so use firecrawl-cli (available skills: `firecrawl`, `firecrawl-crawl`, `firecrawl-scrape`, `firecrawl-search`)
-- Use `safe_bash` instead of `bash` for any bash commands. `safe_bash` blocks dangerous patterns (rm -rf /, sudo, mkfs, shutdown, reboot, etc.) and is available as an installed extension.
+- Always use `pi-extensions` skill for pi packages and extensions development.
 
 ## Folder structure
 
@@ -31,18 +29,59 @@ Refer to the [ABOUT-PI.md](../ABOUT-PI.md) file for an overview of the pi agent 
 - Do not mix multiple independent projects in the same subfolder.
 - When integrating a project into the pi harness, prefer a clear import path from its own repository rather than copying code into `~/.pi/agent/`.
 
+## ⚠️ Mandatory Workflow — Any Code Changes
+
+You must follow these 3 phases **in order**, without skipping any. Each phase contains checklist steps. You only move on to the next phase when all the steps in the current phase are completed.
+
+### Phase 1 — Discovery (before writing a single line of code)
+
+Discover the project you will be working on:
+
+1. Read the configuration files of the existing project — package manager, test framework, linter, tsconfig
+2. Check the existing imports and conventions (e.g., `bun:test` vs. `vitest`, `bunfig.toml`)
+3. Identify the file(s) to modify or create, and their dependencies
+4. Verify that you understand the build/test infrastructure before writing any code
+
+**⚠ If it's a fork**, these steps are MANDATORY:
+
+- Check the package manager (bun, pnpm, npm) — never assume, read the config files
+- Check the test framework used — look at the imports in the existing tests
+- Check if the project has build/lint/typecheck scripts in package.json
+- Checks tsconfig.json for compilation rules
+
+### Phase 2 — Implementation (Required TDD)
+
+1. **Write test first** (RED): a test that fails for the target functionality
+2. **Write minimal code** (GREEN): just enough to pass the test
+3. **Refactor** (REFACTOR): cleans up without breaking the tests
+4. Runs the entire project test suite to confirm that everything passes
+
+Absolute rule: **no production line without a test that fails first.**
+
+### Phase 3 — Verification (Required before declaring complete)
+
+1. Runs the project's **typecheck** (`tsc --noEmit` or equivalent)
+2. Runs the project's **linter** (or install/configure one if it doesn't exist)
+3. Runs all the project's **tests** — not just yours
+4. Verifies that no unwanted artifacts are being tracked (lock files from the wrong package manager, build folders, etc.)
+
+**Rule**: if any of these checks fail, you fix it before moving on to the next step.
+
+---
+
 ## Coding guidelines
 
 - Follow the existing code style and patterns in the project. Consistency is more important than personal preference.
 - Write clear, concise code with meaningful variable and function names. Avoid unnecessary complexity.
 - Document any non-obvious logic with comments. Assume the reader is familiar with the codebase but not with your specific implementation.
 - Avoid duplicating code. If you find yourself copying and pasting, consider refactoring to create reusable functions or modules.
-- Run check/format/lint commands when your done making a change. if they don't exist, suggest making them for the project you're in
-- Avoid running `dev` or `build` commands. if you really need to, ask first
+- Avoid running `dev` or `build` commands. If you really need to, ask first.
 
 **Important** Remember to avoid duplication, that's the most common source of silent errors and maintenance issues. Always prefer importing real modules over copying code.
 
 <test-driven-development>
+
+These instructions are only meant for my local pi harness.
 
 ## Test Framework
 
