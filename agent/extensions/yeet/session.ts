@@ -71,34 +71,33 @@ export class CommitPlanSession implements Component {
   render(_width: number): string[] {
     const { theme } = this.config;
     const { focus, fileCursorIndex, commitMessage, cursorPosition, files } = this.state;
-    const lines: string[] = [];
+    const contentLines: string[] = [];
 
-    // --- Header with distinct background to make it pop ---
+    // --- Header with distinct background ---
     const headerText = "  📦 Commit Plan Review  ";
-    lines.push(theme.bg("selectedBg", theme.bold(headerText)));
-    lines.push("");
+    contentLines.push(theme.bg("selectedBg", theme.bold(headerText)));
+    contentLines.push("");
 
     // --- Commit message box ---
     const isActive = focus === "message";
     const msgLabel = isActive ? "  ✏️  Edit Message:" : "  Commit Message:";
-    lines.push(theme.fg("warning", theme.bold(msgLabel)));
+    contentLines.push(theme.fg("warning", theme.bold(msgLabel)));
 
-    // Render message with visible cursor when active
     if (isActive) {
       const before = commitMessage.slice(0, cursorPosition);
       const after = commitMessage.slice(cursorPosition);
       const cursorLine = before + theme.inverse(BLOCK_CURSOR) + after;
-      lines.push("    " + theme.fg("text", cursorLine));
+      contentLines.push("    " + theme.fg("text", cursorLine));
     } else {
-      lines.push("    " + theme.fg("text", commitMessage || theme.fg("muted", "(empty)")));
+      contentLines.push("    " + theme.fg("text", commitMessage || theme.fg("muted", "(empty)")));
     }
-    lines.push("");
+    contentLines.push("");
 
     // --- Files box ---
     const filesLabel = focus === "files" ? "  📁 Select Files:" : "  Files:";
-    lines.push(theme.fg("warning", theme.bold(filesLabel)));
+    contentLines.push(theme.fg("warning", theme.bold(filesLabel)));
     if (files.length === 0) {
-      lines.push(theme.fg("muted", "    (no files)"));
+      contentLines.push(theme.fg("muted", "    (no files)"));
     } else {
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
@@ -109,17 +108,18 @@ export class CommitPlanSession implements Component {
         const path = isFocused
           ? theme.bg("selectedBg", theme.bold(" " + f.path + " "))
           : theme.fg("text", " " + f.path);
-        lines.push("  " + checkbox + path);
+        contentLines.push("  " + checkbox + path);
       }
     }
-    lines.push("");
+    contentLines.push("");
 
-    // --- Footer with distinct background ---
+    // --- Footer ---
     const footer = isActive
       ? "  [Tab] Switch  [←→] Cursor  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel"
       : "  [Tab] Switch  [Space] Toggle  [↑↓] Navigate  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel";
-    lines.push(theme.bg("toolPendingBg", theme.fg("muted", theme.italic(footer))));
+    contentLines.push(theme.fg("muted", theme.italic(footer)));
 
-    return lines;
+    // Apply a consistent background to the entire card so it pops from the terminal
+    return contentLines.map((line) => theme.bg("customMessageBg", line));
   }
 }
