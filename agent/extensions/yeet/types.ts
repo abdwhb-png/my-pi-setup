@@ -6,6 +6,8 @@ export interface CommitPlanParams {
 
 export interface CommitPlanResult {
   accepted: boolean;
+  /** true = user pressed Esc (stop everything), false = user pressed Enter or Ctrl+R */
+  cancelled: boolean;
   plan_summary: string;
   files: string[];
   commit_message: string;
@@ -13,7 +15,10 @@ export interface CommitPlanResult {
 
 export interface CommitPlanSessionState {
   commitMessage: string;
+  /** Cursor position within commitMessage (0 = before first char, length = after last) */
+  cursorPosition: number;
   files: { path: string; selected: boolean }[];
   focus: 'message' | 'files';
-  cursorIndex: number;
+  /** File list cursor (index into files array) */
+  fileCursorIndex: number;
 }

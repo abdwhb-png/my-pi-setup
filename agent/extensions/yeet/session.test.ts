@@ -5,8 +5,11 @@ import type { CommitPlanParams, CommitPlanResult } from './types';
 function createMockTheme() {
   return {
     fg: (_color: string, text: string) => text,
+    bg: (_color: string, text: string) => text,
     bold: (text: string) => text,
     italic: (text: string) => text,
+    inverse: (text: string) => text,
+    underline: (text: string) => text,
   };
 }
 
@@ -41,7 +44,7 @@ describe('CommitPlanSession', () => {
 
     it('includes the plan title', () => {
       const output = session.render(80);
-      expect(output.some((line) => line.includes('Review Commit Plan'))).toBe(true);
+      expect(output.some((line) => line.includes('Commit Plan Review'))).toBe(true);
     });
 
     it('includes the commit message', () => {
@@ -57,7 +60,9 @@ describe('CommitPlanSession', () => {
 
     it('includes the help hint bar', () => {
       const output = session.render(80);
-      expect(output.some((line) => line.includes('[Enter] Confirm'))).toBe(true);
+      expect(output.some((line) => line.includes('[Enter] Accept'))).toBe(true);
+      expect(output.some((line) => line.includes('[Ctrl+R] Reject'))).toBe(true);
+      expect(output.some((line) => line.includes('[Esc] Cancel'))).toBe(true);
     });
   });
 
@@ -77,23 +82,33 @@ describe('CommitPlanSession', () => {
       expect(() => session.handleInput('Backspace')).not.toThrow();
     });
 
-    it('calls done with accepted=true on Enter', () => {
+    it('calls done with accepted=true, cancelled=false on Enter', () => {
       session.handleInput('\r');
       expect(done).toHaveBeenCalledTimes(1);
       const result: CommitPlanResult = done.mock.calls[0][0];
       expect(result.accepted).toBe(true);
+      expect(result.cancelled).toBe(false);
       expect(result.files).toEqual(['src/index.ts', 'src/utils.ts']);
       expect(result.commit_message).toBe('feat: add new feature');
       expect(result.plan_summary).toBe('Test plan');
     });
 
-    it('calls done with accepted=false on Escape', () => {
+    it('calls done with accepted=false, cancelled=true on Escape', () => {
       session.handleInput('\x1b');
       expect(done).toHaveBeenCalledTimes(1);
       const result: CommitPlanResult = done.mock.calls[0][0];
       expect(result.accepted).toBe(false);
+      expect(result.cancelled).toBe(true);
       expect(result.files).toEqual([]);
       expect(result.commit_message).toBe('');
+    });
+
+    it('calls done with accepted=false, cancelled=false on Ctrl+R (reject)', () => {
+      session.handleInput('\x12');
+      expect(done).toHaveBeenCalledTimes(1);
+      const result: CommitPlanResult = done.mock.calls[0][0];
+      expect(result.accepted).toBe(false);
+      expect(result.cancelled).toBe(false);
     });
 
     it('processes text input and returns accepted result with updated message on Enter', () => {

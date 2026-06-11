@@ -1,54 +1,93 @@
-import { CommitPlanSessionState } from './types';
+import type { CommitPlanSessionState } from "./types";
 
 export function handleCommitPlanInput(
   state: CommitPlanSessionState,
-  key: string
+  key: string,
 ): CommitPlanSessionState {
-  const { focus, cursorIndex, commitMessage, files } = state;
+  const { focus, fileCursorIndex, commitMessage, cursorPosition, files } = state;
 
-  if (key === '\t') {
+  // --- Global keys ---
+
+  if (key === "\t") {
     return {
       ...state,
-      focus: focus === 'message' ? 'files' : 'message',
+      focus: focus === "message" ? "files" : "message",
     };
   }
 
-  if (focus === 'files') {
-    if (key === ' ') {
+  // --- File list navigation ---
+
+  if (focus === "files") {
+    if (key === " ") {
       const newFiles = [...files];
-      if (cursorIndex >= 0 && cursorIndex < newFiles.length) {
-        newFiles[cursorIndex] = { ...newFiles[cursorIndex], selected: !newFiles[cursorIndex].selected };
+      if (fileCursorIndex >= 0 && fileCursorIndex < newFiles.length) {
+        newFiles[fileCursorIndex] = {
+          ...newFiles[fileCursorIndex],
+          selected: !newFiles[fileCursorIndex].selected,
+        };
       }
       return { ...state, files: newFiles };
     }
 
-    if (key === 'ArrowUp') {
-      return {
-        ...state,
-        cursorIndex: Math.max(0, cursorIndex - 1),
-      };
+    if (key === "ArrowUp") {
+      return { ...state, fileCursorIndex: Math.max(0, fileCursorIndex - 1) };
     }
 
-    if (key === 'ArrowDown') {
+    if (key === "ArrowDown") {
       return {
         ...state,
-        cursorIndex: Math.min(files.length - 1, cursorIndex + 1),
+        fileCursorIndex: Math.min(files.length - 1, fileCursorIndex + 1),
       };
     }
   }
 
-  if (focus === 'message') {
-    if (key === 'Backspace') {
+  // --- Message editing ---
+
+  if (focus === "message") {
+    if (key === "ArrowLeft") {
       return {
         ...state,
-        commitMessage: commitMessage.slice(0, -1),
+        cursorPosition: Math.max(0, cursorPosition - 1),
       };
     }
 
-    if (/^[a-zA-Z0-9\s.,!?-]$/.test(key)) {
+    if (key === "ArrowRight") {
       return {
         ...state,
-        commitMessage: commitMessage + key,
+        cursorPosition: Math.min(commitMessage.length, cursorPosition + 1),
+      };
+    }
+
+    if (key === "Backspace") {
+      if (cursorPosition === 0) return state;
+      return {
+        ...state,
+        commitMessage:
+          commitMessage.slice(0, cursorPosition - 1) +
+          commitMessage.slice(cursorPosition),
+        cursorPosition: cursorPosition - 1,
+      };
+    }
+
+    if (key === "Delete") {
+      if (cursorPosition >= commitMessage.length) return state;
+      return {
+        ...state,
+        commitMessage:
+          commitMessage.slice(0, cursorPosition) +
+          commitMessage.slice(cursorPosition + 1),
+      };
+    }
+
+    // Accept any printable character (not control sequences)
+    if (key.length === 1 && key.charCodeAt(0) >= 0x20) {
+      return {
+        ...state,
+        commitMessage:
+          commitMessage.slice(0, cursorPosition) +
+          key +
+          commitMessage.slice(cursorPosition),
+        cursorPosition: cursorPosition + 1,
       };
     }
   }
