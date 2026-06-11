@@ -1,6 +1,7 @@
 .vscode
 exa-usage.json
 web-search.json
+pi-session-**.html
 
 .codex/*
 !.codex/agents/
