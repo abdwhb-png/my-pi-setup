@@ -73,9 +73,9 @@ export class CommitPlanSession implements Component {
     const { focus, fileCursorIndex, commitMessage, cursorPosition, files } = this.state;
     const lines: string[] = [];
 
-    // --- Header with distinct color (warning = orange/yellow, stands out from main chat) ---
+    // --- Header with distinct background to make it pop ---
     const headerText = "  📦 Commit Plan Review  ";
-    lines.push(theme.bg("toolPendingBg", theme.bold(headerText)));
+    lines.push(theme.bg("selectedBg", theme.bold(headerText)));
     lines.push("");
 
     // --- Commit message box ---
@@ -114,11 +114,11 @@ export class CommitPlanSession implements Component {
     }
     lines.push("");
 
-    // --- Footer with key hints ---
+    // --- Footer with distinct background ---
     const footer = isActive
       ? "  [Tab] Switch  [←→] Cursor  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel"
       : "  [Tab] Switch  [Space] Toggle  [↑↓] Navigate  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel";
-    lines.push(theme.fg("muted", theme.italic(footer)));
+    lines.push(theme.bg("toolPendingBg", theme.fg("muted", theme.italic(footer))));
 
     return lines;
   }
