@@ -1,4 +1,4 @@
-import type { Component } from "@mariozechner/pi-tui";
+import { Box, type Component } from "@mariozechner/pi-tui";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { CommitPlanParams, CommitPlanResult, CommitPlanSessionState } from "./types";
 import { handleCommitPlanInput } from "./util";
@@ -68,7 +68,7 @@ export class CommitPlanSession implements Component {
 
   invalidate(): void {}
 
-  render(_width: number): string[] {
+  render(width: number): string[] {
     const { theme } = this.config;
     const { focus, fileCursorIndex, commitMessage, cursorPosition, files } = this.state;
     const contentLines: string[] = [];
@@ -119,7 +119,13 @@ export class CommitPlanSession implements Component {
       : "  [Tab] Switch  [Space] Toggle  [↑↓] Navigate  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel";
     contentLines.push(theme.fg("muted", theme.italic(footer)));
 
-    // Apply a consistent background to the entire card so it pops from the terminal
-    return contentLines.map((line) => theme.bg("customMessageBg", line));
+    // Use Box to apply a consistent background to the entire card with proper padding
+    const box = new Box(1, 0, (text: string) => theme.bg("customMessageBg", text));
+    contentLines.forEach((line) => {
+      const textComponent = { render: () => [line], invalidate: () => {} };
+      box.addChild(textComponent as any);
+    });
+
+    return box.render(width);
   }
 }
