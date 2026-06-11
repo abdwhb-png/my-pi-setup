@@ -1,11 +1,15 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "typescript",
+    "unicorn",
+    "oxc"
+  ],
   "categories": {
-    "correctness": "error",
-    "suspicious": "warn",
-    "pedantic": "off"
+    "correctness": "error"
   },
-  "rules": {
-    "eslint/no-unused-vars": "warn"
+  "rules": {},
+  "env": {
+    "builtin": true
   }
 }

@@ -3,6 +3,9 @@ exa-usage.json
 web-search.json
 pi-session-**.html
 
+.atlas/
+node_modules/
+
 .codex/*
 !.codex/agents/
 !.codex/agents/**
