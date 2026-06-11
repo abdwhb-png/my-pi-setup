@@ -7,7 +7,7 @@ While customizing pi myself, I installed some packages but noticed that they are
 
 ## Context about pi
 
-Refer to the [ABOUT-PI.md](../ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
+Refer to the [ABOUT-PI.md](../resources/ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
 
 ## General Instructions
 
