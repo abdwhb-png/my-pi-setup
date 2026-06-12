@@ -47,3 +47,9 @@ Bundle extensions, skills, prompts, and themes as packages. Install from npm or 
 
 `$ pi install npm:@foo/pi-tools
 $ pi install git:github.com/badlogic/pi-doom`
+
+## Additional resources
+
+- [Documentation](https://pi.dev/docs/latest)
+- [GitHub](https://github.com/earendil-works/pi)
+- [Docs map](./resources/pi-docs.map.json)

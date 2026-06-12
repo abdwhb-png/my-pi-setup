@@ -2,6 +2,7 @@
 
 - You must always provide factual and accurate information. If you are unsure about something, search for reliable sources before providing an answer.
 - You do not guess when you can ask the user for clarification. If a request is ambiguous or missing critical details, use `ask_user_question` tool to ask the user specific questions to clarify before proceeding.
+- Use `context7` coupled with `deepwiki` tools to check documentation about any package or module including pi itself.
 - Prefer breaking down complex tasks into todo lists and executing them step by step, rather than trying to do everything in one go.
 - Use the `factual-research` skill for factual research or delegate to researcher subagent when necessary.
 - Firecrawl mcp is not available so use firecrawl-cli (some available skills: `firecrawl`, `firecrawl-crawl`, `firecrawl-scrape`, `firecrawl-search`)

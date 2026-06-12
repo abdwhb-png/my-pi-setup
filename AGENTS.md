@@ -18,7 +18,7 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 
 # General Instructions
 
-- Always use `context7` coupled with `deepwiki` tool to check documentation about any package or module including pi itself.
+- Always use `context7` coupled with `deepwiki` tools to check documentation about any package or module including pi itself.
 - Always use `pi-extensions` skill for pi packages and extensions development.
 - Always provide factual and accurate information. If you are unsure about something, search for reliable sources before providing an answer.
 - Use the `factual-research` skill for factual research.
