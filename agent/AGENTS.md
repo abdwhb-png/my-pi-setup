@@ -97,9 +97,9 @@ These tools are still appropriate for:
 
 ## Test Framework
 
-- **Vitest is mandatory.** Use the `vitest` skill for all testing. Never use manual console.log test harnesses.
+- **`bun test` is mandatory.** Use bun's native test runner (`bun:test` imports) for all testing — it's 10x faster startup and 2.5-8x faster execution than vitest. Never use manual console.log test harnesses.
 - Import the module under test directly — **never copy-paste functions** into the test file. Testing copies of code instead of real imports is the most common silent failure pattern: the copy diverges from the source, and errors like missing dependencies or broken imports go undetected.
-- If an import cannot be resolved by the test runner (e.g. pi extension packages requiring jiti), **mock it with vi.mock()** — do not inline a copy. The goal is to exercise the real module and catch resolution errors at test time.
+- If an import cannot be resolved by the test runner (e.g. pi extension packages requiring jiti), **mock it with `mock.module()`** — do not inline a copy. The goal is to exercise the real module and catch resolution errors at test time.
 
 ## Anti-Patterns (prohibited)
 
@@ -115,21 +115,22 @@ These tools are still appropriate for:
 
 ## Mocking pi extensions
 
-When a module imports from pi packages that require jiti (e.g., `@plannotator/pi-extension`, `@earendil-works/pi-coding-agent`), use Vitest's `vi.mock()` to stub them:
+When a module imports from pi packages that require jiti (e.g., `@plannotator/pi-extension`, `@earendil-works/pi-coding-agent`), use bun's `mock.module()` to stub them:
 
 ```ts
-import { vi, describe, it, expect } from "vitest";
+import { mock, describe, it, expect } from "bun:test";
 
-vi.mock("@plannotator/pi-extension/plannotator-browser.js", () => ({
-  openPlanReviewBrowser: vi.fn(),
-  openMarkdownAnnotation: vi.fn(),
-  hasPlanBrowserHtml: vi.fn().mockReturnValue(false),
+mock.module("@plannotator/pi-extension/plannotator-browser.js", () => ({
+  openPlanReviewBrowser: mock(),
+  openMarkdownAnnotation: mock(),
+  hasPlanBrowserHtml: mock().mockReturnValue(false),
 }));
 
-// Now this import works — the real index.ts exercises real logic,
-// only the pi-specific browser layer is mocked.
-import { validatePlanPath } from "./index.ts";
+// ⚠️ mock.module() is NOT hoisted — use dynamic import after setting up the mock
+const { validatePlanPath } = await import("./index.ts");
 ```
+
+Key difference from vitest's `vi.mock()`: bun's `mock.module()` executes in order, not hoisted. Static `import` after `mock.module()` won't see the mock — you must use `await import(...)` after the mock setup.
 
 This catches import errors, type mismatches, and structural issues while keeping tests fast and isolated from the pi runtime.
 

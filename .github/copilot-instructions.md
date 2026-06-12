@@ -1,13 +1,18 @@
 # Context
 
-This is the local installation of my pi agent harness (https://pi.dev/).
+This is the local installation of my [pi](https://pi.dev/) agent harness.
 I'm working on it to customize it for my needs. This file contains instructions for how to use and modify the harness, as well as guidelines for code style, testing, and inter-agent communication.
 
-While customizing pi myself, I installed some packages but noticed that they are not as good as I want. So I will be forking them, modifying them, and adding new features. This file will contain instructions for how to do that, as well as guidelines for code style, testing, and inter-agent communication.
+While using pi myself, I installed some packages but noticed that they are not as good as I want. So I will be forking them, modifying them, and adding new features. This file will contain instructions for how to do that.
 
 ## Context about pi
 
-Refer to the [ABOUT-PI.md](../resources/ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
+Always refer to the [ABOUT-PI.md](../docs/ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
+
+**Pi Packages**: Pi packages bundle extensions, skills, prompt templates, and themes so you can share them through npm or git. A package can declare resources in package.json under the pi key, or use conventional directories. Refer to the [pi package documentation](https://pi.dev/docs/latest/packages) for details on how to structure and publish your own packages.
+
+**Pi Extensions**: Extensions are TypeScript modules that extend pi's behavior. They can subscribe to lifecycle events, register custom tools callable by the LLM, add commands, and more. Refer to the [pi extensions documentation](https://pi.dev/docs/latest/extensions) for how to create and use extensions.
+Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi/extensions/ (project-local) for auto-discovery. Use pi -e ./path.ts only for quick tests. Extensions in auto-discovered locations can be hot-reloaded with /reload.
 
 ## General Instructions
 
@@ -78,47 +83,3 @@ Absolute rule: **no production line without a test that fails first.**
 - Avoid running `dev` or `build` commands. If you really need to, ask first.
 
 **Important** Remember to avoid duplication, that's the most common source of silent errors and maintenance issues. Always prefer importing real modules over copying code.
-
-<test-driven-development>
-
-These instructions are only meant for my local pi harness.
-
-## Test Framework
-
-- **Vitest is mandatory.** Use the `vitest` skill for all testing. Never use manual console.log test harnesses.
-- Import the module under test directly — **never copy-paste functions** into the test file. Testing copies of code instead of real imports is the most common silent failure pattern: the copy diverges from the source, and errors like missing dependencies or broken imports go undetected.
-- If an import cannot be resolved by the test runner (e.g. pi extension packages requiring jiti), **mock it with vi.mock()** — do not inline a copy. The goal is to exercise the real module and catch resolution errors at test time.
-
-## Anti-Patterns (prohibited)
-
-1. **Copy-pasting source functions into test files** — Tests must import the real module. Copies do not catch import errors, missing dependencies, or divergence.
-2. **Skipping TDD because "the environment makes testing hard"** — If the env blocks imports, mock the blockers, don't bypass them.
-3. **Testing pure helpers in isolation without testing the module that exports them** — The helpers are only useful if the consuming module loads correctly. Always have at least one test that imports the full module.
-
-## Red-Green-Refactor
-
-- Always follow the `tdd` skill: RED (failing test) → GREEN (minimal code) → REFACTOR.
-- **NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST.**
-- Write one minimal test showing what should happen. Watch it fail for the right reason. Then write the minimal code to make it pass.
-
-## Mocking pi extensions
-
-When a module imports from pi packages that require jiti (e.g., `@plannotator/pi-extension`, `@earendil-works/pi-coding-agent`), use Vitest's `vi.mock()` to stub them:
-
-```ts
-import { vi, describe, it, expect } from "vitest";
-
-vi.mock("@plannotator/pi-extension/plannotator-browser.js", () => ({
-  openPlanReviewBrowser: vi.fn(),
-  openMarkdownAnnotation: vi.fn(),
-  hasPlanBrowserHtml: vi.fn().mockReturnValue(false),
-}));
-
-// Now this import works — the real index.ts exercises real logic,
-// only the pi-specific browser layer is mocked.
-import { validatePlanPath } from "./index.ts";
-```
-
-This catches import errors, type mismatches, and structural issues while keeping tests fast and isolated from the pi runtime.
-
-</test-driven-development>
