@@ -7,35 +7,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createBashTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-
-const DANGEROUS_PATTERNS = [
-  /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|~\/?\s|~\/?\b)/,
-  /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+)?(-[a-zA-Z]*f[a-zA-Z]*\s+)?(\/|~\/?\s|~\/?\b)/,
-  /\bsudo\b/,
-  /\bmkfs\b/,
-  /\bdd\s+if=/,
-  /:\(\)\s*\{\s*:\|:&\s*\}\s*;:/,
-  />\s*\/dev\/[sh]d[a-z]/,
-  /\bchmod\s+(-[a-zA-Z]+\s+)?777\s+\//,
-  /\bchown\s+(-[a-zA-Z]+\s+)?root/,
-  /\bcurl\s.*\|\s*(ba)?sh/,
-  /\bwget\s.*\|\s*(ba)?sh/,
-  /\bshutdown\b/,
-  /\breboot\b/,
-  /\binit\s+0\b/,
-  /\bkill\s+-9\s+1\b/,
-  /\bkillall\b/,
-];
-
-function isDangerous(command: string): string | null {
-  const normalized = command.replace(/\\\n/g, " ");
-  for (const pattern of DANGEROUS_PATTERNS) {
-    if (pattern.test(normalized)) {
-      return `Command blocked by safe_bash: matches dangerous pattern ${pattern}`;
-    }
-  }
-  return null;
-}
+import { isDangerous } from "./guard";
 
 export default function (pi: ExtensionAPI) {
   const bashTool = createBashTool(process.cwd());
@@ -44,14 +16,14 @@ export default function (pi: ExtensionAPI) {
     name: "safe_bash",
     label: "Safe Bash",
     description:
-      "Execute a bash command. Blocks dangerous commands (rm -rf /, sudo, mkfs, etc.).",
+      "Execute a bash command. Provides basic guardrails against accidentally destructive operations (e.g., rm -rf /, sudo). NOT a security sandbox — determined attackers can bypass these checks.",
     parameters: Type.Object({
       command: Type.String({ description: "Bash command to execute" }),
       timeout: Type.Optional(
         Type.Number({ description: "Timeout in seconds (optional)" }),
       ),
     }),
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
+    async execute(toolCallId, params, signal, onUpdate, _ctx) {
       const danger = isDangerous(params.command);
       if (danger) {
         throw new Error(danger);
