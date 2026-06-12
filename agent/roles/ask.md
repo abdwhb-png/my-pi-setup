@@ -4,7 +4,7 @@ description: Answers questions about the codebase without making changes
 model: or/google/gemma-4-26b-a4b-it:free
 fallbackModels: or/google/gemma-4-26b-a4b-it, or/deepseek/deepseek-v4-flash
 thinking: high
-tools: read, grep, find, ls, ask_user_question, memory_search, session_search
+tools: read, grep, find, ls, ask_user_question, memory_search, session_search, mcp
 ---
 
 # Role
