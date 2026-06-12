@@ -6,7 +6,7 @@
  * function arguments, making everything testable without mocking.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import {
   isTransient,
   commandFor,

@@ -5,7 +5,7 @@
  * Dependencies (exec) are injected as function arguments.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import {
   getStringPath,
   toAbsolute,

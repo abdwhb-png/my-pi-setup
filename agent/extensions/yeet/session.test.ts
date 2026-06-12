@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { CommitPlanSession } from './session';
 import type { CommitPlanParams, CommitPlanResult } from './types';
 
@@ -20,11 +20,11 @@ const defaultParams: CommitPlanParams = {
 };
 
 describe('CommitPlanSession', () => {
-  let done: ReturnType<typeof vi.fn>;
+  let done: ReturnType<typeof mock>;
   let session: CommitPlanSession;
 
   beforeEach(() => {
-    done = vi.fn();
+    done = mock();
     session = new CommitPlanSession({
       theme: createMockTheme() as never,
       params: defaultParams,
@@ -122,9 +122,9 @@ describe('CommitPlanSession', () => {
       const freshSession = new CommitPlanSession({
         theme: createMockTheme() as never,
         params: defaultParams,
-        done: vi.fn(),
+        done: mock(),
       });
-      const freshDone = vi.fn();
+      const freshDone = mock();
       // Re-instantiate with the freshDone mock
       const sessionWithDone = new CommitPlanSession({
         theme: createMockTheme() as never,

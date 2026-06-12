@@ -5,7 +5,7 @@
  * Policy functions are injected with their dependencies.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import {
   getInstallConflict,
   getRemovalConflict,

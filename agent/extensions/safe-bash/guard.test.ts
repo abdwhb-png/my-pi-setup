@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { isDangerous } from "./guard";
 
 // --- Positive cases: safe commands that must NOT be blocked ---
