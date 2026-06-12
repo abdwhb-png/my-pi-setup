@@ -22,8 +22,8 @@ export class CommitPlanSession implements Component {
 
     this.inputComponent = new Input();
     this.inputComponent.setValue(config.params.commit_message);
-    // Move cursor to the end of the initial message
-    this.inputComponent.cursor = config.params.commit_message.length;
+    // Move cursor to the end of the initial message using the "End" key sequence
+    this.inputComponent.handleInput("\x1b[F");
     
     this.inputComponent.onSubmit = () => {
       this.config.done({

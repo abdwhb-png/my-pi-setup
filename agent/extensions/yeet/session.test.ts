@@ -116,5 +116,26 @@ describe('CommitPlanSession', () => {
       const result: CommitPlanResult = done.mock.calls[0][0];
       expect(result.commit_message).toBe('feat: add new feature!');
     });
+
+    it('should append text to the end of the initial message (verifying cursor position)', () => {
+      // Create a fresh session for this test to avoid interference with other tests
+      const freshSession = new CommitPlanSession({
+        theme: createMockTheme() as never,
+        params: defaultParams,
+        done: vi.fn(),
+      });
+      const freshDone = vi.fn();
+      // Re-instantiate with the freshDone mock
+      const sessionWithDone = new CommitPlanSession({
+        theme: createMockTheme() as never,
+        params: defaultParams,
+        done: freshDone,
+      });
+
+      sessionWithDone.handleInput('!');
+      sessionWithDone.handleInput('\r');
+      const result: CommitPlanResult = freshDone.mock.calls[0][0];
+      expect(result.commit_message).toBe('feat: add new feature!');
+    });
   });
 });
