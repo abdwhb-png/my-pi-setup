@@ -1,5 +1,5 @@
-import { defineTool, type ExtensionAPI, type AgentToolResult } from "@mariozechner/pi-coding-agent";
-import { Type } from "@mariozechner/pi-ai";
+import { defineTool, type ExtensionAPI, type AgentToolResult } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
 import { CommitPlanSession } from "./session";
 import type { CommitPlanParams, CommitPlanResult } from "./types";
 

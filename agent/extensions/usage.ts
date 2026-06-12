@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const USAGE_PROMPT = String.raw`Create a Pi usage report for all of my Pi sessions over the last 1, 7, 30, and 90 days.
 

@@ -9,7 +9,7 @@
 // Exported constants
 // ---------------------------------------------------------------------------
 
-export const PACKAGE_NAME = "@mariozechner/pi-coding-agent";
+export const PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -126,7 +126,7 @@ export function commandFor(method: InstallMethod): CommandSpec | undefined {
  *
  * Decision matrix:
  *   1. Symlink-aware path check for ~/.vite-plus/, ~/.bun/, /Homebrew/
- *   2. Walk up from piPath looking for node_modules/@mariozechner/pi-coding-agent
+ *   2. Walk up from piPath looking for node_modules/@earendil-works/pi-coding-agent
  *   3. Fallback to any available package manager binary
  *   4. If nothing matches, return "native"
  */

@@ -1,5 +1,5 @@
-import { Input, truncateToWidth, visibleWidth, type Component } from "@mariozechner/pi-tui";
-import type { Theme } from "@mariozechner/pi-coding-agent";
+import { Input, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { CommitPlanParams, CommitPlanResult, CommitPlanSessionState } from "./types";
 import { handleCommitPlanInput } from "./util";
 

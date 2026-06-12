@@ -150,3 +150,6 @@ Coordinate with other local pi sessions on related codebases. Use `/skill:pi-int
 ## Important Notes
 - Always follow `dependency-installation` skill instructions when installing new dependencies. Do not skip steps or make assumptions about the environment.
 - You must not proceed to implementation unless explicitly asked to do so by the user. Always ask for confirmation before starting implementation.
+
+## Additional Context
+- [Context](./CONTEXT.md)

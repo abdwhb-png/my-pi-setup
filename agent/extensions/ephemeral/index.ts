@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { applySelection } from "./apply.ts";
 import { scanCatalog } from "./catalog.ts";
 import { getCatalogManifestWarnings } from "./policy.ts";

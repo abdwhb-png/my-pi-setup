@@ -1,5 +1,5 @@
-import { getMarkdownTheme, type Theme } from "@mariozechner/pi-coding-agent";
-import { Markdown, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { Markdown, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { CatalogItem } from "./types.ts";
 
 export function renderPreviewLines(item: CatalogItem, width: number): string[] {

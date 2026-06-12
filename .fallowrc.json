@@ -31,9 +31,8 @@
         "pi-web-access",
         "@mariozechner/pi-ai",
         "@sinclair/typebox",
-        "@mariozechner/pi-coding-agent",
-        "@mariozechner/pi-tui",
         "@earendil-works/pi-coding-agent",
+        "@earendil-works/pi-tui",
         "@earendil-works/pi-tui",
         "@mendable/firecrawl-js",
         "typebox"
