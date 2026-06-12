@@ -1,6 +1,6 @@
 ---
 description: "Instructions for using LSP tools for code navigation and analysis. Enforce LSP usage for definitions, references, symbols, and diagnostics instead of grep/glob/read."
-applyTo: '**/*.{ts,tsx,js,jsx,py,go,java,rs}'  # Adjust file patterns as needed
+applyTo: '**'
 ---
 ## LSP Server - REQUIRED FIRST STEP
 

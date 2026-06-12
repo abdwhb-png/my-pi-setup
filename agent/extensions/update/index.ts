@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { access, realpath } from "node:fs/promises";
 import {
-  PACKAGE_NAME,
   detectInstallMethod,
   commandFor,
   runWithRetry,
