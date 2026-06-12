@@ -4,6 +4,7 @@ description: This file describes the available subagents and their intended use 
 
 Use the `runSubagent` tool to invoke the right specialists for the task at hand. Each subagent has unique strengths.
 
+- **`pi-expert`**: Authoritative expert on the `pi` agent harness. MUST be consulted for any changes to the `pi` core, architecture, or when building extensions.
 - **`Ask`**: Use for clarifying requirements or answering specific technical questions.
 - **`Codebase Scout`**: Use for finding files and code, returning actionable results.
 - **`Explore`**: Use for codebase research, finding patterns, analyzing dependencies, and OSINT.
