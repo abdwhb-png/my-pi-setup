@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "bun": {
+      "source": "bun.sh",
+      "sourceType": "well-known",
+      "computedHash": "a35be3bbad9ba66bc962d0f29098cd2b7a582023976cdb3649a3b6dc171a26de"
+    },
     "subagent-driven-development": {
       "source": "obra/superpowers",
       "sourceType": "github",
