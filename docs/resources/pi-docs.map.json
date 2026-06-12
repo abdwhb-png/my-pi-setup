@@ -1,0 +1,142 @@
+[
+  {
+    "url": "https://pi.dev/docs/latest/containerization",
+    "title": "Containerization · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/themes",
+    "title": "Themes · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/json",
+    "title": "JSON Event Stream Mode · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/rpc",
+    "title": "RPC Mode · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/providers",
+    "title": "Providers · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/prompt-templates",
+    "title": "Prompt Templates · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/extensions",
+    "title": "Extensions · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/quickstart",
+    "title": "Quickstart · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/termux",
+    "title": "Termux (Android) Setup · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/development",
+    "title": "Development · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/custom-provider",
+    "title": "Custom Providers · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/compaction",
+    "title": "Compaction & Branch Summarization · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest",
+    "title": "Pi Documentation · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/tui",
+    "title": "TUI Components · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/security",
+    "title": "Security · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/packages",
+    "title": "Pi Packages · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/usage",
+    "title": "Using Pi · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/keybindings",
+    "title": "Keybindings · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/session-format",
+    "title": "Session File Format · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/models",
+    "title": "Custom Models · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/terminal-setup",
+    "title": "Terminal Setup · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/sessions",
+    "title": "Sessions · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/skills",
+    "title": "Skills · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/windows",
+    "title": "Windows Setup · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/tmux",
+    "title": "tmux Setup · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/settings",
+    "title": "Settings · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/sdk",
+    "title": "SDK · Docs · Pi",
+    "description": "A terminal-based coding agent"
+  },
+  {
+    "url": "https://pi.dev/docs/latest/shell-aliases",
+    "title": "Shell Aliases · Docs - Pi Coding Agent",
+    "description": "Pi runs bash in non-interactive mode ( bash -c ), which doesn't expand aliases by default. To enable your shell aliases, add ..."
+  }
+]
