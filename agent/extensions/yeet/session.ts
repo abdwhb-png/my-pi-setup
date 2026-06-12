@@ -1,13 +1,11 @@
-import { truncateToWidth, visibleWidth, type Component } from "@mariozechner/pi-tui";
+import { Input, truncateToWidth, visibleWidth, type Component } from "@mariozechner/pi-tui";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { CommitPlanParams, CommitPlanResult, CommitPlanSessionState } from "./types";
 import { handleCommitPlanInput } from "./util";
 
-// Unicode block cursor character for the message editor
-const BLOCK_CURSOR = "\u2588";
-
 export class CommitPlanSession implements Component {
   private state: CommitPlanSessionState;
+  private inputComponent: Input;
 
   constructor(
     private config: {
@@ -16,30 +14,38 @@ export class CommitPlanSession implements Component {
       done: (result: CommitPlanResult) => void;
     },
   ) {
-    const msg = config.params.commit_message;
     this.state = {
-      commitMessage: msg,
-      cursorPosition: msg.length, // cursor at end by default
       files: config.params.files.map((path) => ({ path, selected: true })),
       focus: "message",
       fileCursorIndex: 0,
     };
-  }
 
-  handleInput(data: string): void {
-    // Enter → Accept (commit with this plan)
-    if (data === "\r" || data === "\n") {
+    this.inputComponent = new Input();
+    this.inputComponent.setValue(config.params.commit_message);
+    // Move cursor to the end of the initial message
+    this.inputComponent.cursor = config.params.commit_message.length;
+    
+    this.inputComponent.onSubmit = () => {
       this.config.done({
         accepted: true,
         cancelled: false,
         plan_summary: this.config.params.plan_summary,
         files: this.state.files.filter((f) => f.selected).map((f) => f.path),
-        commit_message: this.state.commitMessage,
+        commit_message: this.inputComponent.getValue(),
       });
-      return;
-    }
+    };
+    this.inputComponent.onEscape = () => {
+      this.config.done({
+        accepted: false,
+        cancelled: true,
+        plan_summary: this.config.params.plan_summary,
+        files: [],
+        commit_message: "",
+      });
+    };
+  }
 
-    // Ctrl+R → Reject (propose a different plan)
+  handleInput(data: string): void {
     if (data === "\x12") {
       this.config.done({
         accepted: false,
@@ -51,30 +57,27 @@ export class CommitPlanSession implements Component {
       return;
     }
 
-    // Esc → Hard cancel (stop the whole commit workflow)
-    if (data === "\x1b") {
-      this.config.done({
-        accepted: false,
-        cancelled: true,
-        plan_summary: this.config.params.plan_summary,
-        files: [],
-        commit_message: "",
-      });
+    if (this.state.focus === "message") {
+      this.inputComponent.handleInput(data);
+      if (data === "\t") {
+        this.state = handleCommitPlanInput(this.state, data);
+      }
       return;
     }
 
     this.state = handleCommitPlanInput(this.state, data);
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.inputComponent.invalidate();
+  }
 
   render(width: number): string[] {
     const { theme } = this.config;
-    const { focus, fileCursorIndex, commitMessage, cursorPosition, files } = this.state;
+    const { focus, fileCursorIndex, files } = this.state;
     const lines: string[] = [];
-    const innerWidth = Math.max(40, width - 4); // Ensure minimum width for readability
+    const innerWidth = Math.max(40, width - 4);
 
-    // --- Header ---
     const headerText = " 📦 Commit Plan Review ";
     const headerPad = Math.max(0, innerWidth - visibleWidth(headerText));
     const padLeft = Math.floor(headerPad / 2);
@@ -85,25 +88,17 @@ export class CommitPlanSession implements Component {
       theme.fg("border", "─".repeat(padRight) + "╮")
     );
 
-    // --- Commit Message Section ---
     const isActive = focus === "message";
     const msgLabel = isActive ? " ✏️ Edit Message:" : " Commit Message:";
     lines.push(theme.fg("border", "│") + " " + theme.fg("accent", theme.bold(msgLabel)));
     
-    if (isActive) {
-      const before = commitMessage.slice(0, cursorPosition);
-      const after = commitMessage.slice(cursorPosition);
-      const cursorLine = before + theme.inverse(BLOCK_CURSOR) + after;
-      lines.push(theme.fg("border", "│") + "   " + theme.fg("text", truncateToWidth(cursorLine, innerWidth - 3)));
-    } else {
-      const msgText = commitMessage || theme.fg("muted", "(empty)");
-      lines.push(theme.fg("border", "│") + "   " + theme.fg("text", truncateToWidth(msgText, innerWidth - 3)));
+    const inputLines = this.inputComponent.render(innerWidth - 3);
+    for (const line of inputLines) {
+      lines.push(theme.fg("border", "│") + "   " + line);
     }
 
-    // --- Divider ---
     lines.push(theme.fg("border", "├" + "─".repeat(innerWidth) + "┤"));
 
-    // --- Files Section ---
     const filesLabel = focus === "files" ? " 📁 Select Files:" : " Files:";
     lines.push(theme.fg("border", "│") + " " + theme.fg("accent", theme.bold(filesLabel)));
     
@@ -124,17 +119,15 @@ export class CommitPlanSession implements Component {
           pathText = theme.fg("text", pathText);
         }
         
-        // Truncate the path to fit within the inner width, accounting for checkbox and spacing
-        const maxPathWidth = innerWidth - 6; // 3 for " [x] ", 3 for left padding/border
+        const maxPathWidth = innerWidth - 6;
         const truncatedPath = truncateToWidth(pathText, maxPathWidth);
         lines.push(theme.fg("border", "│") + "   " + checkbox + " " + truncatedPath);
       }
     }
 
-    // --- Footer ---
     const footerText = isActive
-      ? "[Tab] Switch  [←→] Cursor  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel"
-      : "[Tab] Switch  [Space] Toggle  [↑↓] Navigate  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel";
+      ? "[Tab] Switch to Files  [Enter] Accept  [Esc] Cancel"
+      : "[Tab] Switch to Message  [Space] Toggle  [↑↓] Navigate  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel";
     
     const footerPad = Math.max(0, innerWidth - visibleWidth(footerText));
     const fPadLeft = Math.floor(footerPad / 2);

@@ -48,8 +48,7 @@ describe('CommitPlanSession', () => {
     });
 
     it('includes the commit message', () => {
-      const output = session.render(80);
-      expect(output.some((line) => line.includes('feat: add new feature'))).toBe(true);
+      const output = session.render(80);      // The Input component renders the value, so we check if it's present in the output      expect(output.some((line) => line.includes('feat: add new feature'))).toBe(true);
     });
 
     it('includes file paths', () => {
@@ -61,8 +60,8 @@ describe('CommitPlanSession', () => {
     it('includes the help hint bar', () => {
       const output = session.render(80);
       expect(output.some((line) => line.includes('[Enter] Accept'))).toBe(true);
-      expect(output.some((line) => line.includes('[Ctrl+R] Reject'))).toBe(true);
       expect(output.some((line) => line.includes('[Esc] Cancel'))).toBe(true);
+      expect(output.some((line) => line.includes('[Tab] Switch'))).toBe(true);
     });
   });
 

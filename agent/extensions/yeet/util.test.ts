@@ -4,8 +4,6 @@ import type { CommitPlanSessionState } from "./types";
 
 function makeState(overrides?: Partial<CommitPlanSessionState>): CommitPlanSessionState {
   return {
-    commitMessage: "",
-    cursorPosition: 0,
     files: [
       { path: "file1.ts", selected: false },
       { path: "file2.ts", selected: false },
@@ -56,88 +54,12 @@ describe("handleCommitPlanInput", () => {
     expect(s2.files[0].selected).toBe(false);
   });
 
-  it("should not toggle file selection with Space when focus is message", () => {
+  it("should ignore message editing keys when focus is message (handled by Input component)", () => {
     const s0 = makeState({ focus: "message" });
     const s1 = handleCommitPlanInput(s0, " ");
     expect(s1.files[0].selected).toBe(false);
-    // Space should be inserted into message instead
-    expect(s1.commitMessage).toBe(" ");
-  });
-
-  // --- Message editing ---
-
-  it("should insert characters at cursor position", () => {
-    let s = makeState();
-    s = handleCommitPlanInput(s, "h");
-    expect(s.commitMessage).toBe("h");
-    expect(s.cursorPosition).toBe(1);
-    s = handleCommitPlanInput(s, "i");
-    expect(s.commitMessage).toBe("hi");
-    expect(s.cursorPosition).toBe(2);
-  });
-
-  it("should insert space into commit message", () => {
-    let s = makeState({ commitMessage: "hello", cursorPosition: 5 });
-    s = handleCommitPlanInput(s, " ");
-    expect(s.commitMessage).toBe("hello ");
-    expect(s.cursorPosition).toBe(6);
-  });
-
-  it("should insert special characters into commit message", () => {
-    let s = makeState({ commitMessage: "fix", cursorPosition: 3 });
-    s = handleCommitPlanInput(s, ":");
-    expect(s.commitMessage).toBe("fix:");
-    s = handleCommitPlanInput(s, " ");
-    expect(s.commitMessage).toBe("fix: ");
-    s = handleCommitPlanInput(s, "(");
-    expect(s.commitMessage).toBe("fix: (");
-  });
-
-  it("should delete char before cursor with Backspace", () => {
-    const s0 = makeState({ commitMessage: "hello", cursorPosition: 5 });
-    const s1 = handleCommitPlanInput(s0, "Backspace");
-    expect(s1.commitMessage).toBe("hell");
-    expect(s1.cursorPosition).toBe(4);
-  });
-
-  it("should not delete with Backspace at position 0", () => {
-    const s0 = makeState({ commitMessage: "hello", cursorPosition: 0 });
-    const s1 = handleCommitPlanInput(s0, "Backspace");
-    expect(s1).toBe(s0); // same reference = no change
-  });
-
-  it("should delete char after cursor with Delete", () => {
-    const s0 = makeState({ commitMessage: "hello", cursorPosition: 0 });
-    const s1 = handleCommitPlanInput(s0, "Delete");
-    expect(s1.commitMessage).toBe("ello");
-    expect(s1.cursorPosition).toBe(0);
-  });
-
-  it("should not delete at end of message", () => {
-    const s0 = makeState({ commitMessage: "hello", cursorPosition: 5 });
-    const s1 = handleCommitPlanInput(s0, "Delete");
-    expect(s1).toBe(s0);
-  });
-
-  // --- Cursor movement ---
-
-  it("should move cursor left/right within message", () => {
-    const s0 = makeState({ commitMessage: "hello", cursorPosition: 5 });
-    const s1 = handleCommitPlanInput(s0, "ArrowLeft");
-    expect(s1.cursorPosition).toBe(4);
-    const s2 = handleCommitPlanInput(s1, "ArrowLeft");
-    expect(s2.cursorPosition).toBe(3);
-    // Boundary
-    const s3 = handleCommitPlanInput(s0, "ArrowRight");
-    expect(s3.cursorPosition).toBe(5); // at end, no change
-  });
-
-  it("should insert in the middle of the message", () => {
-    // "helo" with cursor at 3 → insert "l" → "hello"
-    const s0 = makeState({ commitMessage: "helo", cursorPosition: 3 });
-    const s1 = handleCommitPlanInput(s0, "l");
-    expect(s1.commitMessage).toBe("hello");
-    expect(s1.cursorPosition).toBe(4);
+    // State should remain unchanged as Input component handles text
+    expect(s1.focus).toBe("message");
   });
 
   // --- Focus isolation ---

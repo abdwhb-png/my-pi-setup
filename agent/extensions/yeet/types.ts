@@ -14,9 +14,6 @@ export interface CommitPlanResult {
 }
 
 export interface CommitPlanSessionState {
-  commitMessage: string;
-  /** Cursor position within commitMessage (0 = before first char, length = after last) */
-  cursorPosition: number;
   files: { path: string; selected: boolean }[];
   focus: 'message' | 'files';
   /** File list cursor (index into files array) */
