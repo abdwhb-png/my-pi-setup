@@ -1,4 +1,4 @@
-import { Box, type Component } from "@mariozechner/pi-tui";
+import { truncateToWidth, visibleWidth, type Component } from "@mariozechner/pi-tui";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { CommitPlanParams, CommitPlanResult, CommitPlanSessionState } from "./types";
 import { handleCommitPlanInput } from "./util";
@@ -71,61 +71,80 @@ export class CommitPlanSession implements Component {
   render(width: number): string[] {
     const { theme } = this.config;
     const { focus, fileCursorIndex, commitMessage, cursorPosition, files } = this.state;
-    const contentLines: string[] = [];
+    const lines: string[] = [];
+    const innerWidth = Math.max(40, width - 4); // Ensure minimum width for readability
 
-    // --- Header with distinct background ---
-    const headerText = "  📦 Commit Plan Review  ";
-    contentLines.push(theme.bg("selectedBg", theme.bold(headerText)));
-    contentLines.push("");
+    // --- Header ---
+    const headerText = " 📦 Commit Plan Review ";
+    const headerPad = Math.max(0, innerWidth - visibleWidth(headerText));
+    const padLeft = Math.floor(headerPad / 2);
+    const padRight = headerPad - padLeft;
+    lines.push(
+      theme.fg("border", "╭" + "─".repeat(padLeft)) +
+      theme.fg("accent", theme.bold(headerText)) +
+      theme.fg("border", "─".repeat(padRight) + "╮")
+    );
 
-    // --- Commit message box ---
+    // --- Commit Message Section ---
     const isActive = focus === "message";
-    const msgLabel = isActive ? "  ✏️  Edit Message:" : "  Commit Message:";
-    contentLines.push(theme.fg("warning", theme.bold(msgLabel)));
-
+    const msgLabel = isActive ? " ✏️ Edit Message:" : " Commit Message:";
+    lines.push(theme.fg("border", "│") + " " + theme.fg("accent", theme.bold(msgLabel)));
+    
     if (isActive) {
       const before = commitMessage.slice(0, cursorPosition);
       const after = commitMessage.slice(cursorPosition);
       const cursorLine = before + theme.inverse(BLOCK_CURSOR) + after;
-      contentLines.push("    " + theme.fg("text", cursorLine));
+      lines.push(theme.fg("border", "│") + "   " + theme.fg("text", truncateToWidth(cursorLine, innerWidth - 3)));
     } else {
-      contentLines.push("    " + theme.fg("text", commitMessage || theme.fg("muted", "(empty)")));
+      const msgText = commitMessage || theme.fg("muted", "(empty)");
+      lines.push(theme.fg("border", "│") + "   " + theme.fg("text", truncateToWidth(msgText, innerWidth - 3)));
     }
-    contentLines.push("");
 
-    // --- Files box ---
-    const filesLabel = focus === "files" ? "  📁 Select Files:" : "  Files:";
-    contentLines.push(theme.fg("warning", theme.bold(filesLabel)));
+    // --- Divider ---
+    lines.push(theme.fg("border", "├" + "─".repeat(innerWidth) + "┤"));
+
+    // --- Files Section ---
+    const filesLabel = focus === "files" ? " 📁 Select Files:" : " Files:";
+    lines.push(theme.fg("border", "│") + " " + theme.fg("accent", theme.bold(filesLabel)));
+    
     if (files.length === 0) {
-      contentLines.push(theme.fg("muted", "    (no files)"));
+      lines.push(theme.fg("border", "│") + "   " + theme.fg("muted", "(no files)"));
     } else {
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
         const isFocused = focus === "files" && i === fileCursorIndex;
         const checkbox = f.selected
-          ? theme.bg("toolSuccessBg", theme.bold(" [x]"))
-          : theme.fg("muted", " [ ]");
-        const path = isFocused
-          ? theme.bg("selectedBg", theme.bold(" " + f.path + " "))
-          : theme.fg("text", " " + f.path);
-        contentLines.push("  " + checkbox + path);
+          ? theme.fg("success", "[x]")
+          : theme.fg("muted", "[ ]");
+        
+        let pathText = " " + f.path;
+        if (isFocused) {
+          pathText = theme.bg("selectedBg", theme.bold(pathText));
+        } else {
+          pathText = theme.fg("text", pathText);
+        }
+        
+        // Truncate the path to fit within the inner width, accounting for checkbox and spacing
+        const maxPathWidth = innerWidth - 6; // 3 for " [x] ", 3 for left padding/border
+        const truncatedPath = truncateToWidth(pathText, maxPathWidth);
+        lines.push(theme.fg("border", "│") + "   " + checkbox + " " + truncatedPath);
       }
     }
-    contentLines.push("");
 
     // --- Footer ---
-    const footer = isActive
-      ? "  [Tab] Switch  [←→] Cursor  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel"
-      : "  [Tab] Switch  [Space] Toggle  [↑↓] Navigate  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel";
-    contentLines.push(theme.fg("muted", theme.italic(footer)));
+    const footerText = isActive
+      ? "[Tab] Switch  [←→] Cursor  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel"
+      : "[Tab] Switch  [Space] Toggle  [↑↓] Navigate  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel";
+    
+    const footerPad = Math.max(0, innerWidth - visibleWidth(footerText));
+    const fPadLeft = Math.floor(footerPad / 2);
+    const fPadRight = footerPad - fPadLeft;
+    lines.push(
+      theme.fg("border", "╰" + "─".repeat(fPadLeft)) +
+      theme.fg("muted", theme.italic(footerText)) +
+      theme.fg("border", "─".repeat(fPadRight) + "╯")
+    );
 
-    // Use Box to apply a consistent background to the entire card with proper padding
-    const box = new Box(1, 0, (text: string) => theme.bg("customMessageBg", text));
-    contentLines.forEach((line) => {
-      const textComponent = { render: () => [line], invalidate: () => {} };
-      box.addChild(textComponent as any);
-    });
-
-    return box.render(width);
+    return lines;
   }
 }

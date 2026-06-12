@@ -59,7 +59,14 @@ const proposeCommitPlanTool = defineTool({
     const result = await (ctx.ui.custom as any)(
       (_tui: unknown, theme: unknown, _kb: unknown, done: (r: CommitPlanResult) => void) =>
         new CommitPlanSession({ theme: theme as any, params, done }),
-      { overlay: true, overlayOptions: { anchor: "center" as const, width: "80%" as const } },
+      { 
+        overlay: true, 
+        overlayOptions: { 
+          anchor: "center" as const, 
+          width: "80%" as const,
+          maxWidth: 100 
+        } 
+      },
     ) as CommitPlanResult;
 
     // Accept → proceed with commit
