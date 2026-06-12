@@ -27,11 +27,15 @@ export function handleCommitPlanInput(
       return { ...state, files: newFiles };
     }
 
-    if (key === "ArrowUp") {
+    // Handle both test strings ("ArrowUp") and actual terminal escape sequences
+    const isUp = key === "ArrowUp" || key === "\x1b[A" || key === "\x1bOA";
+    const isDown = key === "ArrowDown" || key === "\x1b[B" || key === "\x1bOB";
+
+    if (isUp) {
       return { ...state, fileCursorIndex: Math.max(0, fileCursorIndex - 1) };
     }
 
-    if (key === "ArrowDown") {
+    if (isDown) {
       return {
         ...state,
         fileCursorIndex: Math.min(files.length - 1, fileCursorIndex + 1),

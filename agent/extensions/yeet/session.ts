@@ -57,11 +57,14 @@ export class CommitPlanSession implements Component {
       return;
     }
 
+    // Intercept Tab to switch focus before the Input component can process it
+    if (data === "\t") {
+      this.state = handleCommitPlanInput(this.state, data);
+      return;
+    }
+
     if (this.state.focus === "message") {
       this.inputComponent.handleInput(data);
-      if (data === "\t") {
-        this.state = handleCommitPlanInput(this.state, data);
-      }
       return;
     }
 
