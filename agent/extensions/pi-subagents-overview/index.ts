@@ -289,7 +289,7 @@ function buildWidgetLine(): string {
     .map((a) => a.name);
 
   const safeBashPart =
-    safeBashAgents.length > 0 ? ` · 🔒 sb: ${safeBashAgents.join(",")}` : "";
+    safeBashAgents.length > 0 ? ` · >_ (safe_bash): ${safeBashAgents.join(",")}` : "";
 
   const overridePart =
     overrideCount > 0 ? ` · ${overrideCount} ovr` : "";
@@ -298,7 +298,7 @@ function buildWidgetLine(): string {
   const hasVideographer = users.some((a) => a.name === "videographer");
   const videoPart = hasVideographer ? " · 🎬 video" : "";
 
-  return `🧠 Subagents: ${builtins.length}B/${users.length}U${safeBashPart}${overridePart}${videoPart} (total ${total})`;
+  return `🤖 Subagents: ${builtins.length}B/${users.length}U${safeBashPart}${overridePart}${videoPart} (total ${total})`;
 }
 
 function updateWidget(ctx: ExtensionContext): void {

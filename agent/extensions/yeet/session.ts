@@ -1,7 +1,21 @@
-import { Input, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { Input, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { CommitPlanParams, CommitPlanResult, CommitPlanSessionState } from "./types";
 import { handleCommitPlanInput } from "./util";
+import { renderBoxHeader, renderBoxFooter } from "../shared/box";
+
+function rejectResult(
+  params: CommitPlanParams,
+  cancelled: boolean,
+): CommitPlanResult {
+  return {
+    accepted: false,
+    cancelled,
+    plan_summary: params.plan_summary,
+    files: [],
+    commit_message: "",
+  };
+}
 
 export class CommitPlanSession implements Component {
   private state: CommitPlanSessionState;
@@ -35,25 +49,13 @@ export class CommitPlanSession implements Component {
       });
     };
     this.inputComponent.onEscape = () => {
-      this.config.done({
-        accepted: false,
-        cancelled: true,
-        plan_summary: this.config.params.plan_summary,
-        files: [],
-        commit_message: "",
-      });
+      this.config.done(rejectResult(this.config.params, true));
     };
   }
 
   handleInput(data: string): void {
     if (data === "\x12") {
-      this.config.done({
-        accepted: false,
-        cancelled: false,
-        plan_summary: this.config.params.plan_summary,
-        files: [],
-        commit_message: "",
-      });
+      this.config.done(rejectResult(this.config.params, false));
       return;
     }
 
@@ -81,15 +83,7 @@ export class CommitPlanSession implements Component {
     const lines: string[] = [];
     const innerWidth = Math.max(40, width - 4);
 
-    const headerText = " 📦 Commit Plan Review ";
-    const headerPad = Math.max(0, innerWidth - visibleWidth(headerText));
-    const padLeft = Math.floor(headerPad / 2);
-    const padRight = headerPad - padLeft;
-    lines.push(
-      theme.fg("border", "╭" + "─".repeat(padLeft)) +
-      theme.fg("accent", theme.bold(headerText)) +
-      theme.fg("border", "─".repeat(padRight) + "╮")
-    );
+    lines.push(renderBoxHeader(theme, innerWidth, " 📦 Commit Plan Review "));
 
     const isActive = focus === "message";
     const msgLabel = isActive ? " ✏️ Edit Message:" : " Commit Message:";
@@ -132,14 +126,7 @@ export class CommitPlanSession implements Component {
       ? "[Tab] Switch to Files  [Enter] Accept  [Esc] Cancel"
       : "[Tab] Switch to Message  [Space] Toggle  [↑↓] Navigate  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel";
     
-    const footerPad = Math.max(0, innerWidth - visibleWidth(footerText));
-    const fPadLeft = Math.floor(footerPad / 2);
-    const fPadRight = footerPad - fPadLeft;
-    lines.push(
-      theme.fg("border", "╰" + "─".repeat(fPadLeft)) +
-      theme.fg("muted", theme.italic(footerText)) +
-      theme.fg("border", "─".repeat(fPadRight) + "╯")
-    );
+    lines.push(renderBoxFooter(theme, innerWidth, footerText));
 
     return lines;
   }
