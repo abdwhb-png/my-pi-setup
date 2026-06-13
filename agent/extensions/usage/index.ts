@@ -2,18 +2,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { walkAllSessions } from "./scanner";
 import { computeAllWindows } from "./aggregator";
 import { lookupPricing } from "./pricing";
-import { renderReport } from "./format";
+import { UsageReportWidget } from "./widget";
 import type { UsageReport } from "./types";
-
-// ── ANSI color constants (used in error widget) ──
-
-const RED = "\x1b[31m";
-const RESET = "\x1b[0m";
-
-// ── Widget identity ────────────────────────────
-
-const WIDGET_ID = "usage-report";
-const WIDGET_DISMISS_MS = 30_000;
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("usage", {
@@ -31,9 +21,14 @@ export default function (pi: ExtensionAPI) {
           pricingNotes: [],
           pricing,
         };
-        const lines = renderReport(report);
-        for (const line of lines) {
-          console.log(line);
+        console.log("📊 Pi Usage Report");
+        console.log("─".repeat(40));
+        for (const w of report.windows) {
+          console.log(`\n${w.label}:`);
+          for (const m of w.models) {
+            console.log(`  ${m.provider}/${m.model}: ${m.messageCount} msgs, $${m.cost.toFixed(4)}`);
+          }
+          console.log(`  TOTAL: $${w.totalCost.toFixed(2)}`);
         }
         return;
       }
@@ -45,12 +40,6 @@ export default function (pi: ExtensionAPI) {
         const records = walkAllSessions();
 
         if (records.length === 0) {
-          ctx.ui.setWidget(WIDGET_ID, [
-            "📊  Usage Report",
-            "",
-            "  No session data found.",
-          ], { placement: "belowEditor" });
-          setTimeout(() => ctx.ui.setWidget(WIDGET_ID, undefined), 10_000);
           ctx.ui.notify("No session data found", "warning");
           return;
         }
@@ -75,27 +64,24 @@ export default function (pi: ExtensionAPI) {
           pricingNotes,
           pricing,
         };
-        const lines = renderReport(report);
 
-        ctx.ui.setWidget(WIDGET_ID, lines, { placement: "belowEditor" });
-        ctx.ui.notify("📊 Usage report ready — auto-dismisses in 30s", "info");
-
-        // Auto-dismiss after 30 seconds
-        setTimeout(() => {
-          try {
-            ctx.ui.setWidget(WIDGET_ID, undefined);
-          } catch {
-            /* ignore */
+        // ── Show detached overlay dialog (like yeet) ──
+        await (ctx.ui.custom as any)(
+          (_tui: unknown, theme: unknown, _kb: unknown, done: () => void) =>
+            new UsageReportWidget({ theme: theme as any, report, done }),
+          { 
+            overlay: true, 
+            overlayOptions: { 
+              anchor: "center" as const, 
+              width: "80%" as const,
+              maxWidth: 100 
+            } 
           }
-        }, WIDGET_DISMISS_MS);
+        );
+
+        ctx.ui.notify("📊 Usage report closed", "info");
       } catch (err) {
-        ctx.ui.setWidget(WIDGET_ID, [
-          "📊  Usage Report",
-          "",
-          `  ${RED}Error:${RESET} ${err instanceof Error ? err.message : String(err)}`,
-        ], { placement: "belowEditor" });
-        setTimeout(() => ctx.ui.setWidget(WIDGET_ID, undefined), 15_000);
-        ctx.ui.notify("Usage report failed", "error");
+        ctx.ui.notify(`Usage report failed: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
     },
   });

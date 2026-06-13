@@ -11,8 +11,6 @@ import {
   computeAllWindows,
   TIME_WINDOWS,
 } from "./aggregator";
-import { formatNumber, formatUSD, renderWindow, renderReport } from "./format";
-import { UsageReportWidget } from "./session";
 import { PRICING_CACHE_PATH, loadPricingCache, fetchFromModelsDev } from "./pricing";
 import type {
   UsageRecord,
@@ -259,101 +257,7 @@ describe("aggregator", () => {
   });
 });
 
-// ── format ───────────────────────────────────────────────────────────────────
 
-describe("format", () => {
-  describe("formatNumber", () => {
-    it('adds commas: 15302 → "15,302"', () => {
-      expect(formatNumber(15302)).toBe("15,302");
-    });
-
-    it("handles zero", () => {
-      expect(formatNumber(0)).toBe("0");
-    });
-  });
-
-  describe("formatUSD", () => {
-    it("formats small amounts with 4 decimals", () => {
-      expect(formatUSD(0.00151)).toBe("$0.0015");
-    });
-
-    it("formats large amounts with 2 decimals", () => {
-      expect(formatUSD(1.5)).toBe("$1.50");
-      expect(formatUSD(100)).toBe("$100.00");
-    });
-  });
-
-  describe("renderWindow", () => {
-    it("returns array of strings for a sample window", () => {
-      const window = makeSampleWindow();
-      const lines = renderWindow(window);
-      expect(Array.isArray(lines)).toBe(true);
-      expect(lines.length).toBeGreaterThan(0);
-      for (const line of lines) {
-        expect(typeof line).toBe("string");
-      }
-      // Header should include the label
-      expect(lines.some((l) => l.includes("Last 7 days"))).toBe(true);
-    });
-
-    it("handles empty models array gracefully", () => {
-      const window = makeSampleWindow({ models: [] });
-      const lines = renderWindow(window);
-      expect(lines.some((l) => l.includes("No usage data in this period."))).toBe(true);
-    });
-  });
-
-  describe("renderReport", () => {
-    it("returns array of strings for a sample report", () => {
-      const report = makeSampleReport();
-      const lines = renderReport(report);
-      expect(Array.isArray(lines)).toBe(true);
-      expect(lines.length).toBeGreaterThan(0);
-      for (const line of lines) {
-        expect(typeof line).toBe("string");
-      }
-      // Should include the title
-      expect(lines.some((l) => l.includes("Pi Usage Report"))).toBe(true);
-    });
-  });
-});
-
-// ── UsageReportWidget ────────────────────────────────────────────────────────
-
-describe("UsageReportWidget", () => {
-  it("render returns non-empty array when reportLines provided", () => {
-    const report = makeSampleReport();
-    const lines = ["📊  Usage Report", "", "  Test line"];
-    const widget = new UsageReportWidget(report, lines);
-    const output = widget.render(80);
-    expect(output.length).toBeGreaterThan(0);
-    expect(output).toEqual(lines);
-  });
-
-  it("render returns lines unchanged when reportLines provided (no truncation in static mode)", () => {
-    const report = makeSampleReport();
-    const longLine = "a".repeat(100);
-    const widget = new UsageReportWidget(report, [longLine]);
-    const output = widget.render(10);
-    // The widget returns this.lines verbatim when non-empty (static pre-rendered mode)
-    expect(output[0]).toBe(longLine);
-    expect(output[0].length).toBe(100);
-  });
-
-  it("render leaves short lines unchanged", () => {
-    const report = makeSampleReport();
-    const shortLine = "hello";
-    const widget = new UsageReportWidget(report, [shortLine]);
-    const output = widget.render(80);
-    expect(output[0]).toBe("hello");
-  });
-
-  it("invalidate does not throw", () => {
-    const report = makeSampleReport();
-    const widget = new UsageReportWidget(report, []);
-    expect(() => widget.invalidate()).not.toThrow();
-  });
-});
 
 // ── pricing ──────────────────────────────────────────────────────────────────
 
