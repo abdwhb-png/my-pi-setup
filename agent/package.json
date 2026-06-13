@@ -4,9 +4,15 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "lint": "oxlint",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint . --fix",
+    "lint:check": "oxlint .",
     "test": "bun test",
-    "test:watch": "bun test --watch"
+    "test:watch": "bun test --watch",
+    "test:coverage": "bun test --coverage",
+    "types:check": "tsc --noEmit",
+    "check": "bun scripts/check.ts",
+    "check:parse": "find extensions -name '*.ts' ! -name '*.test.ts' -print0 | xargs -0 -P4 -I{} bun build --no-bundle --no-clear-screen '{}' >/dev/null 2>&1 || exit 1"
   },
   "keywords": [],
   "author": "",
@@ -21,7 +27,8 @@
     "typebox": "^1.1.33"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/bun": "^1.3.14",
+    "@types/node": "^25.9.3",
     "oxlint": "^1.69.0",
     "typescript": "^6.0.3"
   }

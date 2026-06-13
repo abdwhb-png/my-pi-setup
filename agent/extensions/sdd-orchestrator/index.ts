@@ -181,13 +181,14 @@ export default function (pi: ExtensionAPI) {
       _toolCallId: string,
       params: unknown,
       _signal: AbortSignal | undefined,
-      _onUpdate: ((data: unknown) => void) | undefined,
+      _onUpdate,
       ctx: ExtensionContext,
     ) {
       const inputPath = (params as { planPath?: string })?.planPath?.trim();
       if (!inputPath) {
         return {
           content: [{ type: "text", text: "Error: sdd_submit requires a planPath argument." }],
+          details: undefined,
         };
       }
 
@@ -204,6 +205,7 @@ export default function (pi: ExtensionAPI) {
               text: `Error reading plan file: ${err instanceof Error ? err.message : String(err)}`,
             },
           ],
+          details: undefined,
         };
       }
 
@@ -212,6 +214,7 @@ export default function (pi: ExtensionAPI) {
       if (parsed.tasks.length === 0) {
         return {
           content: [{ type: "text", text: "Error: Could not find any tasks in the plan file. Ensure tasks are marked with '## Task N: Title' headings." }],
+          details: undefined,
         };
       }
 
@@ -236,6 +239,7 @@ export default function (pi: ExtensionAPI) {
               text: `Error creating queue entry: ${err instanceof Error ? err.message : String(err)}. Ensure the SDD orchestrator subagent is running (start it with: subagent with agent="sdd-orchestrator" async=true).`,
             },
           ],
+          details: undefined,
         };
       }
 
@@ -304,7 +308,7 @@ export default function (pi: ExtensionAPI) {
       _toolCallId: string,
       params: unknown,
       _signal: AbortSignal | undefined,
-      _onUpdate: ((data: unknown) => void) | undefined,
+      _onUpdate,
       _ctx: ExtensionContext,
     ) {
       const runId = (params as { runId?: string })?.runId?.trim();
@@ -318,6 +322,7 @@ export default function (pi: ExtensionAPI) {
           if (!existsSync(filePath)) {
             return {
               content: [{ type: "text", text: `Run \`${runId}\` not found. It may not exist or may have already completed.` }],
+              details: undefined,
             };
           }
           const progress = JSON.parse(readFileSync(filePath, "utf-8")) as RunProgress;
@@ -352,6 +357,7 @@ export default function (pi: ExtensionAPI) {
         if (progressFiles.length === 0) {
           return {
             content: [{ type: "text", text: "No active SDD runs. Submit a plan with `sdd_submit` to create one." }],
+            details: undefined,
           };
         }
 
@@ -366,6 +372,7 @@ export default function (pi: ExtensionAPI) {
         if (activeRuns.length === 0) {
           return {
             content: [{ type: "text", text: "No active SDD runs. All previous runs have completed." }],
+            details: undefined,
           };
         }
 
@@ -399,6 +406,7 @@ export default function (pi: ExtensionAPI) {
               text: `Error reading SDD status: ${err instanceof Error ? err.message : String(err)}`,
             },
           ],
+          details: undefined,
         };
       }
     },
@@ -421,13 +429,14 @@ export default function (pi: ExtensionAPI) {
       _toolCallId: string,
       params: unknown,
       _signal: AbortSignal | undefined,
-      _onUpdate: ((data: unknown) => void) | undefined,
+      _onUpdate,
       _ctx: ExtensionContext,
     ) {
       const runId = (params as { runId?: string })?.runId?.trim();
       if (!runId) {
         return {
           content: [{ type: "text", text: "Error: sdd_result requires a runId argument." }],
+          details: undefined,
         };
       }
 
@@ -481,6 +490,7 @@ export default function (pi: ExtensionAPI) {
 
         return {
           content: [{ type: "text", text: `Run \`${runId}\` not found.` }],
+          details: undefined,
         };
       } catch (err) {
         return {
@@ -490,6 +500,7 @@ export default function (pi: ExtensionAPI) {
               text: `Error reading SDD result: ${err instanceof Error ? err.message : String(err)}`,
             },
           ],
+          details: undefined,
         };
       }
     },
