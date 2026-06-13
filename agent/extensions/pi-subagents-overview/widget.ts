@@ -7,9 +7,9 @@
  * - Uses shared box rendering for consistent header/footer styling
  */
 
-import { type Component, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { renderBoxHeader, renderBoxFooter } from "../shared/box";
+import { BoxRenderer } from "../shared/box";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -69,37 +69,12 @@ export class SubagentsOverviewWidget implements Component {
 
   render(width: number): string[] {
     const { theme } = this.config;
-    const { scrollOffset } = this.state;
-    const lines: string[] = [];
-    const innerWidth = Math.max(90, Math.min(width - 4, 130));
-
-    // ── Header ──
-    lines.push(renderBoxHeader(theme, innerWidth, " 🤖 Subagents Overview "));
-
-    // ── Content (scrollable) ──
-    const maxViewportHeight = 25;
-    const maxScroll = Math.max(0, this.contentLines.length - maxViewportHeight);
-    const effectiveScroll = Math.min(scrollOffset, maxScroll);
-
-    const visibleLines = this.contentLines.slice(effectiveScroll, effectiveScroll + maxViewportHeight);
-
-    for (const line of visibleLines) {
-      const vw = visibleWidth(line);
-      const padding = Math.max(0, innerWidth - vw - 2);
-      lines.push(theme.fg("border", "│") + " " + line + " ".repeat(padding) + theme.fg("border", "│"));
-    }
-
-    const emptyLines = maxViewportHeight - visibleLines.length;
-    for (let i = 0; i < emptyLines; i++) {
-      lines.push(theme.fg("border", "│") + " ".repeat(innerWidth - 2) + theme.fg("border", "│"));
-    }
-
-    // ── Footer ──
-    const scrollIndicator = maxScroll > 0 ? ` [${effectiveScroll}/${maxScroll}↑↓] ` : "";
-    const footerText = `${scrollIndicator}[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close`;
-    lines.push(renderBoxFooter(theme, innerWidth, footerText));
-
-    return lines;
+    const box = new BoxRenderer(theme, width);
+    box.setTitle(" 🤖 Subagents Overview ");
+    box.setContent(this.contentLines);
+    box.scrollTo(this.state.scrollOffset);
+    box.setFooter(`${box.getScrollInfo()}[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close`);
+    return box.render();
   }
 }
 
@@ -156,36 +131,11 @@ export class AgentDetailWidget implements Component {
 
   render(width: number): string[] {
     const { theme } = this.config;
-    const { scrollOffset } = this.state;
-    const lines: string[] = [];
-    const innerWidth = Math.max(90, Math.min(width - 4, 130));
-
-    // ── Header ──
-    lines.push(renderBoxHeader(theme, innerWidth, ` 🧬 Agent: ${this.config.agentName} `));
-
-    // ── Content (scrollable) ──
-    const maxViewportHeight = 20;
-    const maxScroll = Math.max(0, this.contentLines.length - maxViewportHeight);
-    const effectiveScroll = Math.min(scrollOffset, maxScroll);
-
-    const visibleLines = this.contentLines.slice(effectiveScroll, effectiveScroll + maxViewportHeight);
-
-    for (const line of visibleLines) {
-      const vw = visibleWidth(line);
-      const padding = Math.max(0, innerWidth - vw - 2);
-      lines.push(theme.fg("border", "│") + " " + line + " ".repeat(padding) + theme.fg("border", "│"));
-    }
-
-    const emptyLines = maxViewportHeight - visibleLines.length;
-    for (let i = 0; i < emptyLines; i++) {
-      lines.push(theme.fg("border", "│") + " ".repeat(innerWidth - 2) + theme.fg("border", "│"));
-    }
-
-    // ── Footer ──
-    const scrollIndicator = maxScroll > 0 ? ` [${effectiveScroll}/${maxScroll}↑↓] ` : "";
-    const footerText = `${scrollIndicator}[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close`;
-    lines.push(renderBoxFooter(theme, innerWidth, footerText));
-
-    return lines;
+    const box = new BoxRenderer(theme, width, { viewportHeight: 20 });
+    box.setTitle(` 🧬 Agent: ${this.config.agentName} `);
+    box.setContent(this.contentLines);
+    box.scrollTo(this.state.scrollOffset);
+    box.setFooter(`${box.getScrollInfo()}[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close`);
+    return box.render();
   }
 }

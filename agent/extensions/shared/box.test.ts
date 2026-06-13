@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { renderBoxHeader, renderBoxFooter, renderBoxSides } from "./box";
+import { renderBoxHeader, renderBoxFooter, renderBoxSides, BoxRenderer } from "./box";
 
 function createMockTheme() {
   return {
@@ -135,5 +135,165 @@ describe("renderBoxSides", () => {
   it("returns empty array for zero height", () => {
     const result = renderBoxSides(theme, 0);
     expect(result).toHaveLength(0);
+  });
+});
+
+// ── BoxRenderer ──────────────────────────────────────
+
+describe("BoxRenderer", () => {
+  it("renders header, content, and footer wrapped in borders", () => {
+    const box = new BoxRenderer(theme, 80);
+    box.setTitle("My Box");
+    box.setContent(["line 1", "line 2"]);
+    box.setFooter("[q] Close");
+    const result = box.render();
+    // Header with title
+    expect(result[0]).toContain("My Box");
+    expect(result[0]).toMatch(/^[╭]/);
+    expect(result[0]).toMatch(/[╮]$/);
+    // Content lines have borders and content
+    expect(result.some((l) => l.includes("line 1"))).toBe(true);
+    expect(result.some((l) => l.includes("line 2"))).toBe(true);
+    // Footer
+    const lastLine = result[result.length - 1];
+    expect(lastLine).toContain("[q] Close");
+    expect(lastLine).toMatch(/^[╰]/);
+    expect(lastLine).toMatch(/[╯]$/);
+  });
+
+  it("calculates innerWidth from terminal width", () => {
+    const box = new BoxRenderer(theme, 100);
+    expect(box.getInnerWidth()).toBe(96); // width - 4
+  });
+
+  it("respects minWidth and maxWidth", () => {
+    // Narrow terminal
+    const narrow = new BoxRenderer(theme, 30, { minWidth: 40, maxWidth: 120 });
+    expect(narrow.getInnerWidth()).toBe(36); // clamped to min 40 -> 40-4=36
+
+    // Wide terminal
+    const wide = new BoxRenderer(theme, 200, { minWidth: 40, maxWidth: 100 });
+    expect(wide.getInnerWidth()).toBe(96); // clamped to max 100 -> 100-4=96
+  });
+
+  it("provides contentWidth (inner with border padding)", () => {
+    const box = new BoxRenderer(theme, 100);
+    expect(box.getContentWidth()).toBe(92); // innerWidth - 4 (for │ + 2 spaces)
+  });
+
+  it("handles scroll management with scrollTo/scroll/setMaxScroll", () => {
+    const box = new BoxRenderer(theme, 80, { viewportHeight: 3 });
+    box.setContent(["a", "b", "c", "d", "e", "f"]);
+    box.setFooter("Foot");
+
+    // 6 content lines, viewport 3 -> maxScroll = 3
+    const result = box.render();
+    // Should show a, b, c (first 3)
+    expect(result.some((l) => l.includes("a"))).toBe(true);
+    expect(result.some((l) => l.includes("d"))).toBe(false);
+
+    // Scroll down
+    box.scrollDown();
+    const result2 = box.render();
+    expect(result2.some((l) => l.includes("a"))).toBe(false);
+    expect(result2.some((l) => l.includes("b"))).toBe(true);
+    expect(result2.some((l) => l.includes("e"))).toBe(false);
+  });
+
+  it("scrollTo clamps to valid range", () => {
+    const box = new BoxRenderer(theme, 80, { viewportHeight: 2 });
+    box.setContent(["a", "b", "c", "d", "e"]);
+    box.setFooter("Foot");
+    // 5 content, viewport 2 -> maxScroll = 3
+    box.scrollTo(10); // past end
+    const result = box.render();
+    expect(result.some((l) => l.includes("d"))).toBe(true);
+    expect(result.some((l) => l.includes("e"))).toBe(true);
+  });
+
+  it("scrollTo negative clamps to 0", () => {
+    const box = new BoxRenderer(theme, 80, { viewportHeight: 2 });
+    box.setContent(["a", "b", "c"]);
+    box.setFooter("Foot");
+    box.scrollTo(5);
+    box.scrollTo(-5);
+    const result = box.render();
+    expect(result.some((l) => l.includes("a"))).toBe(true);
+  });
+
+  it("includes scroll info in footer", () => {
+    const box = new BoxRenderer(theme, 80, { viewportHeight: 2 });
+    box.setTitle("Scroll Test");
+    box.setContent(["a", "b", "c", "d"]);
+    box.setFooter("Close");
+    const result = box.render();
+    const lastLine = result[result.length - 1];
+    expect(lastLine).toContain("[0/2"); // scroll indicator present
+    expect(lastLine).toContain("Close");
+  });
+
+  it("handles empty content", () => {
+    const box = new BoxRenderer(theme, 80);
+    box.setTitle("Empty");
+    box.setContent([]);
+    box.setFooter("Done");
+    const result = box.render();
+    expect(result.length).toBeGreaterThan(2);
+  });
+
+  it("pads content with empty lines to fill viewport", () => {
+    const box = new BoxRenderer(theme, 80, { viewportHeight: 5 });
+    box.setTitle("Padded");
+    box.setContent(["only one line"]);
+    box.setFooter("Foot");
+    const result = box.render();
+    // header + 5 content lines + footer = 7 lines
+    // content lines include 1 real + 4 padding
+    expect(result.length).toBe(7);
+  });
+
+  it("allows null footer", () => {
+    const box = new BoxRenderer(theme, 80);
+    box.setTitle("No Footer");
+    box.setContent(["content"]);
+    const result = box.render();
+    // Should not have footer line
+    const lastLine = result[result.length - 1];
+    expect(lastLine).not.toContain("╰");
+  });
+
+  it("allows null title", () => {
+    const box = new BoxRenderer(theme, 80);
+    box.setContent(["content"]);
+    box.setFooter("Foot");
+    const result = box.render();
+    // Should still render with border
+    expect(result[0]).toMatch(/^[╭]/);
+  });
+
+  it("borderChar survives method-detachment (this-binding)" , () => {
+    const box = new BoxRenderer(theme, 80);
+    // Simulates the bug pattern: const b = box.borderChar; b("vertical")
+    const b = box.borderChar;
+    // Must not throw TypeError: Cannot read properties of undefined
+    expect(() => b("vertical")).not.toThrow();
+    expect(b("vertical")).toBe("│");
+  });
+
+  it("getScrollInfo survives method-detachment (this-binding)" , () => {
+    const box = new BoxRenderer(theme, 80, { viewportHeight: 2 });
+    box.setContent(["a", "b", "c"]);
+    box.setFooter("Close");
+    const getScroll = box.getScrollInfo;
+    // Must not throw
+    expect(() => getScroll()).not.toThrow();
+    expect(getScroll()).toContain("[0/1");
+  });
+
+  it("getInnerWidth survives method-detachment (this-binding)" , () => {
+    const box = new BoxRenderer(theme, 100);
+    const getInner = box.getInnerWidth;
+    expect(() => getInner()).not.toThrow();
+    expect(getInner()).toBe(96);
   });
 });

@@ -1,7 +1,7 @@
 import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { UsageReport } from "./types";
-import { renderBoxHeader, renderBoxFooter } from "../shared/box";
+import { BoxRenderer } from "../shared/box";
 
 type Tab = "short" | "long";
 
@@ -74,13 +74,11 @@ export class UsageReportWidget implements Component {
   render(width: number): string[] {
     const { theme, report } = this.config;
     const { activeTab, scrollOffset } = this.state;
-    const lines: string[] = [];
-    const innerWidth = Math.max(90, Math.min(width - 4, 130));
 
-    // ── Header ──────────────────────────────────────────
-    lines.push(renderBoxHeader(theme, innerWidth, " 📊 Pi Usage Report "));
+    const box = new BoxRenderer(theme, width);
+    box.setTitle(" 📊 Pi Usage Report ");
 
-    // ── Tabs ────────────────────────────────────────────
+    // ── Tabs (fixed, non-scrollable) ──
     const tab1 = activeTab === "short"
       ? theme.fg("accent", theme.bold(" [1] Short (1d, 7d) "))
       : theme.fg("muted", " [1] Short (1d, 7d) ");
@@ -88,37 +86,20 @@ export class UsageReportWidget implements Component {
       ? theme.fg("accent", theme.bold(" [2] Long (30d, 90d) "))
       : theme.fg("muted", " [2] Long (30d, 90d) ");
     const tabLine = `  ${tab1}  ${tab2}`;
-    lines.push(theme.fg("border", "│") + " " + tabLine);
-    lines.push(theme.fg("border", "├" + "─".repeat(innerWidth) + "┤"));
+    const innerWidth = box.getInnerWidth();
+    box.setFixedHeader([
+      theme.fg("border", box.borderChar("vertical")) + " " + tabLine,
+      theme.fg("border", box.borderChar("separator") + "─".repeat(innerWidth) + box.borderChar("separatorRight")),
+    ]);
 
-    // ── Content ─────────────────────────────────────────
-    const contentLines = this.renderReportContent(report, activeTab, innerWidth - 4);
+    // ── Scrollable content ──
+    box.setContent(this.renderReportContent(report, activeTab, box.getContentWidth()));
+    box.scrollTo(scrollOffset);
 
-    const maxViewportHeight = 25;
-    const maxScroll = Math.max(0, contentLines.length - maxViewportHeight);
-    const effectiveScroll = Math.min(scrollOffset, maxScroll);
+    const footerText = `${box.getScrollInfo()}[←/→ or 1/2] Tabs  [↑↓/PgUp/PgDn] Scroll  [q/Esc] Close`;
+    box.setFooter(footerText);
 
-    if (effectiveScroll !== scrollOffset) {
-      this.state = { ...this.state, scrollOffset: effectiveScroll };
-    }
-
-    const visibleLines = contentLines.slice(effectiveScroll, effectiveScroll + maxViewportHeight);
-
-    for (const line of visibleLines) {
-      lines.push(theme.fg("border", "│") + "  " + line);
-    }
-
-    const emptyLines = maxViewportHeight - visibleLines.length;
-    for (let i = 0; i < emptyLines; i++) {
-      lines.push(theme.fg("border", "│") + " ".repeat(innerWidth - 2) + theme.fg("border", "│"));
-    }
-
-    // ── Footer ──────────────────────────────────────────
-    const scrollIndicator = maxScroll > 0 ? ` [${effectiveScroll}/${maxScroll}↑↓] ` : "";
-    const footerText = `${scrollIndicator}[←/→ or 1/2] Tabs  [↑↓/PgUp/PgDn] Scroll  [q/Esc] Close`;
-    lines.push(renderBoxFooter(theme, innerWidth, footerText));
-
-    return lines;
+    return box.render();
   }
 
   private renderReportContent(report: UsageReport, activeTab: Tab, innerWidth: number): string[] {
@@ -128,10 +109,15 @@ export class UsageReportWidget implements Component {
     const targetDays = activeTab === "short" ? [1, 7] : [30, 90];
     const windows = report.windows.filter((w) => targetDays.includes(w.days));
 
-    // Fixed column widths (must sum to ≤ innerWidth - 2 for padding)
+    // Responsive column widths: model column takes remaining space
+    const FIXED_COLS = 12 + 6 + 10 + 10 + 8 + 12 + 10; // 68
+    const GAPS = 7 * 2; // 14
+    const CONTENT_WIDTH = innerWidth - 4; // account for │ + 2 spaces padding
+    const modelWidth = Math.max(10, CONTENT_WIDTH - FIXED_COLS - GAPS);
+
     const COL = {
       source: 12,
-      model: 32,
+      model: modelWidth,
       msgs: 6,
       input: 10,
       output: 10,
