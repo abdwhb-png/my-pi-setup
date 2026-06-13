@@ -30,7 +30,7 @@ const emptyCatalog: CatalogData = {
 const emptyState: ProjectState = {
   cwd: "/project",
   paths: { manifestPath: "", settingsPath: "", projectMcpPath: "" },
-  manifest: { version: 1, items: {} },
+  manifest: { version: 1 as const, items: {} },
   warnings: [],
 };
 
@@ -62,7 +62,7 @@ describe("getInstallConflict", () => {
   it("returns undefined when item is already managed", () => {
     const state = {
       ...emptyState,
-      manifest: { version: 1, items: { "skill:test": { key: "skill:test" } as ManifestEntry } },
+      manifest: { version: 1 as const, items: { "skill:test": { key: "skill:test" } as ManifestEntry } },
     };
     expect(getInstallConflict(makeSkillItem(), state)).toBeUndefined();
   });
@@ -279,7 +279,7 @@ describe("getManagedEntriesByCategory", () => {
     const state: ProjectState = {
       ...emptyState,
       manifest: {
-        version: 1,
+        version: 1 as const,
         items: {
           b: { key: "b", category: "skills", id: "b", label: "B" } as ManifestEntry,
           a: { key: "a", category: "skills", id: "a", label: "A" } as ManifestEntry,
@@ -294,7 +294,7 @@ describe("getManagedEntriesByCategory", () => {
     const state: ProjectState = {
       ...emptyState,
       manifest: {
-        version: 1,
+        version: 1 as const,
         items: {
           x: { key: "skill:x", category: "skills", id: "x", label: "old" } as ManifestEntry,
         },

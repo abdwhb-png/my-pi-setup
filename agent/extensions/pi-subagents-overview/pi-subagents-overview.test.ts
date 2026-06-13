@@ -60,8 +60,9 @@ describe('pi-subagents-overview', () => {
       const parsed = JSON.parse(raw)
       const overrides = parsed?.subagents?.agentOverrides ?? {}
       for (const [name, ov] of Object.entries(overrides)) {
-        if (ov.tools !== undefined && ov.tools !== false) {
-          expect(Array.isArray(ov.tools), `${name}.tools should be array`).toBe(true)
+        const agent = ov as { tools?: string[] | false } | undefined;
+        if (agent?.tools !== undefined && agent.tools !== false) {
+          expect(Array.isArray(agent.tools), `${name}.tools should be array`).toBe(true)
         }
       }
     })

@@ -138,25 +138,25 @@ describe("parseGitStatus", () => {
 // ===========================================================================
 describe("difference", () => {
   it("returns set difference", () => {
-    const current = new Set(["/a", "/b", "/c"]);
-    const baseline = new Set(["/b"]);
-    expect(difference(current, baseline)).toEqual(new Set(["/a", "/c"]));
+    const current = new Set<string>(["/a", "/b", "/c"]);
+    const baseline = new Set<string>(["/b"]);
+    expect(difference(current, baseline)).toEqual(new Set<string>(["/a", "/c"]));
   });
 
   it("returns empty set when all items are in baseline", () => {
-    const current = new Set(["/a", "/b"]);
-    const baseline = new Set(["/a", "/b", "/c"]);
-    expect(difference(current, baseline)).toEqual(new Set());
+    const current = new Set<string>(["/a", "/b"]);
+    const baseline = new Set<string>(["/a", "/b", "/c"]);
+    expect(difference(current, baseline)).toEqual(new Set<string>());
   });
 
   it("returns all items when baseline is empty", () => {
-    const current = new Set(["/a", "/b"]);
-    const baseline = new Set();
-    expect(difference(current, baseline)).toEqual(new Set(["/a", "/b"]));
+    const current = new Set<string>(["/a", "/b"]);
+    const baseline = new Set<string>();
+    expect(difference(current, baseline)).toEqual(new Set<string>(["/a", "/b"]));
   });
 
   it("returns empty set when both sets are empty", () => {
-    expect(difference(new Set(), new Set())).toEqual(new Set());
+    expect(difference(new Set<string>(), new Set<string>())).toEqual(new Set<string>());
   });
 
   it("does not mutate original sets", () => {

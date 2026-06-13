@@ -18,4 +18,8 @@ export interface CommitPlanSessionState {
   focus: 'message' | 'files';
   /** File list cursor (index into files array) */
   fileCursorIndex: number;
+  /** Current commit message text being edited */
+  commitMessage?: string;
+  /** Cursor position within the commit message */
+  cursorPosition?: number;
 }
