@@ -10,13 +10,9 @@
   
 </general_constraints>
 
-<coding-guidelines>
+<mandatory-lsp-usage>
 
-## Working in typescript
 
-- when adding a package to a project add it with an install command, instead of manually editing the package json
-- run check/format/lint commands when your done making a change. if they don't exist, suggest making them for the project you're in
-- avoid running `dev` or `build` commands. if you really need to, ask first
 
 ## LSP Server - REQUIRED FIRST STEP
 
@@ -26,7 +22,19 @@
 2. If the relevant language server is NOT running → run `lsp_start_server` immediately
 3. ONLY AFTER the LSP server is running, proceed with analysis
 
-This is a hard requirement, not a preference. Do NOT skip this step.
+**GRACEFUL FALLBACK POLICY:**
+LSP is the primary and required method for code navigation. You are **FORBIDDEN** from falling back to `grep_search`, `file_search`, or `read_file` for code navigation **unless you have first attempted to use the appropriate LSP tool and it has failed** (e.g., returned an error, timed out, or provided no results). 
+
+If `lsp_server_status` returns an empty list or the required server is missing, you MUST call `lsp_start_server` before attempting any fallback. Falling back without first attempting to start and use the LSP server is a violation of the workspace protocol.
+
+**Server ID Mapping Guide:**
+- `.ts`, `.tsx`, `.js`, `.jsx` $\rightarrow$ `typescript`
+- `.py` $\rightarrow$ `python`
+- `.rs` $\rightarrow$ `rust`
+- `.go` $\rightarrow$ `go`
+- `.cpp`, `.hpp`, `.c`, `.h` $\rightarrow$ `clangd`
+
+This is a hard requirement for the initial attempt. Do NOT skip the LSP phase.
 
 ## LSP Tool Requirements
 
@@ -92,6 +100,16 @@ These tools are still appropriate for:
 - `lsp_smart_search` -> Combined: definition + refs + hover
 - `lsp_find_symbol` -> Find symbol by name (optionally scoped to a file)
 
+</mandatory-lsp-usage>
+
+<coding-guidelines>
+
+## Working in typescript
+
+- when adding a package to a project add it with an install command, instead of manually editing the package json
+- run check/format/lint commands when your done making a change. if they don't exist, suggest making them for the project you're in
+- avoid running `dev` or `build` commands. if you really need to, ask first
+
 </coding-guidelines>
 
 <test-driven-development>
@@ -107,6 +125,15 @@ These tools are still appropriate for:
 1. **Copy-pasting source functions into test files** — Tests must import the real module. Copies do not catch import errors, missing dependencies, or divergence.
 2. **Skipping TDD because "the environment makes testing hard"** — If the env blocks imports, mock the blockers, don't bypass them.
 3. **Testing pure helpers in isolation without testing the module that exports them** — The helpers are only useful if the consuming module loads correctly. Always have at least one test that imports the full module.
+4. **Detaching methods from class instances** (`const f = obj.method; f()`) — In TypeScript, class methods lose `this` when detached. Always call methods directly (`obj.method()`) or use arrow-function class fields. Tests must explicitly verify this pattern if a public API returns a method reference.
+
+## Post-edit verification (MANDATORY after every edit)
+
+1. **Parse-check every edited file** — Run `node --check <file>` on every `.ts`/`.js` file modified. This catches stray characters, unterminated strings, and syntax errors that `bun test` won't see unless the file is imported by a test.
+2. **LSP diagnostics** — Run `lsp_diagnostics` on every changed file. This catches type errors before tests even run.
+3. **Run all tests** — At minimum the test files in the changed directory, ideally the full suite.
+
+These 3 steps MUST execute in Phase 3 (Verification) after every code change. If a file has no test that imports it, that's a gap — add an import test.
 
 ## Red-Green-Refactor
 

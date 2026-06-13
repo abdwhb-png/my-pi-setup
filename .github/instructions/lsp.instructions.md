@@ -10,7 +10,19 @@ applyTo: '**'
 2. If the relevant language server is NOT running → run `lsp_start_server` immediately
 3. ONLY AFTER the LSP server is running, proceed with analysis
 
-This is a hard requirement, not a preference. Do NOT skip this step.
+**GRACEFUL FALLBACK POLICY:**
+LSP is the primary and required method for code navigation. You are **FORBIDDEN** from falling back to `grep_search`, `file_search`, or `read_file` for code navigation **unless you have first attempted to use the appropriate LSP tool and it has failed** (e.g., returned an error, timed out, or provided no results). 
+
+If `lsp_server_status` returns an empty list or the required server is missing, you MUST call `lsp_start_server` before attempting any fallback. Falling back without first attempting to start and use the LSP server is a violation of the workspace protocol.
+
+**Server ID Mapping Guide:**
+- `.ts`, `.tsx`, `.js`, `.jsx` $\rightarrow$ `typescript`
+- `.py` $\rightarrow$ `python`
+- `.rs` $\rightarrow$ `rust`
+- `.go` $\rightarrow$ `go`
+- `.cpp`, `.hpp`, `.c`, `.h` $\rightarrow$ `clangd`
+
+This is a hard requirement for the initial attempt. Do NOT skip the LSP phase.
 
 ## LSP Tool Requirements
 
