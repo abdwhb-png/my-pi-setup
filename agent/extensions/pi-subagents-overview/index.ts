@@ -18,6 +18,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { SubagentsOverviewWidget, AgentDetailWidget } from "./widget";
 
 // ── ANSI color constants ──────────────────────────────
 
@@ -65,7 +66,6 @@ const BUILTIN_AGENTS_DIR = path.join(
   "pi-subagents",
   "agents",
 );
-const PROJECT_AGENTS_DIR = path.join(HOME, ".agents");
 const SKILLS_DIR = path.join(HOME, ".agents", "skills");
 
 // ── Frontmatter Parsing ────────────────────────────────
@@ -223,52 +223,6 @@ function readUserAgents(): AgentInfo[] {
  * Read project agents from `.agents/` directory, EXCLUDING the `skills/`
  * subdirectory (those are skill definitions, not agents).
  */
-function readProjectAgents(): AgentInfo[] {
-  const agents: AgentInfo[] = [];
-  if (!fs.existsSync(PROJECT_AGENTS_DIR)) return agents;
-
-  function walkDir(dir: string, depth: number): void {
-    if (depth > 5) return;
-
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-
-      // Skip the skills/ subdirectory entirely
-      if (entry.isDirectory()) {
-        if (entry.name === "skills" && dir === PROJECT_AGENTS_DIR) continue;
-        walkDir(fullPath, depth + 1);
-        continue;
-      }
-
-      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-      if (!entry.name.endsWith(".md")) continue;
-
-      const fm = parseAgentFile(fullPath);
-      if (!fm || !fm.name || !fm.description) continue;
-
-      agents.push({
-        name: fm.name,
-        description: fm.description || "",
-        tools: (fm.tools || "").split(",").map((t) => t.trim()).filter(Boolean),
-        model: fm.model || null,
-        skills: (fm.skills || "").split(",").map((s) => s.trim()).filter(Boolean),
-        source: "project",
-        context: fm.defaultContext || null,
-      });
-    }
-  }
-
-  walkDir(PROJECT_AGENTS_DIR, 0);
-  return agents;
-}
-
 // ── Widget formatting ─────────────────────────────────
 
 function buildWidgetLine(): string {
@@ -289,7 +243,7 @@ function buildWidgetLine(): string {
     .map((a) => a.name);
 
   const safeBashPart =
-    safeBashAgents.length > 0 ? ` · >_ (safe_bash): ${safeBashAgents.join(",")}` : "";
+    safeBashAgents.length > 0 ? ` · ${safeBashAgents.length} safe_bash` : "";
 
   const overridePart =
     overrideCount > 0 ? ` · ${overrideCount} ovr` : "";
@@ -436,7 +390,6 @@ function formatOverview(): string {
   lines.push(`    ${BLUE}${builtins.length}${RESET} builtin  |  ${BLUE}${users.length}${RESET} user`);
 
   // Agents with execution tools (applying overrides from settings.json)
-  const execTools = ["bash", "safe_bash"];
   const allAgents = [...builtins, ...users];
   const agentsWithSafeBash = allAgents.filter((a) =>
     getEffectiveTools(a, overrides).includes("safe_bash") &&
@@ -514,10 +467,10 @@ export default function (pi: ExtensionAPI) {
 
   // ── Intercept subagent tool results ──
 
-  pi.on("tool_result", (event) => {
+  (pi as any).on("tool_result", (event: unknown) => {
     // Check if this is the subagent tool's list action
     // CustomToolResultEvent has toolName: string
-    const ev = event as Record<string, unknown>;
+    const ev = event as unknown as Record<string, unknown>;
     if (ev.toolName !== "subagent") return;
 
     const input = ev.input as Record<string, unknown> | undefined;
@@ -558,15 +511,25 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("subagents-overview", {
     description: "Show a clean overview of all subagents with tools, models, overrides, and stats",
-    handler: async (_args, _ctx) => {
+    handler: async (_args, ctx) => {
       const overview = formatOverview();
-      pi.sendMessage(
+
+      if (!ctx.hasUI) {
+        console.log(overview);
+        return;
+      }
+
+      await (ctx.ui.custom as any)(
+        (_tui: unknown, theme: unknown, _kb: unknown, done: () => void) =>
+          new SubagentsOverviewWidget({ theme: theme as any, content: overview, done }),
         {
-          customType: "pi-subagents-overview",
-          content: overview,
-          display: true,
+          overlay: true,
+          overlayOptions: {
+            anchor: "center" as const,
+            width: "80%" as const,
+            maxWidth: 100,
+          },
         },
-        { triggerTurn: false },
       );
     },
   });
@@ -588,17 +551,30 @@ export default function (pi: ExtensionAPI) {
         }))
         .slice(0, 30);
     },
-    handler: async (args, _ctx) => {
+    handler: async (args, ctx) => {
       const name = args.trim();
       if (!name) {
-        pi.sendMessage(
+        if (!ctx.hasUI) {
+          console.log("Usage: /subagent-view <name>\nExample: /subagent-view worker");
+          return;
+        }
+
+        await (ctx.ui.custom as any)(
+          (_tui: unknown, theme: unknown, _kb: unknown, done: () => void) =>
+            new AgentDetailWidget({
+              theme: theme as any,
+              content: "Usage: /subagent-view <name>\nExample: /subagent-view worker\n\nRun /subagents-overview to see all available agents.",
+              agentName: "help",
+              done,
+            }),
           {
-            customType: "pi-subagents-overview",
-            content:
-              "Usage: /subagent-view <name>\nExample: /subagent-view worker\n\nRun /subagents-overview to see all available agents.",
-            display: true,
+            overlay: true,
+            overlayOptions: {
+              anchor: "center" as const,
+              width: "80%" as const,
+              maxWidth: 100,
+            },
           },
-          { triggerTurn: false },
         );
         return;
       }
@@ -608,22 +584,32 @@ export default function (pi: ExtensionAPI) {
       const agent = allAgents.find((a) => a.name === name);
 
       if (!agent) {
-        pi.sendMessage(
+        if (!ctx.hasUI) {
+          console.log(`Agent "${name}" not found.`);
+          return;
+        }
+
+        await (ctx.ui.custom as any)(
+          (_tui: unknown, theme: unknown, _kb: unknown, done: () => void) =>
+            new AgentDetailWidget({
+              theme: theme as any,
+              content: `Agent "${name}" not found.\nRun /subagents-overview to see all available agents.`,
+              agentName: "error",
+              done,
+            }),
           {
-            customType: "pi-subagents-overview",
-            content: `Agent "${name}" not found.\nRun /subagents-overview to see all available agents.`,
-            display: true,
+            overlay: true,
+            overlayOptions: {
+              anchor: "center" as const,
+              width: "80%" as const,
+              maxWidth: 100,
+            },
           },
-          { triggerTurn: false },
         );
         return;
       }
 
       const lines: string[] = [];
-      lines.push("╔══════════════════════════════════════════════╗");
-      lines.push(`${CYAN}║  Agent: ${BOLD}${agent.name.padEnd(37)}${RESET}${CYAN}║${RESET}`);
-      lines.push("╚══════════════════════════════════════════════╝");
-      lines.push("");
       lines.push(`  ${DIM}Description:${RESET} ${agent.description}`);
       lines.push(`  ${DIM}Source:${RESET} ${agent.source}`);
       lines.push(`  ${DIM}Tools:${RESET} ${getEffectiveTools(agent, overrides).join(", ") || "—"}`);
@@ -650,22 +636,34 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      pi.sendMessage(
+      await (ctx.ui.custom as any)(
+        (_tui: unknown, theme: unknown, _kb: unknown, done: (_result: unknown) => void) =>
+          new AgentDetailWidget({
+            theme: theme as any,
+            content: lines.join("\n"),
+            agentName: agent.name,
+            done: done as () => void,
+          }),
         {
-          customType: "pi-subagents-overview",
-          content: lines.join("\n"),
-          display: true,
+          overlay: true,
+          overlayOptions: {
+            anchor: "center" as const,
+            width: "80%" as const,
+            maxWidth: 100,
+          },
         },
-        { triggerTurn: false },
       );
     },
   });
 
-  // ── Persistent Widget ──
+  // ── Persistent Widget ─
 
   pi.on("session_start", async (_event, ctx) => {
     clearSkillAgentCache();
-    updateWidget(ctx);
+    // Defer registration to yield to git-status-widget's async setWidget()
+    setTimeout(() => {
+      updateWidget(ctx);
+    }, 0);
   });
 
   pi.on("input", async (_event, ctx) => {
