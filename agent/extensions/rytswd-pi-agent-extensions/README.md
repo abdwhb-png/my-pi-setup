@@ -1,0 +1,1 @@
+Inspired from [rytswd/pi-agent-extensions](https://github.com/rytswd/pi-agent-extensions).
