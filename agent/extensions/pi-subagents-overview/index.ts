@@ -501,7 +501,7 @@ export default function (pi: ExtensionAPI) {
         return !filterPattern.test(trimmed);
       });
 
-      return { ...entry, text: filteredLines.join("\n") };
+      return Object.assign({}, entry, { text: filteredLines.join("\n") });
     });
 
     return { content: filteredContent };

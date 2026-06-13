@@ -1,15 +1,39 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "typescript",
-    "unicorn",
-    "oxc"
-  ],
+  "plugins": ["typescript", "unicorn", "oxc"],
   "categories": {
-    "correctness": "error"
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
   },
-  "rules": {},
+  "rules": {
+    "no-underscore-dangle": [
+      "warn",
+      {
+        "allow": ["_output", "_freshSession", "_makeSampleReport", "_MAX_RETRIES"]
+      }
+    ],
+    "no-control-regex": "off"
+  },
   "env": {
     "builtin": true
-  }
+  },
+  "ignorePatterns": ["skills/"],
+  "overrides": [
+    {
+      "files": ["**/*.test.ts"],
+      "rules": {
+        "no-console": "off",
+        "no-unused-vars": "off",
+        "no-underscore-dangle": "off",
+        "unicorn/consistent-function-scoping": "off"
+      }
+    },
+    {
+      "files": ["extensions/update/core.ts", "extensions/ephemeral/apply.ts"],
+      "rules": {
+        "no-await-in-loop": "off"
+      }
+    }
+  ]
 }

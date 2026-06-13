@@ -1,9 +1,3 @@
-/**
- * Test for pi-subagents-overview extension core logic.
- *
- * Uses real filesystem access to test against actual settings.json and agent .md files.
- */
-
 import { describe, it, expect } from 'bun:test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'

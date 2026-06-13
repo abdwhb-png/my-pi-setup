@@ -59,7 +59,7 @@ export function computeWindow(
   const windowRecords = records.filter((r) => isWithinWindow(r, days, cutoff));
   const grouped = groupByModel(windowRecords);
 
-  const models = Array.from(grouped.values()).sort((a, b) => b.cost - a.cost);
+  const models = Array.from(grouped.values()).toSorted((a, b) => b.cost - a.cost);
 
   const totalMessages = models.reduce((sum, m) => sum + m.messageCount, 0);
   const totalInput = models.reduce((sum, m) => sum + m.input, 0);

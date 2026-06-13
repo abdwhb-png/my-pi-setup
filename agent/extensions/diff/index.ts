@@ -54,7 +54,7 @@ export default function (pi: ExtensionAPI) {
         changedFiles = new Set();
         toolTouchedFiles = new Set();
         gitBaseline = await getGitChangedFiles(
-          (cmd, args, opts) => pi.exec(cmd, args, opts),
+          (cmd, spawnArgs, opts) => pi.exec(cmd, spawnArgs, opts),
           ctx.cwd,
         );
         ctx.ui.notify("Cleared changed file list", "info");

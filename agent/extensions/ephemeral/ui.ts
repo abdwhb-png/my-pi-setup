@@ -1,6 +1,6 @@
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { CatalogData, CatalogItem, EphemeralCategory, ManifestEntry, ProjectState } from "./types.ts";
+import type { CatalogData, CatalogItem, EphemeralCategory, ProjectState } from "./types.ts";
 import { renderPreviewLines, renderPreviewMeta } from "./preview.ts";
 import { getLiveWarnings, getManagedEntriesByCategory } from "./policy.ts";
 import { categoryLabel, clamp, pluralize } from "./util.ts";

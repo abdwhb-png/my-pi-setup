@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "types": ["bun", "node"],
+    "target": "ESNext",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "strict": true
+  },
+  "include": ["extensions/**/*.ts"],
+  "exclude": ["node_modules", "git", "npm", "skills"]
+}

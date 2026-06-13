@@ -9,7 +9,6 @@ import {
   groupByModel,
   computeWindow,
   computeAllWindows,
-  TIME_WINDOWS,
 } from "./aggregator";
 import { PRICING_CACHE_PATH, loadPricingCache, fetchFromModelsDev } from "./pricing";
 import type {
@@ -17,7 +16,6 @@ import type {
   UsageReport,
   TimeWindowReport,
   ModelRates,
-  ModelUsageAggregate,
 } from "./types";
 
 // ── Sample data helpers ──────────────────────────────────────────────────────
@@ -94,7 +92,7 @@ function makeSampleWindow(overrides: Partial<TimeWindowReport> = {}): TimeWindow
   };
 }
 
-function makeSampleReport(overrides: Partial<UsageReport> = {}): UsageReport {
+function _makeSampleReport(overrides: Partial<UsageReport> = {}): UsageReport {
   return {
     windows: [makeSampleWindow()],
     generatedAt: new Date("2026-06-10T21:00:00.000Z"),

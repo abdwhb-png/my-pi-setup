@@ -153,7 +153,7 @@ export class UsageReportWidget implements Component {
       lines.push(theme.fg("border", "  " + "─".repeat(sepWidth)));
 
       // Data rows
-      const sorted = [...window.models].sort((a, b) => b.cost - a.cost);
+      const sorted = window.models.toSorted((a, b) => b.cost - a.cost);
       for (const m of sorted) {
         const row =
           this.cell(m.provider, COL.source, "left") + gap +

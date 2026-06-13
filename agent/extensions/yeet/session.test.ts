@@ -43,12 +43,12 @@ describe('CommitPlanSession', () => {
     });
 
     it('includes the plan title', () => {
-      const output = session.render(80);
-      expect(output.some((line) => line.includes('Commit Plan Review'))).toBe(true);
+      const _output = session.render(80);
+      expect(_output.some((line) => line.includes('Commit Plan Review'))).toBe(true);
     });
 
     it('includes the commit message', () => {
-      const output = session.render(80);      // The Input component renders the value, so we check if it's present in the output      expect(output.some((line) => line.includes('feat: add new feature'))).toBe(true);
+      const _output = session.render(80);      // The Input component renders the value, so we check if it's present in the output      expect(_output.some((line) => line.includes('feat: add new feature'))).toBe(true);
     });
 
     it('includes file paths', () => {
@@ -119,7 +119,7 @@ describe('CommitPlanSession', () => {
 
     it('should append text to the end of the initial message (verifying cursor position)', () => {
       // Create a fresh session for this test to avoid interference with other tests
-      const freshSession = new CommitPlanSession({
+      const _freshSession = new CommitPlanSession({
         theme: createMockTheme() as never,
         params: defaultParams,
         done: mock(),
