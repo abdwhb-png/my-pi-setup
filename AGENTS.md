@@ -83,6 +83,7 @@ Absolute rule: **no production line without a test that fails first.**
 - Follow the existing code style and patterns in the project. Consistency is more important than personal preference.
 - Write clear, concise code with meaningful variable and function names. Avoid unnecessary complexity.
 - Document any non-obvious logic with comments. Assume the reader is familiar with the codebase but not with your specific implementation.
+- Use `oxlint` and eventually `oxfmt` for linting and formatting.
 - Avoid duplicating code. If you find yourself copying and pasting, consider refactoring to create reusable functions or modules.
 - Avoid running `dev` or `build` commands. If you really need to, ask first.
 
