@@ -1,5 +1,6 @@
 ---
 description: "The definitive master guide for semantic code navigation using LSP. Combines strategic routing (Truth Hierarchy) with tactical tool usage (Decision Tree, Canonical Workflows, Gotchas)."
+applyTo: '**'
 ---
 
 **Derived from the `lsp-mcp-server` skill.** For the full reference with extended workflows, gotchas, and error codes, automatically refer to the skill.

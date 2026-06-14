@@ -3,10 +3,6 @@ exa-usage.json
 web-search.json
 **/pi-session-**.html
 
-.atlas/
-node_modules/
-
-
 .codex/*
 !.codex/agents/
 !.codex/agents/**
@@ -17,8 +13,11 @@ node_modules/
 !.codex/prompts/**
 .omx/
 
-session-cron.json
-session-cron-lock.lock
+.atlas/
+node_modules/
+
+session-cron.*
+context-mode/
 
 # Lock files
 pnpm-lock.yaml
