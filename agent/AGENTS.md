@@ -12,93 +12,113 @@
 
 <mandatory-lsp-usage>
 
+**Derived from the `lsp-mcp-server` skill.** For the full reference with extended workflows, gotchas, and error codes, automatically refer to the skill.
 
+# LSP Semantic Navigation Master Guide
 
-## LSP Server - REQUIRED FIRST STEP
+## 1. Setup & Hard Rules
+**BEFORE any code analysis, you MUST ensure the server is running:**
+1. Run `lsp_server_status`.
+2. If the relevant server is missing $\rightarrow$ run `lsp_start_server` immediately.
+3. **Server ID Mapping**: `.ts/.tsx/.js/.jsx` $\rightarrow$ `typescript` | `.py` $\rightarrow$ `python` | `.rs` $\rightarrow$ `rust` | `.go` $\rightarrow$ `go` | `.cpp/.hpp/.c/.h` $\rightarrow$ `clangd`.
 
-**BEFORE any code analysis, navigation, or codebase exploration, you MUST:**
+**Hard Rules for Tool Usage:**
+- **LSP First**: Prefer LSP tools over text search for anything code-shaped.
+- **Absolute Paths**: All file paths MUST be absolute. Relative paths are rejected by Zod validation.
+- **1-Indexed**: All line/column numbers are 1-indexed (as shown in editors).
+- **Precision**: Point the cursor at the symbol itself, not at whitespace, brackets, or commas.
+- **Text Search**: Use `grep`/`Glob`/`Read` ONLY for strings, comments, config files, and docs.
 
-1. Run `lsp_server_status` to check running servers
-2. If the relevant language server is NOT running → run `lsp_start_server` immediately
-3. ONLY AFTER the LSP server is running, proceed with analysis
+## 2. Navigation Strategy (The "Truth" Hierarchy)
 
-**GRACEFUL FALLBACK POLICY:**
-LSP is the primary and required method for code navigation. You are **FORBIDDEN** from falling back to `grep_search`, `file_search`, or `read_file` for code navigation **unless you have first attempted to use the appropriate LSP tool and it has failed** (e.g., returned an error, timed out, or provided no results). 
+When searching for a symbol (function, class, variable), follow this hierarchy to avoid "0 results" failures:
 
-If `lsp_server_status` returns an empty list or the required server is missing, you MUST call `lsp_start_server` before attempting any fallback. Falling back without first attempting to start and use the LSP server is a violation of the workspace protocol.
+### Phase A: Local Discovery (The "What is here?" phase)
+- **Tool**: `lsp_workspace_symbols` or `lsp_find_symbol`.
+- **Scope**: Only indexes symbols defined **within the local workspace source**.
+- **Failure Case**: If this returns 0 results, the symbol is likely defined in a **dependency (node_modules)** or is a dynamic property. **DO NOT** assume the symbol doesn't exist.
 
-**Server ID Mapping Guide:**
-- `.ts`, `.tsx`, `.js`, `.jsx` $\rightarrow$ `typescript`
-- `.py` $\rightarrow$ `python`
-- `.rs` $\rightarrow$ `rust`
-- `.go` $\rightarrow$ `go`
-- `.cpp`, `.hpp`, `.c`, `.h` $\rightarrow$ `clangd`
+### Phase B: Contextual Discovery (The "Where is it used?" phase)
+- **Action**: If Phase A fails, use `grep_search` or `lsp_find_references` to find where the symbol is *used* in the local code.
+- **Action**: Read the `import` statements of those files to identify the source library.
 
-This is a hard requirement for the initial attempt. Do NOT skip the LSP phase.
+### Phase C: Library Resolution (The "Deep Dive" phase)
+- **Tool**: `lsp_goto_definition` or `lsp_hover`.
+- **Scope**: Works for **both local and library code**.
+- **Action**: Call `lsp_goto_definition` on the symbol at its usage site. This is the only way to reach the source code inside `node_modules`.
 
-## LSP Tool Requirements
+## 3. Decision Tree: Pick the Right Tool
 
-When LSP MCP tools are available, you MUST use them instead of alternatives:
+| If you want to...                  | Use this Tool              | Note                                    |
+| :--------------------------------- | :------------------------- | :-------------------------------------- |
+| Find a name but not where it lives | `lsp_find_symbol`          | Preferred for single matches.           |
+| Find many matches for a name       | `lsp_workspace_symbols`    | Broad search across project.            |
+| Find a definition at a position    | `lsp_goto_definition`      | **The gold standard** for library code. |
+| Find the interface/class of a var  | `lsp_goto_type_definition` | Jump to the type.                       |
+| Find all usages of a symbol        | `lsp_find_references`      | Semantic, not text-based.               |
+| Get type info / documentation      | `lsp_hover`                | Best for API signatures.                |
+| Find concrete implementations      | `lsp_find_implementations` | For interfaces/abstract classes.        |
+| See who calls it / what it calls   | `lsp_call_hierarchy`       | Trace the execution flow.               |
+| Explore class inheritance          | `lsp_type_hierarchy`       | Parents and children.                   |
+| Get everything in one call         | `lsp_smart_search`         | Definition + Hover + Refs + more.       |
+| Get a file's structure/outline     | `lsp_document_symbols`     | Fast structural overview.               |
+| Get a module's public API          | `lsp_file_exports`         | Top-level exports with signatures.      |
+| See file dependencies              | `lsp_file_imports`         | Imports/dependencies of a file.         |
+| Find connected files               | `lsp_related_files`        | Imports and imported-by.                |
+| Check for errors/warnings          | `lsp_diagnostics`          | Real-time lint/type errors.             |
 
-| Task                      | REQUIRED Tool                                | FORBIDDEN Alternatives    |
-| ------------------------- | -------------------------------------------- | ------------------------- |
-| Find where X is defined   | `lsp_goto_definition`                        | Grep, Read, Glob          |
-| Find where X is used      | `lsp_find_references`                        | Grep                      |
-| Find symbol by name       | `lsp_workspace_symbols` or `lsp_find_symbol` | Glob, Grep                |
-| Understand file structure | `lsp_document_symbols`                       | Read entire file          |
-| Get type information      | `lsp_hover`                                  | Reading source code       |
-| Find implementations      | `lsp_find_implementations`                   | Grep                      |
-| Understand module API     | `lsp_file_exports`                           | Read entire file          |
-| Check for errors          | `lsp_diagnostics`                            | Running compiler manually |
-| See file dependencies     | `lsp_file_imports` or `lsp_related_files`    | Grep for imports          |
+## 4. Canonical Workflows
 
-## Prohibited Patterns
+### A. "Find the definition of foo"
+1. Try `lsp_find_symbol(name="foo")`.
+2. If 0 results $\rightarrow$ `grep_search("foo")` to find a usage site in local code.
+3. Use `lsp_goto_definition` at that usage site to jump to the source (even in `node_modules`).
 
-When LSP is available, NEVER do these:
+### B. "Will renaming X break anything?"
+1. Call `lsp_rename(..., dry_run: true)` (default — safe).
+2. Review the `changes` map.
+3. If correct, call again with `dry_run: false`.
 
-- NEVER use `Grep` to find function/class/symbol definitions
-- NEVER use `Grep` to find where a symbol is referenced
-- NEVER use `Glob` to find files containing a symbol name
-- NEVER use `Read` to scan through a file looking for definitions
-- NEVER use `Bash` with grep/rg/find for code navigation
+### C. "Did my edit break anything?"
+1. Touch the file with any LSP tool (this opens it in the server).
+2. Call `lsp_diagnostics(file_path=...)`.
+3. For project-wide scans: `lsp_index_files(files=[...])` $\rightarrow$ `lsp_workspace_diagnostics()`.
 
-These tools are still appropriate for:
-- Searching for text/strings (not code symbols)
-- Reading configuration files
-- Reading documentation files
-- File operations unrelated to code navigation
+### D. "Apply a quick fix"
+```json
+lsp_code_actions(kinds: ["quickfix"])
+```
+Read the returned actions, then call again with `apply: true, action_index: N`.
 
-## LSP Tool Quick Reference
+### E. "What does this file expose?"
+Prefer `lsp_file_exports` over reading the whole file for a quick public-API view.
 
-- `lsp_server_status` -> Check what's running 
-- `lsp_start_server` -> Start a language server
-- `lsp_stop_server` -> Stop a language server
-- `lsp_goto_definition` -> Jump to where symbol is defined
-- `lsp_goto_type_definition` -> Jump to type definition
-- `lsp_find_references` -> Find all usages of a symbol
-- `lsp_find_implementations` -> Find concrete implementations
-- `lsp_workspace_symbols` -> Search symbols across project
-- `lsp_document_symbols` -> Get outline of a file
-- `lsp_document_highlights` -> Every occurrence in this file (read/write classified)
-- `lsp_hover` -> Get type/docs for symbol
-- `lsp_signature_help` -> Get function parameter hints
-- `lsp_inlay_hints` -> Inferred types + parameter names over a range
-- `lsp_completions` -> Get code completions
-- `lsp_diagnostics` -> Get errors/warnings for a file
-- `lsp_workspace_diagnostics` -> Get errors/warnings across opened files
-- `lsp_index_files` -> Warm up: batch-open files for workspace diagnostics
-- `lsp_file_exports` -> Get public API of a module
-- `lsp_file_imports` -> Get imports/dependencies of a file (regex, JS/TS)
-- `lsp_related_files` -> Find connected files (imports/imported by)
-- `lsp_folding_ranges` -> Foldable regions (functions, blocks, imports)
-- `lsp_selection_range` -> Semantic enclosing ranges (stmt/block/fn)
-- `lsp_rename` -> Rename symbol across codebase
-- `lsp_code_actions` -> Get/apply quick fixes and refactorings
-- `lsp_call_hierarchy` -> See callers and callees
-- `lsp_type_hierarchy` -> See type inheritance
-- `lsp_format_document` -> Format code
-- `lsp_smart_search` -> Combined: definition + refs + hover
-- `lsp_find_symbol` -> Find symbol by name (optionally scoped to a file)
+## 5. Critical Gotchas
+
+- **Workspace Diagnostics**: `lsp_workspace_diagnostics` only reflects **opened files**. You MUST use `lsp_index_files(files=[...])` to warm up the server first.
+- **Related Files**: `lsp_related_files` `imported_by` only sees files already opened this session. For a language-correct "everything that imports X", use `lsp_find_references` on the export instead.
+- **Call/Type Hierarchy**: These require a callable/class-like position. Pointing at a variable will throw `CAPABILITY_NOT_SUPPORTED`. Point at the function/class name itself.
+- **Symbol Kinds**: Use LSP-standard capitalized names: `Class`, `Function`, `Method`, `Interface`, `Variable`, `Property`, `Field`, `Enum`, `Constructor`, `Constant`. Lowercase silently matches nothing.
+- **Auto-Start**: The server auto-starts on first file touch. You usually don't need `lsp_start_server` unless explicitly missing.
+- **File Size**: Files larger than 10 MB are rejected.
+
+## 6. Graceful Fallback Policy
+
+LSP is the primary and required method for code navigation. Fallback to `grep_search` or `read_file` is **FORBIDDEN** unless:
+1. You have attempted to start the server.
+2. The LSP tool returned an error, timed out, or provided no results *after* you tried both Local and Library resolution strategies.
+3. You are searching for plain text, comments, or configuration values (non-code symbols).
+
+**Before falling back, always check:**
+- Is the cursor on the identifier (not on a space, dot, or bracket)?
+- Did you pass an absolute path?
+- Is the language server actually installed? (`lsp_server_status` will tell you.)
+- For workspace-wide queries: are the files opened in the server yet?
+
+## 7. Prohibited Patterns
+- **NEVER** use `Grep` to find a function definition.
+- **NEVER** assume a symbol doesn't exist just because `lsp_workspace_symbols` returned 0.
+- **NEVER** read a 1000-line file to find a symbol when `lsp_document_symbols` can provide the outline.
 
 </mandatory-lsp-usage>
 
