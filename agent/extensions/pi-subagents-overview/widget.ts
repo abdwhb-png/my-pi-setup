@@ -9,7 +9,7 @@
 
 import { type Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { BoxRenderer } from "../shared/box";
+import { BoxRenderer } from "../_shared/box";
 
 // ── Types ──────────────────────────────────────────────
 

@@ -2,7 +2,7 @@ import { Input, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { CommitPlanParams, CommitPlanResult, CommitPlanSessionState } from "./types";
 import { handleCommitPlanInput } from "./util";
-import { renderBoxHeader, renderBoxFooter } from "../shared/box";
+import { renderBoxHeader, renderBoxFooter } from "../_shared/box";
 
 function rejectResult(
   params: CommitPlanParams,
