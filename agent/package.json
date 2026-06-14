@@ -12,7 +12,7 @@
     "test:coverage": "bun test --coverage",
     "types:check": "tsc --noEmit",
     "check": "bun scripts/check.ts",
-    "check:parse": "find extensions -name '*.ts' ! -name '*.test.ts' -print0 | xargs -0 -P4 -I{} bun build --no-bundle --no-clear-screen '{}' >/dev/null 2>&1 || exit 1"
+    "check:parse": "find extensions -name '*.ts' ! -name '*.test.ts' ! -path '*/node_modules/*' -print0 | xargs -0 -P4 -I{} bun build --no-bundle --no-clear-screen '{}' >/dev/null 2>&1 || exit 1"
   },
   "keywords": [],
   "author": "",

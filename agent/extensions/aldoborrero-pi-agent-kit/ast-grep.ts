@@ -130,11 +130,11 @@ function runAstGrep(args: string[], cwd: string): Promise<AstGrepMatch[]> {
     let stdout = "";
     let stderr = "";
 
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout!.on("data", (chunk: any) => {
       stdout += chunk.toString();
     });
 
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr!.on("data", (chunk: any) => {
       stderr += chunk.toString();
     });
 
@@ -183,11 +183,11 @@ function runAstGrepRaw(args: string[], cwd: string): Promise<string> {
     let stdout = "";
     let stderr = "";
 
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout!.on("data", (chunk: any) => {
       stdout += chunk.toString();
     });
 
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr!.on("data", (chunk: any) => {
       stderr += chunk.toString();
     });
 
