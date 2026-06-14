@@ -5,6 +5,7 @@
  * making them fully testable without mocking git, fs, or the pi API.
  */
 
+import { execSync } from "node:child_process";
 import path from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,15 @@ export function parseGitStatus(output: string, cwd: string): Set<string> {
 // ---------------------------------------------------------------------------
 // Set helpers
 // ---------------------------------------------------------------------------
+
+export function which(cmd: string): boolean {
+  try {
+    execSync(`which ${cmd}`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function difference(current: Set<string>, baseline: Set<string>): Set<string> {
   return new Set([...current].filter((file) => !baseline.has(file)));

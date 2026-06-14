@@ -12,6 +12,7 @@ import {
   toRelative,
   parseGitStatus,
   difference,
+  which,
   getGitChangedFiles,
 } from "./core.ts";
 import type { ExecFunction } from "./core.ts";
@@ -165,6 +166,19 @@ describe("difference", () => {
     difference(current, baseline);
     expect(current).toEqual(new Set(["/a"]));
     expect(baseline).toEqual(new Set(["/b"]));
+  });
+});
+
+// ===========================================================================
+// which
+// ===========================================================================
+describe("which", () => {
+  it("returns true for existing command", () => {
+    expect(which("sh")).toBeTrue();
+  });
+
+  it("returns false for non-existing command", () => {
+    expect(which("this-command-definitely-does-not-exist-42")).toBeFalse();
   });
 });
 

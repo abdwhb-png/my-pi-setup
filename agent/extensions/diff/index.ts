@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   getStringPath,
@@ -5,9 +6,67 @@ import {
   toRelative,
   getGitChangedFiles,
   difference,
+  which,
 } from "./core.ts";
 
 const commandName = "diff";
+
+/**
+ * Show git diff output using the best available viewer.
+ *
+ * Tries tuicr first, then delta, then plain git diff as fallback.
+ * Each mode stops the pi TUI, runs the external viewer, then restarts.
+ */
+async function showGitDiff(
+  ctx: any,
+  gitArgs: string[],
+): Promise<void> {
+  if (which("tuicr")) {
+    const tuicrArgs = gitArgs.length > 0 ? ["-r", gitArgs.join(" ")] : [];
+    await ctx.ui.custom((tui: any, _theme: any, _kb: any, done: () => void) => {
+      tui.stop();
+      process.stdout.write("\x1b[2J\x1b[H");
+      spawnSync("tuicr", tuicrArgs, {
+        stdio: "inherit",
+        cwd: ctx.cwd,
+        env: process.env,
+      });
+      tui.start();
+      tui.requestRender(true);
+      done();
+      return { render: () => [], invalidate: () => {} };
+    });
+  } else if (which("delta")) {
+    const cmd = gitArgs.length > 0
+      ? `git diff ${gitArgs.join(" ")} | delta --pager 'less -R'`
+      : "git diff | delta --pager 'less -R'";
+    await ctx.ui.custom((tui: any, _theme: any, _kb: any, done: () => void) => {
+      tui.stop();
+      process.stdout.write("\x1b[32m━━━ Git diff — Press \x1b[1mq\x1b[22m to exit ━━━\x1b[0m\n\n");
+      spawnSync("bash", ["-c", cmd], {
+        stdio: "inherit",
+        cwd: ctx.cwd,
+      });
+      tui.start();
+      tui.requestRender(true);
+      done();
+      return { render: () => [], invalidate: () => {} };
+    });
+  } else {
+    await ctx.ui.custom((tui: any, _theme: any, _kb: any, done: () => void) => {
+      tui.stop();
+      process.stdout.write("\x1b[32m━━━ Git diff — Press \x1b[1mq\x1b[22m to exit ━━━\x1b[0m\n\n");
+      spawnSync("git", ["diff", ...gitArgs], {
+        stdio: "inherit",
+        cwd: ctx.cwd,
+      });
+      tui.start();
+      tui.requestRender(true);
+      done();
+      return { render: () => [], invalidate: () => {} };
+    });
+  }
+}
 
 export default function (pi: ExtensionAPI) {
   let gitBaseline = new Set<string>();
@@ -45,11 +104,31 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand(commandName, {
-    description: "Show files changed by the last agent run and open one in Zed",
+    description: "View changed files from last agent run (/diff) or git diff output (/diff --git)",
+    getArgumentCompletions: (prefix: string) => {
+      const opts = ["--git", "--git --staged", "--git --cached", "--git HEAD~1", "--git HEAD~3..HEAD"];
+      const filtered = opts.filter((o) => o.startsWith(prefix));
+      return filtered.length > 0 ? filtered.map((o) => ({ value: o, label: o, insertText: o })) : null;
+    },
     handler: async (args, ctx) => {
       await ctx.waitForIdle();
 
-      const arg = args.trim();
+      const trimmed = args.trim();
+
+      // ── Git diff mode (/diff --git [...args]) ──────────────────────
+      if (trimmed.startsWith("--git")) {
+        if (!ctx.hasUI) {
+          ctx.ui.notify("Git diff viewer requires interactive mode", "error");
+          return;
+        }
+        const gitArgs = trimmed.slice(5).trim().split(/\s+/).filter(Boolean);
+        await showGitDiff(ctx, gitArgs);
+        return;
+      }
+
+      // ── Agent-change mode (default) ────────────────────────────────
+      const arg = trimmed;
+
       if (arg === "clear") {
         changedFiles = new Set();
         toolTouchedFiles = new Set();
@@ -79,7 +158,7 @@ export default function (pi: ExtensionAPI) {
 
       if (arg) {
         ctx.ui.notify(
-          `Unknown /${commandName} argument: ${arg}. Try /${commandName}, /${commandName} list, or /${commandName} clear.`,
+          `Unknown /${commandName} argument: ${arg}. Try /${commandName}, /${commandName} list, /${commandName} clear, or /${commandName} --git.`,
           "warning",
         );
         return;
