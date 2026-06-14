@@ -6,6 +6,7 @@ web-search.json
 .atlas/
 node_modules/
 
+
 .codex/*
 !.codex/agents/
 !.codex/agents/**
@@ -15,6 +16,9 @@ node_modules/
 !.codex/prompts/
 !.codex/prompts/**
 .omx/
+
+session-cron.json
+session-cron-lock.lock
 
 # Lock files
 pnpm-lock.yaml
