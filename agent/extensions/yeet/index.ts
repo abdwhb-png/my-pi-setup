@@ -1,9 +1,10 @@
 import { defineTool, type ExtensionAPI, type AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { CommitPlanSession } from "./session";
+import { CommitConfirmDialog } from "./confirm";
 import type { CommitPlanParams, CommitPlanResult } from "./types";
 
-const YEET_PROMPT = [
+const YEET_PROMPT_BASE = [
   "Commit the current repository changes.",
   "",
   "CRITICAL RULE: Before performing any git operations, you MUST use the 'propose_commit_plan' tool.",
@@ -25,7 +26,23 @@ const YEET_PROMPT = [
   "Do NOT push unless explicitly requested.",
   "",
   "--- Current Git Status ---",
-].join("\n");
+];
+
+/** Build the prompt for the LLM, injecting auto-approve instructions if needed. */
+function buildYeetPrompt(isAutoApprove: boolean): string {
+  if (!isAutoApprove) return YEET_PROMPT_BASE.join("\n");
+
+  const workflowIdx = YEET_PROMPT_BASE.indexOf("Workflow:");
+  const workflowLines = YEET_PROMPT_BASE.slice(workflowIdx);
+
+  return [
+    "Commit the current repository changes with AUTO-APPROVE mode.",
+    "",
+    "CRITICAL RULE: You MUST use the 'propose_commit_plan' tool with autoApprove=true.",
+    "",
+    ...workflowLines,
+  ].join("\n");
+}
 
 /**
  * Execute a git commit programmatically: stage files, commit, return the short SHA.
@@ -51,7 +68,7 @@ export default function (pi: ExtensionAPI) {
     name: "propose_commit_plan",
     label: "Propose Commit Plan",
     description:
-      "Propose a commit plan to the user. The user can review, edit the message, and toggle files in an interactive UI before approving.",
+      "Propose a commit plan to the user. The user can review, edit the message, and toggle files in an interactive UI before approving. Set autoApprove=true to skip the full editor and show a simple confirm dialog instead.",
     promptSnippet: "Propose a commit plan for user review before staging or committing.",
     promptGuidelines: [
       "Analyze changes and group them into logical, atomic units (e.g., separate refactors from features).",
@@ -65,6 +82,7 @@ export default function (pi: ExtensionAPI) {
       plan_summary: Type.String({ description: "Summary of the changes and why the commit is needed." }),
       files: Type.Array(Type.String(), { description: "File paths to include in the commit." }),
       commit_message: Type.String({ description: "The proposed commit message." }),
+      autoApprove: Type.Optional(Type.Boolean({ description: "When true, skip the full TUI editor and show a simple confirm dialog before committing." })),
     }),
     async execute(
       _toolCallId: string,
@@ -73,21 +91,41 @@ export default function (pi: ExtensionAPI) {
       _onUpdate: unknown,
       ctx: any,
     ): Promise<AgentToolResult<CommitPlanResult>> {
-      const result = await (ctx.ui.custom as any)(
-        (_tui: unknown, theme: unknown, _kb: unknown, done: (r: CommitPlanResult) => void) =>
-          new CommitPlanSession({ theme: theme as any, params, done }),
-        {
-          overlay: true,
-          overlayOptions: {
-            anchor: "center" as const,
-            width: "80%" as const,
-            maxWidth: 100,
-          },
-        },
-      ) as CommitPlanResult;
+      let result: CommitPlanResult;
 
-      // Accept → commit programmatically
+      if (params.autoApprove) {
+        // Auto-approve mode: show minimal confirm dialog
+        result = await (ctx.ui.custom as any)(
+          (_tui: unknown, theme: unknown, _kb: unknown, done: (r: CommitPlanResult) => void) =>
+            new CommitConfirmDialog({ theme: theme as any, params, done }),
+          {
+            overlay: true,
+            overlayOptions: {
+              anchor: "center" as const,
+              width: "80%" as const,
+              maxWidth: 100,
+            },
+          },
+        ) as CommitPlanResult;
+      } else {
+        // Full TUI editor
+        result = await (ctx.ui.custom as any)(
+          (_tui: unknown, theme: unknown, _kb: unknown, done: (r: CommitPlanResult) => void) =>
+            new CommitPlanSession({ theme: theme as any, params, done }),
+          {
+            overlay: true,
+            overlayOptions: {
+              anchor: "center" as const,
+              width: "80%" as const,
+              maxWidth: 100,
+            },
+          },
+        ) as CommitPlanResult;
+      }
+
+      // Accept → commit programmatically with loading notification
       if (result.accepted) {
+        ctx.ui.notify("Committing...", "info");
         const outcome = await executeCommit(pi.exec.bind(pi), result.files, result.commit_message);
 
         if (outcome.success) {
@@ -164,7 +202,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(proposeCommitPlanTool);
 
   pi.registerCommand("yeet", {
-    description: "Add and commit current repo changes (push only if user requests it)",
+    description: "Stage and commit repo changes. Use --go for auto-approve mode (skips TUI editor, shows confirm dialog).",
     handler: async (args: string, ctx: any) => {
       // Programmatically check git status so the LLM always has real data
       let gitStatus = "";
@@ -184,9 +222,17 @@ export default function (pi: ExtensionAPI) {
       }
 
       const hasChanges = gitStatus.length > 0;
+      const trimmedArgs = args.trim();
+      const isAutoApprove = trimmedArgs === "--go";
+      const userArgs = isAutoApprove ? "" : trimmedArgs;
+
+      const extraLines: string[] = [];
+      if (!isAutoApprove && userArgs) {
+        extraLines.push("", "Additional instructions from the user:\n" + userArgs);
+      }
 
       const prompt = [
-        YEET_PROMPT,
+        buildYeetPrompt(isAutoApprove),
         "",
         gitStatus || "(no changes)",
         "",
@@ -196,8 +242,7 @@ export default function (pi: ExtensionAPI) {
         hasChanges
           ? "There are pending changes. Analyze them and propose the first atomic commit."
           : "The working tree is clean. There is nothing to commit.",
-        "",
-        args.trim() ? "Additional instructions from the user:\n" + args.trim() : "",
+        ...extraLines,
       ].join("\n");
 
       if (ctx.isIdle()) {

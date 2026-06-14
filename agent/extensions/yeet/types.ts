@@ -2,6 +2,8 @@ export interface CommitPlanParams {
   plan_summary: string;
   files: string[];
   commit_message: string;
+  /** When true, the plan is auto-approved (no TUI). A confirmation dialog still appears before committing. */
+  autoApprove?: boolean;
 }
 
 export interface CommitPlanResult {
