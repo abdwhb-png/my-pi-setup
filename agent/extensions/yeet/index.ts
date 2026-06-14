@@ -12,7 +12,7 @@ const YEET_PROMPT = [
   "1. Analyze the current changes (git status, git diff) provided below.",
   "2. Group changes into logical, atomic units (e.g., separate a refactor from a feature, or a bugfix from a doc update).",
   "3. Propose the FIRST logical commit using 'propose_commit_plan'.",
-  "4. If the user accepts, proceed to commit those specific files.",
+  "4. The commit happens automatically on approval.",
   "5. After a commit is successful, analyze the REMAINING changes and repeat the process until all changes are committed.",
   "6. If the user rejects a plan, adjust it and propose again.",
   "",
@@ -27,104 +27,140 @@ const YEET_PROMPT = [
   "--- Current Git Status ---",
 ].join("\n");
 
-// Number of rejection retries before forcing a hard cancel option
-const _MAX_RETRIES = 2;
-
-const proposeCommitPlanTool = defineTool({
-  name: "propose_commit_plan",
-  label: "Propose Commit Plan",
-  description:
-    "Propose a commit plan to the user. The user can review, edit the message, and toggle files in an interactive UI before approving.",
-  promptSnippet: "Propose a commit plan for user review before staging or committing.",
-  promptGuidelines: [
-    "Analyze changes and group them into logical, atomic units (e.g., separate refactors from features).",
-    "Propose the first logical commit using propose_commit_plan. Do NOT commit everything at once.",
-    "If the tool returns ACCEPTED, proceed with git add and git commit for those specific files.",
-    "If the tool returns REJECTED, adjust the plan and propose again.",
-    "After each successful commit, analyze remaining changes and propose the next commit until all are handled.",
-    "If the tool returns HARD_CANCEL, stop the commit workflow immediately and return to normal conversation.",
-  ],
-  parameters: Type.Object({
-    plan_summary: Type.String({ description: "Summary of the changes and why the commit is needed." }),
-    files: Type.Array(Type.String(), { description: "File paths to include in the commit." }),
-    commit_message: Type.String({ description: "The proposed commit message." }),
-  }),
-  async execute(
-    _toolCallId: string,
-    params: CommitPlanParams,
-    _signal: AbortSignal | undefined,
-    _onUpdate: unknown,
-    ctx: any,
-  ): Promise<AgentToolResult<CommitPlanResult>> {
-    const result = await (ctx.ui.custom as any)(
-      (_tui: unknown, theme: unknown, _kb: unknown, done: (r: CommitPlanResult) => void) =>
-        new CommitPlanSession({ theme: theme as any, params, done }),
-      { 
-        overlay: true, 
-        overlayOptions: { 
-          anchor: "center" as const, 
-          width: "80%" as const,
-          maxWidth: 100 
-        } 
-      },
-    ) as CommitPlanResult;
-
-    // Accept → proceed with commit
-    if (result.accepted) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: [
-              "User ACCEPTED the commit plan. Proceed with:",
-              "",
-              "Files: " + result.files.join(", "),
-              "Message: " + result.commit_message,
-            ].join("\n"),
-          },
-        ],
-        details: result,
-      };
-    }
-
-    // Reject (Ctrl+R) → repropose
-    if (!result.cancelled) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: [
-              "User REJECTED the commit plan.",
-              "",
-              "You MUST call propose_commit_plan again with a different plan.",
-              "Do NOT stage or commit without approval.",
-            ].join("\n"),
-          },
-        ],
-        details: result,
-      };
-    }
-
-    // Hard cancel (Esc) → stop everything
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: [
-            "HARD_CANCEL: The user cancelled the commit process.",
-            "",
-            "You MUST NOT call propose_commit_plan again.",
-            "Do NOT stage or commit anything.",
-            "Acknowledge the cancellation and return to normal conversation.",
-          ].join("\n"),
-        },
-      ],
-      details: result,
-    };
-  },
-});
+/**
+ * Execute a git commit programmatically: stage files, commit, return the short SHA.
+ * Exported for testing with a mock execFn.
+ */
+export async function executeCommit(
+  execFn: (cmd: string, args: string[], opts?: any) => Promise<{ stdout: string }>,
+  files: string[],
+  message: string,
+): Promise<{ success: true; sha: string } | { success: false; error: string }> {
+  try {
+    await execFn("git", ["add", "--", ...files]);
+    await execFn("git", ["commit", "-m", message]);
+    const { stdout } = await execFn("git", ["rev-parse", "--short", "HEAD"]);
+    return { success: true, sha: stdout.trim() };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 export default function (pi: ExtensionAPI) {
+  const proposeCommitPlanTool = defineTool({
+    name: "propose_commit_plan",
+    label: "Propose Commit Plan",
+    description:
+      "Propose a commit plan to the user. The user can review, edit the message, and toggle files in an interactive UI before approving.",
+    promptSnippet: "Propose a commit plan for user review before staging or committing.",
+    promptGuidelines: [
+      "Analyze changes and group them into logical, atomic units (e.g., separate refactors from features).",
+      "Propose the first logical commit using propose_commit_plan. Do NOT commit everything at once.",
+      "If the tool returns ACCEPTED, the commit happens automatically.",
+      "If the tool returns REJECTED, adjust the plan and propose again.",
+      "After each successful commit, analyze remaining changes and propose the next commit until all are handled.",
+      "If the tool returns HARD_CANCEL, stop the commit workflow immediately and return to normal conversation.",
+    ],
+    parameters: Type.Object({
+      plan_summary: Type.String({ description: "Summary of the changes and why the commit is needed." }),
+      files: Type.Array(Type.String(), { description: "File paths to include in the commit." }),
+      commit_message: Type.String({ description: "The proposed commit message." }),
+    }),
+    async execute(
+      _toolCallId: string,
+      params: CommitPlanParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: any,
+    ): Promise<AgentToolResult<CommitPlanResult>> {
+      const result = await (ctx.ui.custom as any)(
+        (_tui: unknown, theme: unknown, _kb: unknown, done: (r: CommitPlanResult) => void) =>
+          new CommitPlanSession({ theme: theme as any, params, done }),
+        {
+          overlay: true,
+          overlayOptions: {
+            anchor: "center" as const,
+            width: "80%" as const,
+            maxWidth: 100,
+          },
+        },
+      ) as CommitPlanResult;
+
+      // Accept → commit programmatically
+      if (result.accepted) {
+        const outcome = await executeCommit(pi.exec.bind(pi), result.files, result.commit_message);
+
+        if (outcome.success) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: [
+                  `Commit successful (${outcome.sha}).`,
+                  "",
+                  "Files: " + result.files.join(", "),
+                  "Message: " + result.commit_message,
+                ].join("\n"),
+              },
+            ],
+            details: result,
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                "Commit FAILED. The approved plan could not be committed automatically.",
+                "",
+                "Error: " + outcome.error,
+                "",
+                "You may need to investigate (e.g., run git status, check for conflicts) and propose a revised plan.",
+              ].join("\n"),
+            },
+          ],
+          details: result,
+        };
+      }
+
+      // Reject (Ctrl+R) → repropose
+      if (!result.cancelled) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                "User REJECTED the commit plan.",
+                "",
+                "You MUST call propose_commit_plan again with a different plan.",
+                "Do NOT stage or commit without approval.",
+              ].join("\n"),
+            },
+          ],
+          details: result,
+        };
+      }
+
+      // Hard cancel (Esc) → stop everything
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: [
+              "HARD_CANCEL: The user cancelled the commit process.",
+              "",
+              "You MUST NOT call propose_commit_plan again.",
+              "Do NOT stage or commit anything.",
+              "Acknowledge the cancellation and return to normal conversation.",
+            ].join("\n"),
+          },
+        ],
+        details: result,
+      };
+    },
+  });
+
   pi.registerTool(proposeCommitPlanTool);
 
   pi.registerCommand("yeet", {
