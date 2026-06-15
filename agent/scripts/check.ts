@@ -4,7 +4,7 @@ const PHASES: { label: string; script: string }[] = [
     { label: 'Syntax check', script: 'bun run check:parse' },
     { label: 'Type check',   script: 'bun run types:check' },
     { label: 'Lint',         script: 'bun run lint' },
-    { label: 'Tests',        script: 'bun test' },
+    { label: 'Tests',        script: 'bun test --dots' },
 ];
 
 for (const phase of PHASES) {
