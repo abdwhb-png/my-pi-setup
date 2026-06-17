@@ -1,14 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { walkAllSessions } from "./scanner";
-import { computeAllWindows } from "./aggregator";
+import { computeAllWindows, computeWindow } from "./aggregator";
 import { lookupPricing } from "./pricing";
 import { UsageReportWidget } from "./widget";
+import { UsageInlineView } from "./inline-view";
 import type { UsageReport } from "./types";
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("usage", {
-    description: "Show Pi usage and cost summary for the last 1, 7, 30, and 90 days",
-    handler: async (_args: string, ctx: any) => {
+    description: "Show Pi usage and cost summary — no args for inline today view, any arg for full report",
+    handler: async (args: string, ctx: any) => {
       // ── Non-interactive mode fallback ──────────────
       if (!ctx.hasUI) {
         const records = walkAllSessions();
@@ -44,6 +45,19 @@ export default function (pi: ExtensionAPI) {
           return;
         }
 
+        // ── Inline mode: no args → show today's usage inline ──
+        const isFullReport = args.trim() === "--full";
+        if (!isFullReport) {
+          const todayWindow = computeWindow(records, 1, new Map());
+
+          await (ctx.ui.custom as any)(
+            (_tui: unknown, theme: unknown, _kb: unknown, done: () => void) =>
+              new UsageInlineView({ window: todayWindow, theme: theme as any, done }),
+          );
+          return;
+        }
+
+        // ── Full report mode: args present → show detached overlay with all windows ──
         const sourceKeys = [...new Set(records.map((r) => r.sourceKey))];
         ctx.ui.notify("💵 Looking up pricing...", "info");
         const pricing = await lookupPricing(sourceKeys);
