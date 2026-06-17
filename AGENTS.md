@@ -83,7 +83,7 @@ Absolute rule: **no production line without a test that fails first.**
 - Follow the existing code style and patterns in the project. Consistency is more important than personal preference.
 - Write clear, concise code with meaningful variable and function names. Avoid unnecessary complexity.
 - Document any non-obvious logic with comments. Assume the reader is familiar with the codebase but not with your specific implementation.
-- Use `oxlint` and eventually `oxfmt` for linting and formatting.
+- Use `oxlint` (check oxlint skill) and eventually `oxfmt` for linting and formatting.
 - Avoid duplicating code. If you find yourself copying and pasting, consider refactoring to create reusable functions or modules.
 - Avoid running `dev` or `build` commands. If you really need to, ask first.
 
@@ -91,4 +91,34 @@ Absolute rule: **no production line without a test that fails first.**
 
 **Test Driven Development (TDD) is mandatory for any code changes.** Follow the TDD cycle: Write a failing test → Write minimal code to pass the test → Refactor → Run the test suite to confirm all tests pass (follow `tdd` skill).
 
-**Test Runner: Bun test.** I prefer `bun test` over vitest because bun's native test runner is significantly faster — 10x faster startup and 2.5-8x faster execution. All tests use `bun:test` imports. Use `mock.module()` instead of `vi.mock()` for module mocking (not hoisted — use `await import()` after the mock setup).
+
+<test-driven-development>
+
+## Test Framework
+
+- **`bun test` is prefered when applicable.** Use bun's native test runner (`bun:test` imports) for all testing — it's 10x faster startup and 2.5-8x faster execution than vitest. Never use manual console.log test harnesses.
+- Import the module under test directly — **never copy-paste functions** into the test file. Testing copies of code instead of real imports is the most common silent failure pattern: the copy diverges from the source, and errors like missing dependencies or broken imports go undetected.
+- If an import cannot be resolved by the test runner (e.g. pi extension packages requiring jiti), **mock it with `mock.module()`** — do not inline a copy. The goal is to exercise the real module and catch resolution errors at test time.
+
+## Mocking pi extensions
+
+When a module imports from pi packages that require jiti (e.g., `@plannotator/pi-extension`, `@earendil-works/pi-coding-agent`), use bun's `mock.module()` to stub them:
+
+```ts
+import { mock, describe, it, expect } from "bun:test";
+
+mock.module("@plannotator/pi-extension/plannotator-browser.js", () => ({
+  openPlanReviewBrowser: mock(),
+  openMarkdownAnnotation: mock(),
+  hasPlanBrowserHtml: mock().mockReturnValue(false),
+}));
+
+// ⚠️ mock.module() is NOT hoisted — use dynamic import after setting up the mock
+const { validatePlanPath } = await import("./index.ts");
+```
+
+Key difference from vitest's `vi.mock()`: bun's `mock.module()` executes in order, not hoisted. Static `import` after `mock.module()` won't see the mock — you must use `await import(...)` after the mock setup.
+
+This catches import errors, type mismatches, and structural issues while keeping tests fast and isolated from the pi runtime.
+
+</test-driven-development>

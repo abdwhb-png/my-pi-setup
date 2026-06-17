@@ -11,6 +11,7 @@
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
     "types:check": "tsc --noEmit",
+    "typecheck": "bun run types:check",
     "check": "bun scripts/check.ts",
     "check:parse": "find extensions -name '*.ts' ! -name '*.test.ts' ! -path '*/node_modules/*' -print0 | xargs -0 -P4 -I{} bun build --no-bundle --no-clear-screen '{}' >/dev/null 2>&1 || exit 1"
   },
