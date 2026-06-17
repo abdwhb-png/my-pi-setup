@@ -1,0 +1,8 @@
+{
+    "autoStart": [
+        "typescript"
+    ],
+    "autoInjectDiagnostics": [
+        "typescript"
+    ]
+}
