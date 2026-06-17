@@ -107,7 +107,7 @@ function formatStatuses(
 ): string {
   if (statuses.length === 0 || maxWidth <= 0) return "";
 
-  const ordered = [...statuses].sort((a, b) => {
+  const ordered = [...statuses].toSorted((a, b) => {
     const rank = { error: 0, warning: 1, info: 2 } satisfies Record<StatusPriority, number>;
     return rank[a.priority] - rank[b.priority] || a.text.localeCompare(b.text);
   });

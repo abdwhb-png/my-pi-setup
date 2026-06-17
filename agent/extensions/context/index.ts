@@ -81,9 +81,10 @@ async function loadProjectContextFiles(cwd: string): Promise<Array<{ path: strin
 	const seen = new Set<string>();
 
 	const loadFromDir = async (dir: string) => {
-		for (const name of ["AGENTS.md", "CLAUDE.md"]) {
-			const p = path.join(dir, name);
-			const f = await readFileIfExists(p);
+		const results = await Promise.all(
+			["AGENTS.md", "CLAUDE.md"].map((name) => readFileIfExists(path.join(dir, name))),
+		);
+		for (const f of results) {
 			if (f && !seen.has(f.path)) {
 				seen.add(f.path);
 				out.push({ path: f.path, tokens: estimateTokens(f.content), bytes: f.bytes });
@@ -105,7 +106,7 @@ async function loadProjectContextFiles(cwd: string): Promise<Array<{ path: strin
 		current = parent;
 	}
 	stack.reverse();
-	for (const dir of stack) await loadFromDir(dir);
+	await Promise.all(stack.map((dir) => loadFromDir(dir)));
 
 	return out;
 }
@@ -120,16 +121,23 @@ type SkillIndexEntry = {
 	skillDir: string;
 };
 
+/** Extract the file path for a skill command, or "" if unavailable. */
+export function getSkillPathFromCommand(cmd: { source?: string; sourceInfo?: { path?: string } }): string {
+	if (cmd.source !== "skill") return "";
+	return cmd.sourceInfo?.path ?? "";
+}
+
 function buildSkillIndex(pi: ExtensionAPI, cwd: string): SkillIndexEntry[] {
 	return pi
 		.getCommands()
 		.filter((c) => c.source === "skill")
 		.map((c) => {
-			const p = (c as { path?: string }).path ? normalizeReadPath((c as { path?: string }).path!, cwd) : "";
+			const p = getSkillPathFromCommand(c);
+			const fullPath = p ? normalizeReadPath(p, cwd) : "";
 			return {
 				name: normalizeSkillName(c.name),
-				skillFilePath: p,
-				skillDir: p ? path.dirname(p) : "",
+				skillFilePath: fullPath,
+				skillDir: fullPath ? path.dirname(fullPath) : "",
 			};
 		})
 		.filter((x) => x.name && x.skillDir);
@@ -249,6 +257,21 @@ function joinComma(items: string[]): string {
 
 function joinCommaStyled(items: string[], renderItem: (item: string) => string, sep: string): string {
 	return items.map(renderItem).join(sep);
+}
+
+export function calculateExtensionFiles(commands: any[]): string[] {
+	const extensionCmds = commands.filter((c) => c.source === "extension");
+
+	const extensionsByPath = new Map<string, string[]>();
+	for (const c of extensionCmds) {
+		const p = c.sourceInfo?.path ?? "<unknown>";
+		const arr = extensionsByPath.get(p) ?? [];
+		arr.push(c.name);
+		extensionsByPath.set(p, arr);
+	}
+	return [...extensionsByPath.keys()]
+		.map((p) => (p === "<unknown>" ? p : path.basename(p)))
+		.toSorted((a, b) => a.localeCompare(b));
 }
 
 type ContextViewData = {
@@ -478,23 +501,13 @@ export default function contextExtension(pi: ExtensionAPI) {
 		description: "Show loaded context overview",
 		handler: async (_args, ctx: ExtensionCommandContext) => {
 			const commands = pi.getCommands();
-			const extensionCmds = commands.filter((c) => c.source === "extension");
-			const skillCmds = commands.filter((c) => c.source === "skill");
+			const extensionFiles = calculateExtensionFiles(commands);
 
-			const extensionsByPath = new Map<string, string[]>();
-			for (const c of extensionCmds) {
-				const p = (c as { path?: string }).path ?? "<unknown>";
-				const arr = extensionsByPath.get(p) ?? [];
-				arr.push(c.name);
-				extensionsByPath.set(p, arr);
-			}
-			const extensionFiles = [...extensionsByPath.keys()]
-				.map((p) => (p === "<unknown>" ? p : path.basename(p)))
-				.sort((a, b) => a.localeCompare(b));
+			const skillCmds = commands.filter((c) => c.source === "skill");
 
 			const skills = skillCmds
 				.map((c) => normalizeSkillName(c.name))
-				.sort((a, b) => a.localeCompare(b));
+				.toSorted((a, b) => a.localeCompare(b));
 
 			const agentFiles = await loadProjectContextFiles(ctx.cwd);
 			const agentFilePaths = agentFiles.map((f) => shortenPath(f.path, ctx.cwd));
@@ -551,7 +564,7 @@ export default function contextExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			const loadedSkills = Array.from(getLoadedSkillsFromSession(ctx)).sort((a, b) => a.localeCompare(b));
+			const loadedSkills = Array.from(getLoadedSkillsFromSession(ctx)).toSorted((a, b) => a.localeCompare(b));
 
 			const viewData: ContextViewData = {
 				usage: usage
