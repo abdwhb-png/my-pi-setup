@@ -1,0 +1,70 @@
+{
+    "refreshMs": 1500,
+    "iconFamily": "emoji",
+    "gaugeStyle": "blocks",
+    "gaugeWidth": 10,
+    "widgets": {
+        "branch": {
+            "enabled": false
+        },
+        "commit": {
+            "enabled": false
+        },
+        "diff-added": {
+            "enabled": false
+        },
+        "diff-removed": {
+            "enabled": false
+        },
+        "location": {
+            "enabled": false
+        },
+        "git-status": {
+            "enabled": false
+        },
+        "model": {
+            "enabled": false
+        },
+        "thinking": {
+            "enabled": false,
+            "icon": "hide"
+        },
+        "context-bar": {
+            "enabled": true,
+            "row": 0,
+            "align": "left",
+            "position": 1
+        },
+        "total-cost": {
+            "enabled": true,
+            "align": "left",
+            "row": 0,
+            "position": 3
+        },
+        "context-capacity": {
+            "enabled": false,
+            "row": 1,
+            "position": 2
+        }
+    },
+    "extensionWidgets": {
+        "git-status-widget": {
+            "row": 0,
+            "position": 1,
+            "align": "right"
+        },
+        "pi-agent-kit.sandbox": {
+            "row": 1,
+            "position": 1,
+            "align": "left"
+        },
+        "slow-mode": {
+            "row": 1,
+            "align": "left"
+        },
+        "pi-subagents-overview-widget": {
+            "row": 1,
+            "align": "right"
+        }
+    }
+}

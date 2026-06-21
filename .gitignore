@@ -21,9 +21,19 @@ web-search.json
 .atlas/
 node_modules/
 
+.pi/
 pi-acp/
 session-cron.*
 context-mode/
+
+.bash_profile
+.bashrc
+.mcp.json
+.profile
+.zprofile
+.zshrc
+.idea
+.ripgreprc
 
 # Lock files
 pnpm-lock.yaml

@@ -73,5 +73,7 @@ After completing the customisation, update this prompt with any new pitfalls or 
 | Tests pass but real command still broken | Run the actual end-user command (e.g. `pi --resume`) not just unit tests |
 | Extension is inside a monorepo subdirectory | Cannot use remote GitHub URL — use local path instead. Pi can't target subdirectories in git clones |
 | TypeScript extension not loading (trust) | Check `trust.json` — set `"prepare": true` if pi needs to pre-compile `.ts` entry points; or use `pi config --trust` |
+| DTS build fails on missing peer dep | tsup with `dts: true` fails if a `type-only` import from an optional peer dep can't be resolved. Set `dts: false` in tsup config — Pi loads via jiti at runtime and doesn't need `.d.ts` files |
+| `prepare` script runs `npm run build` but DTS fails → no `dist/` after install | Same fix: disable DTS in tsup config so the ESM build passes cleanly. Verify with `pi install <url>` end-to-end |
 
 Here is the customisation I need.

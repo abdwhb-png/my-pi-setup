@@ -1,4 +1,5 @@
 {
+    "typescript7": true,
     "autoStart": [
         "typescript"
     ],
