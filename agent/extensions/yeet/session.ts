@@ -102,8 +102,8 @@ export class CommitPlanSession implements Component {
 
     lines.push(renderBoxHeader(theme, innerWidth, " 📦 Commit Plan Review "));
 
-    const isActive = focus === "message";
-    const msgLabel = isActive ? " ✏️ Edit Message:" : " Commit Message:";
+    const isMessageFocused = focus === "message";
+    const msgLabel = isMessageFocused ? " ✏️ Edit Message:" : " Commit Message:";
     lines.push(theme.fg("border", "│") + " " + theme.fg("accent", theme.bold(msgLabel)));
     
     const inputLines = this.inputComponent.render(innerWidth - 3);
@@ -139,9 +139,9 @@ export class CommitPlanSession implements Component {
       }
     }
 
-    const footerText = isActive
-      ? "[Tab] Switch to Files  [Enter] Accept  [Esc] Cancel"
-      : "[Tab] Switch to Message  [Space] Toggle  [↑↓] Navigate  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel";
+    const footerText = isMessageFocused
+      ? "[Tab] Files  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel"
+      : "[Tab]Message [↑↓]Move [Space]Toggle [Enter]Accept [Ctrl+R]Rej [Esc]Cancel";
     
     lines.push(renderBoxFooter(theme, innerWidth, footerText));
 

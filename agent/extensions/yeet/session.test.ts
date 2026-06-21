@@ -61,7 +61,8 @@ describe('CommitPlanSession', () => {
       const output = session.render(80);
       expect(output.some((line) => line.includes('[Enter] Accept'))).toBe(true);
       expect(output.some((line) => line.includes('[Esc] Cancel'))).toBe(true);
-      expect(output.some((line) => line.includes('[Tab] Switch'))).toBe(true);
+      expect(output.some((line) => line.includes('[Tab]'))).toBe(true);
+      expect(output.some((line) => line.includes('[Ctrl+R]'))).toBe(true);
     });
   });
 
