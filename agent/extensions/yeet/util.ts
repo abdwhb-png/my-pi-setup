@@ -1,4 +1,5 @@
 import type { CommitPlanSessionState } from "./types";
+import { matchesKey } from "@earendil-works/pi-tui";
 
 export function handleCommitPlanInput(
   state: CommitPlanSessionState,
@@ -7,7 +8,7 @@ export function handleCommitPlanInput(
   const { focus, fileCursorIndex, files } = state;
 
   // --- Global keys ---
-  if (key === "\t") {
+  if (matchesKey(key, "tab")) {
     return {
       ...state,
       focus: focus === "message" ? "files" : "message",
@@ -28,8 +29,8 @@ export function handleCommitPlanInput(
     }
 
     // Handle both test strings ("ArrowUp") and actual terminal escape sequences
-    const isUp = key === "ArrowUp" || key === "\x1b[A" || key === "\x1bOA";
-    const isDown = key === "ArrowDown" || key === "\x1b[B" || key === "\x1bOB";
+    const isUp = key === "ArrowUp" || matchesKey(key, "up");
+    const isDown = key === "ArrowDown" || matchesKey(key, "down");
 
     if (isUp) {
       return { ...state, fileCursorIndex: Math.max(0, fileCursorIndex - 1) };

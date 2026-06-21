@@ -18,7 +18,14 @@ function makeState(overrides?: Partial<CommitPlanSessionState>): CommitPlanSessi
 describe("handleCommitPlanInput", () => {
   // --- Focus toggling ---
 
-  it("should toggle focus with Tab", () => {
+  it("should toggle focus with Tab using Kitty protocol encoding", () => {
+    const state = handleCommitPlanInput(makeState(), "\x1b[9u");
+    expect(state.focus).toBe("files");
+    const state2 = handleCommitPlanInput(state, "\x1b[9u");
+    expect(state2.focus).toBe("message");
+  });
+
+  it("should toggle focus with Tab using legacy raw byte", () => {
     const state = handleCommitPlanInput(makeState(), "\t");
     expect(state.focus).toBe("files");
     const state2 = handleCommitPlanInput(state, "\t");
@@ -27,7 +34,15 @@ describe("handleCommitPlanInput", () => {
 
   // --- File list navigation ---
 
-  it("should move file cursor with ArrowUp/ArrowDown", () => {
+  it("should move file cursor with ArrowUp/ArrowDown using legacy ESC sequences", () => {
+    const s0 = makeState({ focus: "files" });
+    const s1 = handleCommitPlanInput(s0, "\x1b[A");
+    expect(s1.fileCursorIndex).toBe(0);
+    const s1d = handleCommitPlanInput(s0, "\x1b[B");
+    expect(s1d.fileCursorIndex).toBe(1);
+  });
+
+  it("should move file cursor with ArrowUp/ArrowDown using test strings", () => {
     const s0 = makeState({ focus: "files" });
     const s1 = handleCommitPlanInput(s0, "ArrowDown");
     expect(s1.fileCursorIndex).toBe(1);
