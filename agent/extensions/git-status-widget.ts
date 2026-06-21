@@ -1,10 +1,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createWidget } from "./_shared/fancy-footer";
 
 const execFileAsync = promisify(execFile);
 const WIDGET_ID = "git-status-widget";
 const UPDATE_INTERVAL_MS = 2_000;
+
+let widgetText: string | null = null;
 
 async function runGit(args: string[], cwd: string) {
   const { stdout } = await execFileAsync("git", args, {
@@ -38,8 +41,8 @@ async function getUnstagedCount(cwd: string) {
   return countUnstagedFiles(status);
 }
 
-async function updateWidget(ctx: ExtensionContext) {
-  if (!ctx.hasUI) return;
+async function refreshWidgetText(ctx: ExtensionContext): Promise<string | null> {
+  if (!ctx.hasUI) return null;
 
   try {
     await runGit(["rev-parse", "--is-inside-work-tree"], ctx.cwd);
@@ -49,31 +52,46 @@ async function updateWidget(ctx: ExtensionContext) {
     ]);
 
     const fileLabel = unstagedCount === 1 ? "file" : "files";
-    ctx.ui.setWidget(WIDGET_ID, [` ${branch} · ${unstagedCount} unstaged ${fileLabel}`]);
+    return ` ${branch} · ${unstagedCount} unstaged ${fileLabel}`;
   } catch {
-    ctx.ui.setWidget(WIDGET_ID, undefined);
+    return null;
   }
 }
 
 export default function (pi: ExtensionAPI) {
   let interval: NodeJS.Timeout | undefined;
+  let w: ReturnType<typeof createWidget> | undefined;
 
   pi.on("session_start", async (_event, ctx) => {
     if (interval) clearInterval(interval);
 
-    await updateWidget(ctx);
-    interval = setInterval(() => {
-      void updateWidget(ctx);
+    w = createWidget(pi, {
+      id: WIDGET_ID,
+      label: "Git Status",
+      description: "Shows current branch and unstaged file count.",
+      row: 1,
+      order: 1,
+      align: "left",
+      render: () => widgetText,
+    });
+
+    widgetText = await refreshWidgetText(ctx);
+    w.update(ctx, widgetText);
+    interval = setInterval(async () => {
+      widgetText = await refreshWidgetText(ctx);
+      w?.update(ctx, widgetText);
     }, UPDATE_INTERVAL_MS);
   });
 
   pi.on("input", async (_event, ctx) => {
-    await updateWidget(ctx);
+    widgetText = await refreshWidgetText(ctx);
+    w?.update(ctx, widgetText);
     return { action: "continue" };
   });
 
   pi.on("tool_execution_end", async (_event, ctx) => {
-    await updateWidget(ctx);
+    widgetText = await refreshWidgetText(ctx);
+    w?.update(ctx, widgetText);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -81,6 +99,6 @@ export default function (pi: ExtensionAPI) {
       clearInterval(interval);
       interval = undefined;
     }
-    if (ctx.hasUI) ctx.ui.setWidget(WIDGET_ID, undefined);
+    w?.remove(ctx);
   });
 }

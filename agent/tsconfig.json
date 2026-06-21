@@ -5,7 +5,14 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
-    "strict": true
+    "strict": true,
+    "stableTypeOrdering": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "pi-fancy-footer": ["extensions/_shared/pi-fancy-footer-shim.d.ts"],
+      "pi-fancy-footer/api": ["extensions/_shared/pi-fancy-footer-shim.d.ts"]
+    }
   },
   "include": ["extensions/**/*.ts"],
   "exclude": ["node_modules", "git", "npm", "skills"]

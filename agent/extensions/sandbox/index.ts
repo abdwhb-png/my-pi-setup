@@ -44,8 +44,7 @@ import { join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type BashOperations, createBashTool, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { registerFancyFooterWidget, refreshFancyFooter } from "../_shared/fancy-footer.js";
-import { createUiColors } from "../_shared/ui-colors.js";
+import { createWidget } from "../_shared/fancy-footer";
 
 interface SandboxConfig extends SandboxRuntimeConfig {
 	enabled?: boolean;
@@ -224,49 +223,29 @@ export default function (pi: ExtensionAPI) {
 	let cachedBash = createBashTool(projectCwd);
 	let sandboxEnabled = false;
 	let sandboxInitialized = false;
-	let fancyFooterActive = false;
 	let sandboxFooterState: "on" | "restricted" | "off" | "error" = "off";
-	const fancyFooterReady = registerFancyFooterWidget(pi, () => ({
+	const w = createWidget(pi, {
 		id: "pi-agent-kit.sandbox",
 		label: "Sandbox",
 		description: "Shows whether sandboxed bash execution is enabled for the current session.",
-		defaults: {
-			row: 1,
-			position: 13,
-			align: "right",
-			fill: "none",
+		row: 1,
+		order: 13,
+		align: "right",
+		grow: false,
+		render: () => {
+			if (sandboxFooterState === "off") return null;
+			return {
+				text: `sandbox:${sandboxFooterState}`,
+				textColor: sandboxFooterState === "on"
+					? "accent" as const
+					: sandboxFooterState === "restricted" ? "warning" as const : "error" as const,
+			};
 		},
-		textColor: sandboxFooterState === "on"
-			? "accent"
-			: (sandboxFooterState === "restricted" ? "warning" : "error"),
-		visible: () => sandboxFooterState !== "off",
-		renderText: () => `sandbox:${sandboxFooterState}`,
-	})).then((active) => {
-		fancyFooterActive = active;
-		return active;
 	});
 
 	function updateSandboxStatus(ctx: ExtensionContext, status: "on" | "restricted" | "off" | "error"): void {
 		sandboxFooterState = status;
-		if (fancyFooterActive) {
-			if (ctx.hasUI) {
-				ctx.ui.setStatus("sandbox", undefined);
-			}
-			void refreshFancyFooter(pi);
-			return;
-		}
-		if (!ctx.hasUI) return;
-		if (status === "off") {
-			ctx.ui.setStatus("sandbox", undefined);
-			return;
-		}
-		const colors = createUiColors(ctx.ui.theme);
-		const text = status === "on"
-			? colors.primary("sandbox:on")
-			: status === "restricted"
-				? colors.warning("sandbox:restricted")
-				: colors.danger("sandbox:error");
-		ctx.ui.setStatus("sandbox", text);
+		w.update(ctx);
 	}
 
 	pi.registerTool({
@@ -290,7 +269,6 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		await fancyFooterReady;
 		projectCwd = ctx.cwd;
 		cachedBash = createBashTool(projectCwd);
 		const noSandbox = pi.getFlag("no-sandbox") as boolean;

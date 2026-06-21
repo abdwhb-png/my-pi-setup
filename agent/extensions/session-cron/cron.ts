@@ -2,8 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname } from "node:path";
-import { registerFancyFooterWidget, refreshFancyFooter } from "../_shared/fancy-footer.js";
-import { createUiColors } from "../_shared/ui-colors.js";
+import { createWidget } from "../_shared/fancy-footer";
 import { FILE_RELOAD_DEBOUNCE_MS } from "./constants";
 import { registerCronCommand } from "./cron-command";
 import { getCronTasksFilePath, loadStoredTasks, saveStoredTasks } from "./persistence";
@@ -21,27 +20,6 @@ export default function sessionCronExtension(pi: ExtensionAPI) {
 	let persistChain: Promise<void> = Promise.resolve();
 	let fileWatcher: FSWatcher | null = null;
 	let reloadTimer: ReturnType<typeof setTimeout> | null = null;
-	let fancyFooterActive = false;
-	const fancyFooterReady = registerFancyFooterWidget(pi, () => ({
-		id: "pi-agent-kit.session-cron",
-		label: "Cron",
-		description: "Scheduled cron tasks for the current session.",
-		defaults: {
-			row: 1,
-			position: 10,
-			align: "right",
-			fill: "none",
-		},
-		textColor: scheduler.isSchedulerOwner() ? "success" : "muted",
-		visible: () => store.size() > 0,
-		renderText: () => `cron:${store.size()}${scheduler.isSchedulerOwner() ? "" : " passive"}`,
-	})).then((active) => {
-		fancyFooterActive = active;
-		if (active && latestCtx?.hasUI) {
-			latestCtx.ui.setStatus("cron", undefined);
-		}
-		return active;
-	});
 
 	function persistTasks(): void {
 		persistChain = persistChain
@@ -132,6 +110,25 @@ export default function sessionCronExtension(pi: ExtensionAPI) {
 			await restoreOwnedTasks(latestCtx);
 		},
 	});
+
+	const w = createWidget(pi, {
+		id: "pi-agent-kit.session-cron",
+		label: "Cron",
+		description: "Scheduled cron tasks for the current session.",
+		row: 1,
+		order: 10,
+		align: "right",
+		grow: false,
+		render: () => {
+			if (store.size() === 0) return null;
+			const isOwner = scheduler.isSchedulerOwner();
+			return {
+				text: `cron:${store.size()}${isOwner ? "" : " passive"}`,
+				textColor: isOwner ? "success" as const : "muted" as const,
+			};
+		},
+	});
+
 	let latestCtx: ExtensionContext | null = null;
 
 	function setContext(ctx: ExtensionContext): void {
@@ -140,26 +137,7 @@ export default function sessionCronExtension(pi: ExtensionAPI) {
 	}
 
 	function updateStatus(): void {
-		if (fancyFooterActive) {
-			if (latestCtx?.hasUI) {
-				latestCtx.ui.setStatus("cron", undefined);
-			}
-			void refreshFancyFooter(pi);
-			return;
-		}
-		if (!latestCtx?.hasUI) return;
-		if (store.size() === 0) {
-			latestCtx.ui.setStatus("cron", undefined);
-			return;
-		}
-		const colors = createUiColors(latestCtx.ui.theme);
-		const suffix = scheduler.isSchedulerOwner() ? "" : " (passive)";
-		latestCtx.ui.setStatus(
-			"cron",
-			scheduler.isSchedulerOwner()
-				? colors.success(`cron:${store.size()}${suffix}`)
-				: colors.meta(`cron:${store.size()}${suffix}`),
-		);
+		w.update(latestCtx!);
 	}
 
 	async function restoreOwnedTasks(ctx: ExtensionContext): Promise<void> {
@@ -230,7 +208,6 @@ export default function sessionCronExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		setContext(ctx);
-		await fancyFooterReady;
 		store.replaceAll(await loadStoredTasks());
 		updateStatus();
 		await persistChain;

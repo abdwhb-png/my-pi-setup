@@ -11,7 +11,8 @@
     "**/node_modules/**",
     "**/pnpm-lock.yaml",
     "**/*.generated.ts",
-    "**/.fallow/**"
+    "**/.fallow/**",
+    "pi-integrations/**"
   ],
   "ignoreDependencies": [
     "@types/node",

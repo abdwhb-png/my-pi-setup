@@ -31,6 +31,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
+import { createWidget } from "../_shared/fancy-footer";
 
 export default function slowMode(pi: ExtensionAPI) {
   // State: whether slow mode is currently enabled
@@ -48,6 +49,17 @@ export default function slowMode(pi: ExtensionAPI) {
   // Uses mkdtempSync for secure, unpredictable temp directory creation
   // to prevent symlink attacks and tmpdir races
   const tmpDir = mkdtempSync(join(tmpdir(), "pi-slow-mode-"));
+
+  // Fancy-footer widget (falls back to setWidget if fancy-footer unavailable)
+  const w = createWidget(pi, {
+    id: "slow-mode",
+    label: "Slow Mode",
+    description: "Shows whether slow mode is active.",
+    row: 1,
+    order: 8,
+    align: "right",
+    render: () => enabled ? "slow ■" : null,
+  });
 
   // Clean up staging directory on session shutdown
   pi.on("session_shutdown", async () => {
@@ -73,13 +85,10 @@ export default function slowMode(pi: ExtensionAPI) {
 
       // Flip the enabled flag
       enabled = !enabled;
+      w.update(ctx, enabled ? "slow ■" : null);
       if (enabled) {
-        // Show status bar indicator when active
-        ctx.ui.setStatus("slow-mode", ctx.ui.theme.fg("warning", "\uf256 slow"));
         ctx.ui.notify("Slow mode enabled — write/edit changes require approval", "info");
       } else {
-        // Clear status bar indicator when disabled
-        ctx.ui.setStatus("slow-mode", undefined);
         ctx.ui.notify("Slow mode disabled", "info");
       }
     },

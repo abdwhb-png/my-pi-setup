@@ -18,7 +18,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { createWidget } from "../_shared/fancy-footer";
 import { SubagentsOverviewWidget, AgentDetailWidget } from "./widget";
 
 // ── ANSI color constants ──────────────────────────────
@@ -244,25 +243,25 @@ function buildWidgetLine(): string {
     .map((a) => a.name);
 
   const safeBashPart =
-    safeBashAgents.length > 0 ? ` · ${safeBashAgents.length} 🛡️sb` : "";
+    safeBashAgents.length > 0 ? ` · ${safeBashAgents.length} safe_bash` : "";
 
   const overridePart =
     overrideCount > 0 ? ` · ${overrideCount} ovr` : "";
 
-  return `🤖 Subagents: ${builtins.length}B/${users.length}U${safeBashPart}${overridePart} (total ${total})`;
-}
+  // Check if videographer agent exists
+  const hasVideographer = users.some((a) => a.name === "videographer");
+  const videoPart = hasVideographer ? " · 🎬 video" : "";
 
-let widgetText: string | null = null;
-let widgetHandle: ReturnType<typeof createWidget> | undefined;
+  return `🤖 Subagents: ${builtins.length}B/${users.length}U${safeBashPart}${overridePart}${videoPart} (total ${total})`;
+}
 
 function updateWidget(ctx: ExtensionContext): void {
   if (!ctx.hasUI) return;
   try {
-    widgetText = buildWidgetLine();
-    widgetHandle?.update(ctx);
+    const line = buildWidgetLine();
+    ctx.ui.setWidget(WIDGET_ID, [line]);
   } catch {
-    widgetText = null;
-    widgetHandle?.update(ctx);
+    ctx.ui.setWidget(WIDGET_ID, undefined);
   }
 }
 
@@ -659,16 +658,6 @@ export default function (pi: ExtensionAPI) {
 
   // ── Persistent Widget ─
 
-  widgetHandle = createWidget(pi, {
-    id: WIDGET_ID,
-    label: "Subagents",
-    description: "Shows subagent counts (builtin/user) and tools in use.",
-    row: 1,
-    order: 2,
-    align: "left",
-    render: () => widgetText,
-  });
-
   pi.on("session_start", async (_event, ctx) => {
     clearSkillAgentCache();
     // Defer registration to yield to git-status-widget's async setWidget()
@@ -687,6 +676,6 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    widgetHandle?.remove(ctx);
+    if (ctx.hasUI) ctx.ui.setWidget(WIDGET_ID, undefined);
   });
 }

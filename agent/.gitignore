@@ -13,6 +13,7 @@ auth.json
 
 models.json
 settings.json
+settings.json.*
 mcp-cache.json
 mcp.json
 git/
