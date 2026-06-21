@@ -117,6 +117,23 @@ describe('CommitPlanSession', () => {
       expect(result.commit_message).toBe('feat: add new feature!');
     });
 
+    it('accepts on Enter when focus is files', () => {
+      session.handleInput('\t');
+      session.handleInput('\r');
+      expect(done).toHaveBeenCalledTimes(1);
+      const result: CommitPlanResult = done.mock.calls[0][0];
+      expect(result.accepted).toBe(true);
+    });
+
+    it('cancels on Escape when focus is files', () => {
+      session.handleInput('\t');
+      session.handleInput('\x1b');
+      expect(done).toHaveBeenCalledTimes(1);
+      const result: CommitPlanResult = done.mock.calls[0][0];
+      expect(result.accepted).toBe(false);
+      expect(result.cancelled).toBe(true);
+    });
+
     it('should append text to the end of the initial message (verifying cursor position)', () => {
       // Create a fresh session for this test to avoid interference with other tests
       const _freshSession = new CommitPlanSession({

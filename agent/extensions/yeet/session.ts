@@ -1,4 +1,4 @@
-import { Input, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import { Input, truncateToWidth, matchesKey, type Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { CommitPlanParams, CommitPlanResult, CommitPlanSessionState } from "./types";
 import { handleCommitPlanInput } from "./util";
@@ -54,19 +54,36 @@ export class CommitPlanSession implements Component {
   }
 
   handleInput(data: string): void {
-    if (data === "\x12") {
+    if (matchesKey(data, "ctrl+r")) {
       this.config.done(rejectResult(this.config.params, false));
       return;
     }
 
     // Intercept Tab to switch focus before the Input component can process it
-    if (data === "\t") {
+    if (matchesKey(data, "tab")) {
       this.state = handleCommitPlanInput(this.state, data);
       return;
     }
 
     if (this.state.focus === "message") {
       this.inputComponent.handleInput(data);
+      return;
+    }
+
+    // When focus is on files, handle Enter/Escape globally, not via Input component
+    if (matchesKey(data, "enter")) {
+      this.config.done({
+        accepted: true,
+        cancelled: false,
+        plan_summary: this.config.params.plan_summary,
+        files: this.state.files.filter((f) => f.selected).map((f) => f.path),
+        commit_message: this.inputComponent.getValue(),
+      });
+      return;
+    }
+
+    if (matchesKey(data, "escape")) {
+      this.config.done(rejectResult(this.config.params, true));
       return;
     }
 
