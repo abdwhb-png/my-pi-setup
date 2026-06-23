@@ -31,14 +31,14 @@
         },
         "context-bar": {
             "enabled": true,
-            "row": 0,
-            "align": "left",
+            "row": 1,
+            "align": "right",
             "position": 1
         },
         "total-cost": {
             "enabled": true,
-            "align": "left",
-            "row": 0,
+            "align": "right",
+            "row": 1,
             "position": 3
         },
         "context-capacity": {
@@ -48,23 +48,26 @@
         }
     },
     "extensionWidgets": {
+        "session-status-bar": {
+            "row": 0
+        },
         "git-status-widget": {
-            "row": 0,
+            "row": 1,
             "position": 1,
+            "align": "left"
+        },
+        "pi-subagents-overview-widget": {
+            "row": 2,
             "align": "right"
         },
         "pi-agent-kit.sandbox": {
-            "row": 1,
+            "row": 2,
             "position": 1,
             "align": "left"
         },
         "slow-mode": {
-            "row": 1,
+            "row": 2,
             "align": "left"
-        },
-        "pi-subagents-overview-widget": {
-            "row": 1,
-            "align": "right"
         }
     }
 }
