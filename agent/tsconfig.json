@@ -10,8 +10,8 @@
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
-      "pi-fancy-footer": ["extensions/_shared/pi-fancy-footer-shim.d.ts"],
-      "pi-fancy-footer/api": ["extensions/_shared/pi-fancy-footer-shim.d.ts"]
+      "pi-fancy-footer": ["../projects/pi-integrations/pi-fancy-footer/src/index.ts"],
+      "pi-fancy-footer/api": ["../projects/pi-integrations/pi-fancy-footer/src/api.ts"]
     }
   },
   "include": ["extensions/**/*.ts"],

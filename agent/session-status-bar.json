@@ -1,12 +1,11 @@
 {
     "enabled": true,
-    "twoLine": true,
+    "twoLine": false,
     "showContext": true,
     "showCost": true,
     "showModel": true,
     "showCwd": true,
-    "showBranch": true,
+    "showBranch": false,
     "showSessionName": true,
-    "showExtensionStatuses": true,
     "refreshMs": 3000
 }
