@@ -1,5 +1,7 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 
+export type UiColorsCreation = ReturnType<typeof createUiColors>;
+
 export const DEFAULT_WARNING_PERCENT = 70;
 export const DEFAULT_ERROR_PERCENT = 90;
 

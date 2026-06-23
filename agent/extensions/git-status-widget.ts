@@ -1,58 +1,30 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { runGit, getBranch, getUnstagedCount } from "./_shared/git-helper";
 import { createWidget } from "./_shared/fancy-footer";
+import {
+  createUiColors,
+} from "./_shared/ui-colors";
 
-const execFileAsync = promisify(execFile);
 const WIDGET_ID = "git-status-widget";
 const UPDATE_INTERVAL_MS = 2_000;
 
 let widgetText: string | null = null;
 
-async function runGit(args: string[], cwd: string) {
-  const { stdout } = await execFileAsync("git", args, {
-    cwd,
-    timeout: 2_000,
-    maxBuffer: 1024 * 1024,
-  });
-  return stdout.trimEnd();
-}
-
-async function getBranch(cwd: string) {
-  const branch = await runGit(["branch", "--show-current"], cwd);
-  if (branch.length > 0) return branch;
-
-  const head = await runGit(["rev-parse", "--short", "HEAD"], cwd);
-  return head.length > 0 ? `detached@${head}` : "unknown";
-}
-
-function countUnstagedFiles(statusOutput: string) {
-  if (statusOutput.length === 0) return 0;
-
-  let count = 0;
-  for (const line of statusOutput.split("\n")) {
-    if (line.startsWith("??") || line[1] !== " ") count += 1;
-  }
-  return count;
-}
-
-async function getUnstagedCount(cwd: string) {
-  const status = await runGit(["status", "--porcelain", "--untracked-files=normal"], cwd);
-  return countUnstagedFiles(status);
-}
-
 async function refreshWidgetText(ctx: ExtensionContext): Promise<string | null> {
   if (!ctx.hasUI) return null;
 
   try {
+
     await runGit(["rev-parse", "--is-inside-work-tree"], ctx.cwd);
     const [branch, unstagedCount] = await Promise.all([
       getBranch(ctx.cwd),
       getUnstagedCount(ctx.cwd),
     ]);
 
+    const colors = createUiColors(ctx.ui.theme);
+
     const fileLabel = unstagedCount === 1 ? "file" : "files";
-    return ` ${branch} · ${unstagedCount} unstaged ${fileLabel}`;
+    return ` ${colors.primary(branch)} · ${colors.warning(`${unstagedCount} unstaged ${fileLabel}`)}`;
   } catch {
     return null;
   }
