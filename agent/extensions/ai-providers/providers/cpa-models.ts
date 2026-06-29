@@ -28,7 +28,35 @@ interface OpenRouterModel {
 	pricing: { prompt: string; completion: string };
 	top_provider: { max_completion_tokens: number | null };
 	supported_parameters?: string[];
+	architecture?: { input_modalities?: string[] };
 }
+
+// ── Static image support map (for non-OpenRouter models) ──
+// These model IDs are known to support image input through CPA.
+// OpenRouter models are checked dynamically via architecture.input_modalities.
+export const STATIC_IMAGE_MODELS = new Set<string>([
+	// Antigravity — Claude models (vision)
+	"claude-sonnet-4-6",
+	"claude-opus-4-6-thinking",
+	// Antigravity — Gemini models (multimodal by default)
+	"gemini-3.1-pro-low",
+	"gemini-3-flash",
+	"gemini-3-flash-agent",
+	"gemini-3.1-flash-lite",
+	"gemini-3.1-flash-image",
+	"gemini-3.5-flash-low",
+	"gemini-3.5-flash-extra-low",
+	"gemini-pro-agent",
+	// Codex — GPT models (vision)
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.5",
+	// OpenCode Go — models with confirmed vision support
+	"ocg/go-kimi-k2.7-code",
+	"ocg/go-kimi-k2.6",
+	"ocg/go-deepseek-v4-pro",
+	"ocg/go-deepseek-v4-flash",
+]);
 
 // ── Module-level cache ──
 
@@ -130,6 +158,7 @@ export async function fetchOpenRouterMetadata(): Promise<Map<string, OpenRouterM
 			pricing: { prompt: string; completion: string };
 			top_provider: { max_completion_tokens: number | null };
 			supported_parameters?: string[];
+			architecture?: { input_modalities?: string[] };
 		}> | undefined;
 
 		if (!data || !Array.isArray(data)) {
@@ -152,6 +181,7 @@ export async function fetchOpenRouterMetadata(): Promise<Map<string, OpenRouterM
 						max_completion_tokens: m.top_provider?.max_completion_tokens ?? null,
 					},
 					supported_parameters: m.supported_parameters ?? [],
+					architecture: m.architecture ?? undefined,
 				});
 			}
 		}
@@ -470,11 +500,22 @@ export function enrichModel(
 		};
 	}
 
+	// ── Image support detection ──
+	let input: Array<"text" | "image"> = ["text"];
+	// Check OpenRouter architecture.input_modalities for OR-routed models
+	if (orMatch?.architecture?.input_modalities?.includes("image")) {
+		input = ["text", "image"];
+	}
+	// Check static image map (for non-OR models or when OR metadata is unavailable)
+	if (STATIC_IMAGE_MODELS.has(modelId)) {
+		input = ["text", "image"];
+	}
+
 	return {
 		id: modelId,
 		name: formatModelName(modelId, ownedBy),
 		reasoning,
-		input: ["text"],
+		input,
 		contextWindow,
 		maxTokens,
 		cost,
@@ -510,7 +551,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "ocg/go-kimi-k2.7-code",
 		name: "Kimi K2.7 Code (Go)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 262_144,
 		maxTokens: 33_000,
 		cost: { input: 0.95, output: 4.0, cacheRead: 0.19, cacheWrite: 0 },
@@ -520,7 +561,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "ocg/go-kimi-k2.6",
 		name: "Kimi K2.6 (Go)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 262_144,
 		maxTokens: 16_384,
 		cost: { input: 0.95, output: 4.0, cacheRead: 0.16, cacheWrite: 0 },
@@ -530,7 +571,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "ocg/go-deepseek-v4-pro",
 		name: "DeepSeek V4 Pro (Go)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_000_000,
 		maxTokens: 384_000,
 		cost: { input: 1.74, output: 3.48, cacheRead: 0.0145, cacheWrite: 0 },
@@ -540,7 +581,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "ocg/go-deepseek-v4-flash",
 		name: "DeepSeek V4 Flash (Go)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_000_000,
 		maxTokens: 384_000,
 		cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
@@ -682,7 +723,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "claude-sonnet-4-6",
 		name: "Claude Sonnet 4.6 (Antigravity)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_000_000,
 		maxTokens: 64_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -692,7 +733,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "claude-opus-4-6-thinking",
 		name: "Claude Opus 4.6 Thinking (Antigravity)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_000_000,
 		maxTokens: 128_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -702,7 +743,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3.1-pro-low",
 		name: "Gemini 3.1 Pro Low (Antigravity)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -712,7 +753,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3-flash",
 		name: "Gemini 3 Flash (Antigravity)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -722,7 +763,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3-flash-agent",
 		name: "Gemini 3 Flash Agent (Antigravity)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -732,7 +773,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3.1-flash-lite",
 		name: "Gemini 3.1 Flash Lite (Antigravity)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -742,7 +783,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3.1-flash-image",
 		name: "Gemini 3.1 Flash Image (Antigravity)",
 		reasoning: false,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -752,7 +793,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3.5-flash-low",
 		name: "Gemini 3.5 Flash Low (Antigravity)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_000_000,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -762,7 +803,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "gemini-3.5-flash-extra-low",
 		name: "Gemini 3.5 Flash Extra Low (Antigravity)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_000_000,
 		maxTokens: 32_768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -772,7 +813,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		id: "gemini-pro-agent",
 		name: "Gemini Pro Agent (Antigravity)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

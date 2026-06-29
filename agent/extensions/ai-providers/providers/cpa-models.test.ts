@@ -14,6 +14,7 @@ import {
 	resetOrMetadataCache,
 	buildCpaModels,
 	STATIC_FALLBACK_MODELS,
+	STATIC_IMAGE_MODELS,
 	PROVIDER_OVERRIDES,
 } from "./cpa-models.ts";
 import type { CpaModelEntry } from "./cpa-models.ts";
@@ -369,9 +370,28 @@ describe("STATIC_FALLBACK_MODELS", () => {
 		expect(antigravityModels.length).toBe(11);
 	});
 
-	it("every model has input: ['text']", () => {
+	it("every model has input with text", () => {
 		for (const m of STATIC_FALLBACK_MODELS) {
+			expect(m.input).toContain("text");
+		}
+	});
+
+	it("text-only models have input: ['text']", () => {
+		const textOnly = STATIC_FALLBACK_MODELS.filter(
+			(m) => !STATIC_IMAGE_MODELS.has(m.id),
+		);
+		for (const m of textOnly) {
 			expect(m.input).toEqual(["text"]);
+		}
+	});
+
+	it("image-capable models have input: ['text', 'image']", () => {
+		const imageModels = STATIC_FALLBACK_MODELS.filter(
+			(m) => STATIC_IMAGE_MODELS.has(m.id),
+		);
+		expect(imageModels.length).toBeGreaterThan(0);
+		for (const m of imageModels) {
+			expect(m.input).toEqual(["text", "image"]);
 		}
 	});
 
