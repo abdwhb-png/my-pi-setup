@@ -5,16 +5,23 @@
  * pipeline, static fallback completeness, and buildCpaModels orchestration.
  */
 
-import { describe, expect, it, mock, beforeEach } from "bun:test";
+import { afterEach, describe, expect, it, mock, beforeEach } from "bun:test";
 import {
 	enrichModel,
 	familyDefaults,
 	fetchCpaModelIds,
 	fetchOpenRouterMetadata,
+	resetOrMetadataCache,
+	buildCpaModels,
 	STATIC_FALLBACK_MODELS,
 	PROVIDER_OVERRIDES,
 } from "./cpa-models.ts";
 import type { CpaModelEntry } from "./cpa-models.ts";
+
+// Ensure cache isolation between tests
+beforeEach(() => {
+	resetOrMetadataCache();
+});
 
 // ── familyDefaults ──
 
@@ -266,8 +273,8 @@ describe("enrichModel enrichment pipeline", () => {
 		expect(result.reasoning).toBe(true);
 	});
 
-	it("applies OpenRouter metadata for ocg/ models matching by alias", () => {
-		// Use a model that doesn't have provider overrides — pure OpenRouter model
+	it("applies OpenRouter metadata for non-ocg models by direct ID match", () => {
+		// Direct match on the model ID (no ocg/ prefix)
 		const orMeta = new Map([
 			[
 				"deepseek/deepseek-v4-flash",
@@ -283,9 +290,32 @@ describe("enrichModel enrichment pipeline", () => {
 		]);
 		const entry: CpaModelEntry = { id: "deepseek/deepseek-v4-flash", owned_by: "openrouter" };
 		const result = enrichModel(entry, orMeta)!;
-		// OR metadata overrides family defaults (which give 384K maxTokens)
+		// OR metadata overrides family defaults
 		expect(result.contextWindow).toBe(1_048_576);
 		expect(result.maxTokens).toBe(16_384);
+	});
+
+	it("applies OpenRouter metadata for ocg/ models via ocgAlias lookup", () => {
+		// ocg/ prefix is stripped, then the alias is looked up in OR metadata
+		const orMeta = new Map([
+			[
+				"deepseek/deepseek-v4-flash",
+				{
+					id: "deepseek/deepseek-v4-flash",
+					name: "DeepSeek V4 Flash",
+					context_length: 1_048_576,
+					pricing: { prompt: "0.00000015", completion: "0.00000020" },
+					top_provider: { max_completion_tokens: 8_192 },
+					supported_parameters: ["reasoning"],
+				},
+			],
+		]);
+		// Use an ocg/ prefixed entry, but the OR map has the unprefixed alias
+		const entry: CpaModelEntry = { id: "ocg/deepseek/deepseek-v4-flash", owned_by: "openrouter" };
+		const result = enrichModel(entry, orMeta)!;
+		// OR metadata should be found via alias (ocgAlias strips the prefix)
+		expect(result.contextWindow).toBe(1_048_576);
+		expect(result.maxTokens).toBe(8_192);
 	});
 
 	it("applies provider-specific overrides for OpenCode Go", () => {
@@ -381,29 +411,102 @@ describe("PROVIDER_OVERRIDES", () => {
 	});
 });
 
-// ── Integration: buildCpaModels returns static fallback when fetch fails ──
+// ── Integration: buildCpaModels ──
 
-describe("buildCpaModels (via fetchCpaModelIds mock)", () => {
-	it("fetchCpaModelIds returns empty on failed fetch", async () => {
-		// Mock global fetch to simulate a network failure
-		const origFetch = globalThis.fetch;
-		globalThis.fetch = mock(() => Promise.reject(new Error("network error"))) as unknown as typeof fetch;
-		try {
-			const result = await fetchCpaModelIds("http://localhost:8317/v1", "test-key");
-			expect(result).toEqual([]);
-		} finally {
-			globalThis.fetch = origFetch;
-		}
+describe("buildCpaModels", () => {
+	const origFetch = globalThis.fetch;
+
+	afterEach(() => {
+		globalThis.fetch = origFetch;
+		resetOrMetadataCache();
 	});
 
-	it("fetchOpenRouterMetadata returns empty map on failed fetch", async () => {
-		const origFetch = globalThis.fetch;
+	it("returns STATIC_FALLBACK_MODELS when CPA returns empty (CPA down)", async () => {
+		// Mock both CPA and OR to fail
 		globalThis.fetch = mock(() => Promise.reject(new Error("network error"))) as unknown as typeof fetch;
-		try {
-			const result = await fetchOpenRouterMetadata();
-			expect(result.size).toBe(0);
-		} finally {
-			globalThis.fetch = origFetch;
-		}
+		const result = await buildCpaModels("http://localhost:8317/v1", "test-key");
+		expect(result.length).toBe(30);
+		expect(result).toBe(STATIC_FALLBACK_MODELS);
+	});
+
+	it("returns STATIC_FALLBACK_MODELS when all entries filter to null", async () => {
+		// CPA returns only prefixed variants (all filtered by enrichModel)
+		let callCount = 0;
+		globalThis.fetch = mock((_url: string, _opts?: RequestInit) => {
+			callCount++;
+			return Promise.resolve(new Response(
+				JSON.stringify({
+					data: [
+						{ id: "or/deepseek/deepseek-v4-flash", owned_by: "openrouter" },
+						{ id: "go-glm-5.2", owned_by: "ocode-go (main)" },
+					],
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			));
+		}) as unknown as typeof fetch;
+
+		const result = await buildCpaModels("http://localhost:8317/v1", "test-key");
+		expect(result.length).toBe(30);
+		expect(result).toBe(STATIC_FALLBACK_MODELS);
+	});
+
+	it("returns enriched models when CPA returns entries", async () => {
+		// CPA call = call 1, OpenRouter call = call 2
+		let callCount = 0;
+		globalThis.fetch = mock((_url: string, _opts?: RequestInit) => {
+			callCount++;
+			if (callCount === 1) {
+				// CPA /v1/models response
+				return Promise.resolve(new Response(
+					JSON.stringify({
+						data: [
+							{ id: "deepseek/deepseek-v4-flash", owned_by: "openrouter" },
+							{ id: "claude-sonnet-4-6", owned_by: "antigravity" },
+						],
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				));
+			}
+			// OpenRouter /v1/models response
+			return Promise.resolve(new Response(
+				JSON.stringify({
+					data: [
+						{
+							id: "deepseek/deepseek-v4-flash",
+							name: "DeepSeek V4 Flash",
+							context_length: 1_048_576,
+							pricing: { prompt: "0.00000012", completion: "0.00000018" },
+							top_provider: { max_completion_tokens: 8192 },
+							supported_parameters: ["reasoning"],
+						},
+					],
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			));
+		}) as unknown as typeof fetch;
+
+		const result = await buildCpaModels("http://localhost:8317/v1", "test-key");
+		expect(result.length).toBe(2);
+		expect(result[0].id).toBe("deepseek/deepseek-v4-flash");
+		expect(result[1].id).toBe("claude-sonnet-4-6");
+		// DeepSeek model should have OR metadata (context 1M+)
+		expect(result[0].contextWindow).toBe(1_048_576);
+		// Claude model should have family defaults (1M)
+		expect(result[1].contextWindow).toBe(1_000_000);
+	});
+
+	it("fetchCpaModelIds returns empty on failed fetch", async () => {
+		globalThis.fetch = mock(() => Promise.reject(new Error("network error"))) as unknown as typeof fetch;
+		const result = await fetchCpaModelIds("http://localhost:8317/v1", "test-key");
+		expect(result).toEqual([]);
+	});
+
+	it("fetchOpenRouterMetadata returns empty map on failed fetch without caching", async () => {
+		globalThis.fetch = mock(() => Promise.reject(new Error("network error"))) as unknown as typeof fetch;
+		const result = await fetchOpenRouterMetadata();
+		expect(result.size).toBe(0);
+		// Verify cache was NOT set (next call should retry)
+		const retry = await fetchOpenRouterMetadata();
+		expect(retry.size).toBe(0);
 	});
 });

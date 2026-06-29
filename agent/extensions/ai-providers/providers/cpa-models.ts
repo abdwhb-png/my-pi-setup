@@ -34,6 +34,14 @@ interface OpenRouterModel {
 
 let orMetadataCache: Map<string, OpenRouterModel> | null = null;
 
+/** Reset the OpenRouter metadata cache (for testing). */
+export function resetOrMetadataCache(): void {
+	orMetadataCache = null;
+}
+
+/** Shared compat constant — avoids repeating the cast across ~30 model entries. */
+const NO_DEV_ROLE_COMPAT = { supportsDeveloperRole: false } as ProviderModelConfig["compat"];
+
 // ── Helper: parse per-million cost strings from OpenRouter ──
 
 function parseOrCost(s: string): number {
@@ -111,8 +119,7 @@ export async function fetchOpenRouterMetadata(): Promise<Map<string, OpenRouterM
 
 		if (!response.ok) {
 			console.warn(`[cpa-models] OpenRouter /v1/models returned ${response.status}`);
-			orMetadataCache = new Map();
-			return orMetadataCache;
+			return new Map();
 		}
 
 		const json = await response.json();
@@ -127,8 +134,7 @@ export async function fetchOpenRouterMetadata(): Promise<Map<string, OpenRouterM
 
 		if (!data || !Array.isArray(data)) {
 			console.warn("[cpa-models] Unexpected OpenRouter /v1/models response shape");
-			orMetadataCache = new Map();
-			return orMetadataCache;
+			return new Map();
 		}
 
 		const map = new Map<string, OpenRouterModel>();
@@ -158,8 +164,7 @@ export async function fetchOpenRouterMetadata(): Promise<Map<string, OpenRouterM
 		} else {
 			console.warn("[cpa-models] OpenRouter /v1/models fetch failed:", err);
 		}
-		orMetadataCache = new Map();
-		return orMetadataCache;
+		return new Map();
 	} finally {
 		clearTimeout(timeout);
 	}
@@ -339,34 +344,57 @@ export const PROVIDER_OVERRIDES: Record<string, Record<string, ProviderOverride>
 // ── Helper: format model name for display ──
 
 function formatModelName(id: string, ownedBy: string): string {
+	// Normalize a name part: uppercase first letter and fix known acronyms
+	const normalizeWord = (w: string): string => {
+		const upper = w.charAt(0).toUpperCase() + w.slice(1);
+		// Known multi-letter acronyms that should stay uppercase
+		const acronyms: Record<string, string> = {
+			Glm: "GLM",
+			Mimo: "MiMo",
+			Gpt: "GPT",
+			Oss: "OSS",
+			Kimi: "Kimi",
+			Qwen: "Qwen",
+			Gemma: "Gemma",
+			Grok: "Grok",
+			Nemotron: "Nemotron",
+			Deepseek: "DeepSeek",
+			Moonshotai: "MoonshotAI",
+			Laguna: "Laguna",
+		};
+		return acronyms[upper] ?? upper;
+	};
+
 	if (id.startsWith("ocg/go-")) {
 		const base = id.slice(7); // remove "ocg/go-"
 		const readable = base
-			.replace(/-/g, " ")
-			.replace(/\b\w/g, (c) => c.toUpperCase())
-			.replace(/v(\d+)/gi, "V$1");
+			.split("-")
+			.map((w) => normalizeWord(w))
+			.join(" ")
+			.replace(/V(\d+)/gi, "V$1");
 		return `${readable} (Go)`;
 	}
 
 	if (ownedBy === "antigravity") {
 		const readable = id
-			.replace(/-/g, " ")
-			.replace(/\b\w/g, (c) => c.toUpperCase())
-			.replace(/v(\d+)/gi, "V$1")
-			.replace(/Gpt Oss/i, "GPT-OSS");
+			.split("-")
+			.map((w) => normalizeWord(w))
+			.join(" ")
+			.replace(/V(\d+)/gi, "V$1");
 		return `${readable} (Antigravity)`;
 	}
 
 	if (ownedBy === "openai") {
-		const readable = id.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+		const readable = id.split("-").map((w) => normalizeWord(w)).join(" ");
 		return `${readable} (Codex)`;
 	}
 
 	// Pool / OpenRouter models: use slashes as separators, add "(Pool)"
 	const readable = id
 		.replace(/\//g, " ")
-		.replace(/-/g, " ")
-		.replace(/\b\w/g, (c) => c.toUpperCase())
+		.split(/[-\s]/)
+		.map((w) => normalizeWord(w))
+		.join(" ")
 		.replace(/:free/gi, " Free")
 		.replace(/V(\d+)/gi, "V$1");
 	return `${readable} (Pool)`;
@@ -450,7 +478,7 @@ export function enrichModel(
 		contextWindow,
 		maxTokens,
 		cost,
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	};
 }
 
@@ -466,7 +494,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 131_072,
 		cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "ocg/go-glm-5.1",
@@ -476,7 +504,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 200_000,
 		maxTokens: 128_000,
 		cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "ocg/go-kimi-k2.7-code",
@@ -486,7 +514,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 262_144,
 		maxTokens: 33_000,
 		cost: { input: 0.95, output: 4.0, cacheRead: 0.19, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "ocg/go-kimi-k2.6",
@@ -496,7 +524,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 262_144,
 		maxTokens: 16_384,
 		cost: { input: 0.95, output: 4.0, cacheRead: 0.16, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "ocg/go-deepseek-v4-pro",
@@ -506,7 +534,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 384_000,
 		cost: { input: 1.74, output: 3.48, cacheRead: 0.0145, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "ocg/go-deepseek-v4-flash",
@@ -516,7 +544,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 384_000,
 		cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "ocg/go-mimo-v2.5",
@@ -526,7 +554,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 128_000,
 		cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "ocg/go-mimo-v2.5-pro",
@@ -536,7 +564,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 1_000_000,
 		cost: { input: 1.74, output: 3.48, cacheRead: 0.0145, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	// OpenRouter pool (11)
 	{
@@ -547,7 +575,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 131_072,
 		cost: { input: 0.1, output: 0.2, cacheRead: 0.02, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "deepseek/deepseek-v4-pro",
@@ -557,7 +585,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 384_000,
 		cost: { input: 0.44, output: 0.87, cacheRead: 0.004, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "google/gemma-4-26b-a4b-it",
@@ -567,7 +595,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 262_144,
 		maxTokens: 32_768,
 		cost: { input: 0.06, output: 0.33, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "google/gemma-4-31b-it",
@@ -577,7 +605,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 262_144,
 		maxTokens: 8_192,
 		cost: { input: 0.12, output: 0.36, cacheRead: 0.09, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "moonshotai/kimi-k2.6:free",
@@ -587,7 +615,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 262_144,
 		maxTokens: 262_144,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "poolside/laguna-m.1:free",
@@ -597,7 +625,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 262_144,
 		maxTokens: 32_768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "google/gemma-4-26b-a4b-it:free",
@@ -607,7 +635,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 262_144,
 		maxTokens: 32_768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "google/gemma-4-31b-it:free",
@@ -617,7 +645,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 262_144,
 		maxTokens: 32_768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "nvidia/nemotron-3-super-120b-a12b:free",
@@ -627,7 +655,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 262_144,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "nvidia/nemotron-3-ultra-550b-a55b:free",
@@ -637,7 +665,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "qwen/qwen3.6-plus-preview:free",
@@ -647,7 +675,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 128_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	// Antigravity (11)
 	{
@@ -658,7 +686,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 64_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "claude-opus-4-6-thinking",
@@ -668,7 +696,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 128_000,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "gemini-3.1-pro-low",
@@ -678,7 +706,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "gemini-3-flash",
@@ -688,7 +716,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "gemini-3-flash-agent",
@@ -698,7 +726,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "gemini-3.1-flash-lite",
@@ -708,7 +736,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "gemini-3.1-flash-image",
@@ -718,7 +746,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "gemini-3.5-flash-low",
@@ -728,7 +756,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "gemini-3.5-flash-extra-low",
@@ -738,7 +766,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_000_000,
 		maxTokens: 32_768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "gemini-pro-agent",
@@ -748,7 +776,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 1_048_576,
 		maxTokens: 65_536,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 	{
 		id: "gpt-oss-120b-medium",
@@ -758,7 +786,7 @@ export const STATIC_FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 128_000,
 		maxTokens: 32_768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { supportsDeveloperRole: false } as ProviderModelConfig["compat"],
+		compat: NO_DEV_ROLE_COMPAT,
 	},
 ];
 
