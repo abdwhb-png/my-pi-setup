@@ -11,20 +11,10 @@
  */
 
 import { describe, test, expect, beforeEach, mock } from "bun:test";
-import type { ExtensionAPI, ExtensionEventMap } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { registerCpaProvider } from "./cpa.ts";
 import { STATIC_FALLBACK_MODELS, resetOrMetadataCache } from "./cpa-models.ts";
-
-// ── Mock buildCpaModels ──
-
-const mockBuildCpaModels = mock();
-mock.module("./cpa-models.ts", () => {
-	const actual = require("./cpa-models.ts");
-	return {
-		...actual,
-		buildCpaModels: (...args: unknown[]) => mockBuildCpaModels(...args),
-	};
-});
 
 interface RegisteredProvider {
 	name: string;
@@ -50,18 +40,6 @@ function createMockExtensionAPI(): {
 	const registeredProviders: RegisteredProvider[] = [];
 	const registeredHandlers: RegisteredHandler[] = [];
 
-	const mockModelRegistry = {
-		registerProvider: (name: string, config: Record<string, unknown>) => {
-			registeredProviders.push({
-				name,
-				config: config as RegisteredProvider["config"],
-			});
-		},
-		authStorage: {
-			get: () => undefined,
-		},
-	};
-
 	// biome-ignore lint/suspicious/noExplicitAny: mock implementation with limited surface
 	const pi = {
 		registerProvider: (name: string, config: Record<string, unknown>) => {
@@ -78,8 +56,23 @@ function createMockExtensionAPI(): {
 	return { pi, registeredProviders, registeredHandlers };
 }
 
+function createMockBuildCpaModels() {
+	return mock((_baseUrl: string, _apiKey: string): Promise<ProviderModelConfig[]> => {
+		return Promise.resolve([]);
+	});
+}
+
+const fakeModel: ProviderModelConfig = {
+	id: "ocg/go-test",
+	name: "Test Model",
+	reasoning: true,
+	input: ["text"],
+	contextWindow: 2000,
+	maxTokens: 200,
+	cost: { input: 0.5, output: 1.0, cacheRead: 0, cacheWrite: 0 },
+};
+
 beforeEach(() => {
-	mockBuildCpaModels.mockClear();
 	resetOrMetadataCache();
 });
 
@@ -88,7 +81,7 @@ beforeEach(() => {
 describe("registerCpaProvider", () => {
 	test("registers with correct provider name", () => {
 		const { pi, registeredProviders } = createMockExtensionAPI();
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
 
 		expect(registeredProviders.length).toBe(1);
 		expect(registeredProviders[0].name).toBe("cpa");
@@ -96,7 +89,7 @@ describe("registerCpaProvider", () => {
 
 	test("registers with correct baseUrl, api, apiKey", () => {
 		const { pi, registeredProviders } = createMockExtensionAPI();
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
 
 		const config = registeredProviders[0].config;
 		expect(config.name).toBe("CLIProxyAPI (local)");
@@ -107,7 +100,7 @@ describe("registerCpaProvider", () => {
 
 	test("initial registration uses STATIC_FALLBACK_MODELS", () => {
 		const { pi, registeredProviders } = createMockExtensionAPI();
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
 
 		const models = registeredProviders[0].config.models;
 		expect(models).toBeDefined();
@@ -118,18 +111,19 @@ describe("registerCpaProvider", () => {
 
 	test("registers a session_start event handler", () => {
 		const { pi, registeredHandlers } = createMockExtensionAPI();
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
 
 		const handlers = registeredHandlers.filter((h) => h.event === "session_start");
 		expect(handlers.length).toBe(1);
 	});
 
-	test("session_start handler calls buildCpaModels with correct args", async () => {
+	test("session_start handler calls buildModels with correct args", async () => {
 		const { pi, registeredHandlers } = createMockExtensionAPI();
-		const fakeModels = [{ id: "test-model", name: "Test", reasoning: true, input: ["text"] as Array<"text">, contextWindow: 1000, maxTokens: 100, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }];
-		mockBuildCpaModels.mockResolvedValue(fakeModels);
+		const mockBuild = mock((_baseUrl: string, _apiKey: string): Promise<ProviderModelConfig[]> => {
+			return Promise.resolve([fakeModel]);
+		});
 
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: mockBuild });
 
 		const handler = registeredHandlers.find((h) => h.event === "session_start");
 		expect(handler).toBeDefined();
@@ -143,7 +137,7 @@ describe("registerCpaProvider", () => {
 
 		await handler!.handler({}, mockCtx);
 
-		expect(mockBuildCpaModels).toHaveBeenCalledWith(
+		expect(mockBuild).toHaveBeenCalledWith(
 			"http://localhost:8317/v1",
 			expect.any(String),
 		);
@@ -151,12 +145,9 @@ describe("registerCpaProvider", () => {
 
 	test("session_start handler re-registers with dynamic models when available", async () => {
 		const { pi, registeredProviders, registeredHandlers } = createMockExtensionAPI();
-		const fakeModels = [
-			{ id: "ocg/go-test", name: "Test Model", reasoning: true, input: ["text"] as Array<"text">, contextWindow: 2000, maxTokens: 200, cost: { input: 0.5, output: 1.0, cacheRead: 0, cacheWrite: 0 } },
-		];
-		mockBuildCpaModels.mockResolvedValue(fakeModels);
+		const mockBuild = mock((): Promise<ProviderModelConfig[]> => Promise.resolve([fakeModel]));
 
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: mockBuild });
 
 		// Initial registration
 		expect(registeredProviders.length).toBe(1);
@@ -180,14 +171,14 @@ describe("registerCpaProvider", () => {
 		// Should have re-registered with dynamic models
 		expect(registeredProviders.length).toBe(2);
 		expect(registeredProviders[1].name).toBe("cpa");
-		expect(registeredProviders[1].config.models).toEqual(fakeModels);
+		expect(registeredProviders[1].config.models).toEqual([fakeModel]);
 	});
 
 	test("session_start handler does NOT re-register if dynamicModels is empty", async () => {
 		const { pi, registeredProviders, registeredHandlers } = createMockExtensionAPI();
-		mockBuildCpaModels.mockResolvedValue([]);
+		const mockBuild = mock((): Promise<ProviderModelConfig[]> => Promise.resolve([]));
 
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: mockBuild });
 
 		expect(registeredProviders.length).toBe(1);
 
@@ -207,9 +198,11 @@ describe("registerCpaProvider", () => {
 
 	test("session_start handler catches errors without throwing", async () => {
 		const { pi, registeredHandlers } = createMockExtensionAPI();
-		mockBuildCpaModels.mockRejectedValue(new Error("Network failure"));
+		const mockBuild = mock((): Promise<ProviderModelConfig[]> => {
+			return Promise.reject(new Error("Network failure"));
+		});
 
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: mockBuild });
 
 		const handler = registeredHandlers.find((h) => h.event === "session_start")!;
 		const mockCtx = {
@@ -225,7 +218,7 @@ describe("registerCpaProvider", () => {
 
 	test("does NOT register a streamSimple (built-in openai-completions used)", () => {
 		const { pi, registeredProviders } = createMockExtensionAPI();
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
 
 		const config = registeredProviders[0].config as Record<string, unknown>;
 		expect(config.streamSimple).toBeUndefined();
@@ -233,7 +226,7 @@ describe("registerCpaProvider", () => {
 
 	test("does NOT register oauth (simple API key auth)", () => {
 		const { pi, registeredProviders } = createMockExtensionAPI();
-		registerCpaProvider(pi);
+		registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
 
 		const config = registeredProviders[0].config as Record<string, unknown>;
 		expect(config.oauth).toBeUndefined();

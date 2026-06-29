@@ -42,7 +42,18 @@ function buildProviderConfig(models: ProviderModelConfig[]) {
 
 // ── Registration ──
 
-export function registerCpaProvider(pi: ExtensionAPI): void {
+/**
+ * Register the CPA provider with Pi.
+ *
+ * @param pi - The Pi extension API
+ * @param options - Optional overrides for testing (buildModels injects a mock)
+ */
+export function registerCpaProvider(
+	pi: ExtensionAPI,
+	options?: { buildModels?: typeof buildCpaModels },
+): void {
+	const buildModels = options?.buildModels ?? buildCpaModels;
+
 	// Phase 1: Register with static fallback models immediately (synchronous)
 	pi.registerProvider(PROVIDER_NAME, buildProviderConfig(STATIC_FALLBACK_MODELS));
 
@@ -50,7 +61,7 @@ export function registerCpaProvider(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		try {
 			const apiKey = process.env.CLIPROXY_API_KEY ?? "";
-			const dynamicModels = await buildCpaModels(PROVIDER_BASE_URL, apiKey);
+			const dynamicModels = await buildModels(PROVIDER_BASE_URL, apiKey);
 			if (dynamicModels.length > 0) {
 				ctx.modelRegistry.registerProvider(PROVIDER_NAME, buildProviderConfig(dynamicModels));
 
