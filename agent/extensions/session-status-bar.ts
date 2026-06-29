@@ -13,21 +13,21 @@
  * Config: ~/.pi/agent/session-status-bar.json
  */
 
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path";
 import type { SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
-import { getBranch } from "../_shared/git-helper";
-import { createWidget } from "../_shared/fancy-footer";
+import { getBranch } from "./_shared/git-helper";
+import { createWidget } from "./_shared/fancy-footer";
 import {
   type UiColorsCreation,
   createUiColors,
   DEFAULT_ERROR_PERCENT,
   DEFAULT_WARNING_PERCENT,
-} from "../_shared/ui-colors";
+} from "./_shared/ui-colors";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -39,7 +39,7 @@ const MAX_BRANCH_WIDTH = 18;
 type StatusBarState = {
   workspace: { shortCwd: string; shortBranch: string };
   context: { tokens: number; window: number; percent: number };
-  model: { id: string };
+  model: { id: string, provider?: Provider };
   session: { name?: string };
   cost: { totalUsd: number };
 };
@@ -148,7 +148,7 @@ function buildState(
   return {
     workspace: { shortCwd, shortBranch },
     context: { tokens: contextTokens, window: contextWindow, percent },
-    model: { id: ctx.model?.id || "no-model" },
+    model: { id: ctx.model?.id || "no-model", provider: ctx.model?.provider},
     session: { name: ctx.sessionManager.getSessionName() },
     cost: { totalUsd },
   };
@@ -184,7 +184,7 @@ function buildRightSide(
   }
 
   if (config.showModel) {
-    parts.push(colors.separator(" │ ") + colors.model(state.model.id));
+    parts.push(colors.separator(" │ ") + colors.subtle(`(${state.model.provider || "no-provider"}) `) + colors.model(state.model.id));
   }
 
   return parts.join("");
