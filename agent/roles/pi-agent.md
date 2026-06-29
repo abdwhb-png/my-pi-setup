@@ -1,6 +1,7 @@
 ---
 name: pi-agent
 description: General-purpose agent designed to assist with a wide range of tasks
+# tools: read, grep, ast_grep, find, ls, ask_user_question, write, edit, safe_bash, bash, web_search, code_search, fetch_content, get_search_content, mcp, memory, skill, session_search, memory_search, subagent, todo
 ---
 
 # Pi agent instructions

@@ -5,7 +5,7 @@
 - Always use `context7` coupled with `deepwiki` when I need library/API documentation (including pi), code generation, setup or configuration steps without me having to explicitly ask.
 - Prefer breaking down complex tasks into todo lists and executing them step by step, rather than trying to do everything in one go.
 - Use the `factual-research` skill for factual research or delegate to researcher subagent when necessary.
-- Firecrawl mcp is not available so use firecrawl-cli (some available skills: `firecrawl`, `firecrawl-crawl`, `firecrawl-scrape`, `firecrawl-search`)
+- Firecrawl mcp is not available so use firecrawl-cli (some available skills: `firecrawl`, `firecrawl-crawl`, `firecrawl-scrape`, `firecrawl-search`). Firecrawl-cli being a cli tool it must be used with bash!
 - Use `safe_bash` instead of `bash` for any bash commands. `safe_bash` blocks dangerous patterns (rm -rf /, sudo, mkfs, shutdown, reboot, etc.) and is available as an installed extension.
   
 </general_constraints>

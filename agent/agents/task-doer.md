@@ -4,7 +4,7 @@ description: Focused task executor — does exactly what is asked, nothing more.
 model: or/qwen/qwen3.6-plus-preview:free
 fallbackModels:
   - or/deepseek/deepseek-v4-flash
-tools: read, edit, write, grep, safe_bash
+tools: read, edit, write, find, ls, grep, safe_bash, lsp, ast_grep
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
