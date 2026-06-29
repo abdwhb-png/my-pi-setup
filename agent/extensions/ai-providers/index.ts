@@ -3,6 +3,7 @@
  *
  * Currently supports:
  * - Factory AI (factory-ai) — via @factory/droid-sdk
+ * - CLIProxyAPI (cpa) — local proxy with dynamic model discovery
  *
  * Future providers can be added under providers/ without restructuring.
  *
@@ -21,10 +22,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isProviderEnabled, isWidgetEnabled } from "./config.ts";
 import { registerFactoryProvider } from "./providers/factory-ai.ts";
+import { registerCpaProvider } from "./providers/cpa.ts";
 import { registerFactoryCreditsWidget } from "./widgets/factory-credits.ts";
 
 const FACTORY_PROVIDER = "factory-ai";
 const FACTORY_WIDGET = "factory-credits";
+const CPA_PROVIDER = "cpa";
 
 export default function aiProvidersExtension(pi: ExtensionAPI): void {
 	const cwd = process.cwd();
@@ -35,6 +38,11 @@ export default function aiProvidersExtension(pi: ExtensionAPI): void {
 		if (isWidgetEnabled(FACTORY_WIDGET, cwd)) {
 			registerFactoryCreditsWidget(pi);
 		}
+	}
+
+	// ── CLIProxyAPI (CPA) ──
+	if (isProviderEnabled(CPA_PROVIDER, cwd)) {
+		registerCpaProvider(pi);
 	}
 
 	// ── Future providers go here ──
