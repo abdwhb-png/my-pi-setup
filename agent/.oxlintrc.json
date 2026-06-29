@@ -1,12 +1,16 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "oxc"],
+  "options": {
+      "typeAware": true
+  },
   "categories": {
     "correctness": "error",
     "suspicious": "warn",
     "perf": "warn"
   },
   "rules": {
+    "typescript/no-deprecated": "error",
     "no-underscore-dangle": [
       "warn",
       {
