@@ -1,8 +1,8 @@
 /**
  * Slow Mode Extension
  *
- * Intercepts write and edit tool calls, letting the user review proposed
- * changes before they are applied.
+ * Overrides the built-in write and edit tools, letting the user review
+ * proposed changes before they are applied.
  *
  * - Write: stages the new file in /tmp, shows content for review.
  * - Edit: stages old/new files in /tmp, shows inline diff for review.
@@ -10,8 +10,8 @@
  * - Ctrl+E opens the new file in $VISUAL/$EDITOR for editing (edit operations).
  * - Ctrl+O opens the diff in an external viewer (delta/vim/diff).
  * - After editing, the diff is regenerated and shown again for approval.
- * - Toggle with /slow-mode command.
- * - Status bar shows "slow ■" when active.
+ * - Toggle with /slow-mode command (supports /slow-mode on|off|enable|disable).
+ * - Status bar shows "slow ■" (warning color) when active.
  *
  * When content is edited:
  * - The actual write/edit operation uses the edited content
@@ -19,21 +19,36 @@
  * - The collapsed snippet shows the original LLM proposal (not the edited version)
  *   This is intentional - it shows what the LLM wanted vs. what was actually applied
  *
- * In non-interactive mode (no UI), slow mode is a no-op.
+ * In non-interactive mode (no UI) or RPC mode, slow mode is a no-op.
  */
 
-import { mkdirSync, mkdtempSync, writeFileSync, unlinkSync, rmSync } from "node:fs";
-import { execFileSync, execSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, unlinkSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { dirname, basename, join, resolve, relative, extname } from "node:path";
+import { dirname, basename, join, resolve, extname } from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { createWriteTool, createEditTool } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { createWidget } from "../_shared/fancy-footer";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { createWidget } from "../_shared/fancy-footer.ts";
+import { createUiColors } from "../_shared/ui-colors.ts";
+import {
+  resolvePath,
+  generateUnifiedDiff,
+  extractEditText,
+  applyEdits,
+  extractEditPatches,
+} from "./slow-mode-core.ts";
 
 export default function slowMode(pi: ExtensionAPI) {
+  // Detect RPC mode — custom() returns undefined in RPC, so we must skip
+  // interception entirely to avoid silently blocking all writes/edits.
+  // See ANTI-PATTERNS §A2.
+  const isRPC = process.argv.includes("--mode") && process.argv.includes("rpc");
+
   // State: whether slow mode is currently enabled
   let enabled = false;
 
@@ -41,16 +56,26 @@ export default function slowMode(pi: ExtensionAPI) {
   // Maps toolCallId -> { originalContent, editedContent }
   const editedCalls = new Map<string, { original: string; edited: string }>();
 
-  // Track the current tool call being processed for rendering
-  // This allows renderCall to access edited content during the same call
-  let _currentToolCallId: string | null = null;
+  // Staging directory: stores proposed file changes for review.
+  // Lazily created on first use to avoid orphaned temp dirs on /reload
+  // (which recreates the extension instance without firing session_shutdown).
+  let _tmpDir: string | null = null;
+  function tmpDir(): string {
+    if (!_tmpDir) {
+      // mkdtempSync for secure, unpredictable temp directory creation
+      // to prevent symlink attacks and tmpdir races
+      _tmpDir = mkdtempSync(join(tmpdir(), "pi-slow-mode-"));
+    }
+    return _tmpDir;
+  }
 
-  // Staging directory: stores proposed file changes for review
-  // Uses mkdtempSync for secure, unpredictable temp directory creation
-  // to prevent symlink attacks and tmpdir races
-  const tmpDir = mkdtempSync(join(tmpdir(), "pi-slow-mode-"));
+  // Original built-in tool instances (re-created on session_start with correct cwd).
+  // Used by the tool overrides to delegate actual file operations after review.
+  let originalWrite = createWriteTool(process.cwd());
+  let originalEdit = createEditTool(process.cwd());
 
   // Fancy-footer widget (falls back to setWidget if fancy-footer unavailable)
+  // Uses ui-colors.ts for consistent theming across extensions.
   const w = createWidget(pi, {
     id: "slow-mode",
     label: "Slow Mode",
@@ -58,15 +83,39 @@ export default function slowMode(pi: ExtensionAPI) {
     row: 1,
     order: 8,
     align: "right",
-    render: () => enabled ? "slow ■" : null,
+    render: (ctx: any) => {
+      if (!enabled) return null;
+      const colors = createUiColors(ctx.theme);
+      return colors.warning("slow ■");
+    },
   });
 
-  // Clean up staging directory on session shutdown
+  // Restore state on session start (survives /reload)
+  // See ANTI-PATTERNS §A6 and PATTERNS §P15.
+  pi.on("session_start", async (_event, ctx) => {
+    // Re-create original tools with the session's cwd
+    originalWrite = createWriteTool(ctx.cwd);
+    originalEdit = createEditTool(ctx.cwd);
+
+    const entries = ctx.sessionManager.getEntries();
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.type === "custom" && e.customType === "slow-mode") {
+        enabled = (e.data as { enabled: boolean }).enabled;
+        w.update(ctx, enabled ? "slow ■" : null);
+        break;
+      }
+    }
+  });
+
+  // Clean up staging directory on session shutdown (only if it was created)
   pi.on("session_shutdown", async () => {
-    try {
-      rmSync(tmpDir, { recursive: true });
-    } catch {
-      // Best-effort cleanup
+    if (_tmpDir) {
+      try {
+        rmSync(_tmpDir, { recursive: true });
+      } catch {
+        // Best-effort cleanup
+      }
     }
   });
 
@@ -74,18 +123,44 @@ export default function slowMode(pi: ExtensionAPI) {
   ///     Toggle command
   //------------------------------------------
 
-  // Register /slow-mode command — toggle the interception gate on/off
+  // Register /slow-mode command — toggle or explicitly set on/off.
+  // Supports: /slow-mode, /slow-mode on, /slow-mode off, /slow-mode enable, /slow-mode disable
   pi.registerCommand("slow-mode", {
     description: "Toggle slow mode — review write/edit changes before applying",
-    handler: async (_args, ctx) => {
+    getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
+      const values = ["on", "enable", "off", "disable"];
+      const items = values.map((v) => ({ value: v, label: v }));
+      const filtered = items.filter((i) => i.value.startsWith(prefix));
+      return filtered.length > 0 ? filtered : null;
+    },
+    handler: async (args, ctx) => {
       // No-op in headless mode (no TUI available)
       if (!ctx.hasUI) {
         return;
       }
 
-      // Flip the enabled flag
-      enabled = !enabled;
+      // No-op in RPC mode — custom() returns undefined, blocking all tools
+      if (isRPC) {
+        ctx.ui.notify("Slow mode is unavailable in RPC mode", "warning");
+        return;
+      }
+
+      // Parse explicit on/off argument (like sandbox extension)
+      const arg = args.trim().toLowerCase();
+      if (arg === "on" || arg === "enable") {
+        enabled = true;
+      } else if (arg === "off" || arg === "disable") {
+        enabled = false;
+      } else {
+        // No argument or unrecognized — toggle current state
+        enabled = !enabled;
+      }
+
       w.update(ctx, enabled ? "slow ■" : null);
+
+      // Persist state so it survives /reload
+      pi.appendEntry("slow-mode", { enabled });
+
       if (enabled) {
         ctx.ui.notify("Slow mode enabled — write/edit changes require approval", "info");
       } else {
@@ -95,27 +170,102 @@ export default function slowMode(pi: ExtensionAPI) {
   });
 
   ////----------------------------------------
-  ///     Tool call interception
+  ///     Tool overrides (C2 fix)
   //------------------------------------------
 
-  // Hook into tool_call event — fires BEFORE tool execution
-  // Returning { block: true, reason } prevents the tool from running
-  pi.on("tool_call", async (event, ctx) => {
-    // Pass through if slow mode is disabled or no UI available
-    if (!enabled || !ctx.hasUI) return;
+  // Override the built-in write tool — same name = override (PATTERNS §P4).
+  // When slow mode is active, performs review before delegating to the
+  // original tool. This replaces the previous tool_call interception +
+  // input mutation approach (which relied on an undocumented contract).
+  // Now content modification happens through the documented execute() interface.
+  pi.registerTool({
+    ...originalWrite,
+    label: "write (slow mode)",
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      // Pass through if slow mode is disabled, no UI, or RPC mode
+      if (!enabled || isRPC || !ctx.hasUI) {
+        return originalWrite.execute(toolCallId, params, signal, onUpdate);
+      }
 
-    // Intercept write tool calls
-    if (event.toolName === "write") {
-      return await reviewWrite(event.toolCallId, event.input, ctx);
-    }
+      const filePath = params.path;
+      const content = params.content;
+      if (!filePath || content == null) {
+        return originalWrite.execute(toolCallId, params, signal, onUpdate);
+      }
 
-    // Intercept edit tool calls
-    if (event.toolName === "edit") {
-      return await reviewEdit(event.toolCallId, event.input, ctx);
-    }
+      // Perform the review — returns approved + potentially edited content
+      const review = await reviewWrite(toolCallId, filePath, content, ctx);
 
-    // All other tools pass through unchanged
+      if (!review.approved) {
+        // Rejection: throw to signal error (ANTI-PATTERNS §A3)
+        throw new Error("User rejected the write in slow mode review.");
+      }
+
+      // If user edited the content, construct modified params (no input mutation)
+      if (review.editedContent != null && review.editedContent !== content) {
+        editedCalls.set(toolCallId, { original: content, edited: review.editedContent });
+        ctx.ui.notify("Using edited content", "info");
+        const modifiedParams = { ...params, content: review.editedContent };
+        return originalWrite.execute(toolCallId, modifiedParams, signal, onUpdate);
+      }
+
+      // Approved without edits: delegate to original
+      return originalWrite.execute(toolCallId, params, signal, onUpdate);
+    },
   });
+
+  // Override the built-in edit tool — same pattern as write above.
+  pi.registerTool({
+    ...originalEdit,
+    label: "edit (slow mode)",
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      // Pass through if slow mode is disabled, no UI, or RPC mode
+      if (!enabled || isRPC || !ctx.hasUI) {
+        return originalEdit.execute(toolCallId, params, signal, onUpdate);
+      }
+
+      const filePath = params.path;
+      if (!filePath) {
+        return originalEdit.execute(toolCallId, params, signal, onUpdate);
+      }
+
+      // Perform the review — returns approved + potentially edited content
+      const review = await reviewEdit(toolCallId, params, ctx);
+
+      if (!review.approved) {
+        throw new Error("User rejected the edit in slow mode review.");
+      }
+
+      // If the user edited the content during review
+      if (review.editedContent != null) {
+        if (review.wroteDirectly) {
+          // Multi-edit with real file: content was already written to disk.
+          // Return a success result without delegating to the original tool.
+          // `details: undefined` matches AgentToolResult with undefined details.
+          editedCalls.set(toolCallId, { original: review.originalNewText!, edited: review.editedContent });
+          return {
+            content: [{ type: "text" as const, text: "Applied via slow mode review (content was edited externally)." }],
+            details: undefined,
+          };
+        }
+        // Single edit or fallback: delegate with modified newText
+        if (review.editedContent !== review.originalNewText) {
+          editedCalls.set(toolCallId, { original: review.originalNewText!, edited: review.editedContent });
+          ctx.ui.notify("Using edited content", "info");
+          // Construct modified params based on the edit format
+          const modifiedParams = constructModifiedEditParams(params, review.editedContent);
+          return originalEdit.execute(toolCallId, modifiedParams, signal, onUpdate);
+        }
+      }
+
+      // Approved without edits: delegate to original
+      return originalEdit.execute(toolCallId, params, signal, onUpdate);
+    },
+  });
+
+  ////----------------------------------------
+  ///     Tool result annotation
+  //------------------------------------------
 
   // Hook into tool_result event — fires AFTER tool execution
   // Add a note when content was edited in slow mode
@@ -154,46 +304,36 @@ export default function slowMode(pi: ExtensionAPI) {
   //------------------------------------------
 
   /**
-   * Resolves file path to be relative to cwd
-   * This normalizes absolute/relative paths for consistent staging
+   * Result of a write review.
    */
-  function resolvePath(ctx: ExtensionContext, filePath: string) {
-    return relative(ctx.cwd, resolve(ctx.cwd, filePath));
+  interface WriteReviewResult {
+    approved: boolean;
+    /** The content after user editing (null if user didn't edit or rejected) */
+    editedContent: string | null;
   }
 
   /**
-   * Review handler for write tool calls (new files / overwrites)
+   * Review a write tool call — stages content, shows review UI, returns result.
    *
-   * Flow:
-   * 1. Stage the proposed content in tmpDir
-   * 2. Show review UI with the full content
-   * 3. User approves → return undefined (tool proceeds)
-   * 4. User rejects → return { block: true } (tool aborted)
-   * 5. Cleanup staged file
-   * 
-   * If user edits content in external editor, the modified content is used.
+   * No longer mutates the input or returns block objects. The caller (tool
+   * override) uses the returned content to construct modified params and
+   * delegate to the original tool.
    */
   async function reviewWrite(
     toolCallId: string,
-    input: Record<string, unknown>,
+    filePath: string,
+    content: string,
     ctx: ExtensionContext,
-  ) {
-    const filePath = input.path as string;
-    const content = input.content as string;
-
-    // Skip if input is malformed
-    if (!filePath || content == null) return;
-
+  ): Promise<WriteReviewResult> {
     // Resolve to relative path for staging
-    const relPath = resolvePath(ctx, filePath);
-    const stagePath = join(tmpDir, relPath);
+    const relPath = resolvePath(ctx.cwd, filePath);
+    const stagePath = join(tmpDir(), relPath);
 
     // Write proposed content to staging directory
     ensureDir(dirname(stagePath));
     writeFileSync(stagePath, content, "utf-8");
 
     // Show review UI — user decides to approve/reject
-    // Emit event so other extensions can track when user approval is pending
     pi.events.emit("slow-mode:waiting", {});
     const result = await showReview(ctx, {
       operation: "WRITE",
@@ -204,99 +344,105 @@ export default function slowMode(pi: ExtensionAPI) {
     });
     pi.events.emit("slow-mode:resolved", {});
 
+    let editedContent: string | null = null;
+
     if (result === "approve") {
       // Read back the staged file in case user edited it
       try {
-        const { readFileSync } = await import("node:fs");
-        const editedContent = readFileSync(stagePath, "utf-8");
-        
-        // If content changed, update the input parameter and track the edit
-        if (editedContent !== content) {
-          input.content = editedContent;
-          editedCalls.set(toolCallId, { original: content, edited: editedContent });
-          ctx.ui.notify("Using edited content", "info");
+        const readBack = readFileSync(stagePath, "utf-8");
+        if (readBack !== content) {
+          editedContent = readBack;
         }
       } catch {
-        // If we can't read the file, use original content
-        // (file might have been deleted, which is fine)
+        // File might have been deleted — use original content
       }
     }
 
     // Clean up staged file after decision
     cleanup(stagePath);
 
-    // Block the tool if user rejected
-    if (result !== "approve") {
-      return { block: true, reason: "User rejected the write in slow mode review." };
-    }
-
-    // Approved: return undefined → tool proceeds with potentially modified content
+    return { approved: result === "approve", editedContent };
   }
 
   /**
-   * Review handler for edit tool calls (modifications to existing files)
+   * Result of an edit review.
+   */
+  interface EditReviewResult {
+    approved: boolean;
+    /** The new content after user editing (null if user didn't edit or rejected) */
+    editedContent: string | null;
+    /** The original newText (before user editing), for tracking */
+    originalNewText: string | null;
+    /** Whether the file was already written directly (multi-edit + external edit) */
+    wroteDirectly: boolean;
+  }
+
+  /**
+   * Review an edit tool call — stages old/new, shows diff, returns result.
    *
-   * Flow:
-   * 1. Stage both old and new text as separate files
-   * 2. Show inline diff review UI
-   * 3. User can: approve (Enter), reject (Esc), edit new file (Ctrl+E),
-   *    or view diff externally (Ctrl+O)
-   * 4. After editing, the diff is regenerated and shown again
-   * 5. Loop continues until user approves or rejects
-   * 6. Cleanup staged files
-   * 
-   * If user edits the new file, the modified content is used.
+   * No longer mutates the input or returns block objects. The caller (tool
+   * override) uses the returned content to construct modified params and
+   * delegate to the original tool, or handles wroteDirectly by returning
+   * a success result.
    */
   async function reviewEdit(
     toolCallId: string,
-    input: Record<string, unknown>,
+    params: { path: string; edits: Array<{ oldText: string; newText: string }> },
     ctx: ExtensionContext,
-  ) {
-    const filePath = input.path as string;
-    if (!filePath) return;
+  ): Promise<EditReviewResult> {
+    const filePath = params.path;
+    const patches = extractEditPatches(params);
+    if (!patches) return { approved: true, editedContent: null, originalNewText: null, wroteDirectly: false };
 
-    // Edit tool uses edits[] array — concatenate all changes for review
-    const edits = input.edits as Array<{ oldText: string; newText: string }> | undefined;
-    // Also support legacy top-level oldText/newText
-    const oldText = edits
-      ? edits.map((e) => e.oldText).join("\n")
-      : (input.oldText as string);
-    const newText = edits
-      ? edits.map((e) => e.newText).join("\n")
-      : (input.newText as string);
+    const relPath = resolvePath(ctx.cwd, filePath);
 
-    if (oldText == null || newText == null) return;
+    // For multi-edit, read the actual file and apply all edits for an accurate diff (M2 fix).
+    // Falls back to concatenation if the file can't be read.
+    let oldText: string;
+    let newText: string;
+    let usedRealFile = false;
 
-    const relPath = resolvePath(ctx, filePath);
+    if (patches.length > 1) {
+      try {
+        const absolutePath = resolve(ctx.cwd, filePath);
+        const fileContent = readFileSync(absolutePath, "utf-8");
+        oldText = fileContent;
+        newText = applyEdits(fileContent, patches);
+        usedRealFile = true;
+      } catch {
+        const extracted = extractEditText(params);
+        if (!extracted) return { approved: true, editedContent: null, originalNewText: null, wroteDirectly: false };
+        oldText = extracted.oldText;
+        newText = extracted.newText;
+      }
+    } else {
+      const extracted = extractEditText(params);
+      if (!extracted) return { approved: true, editedContent: null, originalNewText: null, wroteDirectly: false };
+      oldText = extracted.oldText;
+      newText = extracted.newText;
+    }
 
-    // Stage old and new files for diff viewing and editing
-    // Timestamped to avoid conflicts if multiple edits happen
-    // Preserve original file extension so editors can detect file type
+    // Stage old and new files
     const base = basename(relPath);
     const ext = extname(base);
     const nameWithoutExt = base.slice(0, -ext.length || undefined);
     const ts = Date.now();
-    const oldPath = join(tmpDir, `${nameWithoutExt}-${ts}.old${ext}`);
-    const newPath = join(tmpDir, `${nameWithoutExt}-${ts}.new${ext}`);
-    ensureDir(tmpDir);
+    const oldPath = join(tmpDir(), `${nameWithoutExt}-${ts}.old${ext}`);
+    const newPath = join(tmpDir(), `${nameWithoutExt}-${ts}.new${ext}`);
+    ensureDir(tmpDir());
     writeFileSync(oldPath, oldText, "utf-8");
     writeFileSync(newPath, newText, "utf-8");
 
-    // Emit event so other extensions can track when user approval is pending
     pi.events.emit("slow-mode:waiting", {});
 
     // Review loop: show diff → user can approve, reject, or edit → repeat
     let approved = false;
-    const { readFileSync } = await import("node:fs");
 
     reviewLoop:
     while (true) {
-      // Read current content (may have been edited in a previous iteration)
       const currentOldText = readFileSync(oldPath, "utf-8");
       const currentNewText = readFileSync(newPath, "utf-8");
       const diff = generateUnifiedDiff(relPath, currentOldText, currentNewText);
-      
-      // Render diff through delta if available
       const renderedDiff = renderWithDelta(diff);
 
       const decision = await showReview(ctx, {
@@ -317,22 +463,25 @@ export default function slowMode(pi: ExtensionAPI) {
           approved = false;
           break reviewLoop;
         case "edit":
-          // Open just the new file in the user's editor, then loop back
           openExternalFile(newPath);
           continue;
       }
     }
 
+    let editedContent: string | null = null;
+    let wroteDirectly = false;
+
     if (approved) {
-      // Read back the new file in case user edited it
       try {
         const editedNewText = readFileSync(newPath, "utf-8");
-        
-        // If content changed, update the input parameter and track the edit
         if (editedNewText !== newText) {
-          input.newText = editedNewText;
-          editedCalls.set(toolCallId, { original: newText, edited: editedNewText });
-          ctx.ui.notify("Using edited content", "info");
+          if (usedRealFile) {
+            // Multi-edit with real file: write directly, don't delegate to original
+            const absolutePath = resolve(ctx.cwd, filePath);
+            writeFileSync(absolutePath, editedNewText, "utf-8");
+            wroteDirectly = true;
+          }
+          editedContent = editedNewText;
         }
       } catch {
         // If we can't read the file, use original content
@@ -340,17 +489,35 @@ export default function slowMode(pi: ExtensionAPI) {
     }
 
     pi.events.emit("slow-mode:resolved", {});
-
-    // Clean up staged files after decision
     cleanup(oldPath);
     cleanup(newPath);
 
-    // Block the tool if user rejected
-    if (!approved) {
-      return { block: true, reason: "User rejected the edit in slow mode review." };
-    }
+    return { approved, editedContent, originalNewText: newText, wroteDirectly };
+  }
 
-    // Approved: return undefined → tool proceeds with potentially modified content
+  /**
+   * Construct modified edit params with an updated newText value.
+   *
+   * Handles both the modern `edits[]` array format (single entry) and
+   * the legacy `oldText`/`newText` top-level fields.
+   */
+  function constructModifiedEditParams(
+    params: { path: string; edits: Array<{ oldText: string; newText: string }> },
+    editedNewText: string,
+  ): { path: string; edits: Array<{ oldText: string; newText: string }> } {
+    // Single edit: replace the first (and only) edit entry's newText
+    if (params.edits.length === 1) {
+      return {
+        path: params.path,
+        edits: [{ oldText: params.edits[0].oldText, newText: editedNewText }],
+      };
+    }
+    // Multi-edit fallback: replace all entries with a single full-content edit
+    // (wroteDirectly case is handled before reaching here, so this is a safety net)
+    return {
+      path: params.path,
+      edits: [{ oldText: params.edits.map((e) => e.oldText).join("\n"), newText: editedNewText }],
+    };
   }
 
   ////----------------------------------------
@@ -381,6 +548,7 @@ export default function slowMode(pi: ExtensionAPI) {
    * Displays the proposed change with scrollable preview and key bindings:
    * - Enter: approve change
    * - Esc: reject change
+   * - Ctrl+C: reject (cancel review)
    * - Ctrl+E: edit the new file in $VISUAL/$EDITOR (EDIT operations, when allowEdit is true)
    * - Ctrl+O: open in external viewer/editor (delta/vim/diff for edits, $EDITOR for writes)
    * - k/↑: scroll up one line
@@ -422,6 +590,10 @@ export default function slowMode(pi: ExtensionAPI) {
       // Track last 'g' press for gg binding
       let lastGPress = 0;
 
+      // Render version counter for robust cache invalidation (L4)
+      let renderVersion = 0;
+      let cachedVersion = -1;
+
       /**
        * Clamp scroll offset to valid range
        */
@@ -433,7 +605,7 @@ export default function slowMode(pi: ExtensionAPI) {
        * Invalidate render cache and request re-render
        */
       function refresh() {
-        cachedLines = undefined;
+        renderVersion++;
         tui.requestRender();
       }
 
@@ -455,7 +627,6 @@ export default function slowMode(pi: ExtensionAPI) {
           // For WRITE operations with editing allowed, reload content after external edit
           if (opts.allowEdit && opts.operation === "WRITE" && opts.stagePath) {
             try {
-              const { readFileSync } = require("node:fs");
               const editedContent = readFileSync(opts.stagePath, "utf-8");
               currentBody = editedContent;
 
@@ -484,8 +655,8 @@ export default function slowMode(pi: ExtensionAPI) {
           return;
         }
 
-        // Reject change
-        if (matchesKey(data, Key.escape)) {
+        // Reject change (Esc or Ctrl+C)
+        if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
           done("reject");
           return;
         }
@@ -556,14 +727,18 @@ export default function slowMode(pi: ExtensionAPI) {
        * Render the review UI
        */
       function render(width: number): string[] {
-        // Return cached lines if available (performance optimization)
-        if (cachedLines) return cachedLines;
+        // Return cached lines if version matches (robust cache, L4)
+        if (cachedLines && cachedVersion === renderVersion) return cachedLines;
 
         const lines: string[] = [];
         const add = (s: string) => lines.push(truncateToWidth(s, width));
 
         // Top separator
         add(theme.fg("accent", "─".repeat(width)));
+
+        // Slow mode notice — makes it clear this dialog is from slow mode
+        const colors = createUiColors(theme);
+        add(colors.warning(" ⚠ SLOW MODE — review before applying"));
 
         // Operation label (NEW FILE or EDIT)
         const opLabel =
@@ -630,7 +805,7 @@ export default function slowMode(pi: ExtensionAPI) {
         lines.push("");
 
         // Key binding hints — differ based on operation type
-        let hints = "Enter approve • Esc reject";
+        let hints = "Enter approve • Esc reject • Ctrl+C cancel";
         if (opts.allowEdit && opts.operation === "EDIT") {
           hints += " • Ctrl+E edit • Ctrl+O view diff";
         } else if (opts.allowEdit) {
@@ -644,8 +819,9 @@ export default function slowMode(pi: ExtensionAPI) {
         // Bottom separator
         add(theme.fg("accent", "─".repeat(width)));
 
-        // Cache the rendered lines
+        // Cache the rendered lines with current version
         cachedLines = lines;
+        cachedVersion = renderVersion;
         return lines;
       }
 
@@ -654,6 +830,7 @@ export default function slowMode(pi: ExtensionAPI) {
         render,
         invalidate: () => {
           cachedLines = undefined;
+          cachedVersion = -1;
         },
         handleInput,
       };
@@ -677,7 +854,8 @@ export default function slowMode(pi: ExtensionAPI) {
    *
    * @param oldPath - Path to staged old version
    * @param newPath - Path to staged new version
-   * @param label - File label (unused currently, for future use)
+   * @param label - File label used to replace temp paths in delta diff headers
+   *   for syntax detection
    */
   function openExternalDiff(oldPath: string, newPath: string, label: string) {
     const diffTool = findDiffTool();
@@ -744,6 +922,23 @@ export default function slowMode(pi: ExtensionAPI) {
   }
 
   /**
+   * Check if a command exists in PATH using `command -v`.
+   *
+   * Uses `command -v` (POSIX shell builtin) instead of `which` for
+   * portability — `which` is absent on Alpine, NixOS, and some minimal
+   * container images.
+   */
+  function commandExists(cmd: string): boolean {
+    try {
+      // command -v is a POSIX shell builtin — run via sh -c
+      execFileSync("sh", ["-c", `command -v ${cmd}`], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Find an available diff tool on the system
    *
    * @returns { cmd, args } if found, null otherwise
@@ -753,13 +948,8 @@ export default function slowMode(pi: ExtensionAPI) {
     const candidates = ["delta", "nvim", "vim", "diff"];
 
     for (const cmd of candidates) {
-      try {
-        // Check if command exists in PATH
-        execFileSync("which", [cmd], { stdio: "ignore" });
+      if (commandExists(cmd)) {
         return { cmd, args: [] };
-      } catch {
-        // Command not found, try next candidate
-        continue;
       }
     }
 
@@ -781,20 +971,16 @@ export default function slowMode(pi: ExtensionAPI) {
     if (deltaAvailable !== null) {
       return deltaAvailable;
     }
-    try {
-      execSync("delta --version", { stdio: "pipe" });
-      deltaAvailable = true;
-      return true;
-    } catch {
-      deltaAvailable = false;
-      return false;
-    }
+    deltaAvailable = commandExists("delta");
+    return deltaAvailable;
   }
 
   /**
    * Render a unified diff with delta syntax highlighting.
    * 
-   * Pipes the diff through `delta --color-only` to produce ANSI-colored output.
+   * Pipes the diff through `delta --color-only` via stdin to produce
+   * ANSI-colored output. No shell interpolation — uses execFileSync with
+   * an args array and stdin pipe for safety.
    * Falls back to the original diff if delta is unavailable or fails.
    *
    * @param unifiedDiff - Standard unified diff string
@@ -805,278 +991,22 @@ export default function slowMode(pi: ExtensionAPI) {
       return unifiedDiff;
     }
 
-    const tmp = mkdtempSync(join(tmpdir(), "pi-slowmode-delta-"));
-    const tmpFile = join(tmp, "diff.patch");
     try {
-      writeFileSync(tmpFile, unifiedDiff, "utf-8");
-      const result = execSync(`delta --no-gitconfig --color-only --tabs 4 < "${tmpFile}"`, {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 5000,
-      });
+      // Pipe diff to delta via stdin — no temp file, no shell interpolation
+      const result = execFileSync(
+        "delta",
+        ["--no-gitconfig", "--color-only", "--tabs", "4"],
+        {
+          input: unifiedDiff,
+          encoding: "utf-8",
+          timeout: 5000,
+        },
+      );
       return result;
     } catch {
       // Delta failed, return original diff
       return unifiedDiff;
-    } finally {
-      try {
-        unlinkSync(tmpFile);
-        rmSync(tmp, { recursive: true });
-      } catch {
-        // ignore cleanup errors
-      }
     }
-  }
-
-
-  ////----------------------------------------
-  ///     Diff generation (Myers algorithm)
-  //------------------------------------------
-
-  /**
-   * Generate a unified diff using the Myers diff algorithm.
-   *
-   * Replaces the external 'diff' npm package with a zero-dependency
-   * implementation. Produces output equivalent to `diff -u` / `git diff`.
-   *
-   * @param filePath - Relative file path (used in --- / +++ headers)
-   * @param oldText - Original text
-   * @param newText - Modified text
-   * @param contextLines - Number of context lines around changes (default: 3)
-   * @returns Unified diff string
-   */
-  function generateUnifiedDiff(
-    filePath: string,
-    oldText: string,
-    newText: string,
-    contextLines = 3,
-  ): string {
-    const oldLines = oldText.split("\n");
-    const newLines = newText.split("\n");
-    const edits = myersDiff(oldLines, newLines);
-    const hunks = buildHunks(edits, contextLines);
-
-    const out: string[] = [];
-    out.push(`--- a/${filePath}`);
-    out.push(`+++ b/${filePath}`);
-
-    for (const hunk of hunks) {
-      out.push(
-        `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`,
-      );
-      for (const line of hunk.lines) {
-        out.push(line);
-      }
-    }
-
-    return out.join("\n");
-  }
-
-  /**
-   * Edit operation in a diff: keep, insert, or delete a line.
-   */
-  type Edit =
-    | { type: "keep"; line: string }
-    | { type: "insert"; line: string }
-    | { type: "delete"; line: string };
-
-  /**
-   * Myers diff algorithm (linear-space variant).
-   *
-   * Computes the shortest edit script (SES) between two arrays of lines.
-   * Time: O((N+M)D) where D is the edit distance.
-   * Space: O((N+M)D) for the trace (acceptable for code diffs).
-   *
-   * Reference: Eugene W. Myers, "An O(ND) Difference Algorithm and Its
-   * Variations", Algorithmica 1(2), 1986.
-   */
-  function myersDiff(oldLines: string[], newLines: string[]): Edit[] {
-    const n = oldLines.length;
-    const m = newLines.length;
-    const max = n + m;
-
-    // V[k] = furthest x-position reached on diagonal k
-    // Diagonals range from -max..+max, offset by max for array indexing
-    const size = 2 * max + 1;
-    const v = new Int32Array(size);
-    v[max + 1] = 0;
-
-    // Store each V snapshot to reconstruct the path
-    const trace: Int32Array[] = [];
-
-    outer:
-    for (let d = 0; d <= max; d++) {
-      // Save current state before modification
-      trace.push(v.slice());
-
-      for (let k = -d; k <= d; k += 2) {
-        const kIdx = k + max;
-
-        // Decide whether to move down (insert) or right (delete)
-        let x: number;
-        if (k === -d || (k !== d && v[kIdx - 1] < v[kIdx + 1])) {
-          x = v[kIdx + 1]; // move down: take x from diagonal k+1
-        } else {
-          x = v[kIdx - 1] + 1; // move right: take x from diagonal k-1 and advance
-        }
-        let y = x - k;
-
-        // Follow the diagonal (matching lines)
-        while (x < n && y < m && oldLines[x] === newLines[y]) {
-          x++;
-          y++;
-        }
-
-        v[kIdx] = x;
-
-        // Reached the end of both sequences
-        if (x >= n && y >= m) {
-          break outer;
-        }
-      }
-    }
-
-    // Backtrack through the trace to reconstruct the edit script
-    const edits: Edit[] = [];
-    let x = n;
-    let y = m;
-
-    for (let d = trace.length - 1; d >= 0; d--) {
-      const prev = trace[d];
-      const k = x - y;
-      const kIdx = k + max;
-
-      // Determine which diagonal we came from
-      let prevK: number;
-      if (k === -d || (k !== d && prev[kIdx - 1] < prev[kIdx + 1])) {
-        prevK = k + 1; // came from above (insert)
-      } else {
-        prevK = k - 1; // came from left (delete)
-      }
-
-      const prevX = prev[prevK + max];
-      const prevY = prevX - prevK;
-
-      // Diagonal moves (matching lines) — emit keeps in reverse
-      while (x > prevX && y > prevY) {
-        x--;
-        y--;
-        edits.push({ type: "keep", line: oldLines[x] });
-      }
-
-      if (d > 0) {
-        if (x === prevX) {
-          // Vertical move: insert from new
-          y--;
-          edits.push({ type: "insert", line: newLines[y] });
-        } else {
-          // Horizontal move: delete from old
-          x--;
-          edits.push({ type: "delete", line: oldLines[x] });
-        }
-      }
-    }
-
-    edits.reverse();
-    return edits;
-  }
-
-  /**
-   * A hunk in a unified diff.
-   */
-  interface Hunk {
-    oldStart: number;  // 1-based start line in old file
-    oldCount: number;  // number of old-file lines in hunk
-    newStart: number;  // 1-based start line in new file
-    newCount: number;  // number of new-file lines in hunk
-    lines: string[];   // prefixed lines (" ", "+", "-")
-  }
-
-  /**
-   * Group edit operations into unified diff hunks with context lines.
-   *
-   * Adjacent changes within (2 * contextLines) of each other are merged
-   * into a single hunk, matching standard unified diff behavior.
-   */
-  function buildHunks(edits: Edit[], contextLines: number): Hunk[] {
-    if (edits.length === 0) return [];
-
-    // Find indices of all change operations (insert or delete)
-    const changeIndices: number[] = [];
-    for (let i = 0; i < edits.length; i++) {
-      if (edits[i].type !== "keep") {
-        changeIndices.push(i);
-      }
-    }
-
-    if (changeIndices.length === 0) return [];
-
-    // Group changes that are close enough to share context
-    const groups: { start: number; end: number }[] = [];
-    let groupStart = changeIndices[0];
-    let groupEnd = changeIndices[0];
-
-    for (let i = 1; i < changeIndices.length; i++) {
-      // If gap between changes is <= 2*contextLines, merge into same group
-      if (changeIndices[i] - groupEnd <= 2 * contextLines) {
-        groupEnd = changeIndices[i];
-      } else {
-        groups.push({ start: groupStart, end: groupEnd });
-        groupStart = changeIndices[i];
-        groupEnd = changeIndices[i];
-      }
-    }
-    groups.push({ start: groupStart, end: groupEnd });
-
-    // Convert groups into hunks
-    const hunks: Hunk[] = [];
-
-    for (const group of groups) {
-      // Expand to include context lines
-      const hunkStart = Math.max(0, group.start - contextLines);
-      const hunkEnd = Math.min(edits.length - 1, group.end + contextLines);
-
-      const lines: string[] = [];
-      let oldCount = 0;
-      let newCount = 0;
-
-      // Compute 1-based starting line numbers
-      let oldLine = 1;
-      let newLine = 1;
-      for (let i = 0; i < hunkStart; i++) {
-        if (edits[i].type === "keep" || edits[i].type === "delete") oldLine++;
-        if (edits[i].type === "keep" || edits[i].type === "insert") newLine++;
-      }
-
-      for (let i = hunkStart; i <= hunkEnd; i++) {
-        const edit = edits[i];
-        switch (edit.type) {
-          case "keep":
-            lines.push(` ${edit.line}`);
-            oldCount++;
-            newCount++;
-            break;
-          case "delete":
-            lines.push(`-${edit.line}`);
-            oldCount++;
-            break;
-          case "insert":
-            lines.push(`+${edit.line}`);
-            newCount++;
-            break;
-        }
-      }
-
-      hunks.push({
-        oldStart: oldLine,
-        oldCount,
-        newStart: newLine,
-        newCount,
-        lines,
-      });
-    }
-
-    return hunks;
   }
 
   ////----------------------------------------
