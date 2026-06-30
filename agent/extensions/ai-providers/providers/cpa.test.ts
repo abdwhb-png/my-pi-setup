@@ -13,7 +13,7 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import { registerCpaProvider } from "./cpa.ts";
+import { registerCpaProvider, getCliproxyApiKey } from "./cpa.ts";
 import { STATIC_FALLBACK_MODELS, resetOrMetadataCache } from "./cpa-models.ts";
 
 interface RegisteredProvider {
@@ -95,7 +95,7 @@ describe("registerCpaProvider", () => {
 		expect(config.name).toBe("CLIProxyAPI (local)");
 		expect(config.baseUrl).toBe("http://localhost:8317/v1");
 		expect(config.api).toBe("openai-completions");
-		expect(config.apiKey).toBe("${CLIPROXY_API_KEY}");
+		expect(config.apiKey).toBe(getCliproxyApiKey());
 	});
 
 	test("initial registration uses STATIC_FALLBACK_MODELS", () => {

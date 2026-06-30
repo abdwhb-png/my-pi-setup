@@ -15,6 +15,9 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import {
 	buildCpaModels,
 	STATIC_FALLBACK_MODELS,
@@ -26,7 +29,34 @@ const PROVIDER_NAME = "cpa";
 const PROVIDER_DISPLAY = "CLIProxyAPI (local)";
 const PROVIDER_BASE_URL = "http://localhost:8317/v1";
 const PROVIDER_API = "openai-completions" as const;
-const CPA_API_KEY_ENV = "${CLIPROXY_API_KEY}";
+
+// ── Helper to resolve the API Key dynamically from .env ──
+
+/**
+ * Resolve the CLIProxyAPI key.
+ * Checks process.env first, then falls back to reading the ~/.pi/agent/.env file.
+ */
+export function getCliproxyApiKey(): string {
+	if (process.env.CLIPROXY_API_KEY) {
+		return process.env.CLIPROXY_API_KEY.replace(/^["']|["']$/g, "");
+	}
+	const envPath = join(getAgentDir(), ".env");
+	if (existsSync(envPath)) {
+		try {
+			const content = readFileSync(envPath, "utf-8");
+			for (const line of content.split(/\r?\n/)) {
+				const trimmed = line.trim();
+				if (trimmed.startsWith("CLIPROXY_API_KEY=")) {
+					const value = trimmed.slice("CLIPROXY_API_KEY=".length).trim();
+					return value.replace(/^["']|["']$/g, "");
+				}
+			}
+		} catch {
+			// ignore
+		}
+	}
+	return "";
+}
 
 // ── Provider config helpers ──
 
@@ -35,7 +65,7 @@ function buildProviderConfig(models: ProviderModelConfig[]) {
 		name: PROVIDER_DISPLAY,
 		baseUrl: PROVIDER_BASE_URL,
 		api: PROVIDER_API,
-		apiKey: CPA_API_KEY_ENV,
+		apiKey: getCliproxyApiKey(),
 		models,
 	};
 }
@@ -60,7 +90,7 @@ export function registerCpaProvider(
 	// Phase 2: On session_start, fetch dynamic models and re-register
 	pi.on("session_start", async (_event, ctx) => {
 		try {
-			const apiKey = process.env.CLIPROXY_API_KEY ?? "";
+			const apiKey = getCliproxyApiKey();
 			const dynamicModels = await buildModels(PROVIDER_BASE_URL, apiKey);
 			if (dynamicModels.length > 0) {
 				ctx.modelRegistry.registerProvider(PROVIDER_NAME, buildProviderConfig(dynamicModels));
