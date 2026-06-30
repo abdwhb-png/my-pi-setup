@@ -8,9 +8,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import notify from "./notify.ts";
-import slowMode from "./slow-mode.ts";
 
 export default function rytswdExtensions(pi: ExtensionAPI) {
   notify(pi);
-  slowMode(pi);
 }

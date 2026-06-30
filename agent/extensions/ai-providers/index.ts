@@ -24,6 +24,7 @@ import { isProviderEnabled, isWidgetEnabled } from "./config.ts";
 import { registerFactoryProvider } from "./providers/factory-ai.ts";
 import { registerCpaProvider } from "./providers/cpa.ts";
 import { registerFactoryCreditsWidget } from "./widgets/factory-credits.ts";
+import { registerProvidersCommand } from "./commands/providers.ts";
 
 const FACTORY_PROVIDER = "factory-ai";
 const FACTORY_WIDGET = "factory-credits";
@@ -49,4 +50,7 @@ export default function aiProvidersExtension(pi: ExtensionAPI): void {
 	// Example:
 	// if (isProviderEnabled("openrouter", cwd)) registerOpenRouterProvider(pi);
 	// if (isProviderEnabled("groq", cwd)) registerGroqProvider(pi);
+
+	// ── Global Commands ──
+	registerProvidersCommand(pi);
 }

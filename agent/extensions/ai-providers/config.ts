@@ -23,6 +23,7 @@ import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 export interface AiProvidersConfig {
 	providers: Record<string, boolean>;
 	widgets: Record<string, boolean>;
+	maxVisibleRows?: number;
 }
 
 const DEFAULT_CONFIG: AiProvidersConfig = {
@@ -44,10 +45,17 @@ function normalizeBooleanMap(raw: unknown): Record<string, boolean> {
 function normalizeConfig(raw: unknown): Partial<AiProvidersConfig> {
 	if (!raw || typeof raw !== "object") return {};
 	const value = raw as Record<string, unknown>;
-	return {
+	
+	const config: Partial<AiProvidersConfig> = {
 		providers: normalizeBooleanMap(value.providers),
 		widgets: normalizeBooleanMap(value.widgets),
 	};
+	
+	if (typeof value.maxVisibleRows === "number") {
+		config.maxVisibleRows = value.maxVisibleRows;
+	}
+	
+	return config;
 }
 
 function readLegacyConfig(path: string): Partial<AiProvidersConfig> {
@@ -72,6 +80,7 @@ function mergeConfig(
 			...base.widgets,
 			...(overrides.widgets ?? {}),
 		},
+		maxVisibleRows: overrides.maxVisibleRows ?? base.maxVisibleRows,
 	};
 }
 
