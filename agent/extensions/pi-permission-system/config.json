@@ -1,0 +1,63 @@
+{
+    "permission": {
+        "*": "allow",
+        "path": {
+            "*": "allow",
+            "*.env": "deny",
+            "*.env.*": "deny",
+            "*.env.example": "allow"
+        },
+        "bash": {
+            "*": "allow",
+            "rm -rf *": "ask",
+            "sudo *": "ask",
+            "node_modules/*": "ask"
+        },
+        "safe_bash": {
+            "*": "allow",
+            "rm -rf *": "ask",
+            "sudo *": "ask",
+            "node_modules/*": "ask"
+        },
+        "hypa_bash": {
+            "*": "allow",
+            "rm -rf *": "ask",
+            "sudo *": "ask",
+            "node_modules/*": "ask"
+        },
+        "hypa_shell": {
+            "*": "allow",
+            "rm -rf *": "ask",
+            "sudo *": "ask",
+            "node_modules/*": "ask"
+        },
+        "write": {
+            "*": "allow",
+            "node_modules/*": "deny"
+        },
+        "hypa_write": {
+            "*": "allow",
+            "node_modules/*": "deny"
+        },
+        "edit": {
+            "*": "allow",
+            "node_modules/*": "deny"
+        },
+        "hypa_edit": {
+            "*": "allow",
+            "node_modules/*": "deny"
+        },
+        "external_directory": {
+            "*": "ask",
+            "~/tmp/pi-*/*": "allow",
+            "/home/abdwhb/tmp/pi-*/*": "allow",
+            "~/.pi/*": "allow",
+            "/home/abdwhb/.pi/*": "allow",
+            "/home/abdwhb/.bun/install/global/node_modules/@earendil-works/*": "allow",
+            "/home/abdwhb/.agents/skills/*": "allow",
+            "/home/abdwhb/projects/*": "allow",
+            "/home/abdwhb/projects/pi-integrations/*": "allow",
+            "/home/abdwhb/projects/shared-services/*": "allow"
+        }
+    }
+}

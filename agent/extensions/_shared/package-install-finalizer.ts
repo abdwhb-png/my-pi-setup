@@ -53,6 +53,7 @@ interface PackageFinalizerStateEntry {
   packageJsonSize: number;
   globalSettingsMtimeMs: number;
   projectSettingsMtimeMs: number;
+  managedLinkPaths?: string[];
 }
 
 interface ParsedNpmSource {
@@ -73,6 +74,8 @@ interface ParsedLocalSource {
 
 type ParsedSource = ParsedNpmSource | ParsedGitSource | ParsedLocalSource;
 
+type PackageExports = string | { [key: string]: PackageExports };
+
 interface PackageJsonLike {
   name?: string;
   packageManager?: string;
@@ -83,7 +86,7 @@ interface PackageJsonLike {
     prompts?: string[];
     themes?: string[];
   };
-  exports?: Record<string, unknown> | string;
+  exports?: PackageExports;
 }
 
 const DEFAULT_LOGGER: RepairLogger = {
@@ -230,13 +233,13 @@ export function collectExpectedArtifactPaths(packageRoot: string, pkg: PackageJs
 
 function collectExportTargets(exportsField: PackageJsonLike["exports"]): string[] {
   const targets = new Set<string>();
-  const visit = (value: unknown) => {
+  const visit = (value: PackageExports | undefined) => {
+    if (!value) return;
     if (typeof value === "string") {
       if (value.startsWith("./")) targets.add(value);
       return;
     }
-    if (!value || typeof value !== "object") return;
-    for (const nested of Object.values(value as Record<string, unknown>)) {
+    for (const nested of Object.values(value)) {
       visit(nested);
     }
   };
@@ -281,8 +284,16 @@ export function isReplaceablePackageShim(linkPath: string, packageName: string):
   });
 }
 
-export function ensurePackageLinks(packageRoot: string, packageName: string, scope: PackageScope, cwd: string, agentDir: string): string[] {
+export function ensurePackageLinks(
+  packageRoot: string,
+  packageName: string,
+  scope: PackageScope,
+  cwd: string,
+  agentDir: string,
+  options?: { ownedLinkPaths?: string[] },
+): string[] {
   const changed: string[] = [];
+  const ownedLinkPaths = new Set(options?.ownedLinkPaths ?? []);
   for (const linkRoot of getPackageLinkRoots(scope, cwd, agentDir)) {
     mkdirSync(linkRoot, { recursive: true });
     const linkPath = join(linkRoot, packageName);
@@ -297,7 +308,7 @@ export function ensurePackageLinks(packageRoot: string, packageName: string, sco
           const targetRealPath = realpathSync(targetPath);
           if (currentRealPath === targetRealPath) continue;
           rmSync(linkPath, { recursive: true, force: true });
-        } else if (isReplaceablePackageShim(linkPath, packageName)) {
+        } else if (isReplaceablePackageShim(linkPath, packageName) || ownedLinkPaths.has(linkPath)) {
           rmSync(linkPath, { recursive: true, force: true });
         } else {
           continue;
@@ -341,7 +352,14 @@ export function removePackageLinks(packageRoot: string, packageName: string, sco
   return removed;
 }
 
-export function finalizePackageRoot(packageRoot: string, scope: PackageScope, cwd: string, agentDir: string, logger: RepairLogger = DEFAULT_LOGGER): { built: boolean; linked: string[]; warnings: string[] } {
+export function finalizePackageRoot(
+  packageRoot: string,
+  scope: PackageScope,
+  cwd: string,
+  agentDir: string,
+  logger: RepairLogger = DEFAULT_LOGGER,
+  options?: { ownedLinkPaths?: string[] },
+): { built: boolean; linked: string[]; warnings: string[] } {
   const warnings: string[] = [];
   if (!existsSync(packageRoot)) {
     return { built: false, linked: [], warnings };
@@ -378,7 +396,7 @@ export function finalizePackageRoot(packageRoot: string, scope: PackageScope, cw
     }
   }
 
-  const linked = ensurePackageLinks(packageRoot, pkg.name, scope, cwd, agentDir);
+  const linked = ensurePackageLinks(packageRoot, pkg.name, scope, cwd, agentDir, options);
   for (const warning of warnings) logger.warn(`[package-install-finalizer] ${warning}`);
   if (built) logger.info(`[package-install-finalizer] Built ${pkg.name}`);
   for (const linkPath of linked) logger.info(`[package-install-finalizer] Linked ${pkg.name} -> ${linkPath}`);
@@ -480,11 +498,16 @@ export function repairConfiguredPiPackages(env: RepairEnvironment): RepairSummar
       continue;
     }
 
-    const result = finalizePackageRoot(packageRoot, entry.scope, env.cwd, env.agentDir, logger);
+    const result = finalizePackageRoot(packageRoot, entry.scope, env.cwd, env.agentDir, logger, {
+      ownedLinkPaths: existingStateEntry?.managedLinkPaths,
+    });
     if (result.built) summary.built.push(packageRoot);
     summary.linked.push(...result.linked);
     summary.warnings.push(...result.warnings);
-    if (currentStateEntry) nextState.packages[stateKey] = currentStateEntry;
+    if (currentStateEntry) {
+      currentStateEntry.managedLinkPaths = Array.from(new Set([...(existingStateEntry?.managedLinkPaths ?? []), ...result.linked]));
+      nextState.packages[stateKey] = currentStateEntry;
+    }
   }
 
   saveFinalizerState(env.agentDir, nextState);

@@ -19,11 +19,12 @@ mcp.json
 git/
 
 extensions/oc.ts
-
 extensions/tx9/
+extensions/pi-permission-system/logs/
 
 run-history.jsonl
 trust.json
+package-finalizer-state.json
 npm/
 pi-hermes-memory/
 projects-memory/

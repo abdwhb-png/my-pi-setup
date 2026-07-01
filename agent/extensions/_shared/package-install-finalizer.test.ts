@@ -70,6 +70,55 @@ describe("package-install-finalizer", () => {
     expect(existsSync(packageFinalizer.getStateFilePath(agentDir))).toBe(true);
   });
 
+  it("replaces an owned non-symlink package directory with the current managed symlink", () => {
+    const agentDir = makeTempDir("pi-agent-");
+    const cwd = makeTempDir("pi-cwd-");
+    const packageRoot = makeTempDir("pi-package-");
+
+    mkdirSync(join(packageRoot, "dist"), { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({
+        name: "pi-roles",
+        pi: { extensions: ["./dist/index.js"] },
+        exports: { ".": "./dist/index.js", "./protocol": "./dist/protocol.js" },
+      }),
+    );
+    writeFileSync(join(packageRoot, "dist", "index.js"), "export default {}\n");
+    writeFileSync(join(packageRoot, "dist", "protocol.js"), "export const ok = true\n");
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [packageRoot] }));
+
+    const ownedDir = join(agentDir, "node_modules", "pi-roles");
+    mkdirSync(ownedDir, { recursive: true });
+    writeFileSync(join(ownedDir, "package.json"), JSON.stringify({ name: "pi-roles" }));
+    writeFileSync(join(ownedDir, "index.js"), "export default {}\n");
+
+    writeFileSync(
+      packageFinalizer.getStateFilePath(agentDir),
+      JSON.stringify({
+        version: 1,
+        packages: {
+          [`user:${packageRoot}`]: {
+            source: packageRoot,
+            scope: "user",
+            packageRoot,
+            packageJsonMtimeMs: 0,
+            packageJsonSize: 0,
+            globalSettingsMtimeMs: 0,
+            projectSettingsMtimeMs: 0,
+            managedLinkPaths: [ownedDir],
+          },
+        },
+      }),
+    );
+
+    const result = packageFinalizer.repairConfiguredPiPackages({ cwd, agentDir, logger: { info() {}, warn() {} }, force: true });
+
+    expect(result.linked).toContain(ownedDir);
+    expect(lstatSync(ownedDir).isSymbolicLink()).toBe(true);
+    expect(realpathSync(ownedDir)).toBe(realpathSync(packageRoot));
+  });
+
   it("creates scoped package links by ensuring parent directories exist", () => {
     const agentDir = makeTempDir("pi-agent-");
     const cwd = makeTempDir("pi-cwd-");

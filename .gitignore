@@ -8,6 +8,14 @@ exa-usage.json
 web-search.json
 **/pi-session-**.html
 
+.pi/
+!.pi/prompts/
+!.pi/settings.json
+pi-plans/
+pi-acp/
+session-cron.*
+context-mode/
+
 .codex/*
 !.codex/agents/
 !.codex/agents/**
@@ -18,13 +26,13 @@ web-search.json
 !.codex/prompts/**
 .omx/
 
+.claude/
+
 .atlas/
+.sdd/
 node_modules/
 
-.pi/
-pi-acp/
-session-cron.*
-context-mode/
+context.md
 
 .bash_profile
 .bashrc
