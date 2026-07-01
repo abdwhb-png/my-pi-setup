@@ -132,7 +132,7 @@ describe("brainstorm-forcer redesign", () => {
     expect(await toolCall({ toolName: "bash" }, ctx)).toBeUndefined();
   });
 
-  it("discovery blocks only mutation tools, not research/question tools", async () => {
+  it("discovery blocks only mutation tools, not research/question/unknown non-mutating tools", async () => {
     const { pi, handlers, commands } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
@@ -141,9 +141,10 @@ describe("brainstorm-forcer redesign", () => {
     const blocked = await toolCall({ toolName: "write" }, ctx);
     expect(blocked.block).toBe(true);
     expect(await toolCall({ toolName: "ask_user_question" }, ctx)).toBeUndefined();
+    expect(await toolCall({ toolName: "web_search" }, ctx)).toBeUndefined();
   });
 
-  it("exploring still allows research and ask_user_question, but blocks mutation", async () => {
+  it("exploring allows any non-mutating tools, but blocks mutation", async () => {
     const { pi, handlers, commands } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
@@ -153,6 +154,7 @@ describe("brainstorm-forcer redesign", () => {
     const toolCall = handlers.get("tool_call")!;
     expect(await toolCall({ toolName: "read" }, ctx)).toBeUndefined();
     expect(await toolCall({ toolName: "ask_user_question" }, ctx)).toBeUndefined();
+    expect(await toolCall({ toolName: "web_search" }, ctx)).toBeUndefined();
     const blocked = await toolCall({ toolName: "edit" }, ctx);
     expect(blocked.block).toBe(true);
   });
@@ -197,7 +199,7 @@ describe("brainstorm-forcer redesign", () => {
     await handlers.get("tool_result")!({ toolName: "hypa_ls" }, ctx);
     await handlers.get("tool_result")!({ toolName: "ask_user_question" }, ctx);
     await commands.get("brainstorm")!.handler("status", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Research calls: 2"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Research calls: 1"), "info");
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Questions: 1"), "info");
   });
 

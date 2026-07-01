@@ -49,7 +49,6 @@ type ToolGroups = {
   research: Set<string>;
   questioning: Set<string>;
   mutation: Set<string>;
-  shell: Set<string>;
 };
 
 type Evidence = {
@@ -73,59 +72,56 @@ const EMPTY_EVIDENCE = (): Evidence => ({
 });
 
 function buildToolGroups(pi: ExtensionAPI): ToolGroups {
-  const allNames = pi.getAllTools().map((t) => t.name);
+  const tools = pi.getAllTools();
 
   const research = new Set<string>();
   const questioning = new Set<string>();
   const mutation = new Set<string>();
-  const shell = new Set<string>();
 
-  for (const name of allNames) {
+  const isMutationLike = (name: string, description: string): boolean => {
+    const text = `${name} ${description}`.toLowerCase();
+    return [
+      /(^|[_-])(write|edit)([_-]|$)/,
+      /(^|[_-])(delete|remove|rename|move|apply|patch|commit|push|merge|create|save|update)([_-]|$)/,
+      /\b(write|edit|delete|remove|rename|move|apply|patch|commit|push|merge|create|save|update|modify|overwrite|mutate)\b/,
+    ].some((re) => re.test(text));
+  };
+
+  const isResearchLike = (name: string, description: string): boolean => {
+    const text = `${name} ${description}`.toLowerCase();
+    return [
+      /(^|[_-])(read|grep|find|ls)([_-]|$)/,
+      /(^|[_-])(search|fetch|query|lookup|crawl|scan|inspect|list)([_-]|$)/,
+      /\b(read|search|fetch|query|lookup|crawl|scan|inspect|list|grep|find|discover|analyze|analyse|retrieve|browse|web)\b/,
+    ].some((re) => re.test(text));
+  };
+
+  for (const tool of tools) {
+    const name = tool.name;
+    const description = tool.description ?? "";
     if (name === "ask_user_question") questioning.add(name);
-    if (name === "write" || name === "edit") mutation.add(name);
-    if (name === "bash" || name === "safe_bash" || name === "hypa_shell") shell.add(name);
-
-    if (
-      name === "read" ||
-      name === "grep" ||
-      name === "find" ||
-      name === "ls" ||
-      name === "bash" ||
-      name === "safe_bash" ||
-      name === "hypa_read" ||
-      name === "hypa_grep" ||
-      name === "hypa_find" ||
-      name === "hypa_ls"
-    ) {
-      research.add(name);
-    }
+    if (isMutationLike(name, description)) mutation.add(name);
+    if (isResearchLike(name, description)) research.add(name);
   }
 
-  return { research, questioning, mutation, shell };
+  return { research, questioning, mutation };
 }
 
 function canUseTool(phase: Phase, toolName: string, groups: ToolGroups): boolean {
   if (phase === "documenting") return true;
-  if (groups.mutation.has(toolName)) return false;
-
-  // Discovery / Understanding / Exploring / Presenting allow research + questions.
-  if (groups.research.has(toolName) || groups.questioning.has(toolName)) return true;
-
-  // For non-mutation, non-research tools: keep them allowed to avoid starving the model
-  // in environments with additional safe analysis tools. The hard gate is on mutation.
-  return true;
+  return !groups.mutation.has(toolName);
 }
 
 function phaseRestrictionSummary(phase: Phase): string {
   switch (phase) {
     case "discovery":
-      return "Research only. Mutation blocked. Gather evidence + produce Research Summary.";
+      return "Discovery phase. Any non-mutating tool is allowed. Mutation blocked. Gather evidence + produce Research Summary.";
     case "understanding":
-      return "Use ask_user_question to refine requirements. Mutation blocked.";
+      return "Understanding phase. Any non-mutating tool is allowed; prefer ask_user_question to refine requirements. Mutation blocked.";
     case "exploring":
-      return "Compare 2-3 approaches with trade-offs. Mutation blocked.";
+      return "Exploring phase. Any non-mutating tool is allowed. Compare 2-3 approaches with trade-offs. Mutation blocked.";
     case "presenting":
-      return "Present design sections, validate with user. Mutation blocked.";
+      return "Presenting phase. Any non-mutating tool is allowed. Present design sections, validate with user. Mutation blocked.";
     case "documenting":
       return "Write approved design doc. All tools allowed.";
   }
@@ -230,7 +226,6 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     research: new Set(),
     questioning: new Set(),
     mutation: new Set(),
-    shell: new Set(),
   };
 
   function refreshGroups() {
