@@ -10,10 +10,12 @@
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
-      "pi-fancy-footer": ["../projects/pi-integrations/pi-fancy-footer/src/index.ts"],
-      "pi-fancy-footer/api": ["../projects/pi-integrations/pi-fancy-footer/src/api.ts"]
+      "pi-fancy-footer": ["../../projects/pi-integrations/pi-fancy-footer/src/index.ts"],
+      "pi-fancy-footer/api": ["../../projects/pi-integrations/pi-fancy-footer/src/api.ts"],
+      "pi-roles": ["../../projects/pi-integrations/pi-roles/src/index.ts"],
+      "pi-roles/protocol": ["../../projects/pi-integrations/pi-roles/src/protocol.ts"]
     }
   },
-  "include": ["extensions/**/*.ts"],
+  "include": ["extensions/**/*.ts", "bin/**/*.ts", "../.pi/extensions/**/*.ts"],
   "exclude": ["node_modules", "git", "npm", "skills"]
 }
