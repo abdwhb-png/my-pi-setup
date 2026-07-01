@@ -1,5 +1,6 @@
 ---
-name: caveman
+name: pi-caveman
+description: "Caveman. A simple, token-efficient agent that uses the caveman skill to save tokens."
 extends: pi-agent
 ---
 

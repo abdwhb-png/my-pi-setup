@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
-import { createWidget, type WidgetHandle } from "./_shared/fancy-footer";
-import { createUiColors } from "./_shared/ui-colors";
+import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
+import { createUiColors } from "../_shared/ui-colors";
+import { loadCompressorConfig } from "./config";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -19,6 +20,8 @@ interface LocalCompressorConfig {
   baseUrl: string;
   agent: string;
   timeoutMs: number;
+  showStatus: boolean;
+  showWidget: boolean;
 }
 
 interface ToolResultHandlerOptions {
@@ -79,13 +82,20 @@ export function extractCompressibleText(content: object[]): string | null {
   return content.map((block) => block.text).join("\n");
 }
 
-export function getLocalCompressorConfig(): LocalCompressorConfig {
+export function getLocalCompressorConfig(cwd = process.cwd()): LocalCompressorConfig {
+  const cfg = loadCompressorConfig(cwd);
+
+  const baseUrl = process.env.EDGEE_COMPRESSOR_BASE_URL?.trim() || cfg.baseUrl || DEFAULT_COMPRESSOR_BASE_URL;
+  const agent = process.env.EDGEE_COMPRESSOR_AGENT?.trim() || cfg.agent || DEFAULT_AGENT;
   const timeoutRaw = process.env.EDGEE_COMPRESSOR_TIMEOUT_MS?.trim();
-  const timeoutMs = timeoutRaw ? Number(timeoutRaw) : DEFAULT_TIMEOUT_MS;
+  const timeoutMs = timeoutRaw ? Number(timeoutRaw) : (cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+
   return {
-    baseUrl: process.env.EDGEE_COMPRESSOR_BASE_URL?.trim() || DEFAULT_COMPRESSOR_BASE_URL,
-    agent: process.env.EDGEE_COMPRESSOR_AGENT?.trim() || DEFAULT_AGENT,
+    baseUrl,
+    agent,
     timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : DEFAULT_TIMEOUT_MS,
+    showStatus: cfg.showStatus ?? false,
+    showWidget: cfg.showWidget ?? true,
   };
 }
 
@@ -270,25 +280,34 @@ function updateUi(
   baseUrl: string,
   widget: WidgetHandle | null,
   setWidgetText: (text: string) => void,
+  showStatus: boolean,
+  showWidget: boolean,
 ): void {
   if (!ctx?.hasUI) return;
   const colors = createUiColors(ctx.ui.theme);
   const status = formatStatsStatus(snapshot);
   const lines = formatStatsWidgetLines(snapshot, baseUrl);
-  const statusText = snapshot.failed > 0
-    ? colors.warning(status)
-    : snapshot.compressed > 0
-      ? colors.success(status)
-      : colors.subtle(status);
-  const widgetText = [
-    colors.primary(lines[0] ?? "compressor"),
-    colors.separator(" │ "),
-    snapshot.failed > 0 ? colors.warning(lines[1] ?? "") : colors.meta(lines[1] ?? ""),
-  ].join("");
 
-  ctx.ui.setStatus(STATUS_ID, statusText);
-  setWidgetText(widgetText);
-  widget?.update(ctx, widgetText);
+  if (showStatus) {
+    const statusText = snapshot.failed > 0
+      ? colors.warning(status)
+      : snapshot.compressed > 0
+        ? colors.success(status)
+        : colors.subtle(status);
+    ctx.ui.setStatus(STATUS_ID, statusText);
+  } else {
+    ctx.ui.setStatus(STATUS_ID, "");
+  }
+
+  if (showWidget) {
+    const widgetText = [
+      colors.primary(lines[0] ?? "compressor"),
+      colors.separator(" │ "),
+      snapshot.failed > 0 ? colors.warning(lines[1] ?? "") : colors.meta(lines[1] ?? ""),
+    ].join("");
+    setWidgetText(widgetText);
+    widget?.update(ctx, widgetText);
+  }
 }
 
 export function createToolResultHandler(options?: ToolResultHandlerOptions) {
@@ -377,7 +396,7 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
   const handleObservation = (event: CompressionObservation) => {
     metrics.record(event);
     const snapshot = metrics.snapshot();
-    updateUi(latestCtx, snapshot, config.baseUrl, widget, setWidgetText);
+    updateUi(latestCtx, snapshot, config.baseUrl, widget, setWidgetText, config.showStatus, config.showWidget);
 
     if (!latestCtx?.hasUI) return;
     if (event.kind === "compressed" && !notifiedTools.has(event.toolName)) {
@@ -411,7 +430,7 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
       timeoutMs: config.timeoutMs,
       onObservation: handleObservation,
     });
-    updateUi(latestCtx, metrics.snapshot(), config.baseUrl, widget, setWidgetText);
+    updateUi(latestCtx, metrics.snapshot(), config.baseUrl, widget, setWidgetText, config.showStatus, config.showWidget);
   });
 
   pi.registerCommand("compressor-stats", {
@@ -423,7 +442,7 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
         metrics.reset();
         notifiedTools = new Set<string>();
         notifiedFailure = false;
-        updateUi(latestCtx, metrics.snapshot(), config.baseUrl, widget, setWidgetText);
+        updateUi(latestCtx, metrics.snapshot(), config.baseUrl, widget, setWidgetText, config.showStatus, config.showWidget);
         ctx.ui.notify("compressor stats reset", "info");
         return;
       }

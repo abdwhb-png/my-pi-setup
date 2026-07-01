@@ -51,7 +51,7 @@
 
 ## 2. Key Components
 
-### 2.1 Pi Extension (`extensions/edgee-bridge.ts`)
+### 2.1 Pi Extension (`extensions/save-tokens/local-tool-result-compressor.ts`)
 *   **Startup (`session_start`)**:
     *   Starts a local HTTP server using `Bun.serve` on port `8318`.
     *   Performs a quick health check on the local Edgee gateway (`http://127.0.0.1:8787`).
@@ -83,7 +83,7 @@
 
 ## 4. Test Specifications
 
-A test suite `extensions/__tests__/edgee-bridge.test.ts` will verify:
+A test suite `extensions/save-tokens/local-tool-result-compressor.test.ts` will verify:
 1.  **Mock Server Lifecycle**: The server starts and stops cleanly without leaving active ports.
 2.  **Fallback Behavior**: When Edgee is down, the handler does not block and returns the uncompressed payload.
 3.  **End-to-End Compression**: A simulated payload is successfully routed through a simulated Edgee proxy, compressed, and retrieved.

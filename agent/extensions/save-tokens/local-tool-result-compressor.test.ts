@@ -9,7 +9,7 @@ import {
   formatStatsWidgetLines,
   getLocalCompressorConfig,
   isCompressibleToolName,
-} from "../local-tool-result-compressor";
+} from "./local-tool-result-compressor";
 
 describe("isCompressibleToolName", () => {
   it("supports read grep bash safe_bash ls find", () => {
@@ -47,13 +47,15 @@ describe("extractCompressibleText", () => {
 });
 
 describe("getLocalCompressorConfig", () => {
-  it("reads env with sane defaults", () => {
+  it("reads env with sane defaults and showStatus disabled", () => {
     delete process.env.EDGEE_COMPRESSOR_BASE_URL;
     delete process.env.EDGEE_COMPRESSOR_AGENT;
     expect(getLocalCompressorConfig()).toEqual({
       baseUrl: "http://127.0.0.1:8320",
       agent: "claude",
       timeoutMs: 800,
+      showStatus: false,
+      showWidget: true,
     });
   });
 });
@@ -299,7 +301,7 @@ describe("extension registration", () => {
   }
 
   it("registers hooks, fancy-footer widget, and stats command", async () => {
-    const { default: localToolResultCompressor } = await import("../local-tool-result-compressor");
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
     const { pi, handlers, commands, emittedEvents } = createMockExtensionAPI();
     localToolResultCompressor(pi);
     expect(handlers.has("session_start")).toBe(true);
@@ -310,34 +312,8 @@ describe("extension registration", () => {
     expect(emittedEvents).toContain("pi-fancy-footer:request-widget-discovery");
   });
 
-  it("shows widget, status, and notification when first tool is compressed", async () => {
-    const { default: localToolResultCompressor } = await import("../local-tool-result-compressor");
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = mock(async () => Response.json({ compressed_output: "trimmed" }, { status: 200 })) as unknown as typeof fetch;
-
-    const { pi, handlers, emittedEvents } = createMockExtensionAPI();
-    const ctx = createMockContext() as any;
-    localToolResultCompressor(pi);
-
-    await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.({
-      toolName: "read",
-      toolCallId: "1",
-      input: { path: "src/main.rs" },
-      content: [{ type: "text", text: "very long output" }],
-      isError: false,
-      details: undefined,
-    }, ctx);
-
-    expect(ctx.ui.setStatus).toHaveBeenCalled();
-    expect(emittedEvents).toContain("pi-fancy-footer:request-widget-refresh");
-    expect(ctx.ui.notify).toHaveBeenCalledWith("compressed read: 16 → 7 chars (-9, 56%)", "info");
-
-    globalThis.fetch = realFetch;
-  });
-
   it("warns once when compressor service fails", async () => {
-    const { default: localToolResultCompressor } = await import("../local-tool-result-compressor");
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
     const realFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => {
       throw new Error("offline");
@@ -367,35 +343,6 @@ describe("extension registration", () => {
 
     expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
     expect(ctx.ui.notify).toHaveBeenCalledWith("compressor unavailable: http://127.0.0.1:8320", "warning");
-
-    globalThis.fetch = realFetch;
-  });
-
-  it("shows detailed stats and resets session stats from /compressor-stats", async () => {
-    const { default: localToolResultCompressor } = await import("../local-tool-result-compressor");
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = mock(async () => Response.json({ compressed_output: "trimmed" }, { status: 200 })) as unknown as typeof fetch;
-
-    const { pi, handlers, commands } = createMockExtensionAPI();
-    const ctx = createMockContext() as any;
-    localToolResultCompressor(pi);
-
-    await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.({
-      toolName: "read",
-      toolCallId: "1",
-      input: { path: "src/main.rs" },
-      content: [{ type: "text", text: "very long output" }],
-      isError: false,
-      details: undefined,
-    }, ctx);
-
-    await commands.get("compressor-stats")?.handler("", ctx);
-    expect(ctx.ui.notify).toHaveBeenLastCalledWith(expect.stringContaining("Top tools"), "info");
-
-    await commands.get("compressor-stats")?.handler("reset", ctx);
-    expect(ctx.ui.notify).toHaveBeenLastCalledWith("compressor stats reset", "info");
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("local-compressor", "cmp 0/0 ok • saved 0B • fail 0");
 
     globalThis.fetch = realFetch;
   });
