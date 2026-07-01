@@ -5,12 +5,14 @@
  * Based on amosblomqvist/pi-subagents safe-bash.ts
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createBashTool } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { isDangerous } from "./guard";
 
 export default function (pi: ExtensionAPI) {
-  const bashTool = createBashTool(process.cwd());
+  // Use createBashToolDefinition to get renderCall/renderResult
+  // so safe_bash shows the command in the session UI like built-in bash.
+  const bashDefinition = createBashToolDefinition(process.cwd());
 
   pi.registerTool({
     name: "safe_bash",
@@ -23,12 +25,15 @@ export default function (pi: ExtensionAPI) {
         Type.Number({ description: "Timeout in seconds (optional)" }),
       ),
     }),
-    async execute(toolCallId, params, signal, onUpdate, _ctx) {
+    // Delegate renderers to bash tool definition so command is visible in TUI
+    renderCall: bashDefinition.renderCall,
+    renderResult: bashDefinition.renderResult,
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
       const danger = isDangerous(params.command);
       if (danger) {
         throw new Error(danger);
       }
-      return bashTool.execute(toolCallId, params, signal, onUpdate);
+      return bashDefinition.execute(toolCallId, params, signal, onUpdate, ctx);
     },
   });
 }
