@@ -300,7 +300,11 @@ export function ensurePackageLinks(
     const targetPath = packageRoot;
     mkdirSync(dirname(linkPath), { recursive: true });
 
-    if (existsSync(linkPath)) {
+    let linkExists = false;
+    try {
+      linkExists = !!lstatSync(linkPath);
+    } catch {}
+    if (linkExists) {
       try {
         const stats = lstatSync(linkPath);
         if (stats.isSymbolicLink()) {
@@ -314,7 +318,8 @@ export function ensurePackageLinks(
           continue;
         }
       } catch {
-        continue;
+        // Broken symlink or inaccessible path — remove it so we can create a fresh one.
+        try { rmSync(linkPath, { recursive: true, force: true }); } catch {}
       }
     }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import * as packageFinalizer from "./package-install-finalizer.ts";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 function makeTempDir(prefix: string): string {
@@ -9,6 +9,35 @@ function makeTempDir(prefix: string): string {
 }
 
 describe("package-install-finalizer", () => {
+  it("replaces a broken symlink with the correct one", () => {
+    const agentDir = makeTempDir("pi-agent-");
+    const cwd = makeTempDir("pi-cwd-");
+    const packageRoot = makeTempDir("pi-package-");
+
+    mkdirSync(join(packageRoot, "dist"), { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({
+        name: "pi-roles",
+        pi: { extensions: ["./dist/index.js"] },
+        exports: { ".": "./dist/index.js", "./protocol": "./dist/protocol.js" },
+      }),
+    );
+    writeFileSync(join(packageRoot, "dist", "index.js"), "export default {}\n");
+    writeFileSync(join(packageRoot, "dist", "protocol.js"), "export const ok = true\n");
+
+    // Create a broken symlink at the target path (target doesn't exist)
+    const linkPath = join(agentDir, "node_modules", "pi-roles");
+    mkdirSync(dirname(linkPath), { recursive: true });
+    try { symlinkSync("/nonexistent/target", linkPath, "dir"); } catch {}
+
+    const changed = packageFinalizer.ensurePackageLinks(packageRoot, "pi-roles", "user", cwd, agentDir);
+
+    expect(changed).toContain(linkPath);
+    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    expect(realpathSync(linkPath)).toBe(realpathSync(packageRoot));
+  });
+
   it("replaces a stale shim with a real symlink", async () => {
     const agentDir = makeTempDir("pi-agent-");
     const cwd = makeTempDir("pi-cwd-");
