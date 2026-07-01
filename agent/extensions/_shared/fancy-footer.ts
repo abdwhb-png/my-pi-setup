@@ -1,10 +1,17 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { FancyFooterWidgetContribution } from "pi-fancy-footer/api";
 import {
   contributeFancyFooterWidgets,
   requestFancyFooterWidgetDiscovery,
   requestFancyFooterRefresh,
 } from "pi-fancy-footer/api";
+
+// Derive the Pi API type from the contribute function to avoid
+// type incompatibility when the caller imports ExtensionAPI from
+// a different node_modules/ location than pi-fancy-footer does.
+type PiAPI = Parameters<typeof contributeFancyFooterWidgets>[0];
+// Re-export for callers to avoid ExtensionAPI type mismatches.
+export type { PiAPI as FancyFooterAPI };
 
 export interface WidgetHandle {
   /** Whether fancy-footer is active. If false, use update(_, text) and remove() for fallback. */
@@ -32,7 +39,7 @@ export interface WidgetHandle {
 const MAX_ORDER = 64;
 
 export function createWidget(
-  pi: ExtensionAPI,
+  pi: PiAPI,
   def: FancyFooterWidgetContribution,
 ): WidgetHandle {
   const safeDef: FancyFooterWidgetContribution = {

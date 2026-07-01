@@ -17,7 +17,30 @@
         "allow": ["_output", "_freshSession", "_makeSampleReport", "_MAX_RETRIES"]
       }
     ],
-    "no-control-regex": "off"
+    "no-control-regex": "off",
+
+    // Blocks explicit usage of the 'any' keyword
+    "@typescript-eslint/no-explicit-any": ["error", { "fixToUnknown": false }],
+
+    // Blocks unsafe operations (calls, assigns) if an 'any' leaks in
+    "@typescript-eslint/no-unsafe-argument": "error",
+    "@typescript-eslint/no-unsafe-assignment": "error",
+    "@typescript-eslint/no-unsafe-call": "error",
+    "@typescript-eslint/no-unsafe-member-access": "error",
+    "@typescript-eslint/no-unsafe-return": "error",
+
+    // Blocks explicit usage of the 'unknown' keyword using the modern replacement for ban-types
+    "@typescript-eslint/no-restricted-types": [
+      "error",
+      {
+        "types": {
+          "unknown": {
+            "message": "The 'unknown' type is forbidden. Use a strict type, union, or generic instead.",
+            "fixWith": "never" 
+          }
+        }
+      }
+    ]
   },
   "env": {
     "builtin": true
