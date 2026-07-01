@@ -19,6 +19,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createUiColors } from "../_shared/ui-colors";
+import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -43,7 +44,18 @@ const PHASE_ICONS: Record<Phase, string> = {
 };
 
 const SESSION_KEY = "brainstorm-forcer";
-const STATUS_ID = "brainstorm";
+const WIDGET_ID = "brainstorm-forcer";
+
+type TopicState = {
+  raw: string;
+  display: string;
+};
+
+function summarizeTopicForUi(raw: string): string {
+  const singleLine = raw.replace(/\s+/g, " ").trim();
+  if (singleLine.length <= 64) return singleLine;
+  return `${singleLine.slice(0, 61).trimEnd()}…`;
+}
 
 type ToolGroups = {
   research: Set<string>;
@@ -127,11 +139,11 @@ function phaseRestrictionSummary(phase: Phase): string {
   }
 }
 
-function phaseBanner(phase: Phase, topic: string): string {
-  return `${PHASE_ICONS[phase]} Brainstorm ${PHASE_LABELS[phase]} (${PHASES.indexOf(phase) + 1}/${PHASES.length}) — ${topic}`;
+function phaseBanner(phase: Phase, topic: TopicState): string {
+  return `${PHASE_ICONS[phase]} Brainstorm ${PHASE_LABELS[phase]} (${PHASES.indexOf(phase) + 1}/${PHASES.length}) — ${topic.display}`;
 }
 
-function phasePrompt(phase: Phase, topic: string, evidence: Evidence): string {
+function phasePrompt(phase: Phase, topic: TopicState, evidence: Evidence): string {
   const completed: string[] = [];
   const idx = PHASES.indexOf(phase);
   for (let i = 0; i < idx; i++) {
@@ -143,14 +155,14 @@ function phasePrompt(phase: Phase, topic: string, evidence: Evidence): string {
   switch (phase) {
     case "discovery":
       return [
-        `Current topic: ${topic}`,
+        `Current topic: ${topic.raw}`,
         `Current phase: DISCOVERY`,
         `Use the bundled skill \`brainstorm-forcer\` and research tools to understand the codebase and produce a Research Summary with Files Accessed / Key Findings / Gaps.`,
         evidenceLine,
       ].join("\n\n");
     case "understanding":
       return [
-        `Current topic: ${topic}`,
+        `Current topic: ${topic.raw}`,
         `Current phase: UNDERSTANDING`,
         `Use the bundled skill \`brainstorm-forcer\` and ask_user_question to ask one clarifying question at a time. Do not write code.`,
         evidenceLine,
@@ -158,7 +170,7 @@ function phasePrompt(phase: Phase, topic: string, evidence: Evidence): string {
       ].join("\n\n");
     case "exploring":
       return [
-        `Current topic: ${topic}`,
+        `Current topic: ${topic.raw}`,
         `Current phase: EXPLORING`,
         `Follow the bundled skill \`brainstorm-forcer\`: propose 2-3 approaches with trade-offs, uncertainties, and recommendation. Do not write code.`,
         evidenceLine,
@@ -166,7 +178,7 @@ function phasePrompt(phase: Phase, topic: string, evidence: Evidence): string {
       ].join("\n\n");
     case "presenting":
       return [
-        `Current topic: ${topic}`,
+        `Current topic: ${topic.raw}`,
         `Current phase: PRESENTING`,
         `Follow the bundled skill \`brainstorm-forcer\`: present design in 200-300 word sections. Validate sections with user using ask_user_question when appropriate. Do not write code.`,
         evidenceLine,
@@ -174,7 +186,7 @@ function phasePrompt(phase: Phase, topic: string, evidence: Evidence): string {
       ].join("\n\n");
     case "documenting":
       return [
-        `Current topic: ${topic}`,
+        `Current topic: ${topic.raw}`,
         `Current phase: DOCUMENTING`,
         `Follow the bundled skill \`brainstorm-forcer\` and write approved design doc to docs/plans/.`,
         evidenceLine,
@@ -220,13 +232,15 @@ export default function brainstormForcer(pi: ExtensionAPI) {
   pi.registerMessageRenderer(SESSION_KEY, brainstormMessageRenderer);
 
   let activePhase: Phase | null = null;
-  let topic = "";
+  let topic: TopicState = { raw: "", display: "" };
   let evidence = EMPTY_EVIDENCE();
   let groups: ToolGroups = {
     research: new Set(),
     questioning: new Set(),
     mutation: new Set(),
   };
+  let widgetText: string | null = null;
+  let widget: WidgetHandle | null = null;
 
   function refreshGroups() {
     groups = buildToolGroups(pi);
@@ -234,31 +248,51 @@ export default function brainstormForcer(pi: ExtensionAPI) {
 
   function resetState() {
     activePhase = null;
-    topic = "";
+    topic = { raw: "", display: "" };
     evidence = EMPTY_EVIDENCE();
     refreshGroups();
   }
 
-  function updateFooter(ctx: ExtensionContext): void {
+  function nextPhase(phase: Phase): Phase | null {
+    const idx = PHASES.indexOf(phase) + 1;
+    return idx < PHASES.length ? PHASES[idx]! : null;
+  }
+
+  function previousPhase(phase: Phase): Phase | null {
+    const idx = PHASES.indexOf(phase) - 1;
+    return idx >= 0 ? PHASES[idx]! : null;
+  }
+
+  function findPhase(text: string): Phase | null {
+    const lower = text.trim().toLowerCase();
+    const byName = PHASES.find((p) => p === lower || PHASE_LABELS[p].toLowerCase() === lower || p.startsWith(lower));
+    if (byName) return byName;
+    const n = Number(lower);
+    if (Number.isInteger(n) && n >= 1 && n <= PHASES.length) return PHASES[n - 1]!;
+    return null;
+  }
+
+  function updateWidget(ctx: ExtensionContext): void {
     if (!ctx.hasUI) return;
     const colors = createUiColors(ctx.ui.theme);
     if (!activePhase) {
-      ctx.ui.setStatus(STATUS_ID, "");
+      widgetText = null;
+      widget?.update(ctx, null);
       return;
     }
     const idx = PHASES.indexOf(activePhase) + 1;
     const research = evidence.researchCalls;
     const questions = evidence.questionCalls;
-    const status = [
+    widgetText = [
       colors.primary(`${PHASE_ICONS[activePhase]} ${PHASE_LABELS[activePhase]}`),
       colors.separator(" • "),
-      colors.meta(`phase ${idx}/${PHASES.length}`),
+      colors.meta(`p${idx}/${PHASES.length}`),
       colors.separator(" • "),
-      colors.text(topic),
+      colors.text(topic.display),
       colors.separator(" • "),
       colors.meta(`r:${research} q:${questions}`),
     ].join("");
-    ctx.ui.setStatus(STATUS_ID, status);
+    widget?.update(ctx, widgetText);
   }
 
   function saveState(ctx: ExtensionContext): void {
@@ -272,7 +306,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     } else {
       pi.appendEntry(SESSION_KEY, { active: false });
     }
-    updateFooter(ctx);
+    updateWidget(ctx);
   }
 
   function restoreState(ctx: ExtensionContext): void {
@@ -281,11 +315,14 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i];
       if (entry.type !== "custom" || entry.customType !== SESSION_KEY) continue;
-      const data = entry.data as { active?: boolean; phase?: string; topic?: string; evidence?: Evidence } | undefined;
+      const data = entry.data as { active?: boolean; phase?: string; topic?: TopicState | string; evidence?: Evidence } | undefined;
       if (!data || data.active === false) return;
       if (data.phase && (PHASES as readonly string[]).includes(data.phase)) {
         activePhase = data.phase as Phase;
-        topic = data.topic ?? "";
+        const restoredTopic = data.topic;
+        topic = typeof restoredTopic === "string"
+          ? { raw: restoredTopic, display: summarizeTopicForUi(restoredTopic) }
+          : restoredTopic ?? { raw: "", display: "" };
         evidence = data.evidence ?? EMPTY_EVIDENCE();
       }
       return;
@@ -294,16 +331,16 @@ export default function brainstormForcer(pi: ExtensionAPI) {
 
   function startPhase(topicText: string, ctx: ExtensionContext, immediate: boolean): void {
     activePhase = "discovery";
-    topic = topicText;
+    topic = { raw: topicText, display: summarizeTopicForUi(topicText) };
     evidence = EMPTY_EVIDENCE();
     refreshGroups();
     saveState(ctx);
-    ctx.ui.notify(`Brainstorm ${immediate ? "started" : "armed"}: "${topic}" — Phase 1/${PHASES.length}: Discovery`, "info");
+    ctx.ui.notify(`Brainstorm ${immediate ? "started" : "armed"}: Discovery (1/${PHASES.length})`, "info");
     if (immediate) {
       if (ctx.isIdle()) {
-        pi.sendUserMessage(topic);
+        pi.sendUserMessage(topic.raw);
       } else {
-        pi.sendUserMessage(topic, { deliverAs: "followUp" });
+        pi.sendUserMessage(topic.raw, { deliverAs: "followUp" });
         ctx.ui.notify("Queued brainstorm topic as follow-up turn.", "info");
       }
     }
@@ -315,18 +352,31 @@ export default function brainstormForcer(pi: ExtensionAPI) {
       "/brainstorm arm <topic> arms only. /brainstorm next | force-next | status | stop",
     getArgumentCompletions: (prefix: string) => {
       const trimmed = prefix.trimStart().toLowerCase();
+      const currentIdx = activePhase ? PHASES.indexOf(activePhase) : -1;
       const phaseOptions = PHASES.map((phase, index) => ({
         value: `phase ${phase}`,
         label: `phase ${phase}`,
         description: `Jump to ${PHASE_LABELS[phase]} (${index + 1}/${PHASES.length})`,
       }));
+      const nextOptions = PHASES.filter((p) => PHASES.indexOf(p) > currentIdx).map((phase) => ({
+        value: `next ${phase}`,
+        label: `next ${phase}`,
+        description: `Advance directly to ${PHASE_LABELS[phase]} (${PHASES.indexOf(phase) + 1}/${PHASES.length})`,
+      }));
+      const previousOptions = PHASES.filter((p) => currentIdx >= 0 && PHASES.indexOf(p) < currentIdx).map((phase) => ({
+        value: `previous ${phase}`,
+        label: `previous ${phase}`,
+        description: `Return directly to ${PHASE_LABELS[phase]} (${PHASES.indexOf(phase) + 1}/${PHASES.length})`,
+      }));
       const base = [
         { value: "status", label: "status", description: "Show current phase, evidence, and restrictions" },
         { value: "stop", label: "stop", description: "Disable brainstorming workflow" },
-        { value: "next", label: "next", description: "Advance if completion criteria are met" },
-        { value: "force-next", label: "force-next", description: "Advance even if completion criteria are not met" },
+        { value: "next", label: "next", description: "Advance one phase if completion criteria are met" },
+        { value: "previous", label: "previous", description: "Return to previous phase" },
         { value: "arm ", label: "arm", description: "Arm workflow only; do not send message to model" },
         { value: "start ", label: "start", description: "Arm workflow and immediately send topic to model" },
+        ...nextOptions,
+        ...previousOptions,
         ...phaseOptions,
       ];
       if (!trimmed) return base;
@@ -345,7 +395,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         }
         const blocker = completionBlocker(activePhase, evidence);
         ctx.ui.notify(
-          `Brainstorm: "${topic}" — ${PHASE_LABELS[activePhase]} (${PHASES.indexOf(activePhase) + 1}/${PHASES.length})` +
+          `Brainstorm: ${topic.display} — ${PHASE_LABELS[activePhase]} (${PHASES.indexOf(activePhase) + 1}/${PHASES.length})` +
             `\nResearch calls: ${evidence.researchCalls} | Questions: ${evidence.questionCalls} | Approvals: ${evidence.approvalsCaptured}` +
             `\nRestrictions: ${phaseRestrictionSummary(activePhase)}` +
             (blocker ? `\nNext blocked: ${blocker}` : "\nNext allowed."),
@@ -385,13 +435,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
           ctx.ui.notify("Usage: /brainstorm phase <name|number>", "error");
           return;
         }
-        let resolved: Phase | null = null;
-        const n = Number(target);
-        if (Number.isInteger(n) && n >= 1 && n <= PHASES.length) resolved = PHASES[n - 1]!;
-        else {
-          const lower = target.toLowerCase();
-          resolved = PHASES.find((p) => p === lower || PHASE_LABELS[p].toLowerCase() === lower || p.startsWith(lower)) ?? null;
-        }
+        const resolved = findPhase(target);
         if (!resolved) {
           ctx.ui.notify(`Unknown phase "${target}".`, "error");
           return;
@@ -402,33 +446,79 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         return;
       }
 
-      if (raw === "next") {
+      if (first === "next") {
         if (!activePhase) {
           ctx.ui.notify("No active brainstorming session.", "error");
           return;
         }
-        const blocker = completionBlocker(activePhase, evidence);
-        if (blocker) {
-          ctx.ui.notify(blocker, "warning");
-          return;
+        const force = tail.includes("--force");
+        const phaseArg = tail.replace(/--force/g, "").trim();
+        if (!force) {
+          const blocker = completionBlocker(activePhase, evidence);
+          if (blocker) {
+            ctx.ui.notify(blocker, "warning");
+            return;
+          }
         }
-        const idx = PHASES.indexOf(activePhase);
-        const next = PHASES[idx + 1];
+        let next: Phase | null;
+        if (phaseArg) {
+          const resolved = findPhase(phaseArg);
+          if (!resolved) {
+            ctx.ui.notify(`Unknown phase "${phaseArg}".`, "error");
+            return;
+          }
+          if (PHASES.indexOf(resolved) <= PHASES.indexOf(activePhase)) {
+            ctx.ui.notify(`Phase "${resolved}" is not after ${PHASE_LABELS[activePhase]}.`, "warning");
+            return;
+          }
+          next = resolved;
+        } else {
+          next = nextPhase(activePhase);
+        }
         if (!next) {
           ctx.ui.notify("Already at final phase.", "info");
           return;
         }
         activePhase = next;
         saveState(ctx);
-        ctx.ui.notify(`Advanced to ${PHASE_LABELS[next]} (${idx + 2}/${PHASES.length}).`, "info");
+        ctx.ui.notify(`Advanced to ${PHASE_LABELS[next]} (${PHASES.indexOf(next) + 1}/${PHASES.length})${force ? " (forced)" : ""}.`, force ? "warning" : "info");
         return;
       }
 
-      if (raw === "force-next") {
+      if (first === "previous") {
         if (!activePhase) {
           ctx.ui.notify("No active brainstorming session.", "error");
           return;
         }
+        const force = tail.includes("--force");
+        const phaseArg = tail.replace(/--force/g, "").trim();
+        let previous: Phase | null;
+        if (phaseArg) {
+          const resolved = findPhase(phaseArg);
+          if (!resolved) {
+            ctx.ui.notify(`Unknown phase "${phaseArg}".`, "error");
+            return;
+          }
+          if (PHASES.indexOf(resolved) >= PHASES.indexOf(activePhase)) {
+            ctx.ui.notify(`Phase "${resolved}" is not before ${PHASE_LABELS[activePhase]}.`, "warning");
+            return;
+          }
+          previous = resolved;
+        } else {
+          previous = previousPhase(activePhase);
+        }
+        if (!previous) {
+          ctx.ui.notify("Already at first phase.", "info");
+          return;
+        }
+        activePhase = previous;
+        saveState(ctx);
+        ctx.ui.notify(`Returned to ${PHASE_LABELS[previous]} (${PHASES.indexOf(previous) + 1}/${PHASES.length})${force ? " (forced)" : ""}.`, force ? "warning" : "info");
+        return;
+      }
+
+      if (raw === "force-next") {
+        // Deprecated alias — now use /brainstorm next --force
         const idx = PHASES.indexOf(activePhase);
         const next = PHASES[idx + 1];
         if (!next) {
@@ -451,13 +541,24 @@ export default function brainstormForcer(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    widget = createWidget(pi, {
+      id: WIDGET_ID,
+      label: "Brainstorm",
+      description: "Shows brainstorming phase, topic, and evidence counters.",
+      row: 0,
+      order: 8,
+      align: "left",
+      render: () => widgetText,
+    });
     refreshGroups();
     restoreState(ctx);
-    updateFooter(ctx);
+    updateWidget(ctx);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    if (ctx.hasUI) ctx.ui.setStatus(STATUS_ID, "");
+    widget?.remove(ctx);
+    widget = null;
+    widgetText = null;
   });
 
   pi.on("tool_call", async (event, ctx) => {

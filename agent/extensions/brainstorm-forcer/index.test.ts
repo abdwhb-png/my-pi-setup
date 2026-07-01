@@ -75,8 +75,9 @@ describe("brainstorm-forcer redesign", () => {
     expect(renderers.has("brainstorm-forcer")).toBe(true);
   });
 
-  it("provides argument completions like sandbox-style commands", () => {
+  it("provides argument completions like sandbox-style commands", async () => {
     const { pi, commands } = createMockAPI();
+    const ctx = createMockContext();
     brainstormForcer(pi);
     const cmd = commands.get("brainstorm")! as any;
 
@@ -84,14 +85,21 @@ describe("brainstorm-forcer redesign", () => {
     expect(Array.isArray(all)).toBe(true);
     expect(all.some((item: any) => item.value === "status")).toBe(true);
     expect(all.some((item: any) => item.value === "next")).toBe(true);
+    expect(all.some((item: any) => item.value === "previous")).toBe(true);
     expect(all.some((item: any) => item.value === "arm ")).toBe(true);
     expect(all.some((item: any) => item.value === "phase discovery")).toBe(true);
 
     const filtered = cmd.getArgumentCompletions("sta");
-    expect(filtered).toEqual([
-      expect.objectContaining({ value: "status" }),
-      expect.objectContaining({ value: "start " }),
-    ]);
+    expect(filtered).toHaveLength(2);
+    expect(filtered[0]).toMatchObject({ value: "status" });
+    expect(filtered[1]).toMatchObject({ value: "start " });
+
+    await cmd.handler("topic", ctx);
+    await cmd.handler("force-next", ctx); // understanding
+    const nextFiltered = cmd.getArgumentCompletions("next ");
+    expect(nextFiltered.some((item: any) => item.value === "next exploring")).toBe(true);
+    const previousFiltered = cmd.getArgumentCompletions("previous ");
+    expect(previousFiltered.some((item: any) => item.value === "previous discovery")).toBe(true);
   });
 
   it("/brainstorm <topic> starts immediately and sends user message", async () => {
@@ -101,7 +109,11 @@ describe("brainstorm-forcer redesign", () => {
     await commands.get("brainstorm")!.handler("fix footer status", ctx);
     expect(sentUserMessages).toHaveLength(1);
     expect(sentUserMessages[0]!.content).toBe("fix footer status");
-    expect(entries[0]!.data).toMatchObject({ active: true, phase: "discovery", topic: "fix footer status" });
+    expect(entries[0]!.data).toMatchObject({
+      active: true,
+      phase: "discovery",
+      topic: { raw: "fix footer status", display: "fix footer status" },
+    });
   });
 
   it("/brainstorm arm <topic> arms only without sending user message", async () => {
@@ -110,6 +122,21 @@ describe("brainstorm-forcer redesign", () => {
     brainstormForcer(pi);
     await commands.get("brainstorm")!.handler("arm diagnose footer", ctx);
     expect(sentUserMessages).toHaveLength(0);
+  });
+
+  it("uses shortened topic for notify/footer while sending raw topic to model", async () => {
+    const { pi, commands, sentUserMessages, handlers } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await handlers.get("session_start")!({}, ctx);
+    const longTopic = "you see the forked pi-roles package ? I dont get why the status displayed is Intent not defined - role and I want something more useful";
+    await commands.get("brainstorm")!.handler(longTopic, ctx);
+    expect(sentUserMessages[0]!.content).toBe(longTopic);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Brainstorm started: Discovery (1/5)", "info");
+    const widgetCall = (ctx.ui.setWidget as any).mock.calls.at(-1);
+    expect(widgetCall[0]).toBe("brainstorm-forcer");
+    expect(widgetCall[1][0]).toContain("Discovery");
+    expect(widgetCall[1][0].length).toBeLessThan(longTopic.length + 20);
   });
 
   it("resources_discover registers extension dir for bundled skill discovery", async () => {
@@ -180,7 +207,7 @@ describe("brainstorm-forcer redesign", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Understanding"), "info");
   });
 
-  it("/brainstorm force-next bypasses completion checks", async () => {
+  it("/brainstorm force-next bypasses completion checks (deprecated alias)", async () => {
     const { pi, commands } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
@@ -188,6 +215,41 @@ describe("brainstorm-forcer redesign", () => {
     await cmd.handler("topic", ctx);
     await cmd.handler("force-next", ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Force-advanced to Understanding"), "warning");
+  });
+
+  it("/brainstorm next --force bypasses completion blocker", async () => {
+    const { pi, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const cmd = commands.get("brainstorm")!;
+    await cmd.handler("topic", ctx);
+    await cmd.handler("next --force", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Understanding (2/5) (forced)"), "warning");
+  });
+
+  it("/brainstorm next exploring --force skips blocker", async () => {
+    const { pi, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const cmd = commands.get("brainstorm")!;
+    await cmd.handler("topic", ctx);
+    await cmd.handler("next exploring --force", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Exploring"), "warning");
+  });
+
+  it("/brainstorm previous returns to previous or specified earlier phase", async () => {
+    const { pi, commands, handlers } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const cmd = commands.get("brainstorm")!;
+    await cmd.handler("topic", ctx);
+    await handlers.get("tool_result")!({ toolName: "read" }, ctx);
+    await cmd.handler("next", ctx); // understanding
+    await cmd.handler("force-next", ctx); // exploring
+    await cmd.handler("previous", ctx); // back to understanding
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Returned to Understanding"), "info");
+    await cmd.handler("previous discovery --force", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Returned to Discovery"), "warning");
   });
 
   it("tool_result tracks research + question evidence", async () => {
@@ -232,25 +294,29 @@ describe("brainstorm-forcer redesign", () => {
     expect(result.message.content).toContain("Brainstorm Discovery");
   });
 
-  it("footer status uses ui-colors path and updates on phase changes", async () => {
-    const { pi, commands } = createMockAPI();
+  it("phase widget uses ui-colors path and updates on phase changes", async () => {
+    const { pi, commands, handlers } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
+    await handlers.get("session_start")!({}, ctx);
     const cmd = commands.get("brainstorm")!;
     await cmd.handler("topic", ctx);
-    expect(ctx.ui.setStatus).toHaveBeenCalled();
+    expect(ctx.ui.setWidget).toHaveBeenCalled();
     await cmd.handler("phase exploring", ctx);
-    expect(ctx.ui.setStatus).toHaveBeenCalledWith("brainstorm", expect.stringContaining("Exploring"));
+    const lastWidgetCall = (ctx.ui.setWidget as any).mock.calls.at(-1);
+    expect(lastWidgetCall[0]).toBe("brainstorm-forcer");
+    expect(lastWidgetCall[1][0]).toContain("Exploring");
   });
 
   it("stop clears state and footer", async () => {
-    const { pi, commands, entries } = createMockAPI();
+    const { pi, commands, entries, handlers } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
+    await handlers.get("session_start")!({}, ctx);
     const cmd = commands.get("brainstorm")!;
     await cmd.handler("topic", ctx);
     await cmd.handler("stop", ctx);
     expect(entries.at(-1)?.data).toMatchObject({ active: false });
-    expect(ctx.ui.setStatus).toHaveBeenCalledWith("brainstorm", "");
+    expect(ctx.ui.setWidget).toHaveBeenCalledWith("brainstorm-forcer", undefined);
   });
 });
