@@ -1,6 +1,15 @@
 import type { ExtensionAPI, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import { basename } from "node:path";
 import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
 import { createUiColors } from "../_shared/ui-colors";
+import {
+  appendCompressionEvent,
+  type CompressionDetails,
+  type CompressionFailedReason,
+  type CompressionKind,
+  type CompressionSkippedReason,
+} from "../_shared/compression-protocol";
+import {icon} from "../_shared/compression-render";
 import { loadCompressorConfig } from "./config";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -11,10 +20,30 @@ const DEFAULT_TIMEOUT_MS = 800;
 const STATUS_ID = "local-compressor";
 const WIDGET_ID = "local-compressor";
 
-type CompressionObservation =
-  | { kind: "compressed"; toolName: string; originalLength: number; compressedLength: number }
-  | { kind: "skipped"; toolName: string; reason: "non_text_content" | "no_change"; originalLength: number }
-  | { kind: "failed"; toolName: string; reason: "service_error"; originalLength: number };
+type CompressionObservation = {
+  kind: CompressionKind;
+  toolCallId: string;
+  toolName: string;
+  originalLength: number;
+  compressedLength: number;
+  subject?: string;
+  reason?: CompressionSkippedReason | CompressionFailedReason;
+};
+
+type CompressionMetricObservation = {
+  kind: CompressionKind;
+  toolName: string;
+  originalLength: number;
+  compressedLength: number;
+};
+
+type CompressionSummary = {
+  seen: number;
+  compressed: number;
+  skipped: number;
+  failed: number;
+  bytesSaved: number;
+};
 
 interface LocalCompressorConfig {
   baseUrl: string;
@@ -152,6 +181,21 @@ function formatSavedBytes(bytesSaved: number): string {
   return `${(bytesSaved / 1_000_000).toFixed(1)}MB`;
 }
 
+function summarizeCompressionEvents(events: CompressionObservation[]): CompressionSummary {
+  return events.reduce<CompressionSummary>((summary, event) => {
+    summary.seen += 1;
+    if (event.kind === "compressed") {
+      summary.compressed += 1;
+      summary.bytesSaved += Math.max(0, event.originalLength - event.compressedLength);
+    } else if (event.kind === "skipped") {
+      summary.skipped += 1;
+    } else {
+      summary.failed += 1;
+    }
+    return summary;
+  }, { seen: 0, compressed: 0, skipped: 0, failed: 0, bytesSaved: 0 });
+}
+
 export function createCompressionMetrics() {
   let seen = 0;
   let compressed = 0;
@@ -184,7 +228,7 @@ export function createCompressionMetrics() {
   }
 
   return {
-    record(event: CompressionObservation) {
+    record(event: CompressionMetricObservation) {
       seen += 1;
       const stats = ensureTool(event.toolName);
 
@@ -233,7 +277,7 @@ export function formatStatsStatus(snapshot: CompressionSnapshot): string {
 function getTopTools(snapshot: CompressionSnapshot, limit = 3): Array<[string, ToolCompressionStats]> {
   return Object.entries(snapshot.toolStats)
     .filter(([, stats]) => stats.compressed > 0 || stats.bytesSaved > 0)
-    .sort((a, b) => b[1].bytesSaved - a[1].bytesSaved || b[1].compressed - a[1].compressed || a[0].localeCompare(b[0]))
+    .toSorted((a, b) => b[1].bytesSaved - a[1].bytesSaved || b[1].compressed - a[1].compressed || a[0].localeCompare(b[0]))
     .slice(0, limit);
 }
 
@@ -268,12 +312,6 @@ export function formatDetailedStats(snapshot: CompressionSnapshot, baseUrl: stri
   return lines.join("\n");
 }
 
-function formatCompressionNotification(event: Extract<CompressionObservation, { kind: "compressed" }>): string {
-  const saved = Math.max(0, event.originalLength - event.compressedLength);
-  const savedPct = event.originalLength > 0 ? Math.round((saved / event.originalLength) * 100) : 0;
-  return `compressed ${event.toolName}: ${event.originalLength} → ${event.compressedLength} chars (-${saved}, ${savedPct}%)`;
-}
-
 function updateUi(
   ctx: ExtensionContext | null,
   snapshot: CompressionSnapshot,
@@ -282,6 +320,7 @@ function updateUi(
   setWidgetText: (text: string) => void,
   showStatus: boolean,
   showWidget: boolean,
+  event?: CompressionObservation
 ): void {
   if (!ctx?.hasUI) return;
   const colors = createUiColors(ctx.ui.theme);
@@ -300,10 +339,12 @@ function updateUi(
   }
 
   if (showWidget) {
+    const lineOne = `${icon} • ${lines[0] ?? "compressor"}`;
+    const lineTwo = lines[1] ?? "";
     const widgetText = [
-      colors.primary(lines[0] ?? "compressor"),
+      event?.kind === "failed" ? colors.danger(lineOne) : colors.primary(lineOne),
       colors.separator(" │ "),
-      snapshot.failed > 0 ? colors.warning(lines[1] ?? "") : colors.meta(lines[1] ?? ""),
+      snapshot.failed > 0 ? colors.warning(lineTwo) : colors.meta(lineTwo),
     ].join("");
     setWidgetText(widgetText);
     widget?.update(ctx, widgetText);
@@ -321,13 +362,18 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
     if (event.isError) return;
     if (!isCompressibleToolName(event.toolName)) return;
 
+    const subject = summarizeToolSubject(event.toolName, event.input);
+
     const text = extractCompressibleText(event.content);
     if (!text) {
       options?.onObservation?.({
         kind: "skipped",
+        toolCallId: event.toolCallId,
         toolName: event.toolName,
-        reason: "non_text_content",
         originalLength: 0,
+        compressedLength: 0,
+        reason: "non_text_content",
+        subject,
       });
       return;
     }
@@ -344,28 +390,62 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
       if (!result.compressed_output || result.compressed_output === text) {
         options?.onObservation?.({
           kind: "skipped",
+          toolCallId: event.toolCallId,
           toolName: event.toolName,
-          reason: "no_change",
           originalLength: text.length,
+          compressedLength: 0,
+          reason: "no_change",
+          subject,
         });
         return;
       }
 
+      const originalLength = text.length;
+      const compressedLength = result.compressed_output.length;
+      if (compressedLength >= originalLength) {
+        options?.onObservation?.({
+          kind: "skipped",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          originalLength,
+          compressedLength: 0,
+          reason: "not_smaller",
+          subject,
+        });
+        return;
+      }
+
+      const savedBytes = Math.max(0, originalLength - compressedLength);
+      const savedPct = originalLength > 0 ? Math.round((savedBytes / originalLength) * 100) : 0;
+
       options?.onObservation?.({
         kind: "compressed",
+        toolCallId: event.toolCallId,
         toolName: event.toolName,
-        originalLength: text.length,
-        compressedLength: result.compressed_output.length,
+        originalLength,
+        compressedLength,
+        subject,
       });
       return {
         content: [{ type: "text" as const, text: result.compressed_output }],
+        details: {
+          compression: {
+            originalLength,
+            compressedLength,
+            savedBytes,
+            savedPct,
+          } satisfies CompressionDetails,
+        },
       };
     } catch {
       options?.onObservation?.({
         kind: "failed",
+        toolCallId: event.toolCallId,
         toolName: event.toolName,
-        reason: "service_error",
         originalLength: text.length,
+        compressedLength: 0,
+        reason: "service_error",
+        subject,
       });
       return;
     }
@@ -376,9 +456,9 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
   let latestCtx: ExtensionContext | null = null;
   let config = getLocalCompressorConfig();
   let metrics = createCompressionMetrics();
-  let notifiedTools = new Set<string>();
-  let notifiedFailure = false;
   let widgetText = "";
+  let pendingTurnEvents: CompressionObservation[] = [];
+  let pendingAgentEvents: CompressionObservation[] = [];
   const widget = createWidget(pi, {
     id: WIDGET_ID,
     label: "Compressor",
@@ -396,19 +476,11 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
   const handleObservation = (event: CompressionObservation) => {
     metrics.record(event);
     const snapshot = metrics.snapshot();
-    updateUi(latestCtx, snapshot, config.baseUrl, widget, setWidgetText, config.showStatus, config.showWidget);
+    updateUi(latestCtx, snapshot, config.baseUrl, widget, setWidgetText, config.showStatus, config.showWidget, event);
 
-    if (!latestCtx?.hasUI) return;
-    if (event.kind === "compressed" && !notifiedTools.has(event.toolName)) {
-      notifiedTools.add(event.toolName);
-      latestCtx.ui.notify(formatCompressionNotification(event), "info");
-      return;
-    }
-
-    if (event.kind === "failed" && !notifiedFailure) {
-      notifiedFailure = true;
-      latestCtx.ui.notify(`compressor unavailable: ${config.baseUrl}`, "warning");
-    }
+    appendCompressionEvent(pi, toCompressionEventPayload(event));
+    pendingTurnEvents.push(event);
+    pendingAgentEvents.push(event);
   };
 
   let handler = createToolResultHandler({
@@ -422,8 +494,8 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
     latestCtx = ctx;
     config = getLocalCompressorConfig();
     metrics = createCompressionMetrics();
-    notifiedTools = new Set<string>();
-    notifiedFailure = false;
+    pendingTurnEvents = [];
+    pendingAgentEvents = [];
     handler = createToolResultHandler({
       baseUrl: config.baseUrl,
       agent: config.agent,
@@ -433,6 +505,31 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
     updateUi(latestCtx, metrics.snapshot(), config.baseUrl, widget, setWidgetText, config.showStatus, config.showWidget);
   });
 
+  pi.on("agent_start", async () => {
+    pendingAgentEvents = [];
+  });
+
+  pi.on("turn_start", async () => {
+    pendingTurnEvents = [];
+  });
+
+  pi.on("turn_end", async (_event, ctx) => {
+    latestCtx = ctx;
+    if (!ctx.hasUI || pendingTurnEvents.length === 0) return;
+    const summary = formatTurnNotification(pendingTurnEvents);
+    ctx.ui.notify(summary.message, summary.type);
+    pendingTurnEvents = [];
+  });
+
+  pi.on("agent_end", async (_event, ctx) => {
+    latestCtx = ctx;
+    // If hasUI always notify on agent_end even if no events were recorded, to ensure the user sees the final summary.
+    if (!ctx.hasUI) return;
+    const summary = formatCompressionNotificationSummary("agent", pendingAgentEvents);
+    ctx.ui.notify(summary.message, summary.type);
+    pendingAgentEvents = [];
+  });
+
   pi.registerCommand("compressor-stats", {
     description: "Show or reset local tool-result compressor stats. Usage: /compressor-stats [reset]",
     handler: async (args, ctx) => {
@@ -440,8 +537,6 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
       const command = args.trim().toLowerCase();
       if (command === "reset") {
         metrics.reset();
-        notifiedTools = new Set<string>();
-        notifiedFailure = false;
         updateUi(latestCtx, metrics.snapshot(), config.baseUrl, widget, setWidgetText, config.showStatus, config.showWidget);
         ctx.ui.notify("compressor stats reset", "info");
         return;
@@ -464,4 +559,93 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
     }
     latestCtx = null;
   });
+}
+
+function toCompressionEventPayload(event: CompressionObservation) {
+  const timestamp = Date.now();
+  if (event.kind === "compressed") {
+    const savedBytes = Math.max(0, event.originalLength - event.compressedLength);
+    const savedPct = event.originalLength > 0 ? Math.round((savedBytes / event.originalLength) * 100) : 0;
+    return {
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      timestamp,
+      kind: "compressed" as const,
+      originalLength: event.originalLength,
+      subject: event.subject,
+      compressedLength: event.compressedLength,
+      savedBytes,
+      savedPct,
+    };
+  }
+
+  if (event.kind === "skipped") {
+    return {
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      timestamp,
+      kind: "skipped" as const,
+      originalLength: event.originalLength,
+      subject: event.subject,
+      reason: event.reason as CompressionSkippedReason,
+    };
+  }
+
+  return {
+    toolCallId: event.toolCallId,
+    toolName: event.toolName,
+    timestamp,
+    kind: "failed" as const,
+    originalLength: event.originalLength,
+    subject: event.subject,
+    reason: event.reason as CompressionFailedReason,
+  };
+}
+
+function summarizeToolSubject(toolName: string, input: object | undefined): string | undefined {
+  if (!input) return undefined;
+  const record = input as Record<string, object | string | number | boolean | undefined>;
+  if (toolName === "read") {
+    const path = record.path ?? record.file_path;
+    return typeof path === "string" ? basename(path) : undefined;
+  }
+  if (toolName === "grep") {
+    const path = record.path;
+    const pattern = record.pattern;
+    if (typeof path === "string") return basename(path);
+    return typeof pattern === "string" ? pattern : undefined;
+  }
+  if (toolName === "ls") {
+    const path = record.path;
+    return typeof path === "string" ? basename(path) || path : undefined;
+  }
+  if (toolName === "find") {
+    const path = record.path;
+    const pattern = record.pattern;
+    if (typeof pattern === "string") return pattern;
+    return typeof path === "string" ? basename(path) || path : undefined;
+  }
+  if (toolName === "bash" || toolName === "safe_bash") {
+    const command = record.command;
+    if (typeof command !== "string") return undefined;
+    return command.length > 48 ? `${command.slice(0, 45)}...` : command;
+  }
+  return undefined;
+}
+
+function formatCompressionNotificationSummary(scope: "turn" | "agent", events: CompressionObservation[]): { message: string; type: "info" | "warning" } {
+  const summary = summarizeCompressionEvents(events);
+  const parts = [`ok ${summary.compressed}/${summary.seen}`];
+  if (summary.bytesSaved > 0) parts.push(`saved ${formatSavedBytes(summary.bytesSaved)}`);
+  if (summary.skipped > 0 || summary.failed > 0) parts.push(`skipped ${summary.skipped}`);
+  parts.push(`fail ${summary.failed}`);
+
+  return {
+    message: `${icon} compression ${scope}: ${parts.join(" • ")}`,
+    type: summary.failed > 0 ? "warning" : "info",
+  };
+}
+
+function formatTurnNotification(events: CompressionObservation[]): { message: string; type: "info" | "warning" } {
+  return formatCompressionNotificationSummary("turn", events);
 }

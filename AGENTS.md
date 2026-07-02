@@ -1,4 +1,4 @@
-# Context
+# AGENTS.md
 
 This is the local installation of my [pi](https://pi.dev/) agent harness.
 I'm working on it to customize it for my needs. This file contains instructions for how to use and modify the harness, as well as guidelines for code style, testing, and inter-agent communication.
@@ -20,16 +20,15 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 
 **Pi Sessions**: Sessions auto-save to `~/.pi/agent/sessions/`, organized by working directory. Each session is a JSONL file with a tree structure. Refer to the [pi sessions documentation](https://pi.dev/docs/latest/sessions) for how to work with sessions.
 
-# General Instructions
+## General Instructions
 
 - Always use `context7` coupled with `deepwiki` tools to check documentation about any package or module including pi itself.
 - Always use `pi-extensions` skill for pi packages and extensions development.
+- Use the `pi-cli` skill for any questions regarding the `pi` command-line interface, flags, and automation.
 - Always provide factual and accurate information. If you are unsure about something, search for reliable sources before providing an answer.
 - Use the `factual-research` skill for factual research.
-- Use the `pi-cli` skill for any questions regarding the `pi` command-line interface, flags, and automation.
-- Firecrawl mcp is not available so use firecrawl-cli (some available skills: `firecrawl`, `firecrawl-crawl`, `firecrawl-scrape`, `firecrawl-search`)
 
-# Folder structure
+## Folder structure
 
 - `~/.pi/agent/`: Core logic and functionality of the pi harness. Most of your changes will be here.
 - `~/projects/pi-integrations/`: Coordination root for custom extensions and packages to integrate with the pi harness.
@@ -44,11 +43,11 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 - Do not mix multiple independent projects in the same subfolder.
 - When integrating a project into the pi harness, prefer a clear import path from its own repository rather than copying code into `~/.pi/agent/`.
 
-# ⚠️ Mandatory Workflow — Any Code Changes
+## ⚠️ Mandatory Workflow — Any Code Changes
 
 You must follow these 3 phases **in order**, without skipping any. Each phase contains checklist steps. You only move on to the next phase when all the steps in the current phase are completed.
 
-## Phase 1 — Discovery (before writing a single line of code)
+### Phase 1 — Discovery (before writing a single line of code)
 
 Discover the project you will be working on:
 
@@ -64,7 +63,7 @@ Discover the project you will be working on:
 - Check if the project has build/lint/typecheck scripts in package.json
 - Checks tsconfig.json for compilation rules
 
-## Phase 2 — Implementation (Required TDD)
+### Phase 2 — Implementation (Required TDD)
 
 1. **Write test first** (RED): a test that fails for the target functionality
 2. **Write minimal code** (GREEN): just enough to pass the test
@@ -73,7 +72,7 @@ Discover the project you will be working on:
 
 Absolute rule: **no production line without a test that fails first.**
 
-## Phase 3 — Verification (Required before declaring complete)
+### Phase 3 — Verification (Required before declaring complete)
 
 1. Runs the project's **typecheck** (`tsc --noEmit` or equivalent)
 2. Runs the project's **linter** (or install/configure one if it doesn't exist)
@@ -82,7 +81,7 @@ Absolute rule: **no production line without a test that fails first.**
 
 **Rule**: if any of these checks fail, you fix it before moving on to the next step.
 
-# Coding guidelines
+## Coding guidelines
 
 - Follow the existing code style and patterns in the project. Consistency is more important than personal preference.
 - Write clear, concise code with meaningful variable and function names. Avoid unnecessary complexity.
@@ -98,7 +97,7 @@ Absolute rule: **no production line without a test that fails first.**
 
 <test-driven-development>
 
-## Test Framework
+### Test Framework
 
 - **`bun test` is prefered when applicable.** Use bun's native test runner (`bun:test` imports) for all testing — it's 10x faster startup and 2.5-8x faster execution than vitest. Never use manual console.log test harnesses.
 - Import the module under test directly — **never copy-paste functions** into the test file. Testing copies of code instead of real imports is the most common silent failure pattern: the copy diverges from the source, and errors like missing dependencies or broken imports go undetected.
@@ -126,3 +125,26 @@ Key difference from vitest's `vi.mock()`: bun's `mock.module()` executes in orde
 This catches import errors, type mismatches, and structural issues while keeping tests fast and isolated from the pi runtime.
 
 </test-driven-development>
+
+# More Resources
+
+<model-config-verification>
+
+# ⚠️ Model Configuration — Factual Verification Required
+
+**Whenever you add or configure a model in `models.json` (contextWindow, maxTokens, cost, input modes, reasoning), you MUST verify the specs factually against the provider's official documentation, API, or trusted aggregator (e.g. OpenRouter API).**
+
+This applies to models from:
+- OpenCode Go (`ocg/`): check OpenCode docs
+- OpenRouter pool (`or/` aliases): check OpenRouter API (`https://openrouter.ai/api/v1/models`)
+- OAuth providers (Antigravity, Codex, etc.): check the underlying provider's official docs (Anthropic, Google, OpenAI, etc.) or OpenRouter for the closest equivalent model
+
+**Process:**
+1. Identify the underlying model (e.g., `claude-sonnet-4-6` → `anthropic/claude-sonnet-4.6` on OpenRouter)
+2. Query the provider's API or documentation for context length, max output tokens, supported input modalities
+3. Pricing: OAuth models are $0 (already covered by subscription); OpenCode Go uses the Go pricing; OpenRouter pool uses OpenRouter pricing
+4. Never copy-paste specs from one model to another without verifying — even within the same provider family
+
+**Anti-pattern: guessing specs.** Do not assume `contextWindow: 1000000` or `maxTokens: 8192` as defaults. Each model has specific, documented limits.
+
+</model-config-verification>

@@ -40,11 +40,13 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { type BashOperations, createBashTool, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { type BashOperations, createBashTool, createBashToolDefinition, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createWidget } from "../_shared/fancy-footer";
+import { createBashPrefixRenderer } from "../_shared/bash-prefix-renderer";
+import { appendCompressionFooter } from "../_shared/compression-render";
 
 interface SandboxConfig extends SandboxRuntimeConfig {
 	enabled?: boolean;
@@ -143,6 +145,23 @@ function deepMerge(base: SandboxConfig, overrides: Partial<SandboxConfig>): Sand
 	return result;
 }
 
+export function buildSandboxShellEnv(
+	baseEnv: NodeJS.ProcessEnv = process.env,
+	agentDir: string = getAgentDir(),
+): NodeJS.ProcessEnv {
+	const pathKey = Object.keys(baseEnv).find((key) => key.toLowerCase() === "path") ?? "PATH";
+	const currentPath = baseEnv[pathKey] ?? "";
+	const binDir = join(agentDir, "bin");
+	const pathEntries = currentPath.split(delimiter).filter(Boolean);
+	const updatedPath = pathEntries.includes(binDir)
+		? currentPath
+		: [binDir, currentPath].filter(Boolean).join(delimiter);
+	return {
+		...baseEnv,
+		[pathKey]: updatedPath,
+	};
+}
+
 function createSandboxedBashOps(): BashOperations {
 	return {
 		async exec(command, cwd, { onData, signal, timeout }) {
@@ -151,11 +170,13 @@ function createSandboxedBashOps(): BashOperations {
 			}
 
 			const wrappedCommand = await SandboxManager.wrapWithSandbox(command);
+			const shellEnv = buildSandboxShellEnv();
 
 			return new Promise((resolve, reject) => {
 				const child = spawn("bash", ["-c", wrappedCommand], {
 					cwd,
 					detached: true,
+					env: shellEnv,
 					stdio: ["ignore", "pipe", "pipe"],
 				});
 
@@ -221,6 +242,7 @@ export default function (pi: ExtensionAPI) {
 
 	let projectCwd = process.cwd();
 	let cachedBash = createBashTool(projectCwd);
+	let bashDef = createBashToolDefinition(projectCwd);
 	let sandboxEnabled = false;
 	let sandboxInitialized = false;
 	let sandboxFooterState: "on" | "restricted" | "off" | "error" = "off";
@@ -251,6 +273,20 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		...cachedBash,
 		label: "bash (sandboxed)",
+		// Show 🛡️ prefix when sandbox active, no prefix when disabled
+		renderCall: createBashPrefixRenderer(() => (sandboxEnabled ? "🛡️" : "")),
+		renderResult: (
+			result: Parameters<NonNullable<typeof bashDef.renderResult>>[0],
+			options: Parameters<NonNullable<typeof bashDef.renderResult>>[1],
+			theme: Parameters<NonNullable<typeof bashDef.renderResult>>[2],
+			context: Parameters<NonNullable<typeof bashDef.renderResult>>[3],
+		) => {
+			const component = bashDef.renderResult!(result, options, theme, context);
+			if (!options.isPartial) {
+				appendCompressionFooter(component, result.details, theme);
+			}
+			return component;
+		},
 		async execute(id, params, signal, onUpdate, _ctx) {
 			if (!sandboxEnabled || !sandboxInitialized) {
 				return cachedBash.execute(id, params, signal, onUpdate);
@@ -271,6 +307,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		projectCwd = ctx.cwd;
 		cachedBash = createBashTool(projectCwd);
+		bashDef = createBashToolDefinition(projectCwd);
 		const noSandbox = pi.getFlag("no-sandbox") as boolean;
 
 		if (noSandbox) {

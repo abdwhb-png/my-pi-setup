@@ -10,6 +10,8 @@ import {
   getLocalCompressorConfig,
   isCompressibleToolName,
 } from "./local-tool-result-compressor";
+import { COMPRESSION_EVENT_ENTRY_TYPE } from "../_shared/compression-protocol";
+import type { CompressionDetails } from "../_shared/compression-protocol";
 
 describe("isCompressibleToolName", () => {
   it("supports read grep bash safe_bash ls find", () => {
@@ -25,6 +27,13 @@ describe("isCompressibleToolName", () => {
     expect(isCompressibleToolName("write")).toBe(false);
     expect(isCompressibleToolName("edit")).toBe(false);
     expect(isCompressibleToolName("custom")).toBe(false);
+  });
+
+  it("keeps hypa tools out of Edgee compression", () => {
+    expect(isCompressibleToolName("hypa_ls")).toBe(false);
+    expect(isCompressibleToolName("hypa_find")).toBe(false);
+    expect(isCompressibleToolName("hypa_grep")).toBe(false);
+    expect(isCompressibleToolName("hypa_read")).toBe(false);
   });
 });
 
@@ -65,8 +74,8 @@ describe("createCompressionMetrics", () => {
     const metrics = createCompressionMetrics();
     metrics.record({ kind: "compressed", toolName: "read", originalLength: 100, compressedLength: 40 });
     metrics.record({ kind: "compressed", toolName: "grep", originalLength: 80, compressedLength: 20 });
-    metrics.record({ kind: "skipped", toolName: "find", reason: "no_change", originalLength: 10 });
-    metrics.record({ kind: "failed", toolName: "bash", reason: "service_error", originalLength: 20 });
+    metrics.record({ kind: "skipped", toolName: "find", originalLength: 10, compressedLength: 0 });
+    metrics.record({ kind: "failed", toolName: "bash", originalLength: 20, compressedLength: 0 });
 
     expect(metrics.snapshot()).toMatchObject({
       seen: 4,
@@ -105,7 +114,7 @@ describe("createCompressionMetrics", () => {
     const metrics = createCompressionMetrics();
     metrics.record({ kind: "compressed", toolName: "read", originalLength: 100, compressedLength: 40 });
     metrics.record({ kind: "compressed", toolName: "safe_bash", originalLength: 90, compressedLength: 50 });
-    metrics.record({ kind: "failed", toolName: "ls", reason: "service_error", originalLength: 20 });
+    metrics.record({ kind: "failed", toolName: "ls", originalLength: 20, compressedLength: 0 });
 
     expect(formatStatsStatus(metrics.snapshot())).toBe("cmp 2/3 ok • saved 100B • fail 1");
     expect(formatStatsWidgetLines(metrics.snapshot(), "http://127.0.0.1:8320")).toEqual([
@@ -153,15 +162,84 @@ describe("createToolResultHandler", () => {
       isError: false,
       details: undefined,
     };
-    await expect(handler(event as any)).resolves.toEqual({
+    const result = await handler(event as any);
+    expect(result).toEqual({
       content: [{ type: "text", text: "trimmed" }],
+      details: {
+        compression: {
+          originalLength: "very long output".length,
+          compressedLength: "trimmed".length,
+          savedBytes: "very long output".length - "trimmed".length,
+          savedPct: Math.round((("very long output".length - "trimmed".length) / "very long output".length) * 100),
+        },
+      },
     });
     expect(observations).toEqual([
       {
         kind: "compressed",
+        toolCallId: "1",
         toolName: "read",
         originalLength: "very long output".length,
         compressedLength: "trimmed".length,
+        subject: "main.rs",
+      },
+    ]);
+  });
+
+  it("compression details match expected shape and types", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "short" }, { status: 200 }))
+    );
+    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "1",
+      input: { command: "cat large.log" },
+      content: [{ type: "text", text: "a".repeat(5000) }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(result).toBeDefined();
+    expect(result!.details).toBeDefined();
+    const cd = result!.details!.compression as CompressionDetails;
+    expect(cd.originalLength).toBe(5000);
+    expect(cd.compressedLength).toBe("short".length);
+    expect(cd.savedBytes).toBe(5000 - "short".length);
+    expect(cd.savedPct).toBe(Math.round(((5000 - "short".length) / 5000) * 100));
+    expect(cd.savedPct).toBeGreaterThan(0);
+    expect(cd.savedPct).toBeLessThanOrEqual(100);
+  });
+
+  it("skips when compressed output is not smaller than the original", async () => {
+    const observations: object[] = [];
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "1F 1D:\n\n./ (no output)\n" }, { status: 200 }))
+    );
+    const handler = createToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      onObservation: (event) => observations.push(event),
+    });
+
+    const result = await handler({
+      toolName: "safe_bash",
+      toolCallId: "ns1",
+      input: { command: "find . -maxdepth 1" },
+      content: [{ type: "text", text: "./\n" }],
+      isError: false,
+      details: undefined,
+    } as any);
+
+    expect(result).toBeUndefined();
+    expect(observations).toEqual([
+      {
+        kind: "skipped",
+        toolCallId: "ns1",
+        toolName: "safe_bash",
+        originalLength: 3,
+        compressedLength: 0,
+        reason: "not_smaller",
+        subject: "find . -maxdepth 1",
       },
     ]);
   });
@@ -189,9 +267,12 @@ describe("createToolResultHandler", () => {
     expect(observations).toEqual([
       {
         kind: "skipped",
+        toolCallId: "1",
         toolName: "read",
-        reason: "non_text_content",
         originalLength: 0,
+        compressedLength: 0,
+        reason: "non_text_content",
+        subject: "a",
       },
     ]);
   });
@@ -216,9 +297,12 @@ describe("createToolResultHandler", () => {
     expect(observations).toEqual([
       {
         kind: "failed",
+        toolCallId: "1",
         toolName: "grep",
-        reason: "service_error",
         originalLength: "src/a.rs:1: foo".length,
+        compressedLength: 0,
+        reason: "service_error",
+        subject: "src",
       },
     ]);
   });
@@ -267,10 +351,14 @@ describe("extension registration", () => {
     handlers: Map<string, (...args: any[]) => any>;
     commands: Map<string, { description: string; handler: (...args: any[]) => any }>;
     emittedEvents: string[];
+    registeredTools: Map<string, unknown>;
+    entries: Array<{ customType: string; data?: object }>;
   } {
     const handlers = new Map<string, (...args: any[]) => any>();
     const commands = new Map<string, { description: string; handler: (...args: any[]) => any }>();
     const emittedEvents: string[] = [];
+    const registeredTools = new Map<string, unknown>();
+    const entries: Array<{ customType: string; data?: object }> = [];
     const pi = {
       events: {
         on: () => undefined,
@@ -282,9 +370,15 @@ describe("extension registration", () => {
       registerCommand: (name: string, command: { description: string; handler: (...args: any[]) => any }) => {
         commands.set(name, command);
       },
+      registerTool: (tool: unknown) => {
+        registeredTools.set((tool as { name: string }).name, tool);
+      },
+      appendEntry: (customType: string, data?: object) => {
+        entries.push({ customType, data });
+      },
     } as unknown as ExtensionAPI;
 
-    return { pi, handlers, commands, emittedEvents };
+    return { pi, handlers, commands, emittedEvents, registeredTools, entries };
   }
 
   function createMockContext() {
@@ -300,30 +394,120 @@ describe("extension registration", () => {
     };
   }
 
-  it("registers hooks, fancy-footer widget, and stats command", async () => {
+  it("registers hooks, fancy-footer widget, and stats command without registering tools", async () => {
     const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
-    const { pi, handlers, commands, emittedEvents } = createMockExtensionAPI();
+    const { pi, handlers, commands, emittedEvents, registeredTools } = createMockExtensionAPI();
     localToolResultCompressor(pi);
     expect(handlers.has("session_start")).toBe(true);
+    expect(handlers.has("turn_start")).toBe(true);
+    expect(handlers.has("turn_end")).toBe(true);
+    expect(handlers.has("agent_start")).toBe(true);
+    expect(handlers.has("agent_end")).toBe(true);
     expect(handlers.has("tool_result")).toBe(true);
     expect(handlers.has("session_shutdown")).toBe(true);
     expect(handlers.has("before_provider_request")).toBe(false);
     expect(commands.has("compressor-stats")).toBe(true);
     expect(emittedEvents).toContain("pi-fancy-footer:request-widget-discovery");
+    expect(registeredTools.size).toBe(0);
   });
 
-  it("warns once when compressor service fails", async () => {
+  it("appends compressed outcome entry and reports summary-only turn and agent notifications", async () => {
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => Response.json({ compressed_output: "trimmed" })) as unknown as typeof fetch;
+
+    const { pi, handlers, entries } = createMockExtensionAPI();
+    const ctx = createMockContext() as any;
+    localToolResultCompressor(pi);
+
+    await handlers.get("session_start")?.({}, ctx);
+  await handlers.get("agent_start")?.({}, ctx);
+    await handlers.get("turn_start")?.({}, ctx);
+    await handlers.get("tool_result")?.({
+      toolName: "read",
+      toolCallId: "c1",
+      input: { path: "file.txt" },
+      content: [{ type: "text", text: "very long output" }],
+      isError: false,
+      details: undefined,
+    }, ctx);
+
+    expect(entries).toContainEqual({
+      customType: COMPRESSION_EVENT_ENTRY_TYPE,
+      data: {
+        toolCallId: "c1",
+        toolName: "read",
+        timestamp: expect.any(Number),
+        kind: "compressed",
+        originalLength: "very long output".length,
+        subject: "file.txt",
+        compressedLength: "trimmed".length,
+        savedBytes: "very long output".length - "trimmed".length,
+        savedPct: Math.round((("very long output".length - "trimmed".length) / "very long output".length) * 100),
+      },
+    });
+    expect(ctx.ui.notify).not.toHaveBeenCalledWith("compressed read: 16 → 7 chars (-9, 56%)", "info");
+    await handlers.get("turn_end")?.({}, ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("compression turn: ok 1/1 • saved 9B • fail 0", "info");
+    expect(ctx.ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("read"), "info");
+
+    await handlers.get("agent_end")?.({}, ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("compression agent: ok 1/1 • saved 9B • fail 0", "info");
+
+    globalThis.fetch = realFetch;
+  });
+
+  it("appends skipped outcome entry and reports it at turn_end", async () => {
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => Response.json({ compressed_output: "same output" })) as unknown as typeof fetch;
+
+    const { pi, handlers, entries } = createMockExtensionAPI();
+    const ctx = createMockContext() as any;
+    localToolResultCompressor(pi);
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("turn_start")?.({}, ctx);
+    await handlers.get("tool_result")?.({
+      toolName: "grep",
+      toolCallId: "s1",
+      input: { pattern: "foo" },
+      content: [{ type: "text", text: "same output" }],
+      isError: false,
+      details: undefined,
+    }, ctx);
+
+    expect(entries).toContainEqual({
+      customType: COMPRESSION_EVENT_ENTRY_TYPE,
+      data: {
+        toolCallId: "s1",
+        toolName: "grep",
+        timestamp: expect.any(Number),
+        kind: "skipped",
+        originalLength: "same output".length,
+        subject: "foo",
+        reason: "no_change",
+      },
+    });
+    await handlers.get("turn_end")?.({}, ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("compression turn: ok 0/1 • skipped 1 • fail 0", "info");
+
+    globalThis.fetch = realFetch;
+  });
+
+  it("appends failed outcome entries and summarizes them at turn_end", async () => {
     const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
     const realFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => {
       throw new Error("offline");
     }) as unknown as typeof fetch;
 
-    const { pi, handlers } = createMockExtensionAPI();
+    const { pi, handlers, entries } = createMockExtensionAPI();
     const ctx = createMockContext() as any;
     localToolResultCompressor(pi);
 
     await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("turn_start")?.({}, ctx);
     await handlers.get("tool_result")?.({
       toolName: "grep",
       toolCallId: "1",
@@ -341,8 +525,79 @@ describe("extension registration", () => {
       details: undefined,
     }, ctx);
 
-    expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("compressor unavailable: http://127.0.0.1:8320", "warning");
+    expect(entries).toContainEqual({
+      customType: COMPRESSION_EVENT_ENTRY_TYPE,
+      data: {
+        toolCallId: "1",
+        toolName: "grep",
+        timestamp: expect.any(Number),
+        kind: "failed",
+        originalLength: "src/a.rs:1: foo".length,
+        subject: "src",
+        reason: "service_error",
+      },
+    });
+    expect(entries).toContainEqual({
+      customType: COMPRESSION_EVENT_ENTRY_TYPE,
+      data: {
+        toolCallId: "2",
+        toolName: "bash",
+        timestamp: expect.any(Number),
+        kind: "failed",
+        originalLength: "other output".length,
+        subject: "ls -la",
+        reason: "service_error",
+      },
+    });
+    await handlers.get("turn_end")?.({}, ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("compression turn: ok 0/2 • skipped 0 • fail 2", "warning");
+
+    globalThis.fetch = realFetch;
+  });
+
+  it("summarizes multiple read outcomes truthfully at turn_end", async () => {
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+    const responses = [
+      Response.json({ compressed_output: "same output" }),
+      Response.json({ compressed_output: "trimmed" }),
+      Response.json({ compressed_output: "same output" }),
+    ];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => responses.shift() ?? Response.json({ compressed_output: "same output" })) as unknown as typeof fetch;
+
+    const { pi, handlers } = createMockExtensionAPI();
+    const ctx = createMockContext() as any;
+    localToolResultCompressor(pi);
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("turn_start")?.({}, ctx);
+    await handlers.get("tool_result")?.({
+      toolName: "read",
+      toolCallId: "r1",
+      input: { path: "/tmp/a.md" },
+      content: [{ type: "text", text: "same output" }],
+      isError: false,
+      details: undefined,
+    }, ctx);
+    await handlers.get("tool_result")?.({
+      toolName: "read",
+      toolCallId: "r2",
+      input: { path: "/tmp/.oxlintrc.json" },
+      content: [{ type: "text", text: "very long output" }],
+      isError: false,
+      details: undefined,
+    }, ctx);
+    await handlers.get("tool_result")?.({
+      toolName: "read",
+      toolCallId: "r3",
+      input: { path: "/tmp/b.md" },
+      content: [{ type: "text", text: "same output" }],
+      isError: false,
+      details: undefined,
+    }, ctx);
+
+    await handlers.get("turn_end")?.({}, ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("compression turn: ok 1/3 • saved 9B • skipped 2 • fail 0", "info");
 
     globalThis.fetch = realFetch;
   });
