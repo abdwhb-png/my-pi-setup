@@ -68,6 +68,7 @@ type Evidence = {
   questionCalls: number;
   approvalsCaptured: number;
   assistantTurnsByPhase: Record<Phase, number>;
+  approvalsByPhase: Record<Phase, number>;
 };
 
 const EMPTY_EVIDENCE = (): Evidence => ({
@@ -75,6 +76,13 @@ const EMPTY_EVIDENCE = (): Evidence => ({
   questionCalls: 0,
   approvalsCaptured: 0,
   assistantTurnsByPhase: {
+    discovery: 0,
+    understanding: 0,
+    exploring: 0,
+    presenting: 0,
+    documenting: 0,
+  },
+  approvalsByPhase: {
     discovery: 0,
     understanding: 0,
     exploring: 0,
@@ -188,7 +196,9 @@ function phasePrompt(phase: Phase, topic: TopicState, evidence: Evidence): strin
       return [
         `Current topic: ${topic.raw}`,
         `Current phase: DOCUMENTING`,
-        `Follow the bundled skill \`brainstorm-forcer\` and write approved design doc to docs/plans/.`,
+        `Use the \`writing-plans\` skill to create a detailed implementation plan at \`docs/plans/YYYY-MM-DD-<topic>-design.md\` (relative to CWD).`,
+        `If \`writing-plans\` skill is not loaded, ask user to load it with /skill writing-plans.`,
+        `If docs/plans/ does not exist, create it first.`,
         evidenceLine,
         ...completed,
       ].join("\n\n");
@@ -206,11 +216,11 @@ function completionBlocker(phase: Phase, evidence: Evidence): string | undefined
         ? undefined
         : "Understanding incomplete: ask_user_question has not been used yet.";
     case "exploring":
-      return evidence.assistantTurnsByPhase.exploring > 0
+      return evidence.approvalsByPhase.exploring > 0
         ? undefined
-        : "Exploring incomplete: no exploring-phase assistant response observed yet.";
+        : "Exploring incomplete: ask_user_question approval not captured yet. Ask user for preference on proposed approaches.";
     case "presenting":
-      return evidence.approvalsCaptured > 0
+      return evidence.approvalsByPhase.presenting > 0
         ? undefined
         : "Presenting incomplete: no ask_user_question approval/validation captured yet.";
     case "documenting":
@@ -324,6 +334,10 @@ export default function brainstormForcer(pi: ExtensionAPI) {
           ? { raw: restoredTopic, display: summarizeTopicForUi(restoredTopic) }
           : restoredTopic ?? { raw: "", display: "" };
         evidence = data.evidence ?? EMPTY_EVIDENCE();
+        // Ensure new fields exist on restored evidence (backward compat)
+        if (!evidence.approvalsByPhase) {
+          evidence.approvalsByPhase = EMPTY_EVIDENCE().approvalsByPhase;
+        }
       }
       return;
     }
@@ -564,19 +578,43 @@ export default function brainstormForcer(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     if (!activePhase) return;
     if (canUseTool(activePhase, event.toolName, groups)) return;
-    const reason = phaseRestrictionSummary(activePhase);
+    const phaseLabel = PHASE_LABELS[activePhase];
+    const reason = [
+      `BLOCKED: ${event.toolName} is not allowed in the ${phaseLabel} phase.`,
+      `Allowed tools: non-mutating only (read, search, ask_user_question, web_search, fetch_content, grep, find, ls, etc.).`,
+      `Mutation tools (write, edit, bash, etc.) are blocked until the Documenting phase.`,
+      `To skip to Documenting: /brainstorm next --force`,
+      ``,
+      `Current restriction: ${phaseRestrictionSummary(activePhase)}`,
+    ].join("\n");
     if (ctx.hasUI) {
-      ctx.ui.notify(`Blocked ${event.toolName}: ${reason}`, "warning");
+      ctx.ui.notify(`Blocked ${event.toolName}`, "warning");
     }
     return { block: true, reason };
   });
 
-  pi.on("tool_result", async (event) => {
+  pi.on("tool_result", async (event, ctx) => {
     if (!activePhase) return;
     if (groups.research.has(event.toolName)) evidence.researchCalls += 1;
     if (groups.questioning.has(event.toolName)) {
       evidence.questionCalls += 1;
-      if (activePhase === "presenting") evidence.approvalsCaptured += 1;
+      evidence.approvalsCaptured += 1;
+      evidence.approvalsByPhase[activePhase] += 1;
+    }
+    // Detect blocked mutation tool — inject follow-up to LLM so it knows why
+    const blocked = event.isError && groups.mutation.has(event.toolName) && activePhase !== "documenting";
+    if (blocked && ctx.hasUI) {
+      pi.appendEntry(SESSION_KEY, {
+        active: true,
+        phase: activePhase,
+        topic,
+        evidence,
+        blockFeedback: {
+          tool: event.toolName,
+          phase: activePhase,
+          phaseLabel: PHASE_LABELS[activePhase],
+        },
+      });
     }
   });
 
@@ -586,10 +624,23 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     evidence.assistantTurnsByPhase[activePhase] += 1;
   });
 
-  pi.on("before_agent_start", async (event) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     if (!activePhase) return;
+    // Check for recent block feedback in session entries
+    let blockNote = "";
+    const entries = ctx.sessionManager.getEntries();
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (entry.type !== "custom" || entry.customType !== SESSION_KEY) continue;
+      const data = entry.data as { blockFeedback?: { tool: string; phase: string; phaseLabel: string } } | undefined;
+      if (data?.blockFeedback) {
+        const bf = data.blockFeedback;
+        blockNote = `\n\n⚠️  PREVIOUS TOOL BLOCKED: Your last call to \`${bf.tool}\` was blocked because you are in the ${bf.phaseLabel} phase. Mutation tools are not allowed until the Documenting phase. To proceed with writing files, advance to Documenting with /brainstorm next --force. Otherwise, continue with non-mutating tools only.`;
+        break;
+      }
+    }
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${phasePrompt(activePhase, topic, evidence)}`,
+      systemPrompt: `${event.systemPrompt}\n\n${phasePrompt(activePhase, topic, evidence)}${blockNote}`,
       message: {
         customType: SESSION_KEY,
         content: phaseBanner(activePhase, topic),

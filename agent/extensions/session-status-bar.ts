@@ -21,7 +21,7 @@ import { readFileSync, existsSync } from "node:fs"
 import { join } from "node:path";
 import type { SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
 import { getBranch } from "./_shared/git-helper";
-import { createWidget } from "./_shared/fancy-footer";
+import { createWidget, getSessionUsageMetrics } from "./_shared/fancy-footer";
 import {
   type UiColorsCreation,
   createUiColors,
@@ -124,7 +124,7 @@ function buildState(
   const messages = ctx.sessionManager.getBranch()
     .filter(isSessionMessageEntry)
     .map((e) => e.message as AssistantMessage)
-    .filter((m) => m.stopReason !== "aborted");
+    .filter((m) => m.role === "assistant" && m.stopReason !== "aborted");
 
   const lastMessage = messages[messages.length - 1];
   const totalUsd = messages.reduce(
@@ -292,12 +292,49 @@ export default function (pi: ExtensionAPI) {
     const colors = createUiColors(ctx.ui.theme);
     if (!config.enabled) return colors.warning("Session Status Bar disabled in config");
     const branchName = await getBranch(ctx.cwd).catch(() => null);
-    const state = buildState(ctx, branchName, config);
+
+    // Try bridge (pi-fancy-footer metrics API) first
+    const state = tryBuildStateFromBridge(ctx, branchName, config)
+      ?? buildState(ctx, branchName, config);
+
     const width = process.stdout.columns || 120;
     if (config.twoLine) {
       return renderTwoLine(state, width, config, colors).join("\n");
     }
     return renderCompact(state, width, config, colors);
+  }
+
+  function tryBuildStateFromBridge(
+    ctx: ExtensionContext,
+    branchName: string | null,
+    config: StatusBarConfig,
+  ): StatusBarState | undefined {
+    try {
+      const metrics = getSessionUsageMetrics(ctx);
+      const contextTokens = metrics.latest
+        ? metrics.latest.input + metrics.latest.output +
+          metrics.latest.cacheRead + metrics.latest.cacheWrite
+        : 0;
+      const contextWindow = ctx.model?.contextWindow || 0;
+      const percent = contextWindow > 0 ? (contextTokens / contextWindow) * 100 : 0;
+
+      const cwd = ctx.cwd;
+      const home = process.env.HOME || "";
+      const shortCwd = home && cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
+
+      const branch = config.showBranch ? branchName : null;
+      const shortBranch = branch ? shortenMiddle(branch, MAX_BRANCH_WIDTH) : "";
+
+      return {
+        workspace: { shortCwd, shortBranch },
+        context: { tokens: contextTokens, window: contextWindow, percent },
+        model: { id: ctx.model?.id || "no-model", provider: ctx.model?.provider },
+        session: { name: ctx.sessionManager.getSessionName() },
+        cost: { totalUsd: metrics.totalCost },
+      };
+    } catch {
+      // Bridge unavailable — fall back to inline buildState
+    }
   }
 
   async function updateWidget() {

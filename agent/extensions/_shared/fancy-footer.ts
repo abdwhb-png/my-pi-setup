@@ -6,6 +6,18 @@ import {
   requestFancyFooterRefresh,
 } from "pi-fancy-footer/api";
 
+// ── Bridge to pi-fancy-footer/api/metrics ────────────────────────────────
+//
+// Re-exported so consumers import from this bridge instead of depending
+// on pi-fancy-footer/api/metrics directly. If the package changes the
+// entry point, only this file needs updating.
+
+export {
+  collectSessionUsageMetrics as getSessionUsageMetrics,
+  type SessionUsageMetrics,
+  type UsageSnapshot,
+} from "pi-fancy-footer/api/metrics";
+
 // Derive the Pi API type from the contribute function to avoid
 // type incompatibility when the caller imports ExtensionAPI from
 // a different node_modules/ location than pi-fancy-footer does.

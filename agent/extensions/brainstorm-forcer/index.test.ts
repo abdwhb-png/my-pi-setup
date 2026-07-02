@@ -265,17 +265,36 @@ describe("brainstorm-forcer redesign", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Questions: 1"), "info");
   });
 
-  it("message_end tracks assistant turns by phase", async () => {
+  it("tool_result captures approval for understanding + exploring + presenting", async () => {
     const { pi, handlers, commands } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
     const cmd = commands.get("brainstorm")!;
     await cmd.handler("topic", ctx);
     await handlers.get("tool_result")!({ toolName: "read" }, ctx);
-    await cmd.handler("next", ctx); // understanding
-    await cmd.handler("force-next", ctx); // exploring
-    await handlers.get("message_end")!({ message: { role: "assistant", content: [] } }, ctx);
-    await cmd.handler("next", ctx); // should now advance because exploring got an assistant turn
+    await cmd.handler("next", ctx); // discovery→understanding
+    await handlers.get("tool_result")!({ toolName: "ask_user_question" }, ctx);
+    // approval captured in understanding phase
+    await cmd.handler("next", ctx); // understanding→exploring (approval present)
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Exploring"), "info");
+  });
+
+  it("exploring blocked without approval, advances with approval", async () => {
+    const { pi, handlers, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const cmd = commands.get("brainstorm")!;
+    await cmd.handler("topic", ctx);
+    await handlers.get("tool_result")!({ toolName: "read" }, ctx);
+    await cmd.handler("next", ctx); // discovery→understanding
+    await handlers.get("tool_result")!({ toolName: "ask_user_question" }, ctx);
+    await cmd.handler("next", ctx); // understanding→exploring
+    // No approval in exploring yet — should be blocked
+    await cmd.handler("next", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Exploring incomplete"), "warning");
+    // Now capture approval via ask_user_question in exploring
+    await handlers.get("tool_result")!({ toolName: "ask_user_question" }, ctx);
+    await cmd.handler("next", ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Presenting"), "info");
   });
 
@@ -318,5 +337,23 @@ describe("brainstorm-forcer redesign", () => {
     await cmd.handler("stop", ctx);
     expect(entries.at(-1)?.data).toMatchObject({ active: false });
     expect(ctx.ui.setWidget).toHaveBeenCalledWith("brainstorm-forcer", undefined);
+  });
+
+  it("blocked mutation tool appends blockFeedback entry", async () => {
+    const { pi, handlers, commands, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    const toolCall = handlers.get("tool_call")!;
+    const result = await toolCall({ toolName: "write" }, ctx);
+    expect(result.block).toBe(true);
+    expect(result.reason).toContain("BLOCKED");
+    // Simulate Pi returning the blocked tool result
+    await handlers.get("tool_result")!({ toolName: "write", isError: true }, ctx);
+    // Should have appended blockFeedback entry
+    const feedbackEntry = entries.find((e: any) => e.data?.blockFeedback);
+    expect(feedbackEntry).toBeTruthy();
+    expect((feedbackEntry!.data as any).blockFeedback.tool).toBe("write");
+    expect((feedbackEntry!.data as any).blockFeedback.phase).toBe("discovery");
   });
 });
