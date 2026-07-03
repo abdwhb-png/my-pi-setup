@@ -64,13 +64,16 @@ describe("familyDefaults", () => {
 
 	it("returns GPT-5.5 defaults", () => {
 		const result = familyDefaults("gpt-5.5");
-		expect(result.contextWindow).toBe(1_050_000);
+		// Codex subscription caps gpt-5.5 at 272K input (400K total).
+		// See https://github.com/openai/codex/issues/19464
+		expect(result.contextWindow).toBe(272_000);
 		expect(result.maxTokens).toBe(128_000);
 	});
 
 	it("returns GPT-5.4 defaults (before mini check)", () => {
 		const result = familyDefaults("gpt-5.4");
-		expect(result.contextWindow).toBe(1_050_000);
+		// GPT-5.4 in Codex supports up to 1M context.
+		expect(result.contextWindow).toBe(1_000_000);
 		expect(result.maxTokens).toBe(128_000);
 	});
 

@@ -225,14 +225,18 @@ export function familyDefaults(
 	}
 
 	// GPT family (order matters: check more specific first)
+	// GPT-5.5 in Codex (subscription) is capped at 400K total (272K input + 128K output).
+	// The API version supports 1M, but Codex is still limited upstream.
+	// See: https://github.com/openai/codex/issues/19464
 	if (id.includes("gpt-5.5")) {
-		return { contextWindow: 1_050_000, maxTokens: 128_000, reasoning: true };
+		return { contextWindow: 272_000, maxTokens: 128_000, reasoning: true };
 	}
 	if (id.includes("gpt-5.4-mini") || id.includes("gpt-5.3-codex")) {
 		return { contextWindow: 400_000, maxTokens: 128_000, reasoning: true };
 	}
+	// GPT-5.4 in Codex allows up to 1M context via model_context_window.
 	if (id.includes("gpt-5.4")) {
-		return { contextWindow: 1_050_000, maxTokens: 128_000, reasoning: true };
+		return { contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true };
 	}
 	if (id.startsWith("gpt-oss")) {
 		return { contextWindow: 128_000, maxTokens: 32_768, reasoning: true };
