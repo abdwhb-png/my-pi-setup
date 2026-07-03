@@ -7,7 +7,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { isDangerous } from "../_shared/bash-guard";
+import { isDangerous, redirectShellCommand } from "../_shared/bash-guard";
 import { createBashPrefixRenderer } from "../_shared/bash-prefix-renderer";
 import { appendCompressionFooter } from "../_shared/compression-render";
 
@@ -46,6 +46,10 @@ export default function (pi: ExtensionAPI) {
       const danger = isDangerous(params.command);
       if (danger) {
         throw new Error(danger);
+      }
+      const redirect = redirectShellCommand(params.command);
+      if (redirect) {
+        throw new Error(redirect);
       }
       return bashDefinition.execute(toolCallId, params, signal, onUpdate, ctx);
     },

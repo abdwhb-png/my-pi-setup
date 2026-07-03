@@ -87,5 +87,18 @@ export default function piOverrides(pi: ExtensionAPI): void {
         return renderTextResultWithCompression(text, result.details, theme, options.isPartial);
       },
     });
+
+    // Augment default active toolset with native grep/find/ls.
+    // Pi core defaults to ["read", "bash", "edit", "write"] — add the
+    // read-only built-ins so the LLM can use them directly instead of
+    // shelling out via bash. This augments rather than replaces so it
+    // composes safely with pi-roles inherit semantics.
+    const current = pi.getActiveTools();
+    const added = ["grep", "find", "ls"].filter(t => !current.includes(t));
+    const newTools = [...new Set([...current, ...added])];
+    pi.setActiveTools(newTools);
+    if (ctx.hasUI && added.length > 0) {
+      ctx.ui.notify(`🛠️ Updated active tools: ${newTools.join(", ")}`, "info");
+    }
   });
 }

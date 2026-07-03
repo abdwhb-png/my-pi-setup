@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { isDangerous } from "./guard";
+import { isDangerous, redirectShellCommand } from "./guard";
 
 // --- Positive cases: safe commands that must NOT be blocked ---
 
@@ -190,5 +190,62 @@ describe("isDangerous - bypass attempts", () => {
 
   it("should block rm -rf /*", () => {
     expect(isDangerous("rm -rf /*")).not.toBeNull();
+  });
+});
+
+// --- Redirect cases: shell commands with native equivalents ---
+
+describe("redirectShellCommand", () => {
+  it("redirects grep to native grep tool", () => {
+    const result = redirectShellCommand("grep -r \"foo\" .");
+    expect(result).toContain("BLOCKED");
+    expect(result).toContain("grep");
+    expect(result).toContain("ripgrep");
+  });
+
+  it("redirects rg (ripgrep) to native grep tool", () => {
+    const result = redirectShellCommand("rg -r \"foo\" .");
+    expect(result).toContain("BLOCKED");
+    expect(result).toContain("grep");
+  });
+
+  it("redirects find to native find tool", () => {
+    const result = redirectShellCommand("find . -name \"*.ts\"");
+    expect(result).toContain("BLOCKED");
+    expect(result).toContain("find");
+    expect(result).toContain("fd");
+  });
+
+  it("redirects fd to native find tool", () => {
+    const result = redirectShellCommand("fd -e ts src/");
+    expect(result).toContain("BLOCKED");
+    expect(result).toContain("find");
+  });
+
+  it("redirects ls to native ls tool", () => {
+    const result = redirectShellCommand("ls -la");
+    expect(result).toContain("BLOCKED");
+    expect(result).toContain("ls");
+  });
+
+  it("redirects ack to native grep tool", () => {
+    expect(redirectShellCommand("ack foo")).toContain("BLOCKED");
+  });
+
+  it("redirects ag to native grep tool", () => {
+    expect(redirectShellCommand("ag foo")).toContain("BLOCKED");
+  });
+
+  it("passes through commands without native equivalents", () => {
+    expect(redirectShellCommand("cat file.txt")).toBeNull();
+    expect(redirectShellCommand("node index.js")).toBeNull();
+    expect(redirectShellCommand("npm test")).toBeNull();
+    expect(redirectShellCommand("git status")).toBeNull();
+    expect(redirectShellCommand("echo hello")).toBeNull();
+  });
+
+  it("passes through empty or blank commands", () => {
+    expect(redirectShellCommand("")).toBeNull();
+    expect(redirectShellCommand("   ")).toBeNull();
   });
 });

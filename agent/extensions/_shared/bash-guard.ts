@@ -105,3 +105,58 @@ export function isDangerous(
   }
   return null;
 }
+
+/**
+ * Shell commands that have native Pi tool equivalents, mapped to their
+ * native tool names. When the LLM tries to use these via safe_bash, we
+ * redirect it to the better native implementation.
+ */
+const SHELL_TO_NATIVE_MAP: Record<string, string> = {
+  grep: "grep",
+  rg: "grep",
+  find: "find",
+  fd: "find",
+  ls: "ls",
+  ack: "grep",
+  ag: "grep",
+};
+
+/**
+ * Extract the first word (command name) from a shell command string.
+ */
+function firstWord(command: string): string | undefined {
+  const norm = normalize(command);
+  const space = norm.indexOf(" ");
+  if (space === -1) return norm;
+  return norm.slice(0, space);
+}
+
+/**
+ * Check if a command should be redirected to a native Pi tool instead.
+ * Returns null if the command has no native equivalent, or a redirect
+ * message string (safe_bash will throw this as an error for the LLM).
+ *
+ * Example: `grep -r "foo" .` → "BLOCKED: Use native 'grep' tool (uses ripgrep, 10-100x faster with structured JSON output) instead of 'bash grep'"
+ */
+export function redirectShellCommand(
+  command: string,
+): string | null {
+  const first = firstWord(command);
+  if (!first) return null;
+  const native = SHELL_TO_NATIVE_MAP[first];
+  if (!native) return null;
+
+  const toolName = native === "grep"
+    ? "grep"
+    : native === "find"
+      ? "find"
+      : "ls";
+
+  const speedNote = native === "grep"
+    ? " (uses ripgrep, 10-100x faster with structured JSON output)"
+    : native === "find"
+      ? " (uses fd, faster and respects .gitignore)"
+      : " (uses Node.js fs APIs, more reliable parsing)";
+
+  return `BLOCKED: Use native '${toolName}' tool${speedNote} instead of safe_bash '${first}'`;
+}
