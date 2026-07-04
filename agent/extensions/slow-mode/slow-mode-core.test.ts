@@ -13,6 +13,7 @@ import {
   applyEdits,
   extractEditText,
   extractEditPatches,
+  autoAcceptKey,
   type Edit,
   type EditPatch,
 } from "./slow-mode-core.ts";
@@ -339,6 +340,36 @@ describe("extractEditText", () => {
 // ===========================================================================
 // extractEditPatches
 // ===========================================================================
+describe("autoAcceptKey", () => {
+  it("returns the command for bash", () => {
+    expect(autoAcceptKey("bash", { command: "ls -la" })).toBe("ls -la");
+  });
+
+  it("returns the command for safe_bash", () => {
+    expect(autoAcceptKey("safe_bash", { command: "rm -rf /tmp/x" })).toBe("rm -rf /tmp/x");
+  });
+
+  it("returns the path for write", () => {
+    expect(autoAcceptKey("write", { path: "/a/b.ts", content: "x" })).toBe("/a/b.ts");
+  });
+
+  it("returns the path for edit", () => {
+    expect(autoAcceptKey("edit", { path: "/a/b.ts", edits: [] })).toBe("/a/b.ts");
+  });
+
+  it("returns null for unknown tool", () => {
+    expect(autoAcceptKey("read", { path: "/a/b.ts" })).toBeNull();
+  });
+
+  it("returns null when command missing", () => {
+    expect(autoAcceptKey("bash", {})).toBeNull();
+  });
+
+  it("returns null when path missing", () => {
+    expect(autoAcceptKey("write", { content: "x" })).toBeNull();
+  });
+});
+
 describe("extractEditPatches", () => {
   it("returns patches array from modern edits[]", () => {
     const patches: EditPatch[] = [

@@ -364,3 +364,28 @@ export function extractEditPatches(
   if (oldText == null || newText == null) return null;
   return [{ oldText, newText }];
 }
+
+/**
+ * Compute the auto-accept key for a tool call.
+ *
+ * - bash / safe_bash: the exact command string
+ * - write / edit: the file path
+ * - anything else: null (auto-accept not supported)
+ *
+ * Returns null when the identifying field is missing, so callers can treat
+ * a null key as "do not auto-accept".
+ */
+export function autoAcceptKey(
+  toolName: string,
+  params: Record<string, unknown>,
+): string | null {
+  if (toolName === "bash" || toolName === "safe_bash") {
+    const command = params.command;
+    return typeof command === "string" ? command : null;
+  }
+  if (toolName === "write" || toolName === "edit") {
+    const path = params.path;
+    return typeof path === "string" ? path : null;
+  }
+  return null;
+}
