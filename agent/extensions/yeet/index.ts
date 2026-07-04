@@ -52,11 +52,12 @@ export async function executeCommit(
   execFn: (cmd: string, args: string[], opts?: any) => Promise<{ stdout: string }>,
   files: string[],
   message: string,
+  cwd: string,
 ): Promise<{ success: true; sha: string } | { success: false; error: string }> {
   try {
-    await execFn("git", ["add", "--", ...files]);
-    await execFn("git", ["commit", "-m", message]);
-    const { stdout } = await execFn("git", ["rev-parse", "--short", "HEAD"]);
+    await execFn("git", ["add", "--", ...files], { cwd });
+    await execFn("git", ["commit", "-m", message], { cwd });
+    const { stdout } = await execFn("git", ["rev-parse", "--short", "HEAD"], { cwd });
     return { success: true, sha: stdout.trim() };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -126,7 +127,7 @@ export default function (pi: ExtensionAPI) {
       // Accept → commit programmatically with loading notification
       if (result.accepted) {
         ctx.ui.notify("Committing...", "info");
-        const outcome = await executeCommit(pi.exec.bind(pi), result.files, result.commit_message);
+        const outcome = await executeCommit(pi.exec.bind(pi), result.files, result.commit_message, ctx.cwd);
 
         if (outcome.success) {
           return {

@@ -6,13 +6,18 @@ describe("executeCommit", () => {
     let addArgs: string[][] = [];
     let commitArgs: string[][] = [];
 
-    const mockExec = mock(async (cmd: string, args: string[]) => {
+    let addOpts: any[] = [];
+    let commitOpts: any[] = [];
+
+    const mockExec = mock(async (cmd: string, args: string[], opts?: any) => {
       if (cmd === "git" && args[0] === "add") {
         addArgs.push(args);
+        addOpts.push(opts);
         return { stdout: "" };
       }
       if (cmd === "git" && args[0] === "commit") {
         commitArgs.push(args);
+        commitOpts.push(opts);
         return { stdout: "" };
       }
       if (cmd === "git" && args[0] === "rev-parse") {
@@ -21,20 +26,22 @@ describe("executeCommit", () => {
       throw new Error("unexpected call: " + cmd + " " + args.join(" "));
     });
 
-    const result = await executeCommit(mockExec, ["src/foo.ts", "src/bar.ts"], "feat: add foo");
+    const result = await executeCommit(mockExec, ["src/foo.ts", "src/bar.ts"], "feat: add foo", "/test/cwd");
 
     expect(result).toEqual({ success: true, sha: "abc1234" });
     expect(addArgs).toEqual([["add", "--", "src/foo.ts", "src/bar.ts"]]);
+    expect(addOpts).toEqual([{ cwd: "/test/cwd" }]);
+    expect(commitOpts).toEqual([{ cwd: "/test/cwd" }]);
     expect(commitArgs).toEqual([["commit", "-m", "feat: add foo"]]);
     expect(mockExec).toHaveBeenCalledTimes(3);
   });
 
   it("should return error when git add fails", async () => {
-    const mockExec = mock(async (_cmd: string, _args: string[]) => {
+    const mockExec = mock(async (_cmd: string, _args: string[], _opts?: any) => {
       throw new Error("fatal: pathspec 'nonexistent.ts' did not match any files");
     });
 
-    const result = await executeCommit(mockExec, ["nonexistent.ts"], "msg");
+    const result = await executeCommit(mockExec, ["nonexistent.ts"], "msg", "/test/cwd");
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -43,14 +50,14 @@ describe("executeCommit", () => {
   });
 
   it("should return error when git commit fails", async () => {
-    const mockExec = mock(async (cmd: string, args: string[]) => {
+    const mockExec = mock(async (cmd: string, args: string[], _opts?: any) => {
       if (cmd === "git" && args[0] === "add") {
         return { stdout: "" };
       }
       throw new Error("nothing to commit");
     });
 
-    const result = await executeCommit(mockExec, ["a.ts"], "msg");
+    const result = await executeCommit(mockExec, ["a.ts"], "msg", "/test/cwd");
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -59,7 +66,7 @@ describe("executeCommit", () => {
   });
 
   it("should handle empty files array", async () => {
-    const mockExec = mock(async (cmd: string, args: string[]) => {
+    const mockExec = mock(async (cmd: string, args: string[], _opts?: any) => {
       if (cmd === "git" && args[0] === "add") {
         return { stdout: "" };
       }
@@ -72,7 +79,7 @@ describe("executeCommit", () => {
       throw new Error("unexpected: " + cmd + " " + args.join(" "));
     });
 
-    const result = await executeCommit(mockExec, [], "chore: empty");
+    const result = await executeCommit(mockExec, [], "chore: empty", "/test/cwd");
 
     expect(result).toEqual({ success: true, sha: "def5678" });
   });
