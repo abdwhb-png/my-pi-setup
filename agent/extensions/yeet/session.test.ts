@@ -1,6 +1,8 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { CommitPlanSession } from './session';
 import type { CommitPlanParams, CommitPlanResult } from './types';
+import { handleCommitPlanInput } from "./session";
+import type { CommitPlanSessionState } from "./types";
 
 function createMockTheme() {
   return {
@@ -15,9 +17,100 @@ function createMockTheme() {
 
 const defaultParams: CommitPlanParams = {
   plan_summary: 'Test plan',
-  files: ['src/index.ts', 'src/utils.ts'],
+  files: ['src/index.ts', 'src/session.ts'],
   commit_message: 'feat: add new feature',
 };
+
+
+function makeState(overrides?: Partial<CommitPlanSessionState>): CommitPlanSessionState {
+  return {
+    files: [
+      { path: "file1.ts", selected: false },
+      { path: "file2.ts", selected: false },
+      { path: "file3.ts", selected: false },
+    ],
+    focus: "message",
+    fileCursorIndex: 0,
+    ...overrides,
+  };
+}
+
+describe("handleCommitPlanInput", () => {
+  // --- Focus toggling ---
+
+  it("should toggle focus with Tab using Kitty protocol encoding", () => {
+    const state = handleCommitPlanInput(makeState(), "\x1b[9u");
+    expect(state.focus).toBe("files");
+    const state2 = handleCommitPlanInput(state, "\x1b[9u");
+    expect(state2.focus).toBe("message");
+  });
+
+  it("should toggle focus with Tab using legacy raw byte", () => {
+    const state = handleCommitPlanInput(makeState(), "\t");
+    expect(state.focus).toBe("files");
+    const state2 = handleCommitPlanInput(state, "\t");
+    expect(state2.focus).toBe("message");
+  });
+
+  // --- File list navigation ---
+
+  it("should move file cursor with ArrowUp/ArrowDown using legacy ESC sequences", () => {
+    const s0 = makeState({ focus: "files" });
+    const s1 = handleCommitPlanInput(s0, "\x1b[A");
+    expect(s1.fileCursorIndex).toBe(0);
+    const s1d = handleCommitPlanInput(s0, "\x1b[B");
+    expect(s1d.fileCursorIndex).toBe(1);
+  });
+
+  it("should move file cursor with ArrowUp/ArrowDown using test strings", () => {
+    const s0 = makeState({ focus: "files" });
+    const s1 = handleCommitPlanInput(s0, "ArrowDown");
+    expect(s1.fileCursorIndex).toBe(1);
+    const s2 = handleCommitPlanInput(s1, "ArrowDown");
+    expect(s2.fileCursorIndex).toBe(2);
+    // Boundary
+    const s3 = handleCommitPlanInput(s2, "ArrowDown");
+    expect(s3.fileCursorIndex).toBe(2);
+
+    const s4 = handleCommitPlanInput(s2, "ArrowUp");
+    expect(s4.fileCursorIndex).toBe(1);
+    const s5 = handleCommitPlanInput(s4, "ArrowUp");
+    expect(s5.fileCursorIndex).toBe(0);
+    // Boundary
+    const s6 = handleCommitPlanInput(s5, "ArrowUp");
+    expect(s6.fileCursorIndex).toBe(0);
+  });
+
+  it("should toggle file selection with Space when focus is files", () => {
+    const s0 = makeState({ focus: "files" });
+    const s1 = handleCommitPlanInput(s0, " ");
+    expect(s1.files[0].selected).toBe(true);
+    const s2 = handleCommitPlanInput(s1, " ");
+    expect(s2.files[0].selected).toBe(false);
+  });
+
+  it("should ignore message editing keys when focus is message (handled by Input component)", () => {
+    const s0 = makeState({ focus: "message" });
+    const s1 = handleCommitPlanInput(s0, " ");
+    expect(s1.files[0].selected).toBe(false);
+    // State should remain unchanged as Input component handles text
+    expect(s1.focus).toBe("message");
+  });
+
+  // --- Focus isolation ---
+
+  it("should not update commit message when typing and focus is files", () => {
+    const s0 = makeState({ focus: "files", commitMessage: "" });
+    const s1 = handleCommitPlanInput(s0, "a");
+    expect(s1.commitMessage).toBe("");
+  });
+
+  it("should not move cursor when ArrowLeft/Right and focus is files", () => {
+    const s0 = makeState({ focus: "files", commitMessage: "hello", cursorPosition: 3 });
+    const s1 = handleCommitPlanInput(s0, "ArrowLeft");
+    expect(s1.cursorPosition).toBe(3);
+  });
+});
 
 describe('CommitPlanSession', () => {
   let done: ReturnType<typeof mock>;
@@ -54,7 +147,7 @@ describe('CommitPlanSession', () => {
     it('includes file paths', () => {
       const output = session.render(80);
       expect(output.some((line) => line.includes('src/index.ts'))).toBe(true);
-      expect(output.some((line) => line.includes('src/utils.ts'))).toBe(true);
+      expect(output.some((line) => line.includes('src/session.ts'))).toBe(true);
     });
 
     it('includes the help hint bar', () => {
@@ -88,7 +181,7 @@ describe('CommitPlanSession', () => {
       const result: CommitPlanResult = done.mock.calls[0][0];
       expect(result.accepted).toBe(true);
       expect(result.cancelled).toBe(false);
-      expect(result.files).toEqual(['src/index.ts', 'src/utils.ts']);
+      expect(result.files).toEqual(['src/index.ts', 'src/session.ts']);
       expect(result.commit_message).toBe('feat: add new feature');
       expect(result.plan_summary).toBe('Test plan');
     });

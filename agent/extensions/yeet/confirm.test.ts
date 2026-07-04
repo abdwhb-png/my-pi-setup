@@ -17,9 +17,9 @@ function makeTheme() {
 
 function makeParams(overrides?: Partial<CommitPlanParams>): CommitPlanParams {
   return {
-    plan_summary: "Refactor utils and fix lint issues",
-    files: ["src/utils.ts", "src/types.ts"],
-    commit_message: "refactor: clean up utility functions",
+    plan_summary: "Refactor session and fix lint issues",
+    files: ["src/session.ts", "src/types.ts"],
+    commit_message: "refactor: clean up session functions",
     ...overrides,
   };
 }
@@ -39,10 +39,10 @@ describe("CommitConfirmDialog", () => {
     const output = dialog.render(80);
     const full = output.join("\n");
 
-    expect(full).toContain("Refactor utils and fix lint issues");
-    expect(full).toContain("src/utils.ts");
+    expect(full).toContain("Refactor session and fix lint issues");
+    expect(full).toContain("src/session.ts");
     expect(full).toContain("src/types.ts");
-    expect(full).toContain("refactor: clean up utility functions");
+    expect(full).toContain("refactor: clean up session functions");
   });
 
   it("render() includes Confirm/Cancel footer", () => {
