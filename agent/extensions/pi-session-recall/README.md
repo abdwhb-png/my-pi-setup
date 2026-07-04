@@ -4,7 +4,7 @@ Recall past [pi](https://github.com/earendil-works/pi) sessions. Search through 
 
 ## What it does
 
-Two tools that let the agent recall past sessions:
+Three tools that let the agent recall past sessions:
 
 ### `pi_session_search`
 
@@ -17,6 +17,10 @@ Spaces mean exact spaces in an exact phrase. For unrelated concepts, the agent s
 Deep-dives into a specific session file. Loads the conversation, sends it to an LLM, and answers your question about it.
 
 For large sessions that exceed the model's context window, it uses smart windowing: keeps the first/last messages plus keyword-relevant sections, marking gaps with `[... N messages omitted ...]`.
+
+### `pi_session_find`
+
+Finds a session directly by session id (UUID suffix from the session filename) and returns the exact matching session path.
 
 ### `/pi-session-recall`
 

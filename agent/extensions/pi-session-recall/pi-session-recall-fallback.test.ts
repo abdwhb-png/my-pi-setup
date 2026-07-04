@@ -66,6 +66,29 @@ describe("pi-session-recall fallback models", () => {
     completeMock.mockClear();
   });
 
+  it("finds a session directly by session id", async () => {
+    const sessionsRoot = join(agentDir, "sessions", "--tmp-project--");
+    mkdirSync(sessionsRoot, { recursive: true });
+    const exactSessionPath = join(
+      sessionsRoot,
+      "pi-session-2026-07-05T12-00-00-000Z_12345678-aaaa-bbbb-cccc-1234567890ab.jsonl",
+    );
+    writeFileSync(exactSessionPath, "{}\n");
+
+    const { tools } = createMockAPI();
+    const result = await tools.get("pi_session_find").execute(
+      "tool-call",
+      { sessionId: "12345678-aaaa-bbbb-cccc-1234567890ab" },
+      undefined,
+      undefined,
+      {},
+    );
+
+    expect(result.content[0].text).toContain(exactSessionPath);
+    expect(result.content[0].text).toContain("12345678-aaaa-bbbb-cccc-1234567890ab");
+    expect(result.details).toMatchObject({ matchCount: 1, sessionId: "12345678-aaaa-bbbb-cccc-1234567890ab" });
+  });
+
   it("tries configured fallback-models when the primary query model has no auth", async () => {
     writeFileSync(
       join(agentDir, "pi-session-recall.json"),

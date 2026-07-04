@@ -361,6 +361,13 @@ interface FileMatchCount {
 	count: number;
 }
 
+interface SessionSearchResult {
+	filePath: string;
+	project: string;
+	date: string;
+	count: number;
+}
+
 /** Recursively find all .jsonl files under a directory */
 function walkJsonlFiles(dir: string): string[] {
 	const results: string[] = [];
@@ -379,6 +386,63 @@ function walkJsonlFiles(dir: string): string[] {
 	}
 	walk(dir);
 	return results;
+}
+
+function sessionResultFromPath(filePath: string, count: number): SessionSearchResult {
+	return {
+		filePath,
+		project: projectFromPath(filePath),
+		date: dateFromPath(filePath),
+		count,
+	};
+}
+
+function formatSessionLocation(result: SessionSearchResult): string {
+	return `**${result.date}** · \`${result.project}\` · ${result.count} match${result.count > 1 ? "es" : ""}\nSession: \`${result.filePath}\``;
+}
+
+function parseSessionIdFromPath(filePath: string): string | null {
+	const match = filePath.match(/_([0-9a-fA-F-]{36})\.jsonl$/);
+	return match?.[1] ?? null;
+}
+
+function findSessionsById(sessionId: string, sessionsDir: string): SessionSearchResult[] {
+	const normalizedId = sessionId.trim().toLowerCase();
+	if (!normalizedId) return [];
+
+	return walkJsonlFiles(sessionsDir)
+		.filter((filePath) => parseSessionIdFromPath(filePath)?.toLowerCase() === normalizedId)
+		.map((filePath) => sessionResultFromPath(filePath, 1))
+		.toSorted((a, b) => b.filePath.localeCompare(a.filePath));
+}
+
+function searchSessionsByQuery(query: string, sessionsDir: string): SessionSearchResult[] {
+	return searchFiles(query, sessionsDir)
+		.sort((a, b) => b.count - a.count || b.path.localeCompare(a.path))
+		.slice(0, MAX_SEARCH_RESULTS)
+		.map((match) => sessionResultFromPath(match.path, match.count));
+}
+
+function buildSessionSearchOutput(results: SessionSearchResult[], query: string): string {
+	const formatted: string[] = [];
+
+	for (const result of results) {
+		const matchLines = searchLines(query, result.filePath, MAX_SNIPPETS_PER_SESSION);
+		if (matchLines.length === 0) continue;
+
+		const snippets: string[] = [];
+		for (const line of matchLines) {
+			const msg = extractMessageText(line);
+			if (!msg) continue;
+			const snippet = snippetAround(msg.text, query);
+			snippets.push(`  [${msg.role}] ${snippet}`);
+		}
+
+		if (snippets.length === 0) continue;
+		formatted.push(`${formatSessionLocation(result)}\n${snippets.join("\n")}`);
+	}
+
+	return formatted.join("\n\n---\n\n");
 }
 
 /**
@@ -741,7 +805,7 @@ export default function sessionRecallExtension(pi: ExtensionAPI) {
 			}),
 		}),
 
-		async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			const { query } = params;
 			const sessionsDir = getSessionsDir();
 
@@ -770,39 +834,10 @@ export default function sessionRecallExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			const fileMatches = allMatches
-				.sort((a, b) => b.count - a.count || b.path.localeCompare(a.path))
-				.slice(0, MAX_SEARCH_RESULTS);
+			const sessionResults = searchSessionsByQuery(query, sessionsDir);
+			const outputBody = buildSessionSearchOutput(sessionResults, query);
 
-			const results: string[] = [];
-
-			for (const { path: filePath, count } of fileMatches) {
-				if (signal?.aborted) break;
-
-				const project = projectFromPath(filePath);
-				const date = dateFromPath(filePath);
-
-				const matchLines = searchLines(query, filePath, MAX_SNIPPETS_PER_SESSION);
-				if (matchLines.length === 0) continue;
-
-				const snippets: string[] = [];
-				for (const line of matchLines) {
-					const msg = extractMessageText(line);
-					if (!msg) continue;
-					const snippet = snippetAround(msg.text, query);
-					snippets.push(`  [${msg.role}] ${snippet}`);
-				}
-
-				if (snippets.length === 0) continue;
-
-				results.push(
-					`**${date}** · \`${project}\` · ${count} match${count > 1 ? "es" : ""}\n` +
-						`Session: \`${filePath}\`\n` +
-						snippets.join("\n"),
-				);
-			}
-
-			if (results.length === 0) {
+			if (!outputBody) {
 				return {
 					content: [
 						{
@@ -817,12 +852,66 @@ export default function sessionRecallExtension(pi: ExtensionAPI) {
 			}
 
 			const output =
-				`Found ${results.length} session${results.length > 1 ? "s" : ""} matching "${query}":\n\n` +
-				results.join("\n\n---\n\n");
+				`Found ${sessionResults.length} session${sessionResults.length > 1 ? "s" : ""} matching "${query}":\n\n` +
+				outputBody;
 
 			return {
 				content: [{ type: "text" as const, text: output }],
-				details: { matchCount: results.length, query },
+				details: { matchCount: sessionResults.length, query },
+			};
+		},
+	});
+
+	// ── pi_session_find tool ───────────────────────────────────────────────
+
+	pi.registerTool({
+		name: "pi_session_find",
+		label: "Session Find",
+		description:
+			"Find a session directly by its session id. Use when you already know the UUID suffix from a pi session filename and want the exact session path.",
+		renderResult: (result, _options, theme) => {
+			const container = new Container();
+			const text = result.content?.[0]?.type === "text" ? result.content[0].text : "";
+			container.addChild(new Text(theme.fg("toolOutput", text), 0, 0));
+			return container;
+		},
+		parameters: Type.Object({
+			sessionId: Type.String({
+				description: "Exact session id UUID from a pi session filename.",
+			}),
+		}),
+
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			const { sessionId } = params;
+			const sessionsDir = getSessionsDir();
+
+			const errorResult = (text: string) => ({
+				content: [{ type: "text" as const, text }],
+				details: { error: true },
+			});
+
+			if (!existsSync(sessionsDir)) {
+				return errorResult("No sessions directory found.");
+			}
+
+			const results = findSessionsById(sessionId, sessionsDir);
+			if (results.length === 0) {
+				return {
+					content: [{ type: "text" as const, text: `No session found for id "${sessionId}".` }],
+					details: { matchCount: 0, sessionId },
+				};
+			}
+
+			const output = results
+				.map((result) => {
+					const foundSessionId = parseSessionIdFromPath(result.filePath) ?? sessionId;
+					return `${formatSessionLocation(result)}\nSession ID: \`${foundSessionId}\``;
+				})
+				.join("\n\n---\n\n");
+
+			return {
+				content: [{ type: "text" as const, text: output }],
+				details: { matchCount: results.length, sessionId },
 			};
 		},
 	});

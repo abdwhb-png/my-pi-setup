@@ -1,0 +1,6 @@
+{
+    "queryModel": {
+        "provider": "cpa",
+        "id": "gemini-3.1-flash-lite"
+    }
+}
