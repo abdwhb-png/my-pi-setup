@@ -10,7 +10,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
-import { createUiColors } from "../_shared/ui-colors.ts";
+import { createUiColors } from "./_shared/ui-colors.ts";
 import { Container, Key, Text, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
 import os from "node:os";
 import path from "node:path";

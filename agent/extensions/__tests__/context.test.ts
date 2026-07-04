@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { calculateExtensionFiles, getSkillPathFromCommand } from "./index.ts";
+import { calculateExtensionFiles, getSkillPathFromCommand } from "../context.ts";
 
 describe("calculateExtensionFiles", () => {
 	it("should correctly identify extension files from commands", () => {
