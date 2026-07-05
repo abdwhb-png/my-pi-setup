@@ -4,8 +4,8 @@ import {
   decorateStatuses,
   filterStatuses,
   toCompletions,
-} from "../statuses.ts";
-import { isHidden, toggleHidden } from "../visibility.ts";
+} from "./statuses.ts";
+import { isHidden, toggleHidden } from "./visibility.ts";
 
 describe("statuses classify/decode", () => {
   it("classifies error keywords", () => {

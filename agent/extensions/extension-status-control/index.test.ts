@@ -6,7 +6,7 @@ const subscribeMock = mock(() => () => undefined);
 const refreshMock = mock(() => undefined);
 const publishedSnaps: unknown[] = [];
 
-mock.module("../../_shared/fancy-footer.ts", () => ({
+mock.module("../_shared/fancy-footer.ts", () => ({
   getFancyFooterExtensionStatusesSnapshot: (...args: unknown[]) => snapshotMock(...args),
   subscribeFancyFooterExtensionStatuses: (...args: unknown[]) =>
     subscribeMock(...(args as [])),
@@ -22,7 +22,7 @@ function createMockAPI() {
     registerCommand: (name: string, command: unknown) => {
       commands.set(name, command as never);
     },
-  } as unknown as Parameters<typeof import("../index.ts")["default"]>[0];
+} as unknown as Parameters<typeof import("./index.ts")["default"]>[0];
   return { pi, commands };
 }
 
@@ -45,7 +45,7 @@ function createCtx(selectSequence: (string | undefined)[]) {
 
 describe("extension-status command", () => {
   it("registers /extension-status with autocomplete", async () => {
-    const { default: factory } = await import("../index.ts");
+    const { default: factory } = await import("./index.ts");
     snapshotMock.mockImplementation(() => [
       { id: "lsp", status: "LSP: ready" },
     ]);
@@ -64,7 +64,7 @@ describe("extension-status command", () => {
   });
 
   it("autocomplete filters by prefix against id or status", async () => {
-    const { default: factory } = await import("../index.ts");
+    const { default: factory } = await import("./index.ts");
     snapshotMock.mockImplementation(() => [
       { id: "lsp", status: "ready" },
       { id: "caveman", status: "ULTRA mode" },
@@ -81,7 +81,7 @@ describe("extension-status command", () => {
   });
 
   it("notifies when there are no statuses", async () => {
-    const { default: factory } = await import("../index.ts");
+    const { default: factory } = await import("./index.ts");
     snapshotMock.mockImplementation(() => []);
     const { pi, commands } = createMockAPI();
     const { ctx } = createCtx([]);
