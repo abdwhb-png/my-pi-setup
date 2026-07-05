@@ -20,18 +20,33 @@ Configs are merged (project overrides global):
 
 ```json
 {
-  "sandbox": {
-    "enabled": true,
-    "network": {
-      "allowedDomains": ["github.com", "*.github.com", "registry.npmjs.org"],
-      "deniedDomains": []
-    },
-    "filesystem": {
-      "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg"],
-      "allowWrite": [".", "/tmp"],
-      "denyWrite": [".env", ".env.*", "*.pem", "*.key"]
-    }
-  }
+  "network": {
+    "allowedDomains": [
+      "github.com",
+      "*.github.com",
+      "lfs.github.com",
+      "api.github.com",
+      "npmjs.org",
+      "*.npmjs.org"
+    ],
+    "deniedDomains": ["malicious.com"],
+    "allowUnixSockets": ["/var/run/docker.sock"],
+    "allowLocalBinding": false
+  },
+  "filesystem": {
+    "denyRead": ["~/.ssh"],
+    "allowRead": [],
+    "allowWrite": [".", "src/", "test/", "/tmp"],
+    "denyWrite": [".env", "config/production.json"]
+  },
+  "ignoreViolations": {
+    "*": ["/usr/bin", "/System"],
+    "git push": ["/usr/bin/nc"],
+    "npm": ["/private/tmp"]
+  },
+  "enableWeakerNestedSandbox": false,
+  "enableWeakerNetworkIsolation": false,
+  "allowAppleEvents": false
 }
 ```
 
