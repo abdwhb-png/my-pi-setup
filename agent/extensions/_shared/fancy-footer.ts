@@ -18,6 +18,21 @@ export {
   type UsageSnapshot,
 } from "pi-fancy-footer/api/metrics";
 
+// ── Extension status snapshot API ────────────────────────────────────────
+//
+// Re-exported so command-style extensions can read/observe extension statuses
+// without clobbering pi-fancy-footer's footer. The snapshot is republished by
+// the above-editor widget after every render.
+
+export {
+  getExtensionStatusesSnapshot as getFancyFooterExtensionStatusesSnapshot,
+  subscribeExtensionStatusesSnapshot as subscribeFancyFooterExtensionStatuses,
+  publishExtensionStatusesSnapshot,
+  FANCY_FOOTER_EXTENSION_STATUSES_SNAPSHOT_EVENT,
+  type FancyFooterExtensionStatusSnapshot,
+  type FancyFooterExtensionStatusesListener,
+} from "pi-fancy-footer/api";
+
 // Derive the Pi API type from the contribute function to avoid
 // type incompatibility when the caller imports ExtensionAPI from
 // a different node_modules/ location than pi-fancy-footer does.
