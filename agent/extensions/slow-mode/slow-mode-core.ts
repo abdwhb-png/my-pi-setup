@@ -6,7 +6,9 @@
  * Mirrors the pattern established by `extensions/diff/core.ts`.
  */
 
-import { relative, resolve } from "node:path";
+import { relative, resolve, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -388,4 +390,89 @@ export function autoAcceptKey(
     return typeof path === "string" ? path : null;
   }
   return null;
+}
+
+// ---- Slow Mode Config ----
+
+/** Map of tool name to whether slow mode should apply. */
+export type SlowModeConfig = Record<string, boolean>;
+
+/**
+ * Result of validating a slow-mode config against active tools.
+ */
+export interface SlowModeConfigResult {
+  /** Only tools that exist in the current active set. */
+  tools: Map<string, boolean>;
+  /** Human-readable warnings about non-existent tools in the config. */
+  warnings: string[];
+}
+
+/**
+ * Load slow-mode config from a JSON file.
+ *
+ * Expected format: `{ "toolName": true/false, ... }`
+ *
+ * Non-boolean values are silently filtered out. Malformed
+ * or missing files return an empty object (no config = no slow mode).
+ *
+ * @param configPath - Path to slow-mode.json. Defaults to ~/.pi/agent/slow-mode.json
+ * @returns Parsed config (empty object on any error)
+ */
+export function loadSlowModeConfig(configPath?: string): SlowModeConfig {
+  const defaultDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+  const path = configPath ?? join(defaultDir, "slow-mode.json");
+
+  if (!existsSync(path)) {
+    return {};
+  }
+
+  try {
+    const raw = readFileSync(path, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const config: SlowModeConfig = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof key !== "string") continue;
+      if (typeof value !== "boolean") continue;
+      config[key] = value;
+    }
+    return config;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Validate a slow-mode config against the current active tools.
+ *
+ * Returns only tools that exist in `activeTools`. Adds warnings for
+ * any config entries that reference non-existent tools.
+ *
+ * @param config - The raw config from loadSlowModeConfig()
+ * @param activeTools - Current active tool names from pi.getActiveTools()
+ * @returns Filtered config and warnings
+ */
+export function validateSlowModeConfig(
+  config: SlowModeConfig,
+  activeTools: string[],
+): SlowModeConfigResult {
+  const activeSet = new Set(activeTools);
+  const tools = new Map<string, boolean>();
+  const warnings: string[] = [];
+
+  for (const [toolName, enabled] of Object.entries(config)) {
+    if (!activeSet.has(toolName)) {
+      warnings.push(
+        `Tool "${toolName}" in slow-mode.json does not exist and will be ignored`,
+      );
+      continue;
+    }
+    tools.set(toolName, enabled);
+  }
+
+  return { tools, warnings };
 }

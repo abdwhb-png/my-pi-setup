@@ -4,7 +4,7 @@
  * All tests are self-contained — no filesystem, no pi API, no shells.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import {
   resolvePath,
   myersDiff,
@@ -14,9 +14,15 @@ import {
   extractEditText,
   extractEditPatches,
   autoAcceptKey,
+  loadSlowModeConfig,
+  validateSlowModeConfig,
   type Edit,
   type EditPatch,
+  type SlowModeConfig,
 } from "./slow-mode-core.ts";
+import { writeFileSync, unlinkSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // ===========================================================================
 // resolvePath
@@ -391,5 +397,84 @@ describe("extractEditPatches", () => {
 
   it("returns null for empty edits array", () => {
     expect(extractEditPatches({ edits: [] })).toBeNull();
+  });
+});
+
+describe("loadSlowModeConfig", () => {
+  const tmpDir = join(tmpdir(), `pi-slow-mode-config-test-${Date.now()}`);
+  mkdirSync(tmpDir, { recursive: true });
+
+  afterAll(() => {
+    try { rmSync(tmpDir, { recursive: true }); } catch { /* best-effort */ }
+  });
+
+  const writeConfig = (name: string, content: string) => {
+    const p = join(tmpDir, name);
+    try { unlinkSync(p); } catch { /* ok if not present */ }
+    writeFileSync(p, content, "utf-8");
+    return p;
+  };
+
+  it("returns empty object when file does not exist", () => {
+    const result = loadSlowModeConfig(join(tmpDir, "nonexistent.json"));
+    expect(result).toEqual({});
+  });
+
+  it("loads valid config", () => {
+    const path = writeConfig("valid.json", JSON.stringify({ write: true, edit: false, grep: true }));
+    const result = loadSlowModeConfig(path);
+    expect(result).toEqual({ write: true, edit: false, grep: true });
+  });
+
+  it("returns empty object for malformed JSON", () => {
+    const path = writeConfig("bad.json", "{ not valid json }");
+    const result = loadSlowModeConfig(path);
+    expect(result).toEqual({});
+  });
+
+  it("filters out non-boolean values", () => {
+    const path = writeConfig("mixed.json", JSON.stringify({ write: true, grep: "yes", read: 1, find: false }));
+    const result = loadSlowModeConfig(path);
+    expect(result).toEqual({ write: true, find: false });
+  });
+
+  it("returns empty object when file contains a JSON array", () => {
+    const path = writeConfig("array.json", "[1, 2, 3]");
+    const result = loadSlowModeConfig(path);
+    expect(result).toEqual({});
+  });
+});
+
+describe("validateSlowModeConfig", () => {
+  const activeTools = ["write", "edit", "read", "bash", "grep", "find", "ls"];
+
+  it("returns empty warnings when all tools exist", () => {
+    const config: SlowModeConfig = { write: true, edit: true, grep: true };
+    const result = validateSlowModeConfig(config, activeTools);
+    expect(result.tools).toEqual(new Map([["write", true], ["edit", true], ["grep", true]]));
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("warns about non-existent tools", () => {
+    const config: SlowModeConfig = { write: true, nonexistent: true, fake_tool: false };
+    const result = validateSlowModeConfig(config, activeTools);
+    expect(result.tools.get("write")).toBe(true);
+    expect(result.tools.has("nonexistent")).toBe(false);
+    expect(result.tools.has("fake_tool")).toBe(false);
+    expect(result.warnings).toContain('Tool "nonexistent" in slow-mode.json does not exist and will be ignored');
+    expect(result.warnings).toContain('Tool "fake_tool" in slow-mode.json does not exist and will be ignored');
+  });
+
+  it("handles empty config", () => {
+    const result = validateSlowModeConfig({}, activeTools);
+    expect(result.tools.size).toBe(0);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("handles empty active tools list", () => {
+    const config: SlowModeConfig = { write: true };
+    const result = validateSlowModeConfig(config, []);
+    expect(result.tools.size).toBe(0);
+    expect(result.warnings).toContain('Tool "write" in slow-mode.json does not exist and will be ignored');
   });
 });
