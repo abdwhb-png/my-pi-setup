@@ -13,9 +13,9 @@ import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import { resolvePromptFile, loadPromptPathsFromSettings } from "./prompt-role-switch";
 
-// ── Mock pi-roles/protocol before dynamic import ──
+// ── Mock shared pi-roles bridge before dynamic import ──
 let writeRoleSwitchRequestSpy = mock(() => {});
-mock.module("pi-roles/protocol", () => ({
+mock.module("../_shared/pi-roles", () => ({
   writeRoleSwitchRequest: writeRoleSwitchRequestSpy,
 }));
 

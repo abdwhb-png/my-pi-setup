@@ -23,7 +23,7 @@ import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { writeRoleSwitchRequest } from "pi-roles/protocol";
+import { writeRoleSwitchRequest } from "../_shared/pi-roles";
 
 
 // ── Constants ──

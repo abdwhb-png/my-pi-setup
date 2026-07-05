@@ -16,7 +16,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { writeRoleSwitchRequest } from "pi-roles/protocol";
+import { writeRoleSwitchRequest } from "../_shared/pi-roles";
 import { getSettingsValue } from "../_shared/settings";
 
 // ── Constants ──
