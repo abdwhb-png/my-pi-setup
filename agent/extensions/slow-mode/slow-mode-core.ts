@@ -389,7 +389,8 @@ export function autoAcceptKey(
     const path = params.path;
     return typeof path === "string" ? path : null;
   }
-  return null;
+  // Generic: serialize params as key so auto-accept works per-param-set
+  return JSON.stringify(params);
 }
 
 // ---- Slow Mode Config ----

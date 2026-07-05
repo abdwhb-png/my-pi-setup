@@ -363,8 +363,10 @@ describe("autoAcceptKey", () => {
     expect(autoAcceptKey("edit", { path: "/a/b.ts", edits: [] })).toBe("/a/b.ts");
   });
 
-  it("returns null for unknown tool", () => {
-    expect(autoAcceptKey("read", { path: "/a/b.ts" })).toBeNull();
+  it("returns serialized params for unknown tool", () => {
+    const params = { path: "/a/b.ts", offset: 5 };
+    const key = autoAcceptKey("read", params);
+    expect(key).toBe(JSON.stringify(params));
   });
 
   it("returns null when command missing", () => {

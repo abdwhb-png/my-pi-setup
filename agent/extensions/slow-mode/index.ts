@@ -25,6 +25,9 @@ import {
   applyEdits,
   extractEditPatches,
   autoAcceptKey,
+  loadSlowModeConfig,
+  validateSlowModeConfig,
+  type SlowModeConfigResult,
 } from "./slow-mode-core.ts";
 import {
   showReview,
@@ -38,6 +41,17 @@ export default function slowMode(pi: ExtensionAPI) {
   const isRPC = process.argv.includes("--mode") && process.argv.includes("rpc");
 
   let enabled = false;
+
+  /** Per-tool slow-mode config. Map key = tool name, value = slow mode active for this tool. */
+  let toolConfig = new Map<string, boolean>();
+
+  /** Reload the slow-mode tool config from disk. */
+  function reloadToolConfig(): SlowModeConfigResult {
+    const raw = loadSlowModeConfig();
+    const result = validateSlowModeConfig(raw, pi.getActiveTools());
+    toolConfig = result.tools;
+    return result;
+  }
 
   const editedCalls = new Map<string, { original: string; edited: string }>();
   const autoAccept = new Map<string, Set<string>>();
@@ -72,6 +86,22 @@ export default function slowMode(pi: ExtensionAPI) {
   let originalWrite = createWriteTool(process.cwd());
   let originalEdit = createEditTool(process.cwd());
 
+  /**
+   * Build the widget text showing slow-mode status + configured tools.
+   * Format: "slow ■ [write, edit, grep]" or "slow ■ (3 tools)"
+   */
+  function buildWidgetText(enabled: boolean, config: Map<string, boolean>): string | null {
+    if (!enabled) return null;
+    const activeTools = [...config.entries()]
+      .filter(([, v]) => v === true)
+      .map(([k]) => k);
+    if (activeTools.length === 0) return "slow ■";
+    const maxShow = 4;
+    const shown = activeTools.slice(0, maxShow);
+    const suffix = activeTools.length > maxShow ? ` +${activeTools.length - maxShow}` : "";
+    return `slow ■ [${shown.join(", ")}${suffix}]`;
+  }
+
   const w = createWidget(pi, {
     id: "slow-mode",
     label: "Slow Mode",
@@ -80,9 +110,10 @@ export default function slowMode(pi: ExtensionAPI) {
     order: 8,
     align: "right",
     render: (ctx: any) => {
-      if (!enabled) return null;
+      const text = buildWidgetText(enabled, toolConfig);
+      if (!text) return null;
       const colors = createUiColors(ctx.theme);
-      return colors.warning("slow ■");
+      return colors.warning(text);
     },
   });
 
@@ -90,12 +121,18 @@ export default function slowMode(pi: ExtensionAPI) {
     originalWrite = createWriteTool(ctx.cwd);
     originalEdit = createEditTool(ctx.cwd);
 
+    // Load tool config first (needed for widget display)
+    const result = reloadToolConfig();
+    for (const warning of result.warnings) {
+      ctx.ui.notify(warning, "warning");
+    }
+
     const entries = ctx.sessionManager.getEntries();
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i];
       if (e.type === "custom" && e.customType === "slow-mode") {
         enabled = (e.data as { enabled: boolean }).enabled;
-        w.update(ctx, enabled ? "slow ■" : null);
+        w.update(ctx, buildWidgetText(enabled, toolConfig));
         break;
       }
     }
@@ -115,9 +152,9 @@ export default function slowMode(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("slow-mode", {
-    description: "Toggle slow mode — review write/edit changes before applying",
+    description: "Toggle slow mode — review write/edit/bash changes before applying",
     getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
-      const values = ["on", "enable", "off", "disable"];
+      const values = ["on", "enable", "off", "disable", "reload"];
       const items = values.map((v) => ({ value: v, label: v }));
       const filtered = items.filter((i) => i.value.startsWith(prefix));
       return filtered.length > 0 ? filtered : null;
@@ -133,6 +170,18 @@ export default function slowMode(pi: ExtensionAPI) {
       }
 
       const arg = args.trim().toLowerCase();
+
+      if (arg === "reload" || arg === "refresh") {
+        const result = reloadToolConfig();
+        w.update(ctx, buildWidgetText(enabled, toolConfig));
+        for (const warning of result.warnings) {
+          ctx.ui.notify(warning, "warning");
+        }
+        const count = [...result.tools.values()].filter(Boolean).length;
+        ctx.ui.notify(`Slow-mode config reloaded (${count} tools under review)`, "info");
+        return;
+      }
+
       if (arg === "on" || arg === "enable") {
         enabled = true;
       } else if (arg === "off" || arg === "disable") {
@@ -141,12 +190,12 @@ export default function slowMode(pi: ExtensionAPI) {
         enabled = !enabled;
       }
 
-      w.update(ctx, enabled ? "slow ■" : null);
+      w.update(ctx, buildWidgetText(enabled, toolConfig));
 
       pi.appendEntry("slow-mode", { enabled });
 
       if (enabled) {
-        ctx.ui.notify("Slow mode enabled — write/edit changes require approval", "info");
+        ctx.ui.notify("Slow mode enabled — write/edit/bash changes require approval", "info");
       } else {
         ctx.ui.notify("Slow mode disabled", "info");
       }
@@ -157,7 +206,7 @@ export default function slowMode(pi: ExtensionAPI) {
     ...originalWrite,
     label: "write (slow mode)",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      if (!enabled || isRPC || !ctx.hasUI) {
+      if (!enabled || isRPC || !ctx.hasUI || toolConfig.get("write") === false) {
         return originalWrite.execute(toolCallId, params, signal, onUpdate);
       }
 
@@ -201,7 +250,7 @@ export default function slowMode(pi: ExtensionAPI) {
     ...originalEdit,
     label: "edit (slow mode)",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      if (!enabled || isRPC || !ctx.hasUI) {
+      if (!enabled || isRPC || !ctx.hasUI || toolConfig.get("edit") === false) {
         return originalEdit.execute(toolCallId, params, signal, onUpdate);
       }
 
@@ -279,21 +328,69 @@ export default function slowMode(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     if (!enabled || isRPC || !ctx.hasUI) return;
 
-    if (event.toolName !== "bash" && event.toolName !== "safe_bash") return;
+    // Config opt-out: if tool explicitly set to false, skip review entirely
+    if (toolConfig.get(event.toolName) === false) return;
 
-    const input = event.input as { command?: unknown };
-    const command = typeof input.command === "string" ? input.command : undefined;
-    if (command == null) return;
+    if (event.toolName === "bash" || event.toolName === "safe_bash") {
+      const input = event.input as { command?: unknown };
+      const command = typeof input.command === "string" ? input.command : undefined;
+      if (command == null) return;
 
-    const key = autoAcceptKey(event.toolName, event.input as Record<string, unknown>);
-    if (isAutoAccepted(event.toolName, key)) {
-      return;
+      const key = autoAcceptKey(event.toolName, event.input as Record<string, unknown>);
+      if (isAutoAccepted(event.toolName, key)) {
+        return;
+      }
+
+      const danger = isDangerous(command);
+      const body = danger
+        ? `⚠ DANGEROUS (${danger})\n\n$ ${command}`
+        : `$ ${command}`;
+
+      pi.events.emit("slow-mode:waiting", {});
+      let decision: ReviewResult;
+      try {
+        decision = await showReview(ctx, {
+          operation: "BASH",
+          filePath: event.toolName,
+          body,
+          allowEdit: false,
+        });
+      } finally {
+        pi.events.emit("slow-mode:resolved", {});
+      }
+
+      if (decision === "approve") {
+        return;
+      }
+      if (decision === "approve-auto") {
+        recordAutoAccept(event.toolName, key);
+        return;
+      }
+      if (decision === "edit") {
+        return;
+      }
+      if (decision === "reject") {
+        return {
+          block: true as const,
+          reason: "User rejected the bash command in slow mode review.",
+        };
+      }
+      return {
+        block: true as const,
+        reason: `User rejected the bash command: ${decision.reason}`,
+      };
     }
 
-    const danger = isDangerous(command);
-    const body = danger
-      ? `⚠ DANGEROUS (${danger})\n\n$ ${command}`
-      : `$ ${command}`;
+    // ---- Generic config-based slow mode for any other tool ----
+    if (!toolConfig.has(event.toolName) || toolConfig.get(event.toolName) !== true) return;
+
+    const input = event.input as Record<string, unknown>;
+    const bodyLines = [`Tool: ${event.toolName}`];
+    for (const [key, value] of Object.entries(input)) {
+      const valStr = typeof value === "string" ? value : JSON.stringify(value);
+      bodyLines.push(`  ${key}: ${valStr}`);
+    }
+    const body = bodyLines.join("\n");
 
     pi.events.emit("slow-mode:waiting", {});
     let decision: ReviewResult;
@@ -308,26 +405,24 @@ export default function slowMode(pi: ExtensionAPI) {
       pi.events.emit("slow-mode:resolved", {});
     }
 
-    if (decision === "approve") {
-      return;
-    }
-    if (decision === "approve-auto") {
-      recordAutoAccept(event.toolName, key);
-      return;
-    }
-    if (decision === "edit") {
+    if (decision === "approve" || decision === "approve-auto") {
+      if (decision === "approve-auto") {
+        recordAutoAccept(event.toolName, autoAcceptKey(event.toolName, input));
+      }
       return;
     }
     if (decision === "reject") {
       return {
         block: true as const,
-        reason: "User rejected the bash command in slow mode review.",
+        reason: `User rejected the ${event.toolName} tool call in slow mode review.`,
       };
     }
-    return {
-      block: true as const,
-      reason: `User rejected the bash command: ${decision.reason}`,
-    };
+    if (typeof decision === "object" && decision.action === "rejected") {
+      return {
+        block: true as const,
+        reason: `User rejected the ${event.toolName} tool call: ${decision.reason}`,
+      };
+    }
   });
 
   interface WriteReviewResult {
