@@ -4,7 +4,7 @@
  * All tests are self-contained — no filesystem, no pi API, no shells.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, afterAll } from "bun:test";
 import {
   resolvePath,
   myersDiff,

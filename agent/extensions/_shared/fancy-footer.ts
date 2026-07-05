@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FancyFooterWidgetContribution } from "pi-fancy-footer/api";
 import {
   contributeFancyFooterWidgets,
@@ -33,13 +33,6 @@ export {
   type FancyFooterExtensionStatusesListener,
 } from "pi-fancy-footer/api";
 
-// Derive the Pi API type from the contribute function to avoid
-// type incompatibility when the caller imports ExtensionAPI from
-// a different node_modules/ location than pi-fancy-footer does.
-type PiAPI = Parameters<typeof contributeFancyFooterWidgets>[0];
-// Re-export for callers to avoid ExtensionAPI type mismatches.
-export type { PiAPI as FancyFooterAPI };
-
 export interface WidgetHandle {
   /** Whether fancy-footer is active. If false, use update(_, text) and remove() for fallback. */
   readonly active: boolean;
@@ -66,7 +59,7 @@ export interface WidgetHandle {
 const MAX_ORDER = 64;
 
 export function createWidget(
-  pi: PiAPI,
+  pi: ExtensionAPI,
   def: FancyFooterWidgetContribution,
 ): WidgetHandle {
   const safeDef: FancyFooterWidgetContribution = {
@@ -76,9 +69,14 @@ export function createWidget(
 
   let isActive = false;
 
+  // Cast through unknown: pi-fancy-footer imports its own ExtensionAPI
+  // from a different node_modules path, causing nominal mismatch despite
+  // identical structure.
+  const ff = pi as unknown as Parameters<typeof contributeFancyFooterWidgets>[0];
+
   try {
-    contributeFancyFooterWidgets(pi, safeDef);
-    requestFancyFooterWidgetDiscovery(pi);
+    contributeFancyFooterWidgets(ff, safeDef);
+    requestFancyFooterWidgetDiscovery(ff);
     isActive = true;
   } catch {
     // pi-fancy-footer not installed — widget will use fallback path
@@ -91,7 +89,7 @@ export function createWidget(
 
     update(ctx: ExtensionContext, fallbackText?: string | null): void {
       if (isActive) {
-        requestFancyFooterRefresh(pi);
+        requestFancyFooterRefresh(ff);
       } else if (ctx.hasUI) {
         ctx.ui.setWidget(def.id, fallbackText ? [fallbackText] : undefined);
       }
