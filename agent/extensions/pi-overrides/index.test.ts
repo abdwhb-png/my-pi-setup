@@ -315,4 +315,82 @@ describe("pi-overrides", () => {
       // NOTE: See above — grep.ignoreGitignore is blocked (no factory hook).
     });
   });
+
+  // ─── LLM-disambiguation: pattern vs description docs ─────────────────────────
+  //
+  // Lighter LLMs repeatedly confuse JSON-Schema field `description` (which
+  // annotates the `pattern` prop on pi's schemas) for a tool argument. They
+  // emit { "description": "pattern: php" } instead of { "pattern": "php" }
+  // and loop forever on validation errors. Pi does NOT silently repair args
+  // — we steer the LLM via three official doc channels (description,
+  // promptSnippet, promptGuidelines). promptGuidelines lands in the
+  // Guidelines section of the system prompt every turn.
+
+  describe("LLM-disambiguation: docs steer LLM away from `description` confusion", () => {
+    it("grep tool surfaces pattern/description disambiguation in docs", async () => {
+      resetAuditState("standard");
+      const { pi, handlers, registeredTools } = createMockExtensionApi();
+      piOverrides(pi);
+      await handlers.get("session_start")?.({}, { cwd: "/tmp" });
+      const grep = registeredTools.get("grep") as {
+        description?: string;
+        promptSnippet?: string;
+        promptGuidelines?: string[];
+      };
+      if (!grep) throw new Error("grep tool not registered");
+      // Description must name `pattern` as the required argument
+      expect(grep.description).toMatch(/`pattern`/);
+      // Description must explicitly warn against the `description` failure mode
+      expect(grep.description?.toLowerCase()).toContain("do not use `description`");
+      // Prompt snippet must mention `pattern`
+      expect(grep.promptSnippet).toMatch(/`pattern`/);
+      // Prompt guidelines present and at least one explicitly mentions the `pattern` arg
+      expect(Array.isArray(grep.promptGuidelines)).toBe(true);
+      expect(grep.promptGuidelines!.length).toBeGreaterThan(0);
+      expect(grep.promptGuidelines!.some((g) => /`pattern`/i.test(g))).toBe(true);
+    });
+
+    it("find tool surfaces pattern/description disambiguation in docs", async () => {
+      resetAuditState("standard");
+      const { pi, handlers, registeredTools } = createMockExtensionApi();
+      piOverrides(pi);
+      await handlers.get("session_start")?.({}, { cwd: "/tmp" });
+      const find = registeredTools.get("find") as {
+        description?: string;
+        promptSnippet?: string;
+        promptGuidelines?: string[];
+      };
+      if (!find) throw new Error("find tool not registered");
+      expect(find.description).toMatch(/`pattern`/);
+      expect(find.promptSnippet).toMatch(/`pattern`/);
+      expect(Array.isArray(find.promptGuidelines)).toBe(true);
+      expect(find.promptGuidelines!.some((g) => /`pattern`/i.test(g))).toBe(true);
+    });
+
+    it("ls tool surfaces `path` argument in docs", async () => {
+      resetAuditState("standard");
+      const { pi, handlers, registeredTools } = createMockExtensionApi();
+      piOverrides(pi);
+      await handlers.get("session_start")?.({}, { cwd: "/tmp" });
+      const ls = registeredTools.get("ls") as {
+        promptGuidelines?: string[];
+      };
+      if (!ls) throw new Error("ls tool not registered");
+      expect(Array.isArray(ls.promptGuidelines)).toBe(true);
+      expect(ls.promptGuidelines!.some((g) => /`path`/i.test(g))).toBe(true);
+    });
+
+    it("read tool surfaces `path` argument in docs", async () => {
+      resetAuditState("standard");
+      const { pi, handlers, registeredTools } = createMockExtensionApi();
+      piOverrides(pi);
+      await handlers.get("session_start")?.({}, { cwd: "/tmp" });
+      const read = registeredTools.get("read") as {
+        promptGuidelines?: string[];
+      };
+      if (!read) throw new Error("read tool not registered");
+      expect(Array.isArray(read.promptGuidelines)).toBe(true);
+      expect(read.promptGuidelines!.some((g) => /`path`/i.test(g))).toBe(true);
+    });
+  });
 });

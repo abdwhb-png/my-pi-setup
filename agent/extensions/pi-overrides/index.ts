@@ -204,6 +204,66 @@ function makeRenderResult<F extends (...args: any[]) => Component>(
   return wrap as unknown as F;
 }
 
+// ─── LLM-disambiguation docs ─────────────────────────────────────────────────
+//
+// Lighter LLMs repeatedly confuse JSON-Schema field `description` (which
+// annotates each `pattern`/`path` prop on pi's tool schemas) for an actual
+// argument. They emit { "description": "pattern: php" } instead of
+// { "pattern": "php" } and loop forever on validation errors.
+//
+// Pi's contract: do NOT silently repair args. Steer the LLM via the three
+// official doc channels that ship with every ToolDefinition:
+//   - `description`     → tool's own doc, sent in the tool spec
+//   - `promptSnippet`   → "Available tools" line in the system prompt
+//   - `promptGuidelines`→ appended to the Guidelines section every turn
+// Repeating the disambiguation across all three channels is deliberate —
+// light models need the same rule in multiple places before it sticks.
+
+const GREP_DISAMBIGUATION = {
+  description:
+    "Search file contents (ripgrep). Arguments: " +
+    "{ pattern: string, path?: string, glob?: string, ignoreCase?: boolean, " +
+    "literal?: boolean, context?: number, limit?: number }. " +
+    "REQUIRED: pass the regex/text to search for in the `pattern` argument. " +
+    "Do NOT use `description` as an argument — it is JSON-Schema metadata that " +
+    "annotates the `pattern` field, not itself a parameter. " +
+    "Correct call shape = { \"pattern\": \"foo\", \"path\": \"./src\" }.",
+  promptSnippet:
+    "Search file contents for the regex/text in `pattern` (NOT `description`). Respects .gitignore.",
+  promptGuidelines: [
+    "grep: pass the search text in the `pattern` argument. `description` is schema metadata, not a parameter.",
+    "grep: correct shape = { \"pattern\": \"foo\", \"path\": \"./src\" }. Do not emit { \"description\": ... }.",
+  ],
+};
+
+const FIND_DISAMBIGUATION = {
+  description:
+    "Find files by glob pattern (fd). Arguments: " +
+    "{ pattern: string, path?: string, limit?: number }. " +
+    "REQUIRED: pass the glob expression in the `pattern` argument. " +
+    "Do NOT use `description` as an argument — it is JSON-Schema metadata that " +
+    "annotates the `pattern` field. " +
+    "Correct call shape = { \"pattern\": \"**/*.ts\", \"path\": \"./src\" }.",
+  promptSnippet:
+    "Find files matching a glob in `pattern` (NOT `description`). Respects .gitignore.",
+  promptGuidelines: [
+    "find: pass the glob expression in the `pattern` argument. `description` is schema metadata, not a parameter.",
+    "find: correct shape = { \"pattern\": \"**/*.ts\", \"path\": \"./src\" }. Do not emit { \"description\": ... }.",
+  ],
+};
+
+const LS_DISAMBIGUATION = {
+  promptGuidelines: [
+    "ls: pass the directory to list in the `path` argument (optional). No other arguments expected.",
+  ],
+};
+
+const READ_DISAMBIGUATION = {
+  promptGuidelines: [
+    "read: pass the file to read in the `path` argument (required). Optional: `offset`, `limit` (1-indexed line numbers).",
+  ],
+};
+
 // ─── Extension entry point ────────────────────────────────────────────────────
 
 export default function piOverrides(pi: ExtensionAPI): void {
@@ -226,10 +286,26 @@ export default function piOverrides(pi: ExtensionAPI): void {
     const lsTextByCallId = new Map<string, Text>();
     const findTextByCallId = new Map<string, Text>();
 
-    pi.registerTool({ ...readDef, renderResult: makeRenderResult(readTextByCallId, readDef) });
-    pi.registerTool({ ...grepDef, renderResult: makeRenderResult(grepTextByCallId, grepDef) });
-    pi.registerTool({ ...lsDef, renderResult: makeRenderResult(lsTextByCallId, lsDef) });
-    pi.registerTool({ ...findDef, renderResult: makeRenderResult(findTextByCallId, findDef) });
+    pi.registerTool({
+      ...readDef,
+      promptGuidelines: READ_DISAMBIGUATION.promptGuidelines,
+      renderResult: makeRenderResult(readTextByCallId, readDef),
+    });
+    pi.registerTool({
+      ...grepDef,
+      ...GREP_DISAMBIGUATION,
+      renderResult: makeRenderResult(grepTextByCallId, grepDef),
+    });
+    pi.registerTool({
+      ...lsDef,
+      ...LS_DISAMBIGUATION,
+      renderResult: makeRenderResult(lsTextByCallId, lsDef),
+    });
+    pi.registerTool({
+      ...findDef,
+      ...FIND_DISAMBIGUATION,
+      renderResult: makeRenderResult(findTextByCallId, findDef),
+    });
 
     // Augment default active toolset with native grep/find/ls.
     // Pi core defaults to ["read", "bash", "edit", "write"] — add the
