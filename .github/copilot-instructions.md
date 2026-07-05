@@ -7,3 +7,8 @@ Do not attempt to "figure it out" using LSP, grep, or file reading on your own. 
 **Workflow:**
 1. Call `pi-expert` to analyze the request and provide the correct architectural approach.
 2. Use the guidance provided by `pi-expert` to perform the actual implementation.
+
+## Agent context (always read)
+
+- [AGENTS.md](../AGENTS.md)
+- [agent/AGENTS.md](../agent/AGENTS.md)

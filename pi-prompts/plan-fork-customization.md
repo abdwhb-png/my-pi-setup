@@ -6,7 +6,11 @@ role: plan
 
 I have installed this pi package/extension, but when I used it I noticed I need to customize it so I forked it in `/home/abdwhb/projects/pi-integrations`.
 
-Needed customizations are: $ARGUMENTS
+---
+
+**Here are the customizations I want**: $ARGUMENTS
+
+---
 
 ## Fork Workflow
 

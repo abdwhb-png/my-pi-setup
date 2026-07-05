@@ -22,11 +22,11 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 
 ## General Instructions
 
-- Always use `context7` coupled with `deepwiki` tools to check documentation about any package or module including pi itself.
 - Always use `pi-extensions` skill for pi packages and extensions development.
 - Use the `pi-cli` skill for any questions regarding the `pi` command-line interface, flags, and automation.
-- Always provide factual and accurate information. If you are unsure about something, search for reliable sources before providing an answer.
-- Use the `factual-research` skill for factual research.
+- Always provide factual and accurate information. If you are unsure about something, search for reliable sources before taking action or providing an answer.
+
+**NEVER SPECULATE ON PI TYPES**: Always refer to the pi types in the harness or in the pi packages. Never assume a type or a property exists without verifying it in the codebase. That ensure you always import the correct types or built a specific type for your needs based on pi's actual types. If you cannot find the type, ask `pi-expert` for clarification.
 
 ## Folder structure
 
@@ -86,11 +86,30 @@ Absolute rule: **no production line without a test that fails first.**
 - Follow the existing code style and patterns in the project. Consistency is more important than personal preference.
 - Write clear, concise code with meaningful variable and function names. Avoid unnecessary complexity.
 - Document any non-obvious logic with comments. Assume the reader is familiar with the codebase but not with your specific implementation.
-- Use `oxlint` (check oxlint skill) and eventually `oxfmt` for linting and formatting.
+- Use `oxlint` (check oxlint skill) for linting (e.g. `bun run lint` or `bunx oxlint`).
 - Avoid duplicating code. If you find yourself copying and pasting, consider refactoring to create reusable functions or modules.
 - Avoid running `dev` or `build` commands. If you really need to, ask first.
 
 **Important** Remember to avoid duplication, that's the most common source of silent errors and maintenance issues. Always prefer importing real modules over copying code.
+
+## Lint warnings from package boundary code
+
+Some extensions bridge pi's generic TypeScript types (e.g. `ToolDefinition<TDetails>` where `TDetails` defaults to `unknown`).  These generics are inherent to the pi framework — we cannot change them and `unknown` is an intentional part of pi's API contract.
+
+**When you encounter an oxlint warning and cannot eliminate it without breaking typecheck, inspect the type origin:**
+1. If the type comes from `@earendil-works/pi-coding-agent` or another package we don't own → this is a **package boundary warning**.
+2. If you can replace `unknown` with a concrete pi-exported type (`GrepToolDetails`, `FindToolDetails`, etc.) → do that instead.  Check the actual `.d.ts` files in `node_modules/@earendil-works/pi-coding-agent/dist/` — do not guess.
+3. If the pi type is **not re-exported** from the public entrypoint (e.g. `ToolRenderContext`) or the generic cannot be eliminated → the warning is intentional.  Wrap the line in a `// oxlint-disable-next-line <rule>` comment with a brief rationale.
+
+**Rule of thumb:**  If the only way to silence the warning would break `bun run typecheck` or `bun test`, then the warning is a package-boundary cost that we accept.  Do not chase zero warnings at the expense of type safety.
+
+**Verified examples of accepted warnings:**
+- `makeRenderResult` in `pi-overrides/index.ts` uses `any` for the generic `F extends (...args: any[])`, `unknown` in the return cast, and `as never` for the inner call — all necessary because `ToolRenderContext` is not publicly exported and pi's generics default to `unknown`.
+
+## Lint execution
+
+- `bun run lint` (no `--deny-warnings`):  warnings print but do not block.  Use this for routine checks.
+- `bun run lint:check` (with `--deny-warnings`):  exits non-zero on any warning.  Use this only as a strict gate when you need zero-tolerance.
 
 **Test Driven Development (TDD) is mandatory for any code changes.** Follow the TDD cycle: Write a failing test → Write minimal code to pass the test → Refactor → Run the test suite to confirm all tests pass (follow `tdd` skill).
 
@@ -148,3 +167,11 @@ This applies to models from:
 **Anti-pattern: guessing specs.** Do not assume `contextWindow: 1000000` or `maxTokens: 8192` as defaults. Each model has specific, documented limits.
 
 </model-config-verification>
+
+
+### ANTI PATTERNS
+
+- **Guess or Speculate about PI framework internals:** Avoid making assumptions about the internal behavior or structure of the PI framework. **Solution:** Ask `pi-expert` or refer to the official documentation.
+- **Speculating with casts and generic gymnastics where the real fix is simpler**. **Solution:** Let TypeScript infer the parameter types directly from the framework's types. For example, if a pi extension tool expects `ToolDefinition` from `@earendil-works/pi-coding-agent`, do not cast or wrap it in a generic. Import the type and use it directly (e.g., `import type { ToolDefinition } from "@earendil-works/pi-coding-agent";`).
+- **Copying code instead of importing modules:** Never copy-paste functions or classes from other modules into your test or implementation. **Solution:** Import the real module to ensure you are testing the actual code and catching any dependency or resolution issues.
+- Writing test file for a single extension file under `agent/extensions`. **Why ?** Because pi will also consider that test file as an extension and will try to load it, which will fail because the test file is not a valid extension. **Solution:** If single extension file, the test file must be under `agent/extensions/__tests__/` and import the extension file from there. If multiple extension files, the test file can be in the same folder as the extension files.
