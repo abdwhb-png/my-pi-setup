@@ -69,14 +69,9 @@ export function createWidget(
 
   let isActive = false;
 
-  // Cast through unknown: pi-fancy-footer imports its own ExtensionAPI
-  // from a different node_modules path, causing nominal mismatch despite
-  // identical structure.
-  const ff = pi as unknown as Parameters<typeof contributeFancyFooterWidgets>[0];
-
   try {
-    contributeFancyFooterWidgets(ff, safeDef);
-    requestFancyFooterWidgetDiscovery(ff);
+    contributeFancyFooterWidgets(pi, safeDef);
+    requestFancyFooterWidgetDiscovery(pi);
     isActive = true;
   } catch {
     // pi-fancy-footer not installed — widget will use fallback path
@@ -89,7 +84,7 @@ export function createWidget(
 
     update(ctx: ExtensionContext, fallbackText?: string | null): void {
       if (isActive) {
-        requestFancyFooterRefresh(ff);
+        requestFancyFooterRefresh(pi);
       } else if (ctx.hasUI) {
         ctx.ui.setWidget(def.id, fallbackText ? [fallbackText] : undefined);
       }
