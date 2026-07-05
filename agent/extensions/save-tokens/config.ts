@@ -30,6 +30,10 @@ export interface CompressorConfig {
   timeoutMs?: number;
   showStatus?: boolean;
   showWidget?: boolean;
+  archiveOriginal?: boolean;
+  capFallbackBytes?: number;
+  routingStrategy?: "edgee" | "benchmark";
+  summaryGranularity?: "none" | "turn" | "agent" | "all";
 }
 
 export interface CavemanConfig {
@@ -67,6 +71,12 @@ function normalizeCompressor(raw: object): CompressorConfig | undefined {
   if (typeof r.timeoutMs === "number") out.timeoutMs = r.timeoutMs;
   if (typeof r.showStatus === "boolean") out.showStatus = r.showStatus;
   if (typeof r.showWidget === "boolean") out.showWidget = r.showWidget;
+  if (typeof r.archiveOriginal === "boolean") out.archiveOriginal = r.archiveOriginal;
+  if (typeof r.capFallbackBytes === "number") out.capFallbackBytes = r.capFallbackBytes;
+  if (r.routingStrategy === "edgee" || r.routingStrategy === "benchmark") out.routingStrategy = r.routingStrategy;
+  if (r.summaryGranularity === "none" || r.summaryGranularity === "turn" || r.summaryGranularity === "agent" || r.summaryGranularity === "all") {
+    out.summaryGranularity = r.summaryGranularity;
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -80,7 +90,7 @@ function normalizeCaveman(raw: object): CavemanConfig | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function normalizeConfig(raw: object): Partial<SaveTokensConfig> {
+export function normalizeConfig(raw: object): Partial<SaveTokensConfig> {
   if (!raw || typeof raw !== "object") return {};
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const r = raw as LooseDict;

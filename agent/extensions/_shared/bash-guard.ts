@@ -160,3 +160,23 @@ export function redirectShellCommand(
 
   return `BLOCKED: Use native '${toolName}' tool${speedNote} instead of safe_bash '${first}'`;
 }
+
+/**
+ * Audit-policy-aware variant of redirectShellCommand.
+ *
+ * When `enforceNative` is true (standard profile), behaves identically to
+ * redirectShellCommand — returns a BLOCKED error string for redirectable
+ * commands.
+ *
+ * When `enforceNative` is false (audit / advanced profiles), redirection is
+ * relaxed: returns null so the command is allowed through. The caller
+ * (safe-bash/index.ts) is responsible for reading the active policy flag
+ * via shouldEnforceNativeTools() before calling this function.
+ */
+export function redirectShellCommandWithPolicy(
+  command: string,
+  enforceNative: boolean,
+): string | null {
+  if (!enforceNative) return null;
+  return redirectShellCommand(command);
+}

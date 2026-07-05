@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { isDangerous, redirectShellCommand } from "./guard";
+import { isDangerous, redirectShellCommand, redirectShellCommandWithPolicy } from "./guard";
 
 // --- Positive cases: safe commands that must NOT be blocked ---
 
@@ -247,5 +247,69 @@ describe("redirectShellCommand", () => {
   it("passes through empty or blank commands", () => {
     expect(redirectShellCommand("")).toBeNull();
     expect(redirectShellCommand("   ")).toBeNull();
+  });
+});
+
+// --- Audit-aware redirect policy ---
+
+describe("redirectShellCommandWithPolicy - enforceNative=true (standard profile)", () => {
+  it("blocks grep with BLOCKED message", () => {
+    const result = redirectShellCommandWithPolicy("grep -r 'foo' .", true);
+    expect(result).not.toBeNull();
+    expect(result).toContain("BLOCKED");
+    expect(result).toContain("grep");
+  });
+
+  it("blocks find with BLOCKED message", () => {
+    const result = redirectShellCommandWithPolicy("find . -name '*.ts'", true);
+    expect(result).not.toBeNull();
+    expect(result).toContain("BLOCKED");
+    expect(result).toContain("find");
+  });
+
+  it("blocks ls with BLOCKED message", () => {
+    const result = redirectShellCommandWithPolicy("ls -la", true);
+    expect(result).not.toBeNull();
+    expect(result).toContain("BLOCKED");
+  });
+
+  it("passes through non-redirectable commands", () => {
+    expect(redirectShellCommandWithPolicy("git status", true)).toBeNull();
+    expect(redirectShellCommandWithPolicy("cat file.txt", true)).toBeNull();
+  });
+});
+
+describe("redirectShellCommandWithPolicy - enforceNative=false (audit/advanced profile)", () => {
+  it("returns null for grep (no block in audit mode)", () => {
+    expect(redirectShellCommandWithPolicy("grep -r 'foo' .", false)).toBeNull();
+  });
+
+  it("returns null for rg in audit mode", () => {
+    expect(redirectShellCommandWithPolicy("rg pattern src/", false)).toBeNull();
+  });
+
+  it("returns null for find in audit mode", () => {
+    expect(redirectShellCommandWithPolicy("find . -name '*.ts'", false)).toBeNull();
+  });
+
+  it("returns null for fd in audit mode", () => {
+    expect(redirectShellCommandWithPolicy("fd -e ts src/", false)).toBeNull();
+  });
+
+  it("returns null for ls in audit mode", () => {
+    expect(redirectShellCommandWithPolicy("ls -la", false)).toBeNull();
+  });
+
+  it("returns null for ack in audit mode", () => {
+    expect(redirectShellCommandWithPolicy("ack foo", false)).toBeNull();
+  });
+
+  it("returns null for non-redirectable commands too", () => {
+    expect(redirectShellCommandWithPolicy("git status", false)).toBeNull();
+    expect(redirectShellCommandWithPolicy("cat file.txt", false)).toBeNull();
+  });
+
+  it("returns null for empty command", () => {
+    expect(redirectShellCommandWithPolicy("", false)).toBeNull();
   });
 });

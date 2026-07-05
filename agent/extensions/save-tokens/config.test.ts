@@ -3,6 +3,7 @@ import {
   loadSaveTokensConfig,
   loadCompressorConfig,
   loadCavemanConfig,
+  normalizeConfig,
 } from "./config";
 
 describe("config loader", () => {
@@ -25,5 +26,35 @@ describe("config loader", () => {
     const cfg = loadCavemanConfig();
     expect(typeof cfg).toBe("object");
     expect(cfg).not.toBeNull();
+  });
+
+  it("normalizes archive, cap, and summary granularity settings", () => {
+    expect(normalizeConfig({
+      compressor: {
+        archiveOriginal: true,
+        capFallbackBytes: 12000,
+        routingStrategy: "benchmark",
+        summaryGranularity: "agent",
+        ignored: "nope",
+      },
+    })).toEqual({
+      compressor: {
+        archiveOriginal: true,
+        capFallbackBytes: 12000,
+        routingStrategy: "benchmark",
+        summaryGranularity: "agent",
+      },
+    });
+  });
+
+  it("drops invalid compressor notification settings", () => {
+    expect(normalizeConfig({
+      compressor: {
+        archiveOriginal: "yes",
+        capFallbackBytes: "12000",
+        routingStrategy: "headroom",
+        summaryGranularity: "session",
+      },
+    })).toEqual({});
   });
 });

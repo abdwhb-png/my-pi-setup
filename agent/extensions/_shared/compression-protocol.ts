@@ -9,6 +9,7 @@ export interface CompressionDetails {
   compressedLength: number;
   savedBytes: number;
   savedPct: number;
+  archivePath?: string;
 }
 
 export interface CompressionEventBase {
@@ -25,6 +26,7 @@ export interface CompressionCompressedEvent extends CompressionEventBase {
   compressedLength: number;
   savedBytes: number;
   savedPct: number;
+  archivePath?: string;
 }
 
 export interface CompressionSkippedEvent extends CompressionEventBase {

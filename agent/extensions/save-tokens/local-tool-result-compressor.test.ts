@@ -1,7 +1,8 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   createCompressionMetrics,
+  createCompressionMetricsFromEvents,
   createToolResultHandler,
   extractCompressibleText,
   formatDetailedStats,
@@ -9,6 +10,8 @@ import {
   formatStatsWidgetLines,
   getLocalCompressorConfig,
   isCompressibleToolName,
+  chooseCompressionRoute,
+  shouldNotifyCompressionSummary,
 } from "./local-tool-result-compressor";
 import { COMPRESSION_EVENT_ENTRY_TYPE } from "../_shared/compression-protocol";
 import type { CompressionDetails } from "../_shared/compression-protocol";
@@ -65,7 +68,24 @@ describe("getLocalCompressorConfig", () => {
       timeoutMs: 800,
       showStatus: false,
       showWidget: true,
+      archiveOriginal: false,
+      routingStrategy: "edgee",
+      summaryGranularity: "all",
     });
+  });
+});
+
+describe("chooseCompressionRoute", () => {
+  it("keeps legacy edgee route when strategy is edgee", () => {
+    expect(chooseCompressionRoute({ strategy: "edgee", toolName: "grep", text: "ERROR late" })).toBe("edgee");
+    expect(chooseCompressionRoute({ strategy: "edgee", toolName: "read", text: "function x() {}" })).toBe("edgee");
+  });
+
+  it("uses benchmark routing from the latest report", () => {
+    expect(chooseCompressionRoute({ strategy: "benchmark", toolName: "read", text: "export function createToolResultHandler() {}" })).toBe("edgee");
+    expect(chooseCompressionRoute({ strategy: "benchmark", toolName: "grep", text: "src/a.ts:99: model config error" })).toBe("cap");
+    expect(chooseCompressionRoute({ strategy: "benchmark", toolName: "bash", text: "FAIL expected engine received engine" })).toBe("cap");
+    expect(chooseCompressionRoute({ strategy: "benchmark", toolName: "ls", text: "src\ntest\npackage.json" })).toBe("cap");
   });
 });
 
@@ -110,6 +130,37 @@ describe("createCompressionMetrics", () => {
     });
   });
 
+  it("rebuilds metrics from persisted compression events", () => {
+    const metrics = createCompressionMetricsFromEvents([
+      {
+        toolCallId: "old-1",
+        toolName: "read",
+        timestamp: 1,
+        kind: "compressed",
+        originalLength: 100,
+        compressedLength: 40,
+        savedBytes: 60,
+        savedPct: 60,
+      },
+      {
+        toolCallId: "old-2",
+        toolName: "grep",
+        timestamp: 2,
+        kind: "skipped",
+        originalLength: 20,
+        reason: "no_change",
+      },
+    ]);
+
+    expect(metrics.snapshot()).toMatchObject({
+      seen: 2,
+      compressed: 1,
+      skipped: 1,
+      failed: 0,
+      bytesSaved: 60,
+    });
+  });
+
   it("formats readable status and widget lines", () => {
     const metrics = createCompressionMetrics();
     metrics.record({ kind: "compressed", toolName: "read", originalLength: 100, compressedLength: 40 });
@@ -123,6 +174,18 @@ describe("createCompressionMetrics", () => {
     ]);
 
     expect(formatDetailedStats(metrics.snapshot(), "http://127.0.0.1:8320")).toContain("1. read — saved 60B • ok 1 • skipped 0 • fail 0");
+  });
+});
+
+describe("notification granularity", () => {
+  it("allows summary notifications to be muted by scope", () => {
+    expect(shouldNotifyCompressionSummary("none", "turn")).toBe(false);
+    expect(shouldNotifyCompressionSummary("turn", "turn")).toBe(true);
+    expect(shouldNotifyCompressionSummary("turn", "agent")).toBe(false);
+    expect(shouldNotifyCompressionSummary("agent", "turn")).toBe(false);
+    expect(shouldNotifyCompressionSummary("agent", "agent")).toBe(true);
+    expect(shouldNotifyCompressionSummary("all", "turn")).toBe(true);
+    expect(shouldNotifyCompressionSummary("all", "agent")).toBe(true);
   });
 });
 
@@ -184,6 +247,81 @@ describe("createToolResultHandler", () => {
         subject: "main.rs",
       },
     ]);
+  });
+
+  it("can archive original output and expose the path in compressed content", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
+    const handler = createToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-c1.txt"),
+    });
+
+    const result = await handler({
+      toolName: "read",
+      toolCallId: "c1",
+      input: { path: "src/main.ts" },
+      content: [{ type: "text", text: "very long original output\n".repeat(40) }],
+      isError: false,
+      details: undefined,
+    } as any);
+
+    expect(result?.content[0]?.text).toContain("trimmed");
+    expect(result?.content[0]?.text).toContain("Full original tool result saved: /tmp/pi-tool-results/full-c1.txt");
+    expect(result?.details?.compression.archivePath).toBe("/tmp/pi-tool-results/full-c1.txt");
+  });
+
+  it("can fall back to archived head-tail cap when backend returns no output", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: null }, { status: 200 })));
+    const handler = createToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      capFallbackBytes: 240,
+      archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-cap1.txt"),
+    });
+    const source = ["HEAD", ...Array.from({ length: 120 }, (_, index) => `line-${index}`), "TAIL"].join("\n");
+
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "cap1",
+      input: { command: "cat big.log" },
+      content: [{ type: "text", text: source }],
+      isError: false,
+      details: undefined,
+    } as any);
+
+    const output = result?.content[0]?.text ?? "";
+    expect(output).toContain("HEAD");
+    expect(output).toContain("TAIL");
+    expect(output).toContain("omitted by head/tail cap");
+    expect(output).toContain("Full original tool result saved: /tmp/pi-tool-results/full-cap1.txt");
+    expect(output.length).toBeLessThan(source.length);
+    expect(result?.details?.compression.archivePath).toBe("/tmp/pi-tool-results/full-cap1.txt");
+  });
+
+  it("can route benchmark-selected payloads directly to archived cap", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "should not call" }, { status: 200 })));
+    const handler = createToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      routingStrategy: "benchmark",
+      capFallbackBytes: 260,
+      archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-grep1.txt"),
+    });
+    const source = ["HEAD", ...Array.from({ length: 100 }, (_, index) => `src/file.ts:${index}: noise`), "src/config.ts:999: model routing error", "TAIL"].join("\n");
+
+    const result = await handler({
+      toolName: "grep",
+      toolCallId: "grep1",
+      input: { pattern: "routing", path: "src" },
+      content: [{ type: "text", text: source }],
+      isError: false,
+      details: undefined,
+    } as any);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result?.content[0]?.text).toContain("Full original tool result saved: /tmp/pi-tool-results/full-grep1.txt");
+    expect(result?.details?.compression.archivePath).toBe("/tmp/pi-tool-results/full-grep1.txt");
   });
 
   it("compression details match expected shape and types", async () => {
@@ -381,10 +519,13 @@ describe("extension registration", () => {
     return { pi, handlers, commands, emittedEvents, registeredTools, entries };
   }
 
-  function createMockContext() {
+  function createMockContext(sessionEntries: Array<{ type: string; customType?: string; data?: object }> = []) {
     return {
       hasUI: true,
       signal: undefined,
+      sessionManager: {
+        getEntries: () => sessionEntries,
+      },
       ui: {
         theme: { fg: (_color: string, text: string) => text },
         notify: mock(() => undefined),
@@ -434,7 +575,7 @@ describe("extension registration", () => {
 
     expect(entries).toContainEqual({
       customType: COMPRESSION_EVENT_ENTRY_TYPE,
-      data: {
+      data: expect.objectContaining({
         toolCallId: "c1",
         toolName: "read",
         timestamp: expect.any(Number),
@@ -444,17 +585,45 @@ describe("extension registration", () => {
         compressedLength: "trimmed".length,
         savedBytes: "very long output".length - "trimmed".length,
         savedPct: Math.round((("very long output".length - "trimmed".length) / "very long output".length) * 100),
-      },
+      }),
     });
     expect(ctx.ui.notify).not.toHaveBeenCalledWith("compressed read: 16 → 7 chars (-9, 56%)", "info");
     await handlers.get("turn_end")?.({}, ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("compression turn: ok 1/1 • saved 9B • fail 0", "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("compression turn: ok 1/1 • saved 9B • fail 0"), "info");
     expect(ctx.ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("read"), "info");
 
     await handlers.get("agent_end")?.({}, ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("compression agent: ok 1/1 • saved 9B • fail 0", "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("compression agent: ok 1/1 • saved 9B • fail 0"), "info");
 
     globalThis.fetch = realFetch;
+  });
+
+  it("restores widget and command stats from persisted session telemetry on session_start", async () => {
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+    const { pi, handlers, commands } = createMockExtensionAPI();
+    const ctx = createMockContext([
+      {
+        type: "custom",
+        customType: COMPRESSION_EVENT_ENTRY_TYPE,
+        data: {
+          toolCallId: "old-1",
+          toolName: "read",
+          timestamp: 1,
+          kind: "compressed",
+          originalLength: 100,
+          compressedLength: 25,
+          savedBytes: 75,
+          savedPct: 75,
+        },
+      },
+    ]) as any;
+    localToolResultCompressor(pi);
+
+    await handlers.get("session_start")?.({}, ctx);
+    await commands.get("compressor-stats")?.handler("", ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Summary: ok 1/1"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("saved 75B"), "info");
   });
 
   it("appends skipped outcome entry and reports it at turn_end", async () => {
@@ -490,7 +659,7 @@ describe("extension registration", () => {
       },
     });
     await handlers.get("turn_end")?.({}, ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("compression turn: ok 0/1 • skipped 1 • fail 0", "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("compression turn: ok 0/1 • skipped 1 • fail 0"), "info");
 
     globalThis.fetch = realFetch;
   });
@@ -550,7 +719,7 @@ describe("extension registration", () => {
       },
     });
     await handlers.get("turn_end")?.({}, ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("compression turn: ok 0/2 • skipped 0 • fail 2", "warning");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("compression turn: ok 0/2 • skipped 0 • fail 2"), "warning");
 
     globalThis.fetch = realFetch;
   });
@@ -597,8 +766,138 @@ describe("extension registration", () => {
     }, ctx);
 
     await handlers.get("turn_end")?.({}, ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("compression turn: ok 1/3 • saved 9B • skipped 2 • fail 0", "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("compression turn: ok 1/3 • saved 9B • skipped 2 • fail 0"), "info");
 
     globalThis.fetch = realFetch;
+  });
+});
+
+import { toolCompressionContext } from "./tool-results/core";
+import { resetAuditState, setActiveProfile } from "../_shared/audit-mode";
+
+describe("toolCompressionContext", () => {
+  it("classifies search tools", () => {
+    expect(toolCompressionContext("grep")).toBe("search");
+    expect(toolCompressionContext("find")).toBe("search");
+    expect(toolCompressionContext("ls")).toBe("search");
+  });
+
+  it("classifies read tool", () => {
+    expect(toolCompressionContext("read")).toBe("read");
+  });
+
+  it("classifies shell tools", () => {
+    expect(toolCompressionContext("bash")).toBe("shell");
+    expect(toolCompressionContext("safe_bash")).toBe("shell");
+  });
+
+  it("returns null for unrelated tools", () => {
+    expect(toolCompressionContext("write")).toBeNull();
+    expect(toolCompressionContext("edit")).toBeNull();
+    expect(toolCompressionContext("custom")).toBeNull();
+  });
+});
+
+describe("audit-aware compression policy", () => {
+  // Reset audit state after each test to avoid cross-test leakage.
+  afterEach(() => {
+    resetAuditState("standard");
+  });
+
+  it("standard profile: compresses all tool types", async () => {
+    // standard is the default — no setActiveProfile needed
+    const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
+    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+
+    for (const toolName of ["grep", "find", "ls", "read", "bash", "safe_bash"]) {
+      fetchImpl.mockClear();
+      const result = await handler({
+        toolName,
+        toolCallId: "x",
+        input: { path: ".", command: "ls" },
+        content: [{ type: "text", text: "some output" }],
+        isError: false,
+        details: undefined,
+      } as any);
+      expect(fetchImpl).toHaveBeenCalled();
+      expect(result).toBeDefined();
+    }
+  });
+
+  it("audit profile: keeps compression enabled for all tool types", async () => {
+    setActiveProfile("audit");
+    const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
+    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+
+    for (const toolName of ["grep", "find", "ls", "read", "bash", "safe_bash"]) {
+      fetchImpl.mockClear();
+      const result = await handler({
+        toolName,
+        toolCallId: "x",
+        input: { path: ".", command: "ls" },
+        content: [{ type: "text", text: "some output" }],
+        isError: false,
+        details: undefined,
+      } as any);
+      expect(fetchImpl).toHaveBeenCalled();
+      expect(result).toBeDefined();
+    }
+  });
+
+  it("advanced profile: disables compression for search tools (grep, find, ls)", async () => {
+    setActiveProfile("advanced");
+    const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
+    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+
+    for (const toolName of ["grep", "find", "ls"]) {
+      fetchImpl.mockClear();
+      const result = await handler({
+        toolName,
+        toolCallId: "x",
+        input: { path: ".", pattern: "foo", command: "ls" },
+        content: [{ type: "text", text: "some output" }],
+        isError: false,
+        details: undefined,
+      } as any);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(result).toBeUndefined();
+    }
+  });
+
+  it("advanced profile: disables compression for shell tools (bash, safe_bash)", async () => {
+    setActiveProfile("advanced");
+    const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
+    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+
+    for (const toolName of ["bash", "safe_bash"]) {
+      fetchImpl.mockClear();
+      const result = await handler({
+        toolName,
+        toolCallId: "x",
+        input: { command: "cat file.txt" },
+        content: [{ type: "text", text: "some output" }],
+        isError: false,
+        details: undefined,
+      } as any);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(result).toBeUndefined();
+    }
+  });
+
+  it("advanced profile: keeps compression enabled for read tool (disableForRead is false)", async () => {
+    setActiveProfile("advanced");
+    const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
+    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+
+    const result = await handler({
+      toolName: "read",
+      toolCallId: "x",
+      input: { path: "src/main.ts" },
+      content: [{ type: "text", text: "some output" }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(fetchImpl).toHaveBeenCalled();
+    expect(result).toBeDefined();
   });
 });
