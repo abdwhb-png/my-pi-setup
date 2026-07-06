@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import nodePath from "node:path";
 import { Container, Text } from "@earendil-works/pi-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resetAuditState, setActiveProfile } from "../_shared/audit-mode/audit-state";
@@ -391,6 +394,122 @@ describe("pi-overrides", () => {
       if (!read) throw new Error("read tool not registered");
       expect(Array.isArray(read.promptGuidelines)).toBe(true);
       expect(read.promptGuidelines!.some((g) => /`path`/i.test(g))).toBe(true);
+    });
+  });
+
+
+  describe("path-redirect: read on directory, ls on file", () => {
+    let tmpDir: string;
+
+    afterEach(async () => {
+      if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    async function setupEnv(): Promise<{
+      cwd: string;
+      subDir: string;
+      filePath: string;
+    }> {
+      tmpDir = await mkdtemp(nodePath.join(tmpdir(), "pi-overrides-test-"));
+      const subDir = nodePath.join(tmpDir, "subdir");
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(subDir);
+      const filePath = nodePath.join(tmpDir, "hello.txt");
+      await writeFile(filePath, "line one\nline two\nline three\n");
+      return { cwd: tmpDir, subDir, filePath };
+    }
+
+    type ToolExec = {
+      execute?: (
+        id: string,
+        args: { path?: string; offset?: number; limit?: number },
+        signal: AbortSignal,
+      ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+    };
+
+    it("read on directory returns directory listing (not EISDIR)", async () => {
+      resetAuditState("standard");
+      const { cwd } = await setupEnv();
+      const { pi, handlers, registeredTools } = createMockExtensionApi();
+      piOverrides(pi);
+      await handlers.get("session_start")?.({}, { cwd });
+
+      const readTool = registeredTools.get("read") as ToolExec;
+      if (!readTool?.execute) throw new Error("read tool not registered");
+
+      const result = await readTool.execute("call1", { path: "subdir" }, new AbortController().signal);
+      const text = result.content.find((c) => c.type === "text")?.text ?? "";
+      expect(text).toContain("Path is a directory. Contents of");
+      expect(text).not.toContain("EISDIR");
+    });
+
+    it("read on file returns file content (normal behavior)", async () => {
+      resetAuditState("standard");
+      const { cwd } = await setupEnv();
+      const { pi, handlers, registeredTools } = createMockExtensionApi();
+      piOverrides(pi);
+      await handlers.get("session_start")?.({}, { cwd });
+
+      const readTool = registeredTools.get("read") as ToolExec;
+      if (!readTool?.execute) throw new Error("read tool not registered");
+
+      const result = await readTool.execute("call2", { path: "hello.txt" }, new AbortController().signal);
+      const text = result.content.find((c) => c.type === "text")?.text ?? "";
+      expect(text).toContain("line one");
+      expect(text).toContain("line two");
+      expect(text).toContain("line three");
+    });
+
+    it("ls on file returns stat info + preview (not an error)", async () => {
+      resetAuditState("standard");
+      const { cwd } = await setupEnv();
+      const { pi, handlers, registeredTools } = createMockExtensionApi();
+      piOverrides(pi);
+      await handlers.get("session_start")?.({}, { cwd });
+
+      const lsTool = registeredTools.get("ls") as ToolExec;
+      if (!lsTool?.execute) throw new Error("ls tool not registered");
+
+      const result = await lsTool.execute("call3", { path: "hello.txt" }, new AbortController().signal);
+      const text = result.content.find((c) => c.type === "text")?.text ?? "";
+      expect(text).toContain("Path is a file.");
+      expect(text).toContain("line one");
+      expect(text).toContain("Modified:");
+    });
+
+    it("ls on directory returns directory listing (normal behavior)", async () => {
+      resetAuditState("standard");
+      const { cwd } = await setupEnv();
+      const { pi, handlers, registeredTools } = createMockExtensionApi();
+      piOverrides(pi);
+      await handlers.get("session_start")?.({}, { cwd });
+
+      const lsTool = registeredTools.get("ls") as ToolExec;
+      if (!lsTool?.execute) throw new Error("ls tool not registered");
+
+      const result = await lsTool.execute("call4", { path: "." }, new AbortController().signal);
+      const text = result.content.find((c) => c.type === "text")?.text ?? "";
+      expect(text).toContain("hello.txt");
+      expect(text).toContain("subdir");
+    });
+
+    it("read on symlink to directory redirects to listing", async () => {
+      resetAuditState("standard");
+      const { cwd, subDir } = await setupEnv();
+      const symlinkPath = nodePath.join(cwd, "link-to-dir");
+      const { symlink } = await import("node:fs/promises");
+      await symlink(subDir, symlinkPath, "dir");
+
+      const { pi, handlers, registeredTools } = createMockExtensionApi();
+      piOverrides(pi);
+      await handlers.get("session_start")?.({}, { cwd });
+
+      const readTool = registeredTools.get("read") as ToolExec;
+      if (!readTool?.execute) throw new Error("read tool not registered");
+
+      const result = await readTool.execute("call5", { path: "link-to-dir" }, new AbortController().signal);
+      const text = result.content.find((c) => c.type === "text")?.text ?? "";
+      expect(text).toContain("Path is a directory. Contents of");
     });
   });
 });

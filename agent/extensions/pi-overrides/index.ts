@@ -1,4 +1,4 @@
-import { readdir as fsReaddir, stat as fsStat } from "node:fs/promises";
+import { readdir as fsReaddir, readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
 import nodePath from "node:path";
@@ -17,6 +17,7 @@ import {
 import { appendCompressionFooter } from "../_shared/compression-render";
 import { getActivePolicy } from "../_shared/audit-mode/audit-state";
 import piFileResolver from "./pi-file-resolver";
+import { handleReadOnDirectory, handleLsOnFile } from "./path-redirect";
 
 // ─── Audit-aware ls operations ───────────────────────────────────────────────
 
@@ -280,6 +281,41 @@ export default function piOverrides(pi: ExtensionAPI): void {
     const lsDef = createLsToolDefinition(ctx.cwd, { operations: auditAwareLsOperations });
     // find: audit-aware operations inject --no-ignore per active policy at call time.
     const findDef = createFindToolDefinition(ctx.cwd, { operations: auditAwareFindOperations });
+
+    // --- wrap read.execute: redirect directories to ls-like output ---
+    const cwd = ctx.cwd;
+    // oxlint-disable-next-line typescript/unbound-method -- plain fn, no this
+    const originalReadExecute = readDef.execute;
+    readDef.execute = async (toolCallId, params, signal, onUpdate, extCtx) => {
+      const absPath = nodePath.resolve(cwd, params.path);
+      try {
+        const s = await fsStat(absPath);
+        if (s.isDirectory()) {
+          // oxlint-ignore-next-line typescript/unbound-method -- arrow fn, this is lexically bound
+          return handleReadOnDirectory(absPath, auditAwareLsOperations.readdir);
+        }
+      } catch {
+        // path doesn't exist or no perms — let original handle
+      }
+      return originalReadExecute(toolCallId, params, signal, onUpdate, extCtx);
+    };
+
+    // --- wrap ls.execute: redirect files to stat+preview ---
+    // oxlint-disable-next-line typescript/unbound-method -- plain fn, no this
+    const originalLsExecute = lsDef.execute;
+    lsDef.execute = async (toolCallId, params, signal, onUpdate, extCtx) => {
+      const absPath = nodePath.resolve(cwd, params.path ?? cwd);
+      try {
+        const s = await fsStat(absPath);
+        if (!s.isDirectory()) {
+          // oxlint-ignore-next-line typescript/unbound-method -- standalone functions, no this
+          return handleLsOnFile(absPath, fsReadFile, fsStat);
+        }
+      } catch {
+        // path doesn't exist or no perms — let original handle
+      }
+      return originalLsExecute(toolCallId, params, signal, onUpdate, extCtx);
+    };
 
     const readTextByCallId = new Map<string, Text>();
     const grepTextByCallId = new Map<string, Text>();
