@@ -104,10 +104,11 @@ function formatTokenCount(n: number): string {
   return `${(n / 1000000).toFixed(1)}M`;
 }
 
-function formatUsdCompact(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "$0.00";
-  if (value < 0.01) return "<$0.01";
-  return `$${value.toFixed(2)}`;
+function formatUsdCompact(value: number, colors: UiColorsCreation): string {
+  const symbol = colors.primary('$');
+  if (!Number.isFinite(value) || value <= 0) return `${symbol} 0.00`;
+  if (value < 0.01) return `<${symbol} 0.01`;
+  return `${symbol} ${value.toFixed(2)}`;
 }
 
 // ── State building ──────────────────────────────────────────────────────
@@ -162,10 +163,14 @@ function buildRightSide(
   colors: UiColorsCreation,
 ): string {
   const parts: string[] = [];
+  const partsPush = (s: string) => {
+    if (parts.length > 0) parts.push(colors.separator(" │ "));
+    parts.push(s);
+  }
 
   if (config.showContext) {
     const pct = `${Math.round(state.context.percent)}%`;
-    parts.push(
+    partsPush(
       colors.pressure(pct, state.context.percent, DEFAULT_WARNING_PERCENT, DEFAULT_ERROR_PERCENT) +
       " " +
       colors.pressure(
@@ -180,11 +185,11 @@ function buildRightSide(
   }
 
   if (config.showCost && state.cost.totalUsd >= 0) {
-    parts.push(colors.separator(" │ ") + colors.meta(formatUsdCompact(state.cost.totalUsd)));
+    partsPush(colors.meta(formatUsdCompact(state.cost.totalUsd, colors)));
   }
 
   if (config.showModel) {
-    parts.push(colors.separator(" │ ") + colors.subtle(`(${state.model.provider || "no-provider"}) `) + colors.model(state.model.id));
+    partsPush(colors.subtle(`(${state.model.provider || "no-provider"}) `) + colors.model(state.model.id));
   }
 
   return parts.join("");

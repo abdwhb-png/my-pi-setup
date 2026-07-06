@@ -1,7 +1,7 @@
 {
     "enabled": true,
     "twoLine": false,
-    "showContext": true,
+    "showContext": false,
     "showCost": true,
     "showModel": true,
     "showCwd": true,
