@@ -6,9 +6,7 @@
  * Mirrors the pattern established by `extensions/diff/core.ts`.
  */
 
-import { relative, resolve, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { relative, resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -419,32 +417,42 @@ export interface SlowModeConfigResult {
  * @param configPath - Path to slow-mode.json. Defaults to ~/.pi/agent/slow-mode.json
  * @returns Parsed config (empty object on any error)
  */
-export function loadSlowModeConfig(configPath?: string): SlowModeConfig {
-  const defaultDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
-  const path = configPath ?? join(defaultDir, "slow-mode.json");
-
-  if (!existsSync(path)) {
-    return {};
+/**
+ * Normalize raw JSON → SlowModeConfig. Filters out non-boolean values
+ * and rejects arrays/non-objects.
+ */
+function normalizeSlowModeConfig(raw: unknown): Partial<SlowModeConfig> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const config: SlowModeConfig = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== "boolean") continue;
+    config[key] = value;
   }
+  return config;
+}
 
-  try {
-    const raw = readFileSync(path, "utf-8");
-    const parsed = JSON.parse(raw) as unknown;
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
 
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return {};
-    }
-
-    const config: SlowModeConfig = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof key !== "string") continue;
-      if (typeof value !== "boolean") continue;
-      config[key] = value;
-    }
-    return config;
-  } catch {
-    return {};
-  }
+/**
+ * Load slow-mode config from the legacy JSON file.
+ *
+ * Loads from <agentDir>/slow-mode.json (global) and optionally
+ * <cwd>/.pi/slow-mode.json (project), merged with project taking precedence.
+ *
+ * @param cwd - Working directory (defaults to process.cwd())
+ * @param agentDir - Agent directory override (for testing)
+ * @returns Parsed config (empty object on any error)
+ */
+export function loadSlowModeConfig(
+  cwd: string = process.cwd(),
+  agentDir?: string,
+): SlowModeConfig {
+  return loadExtensionConfig(cwd, {
+    defaults: {} as SlowModeConfig,
+    normalize: normalizeSlowModeConfig,
+    sources: [{ legacyFilename: "slow-mode.json" }],
+    agentDir,
+  });
 }
 
 /**

@@ -4,7 +4,7 @@
  * All tests are self-contained — no filesystem, no pi API, no shells.
  */
 
-import { describe, it, expect, afterAll } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
 import {
   resolvePath,
   myersDiff,
@@ -20,7 +20,7 @@ import {
   type EditPatch,
   type SlowModeConfig,
 } from "./slow-mode-core.ts";
-import { writeFileSync, unlinkSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -403,47 +403,70 @@ describe("extractEditPatches", () => {
 });
 
 describe("loadSlowModeConfig", () => {
-  const tmpDir = join(tmpdir(), `pi-slow-mode-config-test-${Date.now()}`);
-  mkdirSync(tmpDir, { recursive: true });
+  let agentDir: string;
+  let cwd: string;
 
-  afterAll(() => {
-    try { rmSync(tmpDir, { recursive: true }); } catch { /* best-effort */ }
-  });
+  const makeTempDir = () => join(tmpdir(), `pi-slow-config-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-  const writeConfig = (name: string, content: string) => {
-    const p = join(tmpDir, name);
-    try { unlinkSync(p); } catch { /* ok if not present */ }
-    writeFileSync(p, content, "utf-8");
-    return p;
+  const writeSlowModeJson = (dir: string, content: unknown) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "slow-mode.json"), JSON.stringify(content));
   };
 
+  const writeRawSlowModeJson = (dir: string, content: string) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "slow-mode.json"), content);
+  };
+
+  const cleanup = () => {
+    try { rmSync(cwd, { recursive: true }); } catch {}
+    try { rmSync(agentDir, { recursive: true }); } catch {}
+  };
+
+  afterAll(cleanup);
+
+  beforeEach(() => {
+    agentDir = makeTempDir();
+    cwd = makeTempDir();
+  });
+
+  afterEach(cleanup);
+
   it("returns empty object when file does not exist", () => {
-    const result = loadSlowModeConfig(join(tmpDir, "nonexistent.json"));
+    const result = loadSlowModeConfig(cwd, agentDir);
     expect(result).toEqual({});
   });
 
-  it("loads valid config", () => {
-    const path = writeConfig("valid.json", JSON.stringify({ write: true, edit: false, grep: true }));
-    const result = loadSlowModeConfig(path);
+  it("loads valid config from agent dir", () => {
+    writeSlowModeJson(agentDir, { write: true, edit: false, grep: true });
+    const result = loadSlowModeConfig(cwd, agentDir);
     expect(result).toEqual({ write: true, edit: false, grep: true });
   });
 
   it("returns empty object for malformed JSON", () => {
-    const path = writeConfig("bad.json", "{ not valid json }");
-    const result = loadSlowModeConfig(path);
+    writeRawSlowModeJson(agentDir, "{ not valid json }");
+    const result = loadSlowModeConfig(cwd, agentDir);
     expect(result).toEqual({});
   });
 
   it("filters out non-boolean values", () => {
-    const path = writeConfig("mixed.json", JSON.stringify({ write: true, grep: "yes", read: 1, find: false }));
-    const result = loadSlowModeConfig(path);
+    writeSlowModeJson(agentDir, { write: true, grep: "yes", read: 1, find: false });
+    const result = loadSlowModeConfig(cwd, agentDir);
     expect(result).toEqual({ write: true, find: false });
   });
 
   it("returns empty object when file contains a JSON array", () => {
-    const path = writeConfig("array.json", "[1, 2, 3]");
-    const result = loadSlowModeConfig(path);
+    writeRawSlowModeJson(agentDir, "[1, 2, 3]");
+    const result = loadSlowModeConfig(cwd, agentDir);
     expect(result).toEqual({});
+  });
+
+  it("merges project-local config over global", () => {
+    writeSlowModeJson(agentDir, { write: true, edit: false });
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(join(cwd, ".pi", "slow-mode.json"), JSON.stringify({ edit: true, grep: true }));
+    const result = loadSlowModeConfig(cwd, agentDir);
+    expect(result).toEqual({ write: true, edit: true, grep: true });
   });
 });
 

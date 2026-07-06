@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export type PackageScope = "user" | "project";
 
@@ -97,7 +98,7 @@ const DEFAULT_LOGGER: RepairLogger = {
 const STATE_VERSION = 1 as const;
 
 export function getDefaultAgentDir(): string {
-  return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+  return getAgentDir();
 }
 
 export function readConfiguredPackageSources(cwd: string, agentDir: string): ConfiguredPackageSource[] {

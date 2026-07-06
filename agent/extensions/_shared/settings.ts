@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export interface GetSettingsOptions {
   path?: string;
 }
 
-const DEFAULT_AGENT_DIR = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+const DEFAULT_AGENT_DIR = getAgentDir();
 
 /**
  * Get a value from settings.json using dot-notation key path.
