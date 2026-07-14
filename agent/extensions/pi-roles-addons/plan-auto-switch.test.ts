@@ -1,26 +1,24 @@
 /**
  * Tests for plan-auto-switch pure helpers.
  *
- * After the rewrite (v2), plan-auto-switch no longer reads role files,
- * parses tool lists, or returns systemPrompts. It only detects
- * `plannotator:plan-approved` entries and writes a
- * `pi-roles:switch-request` via the shared protocol.
+ * After the rewrite (v3), plan-auto-switch listens on `turn_end` instead
+ * of `before_agent_start` to detect plan approvals sooner. It also
+ * recognizes the main plannotator's `plannotator-autoexecute-processed`
+ * marker to avoid double-firing.
  *
- * The testable surface is now:
- *   - `findUnprocessedPlanApproval` — scan session entries
+ * The testable surface:
+ *   - `findUnprocessedPlanApproval` — scan session entries (cross-marker aware)
  *   - The handler delegates to `writeRoleSwitchRequest` from pi-roles/protocol
- *     (mocked in the smoke test)
+ *     (mocked in smoke test)
  */
 
 import { describe, expect, it, mock } from "bun:test";
 import {
   findUnprocessedPlanApproval,
   PROCESSED_MARKER_PREFIX,
+  PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED,
 } from "./plan-auto-switch";
 
-// ---------------------------------------------------------------------------
-// findUnprocessedPlanApproval
-// ---------------------------------------------------------------------------
 
 describe("findUnprocessedPlanApproval", () => {
   function makeEntry(customType: string, data: unknown, id: string) {
@@ -39,10 +37,18 @@ describe("findUnprocessedPlanApproval", () => {
     expect(result?.data.planPath).toBe("/b.md");
   });
 
-  it("returns null when all plan-approved entries are processed", () => {
+  it("returns null when all plan-approved entries are processed (own marker)", () => {
     const entries = [
       makeEntry("plannotator:plan-approved", { planPath: "/a.md", approved: true, timestamp: 1 }, "e1"),
       makeEntry("plan-auto-switch:processed", { sourceEntryId: "e1" }, "e2"),
+    ];
+    expect(findUnprocessedPlanApproval(entries as any)).toBeNull();
+  });
+
+  it("returns null when entry is processed by main plannotator marker", () => {
+    const entries = [
+      makeEntry("plannotator:plan-approved", { planPath: "/a.md", approved: true, timestamp: 1 }, "e1"),
+      makeEntry("plannotator-autoexecute-processed", { sourceEntryId: "e1" }, "e2"),
     ];
     expect(findUnprocessedPlanApproval(entries as any)).toBeNull();
   });
@@ -73,13 +79,14 @@ describe("findUnprocessedPlanApproval", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Exports sanity
-// ---------------------------------------------------------------------------
 
 describe("module exports", () => {
   it("exports PROCESSED_MARKER_PREFIX", () => {
     expect(PROCESSED_MARKER_PREFIX).toBe("plan-auto-switch:processed");
+  });
+
+  it("exports PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED", () => {
+    expect(PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED).toBe("plannotator-autoexecute-processed");
   });
 
   it("exports findUnprocessedPlanApproval as a function", () => {

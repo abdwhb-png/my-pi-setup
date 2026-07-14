@@ -1,33 +1,44 @@
 /**
- * plan-auto-switch — Auto-switch to pi-agent role after plan approval.
+ * plan-auto-switch — Auto-switch role after plan approval.
  *
- * This extension listens on `before_agent_start` and scans the session log
- * for unprocessed `plannotator:plan-approved` entries (emitted by the
- * plannotator-bridge extension's `plan_submit` tool). When one is found,
- * it writes a `pi-roles:switch-request` entry via the shared protocol.
- * pi-roles consumes the request in its own `before_agent_start` handler
- * and applies the role switch — pi-roles remains the sole owner of
- * `state.activeRole` and the system prompt.
+ * Listens on `turn_end` (was `before_agent_start`) to detect plan
+ * approvals as soon as the turn that produced them ends — not at the
+ * start of the *next* turn. On detection it writes a
+ * `pi-roles:switch-request` entry and sends a "Continue" user message
+ * to force an immediate new turn so pi-roles can consume the request
+ * in its own `before_agent_start` handler.
  *
- * This extension no longer returns a systemPrompt, no longer reads role
- * files, and no longer calls setActiveTools. All role-application logic
- * lives in pi-roles. The only job here is detecting the approval event
- * and forwarding it as a typed protocol request.
+ * Uses the main plannotator's `plannotator-autoexecute-processed`
+ * marker so the main plannotator's `agent_end` handler doesn't
+ * double-fire.
+ *
+ * pi-roles remains the sole owner of `state.activeRole` and the
+ * system prompt. This extension's only job is detecting the approval
+ * and forwarding it as a typed protocol request at the earliest
+ * possible moment.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { writeRoleSwitchRequest } from "../_shared/pi-roles";
 import { getSettingsValue } from "../_shared/settings";
 
-// ── Constants ──
 
 /** Custom entry type emitted by plannotator-bridge on plan approval. */
 const PLAN_APPROVED_ENTRY_TYPE = "plannotator:plan-approved";
 
-/** Custom entry type we persist to mark an approval as processed. */
+/**
+ * Processed marker used by this extension AND the main plannotator.
+ * Using the same marker prevents both from firing on the same approval.
+ */
+export const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED = "plannotator-autoexecute-processed";
+
+/**
+ * Legacy marker — kept exported for backward-compatible dedup in
+ * `findUnprocessedPlanApproval`. New entries use the shared marker above.
+ */
 export const PROCESSED_MARKER_PREFIX = "plan-auto-switch:processed";
 
-// ── Types ──
+/** Fully-qualified event name for the marker we write. */
 
 interface PlanApprovedPayload {
   planPath?: string;
@@ -36,21 +47,21 @@ interface PlanApprovedPayload {
   timestamp?: number;
 }
 
-// ── Pure helpers (exported for tests) ──
 
 /**
  * Scan session entries (newest-first) for an unprocessed
  * `plannotator:plan-approved` entry.
  *
- * "Unprocessed" means there is no subsequent `plan-auto-switch:processed`
- * entry whose `sourceEntryId` matches the approval entry's id.
- *
- * Returns `{ entry, data }` for the latest unprocessed approval, or `null`.
+ * "Unprocessed" means no subsequent marker with a matching
+ * `sourceEntryId` — we check both our legacy marker and the
+ * main plannotator's marker.
  */
+// oxlint-disable-next-line typescript/no-restricted-types -- pi entry data is unknown by API contract
 export function findUnprocessedPlanApproval(
   entries: ReadonlyArray<{
     type: string;
     customType?: string;
+    // oxlint-disable-next-line typescript/no-restricted-types -- pi entry data is unknown by API contract
     data?: unknown;
     id: string;
   }>,
@@ -62,14 +73,21 @@ export function findUnprocessedPlanApproval(
     const data = (e.data ?? {}) as PlanApprovedPayload;
     if (data.approved !== true) continue;
 
+    // Check both our legacy marker and the shared marker
     const processed = entries
       .slice(i + 1)
       .some(
         (p) =>
           p &&
           p.type === "custom" &&
-          p.customType === PROCESSED_MARKER_PREFIX &&
-          ((p.data as { sourceEntryId?: string } | undefined)?.sourceEntryId === e.id),
+          (
+            p.customType === PROCESSED_MARKER_PREFIX ||
+            p.customType === PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED
+          ) &&
+          (
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- pi entry data is unknown
+            (p.data as { sourceEntryId?: string } | undefined)?.sourceEntryId === e.id
+          ),
       );
 
     if (!processed) {
@@ -79,10 +97,9 @@ export function findUnprocessedPlanApproval(
   return null;
 }
 
-// ── Extension entry point ──
 
 export default function planAutoSwitch(pi: ExtensionAPI): void {
-  pi.on("before_agent_start", async (_event, ctx) => {
+  pi.on("turn_end", async (_event, ctx) => {
     let entries;
     try {
       entries = ctx.sessionManager.getEntries();
@@ -93,11 +110,6 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
     const approval = findUnprocessedPlanApproval(entries);
     if (!approval) return;
 
-    // Write the switch-request through pi-roles' shared protocol.
-    // pi-roles consumes this in its own before_agent_start handler
-    // and applies the role switch (mutates state.activeRole, sets
-    // tools/model, returns the correct systemPrompt).
-    // Default to "pi-agent" if pi-roles.defaultRole is not defined.
     const targetRole = getSettingsValue("pi-roles.defaultRole", "pi-agent");
     writeRoleSwitchRequest(pi, {
       targetRole,
@@ -105,13 +117,15 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
       sourceEntryId: approval.entry.id,
     });
 
-    // Mark the approval as processed so we don't re-trigger.
-    pi.appendEntry(PROCESSED_MARKER_PREFIX, {
+    // Use the shared marker so the main plannotator's agent_end
+    // handler sees this as already processed.
+    pi.appendEntry(PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED, {
       sourceEntryId: approval.entry.id,
       timestamp: Date.now(),
     });
 
-    // No systemPrompt return — pi-roles owns the prompt. Our request
-    // entry will be consumed by pi-roles' handler this same turn.
+    // Force a new turn so pi-roles' before_agent_start fires and
+    // consumes the switch request we just wrote.
+    pi.sendUserMessage("Continue with the approved plan.");
   });
 }
