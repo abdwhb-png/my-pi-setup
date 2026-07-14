@@ -1,4 +1,5 @@
 {
+    "yoloMode": false,
     "permission": {
         "*": "allow",
         "path": {
@@ -11,42 +12,32 @@
             "*": "allow",
             "rm -rf *": "ask",
             "sudo *": "ask",
-            "node_modules/*": "ask"
-        },
-        "safe_bash": {
-            "*": "allow",
-            "rm -rf *": "ask",
-            "sudo *": "ask",
-            "node_modules/*": "ask"
-        },
-        "hypa_bash": {
-            "*": "allow",
-            "rm -rf *": "ask",
-            "sudo *": "ask",
-            "node_modules/*": "ask"
-        },
-        "hypa_shell": {
-            "*": "allow",
-            "rm -rf *": "ask",
-            "sudo *": "ask",
-            "node_modules/*": "ask"
+            "docker *": "ask",
+            "docker info *": "allow",
+            "docker ps *": "allow",
+            "docker logs *": "allow",
+            "git *": "ask",
+            "git status *": "allow",
+            "git log *": "allow",
+            "git show *": "allow",
+            "agent-browser *": "allow",
+            "chrome-devtools *": "allow",
+            "* node_modules/*": "ask"
         },
         "write": {
             "*": "allow",
-            "node_modules/*": "deny"
-        },
-        "hypa_write": {
-            "*": "allow",
-            "node_modules/*": "deny"
+            "node_modules/*": "deny",
+            "AGENTS.md": "ask"
         },
         "edit": {
             "*": "allow",
-            "node_modules/*": "deny"
+            "node_modules/*": "deny",
+            "AGENTS.md": "ask"
         },
-        "hypa_edit": {
-            "*": "allow",
-            "node_modules/*": "deny"
-        },
+        "safe_bash": "allow",
+        "hypa_shell": "allow",
+        "hypa_write": "allow",
+        "hypa_edit": "allow",
         "external_directory": {
             "*": "ask",
             "~/tmp/pi-*/*": "allow",
