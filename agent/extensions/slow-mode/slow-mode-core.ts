@@ -6,7 +6,7 @@
  * Mirrors the pattern established by `extensions/diff/core.ts`.
  */
 
-import { relative, resolve } from "node:path";
+import { relative, resolve } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -16,19 +16,19 @@ import { relative, resolve } from "node:path";
  * Edit operation in a diff: keep, insert, or delete a line.
  */
 export type Edit =
-  | { type: "keep"; line: string }
-  | { type: "insert"; line: string }
-  | { type: "delete"; line: string };
+    | { type: 'keep'; line: string }
+    | { type: 'insert'; line: string }
+    | { type: 'delete'; line: string };
 
 /**
  * A hunk in a unified diff.
  */
 export interface Hunk {
-  oldStart: number; // 1-based start line in old file
-  oldCount: number; // number of old-file lines in hunk
-  newStart: number; // 1-based start line in new file
-  newCount: number; // number of new-file lines in hunk
-  lines: string[]; // prefixed lines (" ", "+", "-")
+    oldStart: number; // 1-based start line in old file
+    oldCount: number; // number of old-file lines in hunk
+    newStart: number; // 1-based start line in new file
+    newCount: number; // number of new-file lines in hunk
+    lines: string[]; // prefixed lines (" ", "+", "-")
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ export interface Hunk {
  * Normalizes absolute/relative paths for consistent staging.
  */
 export function resolvePath(cwd: string, filePath: string): string {
-  return relative(cwd, resolve(cwd, filePath));
+    return relative(cwd, resolve(cwd, filePath));
 }
 
 // ---------------------------------------------------------------------------
@@ -58,94 +58,93 @@ export function resolvePath(cwd: string, filePath: string): string {
  * Variations", Algorithmica 1(2), 1986.
  */
 export function myersDiff(oldLines: string[], newLines: string[]): Edit[] {
-  const n = oldLines.length;
-  const m = newLines.length;
-  const max = n + m;
+    const n = oldLines.length;
+    const m = newLines.length;
+    const max = n + m;
 
-  // V[k] = furthest x-position reached on diagonal k
-  // Diagonals range from -max..+max, offset by max for array indexing
-  const size = 2 * max + 1;
-  const v = new Int32Array(size);
-  v[max + 1] = 0;
+    // V[k] = furthest x-position reached on diagonal k
+    // Diagonals range from -max..+max, offset by max for array indexing
+    const size = 2 * max + 1;
+    const v = new Int32Array(size);
+    v[max + 1] = 0;
 
-  // Store each V snapshot to reconstruct the path
-  const trace: Int32Array[] = [];
+    // Store each V snapshot to reconstruct the path
+    const trace: Int32Array[] = [];
 
-  outer:
-  for (let d = 0; d <= max; d++) {
-    // Save current state before modification
-    trace.push(v.slice());
+    outer: for (let d = 0; d <= max; d++) {
+        // Save current state before modification
+        trace.push(v.slice());
 
-    for (let k = -d; k <= d; k += 2) {
-      const kIdx = k + max;
+        for (let k = -d; k <= d; k += 2) {
+            const kIdx = k + max;
 
-      // Decide whether to move down (insert) or right (delete)
-      let x: number;
-      if (k === -d || (k !== d && v[kIdx - 1] < v[kIdx + 1])) {
-        x = v[kIdx + 1]; // move down: take x from diagonal k+1
-      } else {
-        x = v[kIdx - 1] + 1; // move right: take x from diagonal k-1 and advance
-      }
-      let y = x - k;
+            // Decide whether to move down (insert) or right (delete)
+            let x: number;
+            if (k === -d || (k !== d && v[kIdx - 1] < v[kIdx + 1])) {
+                x = v[kIdx + 1]; // move down: take x from diagonal k+1
+            } else {
+                x = v[kIdx - 1] + 1; // move right: take x from diagonal k-1 and advance
+            }
+            let y = x - k;
 
-      // Follow the diagonal (matching lines)
-      while (x < n && y < m && oldLines[x] === newLines[y]) {
-        x++;
-        y++;
-      }
+            // Follow the diagonal (matching lines)
+            while (x < n && y < m && oldLines[x] === newLines[y]) {
+                x++;
+                y++;
+            }
 
-      v[kIdx] = x;
+            v[kIdx] = x;
 
-      // Reached the end of both sequences
-      if (x >= n && y >= m) {
-        break outer;
-      }
-    }
-  }
-
-  // Backtrack through the trace to reconstruct the edit script
-  const edits: Edit[] = [];
-  let x = n;
-  let y = m;
-
-  for (let d = trace.length - 1; d >= 0; d--) {
-    const prev = trace[d];
-    const k = x - y;
-    const kIdx = k + max;
-
-    // Determine which diagonal we came from
-    let prevK: number;
-    if (k === -d || (k !== d && prev[kIdx - 1] < prev[kIdx + 1])) {
-      prevK = k + 1; // came from above (insert)
-    } else {
-      prevK = k - 1; // came from left (delete)
+            // Reached the end of both sequences
+            if (x >= n && y >= m) {
+                break outer;
+            }
+        }
     }
 
-    const prevX = prev[prevK + max];
-    const prevY = prevX - prevK;
+    // Backtrack through the trace to reconstruct the edit script
+    const edits: Edit[] = [];
+    let x = n;
+    let y = m;
 
-    // Diagonal moves (matching lines) — emit keeps in reverse
-    while (x > prevX && y > prevY) {
-      x--;
-      y--;
-      edits.push({ type: "keep", line: oldLines[x] });
+    for (let d = trace.length - 1; d >= 0; d--) {
+        const prev = trace[d];
+        const k = x - y;
+        const kIdx = k + max;
+
+        // Determine which diagonal we came from
+        let prevK: number;
+        if (k === -d || (k !== d && prev[kIdx - 1] < prev[kIdx + 1])) {
+            prevK = k + 1; // came from above (insert)
+        } else {
+            prevK = k - 1; // came from left (delete)
+        }
+
+        const prevX = prev[prevK + max];
+        const prevY = prevX - prevK;
+
+        // Diagonal moves (matching lines) — emit keeps in reverse
+        while (x > prevX && y > prevY) {
+            x--;
+            y--;
+            edits.push({ type: 'keep', line: oldLines[x] });
+        }
+
+        if (d > 0) {
+            if (x === prevX) {
+                // Vertical move: insert from new
+                y--;
+                edits.push({ type: 'insert', line: newLines[y] });
+            } else {
+                // Horizontal move: delete from old
+                x--;
+                edits.push({ type: 'delete', line: oldLines[x] });
+            }
+        }
     }
 
-    if (d > 0) {
-      if (x === prevX) {
-        // Vertical move: insert from new
-        y--;
-        edits.push({ type: "insert", line: newLines[y] });
-      } else {
-        // Horizontal move: delete from old
-        x--;
-        edits.push({ type: "delete", line: oldLines[x] });
-      }
-    }
-  }
-
-  edits.reverse();
-  return edits;
+    edits.reverse();
+    return edits;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,84 +158,86 @@ export function myersDiff(oldLines: string[], newLines: string[]): Edit[] {
  * into a single hunk, matching standard unified diff behavior.
  */
 export function buildHunks(edits: Edit[], contextLines: number): Hunk[] {
-  if (edits.length === 0) return [];
+    if (edits.length === 0) return [];
 
-  // Find indices of all change operations (insert or delete)
-  const changeIndices: number[] = [];
-  for (let i = 0; i < edits.length; i++) {
-    if (edits[i].type !== "keep") {
-      changeIndices.push(i);
-    }
-  }
-
-  if (changeIndices.length === 0) return [];
-
-  // Group changes that are close enough to share context
-  const groups: { start: number; end: number }[] = [];
-  let groupStart = changeIndices[0];
-  let groupEnd = changeIndices[0];
-
-  for (let i = 1; i < changeIndices.length; i++) {
-    // If gap between changes is <= 2*contextLines, merge into same group
-    if (changeIndices[i] - groupEnd <= 2 * contextLines) {
-      groupEnd = changeIndices[i];
-    } else {
-      groups.push({ start: groupStart, end: groupEnd });
-      groupStart = changeIndices[i];
-      groupEnd = changeIndices[i];
-    }
-  }
-  groups.push({ start: groupStart, end: groupEnd });
-
-  // Convert groups into hunks
-  const hunks: Hunk[] = [];
-
-  for (const group of groups) {
-    // Expand to include context lines
-    const hunkStart = Math.max(0, group.start - contextLines);
-    const hunkEnd = Math.min(edits.length - 1, group.end + contextLines);
-
-    const lines: string[] = [];
-    let oldCount = 0;
-    let newCount = 0;
-
-    // Compute 1-based starting line numbers
-    let oldLine = 1;
-    let newLine = 1;
-    for (let i = 0; i < hunkStart; i++) {
-      if (edits[i].type === "keep" || edits[i].type === "delete") oldLine++;
-      if (edits[i].type === "keep" || edits[i].type === "insert") newLine++;
+    // Find indices of all change operations (insert or delete)
+    const changeIndices: number[] = [];
+    for (let i = 0; i < edits.length; i++) {
+        if (edits[i].type !== 'keep') {
+            changeIndices.push(i);
+        }
     }
 
-    for (let i = hunkStart; i <= hunkEnd; i++) {
-      const edit = edits[i];
-      switch (edit.type) {
-        case "keep":
-          lines.push(` ${edit.line}`);
-          oldCount++;
-          newCount++;
-          break;
-        case "delete":
-          lines.push(`-${edit.line}`);
-          oldCount++;
-          break;
-        case "insert":
-          lines.push(`+${edit.line}`);
-          newCount++;
-          break;
-      }
+    if (changeIndices.length === 0) return [];
+
+    // Group changes that are close enough to share context
+    const groups: { start: number; end: number }[] = [];
+    let groupStart = changeIndices[0];
+    let groupEnd = changeIndices[0];
+
+    for (let i = 1; i < changeIndices.length; i++) {
+        // If gap between changes is <= 2*contextLines, merge into same group
+        if (changeIndices[i] - groupEnd <= 2 * contextLines) {
+            groupEnd = changeIndices[i];
+        } else {
+            groups.push({ start: groupStart, end: groupEnd });
+            groupStart = changeIndices[i];
+            groupEnd = changeIndices[i];
+        }
+    }
+    groups.push({ start: groupStart, end: groupEnd });
+
+    // Convert groups into hunks
+    const hunks: Hunk[] = [];
+
+    for (const group of groups) {
+        // Expand to include context lines
+        const hunkStart = Math.max(0, group.start - contextLines);
+        const hunkEnd = Math.min(edits.length - 1, group.end + contextLines);
+
+        const lines: string[] = [];
+        let oldCount = 0;
+        let newCount = 0;
+
+        // Compute 1-based starting line numbers
+        let oldLine = 1;
+        let newLine = 1;
+        for (let i = 0; i < hunkStart; i++) {
+            if (edits[i].type === 'keep' || edits[i].type === 'delete')
+                oldLine++;
+            if (edits[i].type === 'keep' || edits[i].type === 'insert')
+                newLine++;
+        }
+
+        for (let i = hunkStart; i <= hunkEnd; i++) {
+            const edit = edits[i];
+            switch (edit.type) {
+                case 'keep':
+                    lines.push(` ${edit.line}`);
+                    oldCount++;
+                    newCount++;
+                    break;
+                case 'delete':
+                    lines.push(`-${edit.line}`);
+                    oldCount++;
+                    break;
+                case 'insert':
+                    lines.push(`+${edit.line}`);
+                    newCount++;
+                    break;
+            }
+        }
+
+        hunks.push({
+            oldStart: oldLine,
+            oldCount,
+            newStart: newLine,
+            newCount,
+            lines,
+        });
     }
 
-    hunks.push({
-      oldStart: oldLine,
-      oldCount,
-      newStart: newLine,
-      newCount,
-      lines,
-    });
-  }
-
-  return hunks;
+    return hunks;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,30 +256,30 @@ export function buildHunks(edits: Edit[], contextLines: number): Hunk[] {
  * @returns Unified diff string
  */
 export function generateUnifiedDiff(
-  filePath: string,
-  oldText: string,
-  newText: string,
-  contextLines = 3,
+    filePath: string,
+    oldText: string,
+    newText: string,
+    contextLines = 3,
 ): string {
-  const oldLines = oldText.split("\n");
-  const newLines = newText.split("\n");
-  const edits = myersDiff(oldLines, newLines);
-  const hunks = buildHunks(edits, contextLines);
+    const oldLines = oldText.split('\n');
+    const newLines = newText.split('\n');
+    const edits = myersDiff(oldLines, newLines);
+    const hunks = buildHunks(edits, contextLines);
 
-  const out: string[] = [];
-  out.push(`--- a/${filePath}`);
-  out.push(`+++ b/${filePath}`);
+    const out: string[] = [];
+    out.push(`--- a/${filePath}`);
+    out.push(`+++ b/${filePath}`);
 
-  for (const hunk of hunks) {
-    out.push(
-      `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`,
-    );
-    for (const line of hunk.lines) {
-      out.push(line);
+    for (const hunk of hunks) {
+        out.push(
+            `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`,
+        );
+        for (const line of hunk.lines) {
+            out.push(line);
+        }
     }
-  }
 
-  return out.join("\n");
+    return out.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -289,8 +290,8 @@ export function generateUnifiedDiff(
  * A single edit operation as provided by the pi `edit` tool.
  */
 export interface EditPatch {
-  oldText: string;
-  newText: string;
+    oldText: string;
+    newText: string;
 }
 
 /**
@@ -307,15 +308,15 @@ export interface EditPatch {
  * @returns The patched content after all edits are applied
  */
 export function applyEdits(
-  originalContent: string,
-  edits: EditPatch[],
+    originalContent: string,
+    edits: EditPatch[],
 ): string {
-  let result = originalContent;
-  for (const edit of edits) {
-    if (edit.oldText.length === 0) continue;
-    result = result.replace(edit.oldText, edit.newText);
-  }
-  return result;
+    let result = originalContent;
+    for (const edit of edits) {
+        if (edit.oldText.length === 0) continue;
+        result = result.replace(edit.oldText, edit.newText);
+    }
+    return result;
 }
 
 /**
@@ -329,22 +330,22 @@ export function applyEdits(
  * @returns { oldText, newText } or null if the input is malformed
  */
 export function extractEditText(
-  input: Record<string, unknown>,
+    input: Record<string, unknown>,
 ): { oldText: string; newText: string } | null {
-  const edits = input.edits as EditPatch[] | undefined;
+    const edits = input.edits as EditPatch[] | undefined;
 
-  if (edits && Array.isArray(edits) && edits.length > 0) {
-    return {
-      oldText: edits.map((e) => e.oldText).join("\n"),
-      newText: edits.map((e) => e.newText).join("\n"),
-    };
-  }
+    if (edits && Array.isArray(edits) && edits.length > 0) {
+        return {
+            oldText: edits.map((e) => e.oldText).join('\n'),
+            newText: edits.map((e) => e.newText).join('\n'),
+        };
+    }
 
-  // Legacy single oldText/newText
-  const oldText = input.oldText as string | undefined;
-  const newText = input.newText as string | undefined;
-  if (oldText == null || newText == null) return null;
-  return { oldText, newText };
+    // Legacy single oldText/newText
+    const oldText = input.oldText as string | undefined;
+    const newText = input.newText as string | undefined;
+    if (oldText == null || newText == null) return null;
+    return { oldText, newText };
 }
 
 /**
@@ -352,17 +353,17 @@ export function extractEditText(
  * Returns null if no valid edits are present.
  */
 export function extractEditPatches(
-  input: Record<string, unknown>,
+    input: Record<string, unknown>,
 ): EditPatch[] | null {
-  const edits = input.edits as EditPatch[] | undefined;
-  if (edits && Array.isArray(edits) && edits.length > 0) {
-    return edits;
-  }
-  // Legacy single edit
-  const oldText = input.oldText as string | undefined;
-  const newText = input.newText as string | undefined;
-  if (oldText == null || newText == null) return null;
-  return [{ oldText, newText }];
+    const edits = input.edits as EditPatch[] | undefined;
+    if (edits && Array.isArray(edits) && edits.length > 0) {
+        return edits;
+    }
+    // Legacy single edit
+    const oldText = input.oldText as string | undefined;
+    const newText = input.newText as string | undefined;
+    if (oldText == null || newText == null) return null;
+    return [{ oldText, newText }];
 }
 
 /**
@@ -376,19 +377,19 @@ export function extractEditPatches(
  * a null key as "do not auto-accept".
  */
 export function autoAcceptKey(
-  toolName: string,
-  params: Record<string, unknown>,
+    toolName: string,
+    params: Record<string, unknown>,
 ): string | null {
-  if (toolName === "bash" || toolName === "safe_bash") {
-    const command = params.command;
-    return typeof command === "string" ? command : null;
-  }
-  if (toolName === "write" || toolName === "edit") {
-    const path = params.path;
-    return typeof path === "string" ? path : null;
-  }
-  // Generic: serialize params as key so auto-accept works per-param-set
-  return JSON.stringify(params);
+    if (toolName === 'bash' || toolName === 'safe_bash') {
+        const command = params.command;
+        return typeof command === 'string' ? command : null;
+    }
+    if (toolName === 'write' || toolName === 'edit') {
+        const path = params.path;
+        return typeof path === 'string' ? path : null;
+    }
+    // Generic: serialize params as key so auto-accept works per-param-set
+    return JSON.stringify(params);
 }
 
 // ---- Slow Mode Config ----
@@ -400,10 +401,10 @@ export type SlowModeConfig = Record<string, boolean>;
  * Result of validating a slow-mode config against active tools.
  */
 export interface SlowModeConfigResult {
-  /** Only tools that exist in the current active set. */
-  tools: Map<string, boolean>;
-  /** Human-readable warnings about non-existent tools in the config. */
-  warnings: string[];
+    /** Only tools that exist in the current active set. */
+    tools: Map<string, boolean>;
+    /** Human-readable warnings about non-existent tools in the config. */
+    warnings: string[];
 }
 
 /**
@@ -422,16 +423,17 @@ export interface SlowModeConfigResult {
  * and rejects arrays/non-objects.
  */
 function normalizeSlowModeConfig(raw: unknown): Partial<SlowModeConfig> {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
-  const config: SlowModeConfig = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value !== "boolean") continue;
-    config[key] = value;
-  }
-  return config;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+        return {};
+    const config: SlowModeConfig = {};
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof value !== 'boolean') continue;
+        config[key] = value;
+    }
+    return config;
 }
 
-import { loadExtensionConfig } from "../_shared/config-loader.ts";
+import { loadExtensionConfig } from '../_shared/config-loader.ts';
 
 /**
  * Load slow-mode config from the legacy JSON file.
@@ -444,15 +446,15 @@ import { loadExtensionConfig } from "../_shared/config-loader.ts";
  * @returns Parsed config (empty object on any error)
  */
 export function loadSlowModeConfig(
-  cwd: string = process.cwd(),
-  agentDir?: string,
+    cwd: string = process.cwd(),
+    agentDir?: string,
 ): SlowModeConfig {
-  return loadExtensionConfig(cwd, {
-    defaults: {} as SlowModeConfig,
-    normalize: normalizeSlowModeConfig,
-    sources: [{ legacyFilename: "slow-mode.json" }],
-    agentDir,
-  });
+    return loadExtensionConfig(cwd, {
+        defaults: {} as SlowModeConfig,
+        normalize: normalizeSlowModeConfig,
+        sources: [{ legacyFilename: 'slow-mode.json' }],
+        agentDir,
+    });
 }
 
 /**
@@ -466,22 +468,22 @@ export function loadSlowModeConfig(
  * @returns Filtered config and warnings
  */
 export function validateSlowModeConfig(
-  config: SlowModeConfig,
-  activeTools: string[],
+    config: SlowModeConfig,
+    activeTools: string[],
 ): SlowModeConfigResult {
-  const activeSet = new Set(activeTools);
-  const tools = new Map<string, boolean>();
-  const warnings: string[] = [];
+    const activeSet = new Set(activeTools);
+    const tools = new Map<string, boolean>();
+    const warnings: string[] = [];
 
-  for (const [toolName, enabled] of Object.entries(config)) {
-    if (!activeSet.has(toolName)) {
-      warnings.push(
-        `Tool "${toolName}" in slow-mode.json does not exist and will be ignored`,
-      );
-      continue;
+    for (const [toolName, enabled] of Object.entries(config)) {
+        if (!activeSet.has(toolName)) {
+            warnings.push(
+                `Tool "${toolName}" in slow-mode.json does not exist and will be ignored`,
+            );
+            continue;
+        }
+        tools.set(toolName, enabled);
     }
-    tools.set(toolName, enabled);
-  }
 
-  return { tools, warnings };
+    return { tools, warnings };
 }

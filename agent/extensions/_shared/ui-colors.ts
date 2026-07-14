@@ -20,6 +20,7 @@ export function createUiColors(theme: Theme) {
     apply: (color: ThemeColor, text: string) => theme.fg(color, text),
     separator: (text: string) => theme.fg("dim", text),
     subtle: (text: string) => theme.fg("dim", text),
+    muted: (text: string) => theme.fg("muted", text),
     meta: (text: string) => theme.fg("muted", text),
     primary: (text: string) => theme.fg("accent", text),
     success: (text: string) => theme.fg("success", text),

@@ -7,6 +7,7 @@
 exa-usage.json
 web-search.json
 **/pi-session-**.html
+.pi-lens/
 
 .pi/
 !.pi/prompts/
@@ -30,9 +31,13 @@ context-mode/
 
 .atlas/
 .sdd/
+.hypa/
+.firecrawl/
 node_modules/
 
+.agents/skills/last30days
 context.md
+docs/resources/about-caveman/
 
 .bash_profile
 .bashrc

@@ -2,13 +2,14 @@
   "compilerOptions": {
     "types": ["bun", "node"],
     "target": "ESNext",
-    "noEmit": true,
+    "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    "noEmit": true,
     "skipLibCheck": true,
     "strict": true,
+    "noImplicitAny": true,
     "stableTypeOrdering": true,
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
+    // "ignoreDeprecations": "6.0",
     "paths": {
       "pi-fancy-footer": ["../../projects/pi-integrations/pi-fancy-footer/src/index.ts"],
       "pi-fancy-footer/api": ["../../projects/pi-integrations/pi-fancy-footer/src/api.ts"],

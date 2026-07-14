@@ -9,13 +9,11 @@
  * Note: the old footer extension was migrated to ../session-status-bar/
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import astGrep from "./ast-grep.ts";
-import btw from "./btw.ts";
-import until from "./until.ts";
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import btw from './btw.ts';
+import until from './until.ts';
 
 export default function aldoborreroExtensions(pi: ExtensionAPI) {
-  astGrep(pi);
-  btw(pi);
-  until(pi);
+    btw(pi);
+    until(pi);
 }

@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": true,
+    "singleQuote": true,
+    "singleAttributePerLine": false,
+    "htmlWhitespaceSensitivity": "css",
+    "printWidth": 80,
+    "tabWidth": 4,
+    "sortPackageJson": false,
+    "sortImports": {
+        "partitionByNewline": true,
+        "newlinesBetween": false
+    },
+    "overrides": [
+        {
+            "files": ["**/*.yml", "**/*.yaml"],
+            "options": {
+                "tabWidth": 2
+            }
+        }
+    ],
+    "ignorePatterns": [
+        "node_modules/",
+        "dist/",
+        "build/",
+        "coverage/",
+        "docs/",
+        "plans/",
+        ".agents/",
+        "*.log",
+        ".env*",
+        "package-lock.json",
+        "bun.lock",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        ".DS_Store",
+        ".vscode/",
+        ".idea/",
+        "*.swp",
+        "__pycache__/",
+        "*.pyc",
+        ".venv/",
+        "target/",
+        "*.class",
+        ".gradle/",
+        "bin/",
+        "obj/",
+        "packages/",
+        "*.exe",
+        ".github/agents/copilot-instructions.md",
+        ".github/instructions/*.instructions.md",
+    ],
+}

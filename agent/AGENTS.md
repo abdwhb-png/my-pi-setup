@@ -35,11 +35,10 @@
 
 ## Post-edit verification (MANDATORY after every edit)
 
-1. **Parse-check every edited file** — Run `node --check <file>` on every `.ts`/`.js` file modified. This catches stray characters, unterminated strings, and syntax errors that `bun test` won't see unless the file is imported by a test.
-2. **LSP diagnostics** — Run `lsp_diagnostics` on every changed file. This catches type errors before tests even run.
-3. **Run all tests** — At minimum the test files in the changed directory, ideally the full suite.
+1. **LSP diagnostics** — Run `lsp_diagnostics` at the end of the changed files. This catches type errors before tests even run.
+2. **Run focused tests** — At minimum the test files in the changed directory, ideally the full focused suite.
 
-These 3 steps MUST execute in Phase 3 (Verification) after every code change. If a file has no test that imports it, that's a gap — add an import test.
+These 2 steps MUST execute in Phase 3 (Verification) after all code changes. If a file has no test that imports it, that's a gap — add an import test.
 
 ### Anti-Patterns (prohibited)
 

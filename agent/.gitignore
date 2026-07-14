@@ -14,7 +14,8 @@ auth.json
 models.json
 settings.json
 settings.json.*
-mcp-cache.json
+mcp-*/
+mcp-*
 mcp.json
 git/
 
@@ -33,4 +34,6 @@ intercom/
 research.md
 **.log
 skills-lock.json
+
+models.backup
 
