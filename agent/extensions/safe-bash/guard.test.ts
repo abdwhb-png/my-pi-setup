@@ -382,3 +382,55 @@ describe('redirectShellCommandWithPolicy - enforceNative=false (audit/advanced p
         expect(redirectShellCommandWithPolicy('', false)).toBeNull();
     });
 });
+
+// --- allowList bypass ---
+
+describe('redirectShellCommandWithPolicy - allowList bypass', () => {
+    it('returns null when command is in allowList (enforceNative=true)', () => {
+        expect(
+            redirectShellCommandWithPolicy("grep -r 'foo' .", true, ['grep']),
+        ).toBeNull();
+    });
+
+    it('returns null when find is in allowList', () => {
+        expect(
+            redirectShellCommandWithPolicy("find . -name '*.ts'", true, [
+                'find',
+            ]),
+        ).toBeNull();
+    });
+
+    it('returns null when ls is in allowList', () => {
+        expect(
+            redirectShellCommandWithPolicy('ls -la', true, ['ls']),
+        ).toBeNull();
+    });
+
+    it('still blocks commands not in allowList', () => {
+        expect(
+            redirectShellCommandWithPolicy("grep -r 'foo' .", true, ['find']),
+        ).not.toBeNull();
+    });
+
+    it('blocks when allowList is empty or undefined', () => {
+        expect(
+            redirectShellCommandWithPolicy("grep -r 'foo' .", true, []),
+        ).not.toBeNull();
+        expect(
+            redirectShellCommandWithPolicy("grep -r 'foo' .", true),
+        ).not.toBeNull();
+    });
+
+    it('default allowList is empty (backward compatible)', () => {
+        // Same call shape as before adding the parameter
+        expect(
+            redirectShellCommandWithPolicy("grep -r 'foo' .", true),
+        ).not.toBeNull();
+    });
+
+    it('allowList also bypasses in audit mode (no-op, still null)', () => {
+        expect(
+            redirectShellCommandWithPolicy("grep -r 'foo' .", false, ['grep']),
+        ).toBeNull();
+    });
+});

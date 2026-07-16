@@ -166,14 +166,25 @@ export function redirectShellCommand(command: string): string | null {
  * commands.
  *
  * When `enforceNative` is false (audit / advanced profiles), redirection is
- * relaxed: returns null so the command is allowed through. The caller
- * (safe-bash/index.ts) is responsible for reading the active policy flag
- * via shouldEnforceNativeTools() before calling this function.
+ * relaxed: returns null so the command is allowed through.
+ *
+ * `allowList` (optional) bypasses redirection for specific commands by first
+ * word, regardless of profile. Useful when the user explicitly wants a shell
+ * command (e.g. `grep`, `find`) to run through safe_bash instead of the native
+ * tool. `isDangerous()` still runs upstream — only the redirect is bypassed.
+ *
+ * The caller (safe-bash/index.ts) is responsible for reading the active
+ * policy flag via shouldEnforceNativeTools() before calling this function.
  */
 export function redirectShellCommandWithPolicy(
     command: string,
     enforceNative: boolean,
+    allowList: ReadonlyArray<string> = [],
 ): string | null {
     if (!enforceNative) return null;
+    if (allowList.length > 0) {
+        const first = firstWord(command);
+        if (first && allowList.includes(first)) return null;
+    }
     return redirectShellCommand(command);
 }

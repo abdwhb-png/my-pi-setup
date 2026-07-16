@@ -16,26 +16,46 @@ export type SafeBashMode = 'coexist' | 'replace';
 
 export interface SafeBashConfig {
     mode: SafeBashMode;
+    /**
+     * Shell commands (by first word) allowed to bypass native-tool redirection
+     * in standard profile. Empty = redirection enforced as usual.
+     * `isDangerous()` still runs on these commands — only the redirect is bypassed.
+     */
+    allowedShellCommands: string[];
 }
 
 export const DEFAULT_SAFE_BASH_CONFIG: SafeBashConfig = {
     mode: 'coexist',
+    allowedShellCommands: [],
 };
 
 /**
  * Normalize raw JSON → Partial<SafeBashConfig>.
- * Keeps only a valid `mode` field; drops everything else.
+ * Keeps only valid `mode` and `allowedShellCommands` fields; drops everything else.
  */
 export function normalizeSafeBashConfig(raw: unknown): Partial<SafeBashConfig> {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
         return {};
     }
     const obj = raw as Record<string, unknown>;
+    const result: Partial<SafeBashConfig> = {};
+
     const mode = obj.mode;
     if (mode === 'replace' || mode === 'coexist') {
-        return { mode };
+        result.mode = mode;
     }
-    return {};
+
+    const allowed = obj.allowedShellCommands;
+    if (Array.isArray(allowed)) {
+        const filtered = allowed.filter(
+            (entry): entry is string => typeof entry === 'string',
+        );
+        if (filtered.length > 0) {
+            result.allowedShellCommands = filtered;
+        }
+    }
+
+    return result;
 }
 
 /**

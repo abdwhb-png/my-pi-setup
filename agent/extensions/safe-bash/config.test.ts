@@ -46,6 +46,58 @@ describe('normalizeSafeBashConfig', () => {
             mode: 'replace',
         });
     });
+
+    // --- allowedShellCommands ---
+
+    it('accepts allowedShellCommands as string array', () => {
+        expect(
+            normalizeSafeBashConfig({
+                allowedShellCommands: ['grep', 'find'],
+            }),
+        ).toEqual({
+            allowedShellCommands: ['grep', 'find'],
+        });
+    });
+
+    it('filters non-string entries from allowedShellCommands', () => {
+        expect(
+            normalizeSafeBashConfig({
+                allowedShellCommands: ['grep', 42, null, 'find', true],
+            } as any),
+        ).toEqual({
+            allowedShellCommands: ['grep', 'find'],
+        });
+    });
+
+    it('rejects allowedShellCommands that is not an array', () => {
+        expect(
+            normalizeSafeBashConfig({ allowedShellCommands: 'grep' } as any),
+        ).toEqual({});
+        expect(
+            normalizeSafeBashConfig({ allowedShellCommands: null } as any),
+        ).toEqual({});
+        expect(
+            normalizeSafeBashConfig({ allowedShellCommands: {} } as any),
+        ).toEqual({});
+    });
+
+    it('drops allowedShellCommands when array is empty', () => {
+        expect(normalizeSafeBashConfig({ allowedShellCommands: [] })).toEqual(
+            {},
+        );
+    });
+
+    it('preserves both mode and allowedShellCommands', () => {
+        expect(
+            normalizeSafeBashConfig({
+                mode: 'replace',
+                allowedShellCommands: ['grep'],
+            }),
+        ).toEqual({
+            mode: 'replace',
+            allowedShellCommands: ['grep'],
+        });
+    });
 });
 
 describe('loadSafeBashConfig', () => {
@@ -94,5 +146,19 @@ describe('loadSafeBashConfig', () => {
         } as any);
         const config: SafeBashConfig = loadSafeBashConfig(cwd, undefined, sm);
         expect(config.mode).toBe('replace');
+    });
+
+    it('defaults allowedShellCommands to empty array', () => {
+        const sm = SettingsManager.inMemory({} as any);
+        const config = loadSafeBashConfig(cwd, undefined, sm);
+        expect(config.allowedShellCommands).toEqual([]);
+    });
+
+    it('reads allowedShellCommands from settings', () => {
+        const sm = SettingsManager.inMemory({
+            safeBash: { allowedShellCommands: ['grep', 'rg'] },
+        } as any);
+        const config = loadSafeBashConfig(cwd, undefined, sm);
+        expect(config.allowedShellCommands).toEqual(['grep', 'rg']);
     });
 });

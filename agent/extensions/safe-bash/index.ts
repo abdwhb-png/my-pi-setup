@@ -39,9 +39,17 @@ export default function (pi: ExtensionAPI) {
     /** Current safe-bash mode, (re)loaded from settings.json or flipped via /safe-bash. */
     let currentMode: SafeBashMode = 'coexist';
 
+    /**
+     * Current allowed-shell-commands list (by first word), reloaded from
+     * settings.json. Bypasses native-tool redirection for these commands;
+     * `isDangerous()` still runs on them.
+     */
+    let currentAllowedShellCommands: string[] = [];
+
     /** Reload config from settings.json and apply the mode to the active tools. */
     function reloadConfig(cwd: string): SafeBashMode {
         const config = loadSafeBashConfig(cwd);
+        currentAllowedShellCommands = config.allowedShellCommands;
         return setMode(config.mode);
     }
 
@@ -103,6 +111,7 @@ export default function (pi: ExtensionAPI) {
             const redirect = redirectShellCommandWithPolicy(
                 params.command,
                 shouldEnforceNativeTools(),
+                currentAllowedShellCommands,
             );
             if (redirect) {
                 throw new Error(redirect);
