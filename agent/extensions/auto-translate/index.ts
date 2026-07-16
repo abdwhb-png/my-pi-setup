@@ -15,7 +15,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { registerCommands } from './commands.ts';
 import { loadTranslateConfig } from './config.ts';
-import { createState, buildStatusText } from './state.ts';
+import { createState, buildStatusText, icon } from './state.ts';
 import { translate } from './translator.ts';
 import type { TranslateConfig } from './types.ts';
 import { createTranslateWidget } from './widget.ts';
@@ -72,13 +72,22 @@ export default function (pi: ExtensionAPI): void {
             return { action: 'continue' };
         }
 
-        const translated = await translate(
-            text,
-            targetName,
-            { ...config, model: modelSpec },
-            { complete },
-            ctx,
+        ctx.ui.setStatus(
+            'auto-translate',
+            ctx.ui.theme.fg('accent', `${icon} translating…`),
         );
+        let translated: string | null;
+        try {
+            translated = await translate(
+                text,
+                targetName,
+                { ...config, model: modelSpec },
+                { complete },
+                ctx,
+            );
+        } finally {
+            ctx.ui.setStatus('auto-translate', undefined);
+        }
 
         // Pass through if translation failed or text was already the target language.
         if (translated == null || translated === text)

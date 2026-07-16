@@ -13,7 +13,30 @@ mock.module('@earendil-works/pi-tui', () => ({
         );
     },
     fuzzyMatch: () => ({ matches: true, score: 0 }),
+    Markdown: () => null,
+    ProcessTerminal: class {},
+    TUI: class {},
+    setKeybindings: () => {},
+    getCapabilities: () => ({ images: false, hyperlinks: false }),
 }));
+
+// Mock pi-coding-agent settings to avoid loading the full TUI stack
+mock.module('@earendil-works/pi-coding-agent', () => {
+    const agentDir = '/tmp/pi-agent';
+    return {
+        getAgentDir: () => agentDir,
+        SettingsManager: {
+            create: () => ({
+                getGlobalSettings: () => ({}),
+                getProjectSettings: () => ({}),
+            }),
+            inMemory: (data: unknown) => ({
+                getGlobalSettings: () => data,
+                getProjectSettings: () => data,
+            }),
+        },
+    };
+});
 
 const {
     parseAtValue,

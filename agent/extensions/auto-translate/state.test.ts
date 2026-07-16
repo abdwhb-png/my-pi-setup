@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { icon } from './state.ts';
+import { icon, offText } from './state.ts';
 import { defaultRuntimeState } from './types.ts';
 
 const { createState, buildStatusText, toggleSend } = await import('./state.ts');
@@ -32,7 +32,7 @@ describe('state', () => {
 
     it('buildStatusText shows off when disabled', () => {
         const s = createState(CFG);
-        expect(buildStatusText(s, CFG)).toBe(`${icon}translate off`);
+        expect(buildStatusText(s, CFG)).toBe(offText);
     });
 
     it('buildStatusText shows target + mode when enabled', () => {

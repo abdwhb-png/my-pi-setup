@@ -15,13 +15,18 @@ mock.module('pi-fancy-footer/api', () => ({
 const { default: factory } = await import('./index.ts');
 
 function mockPi() {
-    const commands = new Set<string>();
+    const commands = new Map<
+        string,
+        { handler: (a: string, ctx: any) => Promise<void> }
+    >();
     const handlers = new Map<string, Array<(e: any, ctx: any) => any>>();
     const pi: any = {
         on: mock((event: string, handler: any) => {
             handlers.set(event, [...(handlers.get(event) ?? []), handler]);
         }),
-        registerCommand: mock((name: string) => commands.add(name)),
+        registerCommand: mock((name: string, def: any) =>
+            commands.set(name, def),
+        ),
     };
     return { pi, commands, handlers };
 }
@@ -29,8 +34,23 @@ function mockPi() {
 function mockCtx() {
     return {
         hasUI: true,
-        ui: { notify: mock(), setWidget: mock() },
+        ui: {
+            notify: mock(),
+            setWidget: mock(),
+            setStatus: mock(),
+            theme: { fg: mock((_scope: string, s: string) => s) },
+        },
         model: undefined,
+        modelRegistry: {
+            find: mock().mockReturnValue({
+                provider: 'openai',
+                id: 'gpt-5-nano',
+            }),
+            getApiKeyAndHeaders: mock().mockResolvedValue({
+                ok: false,
+                error: 'no key',
+            }),
+        },
     } as any;
 }
 
@@ -73,14 +93,31 @@ describe('auto-translate factory', () => {
         expect(out).toEqual({ action: 'continue' });
     });
 
-    it('input handler passes through empty input', async () => {
-        const { pi, handlers } = mockPi();
+    it('input handler shows translating status then clears it', async () => {
+        const { pi, commands, handlers } = mockPi();
         factory(pi);
+        // Enable translation via the registered command so the input handler runs.
+        await commands.get('translate-on')!.handler('', mockCtx());
         const inputHandler = handlers.get('input')![0];
+        const ctx = mockCtx();
+        // ctx.model set so effectiveModel resolves; modelRegistry.find returns a
+        // model but auth fails -> translate() returns null -> pass-through.
+        // Status lifecycle must run regardless.
+        ctx.model = { provider: 'openai', id: 'gpt-5-nano' };
         const out = await inputHandler(
-            { text: '   ', source: 'user' },
-            mockCtx(),
+            { text: 'bonjour', source: 'user' },
+            ctx,
         );
+        // translate() returns null (auth failed) so pass-through,
+        // but the status lifecycle must run regardless.
         expect(out).toEqual({ action: 'continue' });
+        expect(ctx.ui.setStatus).toHaveBeenCalledWith(
+            'auto-translate',
+            expect.stringContaining('translating'),
+        );
+        expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+            'auto-translate',
+            undefined,
+        );
     });
 });

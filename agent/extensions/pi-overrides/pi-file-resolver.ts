@@ -4,6 +4,10 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { fuzzyFilter } from '@earendil-works/pi-tui';
+import {
+    type FileResolverConfig,
+    loadFileResolverConfig,
+} from './pi-file-resolver-config.ts';
 
 // ---------------------------------------------------------------------------
 // Public interface — exported for testing
@@ -173,35 +177,46 @@ interface FileCache {
     running: boolean;
 }
 
+function buildFdArgs(
+    baseDir: string,
+    maxResults: number,
+    config: FileResolverConfig,
+): string[] {
+    const args: string[] = [
+        '--base-directory',
+        baseDir,
+        '--max-results',
+        String(maxResults),
+    ];
+
+    // --type flags
+    for (const t of config.fd.types) {
+        args.push('--type', t);
+    }
+
+    if (config.fd.followSymlinks) args.push('--follow');
+    if (config.fd.includeHidden) args.push('--hidden');
+    if (!config.fd.respectGitignore) args.push('--no-ignore-vcs');
+
+    // --exclude patterns (each generates 3 levels: dir, dir/*, dir/**)
+    for (const pattern of config.fd.excludePatterns) {
+        if (!pattern) continue;
+        args.push('--exclude', pattern);
+        args.push('--exclude', `${pattern}/*`);
+        args.push('--exclude', `${pattern}/**`);
+    }
+
+    return args;
+}
+
 async function walkDirFd(
     baseDir: string,
     maxResults: number,
     signal: AbortSignal,
+    config: FileResolverConfig,
 ): Promise<string[]> {
     return new Promise<string[]>((resolve) => {
-        const args = [
-            '--base-directory',
-            baseDir,
-            '--max-results',
-            String(maxResults),
-            '--type',
-            'f',
-            '--follow',
-            '--hidden',
-            '--exclude',
-            '.git',
-            '--exclude',
-            '.git/*',
-            '--exclude',
-            '.git/**',
-            '--exclude',
-            'node_modules',
-            '--exclude',
-            'node_modules/*',
-            '--exclude',
-            'node_modules/**',
-            '',
-        ];
+        const args = buildFdArgs(baseDir, maxResults, config);
 
         const child = spawn('fd', args, {
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -241,7 +256,11 @@ async function walkDirFd(
     });
 }
 
-function buildIndexBackground(cache: FileCache, roots: string[]): void {
+function buildIndexBackground(
+    cache: FileCache,
+    roots: string[],
+    config: FileResolverConfig,
+): void {
     if (cache.running || cache.ready) return;
     cache.running = true;
     (async () => {
@@ -250,7 +269,12 @@ function buildIndexBackground(cache: FileCache, roots: string[]): void {
         indexAbortController = controller;
         for (const root of roots) {
             try {
-                const entries = await walkDirFd(root, 10000, controller.signal);
+                const entries = await walkDirFd(
+                    root,
+                    10000,
+                    controller.signal,
+                    config,
+                );
                 allFiles.push(...entries);
             } catch {
                 // root not found, skip
@@ -284,6 +308,17 @@ let autocompleteRegistered = false;
 /** Current CWD, refreshed each session_start. Used by autocomplete wrapper. */
 let sessionCwd = '';
 
+/** Current config, loaded at session_start. Default config used as fallback. */
+let fileResolverConfig: FileResolverConfig = {
+    fd: {
+        respectGitignore: true,
+        followSymlinks: true,
+        includeHidden: true,
+        excludePatterns: ['.git', 'node_modules'],
+        types: ['f'],
+    },
+};
+
 /** Per-session file cache. Replaced on session_start, cleared on session_shutdown. */
 let currentCache: FileCache = { files: [], ready: false, running: false };
 let currentRoots: string[] = [];
@@ -301,6 +336,7 @@ export default function (pi: ExtensionAPI): void {
     pi.on('session_start', (_event, ctx) => {
         // Refresh CWD every session so /new ~/other-project/ uses right CWD
         sessionCwd = ctx.cwd;
+        fileResolverConfig = loadFileResolverConfig(ctx.cwd);
 
         if (!autocompleteRegistered) {
             ctx.ui.addAutocompleteProvider((current) => ({
@@ -355,7 +391,7 @@ export default function (pi: ExtensionAPI): void {
 
         currentCache = { files: [], ready: false, running: false };
         currentRoots = getSearchRoots(ctx.cwd);
-        buildIndexBackground(currentCache, currentRoots);
+        buildIndexBackground(currentCache, currentRoots, fileResolverConfig);
     });
 
     // Clear cache on session end
@@ -372,7 +408,7 @@ export default function (pi: ExtensionAPI): void {
 
     pi.on('before_agent_start', async (event) => {
         // Ensure background indexing has started
-        buildIndexBackground(currentCache, currentRoots);
+        buildIndexBackground(currentCache, currentRoots, fileResolverConfig);
 
         const refs = findUnresolvedAtRefs(event.prompt);
         if (refs.length === 0) return;
