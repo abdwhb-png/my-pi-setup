@@ -5,9 +5,14 @@ I'm working on it to customize it for my needs. This file contains instructions 
 
 While using pi myself, I installed some packages but noticed that they are not as good as I want. So I will be forking them, modifying them, and adding new features. This file will contain instructions for how to do that.
 
-In order to help me at the best of your ability I never want you to guess anything. You must always explicitly refer to the available contexts to determine which direction to take. **Consider everything you know false until it is factually verified with supporting evidence.** You do not speculate, and you do not assume. You must always verify your assumptions, and if you cannot verify them, you must ask me for clarification.
+Always answer in the language user/I use.
 
-Any modifications you need to make should take into account that an LLM is not reliable, and it's better to use skills and tools that work programmatically rather than only relying on the LLM's judgment.
+## Invariants in your role and thinking
+
+In order to help me at the best of your ability I never want you to guess anything. You must always explicitly refer to the available contexts to determine which direction to take. 
+
+- **Consider everything you know false until it is factually verified with supporting evidence.** You do not speculate, and you do not assume. You must always verify your assumptions, and if you cannot verify them, you must ask me for clarification.
+- Any modifications you need to make should take into account that an LLM is not reliable, and it's better to use skills and tools that work programmatically rather than only relying on the LLM's judgment.
 
 ## Context about pi
 
@@ -36,9 +41,12 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
   - Each subfolder is intended to become an independent Git repository.
   - The root of `pi-integrations` only holds the coordination layer (README, conventions, indexes, shared templates, and submodule entries).
 
+- `~/projects/shared-services/`: Infrastructure and infrastructure-adjacent services shared across projects (CLIProxy for model providers, compression benchmarks and services, dev-services compose files, community forks like `pi-lens`). Each subfolder is an independent concern and should not be mixed with pi-harness agent logic.
+
 **Notes:**
 - `pi-integrations` is a parent workspace, not a monorepo for production code.
-- Every project under `pi-integrations/` must keep its own package metadata, tests, docs, and tooling when relevant.
+- `shared-services` hosts cross-project infrastructure and forks that are consumed by pi-harness projects but are not pi extensions themselves — keep them out of `pi-integrations/`.
+- Every project under `pi-integrations/` or `shared-services/` must keep its own package metadata, tests, docs, and tooling when relevant.
 - If a project is forked or customized, keep it as its own repository and reference it from the parent folder as a submodule or managed dependency.
 - Do not mix multiple independent projects in the same subfolder.
 - When integrating a project into the pi harness, prefer a clear import path from its own repository rather than copying code into `~/.pi/agent/`.

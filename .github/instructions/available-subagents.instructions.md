@@ -1,5 +1,6 @@
 ---
 description: This file describes the available subagents and their intended use cases.
+applyTo: '**'
 ---
 
 Use the `runSubagent` tool to invoke the right specialists for the task at hand. Each subagent has unique strengths.
