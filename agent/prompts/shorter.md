@@ -1,6 +1,7 @@
 ---
 description: Make an answer short
-argument-hint: "[request]"
+argument-hint: "[request
+role: pi-caveman
 ---
 
 $ARGUMENTS
