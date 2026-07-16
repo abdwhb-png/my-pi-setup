@@ -7,7 +7,9 @@ import { fuzzyFilter } from '@earendil-works/pi-tui';
 import {
     type FileResolverConfig,
     loadFileResolverConfig,
-} from './pi-file-resolver-config.ts';
+    getFileResolverConfig,
+    setFileResolverConfig,
+} from './config.ts';
 
 // ---------------------------------------------------------------------------
 // Public interface — exported for testing
@@ -357,17 +359,6 @@ let autocompleteRegistered = false;
 /** Current CWD, refreshed each session_start. Used by autocomplete wrapper. */
 let sessionCwd = '';
 
-/** Current config, loaded at session_start. Default config used as fallback. */
-let fileResolverConfig: FileResolverConfig = {
-    fd: {
-        respectGitignore: true,
-        followSymlinks: true,
-        includeHidden: true,
-        excludePatterns: ['.git', 'node_modules'],
-        types: ['f'],
-    },
-};
-
 /** Per-session file cache. Replaced on session_start, cleared on session_shutdown. */
 let currentCache: FileCache = { files: [], ready: false, running: false };
 let currentRoots: string[] = [];
@@ -385,7 +376,7 @@ export default function (pi: ExtensionAPI): void {
     pi.on('session_start', (_event, ctx) => {
         // Refresh CWD every session so /new ~/other-project/ uses right CWD
         sessionCwd = ctx.cwd;
-        fileResolverConfig = loadFileResolverConfig(ctx.cwd);
+        setFileResolverConfig(loadFileResolverConfig(ctx.cwd));
 
         if (!autocompleteRegistered) {
             ctx.ui.addAutocompleteProvider((current) => ({
@@ -413,7 +404,7 @@ export default function (pi: ExtensionAPI): void {
                         prefix,
                         result?.items ?? [],
                         currentCache,
-                        fileResolverConfig,
+                        getFileResolverConfig(),
                     );
 
                     if (enrichedItems.length === 0) return null;
@@ -456,7 +447,11 @@ export default function (pi: ExtensionAPI): void {
 
         currentCache = { files: [], ready: false, running: false };
         currentRoots = getSearchRoots(ctx.cwd);
-        buildIndexBackground(currentCache, currentRoots, fileResolverConfig);
+        buildIndexBackground(
+            currentCache,
+            currentRoots,
+            getFileResolverConfig(),
+        );
     });
 
     // Clear cache on session end
@@ -473,7 +468,11 @@ export default function (pi: ExtensionAPI): void {
 
     pi.on('before_agent_start', async (event) => {
         // Ensure background indexing has started
-        buildIndexBackground(currentCache, currentRoots, fileResolverConfig);
+        buildIndexBackground(
+            currentCache,
+            currentRoots,
+            getFileResolverConfig(),
+        );
 
         const refs = findUnresolvedAtRefs(event.prompt);
         if (refs.length === 0) return;

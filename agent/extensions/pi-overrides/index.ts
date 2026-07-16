@@ -1,23 +1,29 @@
-import { readdir as fsReaddir, readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
-import { createInterface } from "node:readline";
-import { spawn } from "node:child_process";
-import nodePath from "node:path";
-import { Container, Text } from "@earendil-works/pi-tui";
-import type { Component } from "@earendil-works/pi-tui";
-import type {
-  ExtensionAPI,
-  Theme,
-} from "@earendil-works/pi-coding-agent";
+import { spawn } from 'node:child_process';
 import {
-  createFindToolDefinition,
-  createGrepToolDefinition,
-  createLsToolDefinition,
-  createReadToolDefinition,
-} from "@earendil-works/pi-coding-agent";
-import { appendCompressionFooter } from "../_shared/compression-render";
-import { getActivePolicy } from "../_shared/audit-mode/audit-state";
-import piFileResolver from "./pi-file-resolver";
-import { handleReadOnDirectory, handleLsOnFile } from "./path-redirect";
+    readdir as fsReaddir,
+    readFile as fsReadFile,
+    stat as fsStat,
+} from 'node:fs/promises';
+import nodePath from 'node:path';
+import { createInterface } from 'node:readline';
+import type { ExtensionAPI, Theme } from '@earendil-works/pi-coding-agent';
+import {
+    createFindToolDefinition,
+    createGrepToolDefinition,
+    createLsToolDefinition,
+    createReadToolDefinition,
+} from '@earendil-works/pi-coding-agent';
+import { Container, Text } from '@earendil-works/pi-tui';
+import type { Component } from '@earendil-works/pi-tui';
+import { getActivePolicy } from '../_shared/audit-mode/audit-state';
+import { appendCompressionFooter } from '../_shared/compression-render';
+import {
+    loadFileResolverConfig,
+    setFileResolverConfig,
+    getFileResolverConfig,
+} from './config.ts';
+import { handleReadOnDirectory, handleLsOnFile } from './path-redirect';
+import piFileResolver from './pi-file-resolver';
 
 // ─── Audit-aware ls operations ───────────────────────────────────────────────
 
@@ -27,23 +33,27 @@ import { handleReadOnDirectory, handleLsOnFile } from "./path-redirect";
  * effect immediately without re-registering the tool.
  */
 export const auditAwareLsOperations = {
-  exists: async (absolutePath: string): Promise<boolean> => {
-    try {
-      await fsStat(absolutePath);
-      return true;
-    } catch {
-      return false;
-    }
-  },
-  stat: fsStat,
-  readdir: async (absolutePath: string): Promise<string[]> => {
-    const entries = await fsReaddir(absolutePath);
-    if (getActivePolicy()["listing.showHidden"]) {
-      return entries;
-    }
-    // Standard mode: hide dotfiles
-    return entries.filter((e) => !e.startsWith("."));
-  },
+    exists: async (absolutePath: string): Promise<boolean> => {
+        try {
+            await fsStat(absolutePath);
+            return true;
+        } catch {
+            return false;
+        }
+    },
+    stat: fsStat,
+    readdir: async (absolutePath: string): Promise<string[]> => {
+        const entries = await fsReaddir(absolutePath);
+        // Config override: show everything if respectGitignore is false
+        if (!getFileResolverConfig().ls.respectGitignore) {
+            return entries;
+        }
+        if (getActivePolicy()['listing.showHidden']) {
+            return entries;
+        }
+        // Standard mode: hide dotfiles
+        return entries.filter((e) => !e.startsWith('.'));
+    },
 };
 
 // ─── Audit-aware find operations ─────────────────────────────────────────────
@@ -59,8 +69,8 @@ export const auditAwareLsOperations = {
  * Tests that call glob() directly will catch the breakage early.
  */
 const FD_BIN = nodePath.join(
-  nodePath.dirname(new URL(import.meta.url).pathname),
-  "../../bin/fd",
+    nodePath.dirname(new URL(import.meta.url).pathname),
+    '../../bin/fd',
 );
 
 /**
@@ -73,95 +83,107 @@ const FD_BIN = nodePath.join(
  * reimplements the fd invocation in full so that it can inject --no-ignore.
  */
 export const auditAwareFindOperations = {
-  exists: async (absolutePath: string): Promise<boolean> => {
-    try {
-      await fsStat(absolutePath);
-      return true;
-    } catch {
-      return false;
-    }
-  },
-  glob: async (
-    pattern: string,
-    cwd: string,
-    options: { ignore: string[]; limit: number },
-  ): Promise<string[]> => {
-    const ignoreGitignore = getActivePolicy()["find.ignoreGitignore"];
-
-    const args: string[] = [
-      "--glob",
-      "--color=never",
-      "--hidden",
-      "--no-require-git",
-      "--max-results",
-      String(options.limit),
-    ];
-
-    if (ignoreGitignore) {
-      // Bypass .gitignore so audit sees everything on disk.
-      args.push("--no-ignore");
-    }
-
-    // Mirror the factory's --full-path logic for path-containing patterns.
-    let effectivePattern = pattern;
-    if (pattern.includes("/")) {
-      args.push("--full-path");
-      if (!pattern.startsWith("**")) {
-        effectivePattern = `**/${pattern}`;
-      }
-    }
-
-    args.push(effectivePattern, cwd);
-
-    return new Promise<string[]>((resolve, reject) => {
-      const child = spawn(FD_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
-      if (!child.stdout || !child.stderr) {
-        reject(new Error("Failed to open stdio for fd"));
-        return;
-      }
-      const stdout = child.stdout;
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      const rl = createInterface({ input: stdout as NodeJS.ReadableStream });
-      const results: string[] = [];
-      let stderr = "";
-
-      child.stderr.on("data", (chunk: Buffer | string) => {
-        stderr += typeof chunk === "string" ? chunk : chunk.toString();
-      });
-
-      rl.on("line", (line: string) => {
-        if (line.trim()) results.push(line.trim());
-      });
-
-      child.on("error", (err: Error) => reject(new Error(`Failed to run fd: ${err.message}`)));
-
-      child.on("close", (code: number | null) => {
-        rl.close();
-        if (code !== 0 && results.length === 0) {
-          reject(new Error(stderr.trim() || `fd exited with code ${code}`));
-          return;
+    exists: async (absolutePath: string): Promise<boolean> => {
+        try {
+            await fsStat(absolutePath);
+            return true;
+        } catch {
+            return false;
         }
-        resolve(results);
-      });
-    });
-  },
+    },
+    glob: async (
+        pattern: string,
+        cwd: string,
+        options: { ignore: string[]; limit: number },
+    ): Promise<string[]> => {
+        const ignoreGitignore =
+            getActivePolicy()['find.ignoreGitignore'] ||
+            !getFileResolverConfig().fd.respectGitignore;
+
+        const args: string[] = [
+            '--glob',
+            '--color=never',
+            '--hidden',
+            '--no-require-git',
+            '--max-results',
+            String(options.limit),
+        ];
+
+        if (ignoreGitignore) {
+            // Bypass .gitignore so audit sees everything on disk.
+            args.push('--no-ignore');
+        }
+
+        // Mirror the factory's --full-path logic for path-containing patterns.
+        let effectivePattern = pattern;
+        if (pattern.includes('/')) {
+            args.push('--full-path');
+            if (!pattern.startsWith('**')) {
+                effectivePattern = `**/${pattern}`;
+            }
+        }
+
+        args.push(effectivePattern, cwd);
+
+        return new Promise<string[]>((resolve, reject) => {
+            const child = spawn(FD_BIN, args, {
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            if (!child.stdout || !child.stderr) {
+                reject(new Error('Failed to open stdio for fd'));
+                return;
+            }
+            const stdout = child.stdout;
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+            const rl = createInterface({
+                input: stdout as NodeJS.ReadableStream,
+            });
+            const results: string[] = [];
+            let stderr = '';
+
+            child.stderr.on('data', (chunk: Buffer | string) => {
+                stderr += typeof chunk === 'string' ? chunk : chunk.toString();
+            });
+
+            rl.on('line', (line: string) => {
+                if (line.trim()) results.push(line.trim());
+            });
+
+            child.on('error', (err: Error) =>
+                reject(new Error(`Failed to run fd: ${err.message}`)),
+            );
+
+            child.on('close', (code: number | null) => {
+                rl.close();
+                if (code !== 0 && results.length === 0) {
+                    reject(
+                        new Error(
+                            stderr.trim() || `fd exited with code ${code}`,
+                        ),
+                    );
+                    return;
+                }
+                resolve(results);
+            });
+        });
+    },
 };
 
 // ─── Compression render helper ────────────────────────────────────────────────
 
 function renderTextResultWithCompression(
-  component: Text,
-  details: object | undefined,
-  theme: Theme,
-  isPartial: boolean,
+    component: Text,
+    details: object | undefined,
+    theme: Theme,
+    isPartial: boolean,
 ): Component {
-  if (!isPartial) {
-    const container = new Container();
-    container.addChild(component);
-    appendCompressionFooter(container, details, theme);
-    if (container.children.length > 1) return container;
-  }
-  return component;
+    if (!isPartial) {
+        const container = new Container();
+        container.addChild(component);
+        appendCompressionFooter(container, details, theme);
+        if (container.children.length > 1) return container;
+    }
+    return component;
 }
 
 /**
@@ -182,27 +204,37 @@ function renderTextResultWithCompression(
  */
 // oxlint-disable-next-line typescript/no-explicit-any, typescript/no-unsafe-type-assertion
 function makeRenderResult<F extends (...args: any[]) => Component>(
-  textByCallId: Map<string, Text>,
-  toolDef: { renderResult?: F },
+    textByCallId: Map<string, Text>,
+    toolDef: { renderResult?: F },
 ): F {
-  const wrap = (
-    result: { details?: object },
-    options: { isPartial: boolean },
-    theme: Theme,
-    context: { toolCallId: string },
-  ) => {
-    let text = textByCallId.get(context.toolCallId);
-    if (!text) {
-      text = new Text("", 0, 0);
-      textByCallId.set(context.toolCallId, text);
-    }
-    const baseContext = { ...context, lastComponent: text };
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    toolDef.renderResult!(result as never, options as never, theme, baseContext as never);
-    return renderTextResultWithCompression(text, result.details, theme, options.isPartial);
-  };
-  // oxlint-disable-next-line typescript/no-restricted-types, typescript/no-unsafe-type-assertion
-  return wrap as unknown as F;
+    const wrap = (
+        result: { details?: object },
+        options: { isPartial: boolean },
+        theme: Theme,
+        context: { toolCallId: string },
+    ) => {
+        let text = textByCallId.get(context.toolCallId);
+        if (!text) {
+            text = new Text('', 0, 0);
+            textByCallId.set(context.toolCallId, text);
+        }
+        const baseContext = { ...context, lastComponent: text };
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+        toolDef.renderResult!(
+            result as never,
+            options as never,
+            theme,
+            baseContext as never,
+        );
+        return renderTextResultWithCompression(
+            text,
+            result.details,
+            theme,
+            options.isPartial,
+        );
+    };
+    // oxlint-disable-next-line typescript/no-restricted-types, typescript/no-unsafe-type-assertion
+    return wrap as unknown as F;
 }
 
 // ─── LLM-disambiguation docs ─────────────────────────────────────────────────
@@ -221,141 +253,180 @@ function makeRenderResult<F extends (...args: any[]) => Component>(
 // light models need the same rule in multiple places before it sticks.
 
 const GREP_DISAMBIGUATION = {
-  description:
-    "Search file contents (ripgrep). Arguments: " +
-    "{ pattern: string, path?: string, glob?: string, ignoreCase?: boolean, " +
-    "literal?: boolean, context?: number, limit?: number }. " +
-    "REQUIRED: pass the regex/text to search for in the `pattern` argument. " +
-    "Do NOT use `description` as an argument — it is JSON-Schema metadata that " +
-    "annotates the `pattern` field, not itself a parameter. " +
-    "Correct call shape = { \"pattern\": \"foo\", \"path\": \"./src\" }.",
-  promptSnippet:
-    "Search file contents for the regex/text in `pattern` (NOT `description`). Respects .gitignore.",
-  promptGuidelines: [
-    "grep: pass the search text in the `pattern` argument. `description` is schema metadata, not a parameter.",
-    "grep: correct shape = { \"pattern\": \"foo\", \"path\": \"./src\" }. Do not emit { \"description\": ... }.",
-  ],
+    description:
+        'Search file contents (ripgrep). Arguments: ' +
+        '{ pattern: string, path?: string, glob?: string, ignoreCase?: boolean, ' +
+        'literal?: boolean, context?: number, limit?: number }. ' +
+        'REQUIRED: pass the regex/text to search for in the `pattern` argument. ' +
+        'Do NOT use `description` as an argument — it is JSON-Schema metadata that ' +
+        'annotates the `pattern` field, not itself a parameter. ' +
+        'Correct call shape = { "pattern": "foo", "path": "./src" }.',
+    promptSnippet:
+        'Search file contents for the regex/text in `pattern` (NOT `description`). Respects .gitignore.',
+    promptGuidelines: [
+        'grep: pass the search text in the `pattern` argument. `description` is schema metadata, not a parameter.',
+        'grep: correct shape = { "pattern": "foo", "path": "./src" }. Do not emit { "description": ... }.',
+    ],
 };
 
 const FIND_DISAMBIGUATION = {
-  description:
-    "Find files by glob pattern (fd). Arguments: " +
-    "{ pattern: string, path?: string, limit?: number }. " +
-    "REQUIRED: pass the glob expression in the `pattern` argument. " +
-    "Do NOT use `description` as an argument — it is JSON-Schema metadata that " +
-    "annotates the `pattern` field. " +
-    "Correct call shape = { \"pattern\": \"**/*.ts\", \"path\": \"./src\" }.",
-  promptSnippet:
-    "Find files matching a glob in `pattern` (NOT `description`). Respects .gitignore.",
-  promptGuidelines: [
-    "find: pass the glob expression in the `pattern` argument. `description` is schema metadata, not a parameter.",
-    "find: correct shape = { \"pattern\": \"**/*.ts\", \"path\": \"./src\" }. Do not emit { \"description\": ... }.",
-  ],
+    description:
+        'Find files by glob pattern (fd). Arguments: ' +
+        '{ pattern: string, path?: string, limit?: number }. ' +
+        'REQUIRED: pass the glob expression in the `pattern` argument. ' +
+        'Do NOT use `description` as an argument — it is JSON-Schema metadata that ' +
+        'annotates the `pattern` field. ' +
+        'Correct call shape = { "pattern": "**/*.ts", "path": "./src" }.',
+    promptSnippet:
+        'Find files matching a glob in `pattern` (NOT `description`). Respects .gitignore.',
+    promptGuidelines: [
+        'find: pass the glob expression in the `pattern` argument. `description` is schema metadata, not a parameter.',
+        'find: correct shape = { "pattern": "**/*.ts", "path": "./src" }. Do not emit { "description": ... }.',
+    ],
 };
 
 const LS_DISAMBIGUATION = {
-  promptGuidelines: [
-    "ls: pass the directory to list in the `path` argument (optional). No other arguments expected.",
-  ],
+    promptGuidelines: [
+        'ls: pass the directory to list in the `path` argument (optional). No other arguments expected.',
+    ],
 };
 
 const READ_DISAMBIGUATION = {
-  promptGuidelines: [
-    "read: pass the file to read in the `path` argument (required). Optional: `offset`, `limit` (1-indexed line numbers).",
-  ],
+    promptGuidelines: [
+        'read: pass the file to read in the `path` argument (required). Optional: `offset`, `limit` (1-indexed line numbers).',
+    ],
 };
 
 // ─── Extension entry point ────────────────────────────────────────────────────
 
 export default function piOverrides(pi: ExtensionAPI): void {
-  // --- Register piFileResolver
-  piFileResolver(pi);
+    // --- Register piFileResolver
+    piFileResolver(pi);
 
-  pi.on("session_start", async (_event, ctx) => {
-    const readDef = createReadToolDefinition(ctx.cwd);
-    // grep: factory only exposes isDirectory/readFile helpers — no hook to
-    // inject --no-ignore into rg. Use default factory; grep.ignoreGitignore
-    // enforcement is blocked by the factory API (see BLOCKERS below).
-    const grepDef = createGrepToolDefinition(ctx.cwd);
-    // ls: audit-aware operations filter dotfiles per active policy at call time.
-    const lsDef = createLsToolDefinition(ctx.cwd, { operations: auditAwareLsOperations });
-    // find: audit-aware operations inject --no-ignore per active policy at call time.
-    const findDef = createFindToolDefinition(ctx.cwd, { operations: auditAwareFindOperations });
+    pi.on('session_start', async (_event, ctx) => {
+        // Load config fresh each session
+        setFileResolverConfig(loadFileResolverConfig(ctx.cwd));
 
-    // --- wrap read.execute: redirect directories to ls-like output ---
-    const cwd = ctx.cwd;
-    // oxlint-disable-next-line typescript/unbound-method -- plain fn, no this
-    const originalReadExecute = readDef.execute;
-    readDef.execute = async (toolCallId, params, signal, onUpdate, extCtx) => {
-      const absPath = nodePath.resolve(cwd, params.path);
-      try {
-        const s = await fsStat(absPath);
-        if (s.isDirectory()) {
-          // oxlint-ignore-next-line typescript/unbound-method -- arrow fn, this is lexically bound
-          return handleReadOnDirectory(absPath, auditAwareLsOperations.readdir);
+        const readDef = createReadToolDefinition(ctx.cwd);
+        // grep: factory only exposes isDirectory/readFile helpers — no hook to
+        // inject --no-ignore into rg. Use default factory; grep.ignoreGitignore
+        // enforcement is blocked by the factory API (see BLOCKERS below).
+        const grepDef = createGrepToolDefinition(ctx.cwd);
+        // ls: audit-aware operations filter dotfiles per active policy at call time.
+        const lsDef = createLsToolDefinition(ctx.cwd, {
+            operations: auditAwareLsOperations,
+        });
+        // find: audit-aware operations inject --no-ignore per active policy at call time.
+        const findDef = createFindToolDefinition(ctx.cwd, {
+            operations: auditAwareFindOperations,
+        });
+
+        // --- wrap read.execute: redirect directories to ls-like output ---
+        const cwd = ctx.cwd;
+        // oxlint-disable-next-line typescript/unbound-method -- plain fn, no this
+        const originalReadExecute = readDef.execute;
+        readDef.execute = async (
+            toolCallId,
+            params,
+            signal,
+            onUpdate,
+            extCtx,
+        ) => {
+            const absPath = nodePath.resolve(cwd, params.path);
+            try {
+                const s = await fsStat(absPath);
+                if (s.isDirectory()) {
+                    // oxlint-ignore-next-line typescript/unbound-method -- arrow fn, this is lexically bound
+                    return handleReadOnDirectory(
+                        absPath,
+                        auditAwareLsOperations.readdir,
+                    );
+                }
+            } catch {
+                // path doesn't exist or no perms — let original handle
+            }
+            return originalReadExecute(
+                toolCallId,
+                params,
+                signal,
+                onUpdate,
+                extCtx,
+            );
+        };
+
+        // --- wrap ls.execute: redirect files to stat+preview ---
+        // oxlint-disable-next-line typescript/unbound-method -- plain fn, no this
+        const originalLsExecute = lsDef.execute;
+        lsDef.execute = async (
+            toolCallId,
+            params,
+            signal,
+            onUpdate,
+            extCtx,
+        ) => {
+            const absPath = nodePath.resolve(cwd, params.path ?? cwd);
+            try {
+                const s = await fsStat(absPath);
+                if (!s.isDirectory()) {
+                    // oxlint-ignore-next-line typescript/unbound-method -- standalone functions, no this
+                    return handleLsOnFile(absPath, fsReadFile, fsStat);
+                }
+            } catch {
+                // path doesn't exist or no perms — let original handle
+            }
+            return originalLsExecute(
+                toolCallId,
+                params,
+                signal,
+                onUpdate,
+                extCtx,
+            );
+        };
+
+        const readTextByCallId = new Map<string, Text>();
+        const grepTextByCallId = new Map<string, Text>();
+        const lsTextByCallId = new Map<string, Text>();
+        const findTextByCallId = new Map<string, Text>();
+
+        pi.registerTool({
+            ...readDef,
+            promptGuidelines: READ_DISAMBIGUATION.promptGuidelines,
+            renderResult: makeRenderResult(readTextByCallId, readDef),
+        });
+        pi.registerTool({
+            ...grepDef,
+            ...GREP_DISAMBIGUATION,
+            renderResult: makeRenderResult(grepTextByCallId, grepDef),
+        });
+        pi.registerTool({
+            ...lsDef,
+            ...LS_DISAMBIGUATION,
+            renderResult: makeRenderResult(lsTextByCallId, lsDef),
+        });
+        pi.registerTool({
+            ...findDef,
+            ...FIND_DISAMBIGUATION,
+            renderResult: makeRenderResult(findTextByCallId, findDef),
+        });
+
+        // Augment default active toolset with native grep/find/ls.
+        // Pi core defaults to ["read", "bash", "edit", "write"] — add the
+        // read-only built-ins so the LLM can use them directly instead of
+        // shelling out via bash. This augments rather than replaces so it
+        // composes safely with pi-roles inherit semantics.
+        const current = pi.getActiveTools();
+        const added = ['grep', 'find', 'ls'].filter(
+            (t) => !current.includes(t),
+        );
+        const newTools = [...new Set([...current, ...added])];
+        pi.setActiveTools(newTools);
+        if (ctx.hasUI && added.length > 0) {
+            ctx.ui.notify(
+                `🛠️ Updated active tools: ${newTools.join(', ')}`,
+                'info',
+            );
         }
-      } catch {
-        // path doesn't exist or no perms — let original handle
-      }
-      return originalReadExecute(toolCallId, params, signal, onUpdate, extCtx);
-    };
-
-    // --- wrap ls.execute: redirect files to stat+preview ---
-    // oxlint-disable-next-line typescript/unbound-method -- plain fn, no this
-    const originalLsExecute = lsDef.execute;
-    lsDef.execute = async (toolCallId, params, signal, onUpdate, extCtx) => {
-      const absPath = nodePath.resolve(cwd, params.path ?? cwd);
-      try {
-        const s = await fsStat(absPath);
-        if (!s.isDirectory()) {
-          // oxlint-ignore-next-line typescript/unbound-method -- standalone functions, no this
-          return handleLsOnFile(absPath, fsReadFile, fsStat);
-        }
-      } catch {
-        // path doesn't exist or no perms — let original handle
-      }
-      return originalLsExecute(toolCallId, params, signal, onUpdate, extCtx);
-    };
-
-    const readTextByCallId = new Map<string, Text>();
-    const grepTextByCallId = new Map<string, Text>();
-    const lsTextByCallId = new Map<string, Text>();
-    const findTextByCallId = new Map<string, Text>();
-
-    pi.registerTool({
-      ...readDef,
-      promptGuidelines: READ_DISAMBIGUATION.promptGuidelines,
-      renderResult: makeRenderResult(readTextByCallId, readDef),
     });
-    pi.registerTool({
-      ...grepDef,
-      ...GREP_DISAMBIGUATION,
-      renderResult: makeRenderResult(grepTextByCallId, grepDef),
-    });
-    pi.registerTool({
-      ...lsDef,
-      ...LS_DISAMBIGUATION,
-      renderResult: makeRenderResult(lsTextByCallId, lsDef),
-    });
-    pi.registerTool({
-      ...findDef,
-      ...FIND_DISAMBIGUATION,
-      renderResult: makeRenderResult(findTextByCallId, findDef),
-    });
-
-    // Augment default active toolset with native grep/find/ls.
-    // Pi core defaults to ["read", "bash", "edit", "write"] — add the
-    // read-only built-ins so the LLM can use them directly instead of
-    // shelling out via bash. This augments rather than replaces so it
-    // composes safely with pi-roles inherit semantics.
-    const current = pi.getActiveTools();
-    const added = ["grep", "find", "ls"].filter(t => !current.includes(t));
-    const newTools = [...new Set([...current, ...added])];
-    pi.setActiveTools(newTools);
-    if (ctx.hasUI && added.length > 0) {
-      ctx.ui.notify(`🛠️ Updated active tools: ${newTools.join(", ")}`, "info");
-    }
-  });
 }
 
 // ─── BLOCKERS ─────────────────────────────────────────────────────────────────
