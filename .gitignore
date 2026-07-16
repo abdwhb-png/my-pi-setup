@@ -47,6 +47,10 @@ docs/resources/about-caveman/
 .zshrc
 .idea
 .ripgreprc
+.gitconfig
+.gitmodules
+.claude/commands/
+nul
 
 # Lock files
 pnpm-lock.yaml
