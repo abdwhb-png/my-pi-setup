@@ -136,12 +136,61 @@ export function fuzzyMatchBasename(files: string[], query: string): string[] {
     return scored.map((entry) => entry.file);
 }
 
+/**
+ * Enrich autocomplete items with cache-only files when git-ignore is disabled.
+ * Only effective when `config.fd.respectGitignore` is false and cache is ready.
+ *
+ * Existing items are preserved; cache matches not already present (by label)
+ * are appended, capped at 20 extra entries.
+ */
+export function enrichAutocompleteWithCache(
+    prefix: string,
+    items: Array<{ value: string; label: string; description?: string }>,
+    cache: { files: string[]; ready: boolean },
+    config: FileResolverConfig,
+): Array<{ value: string; label: string; description?: string }> {
+    if (!prefix.startsWith('@')) return items;
+    if (config.fd.respectGitignore) return items;
+    if (!cache.ready) return items;
+
+    const parsed = parseAtValue(prefix);
+    if (!parsed.path) return items;
+
+    const extraFiles = fuzzyFilter(
+        cache.files,
+        parsed.path,
+        (f) => f.split('/').pop() ?? '',
+    );
+    if (extraFiles.length === 0) return items;
+
+    const existingLabels = new Set(items.map((i) => i.label));
+    const result = [...items];
+
+    for (const file of extraFiles) {
+        const basename = file.split('/').pop() ?? '';
+        if (existingLabels.has(basename)) continue;
+
+        result.push({
+            value: `@${file}`,
+            label: basename,
+            description: file,
+        });
+        existingLabels.add(basename);
+
+        // Cap extra injections at 20 to avoid flooding the dropdown
+        if (result.length - items.length >= 20) break;
+    }
+
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // Search roots
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
 const AGENT_DIR = join(HOME, '.pi', 'agent');
+const FD_PATH = join(AGENT_DIR, 'bin', 'fd');
 const EXTENSIONS_DIR = join(AGENT_DIR, 'extensions');
 const PI_PROMPTS_DIR = join(HOME, '.pi', 'pi-prompts');
 const PI_DOCS_DIR = join(HOME, '.pi', 'docs');
@@ -218,7 +267,7 @@ async function walkDirFd(
     return new Promise<string[]>((resolve) => {
         const args = buildFdArgs(baseDir, maxResults, config);
 
-        const child = spawn('fd', args, {
+        const child = spawn(FD_PATH, args, {
             stdio: ['ignore', 'pipe', 'pipe'],
             signal,
         });
@@ -349,13 +398,29 @@ export default function (pi: ExtensionAPI): void {
                         cursorCol,
                         options,
                     );
-                    if (!result) return null;
 
-                    if (!result.prefix.startsWith('@')) return result;
+                    // Extract @ prefix from text, even if pi-tui returned null
+                    const currentLine = lines[cursorLine] ?? '';
+                    const textBeforeCursor = currentLine.slice(0, cursorCol);
+                    const atMatch = textBeforeCursor.match(/@(\S*)$/);
+                    const prefix =
+                        result?.prefix ?? (atMatch ? atMatch[0] : undefined);
+
+                    if (!prefix || !prefix.startsWith('@')) return result;
+
+                    // Inject cache-only files when git-ignore is disabled
+                    const enrichedItems = enrichAutocompleteWithCache(
+                        prefix,
+                        result?.items ?? [],
+                        currentCache,
+                        fileResolverConfig,
+                    );
+
+                    if (enrichedItems.length === 0) return null;
 
                     return {
-                        ...result,
-                        items: result.items.map((item) => ({
+                        prefix,
+                        items: enrichedItems.map((item) => ({
                             ...item,
                             value: transformAtValue(item.value, sessionCwd),
                         })),

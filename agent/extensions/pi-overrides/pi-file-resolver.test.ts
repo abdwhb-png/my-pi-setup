@@ -46,6 +46,7 @@ const {
     getSearchRoots,
     levenshteinDistance,
     fuzzyMatchBasename,
+    enrichAutocompleteWithCache,
 } = await import('./pi-file-resolver.ts');
 
 describe('parseAtValue', () => {
@@ -353,5 +354,134 @@ describe('fuzzyMatchBasename', () => {
         const result = fuzzyMatchBasename(sampleFiles, 'nginx.conf');
         expect(result.length).toBe(1);
         expect(result[0]).toContain('nginx.conf');
+    });
+});
+
+describe('enrichAutocompleteWithCache', () => {
+    const existingItems = [
+        {
+            value: '@/home/user/config.ts',
+            label: 'config.ts',
+            description: '/home/user/config.ts',
+        },
+    ];
+
+    const cache: { files: string[]; ready: boolean; running: boolean } = {
+        files: [
+            '/home/user/config.json',
+            '/home/user/config.ts',
+            '/home/user/.env.development',
+        ],
+        ready: true,
+        running: false,
+    };
+
+    const gitRespConfig = {
+        fd: {
+            respectGitignore: true,
+            followSymlinks: true,
+            includeHidden: true,
+            excludePatterns: ['.git', 'node_modules'],
+            types: ['f'],
+        },
+    };
+
+    const gitNoRespConfig = {
+        fd: {
+            respectGitignore: false,
+            followSymlinks: true,
+            includeHidden: true,
+            excludePatterns: ['.git', 'node_modules'],
+            types: ['f'],
+        },
+    };
+
+    it('adds cache-only files when respectGitignore is false', () => {
+        const result = enrichAutocompleteWithCache(
+            '@config',
+            existingItems,
+            cache,
+            gitNoRespConfig,
+        );
+        // config.json from cache should be added (not in existing)
+        const labels = result.map((i) => i.label);
+        expect(labels).toContain('config.json');
+        // config.ts already in existing
+        expect(labels.filter((l) => l === 'config.ts').length).toBe(1);
+    });
+
+    it('does NOT add files when respectGitignore is true', () => {
+        const result = enrichAutocompleteWithCache(
+            '@config',
+            existingItems,
+            cache,
+            gitRespConfig,
+        );
+        const labels = result.map((i) => i.label);
+        expect(labels).toEqual(['config.ts']);
+    });
+
+    it('skips injection when cache is not ready', () => {
+        const unreadyCache = { files: [], ready: false, running: false };
+        const result = enrichAutocompleteWithCache(
+            '@config',
+            existingItems,
+            unreadyCache,
+            gitNoRespConfig,
+        );
+        const labels = result.map((i) => i.label);
+        expect(labels).toEqual(['config.ts']);
+    });
+
+    it('returns original items unchanged when query is empty', () => {
+        const result = enrichAutocompleteWithCache(
+            '@',
+            existingItems,
+            cache,
+            gitNoRespConfig,
+        );
+        expect(result).toEqual(existingItems);
+    });
+
+    it('deduplicates by value', () => {
+        // existing has config.ts, cache also has config.ts → no duplicate
+        const result = enrichAutocompleteWithCache(
+            '@config',
+            existingItems,
+            cache,
+            gitNoRespConfig,
+        );
+        const tsItems = result.filter((i) => i.label === 'config.ts');
+        expect(tsItems.length).toBe(1);
+    });
+
+    it('returns original items when prefix is not @-prefixed (edge case)', () => {
+        const result = enrichAutocompleteWithCache(
+            'config',
+            existingItems,
+            cache,
+            gitNoRespConfig,
+        );
+        expect(result).toEqual(existingItems);
+    });
+
+    it('includes dotfiles from cache when respectGitignore is false', () => {
+        const result = enrichAutocompleteWithCache(
+            '@.env',
+            existingItems,
+            cache,
+            gitNoRespConfig,
+        );
+        expect(result.map((i) => i.label)).toContain('.env.development');
+    });
+
+    it('empty items array stays empty when cache has matches', () => {
+        const result = enrichAutocompleteWithCache(
+            '@.env',
+            [],
+            cache,
+            gitNoRespConfig,
+        );
+        expect(result.map((i) => i.label)).toContain('.env.development');
     });
 });
