@@ -6,104 +6,105 @@
  */
 
 const DANGEROUS_PATTERNS: RegExp[] = [
-  // ═══ rm on critical locations ═══
-  // Matches rm with any combination of -f/-r flags targeting '/' or '~'
-  // Also catches subpaths like /etc, /var since they start with /
-  /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|~\/?(\s|$|\b))/,
-  // Same with -r before -f
-  /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+)?(-[a-zA-Z]*f[a-zA-Z]*\s+)?(\/|~\/?(\s|$|\b))/,
-  // rm -rf /* (glob removal — catches /* where bare / is missed)
-  /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?\/\*/,
-  // rm targeting critical system directories (even with path traversal, $HOME, or quote obfuscation)
-  /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?(\$|\.\.\/|\S*\/etc|\S*\/var|\S*\/boot|\S*\/bin|\S*\/usr)/,
-  // rm with flags + argument starting with / (catches quote obfuscation like rm -rf ''/"etc")
-  /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?['"]+\//,
+    // ═══ rm — all invocations blocked (safe_bash replace mode; use write/edit tools) ═══
+    /\brm\b/,
 
-  // ═══ Privilege escalation ═══
-  /\bsudo\b/,
+    // ═══ rm on critical locations ═══
+    // Matches rm with any combination of -f/-r flags targeting '/' or '~'
+    // Also catches subpaths like /etc, /var since they start with /
+    /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|~\/?(\s|$|\b))/,
+    // Same with -r before -f
+    /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+)?(-[a-zA-Z]*f[a-zA-Z]*\s+)?(\/|~\/?(\s|$|\b))/,
+    // rm -rf /* (glob removal — catches /* where bare / is missed)
+    /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?\/\*/,
+    // rm targeting critical system directories (even with path traversal, $HOME, or quote obfuscation)
+    /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?(\$|\.\.\/|\S*\/etc|\S*\/var|\S*\/boot|\S*\/bin|\S*\/usr)/,
+    // rm with flags + argument starting with / (catches quote obfuscation like rm -rf ''/"etc")
+    /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?['"]+\//,
 
-  // ═══ Filesystem destruction ═══
-  /\b(mkfs|mkswap|fdisk|parted|gdisk)\b/,
-  /\bdd\s+if=/,
-  />\s*\/dev\/(sh|hd|sd|nvme|vd)[a-z]/,
+    // ═══ Privilege escalation ═══
+    /\bsudo\b/,
 
-  // ═══ Fork bomb ═══
-  /:\(\)\s*\{\s*:\|:&\s*\}\s*;:/,
+    // ═══ Filesystem destruction ═══
+    /\b(mkfs|mkswap|fdisk|parted|gdisk)\b/,
+    /\bdd\s+if=/,
+    />\s*\/dev\/(sh|hd|sd|nvme|vd)[a-z]/,
 
-  // ═══ Permission abuse ═══
-  /\bchmod\s+(-[a-zA-Z]+\s+)?([0-7]{3,4})\s+\//,
-  /\bchown\s+(-[a-zA-Z]+\s+)?root/,
+    // ═══ Fork bomb ═══
+    /:\(\)\s*\{\s*:\|:&\s*\}\s*;:/,
 
-  // ═══ Remote pipe to shell ═══
-  /\b(curl|wget)\s.*\|\s*(ba)?sh/,
-  // Indirect: curl/wget to file then execute
-  /\b(curl|wget)\s+.*(?:-o|-O|>)\s+\S+\s+(?:&&|;)\s+(?:bash|sh|zsh)\b/,
-  // base64 decode pipe shell
-  /base64\s+-d\s*\|\s*(ba)?sh/,
-  // openssl dec pipe shell
-  /\bopenssl\s+enc\s+-d\s.*\|\s*(ba)?sh/,
+    // ═══ Permission abuse ═══
+    /\bchmod\s+(-[a-zA-Z]+\s+)?([0-7]{3,4})\s+\//,
+    /\bchown\s+(-[a-zA-Z]+\s+)?root/,
 
-  // ═══ Reverse shell / network tools ═══
-  /\bnc\s+-[a-zA-Z]*e\b/,
-  /\bsocat\s+.*(?:exec|system)/i,
-  /\/dev\/(tcp|udp)\//,
+    // ═══ Remote pipe to shell ═══
+    /\b(curl|wget)\s.*\|\s*(ba)?sh/,
+    // Indirect: curl/wget to file then execute
+    /\b(curl|wget)\s+.*(?:-o|-O|>)\s+\S+\s+(?:&&|;)\s+(?:bash|sh|zsh)\b/,
+    // base64 decode pipe shell
+    /base64\s+-d\s*\|\s*(ba)?sh/,
+    // openssl dec pipe shell
+    /\bopenssl\s+enc\s+-d\s.*\|\s*(ba)?sh/,
 
-  // ═══ Language-based execution with dangerous patterns ═══
-  /\b(python|python3|python2)\s+-c\s+.*\b(?:os\.system|subprocess\.(?:call|Popen|check_call|run))\s*\(/,
-  /\bnode\s+-[e"]\s+.*\b(?:exec(?:Sync)?|spawn(?:Sync)?)\s*\(/,
-  /\bperl\s+-e\s+.*\b(?:system|exec)/,
-  /\bruby\s+-e\s+.*\b(?:system|exec)/,
+    // ═══ Reverse shell / network tools ═══
+    /\bnc\s+-[a-zA-Z]*e\b/,
+    /\bsocat\s+.*(?:exec|system)/i,
+    /\/dev\/(tcp|udp)\//,
 
-  // ═══ System shutdown / halt / reboot ═══
-  /\b(?:shutdown|reboot|halt|poweroff)\b/,
+    // ═══ Language-based execution with dangerous patterns ═══
+    /\b(python|python3|python2)\s+-c\s+.*\b(?:os\.system|subprocess\.(?:call|Popen|check_call|run))\s*\(/,
+    /\bnode\s+-[e"]\s+.*\b(?:exec(?:Sync)?|spawn(?:Sync)?)\s*\(/,
+    /\bperl\s+-e\s+.*\b(?:system|exec)/,
+    /\bruby\s+-e\s+.*\b(?:system|exec)/,
 
-  // ═══ init to runlevel 0 (halt), 1 (single), 6 (reboot) ═══
-  /\binit\s+[016]/,
+    // ═══ System shutdown / halt / reboot ═══
+    /\b(?:shutdown|reboot|halt|poweroff)\b/,
 
-  // ═══ Process kill critical ═══
-  /\bkill\s+-9\s+1\b/,
+    // ═══ init to runlevel 0 (halt), 1 (single), 6 (reboot) ═══
+    /\binit\s+[016]/,
 
-  // ═══ Block chmod 777 on any path starting with / ═══
-  // (already partially covered above, this covers /etc /var /boot etc)
-  /\bchmod\s+(-[a-zA-Z]+\s+)?777\s+\/(?!\.)/,
+    // ═══ Process kill critical ═══
+    /\bkill\s+-9\s+1\b/,
 
-  // ═══ Potential cryptominer detection ═══
-  /\b(xmrig|minergate|cpuminer)\b/,
+    // ═══ Block chmod 777 on any path starting with / ═══
+    // (already partially covered above, this covers /etc /var /boot etc)
+    /\bchmod\s+(-[a-zA-Z]+\s+)?777\s+\/(?!\.)/,
+
+    // ═══ Potential cryptominer detection ═══
+    /\b(xmrig|minergate|cpuminer)\b/,
 ];
 
 /**
  * Normalize a command string to reduce common obfuscation tricks.
  */
 function normalize(command: string): string {
-  return (
-    command
-      // Shell line continuation
-      .replace(/\\\n/g, " ")
-      // Escaped spaces (e.g., rm\ -rf\ /)
-      .replace(/\\ /g, " ")
-      // HTML entities for /
-      .replace(/&#x2F;/gi, "/")
-      .replace(/&#47;/gi, "/")
-      // Collapse multiple spaces
-      .replace(/\s{2,}/g, " ")
-      .trim()
-  );
+    return (
+        command
+            // Shell line continuation
+            .replace(/\\\n/g, ' ')
+            // Escaped spaces (e.g., rm\ -rf\ /)
+            .replace(/\\ /g, ' ')
+            // HTML entities for /
+            .replace(/&#x2F;/gi, '/')
+            .replace(/&#47;/gi, '/')
+            // Collapse multiple spaces
+            .replace(/\s{2,}/g, ' ')
+            .trim()
+    );
 }
 
 /**
  * Check if a command is dangerous.
  * Returns null if safe, or an error message string if blocked.
  */
-export function isDangerous(
-  command: string,
-): string | null {
-  const normalized = normalize(command);
-  for (const pattern of DANGEROUS_PATTERNS) {
-    if (pattern.test(normalized)) {
-      return `Command blocked by safe_bash: matches dangerous pattern ${pattern}`;
+export function isDangerous(command: string): string | null {
+    const normalized = normalize(command);
+    for (const pattern of DANGEROUS_PATTERNS) {
+        if (pattern.test(normalized)) {
+            return `Command blocked by safe_bash: matches dangerous pattern ${pattern}`;
+        }
     }
-  }
-  return null;
+    return null;
 }
 
 /**
@@ -112,23 +113,23 @@ export function isDangerous(
  * redirect it to the better native implementation.
  */
 const SHELL_TO_NATIVE_MAP: Record<string, string> = {
-  grep: "grep",
-  rg: "grep",
-  find: "find",
-  fd: "find",
-  ls: "ls",
-  ack: "grep",
-  ag: "grep",
+    grep: 'grep',
+    rg: 'grep',
+    find: 'find',
+    fd: 'find',
+    ls: 'ls',
+    ack: 'grep',
+    ag: 'grep',
 };
 
 /**
  * Extract the first word (command name) from a shell command string.
  */
 function firstWord(command: string): string | undefined {
-  const norm = normalize(command);
-  const space = norm.indexOf(" ");
-  if (space === -1) return norm;
-  return norm.slice(0, space);
+    const norm = normalize(command);
+    const space = norm.indexOf(' ');
+    if (space === -1) return norm;
+    return norm.slice(0, space);
 }
 
 /**
@@ -138,27 +139,23 @@ function firstWord(command: string): string | undefined {
  *
  * Example: `grep -r "foo" .` → "BLOCKED: Use native 'grep' tool (uses ripgrep, 10-100x faster with structured JSON output) instead of 'bash grep'"
  */
-export function redirectShellCommand(
-  command: string,
-): string | null {
-  const first = firstWord(command);
-  if (!first) return null;
-  const native = SHELL_TO_NATIVE_MAP[first];
-  if (!native) return null;
+export function redirectShellCommand(command: string): string | null {
+    const first = firstWord(command);
+    if (!first) return null;
+    const native = SHELL_TO_NATIVE_MAP[first];
+    if (!native) return null;
 
-  const toolName = native === "grep"
-    ? "grep"
-    : native === "find"
-      ? "find"
-      : "ls";
+    const toolName =
+        native === 'grep' ? 'grep' : native === 'find' ? 'find' : 'ls';
 
-  const speedNote = native === "grep"
-    ? " (uses ripgrep, 10-100x faster with structured JSON output)"
-    : native === "find"
-      ? " (uses fd, faster and respects .gitignore)"
-      : " (uses Node.js fs APIs, more reliable parsing)";
+    const speedNote =
+        native === 'grep'
+            ? ' (uses ripgrep, 10-100x faster with structured JSON output)'
+            : native === 'find'
+              ? ' (uses fd, faster and respects .gitignore)'
+              : ' (uses Node.js fs APIs, more reliable parsing)';
 
-  return `BLOCKED: Use native '${toolName}' tool${speedNote} instead of safe_bash '${first}'`;
+    return `BLOCKED: Use native '${toolName}' tool${speedNote} instead of safe_bash '${first}'`;
 }
 
 /**
@@ -174,9 +171,9 @@ export function redirectShellCommand(
  * via shouldEnforceNativeTools() before calling this function.
  */
 export function redirectShellCommandWithPolicy(
-  command: string,
-  enforceNative: boolean,
+    command: string,
+    enforceNative: boolean,
 ): string | null {
-  if (!enforceNative) return null;
-  return redirectShellCommand(command);
+    if (!enforceNative) return null;
+    return redirectShellCommand(command);
 }
