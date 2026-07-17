@@ -2,21 +2,36 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import nodePath from 'node:path';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type {
+    ExtensionAPI,
+    SlashCommandInfo,
+} from '@earendil-works/pi-coding-agent';
 import { Container, Text } from '@earendil-works/pi-tui';
 import {
     resetAuditState,
     setActiveProfile,
 } from '../_shared/audit-mode/audit-state';
 
-// Prevent config.ts from reading real settings.json via SettingsManager
-mock.module('@earendil-works/pi-coding-agent', () => ({
+const {
+    createFindToolDefinition,
+    createGrepToolDefinition,
+    createLsToolDefinition,
+    createReadToolDefinition,
+} = await import('@earendil-works/pi-coding-agent');
+const settingsManagerCreate = mock(() => ({
+    getGlobalSettings: () => ({}),
+    getProjectSettings: () => ({}),
+}));
+
+// Register before loading index.ts so config.ts never reads real settings.json.
+void mock.module('@earendil-works/pi-coding-agent', () => ({
+    createFindToolDefinition,
+    createGrepToolDefinition,
+    createLsToolDefinition,
+    createReadToolDefinition,
     getAgentDir: () => '/tmp/pi-agent',
     SettingsManager: {
-        create: () => ({
-            getGlobalSettings: () => ({}),
-            getProjectSettings: () => ({}),
-        }),
+        create: settingsManagerCreate,
         inMemory: (data: unknown) => ({
             getGlobalSettings: () => data,
             getProjectSettings: () => data,
@@ -24,10 +39,11 @@ mock.module('@earendil-works/pi-coding-agent', () => ({
     },
 }));
 
-import piOverrides, {
+const {
+    default: piOverrides,
     auditAwareLsOperations,
     auditAwareFindOperations,
-} from './index';
+} = await import('./index');
 
 function createMockTheme() {
     return {
@@ -36,7 +52,10 @@ function createMockTheme() {
     };
 }
 
-function createMockExtensionApi(initialSessionName?: string) {
+function createMockExtensionApi(
+    initialSessionName?: string,
+    commands?: SlashCommandInfo[],
+) {
     const handlers = new Map<
         string,
         (event: object, ctx: object) => Promise<void> | void
@@ -75,6 +94,7 @@ function createMockExtensionApi(initialSessionName?: string) {
         setSessionName: (name: string) => {
             sessionName = name;
         },
+        getCommands: () => commands ?? [],
     } as ExtensionAPI;
     return {
         pi,
@@ -88,6 +108,7 @@ function createMockExtensionApi(initialSessionName?: string) {
 describe('pi-overrides', () => {
     beforeEach(() => {
         resetAuditState('standard');
+        settingsManagerCreate.mockClear();
     });
 
     afterEach(() => {
@@ -116,6 +137,10 @@ describe('pi-overrides', () => {
         expect(getActiveTools()).toContain('bash');
         expect(getActiveTools()).toContain('edit');
         expect(getActiveTools()).toContain('write');
+        expect(settingsManagerCreate).toHaveBeenCalledWith(
+            '/home/abdwhb/.pi/agent',
+            '/tmp/pi-agent',
+        );
     });
 
     it('names an unnamed session from a skill-prefixed user message', async () => {
@@ -797,6 +822,194 @@ describe('pi-overrides', () => {
             const text =
                 result.content.find((c) => c.type === 'text')?.text ?? '';
             expect(text).toContain('Path is a directory. Contents of');
+        });
+    });
+
+    describe('prompt input session naming', () => {
+        const promptCommands: SlashCommandInfo[] = [
+            {
+                name: 'debug-issue',
+                description: 'Debug an issue',
+                source: 'prompt',
+                sourceInfo: {
+                    path: '/prompts/debug-issue.md',
+                    source: 'prompt',
+                    scope: 'user',
+                    origin: 'package',
+                },
+            },
+            {
+                name: 'review-code',
+                description: 'Review code',
+                source: 'prompt',
+                sourceInfo: {
+                    path: '/prompts/review-code.md',
+                    source: 'prompt',
+                    scope: 'user',
+                    origin: 'package',
+                },
+            },
+        ];
+        const nonPromptCommands: SlashCommandInfo[] = [
+            {
+                name: 'diagnose',
+                source: 'skill',
+                sourceInfo: {
+                    path: '/skills/diagnose/SKILL.md',
+                    source: 'skill',
+                    scope: 'user',
+                    origin: 'package',
+                },
+            },
+            {
+                name: 'custom-cmd',
+                source: 'extension',
+                sourceInfo: {
+                    path: '/extensions/test-ext/cmd.ts',
+                    source: 'extension',
+                    scope: 'user',
+                    origin: 'package',
+                },
+            },
+        ];
+
+        it('registers an input handler', async () => {
+            const { pi, handlers } = createMockExtensionApi();
+            piOverrides(pi);
+            expect(handlers.has('input')).toBe(true);
+        });
+
+        it('names an unnamed session from a known prompt command with args', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                undefined,
+                promptCommands,
+            );
+            piOverrides(pi);
+            const handler = handlers.get('input');
+            if (!handler) throw new Error('input handler not registered');
+
+            await handler(
+                { text: '/debug-issue sandbox colors', type: 'input' },
+                {},
+            );
+
+            expect(getSessionName()).toBe('/prompt:debug-issue sandbox colors');
+        });
+
+        it('names an unnamed session from a known prompt command without args', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                undefined,
+                promptCommands,
+            );
+            piOverrides(pi);
+            const handler = handlers.get('input');
+            if (!handler) throw new Error('input handler not registered');
+
+            await handler({ text: '/debug-issue', type: 'input' }, {});
+
+            expect(getSessionName()).toBe('/prompt:debug-issue');
+        });
+
+        it('preserves an existing explicit session name', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                'custom name',
+                promptCommands,
+            );
+            piOverrides(pi);
+            const handler = handlers.get('input');
+            if (!handler) throw new Error('input handler not registered');
+
+            await handler(
+                { text: '/debug-issue sandbox colors', type: 'input' },
+                {},
+            );
+
+            expect(getSessionName()).toBe('custom name');
+        });
+
+        it('ignores unknown commands not in promptNames', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                undefined,
+                promptCommands,
+            );
+            piOverrides(pi);
+            const handler = handlers.get('input');
+            if (!handler) throw new Error('input handler not registered');
+
+            await handler({ text: '/unknown arg1', type: 'input' }, {});
+
+            expect(getSessionName()).toBeUndefined();
+        });
+
+        it('ignores skill-source commands', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                undefined,
+                nonPromptCommands,
+            );
+            piOverrides(pi);
+            const handler = handlers.get('input');
+            if (!handler) throw new Error('input handler not registered');
+
+            await handler({ text: '/diagnose investigate', type: 'input' }, {});
+
+            expect(getSessionName()).toBeUndefined();
+        });
+
+        it('ignores extension-source commands', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                undefined,
+                nonPromptCommands,
+            );
+            piOverrides(pi);
+            const handler = handlers.get('input');
+            if (!handler) throw new Error('input handler not registered');
+
+            await handler({ text: '/custom-cmd do-thing', type: 'input' }, {});
+
+            expect(getSessionName()).toBeUndefined();
+        });
+
+        it('a later prompt names a still-unnamed session', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                undefined,
+                promptCommands,
+            );
+            piOverrides(pi);
+            const handler = handlers.get('input');
+            if (!handler) throw new Error('input handler not registered');
+
+            await handler({ text: '/unknown first', type: 'input' }, {});
+            expect(getSessionName()).toBeUndefined();
+
+            await handler(
+                { text: '/debug-issue fix login', type: 'input' },
+                {},
+            );
+            expect(getSessionName()).toBe('/prompt:debug-issue fix login');
+        });
+
+        it('existing skill message_end behavior still works unchanged', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi();
+            piOverrides(pi);
+            const handler = handlers.get('message_end');
+            if (!handler) throw new Error('message_end handler not registered');
+
+            await handler(
+                {
+                    message: {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'text',
+                                text: '<skill name="diagnose" location="/skills/diagnose/SKILL.md">instructions</skill>\n\nInvestigate color',
+                            },
+                        ],
+                    },
+                },
+                {},
+            );
+
+            expect(getSessionName()).toBe('/skill:diagnose Investigate color');
         });
     });
 });

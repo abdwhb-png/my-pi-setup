@@ -1,5 +1,65 @@
 import { describe, expect, it } from 'bun:test';
-import { compactSkillSessionName } from './session-name.ts';
+import {
+    compactSkillSessionName,
+    compactPromptSessionName,
+} from './session-name.ts';
+
+describe('compactPromptSessionName', () => {
+    it('transforms known prompt command with args', () => {
+        const prompts = new Set(['debug-issue']);
+        expect(
+            compactPromptSessionName('/debug-issue sandbox colors', prompts),
+        ).toBe('/prompt:debug-issue sandbox colors');
+    });
+
+    it('transforms known prompt command without args', () => {
+        const prompts = new Set(['debug-issue']);
+        expect(compactPromptSessionName('/debug-issue', prompts)).toBe(
+            '/prompt:debug-issue',
+        );
+    });
+
+    it.each([
+        ['unknown command', '/unknown', new Set(['debug-issue'])],
+        [
+            'skill command not in promptNames',
+            '/skill:diagnose',
+            new Set(['debug-issue']),
+        ],
+        [
+            'non-leading slash text',
+            'hello /debug-issue',
+            new Set(['debug-issue']),
+        ],
+        ['malformed slash-only input', '/', new Set(['debug-issue'])],
+    ])('returns undefined for %s', (_case, input, prompts) => {
+        expect(compactPromptSessionName(input, prompts)).toBeUndefined();
+    });
+
+    it('preserves exact argument remainder with quotes and repeated whitespace', () => {
+        const prompts = new Set(['debug-issue']);
+        expect(
+            compactPromptSessionName(
+                '/debug-issue   "quoted arg"    repeated  spaces',
+                prompts,
+            ),
+        ).toBe('/prompt:debug-issue   "quoted arg"    repeated  spaces');
+    });
+
+    it('treats trailing whitespace without real args as no-args', () => {
+        const prompts = new Set(['debug-issue']);
+        expect(compactPromptSessionName('/debug-issue   ', prompts)).toBe(
+            '/prompt:debug-issue',
+        );
+    });
+
+    it('transforms any command explicitly present in promptNames', () => {
+        const prompts = new Set(['debug-issue', 'skill:diagnose']);
+        expect(compactPromptSessionName('/skill:diagnose', prompts)).toBe(
+            '/prompt:skill:diagnose',
+        );
+    });
+});
 
 describe('compactSkillSessionName', () => {
     it('replaces a leading skill block with its compact command', () => {

@@ -25,7 +25,10 @@ import {
 } from './config.ts';
 import { handleReadOnDirectory, handleLsOnFile } from './path-redirect';
 import piFileResolver from './pi-file-resolver';
-import { compactSkillSessionName } from './session-name.ts';
+import {
+    compactPromptSessionName,
+    compactSkillSessionName,
+} from './session-name.ts';
 
 // ─── Audit-aware ls operations ───────────────────────────────────────────────
 
@@ -301,7 +304,7 @@ const READ_DISAMBIGUATION = {
 
 // ─── Extension entry point ────────────────────────────────────────────────────
 
-function registerCompactSkillSessionNames(pi: ExtensionAPI): void {
+function registerCompactSessionNames(pi: ExtensionAPI): void {
     pi.on('message_end', (event) => {
         if (pi.getSessionName() || event.message.role !== 'user') return;
 
@@ -317,12 +320,26 @@ function registerCompactSkillSessionNames(pi: ExtensionAPI): void {
         const sessionName = compactSkillSessionName(text);
         if (sessionName) pi.setSessionName(sessionName);
     });
+
+    pi.on('input', (event) => {
+        if (pi.getSessionName()) return { action: 'continue' };
+
+        const commands = pi.getCommands();
+        const promptNames = new Set(
+            commands.filter((c) => c.source === 'prompt').map((c) => c.name),
+        );
+
+        const sessionName = compactPromptSessionName(event.text, promptNames);
+        if (sessionName) pi.setSessionName(sessionName);
+
+        return { action: 'continue' };
+    });
 }
 
 export default function piOverrides(pi: ExtensionAPI): void {
     // --- Register piFileResolver
     piFileResolver(pi);
-    registerCompactSkillSessionNames(pi);
+    registerCompactSessionNames(pi);
 
     pi.on('session_start', async (_event, ctx) => {
         // Load config fresh each session
