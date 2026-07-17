@@ -1,0 +1,260 @@
+{
+  "lastChangelogVersion": "0.80.7",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-luna",
+  "defaultThinkingLevel": "high",
+  "hideThinkingBlock": false,
+  "theme": "dark",
+  "steeringMode": "all",
+  "followUpMode": "all",
+  "npmCommand": [
+    "bun"
+  ],
+  "extensions": [
+    "/home/abdwhb/.pi/agent/extensions/package-finalizer.ts",
+    "/home/abdwhb/.pi/agent/extensions/pi-overrides/index.ts"
+  ],
+  "packages": [
+    "npm:pi-subagents",
+    "npm:pi-web-access",
+    "npm:@juicesharp/rpiv-ask-user-question",
+    "npm:pi-mcp-adapter",
+    "npm:@juicesharp/rpiv-todo",
+    "npm:pi-hermes-memory",
+    "npm:pi-intercom",
+    "/home/abdwhb/projects/pi-integrations/plannotator/apps/pi-extension",
+    "/home/abdwhb/projects/pi-integrations/pi-fancy-footer",
+    "npm:@hypabolic/pi-hypa",
+    "npm:@gotgenes/pi-permission-system",
+    "npm:pi-caveman",
+    "../../projects/pi-integrations/pi-roles",
+    "/home/abdwhb/projects/shared-services/pi-lens",
+    "npm:context-mode"
+  ],
+  "safeBash": {
+    "mode": "replace"
+  },
+  "packageLifecycleTrust": {
+    "confirm": false,
+    "showStatus": true
+  },
+  "aiProviders": {
+    "providers": {
+      "factory-ai": false,
+      "cpa": true
+    }
+  },
+  "saveTokens": {
+    "caveman": {
+      "defaultLevel": "full"
+    }
+  },
+  "fileResolver": {
+    "fd": {
+      "respectGitignore": false,
+      "excludePatterns": [
+        ".git",
+        "node_modules",
+        ".cache"
+      ]
+    },
+    "rg": {
+      "respectGitignore": false
+    },
+    "ls": {
+      "respectGitignore": false
+    }
+  },
+  "translate": {
+    "model": "ocg/go-deepseek-v4-flash",
+    "defaultTargetLanguage": "en",
+    "languages": {
+      "en": "English",
+      "fr": "French"
+    }
+  },
+  "pi-roles": {
+    "roleScope": "both",
+    "defaultRole": "pi-caveman",
+    "intercom": "both",
+    "showStatus": false
+  },
+  "subagents": {
+    "agentOverrides": {
+      "worker": {
+        "model": "cpa/ocg/go-deepseek-v4-flash",
+        "fallbackModels": [
+          "cpa/deepseek/deepseek-v4-flash",
+          "cpa/qwen/qwen3.6-plus-preview:free"
+        ],
+        "thinking": "medium",
+        "tools": [
+          "read",
+          "write",
+          "edit",
+          "grep",
+          "find",
+          "ls",
+          "safe_bash",
+          "contact_supervisor"
+        ]
+      },
+      "delegate": {
+        "model": "cpa/ocg/go-deepseek-v4-flash",
+        "fallbackModels": [
+          "cpa/deepseek/deepseek-v4-flash",
+          "cpa/qwen/qwen3.6-plus-preview:free"
+        ],
+        "thinking": "medium",
+        "tools": [
+          "read",
+          "write",
+          "edit",
+          "grep",
+          "find",
+          "ls",
+          "safe_bash",
+          "contact_supervisor"
+        ]
+      },
+      "scout": {
+        "model": "cpa/ocg/go-deepseek-v4-flash",
+        "fallbackModels": [
+          "cpa/deepseek/deepseek-v4-flash",
+          "cpa/qwen/qwen3.6-plus-preview:free"
+        ],
+        "thinking": "high",
+        "tools": [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "safe_bash",
+          "write",
+          "intercom"
+        ]
+      },
+      "researcher": {
+        "model": "cpa/ocg/go-deepseek-v4-pro",
+        "fallbackModels": [
+          "cpa/deepseek/deepseek-v4-pro",
+          "cpa/nvidia/nemotron-3-super-120b-a12b:free"
+        ],
+        "tools": [
+          "read",
+          "write",
+          "web_search",
+          "fetch_content",
+          "get_search_content",
+          "intercom"
+        ]
+      },
+      "reviewer": {
+        "model": "cpa/ocg/go-glm-5.2",
+        "fallbackModels": [
+          "cpa/ocg/go-deepseek-v4-pro",
+          "cpa/deepseek/deepseek-v4-pro"
+        ],
+        "thinking": "high",
+        "tools": [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "safe_bash",
+          "edit",
+          "write",
+          "intercom"
+        ]
+      },
+      "planner": {
+        "model": "cpa/ocg/go-deepseek-v4-pro",
+        "fallbackModels": [
+          "cpa/deepseek/deepseek-v4-pro",
+          "cpa/nvidia/nemotron-3-super-120b-a12b:free"
+        ],
+        "thinking": "high",
+        "tools": [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "write",
+          "intercom"
+        ]
+      },
+      "oracle": {
+        "model": "cpa/ocg/go-glm-5.2",
+        "fallbackModels": [
+          "cpa/ocg/go-deepseek-v4-pro",
+          "cpa/deepseek/deepseek-v4-pro"
+        ],
+        "tools": [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "safe_bash",
+          "intercom"
+        ]
+      },
+      "plan-reviewer": {
+        "model": "cpa/ocg/go-deepseek-v4-pro",
+        "fallbackModels": [
+          "cpa/deepseek/deepseek-v4-pro",
+          "cpa/nvidia/nemotron-3-super-120b-a12b:free"
+        ],
+        "thinking": "high"
+      },
+      "sdd-orchestrator": {
+        "model": "cpa/ocg/go-deepseek-v4-pro",
+        "fallbackModels": [
+          "cpa/deepseek/deepseek-v4-pro",
+          "cpa/nvidia/nemotron-3-super-120b-a12b:free"
+        ],
+        "tools": [
+          "read",
+          "write",
+          "edit",
+          "grep",
+          "find",
+          "ls",
+          "safe_bash",
+          "subagent"
+        ]
+      },
+      "task-doer": {
+        "model": "cpa/ocg/go-deepseek-v4-flash",
+        "fallbackModels": [
+          "cpa/deepseek/deepseek-v4-flash",
+          "cpa/qwen/qwen3.6-plus-preview:free"
+        ],
+        "thinking": "low",
+        "tools": [
+          "read",
+          "write",
+          "edit",
+          "grep",
+          "safe_bash"
+        ]
+      },
+      "context-builder": {
+        "model": "cpa/ocg/go-deepseek-v4-flash",
+        "fallbackModels": [
+          "cpa/deepseek/deepseek-v4-flash",
+          "cpa/qwen/qwen3.6-plus-preview:free"
+        ],
+        "tools": [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "safe_bash",
+          "write",
+          "web_search",
+          "intercom"
+        ]
+      }
+    }
+  }
+}
