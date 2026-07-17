@@ -1,5 +1,9 @@
 import { describe, it, expect, mock } from 'bun:test';
-import { executeCommit, validateCommitCwd, validateCommitFiles } from './index';
+import yeetExtension, {
+    executeCommit,
+    validateCommitCwd,
+    validateCommitFiles,
+} from './index';
 
 describe('commit CWD validation', () => {
     it('rejects an empty CWD', () => {
@@ -20,6 +24,93 @@ describe('commit CWD validation', () => {
         expect(
             validateCommitFiles('/workspace/repo', ['../other/file.ts']),
         ).toContain('outside');
+    });
+});
+
+describe('/yeet command', () => {
+    it('uses --cwd for Git inspection and the generated commit prompt', async () => {
+        let commandHandler:
+            | ((args: string, ctx: any) => Promise<void>)
+            | undefined;
+        const exec = mock(
+            async (
+                _command: string,
+                args: string[],
+                _options?: { cwd?: string },
+            ) => ({
+                stdout:
+                    args[1] === '--short'
+                        ? ' M target.ts\n'
+                        : ' target.ts | 1 +\n',
+            }),
+        );
+        const sendUserMessage = mock();
+        const pi = {
+            exec,
+            registerTool: () => {},
+            registerCommand: (
+                name: string,
+                options: { handler: (args: string, ctx: any) => Promise<void> },
+            ) => {
+                if (name === 'yeet') commandHandler = options.handler;
+            },
+            sendUserMessage,
+        };
+        const targetCwd = process.cwd();
+
+        yeetExtension(pi as never);
+        await commandHandler?.(`--cwd=${targetCwd} commit target only`, {
+            cwd: '/fallback/repo',
+            isIdle: () => true,
+            ui: { notify: mock() },
+        });
+
+        expect(exec).toHaveBeenCalledTimes(2);
+        expect(
+            exec.mock.calls.every((call) => call[2]?.cwd === targetCwd),
+        ).toBe(true);
+        expect(sendUserMessage).toHaveBeenCalledTimes(1);
+        expect(sendUserMessage.mock.calls[0][0]).toContain(
+            `Required commit CWD: ${targetCwd}`,
+        );
+        expect(sendUserMessage.mock.calls[0][0]).toContain(
+            'commit target only',
+        );
+    });
+
+    it('stops when the selected CWD cannot be inspected as a Git repository', async () => {
+        let commandHandler:
+            | ((args: string, ctx: any) => Promise<void>)
+            | undefined;
+        const exec = mock(async () => {
+            throw new Error('not a git repository');
+        });
+        const sendUserMessage = mock();
+        const notify = mock();
+
+        yeetExtension({
+            exec,
+            registerTool: () => {},
+            registerCommand: (
+                name: string,
+                options: { handler: (args: string, ctx: any) => Promise<void> },
+            ) => {
+                if (name === 'yeet') commandHandler = options.handler;
+            },
+            sendUserMessage,
+        } as never);
+
+        await commandHandler?.(`--cwd=${process.cwd()}`, {
+            cwd: '/fallback/repo',
+            isIdle: () => true,
+            ui: { notify },
+        });
+
+        expect(sendUserMessage).not.toHaveBeenCalled();
+        expect(notify).toHaveBeenCalledWith(
+            expect.stringContaining('Git repository'),
+            'error',
+        );
     });
 });
 

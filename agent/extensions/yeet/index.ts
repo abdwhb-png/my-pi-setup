@@ -6,6 +6,7 @@ import {
     type ExtensionAPI,
     type AgentToolResult,
 } from '@earendil-works/pi-coding-agent';
+import { parseYeetCommandArgs } from './command-args';
 import { CommitConfirmDialog } from './confirm';
 import { CommitPlanSession } from './session';
 import type { CommitPlanParams, CommitPlanResult } from './types';
@@ -18,7 +19,7 @@ const YEET_PROMPT_BASE = [
     'Workflow:',
     '1. Analyze the current changes (git status, git diff) provided below.',
     '2. Group changes into logical, atomic units (e.g., separate a refactor from a feature, or a bugfix from a doc update).',
-    "3. Propose the FIRST logical commit using 'propose_commit_plan'.",
+    "3. Propose the FIRST logical commit using 'propose_commit_plan' with the required CWD shown below.",
     '4. The commit happens automatically on approval.',
     '5. After a commit is successful, analyze the REMAINING changes and repeat the process until all changes are committed.',
     '6. If the user rejects a plan, adjust it and propose again.',
@@ -30,10 +31,6 @@ const YEET_PROMPT_BASE = [
     '',
     'IMPORTANT: If the tool returns HARD_CANCEL, stop the entire commit process immediately and return to normal conversation.',
     'Do NOT push unless explicitly requested.',
-    '',
-    '--- Current Git Status ---',
-    '',
-    'The propose_commit_plan tool requires cwd. Always pass the canonical absolute working directory explicitly.',
 ];
 
 /** Build the prompt for the LLM, injecting auto-approve instructions if needed. */
@@ -341,8 +338,21 @@ export default function (pi: ExtensionAPI) {
 
     pi.registerCommand('yeet', {
         description:
-            'Stage and commit repo changes. Use --go for auto-approve mode (skips TUI editor, shows confirm dialog).',
+            'Stage and commit repo changes. Use --cwd <path> to select a repository and --go for auto-approve mode.',
         handler: async (args: string, ctx: any) => {
+            const parsedArgs = parseYeetCommandArgs(args, ctx.cwd);
+            if (parsedArgs.error) {
+                ctx.ui.notify(parsedArgs.error, 'error');
+                return;
+            }
+
+            const targetCwd = resolve(ctx.cwd, parsedArgs.cwd);
+            const cwdError = validateCommitCwd(targetCwd);
+            if (cwdError) {
+                ctx.ui.notify(cwdError, 'error');
+                return;
+            }
+
             // Programmatically check git status so the LLM always has real data
             let gitStatus = '';
             let gitDiffStat = '';
@@ -350,29 +360,40 @@ export default function (pi: ExtensionAPI) {
                 const statusResult = await pi.exec(
                     'git',
                     ['status', '--short'],
-                    { cwd: ctx.cwd },
+                    { cwd: targetCwd },
                 );
                 gitStatus = statusResult.stdout.trim();
-            } catch {
-                gitStatus = '(not a git repository or git status failed)';
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                ctx.ui.notify(
+                    `Unable to inspect Git repository at ${targetCwd}: ${message}`,
+                    'error',
+                );
+                return;
             }
 
             try {
                 const diffResult = await pi.exec('git', ['diff', '--stat'], {
-                    cwd: ctx.cwd,
+                    cwd: targetCwd,
                 });
                 gitDiffStat = diffResult.stdout.trim();
-            } catch {
-                gitDiffStat = '(git diff failed)';
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                ctx.ui.notify(
+                    `Unable to inspect Git diff at ${targetCwd}: ${message}`,
+                    'error',
+                );
+                return;
             }
 
             const hasChanges = gitStatus.length > 0;
-            const trimmedArgs = args.trim();
-            const isAutoApprove = trimmedArgs === '--go';
-            const userArgs = isAutoApprove ? '' : trimmedArgs;
+            const isAutoApprove = parsedArgs.autoApprove;
+            const userArgs = parsedArgs.instructions;
 
             const extraLines: string[] = [];
-            if (!isAutoApprove && userArgs) {
+            if (userArgs) {
                 extraLines.push(
                     '',
                     'Additional instructions from the user:\n' + userArgs,
@@ -382,6 +403,11 @@ export default function (pi: ExtensionAPI) {
             const prompt = [
                 buildYeetPrompt(isAutoApprove),
                 '',
+                '--- Required Commit CWD ---',
+                `Required commit CWD: ${targetCwd}`,
+                `Call propose_commit_plan with cwd exactly "${targetCwd}".`,
+                '',
+                '--- Current Git Status ---',
                 gitStatus || '(no changes)',
                 '',
                 '--- Diff Summary ---',
