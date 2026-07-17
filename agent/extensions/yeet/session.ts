@@ -9,6 +9,7 @@ import {
     isArrowUp,
     isArrowDown,
 } from '../_shared/commit-keys';
+import { renderCwd } from './cwd-display';
 import type {
     CommitPlanParams,
     CommitPlanResult,
@@ -23,6 +24,7 @@ function rejectResult(
         accepted: false,
         cancelled,
         plan_summary: params.plan_summary,
+        cwd: params.cwd,
         files: [],
         commit_message: '',
     };
@@ -110,6 +112,7 @@ export class CommitPlanSession implements Component {
                 accepted: true,
                 cancelled: false,
                 plan_summary: this.config.params.plan_summary,
+                cwd: this.config.params.cwd,
                 files: this.state.files
                     .filter((f) => f.selected)
                     .map((f) => f.path),
@@ -144,6 +147,7 @@ export class CommitPlanSession implements Component {
                 accepted: true,
                 cancelled: false,
                 plan_summary: this.config.params.plan_summary,
+                cwd: this.config.params.cwd,
                 files: this.state.files
                     .filter((f) => f.selected)
                     .map((f) => f.path),
@@ -173,6 +177,7 @@ export class CommitPlanSession implements Component {
         lines.push(
             renderBoxHeader(theme, innerWidth, ' 📦 Commit Plan Review '),
         );
+        lines.push(...renderCwd(theme, innerWidth, this.config.params.cwd));
 
         const isMessageFocused = focus === 'message';
         const msgLabel = isMessageFocused

@@ -2,6 +2,7 @@ import type { Theme } from '@earendil-works/pi-coding-agent';
 import { type Component } from '@earendil-works/pi-tui';
 import { renderBoxHeader, renderBoxFooter } from '../_shared/box';
 import { isEnter, isEscape } from '../_shared/commit-keys';
+import { renderCwd } from './cwd-display';
 import type { CommitPlanParams, CommitPlanResult } from './types';
 
 /**
@@ -24,6 +25,7 @@ export class CommitConfirmDialog implements Component {
                 accepted: true,
                 cancelled: false,
                 plan_summary: this.config.params.plan_summary,
+                cwd: this.config.params.cwd,
                 files: this.config.params.files,
                 commit_message: this.config.params.commit_message,
             });
@@ -36,6 +38,7 @@ export class CommitConfirmDialog implements Component {
                 accepted: false,
                 cancelled: true,
                 plan_summary: this.config.params.plan_summary,
+                cwd: this.config.params.cwd,
                 files: [],
                 commit_message: '',
             });
@@ -53,6 +56,7 @@ export class CommitConfirmDialog implements Component {
         const innerWidth = Math.max(40, width - 4);
 
         lines.push(renderBoxHeader(theme, innerWidth, ' 📦 Confirm Commit '));
+        lines.push(...renderCwd(theme, innerWidth, params.cwd));
 
         // Summary
         lines.push(

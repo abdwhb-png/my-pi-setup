@@ -1,3 +1,5 @@
+import { statSync } from 'node:fs';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
 import {
     defineTool,
@@ -30,6 +32,8 @@ const YEET_PROMPT_BASE = [
     'Do NOT push unless explicitly requested.',
     '',
     '--- Current Git Status ---',
+    '',
+    'The propose_commit_plan tool requires cwd. Always pass the canonical absolute working directory explicitly.',
 ];
 
 /** Build the prompt for the LLM, injecting auto-approve instructions if needed. */
@@ -48,6 +52,44 @@ function buildYeetPrompt(isAutoApprove: boolean): string {
     ].join('\n');
 }
 
+/** Validate the explicit working directory before opening the commit UI. */
+export function validateCommitCwd(cwd: string): string | null {
+    if (typeof cwd !== 'string' || !cwd.trim()) return 'CWD is required';
+    if (!isAbsolute(cwd.trim())) return `CWD must be absolute: ${cwd}`;
+
+    const resolvedCwd = resolve(cwd.trim());
+    try {
+        if (!statSync(resolvedCwd).isDirectory()) {
+            return `CWD is not a directory: ${cwd}`;
+        }
+    } catch {
+        return `CWD not found: ${cwd}`;
+    }
+
+    return null;
+}
+
+/** Reject file paths that escape the explicitly supplied working directory. */
+export function validateCommitFiles(
+    cwd: string,
+    files: string[],
+): string | null {
+    const resolvedCwd = resolve(cwd.trim());
+    for (const file of files) {
+        const resolvedFile = resolve(resolvedCwd, file);
+        const relativeFile = relative(resolvedCwd, resolvedFile);
+        if (
+            !relativeFile ||
+            relativeFile.startsWith('..') ||
+            isAbsolute(relativeFile)
+        ) {
+            return `File is outside the supplied CWD: ${file}`;
+        }
+    }
+
+    return null;
+}
+
 /**
  * Execute a git commit programmatically: stage files, commit, return the short SHA.
  * Exported for testing with a mock execFn.
@@ -63,6 +105,7 @@ export async function executeCommit(
     cwd: string,
 ): Promise<{ success: true; sha: string } | { success: false; error: string }> {
     try {
+        await execFn('git', ['rev-parse', '--is-inside-work-tree'], { cwd });
         await execFn('git', ['add', '--', ...files], { cwd });
         await execFn('git', ['commit', '-m', message], { cwd });
         const { stdout } = await execFn(
@@ -94,8 +137,13 @@ export default function (pi: ExtensionAPI) {
             'If the tool returns REJECTED, adjust the plan and propose again.',
             'After each successful commit, analyze remaining changes and propose the next commit until all are handled.',
             'If the tool returns HARD_CANCEL, stop the commit workflow immediately and return to normal conversation.',
+            'Always provide cwd as the canonical absolute working directory for this commit.',
         ],
         parameters: Type.Object({
+            cwd: Type.String({
+                description:
+                    'Required canonical absolute working directory. All files and git commands are validated against this path.',
+            }),
             plan_summary: Type.String({
                 description:
                     'Summary of the changes and why the commit is needed.',
@@ -119,6 +167,45 @@ export default function (pi: ExtensionAPI) {
             _onUpdate: unknown,
             ctx: any,
         ): Promise<AgentToolResult<CommitPlanResult>> {
+            const cwdError = validateCommitCwd(params.cwd);
+            const filesError = cwdError
+                ? null
+                : validateCommitFiles(params.cwd, params.files);
+            let worktreeError: string | null = null;
+            if (!cwdError && !filesError) {
+                try {
+                    const result = await pi.exec(
+                        'git',
+                        ['rev-parse', '--is-inside-work-tree'],
+                        { cwd: params.cwd },
+                    );
+                    if (result.stdout.trim() !== 'true') {
+                        worktreeError = `CWD is not a Git worktree: ${params.cwd}`;
+                    }
+                } catch {
+                    worktreeError = `CWD is not a Git worktree: ${params.cwd}`;
+                }
+            }
+            if (cwdError || filesError || worktreeError) {
+                const error = cwdError ?? filesError ?? worktreeError;
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: `Commit plan rejected: ${error}`,
+                        },
+                    ],
+                    details: {
+                        accepted: false,
+                        cancelled: false,
+                        plan_summary: params.plan_summary,
+                        cwd: params.cwd,
+                        files: [],
+                        commit_message: '',
+                    },
+                };
+            }
+
             let result: CommitPlanResult;
 
             if (params.autoApprove) {
@@ -176,7 +263,7 @@ export default function (pi: ExtensionAPI) {
                     pi.exec.bind(pi),
                     result.files,
                     result.commit_message,
-                    ctx.cwd,
+                    result.cwd,
                 );
 
                 if (outcome.success) {
