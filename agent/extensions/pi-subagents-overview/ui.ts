@@ -1,7 +1,6 @@
 /**
- * Overlay widget components for subagents overview and detail views.
+ * Overlay ui components for subagents overview and detail views.
  *
- * Follows the same pattern as usage/widget.ts and yeet/session.ts:
  * - Implements Component interface from @earendil-works/pi-tui
  * - Uses ctx.ui.custom with overlay:true for centered, dismissible dialogs
  * - Uses shared box rendering for consistent header/footer styling
@@ -11,15 +10,17 @@ import type { Theme } from '@earendil-works/pi-coding-agent';
 import { type Component } from '@earendil-works/pi-tui';
 import { BoxRenderer } from '../_shared/box';
 
+export const icon = '👥';
+
 // ── Types ──────────────────────────────────────────────
 
 interface ScrollState {
     scrollOffset: number;
 }
 
-// ── SubagentsOverviewWidget ────────────────────────────
+// ── SubagentsOverviewView ────────────────────────────
 
-export class SubagentsOverviewWidget implements Component {
+export class SubagentsOverviewView implements Component {
     private contentLines: string[];
     private state: ScrollState;
 
@@ -90,7 +91,7 @@ export class SubagentsOverviewWidget implements Component {
     render(width: number): string[] {
         const { theme } = this.config;
         const box = new BoxRenderer(theme, width);
-        box.setTitle(' 𖠌 Subagents Overview ');
+        box.setTitle(`${icon}Subagents Overview `);
         box.setContent(this.contentLines);
         box.scrollTo(this.state.scrollOffset);
         box.setFooter(
@@ -100,9 +101,9 @@ export class SubagentsOverviewWidget implements Component {
     }
 }
 
-// ── AgentDetailWidget ──────────────────────────────────
+// ── AgentDetailView ──────────────────────────────────
 
-export class AgentDetailWidget implements Component {
+export class AgentDetailView implements Component {
     private contentLines: string[];
     private state: ScrollState;
 

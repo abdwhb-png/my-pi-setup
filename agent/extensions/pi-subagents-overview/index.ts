@@ -12,73 +12,76 @@
  *   skill-derived agents from the LLM-visible agent list
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { createWidget } from "../_shared/fancy-footer";
-import { SubagentsOverviewWidget, AgentDetailWidget } from "./widget";
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+} from '@earendil-works/pi-coding-agent';
+import { parseFrontmatter } from '@earendil-works/pi-coding-agent';
+import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import type { AutocompleteItem } from '@earendil-works/pi-tui';
+import { createWidget } from '../_shared/fancy-footer';
+import { icon, SubagentsOverviewView, AgentDetailView } from './ui';
 
 // ── ANSI color constants ──────────────────────────────
 
-const BOLD = "\x1b[1m";
-const DIM = "\x1b[2m";
-const CYAN = "\x1b[36m";
-const GREEN = "\x1b[32m";
-const YELLOW = "\x1b[33m";
-const RED = "\x1b[31m";
-const BLUE = "\x1b[34m";
-const RESET = "\x1b[0m"
+const BOLD = '\x1b[1m';
+const DIM = '\x1b[2m';
+const CYAN = '\x1b[36m';
+const GREEN = '\x1b[32m';
+const YELLOW = '\x1b[33m';
+const RED = '\x1b[31m';
+const BLUE = '\x1b[34m';
+const RESET = '\x1b[0m';
 
-const WIDGET_ID = "pi-subagents-overview-widget";
+const WIDGET_ID = 'pi-subagents-overview-widget';
 
 // ── Types ──────────────────────────────────────────────
 
 interface AgentInfo {
-  name: string;
-  description: string;
-  tools: string[];
-  model: string | null;
-  skills: string[];
-  source: "builtin" | "user" | "project";
-  context: string | null;
+    name: string;
+    description: string;
+    tools: string[];
+    model: string | null;
+    skills: string[];
+    source: 'builtin' | 'user' | 'project';
+    context: string | null;
 }
 
 interface AgentOverride {
-  tools?: string[] | false;
-  model?: string | false;
-  skills?: string[] | false;
-  [key: string]: unknown;
+    tools?: string[] | false;
+    model?: string | false;
+    skills?: string[] | false;
+    [key: string]: unknown;
 }
 
 // ── Paths ──────────────────────────────────────────────
 
-const HOME = process.env.HOME || "/home/abdwhb";
-const SETTINGS_PATH = path.join(HOME, ".pi", "agent", "settings.json");
-const USER_AGENTS_DIR = path.join(HOME, ".pi", "agent", "agents");
+const HOME = process.env.HOME || '/home/abdwhb';
+const SETTINGS_PATH = path.join(HOME, '.pi', 'agent', 'settings.json');
+const USER_AGENTS_DIR = path.join(HOME, '.pi', 'agent', 'agents');
 const BUILTIN_AGENTS_DIR = path.join(
-  HOME,
-  ".pi",
-  "agent",
-  "npm",
-  "node_modules",
-  "pi-subagents",
-  "agents",
+    HOME,
+    '.pi',
+    'agent',
+    'npm',
+    'node_modules',
+    'pi-subagents',
+    'agents',
 );
-const SKILLS_DIR = path.join(HOME, ".agents", "skills");
+const SKILLS_DIR = path.join(HOME, '.agents', 'skills');
 
 // ── Frontmatter Parsing ────────────────────────────────
 
 function parseAgentFile(filePath: string): Record<string, string> | null {
-  try {
-    const raw = fs.readFileSync(filePath, "utf-8");
-    const { frontmatter } = parseFrontmatter<Record<string, string>>(raw);
-    return frontmatter;
-  } catch {
-    return null;
-  }
+    try {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const { frontmatter } = parseFrontmatter<Record<string, string>>(raw);
+        return frontmatter;
+    } catch {
+        return null;
+    }
 }
 
 // ── Skill Agent Names ─────────────────────────────────
@@ -88,136 +91,142 @@ function parseAgentFile(filePath: string): Record<string, string> | null {
 let cachedSkillAgentNames: Set<string> | null = null;
 
 function getSkillAgentNames(): Set<string> {
-  if (cachedSkillAgentNames) return cachedSkillAgentNames;
+    if (cachedSkillAgentNames) return cachedSkillAgentNames;
 
-  const names = new Set<string>();
+    const names = new Set<string>();
 
-  if (!fs.existsSync(SKILLS_DIR)) {
+    if (!fs.existsSync(SKILLS_DIR)) {
+        cachedSkillAgentNames = names;
+        return names;
+    }
+
+    function walkDir(dir: string): void {
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                walkDir(fullPath);
+                continue;
+            }
+            if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+            if (!entry.name.endsWith('.md')) continue;
+
+            const fm = parseAgentFile(fullPath);
+            if (fm && fm.name && fm.description) {
+                names.add(fm.name);
+            }
+        }
+    }
+
+    walkDir(SKILLS_DIR);
     cachedSkillAgentNames = names;
     return names;
-  }
-
-  function walkDir(dir: string): void {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walkDir(fullPath);
-        continue;
-      }
-      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-      if (!entry.name.endsWith(".md")) continue;
-
-      const fm = parseAgentFile(fullPath);
-      if (fm && fm.name && fm.description) {
-        names.add(fm.name);
-      }
-    }
-  }
-
-  walkDir(SKILLS_DIR);
-  cachedSkillAgentNames = names;
-  return names;
 }
 
 function clearSkillAgentCache(): void {
-  cachedSkillAgentNames = null;
+    cachedSkillAgentNames = null;
 }
 
 // ── Data Collection ────────────────────────────────────
 
 function readOverrides(): Record<string, AgentOverride> {
-  try {
-    const raw = fs.readFileSync(SETTINGS_PATH, "utf-8");
-    const parsed = JSON.parse(raw) as {
-      subagents?: { agentOverrides?: Record<string, AgentOverride> };
-    };
-    return parsed?.subagents?.agentOverrides ?? {};
-  } catch {
-    return {};
-  }
+    try {
+        const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8');
+        const parsed = JSON.parse(raw) as {
+            subagents?: { agentOverrides?: Record<string, AgentOverride> };
+        };
+        return parsed?.subagents?.agentOverrides ?? {};
+    } catch {
+        return {};
+    }
 }
 
 /**
  * Return the effective tool list for an agent, applying overrides from settings.json.
  */
 function getEffectiveTools(
-  agent: AgentInfo,
-  overrides: Record<string, AgentOverride>,
+    agent: AgentInfo,
+    overrides: Record<string, AgentOverride>,
 ): string[] {
-  const override = overrides[agent.name];
-  if (!override) return agent.tools;
-  if (override.tools === false) return [];
-  if (Array.isArray(override.tools)) return override.tools;
-  return agent.tools;
+    const override = overrides[agent.name];
+    if (!override) return agent.tools;
+    if (override.tools === false) return [];
+    if (Array.isArray(override.tools)) return override.tools;
+    return agent.tools;
 }
 
 function readBuiltinAgents(): AgentInfo[] {
-  const agents: AgentInfo[] = [];
-  const builtinNames = [
-    "scout",
-    "researcher",
-    "planner",
-    "worker",
-    "reviewer",
-    "context-builder",
-    "oracle",
-    "delegate",
-  ];
+    const agents: AgentInfo[] = [];
+    const builtinNames = [
+        'scout',
+        'researcher',
+        'planner',
+        'worker',
+        'reviewer',
+        'context-builder',
+        'oracle',
+        'delegate',
+    ];
 
-  for (const name of builtinNames) {
-    const filePath = path.join(BUILTIN_AGENTS_DIR, `${name}.md`);
-    if (!fs.existsSync(filePath)) continue;
-    const fm = parseAgentFile(filePath);
-    if (!fm) continue;
+    for (const name of builtinNames) {
+        const filePath = path.join(BUILTIN_AGENTS_DIR, `${name}.md`);
+        if (!fs.existsSync(filePath)) continue;
+        const fm = parseAgentFile(filePath);
+        if (!fm) continue;
 
-    const toolsRaw = fm.tools || "";
-    const tools = toolsRaw
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
+        const toolsRaw = fm.tools || '';
+        const tools = toolsRaw
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean);
 
-    agents.push({
-      name: fm.name || name,
-      description: fm.description || "",
-      tools,
-      model: fm.model || null,
-      skills: [],
-      source: "builtin",
-      context: fm.defaultContext || null,
-    });
-  }
+        agents.push({
+            name: fm.name || name,
+            description: fm.description || '',
+            tools,
+            model: fm.model || null,
+            skills: [],
+            source: 'builtin',
+            context: fm.defaultContext || null,
+        });
+    }
 
-  return agents;
+    return agents;
 }
 
 function readUserAgents(): AgentInfo[] {
-  const agents: AgentInfo[] = [];
-  if (!fs.existsSync(USER_AGENTS_DIR)) return agents;
+    const agents: AgentInfo[] = [];
+    if (!fs.existsSync(USER_AGENTS_DIR)) return agents;
 
-  for (const entry of fs.readdirSync(USER_AGENTS_DIR)) {
-    if (!entry.endsWith(".md")) continue;
-    const filePath = path.join(USER_AGENTS_DIR, entry);
-    const fm = parseAgentFile(filePath);
-    if (!fm) continue;
+    for (const entry of fs.readdirSync(USER_AGENTS_DIR)) {
+        if (!entry.endsWith('.md')) continue;
+        const filePath = path.join(USER_AGENTS_DIR, entry);
+        const fm = parseAgentFile(filePath);
+        if (!fm) continue;
 
-    agents.push({
-      name: fm.name || entry.replace(/\.md$/, ""),
-      description: fm.description || "",
-      tools: (fm.tools || "").split(",").map((t) => t.trim()).filter(Boolean),
-      model: fm.model || null,
-      skills: (fm.skills || "").split(",").map((s) => s.trim()).filter(Boolean),
-      source: "user",
-      context: fm.defaultContext || null,
-    });
-  }
+        agents.push({
+            name: fm.name || entry.replace(/\.md$/, ''),
+            description: fm.description || '',
+            tools: (fm.tools || '')
+                .split(',')
+                .map((t) => t.trim())
+                .filter(Boolean),
+            model: fm.model || null,
+            skills: (fm.skills || '')
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean),
+            source: 'user',
+            context: fm.defaultContext || null,
+        });
+    }
 
-  return agents;
+    return agents;
 }
 
 /**
@@ -227,203 +236,210 @@ function readUserAgents(): AgentInfo[] {
 // ── Widget formatting ─────────────────────────────────
 
 function buildWidgetLine(): string {
-  const overrides = readOverrides();
-  const builtins = readBuiltinAgents();
-  const users = readUserAgents();
+    const overrides = readOverrides();
+    const builtins = readBuiltinAgents();
+    const users = readUserAgents();
 
-  const total = builtins.length + users.length;
-  const overrideCount = Object.keys(overrides).length;
+    const total = builtins.length + users.length;
+    const overrideCount = Object.keys(overrides).length;
 
-  // Agents with safe_bash only (no plain bash) — applying overrides
-  const safeBashAgents = [...builtins, ...users]
-    .filter(
-      (a) =>
-        getEffectiveTools(a, overrides).includes("safe_bash") &&
-        !getEffectiveTools(a, overrides).includes("bash"),
-    )
-    .map((a) => a.name);
+    // Agents with safe_bash only (no plain bash) — applying overrides
+    const safeBashAgents = [...builtins, ...users]
+        .filter(
+            (a) =>
+                getEffectiveTools(a, overrides).includes('safe_bash') &&
+                !getEffectiveTools(a, overrides).includes('bash'),
+        )
+        .map((a) => a.name);
 
-  const safeBashPart =
-    safeBashAgents.length > 0 ? ` · ${safeBashAgents.length} 🛡️sb` : "";
+    const safeBashPart =
+        safeBashAgents.length > 0 ? ` · ${safeBashAgents.length} 🛡️sb` : '';
 
-  const overridePart =
-    overrideCount > 0 ? ` · ${overrideCount} ovr` : "";
+    const overridePart = overrideCount > 0 ? ` · ${overrideCount} ovr` : '';
 
-  return `🤖 Subagents: ${builtins.length}B/${users.length}U${safeBashPart}${overridePart} (total ${total})`;
+    return `${icon}Subagents: ${builtins.length}B/${users.length}U${safeBashPart}${overridePart} (total ${total})`;
 }
 
 let widgetText: string | null = null;
 let widgetHandle: ReturnType<typeof createWidget> | undefined;
 
 function updateWidget(ctx: ExtensionContext): void {
-  if (!ctx.hasUI) return;
-  try {
-    widgetText = buildWidgetLine();
-    widgetHandle?.update(ctx);
-  } catch {
-    widgetText = null;
-    widgetHandle?.update(ctx);
-  }
+    if (!ctx.hasUI) return;
+    try {
+        widgetText = buildWidgetLine();
+        widgetHandle?.update(ctx);
+    } catch {
+        widgetText = null;
+        widgetHandle?.update(ctx);
+    }
 }
 
 // ── Formatting ─────────────────────────────────────────
 
 function formatAgentBlock(
-  agent: AgentInfo,
-  overrides: Record<string, AgentOverride>,
+    agent: AgentInfo,
+    overrides: Record<string, AgentOverride>,
 ): string[] {
-  const lines: string[] = [];
-  const override = overrides[agent.name];
-  const hasOverride = override !== undefined;
+    const lines: string[] = [];
+    const override = overrides[agent.name];
+    const hasOverride = override !== undefined;
 
-  const paddedName = agent.name.padEnd(16);
-  lines.push(`${BOLD}${paddedName}${RESET}${agent.description}`);
+    const paddedName = agent.name.padEnd(16);
+    lines.push(`${BOLD}${paddedName}${RESET}${agent.description}`);
 
-  const toolsLabel = hasOverride ? "Tools*" : "Tools";
-  const toolsStr = agent.tools.length > 0 ? agent.tools.join(", ") : "—";
-  const overrideMarker = hasOverride
-    ? `  ${YELLOW}← OVERRIDDEN${RESET}`
-    : "";
-  lines.push(`  ${DIM}${toolsLabel}:${RESET} ${toolsStr}${overrideMarker}`);
+    const toolsLabel = hasOverride ? 'Tools*' : 'Tools';
+    const toolsStr = agent.tools.length > 0 ? agent.tools.join(', ') : '—';
+    const overrideMarker = hasOverride ? `  ${YELLOW}← OVERRIDDEN${RESET}` : '';
+    lines.push(`  ${DIM}${toolsLabel}:${RESET} ${toolsStr}${overrideMarker}`);
 
-  const modelStr = agent.model ?? `${DIM}(inherited from default)${RESET}`;
-  lines.push(`  ${DIM}Model:${RESET} ${modelStr}`);
+    const modelStr = agent.model ?? `${DIM}(inherited from default)${RESET}`;
+    lines.push(`  ${DIM}Model:${RESET} ${modelStr}`);
 
-  const skillsStr = agent.skills.length > 0 ? agent.skills.join(", ") : `${DIM}—${RESET}`;
-  lines.push(`  ${DIM}Skills:${RESET} ${skillsStr}`);
+    const skillsStr =
+        agent.skills.length > 0 ? agent.skills.join(', ') : `${DIM}—${RESET}`;
+    lines.push(`  ${DIM}Skills:${RESET} ${skillsStr}`);
 
-  if (agent.context) {
-    lines.push(`  ${DIM}Context:${RESET} ${agent.context}`);
-  }
+    if (agent.context) {
+        lines.push(`  ${DIM}Context:${RESET} ${agent.context}`);
+    }
 
-  return lines;
+    return lines;
 }
 
 function formatOverview(): string {
-  const overrides = readOverrides();
-  const builtins = readBuiltinAgents();
-  const users = readUserAgents();
+    const overrides = readOverrides();
+    const builtins = readBuiltinAgents();
+    const users = readUserAgents();
 
-  const lines: string[] = [];
+    const lines: string[] = [];
 
-  lines.push("╔══════════════════════════════════════════════════════════╗");
-  lines.push(`${CYAN}║                    Subagents Overview                   ║${RESET}`);
-  lines.push("╚══════════════════════════════════════════════════════════╝");
-  lines.push("");
+    lines.push('╔══════════════════════════════════════════════════════════╗');
+    lines.push(
+        `${CYAN}║                    Subagents Overview                   ║${RESET}`,
+    );
+    lines.push('╚══════════════════════════════════════════════════════════╝');
+    lines.push('');
 
-  // ── Builtin Agents ──
-  lines.push(`${BOLD}${CYAN}🏗️  BUILTIN AGENTS${RESET}`);
-  lines.push("");
-  for (const agent of builtins) {
-    lines.push(...formatAgentBlock(agent, overrides));
-    lines.push("");
-  }
-
-  // ── User Agents ──
-  lines.push(`${BOLD}${CYAN}👤  USER AGENTS${RESET}`);
-  lines.push("");
-
-  if (users.length === 0) {
-    lines.push("  No user agents configured.");
-    lines.push("");
-  } else {
-    const videographer = users.find((a) => a.name === "videographer");
-    const others = users.filter((a) => a.name !== "videographer");
-
-    if (videographer) {
-      lines.push(...formatAgentBlock(videographer, overrides));
-      lines.push("");
-    }
-
-    if (others.length > 0) {
-      const notable = others.filter(
-        (a) =>
-          a.tools.length > 0 &&
-          !(a.tools.length === 1 && a.tools[0] === "read"),
-      );
-      const shown = notable.length > 3 ? notable.slice(0, 3) : notable;
-
-      for (const agent of shown) {
+    // ── Builtin Agents ──
+    lines.push(`${BOLD}${CYAN}🏗️  BUILTIN AGENTS${RESET}`);
+    lines.push('');
+    for (const agent of builtins) {
         lines.push(...formatAgentBlock(agent, overrides));
-        lines.push("");
-      }
-
-      const remaining =
-        others.length - (videographer ? 0 : 0) - shown.length;
-      if (remaining > 0) {
-        lines.push(
-          `  ... and ${remaining} more user agent(s) (run \`subagent({ action: "list" })\` to see all)`,
-        );
-        lines.push("");
-      }
+        lines.push('');
     }
-  }
 
-  // ── Active Overrides ──
-  const overrideKeys = Object.keys(overrides);
-  lines.push(`${BOLD}${YELLOW}🔧  ACTIVE SETTINGS OVERRIDES${RESET}`);
-  lines.push("");
+    // ── User Agents ──
+    lines.push(`${BOLD}${CYAN}👤  USER AGENTS${RESET}`);
+    lines.push('');
 
-  if (overrideKeys.length === 0) {
-    lines.push(`  ${DIM}No overrides configured.${RESET}`);
-  } else {
-    for (const [agentName, ov] of Object.entries(overrides)) {
-      const overriddenFields = Object.entries(ov)
-        .filter(([_key, val]) => val !== undefined && val !== null && val !== false)
-        .map(([key, val]) => {
-          if (Array.isArray(val)) return `    ${DIM}${key}:${RESET} ${val.join(", ")}`;
-          return `    ${DIM}${key}:${RESET} ${String(val)}`;
-        });
-      if (overriddenFields.length > 0) {
-        lines.push(`  ${BOLD}${agentName}${RESET}`);
-        lines.push(...overriddenFields);
-        lines.push("");
-      }
+    if (users.length === 0) {
+        lines.push('  No user agents configured.');
+        lines.push('');
+    } else {
+        const videographer = users.find((a) => a.name === 'videographer');
+        const others = users.filter((a) => a.name !== 'videographer');
+
+        if (videographer) {
+            lines.push(...formatAgentBlock(videographer, overrides));
+            lines.push('');
+        }
+
+        if (others.length > 0) {
+            const notable = others.filter(
+                (a) =>
+                    a.tools.length > 0 &&
+                    !(a.tools.length === 1 && a.tools[0] === 'read'),
+            );
+            const shown = notable.length > 3 ? notable.slice(0, 3) : notable;
+
+            for (const agent of shown) {
+                lines.push(...formatAgentBlock(agent, overrides));
+                lines.push('');
+            }
+
+            const remaining =
+                others.length - (videographer ? 0 : 0) - shown.length;
+            if (remaining > 0) {
+                lines.push(
+                    `  ... and ${remaining} more user agent(s) (run \`subagent({ action: "list" })\` to see all)`,
+                );
+                lines.push('');
+            }
+        }
     }
-  }
 
-  // ── Quick Stats ──
-  lines.push(`${BOLD}${GREEN}📊  QUICK STATS${RESET}`);
-  lines.push("");
+    // ── Active Overrides ──
+    const overrideKeys = Object.keys(overrides);
+    lines.push(`${BOLD}${YELLOW}🔧  ACTIVE SETTINGS OVERRIDES${RESET}`);
+    lines.push('');
 
-  const totalAgents = builtins.length + users.length;
-  lines.push(`  Total agents: ${BOLD}${totalAgents}${RESET}`);
-  lines.push(`    ${BLUE}${builtins.length}${RESET} builtin  |  ${BLUE}${users.length}${RESET} user`);
+    if (overrideKeys.length === 0) {
+        lines.push(`  ${DIM}No overrides configured.${RESET}`);
+    } else {
+        for (const [agentName, ov] of Object.entries(overrides)) {
+            const overriddenFields = Object.entries(ov)
+                .filter(
+                    ([_key, val]) =>
+                        val !== undefined && val !== null && val !== false,
+                )
+                .map(([key, val]) => {
+                    if (Array.isArray(val))
+                        return `    ${DIM}${key}:${RESET} ${val.join(', ')}`;
+                    return `    ${DIM}${key}:${RESET} ${String(val)}`;
+                });
+            if (overriddenFields.length > 0) {
+                lines.push(`  ${BOLD}${agentName}${RESET}`);
+                lines.push(...overriddenFields);
+                lines.push('');
+            }
+        }
+    }
 
-  // Agents with execution tools (applying overrides from settings.json)
-  const allAgents = [...builtins, ...users];
-  const agentsWithSafeBash = allAgents.filter((a) =>
-    getEffectiveTools(a, overrides).includes("safe_bash") &&
-    !getEffectiveTools(a, overrides).includes("bash"),
-  );
-  const agentsWithPlainBash = allAgents.filter((a) =>
-    getEffectiveTools(a, overrides).includes("bash"),
-  );
+    // ── Quick Stats ──
+    lines.push(`${BOLD}${GREEN}📊  QUICK STATS${RESET}`);
+    lines.push('');
 
-  lines.push(
-    `  ${GREEN}🔒${RESET} safe_bash enforced: ${BOLD}${agentsWithSafeBash.map((a) => a.name).join(", ") || "none"}${RESET}`,
-  );
-  lines.push(
-    `  ${RED}⚠${RESET} plain bash (not restricted): ${BOLD}${agentsWithPlainBash.map((a) => a.name).join(", ") || "none"}${RESET}`,
-  );
+    const totalAgents = builtins.length + users.length;
+    lines.push(`  Total agents: ${BOLD}${totalAgents}${RESET}`);
+    lines.push(
+        `    ${BLUE}${builtins.length}${RESET} builtin  |  ${BLUE}${users.length}${RESET} user`,
+    );
 
-  const allSkills = [...builtins, ...users].flatMap((a) => a.skills);
-  const uniqueSkills = [...new Set(allSkills)].filter(Boolean);
-  const hasYoutube = uniqueSkills.includes("youtube-analysis");
-  lines.push(
-    `  Skills referenced by agents: ${uniqueSkills.length} (youtube-analysis: ${hasYoutube ? "✅" : "❌"})`,
-  );
+    // Agents with execution tools (applying overrides from settings.json)
+    const allAgents = [...builtins, ...users];
+    const agentsWithSafeBash = allAgents.filter(
+        (a) =>
+            getEffectiveTools(a, overrides).includes('safe_bash') &&
+            !getEffectiveTools(a, overrides).includes('bash'),
+    );
+    const agentsWithPlainBash = allAgents.filter((a) =>
+        getEffectiveTools(a, overrides).includes('bash'),
+    );
 
-  lines.push("");
-  lines.push(`${DIM}${'─'.repeat(56)}${RESET}`);
-  lines.push(
-    `  ${DIM}* Tools marked with ← OVERRIDDEN have been modified via settings.json.${RESET}`,
-  );
-  lines.push(
-    `  ${DIM}* Skill-derived agents (from .agents/skills/) are hidden from the LLM list.${RESET}`,
-  );
+    lines.push(
+        `  ${GREEN}🔒${RESET} safe_bash enforced: ${BOLD}${agentsWithSafeBash.map((a) => a.name).join(', ') || 'none'}${RESET}`,
+    );
+    lines.push(
+        `  ${RED}⚠${RESET} plain bash (not restricted): ${BOLD}${agentsWithPlainBash.map((a) => a.name).join(', ') || 'none'}${RESET}`,
+    );
 
-  return lines.join("\n");
+    const allSkills = [...builtins, ...users].flatMap((a) => a.skills);
+    const uniqueSkills = [...new Set(allSkills)].filter(Boolean);
+    const hasYoutube = uniqueSkills.includes('youtube-analysis');
+    lines.push(
+        `  Skills referenced by agents: ${uniqueSkills.length} (youtube-analysis: ${hasYoutube ? '✅' : '❌'})`,
+    );
+
+    lines.push('');
+    lines.push(`${DIM}${'─'.repeat(56)}${RESET}`);
+    lines.push(
+        `  ${DIM}* Tools marked with ← OVERRIDDEN have been modified via settings.json.${RESET}`,
+    );
+    lines.push(
+        `  ${DIM}* Skill-derived agents (from .agents/skills/) are hidden from the LLM list.${RESET}`,
+    );
+
+    return lines.join('\n');
 }
 
 // ── Tool Result Interception ──────────────────────────
@@ -434,259 +450,304 @@ function formatOverview(): string {
  * Pattern matches lines like: "- agent-name (project):" or "- agent-name (user):"
  */
 function buildSkillAgentFilterPattern(skillNames: Set<string>): RegExp | null {
-  if (skillNames.size === 0) return null;
+    if (skillNames.size === 0) return null;
 
-  // Escape special regex characters in agent names
-  const escapedNames: string[] = [];
-  for (const name of skillNames) {
-    escapedNames.push(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  }
+    // Escape special regex characters in agent names
+    const escapedNames: string[] = [];
+    for (const name of skillNames) {
+        escapedNames.push(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    }
 
-  // Match lines that start with "- <name> (" (the subagent list format)
-  const pattern = `^- (${escapedNames.join("|")})\\s*\\(`;
-  return new RegExp(pattern, "m");
+    // Match lines that start with "- <name> (" (the subagent list format)
+    const pattern = `^- (${escapedNames.join('|')})\\s*\\(`;
+    return new RegExp(pattern, 'm');
 }
 
 // ── Extension ──────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-  // Register a renderer for the custom message type
-  pi.registerMessageRenderer("pi-subagents-overview", (message, _options, _theme) => {
-    const content = typeof message.content === "string" ? message.content : "";
-    const lines = content.split("\n");
+    // Register a renderer for the custom message type
+    pi.registerMessageRenderer(
+        'pi-subagents-overview',
+        (message, _options, _theme) => {
+            const content =
+                typeof message.content === 'string' ? message.content : '';
+            const lines = content.split('\n');
 
-    return {
-      render: (width: number) =>
-        lines.map((line) => {
-          const vw = visibleWidth(line);
-          if (vw <= width) return line;
-          return truncateToWidth(line, width);
-        }),
-      invalidate: () => {},
-    };
-  });
+            return {
+                render: (width: number) =>
+                    lines.map((line) => {
+                        const vw = visibleWidth(line);
+                        if (vw <= width) return line;
+                        return truncateToWidth(line, width);
+                    }),
+                invalidate: () => {},
+            };
+        },
+    );
 
-  // ── Intercept subagent tool results ──
+    // ── Intercept subagent tool results ──
 
-  (pi as any).on("tool_result", (event: unknown) => {
-    // Check if this is the subagent tool's list action
-    // CustomToolResultEvent has toolName: string
-    const ev = event as unknown as Record<string, unknown>;
-    if (ev.toolName !== "subagent") return;
+    (pi as any).on('tool_result', (event: unknown) => {
+        // Check if this is the subagent tool's list action
+        // CustomToolResultEvent has toolName: string
+        const ev = event as unknown as Record<string, unknown>;
+        if (ev.toolName !== 'subagent') return;
 
-    const input = ev.input as Record<string, unknown> | undefined;
-    if (!input || input.action !== "list") return;
+        const input = ev.input as Record<string, unknown> | undefined;
+        if (!input || input.action !== 'list') return;
 
-    const content = ev.content as Array<Record<string, unknown>> | undefined;
-    if (!content || content.length === 0) return;
+        const content = ev.content as
+            | Array<Record<string, unknown>>
+            | undefined;
+        if (!content || content.length === 0) return;
 
-    const skillNames = getSkillAgentNames();
-    if (skillNames.size === 0) return;
+        const skillNames = getSkillAgentNames();
+        if (skillNames.size === 0) return;
 
-    const filterPattern = buildSkillAgentFilterPattern(skillNames);
-    if (!filterPattern) return;
+        const filterPattern = buildSkillAgentFilterPattern(skillNames);
+        if (!filterPattern) return;
 
-    const filteredContent = content.map((entry) => {
-      if (entry.type !== "text") return entry;
+        const filteredContent = content.map((entry) => {
+            if (entry.type !== 'text') return entry;
 
-      const text = entry.text as string;
-      if (!text.includes("(project)") && !text.includes("(user)")) {
-        return entry; // Only filter list entries with scope markers
-      }
+            const text = entry.text as string;
+            if (!text.includes('(project)') && !text.includes('(user)')) {
+                return entry; // Only filter list entries with scope markers
+            }
 
-      // Filter out lines matching skill-derived agent names
-      const lines = text.split("\n");
-      const filteredLines = lines.filter((line) => {
-        const trimmed = line.trim();
-        // Check if line matches "- <skill-agent-name> ("
-        return !filterPattern.test(trimmed);
-      });
+            // Filter out lines matching skill-derived agent names
+            const lines = text.split('\n');
+            const filteredLines = lines.filter((line) => {
+                const trimmed = line.trim();
+                // Check if line matches "- <skill-agent-name> ("
+                return !filterPattern.test(trimmed);
+            });
 
-      return Object.assign({}, entry, { text: filteredLines.join("\n") });
+            return Object.assign({}, entry, { text: filteredLines.join('\n') });
+        });
+
+        return { content: filteredContent };
     });
 
-    return { content: filteredContent };
-  });
+    // ── Commands ──
 
-  // ── Commands ──
+    pi.registerCommand('subagents-overview', {
+        description:
+            'Show a clean overview of all subagents with tools, models, overrides, and stats',
+        handler: async (_args, ctx) => {
+            const overview = formatOverview();
 
-  pi.registerCommand("subagents-overview", {
-    description: "Show a clean overview of all subagents with tools, models, overrides, and stats",
-    handler: async (_args, ctx) => {
-      const overview = formatOverview();
+            if (!ctx.hasUI) {
+                console.log(overview);
+                return;
+            }
 
-      if (!ctx.hasUI) {
-        console.log(overview);
-        return;
-      }
-
-      await (ctx.ui.custom as any)(
-        (_tui: unknown, theme: unknown, _kb: unknown, done: () => void) =>
-          new SubagentsOverviewWidget({ theme: theme as any, content: overview, done }),
-        {
-          overlay: true,
-          overlayOptions: {
-            anchor: "center" as const,
-            width: "80%" as const,
-            maxWidth: 100,
-          },
+            await (ctx.ui.custom as any)(
+                (
+                    _tui: unknown,
+                    theme: unknown,
+                    _kb: unknown,
+                    done: () => void,
+                ) =>
+                    new SubagentsOverviewView({
+                        theme: theme as any,
+                        content: overview,
+                        done,
+                    }),
+                {
+                    overlay: true,
+                    overlayOptions: {
+                        anchor: 'center' as const,
+                        width: '80%' as const,
+                        maxWidth: 100,
+                    },
+                },
+            );
         },
-      );
-    },
-  });
+    });
 
-  pi.registerCommand("subagent-view", {
-    description: "Show details for a specific subagent: /subagent-view <name>",
-    getArgumentCompletions: (prefix: string): AutocompleteItem[] => {
-      const builtins = readBuiltinAgents();
-      const users = readUserAgents();
-      const allAgents = [...builtins, ...users];
+    pi.registerCommand('subagent-view', {
+        description:
+            'Show details for a specific subagent: /subagent-view <name>',
+        getArgumentCompletions: (prefix: string): AutocompleteItem[] => {
+            const builtins = readBuiltinAgents();
+            const users = readUserAgents();
+            const allAgents = [...builtins, ...users];
 
-      const lowerPrefix = prefix.toLowerCase();
-      return allAgents
-        .filter((a) => a.name.toLowerCase().includes(lowerPrefix))
-        .map((a) => ({
-          value: a.name,
-          label: a.name,
-          description: `${a.source} — ${a.description.substring(0, 60)}`,
-        }))
-        .slice(0, 30);
-    },
-    handler: async (args, ctx) => {
-      const name = args.trim();
-      if (!name) {
-        if (!ctx.hasUI) {
-          console.log("Usage: /subagent-view <name>\nExample: /subagent-view worker");
-          return;
-        }
-
-        await (ctx.ui.custom as any)(
-          (_tui: unknown, theme: unknown, _kb: unknown, done: () => void) =>
-            new AgentDetailWidget({
-              theme: theme as any,
-              content: "Usage: /subagent-view <name>\nExample: /subagent-view worker\n\nRun /subagents-overview to see all available agents.",
-              agentName: "help",
-              done,
-            }),
-          {
-            overlay: true,
-            overlayOptions: {
-              anchor: "center" as const,
-              width: "80%" as const,
-              maxWidth: 100,
-            },
-          },
-        );
-        return;
-      }
-
-      const overrides = readOverrides();
-      const allAgents = [...readBuiltinAgents(), ...readUserAgents()];
-      const agent = allAgents.find((a) => a.name === name);
-
-      if (!agent) {
-        if (!ctx.hasUI) {
-          console.log(`Agent "${name}" not found.`);
-          return;
-        }
-
-        await (ctx.ui.custom as any)(
-          (_tui: unknown, theme: unknown, _kb: unknown, done: () => void) =>
-            new AgentDetailWidget({
-              theme: theme as any,
-              content: `Agent "${name}" not found.\nRun /subagents-overview to see all available agents.`,
-              agentName: "error",
-              done,
-            }),
-          {
-            overlay: true,
-            overlayOptions: {
-              anchor: "center" as const,
-              width: "80%" as const,
-              maxWidth: 100,
-            },
-          },
-        );
-        return;
-      }
-
-      const lines: string[] = [];
-      lines.push(`  ${DIM}Description:${RESET} ${agent.description}`);
-      lines.push(`  ${DIM}Source:${RESET} ${agent.source}`);
-      lines.push(`  ${DIM}Tools:${RESET} ${getEffectiveTools(agent, overrides).join(", ") || "—"}`);
-      lines.push(`  ${DIM}Model:${RESET} ${agent.model ?? `${DIM}(inherited from default)${RESET}`}`);
-      lines.push(`  ${DIM}Skills:${RESET} ${agent.skills.join(", ") || `${DIM}—${RESET}`}`);
-      if (agent.context) lines.push(`  ${DIM}Default context:${RESET} ${agent.context}`);
-
-      const override = overrides[agent.name];
-      if (override) {
-        lines.push("");
-        lines.push(`  ${YELLOW}🔧 Active overrides:${RESET}`);
-        for (const [key, val] of Object.entries(override)) {
-          if (val === undefined || val === null || val === false) continue;
-          const valStr = Array.isArray(val) ? val.join(", ") : String(val);
-          lines.push(`    ${DIM}${key}:${RESET} ${valStr}`);
-        }
-      }
-
-      if (agent.source === "user") {
-        const filePath = path.join(USER_AGENTS_DIR, `${agent.name}.md`);
-        if (fs.existsSync(filePath)) {
-          lines.push("");
-          lines.push(`  File: ${filePath}`);
-        }
-      }
-
-      await (ctx.ui.custom as any)(
-        (_tui: unknown, theme: unknown, _kb: unknown, done: (_result: unknown) => void) =>
-          new AgentDetailWidget({
-            theme: theme as any,
-            content: lines.join("\n"),
-            agentName: agent.name,
-            done: done as () => void,
-          }),
-        {
-          overlay: true,
-          overlayOptions: {
-            anchor: "center" as const,
-            width: "80%" as const,
-            maxWidth: 100,
-          },
+            const lowerPrefix = prefix.toLowerCase();
+            return allAgents
+                .filter((a) => a.name.toLowerCase().includes(lowerPrefix))
+                .map((a) => ({
+                    value: a.name,
+                    label: a.name,
+                    description: `${a.source} — ${a.description.substring(0, 60)}`,
+                }))
+                .slice(0, 30);
         },
-      );
-    },
-  });
+        handler: async (args, ctx) => {
+            const name = args.trim();
+            if (!name) {
+                if (!ctx.hasUI) {
+                    console.log(
+                        'Usage: /subagent-view <name>\nExample: /subagent-view worker',
+                    );
+                    return;
+                }
 
-  // ── Persistent Widget ─
+                await (ctx.ui.custom as any)(
+                    (
+                        _tui: unknown,
+                        theme: unknown,
+                        _kb: unknown,
+                        done: () => void,
+                    ) =>
+                        new AgentDetailView({
+                            theme: theme as any,
+                            content:
+                                'Usage: /subagent-view <name>\nExample: /subagent-view worker\n\nRun /subagents-overview to see all available agents.',
+                            agentName: 'help',
+                            done,
+                        }),
+                    {
+                        overlay: true,
+                        overlayOptions: {
+                            anchor: 'center' as const,
+                            width: '80%' as const,
+                            maxWidth: 100,
+                        },
+                    },
+                );
+                return;
+            }
 
-  widgetHandle = createWidget(pi, {
-    id: WIDGET_ID,
-    label: "Subagents",
-    description: "Shows subagent counts (builtin/user) and tools in use.",
-    row: 1,
-    order: 2,
-    align: "left",
-    render: () => widgetText,
-  });
+            const overrides = readOverrides();
+            const allAgents = [...readBuiltinAgents(), ...readUserAgents()];
+            const agent = allAgents.find((a) => a.name === name);
 
-  pi.on("session_start", async (_event, ctx) => {
-    clearSkillAgentCache();
-    // Defer registration to yield to git-status-widget's async setWidget()
-    setTimeout(() => {
-      updateWidget(ctx);
-    }, 0);
-  });
+            if (!agent) {
+                if (!ctx.hasUI) {
+                    console.log(`Agent "${name}" not found.`);
+                    return;
+                }
 
-  pi.on("input", async (_event, ctx) => {
-    updateWidget(ctx);
-    return { action: "continue" };
-  });
+                await (ctx.ui.custom as any)(
+                    (
+                        _tui: unknown,
+                        theme: unknown,
+                        _kb: unknown,
+                        done: () => void,
+                    ) =>
+                        new AgentDetailView({
+                            theme: theme as any,
+                            content: `Agent "${name}" not found.\nRun /subagents-overview to see all available agents.`,
+                            agentName: 'error',
+                            done,
+                        }),
+                    {
+                        overlay: true,
+                        overlayOptions: {
+                            anchor: 'center' as const,
+                            width: '80%' as const,
+                            maxWidth: 100,
+                        },
+                    },
+                );
+                return;
+            }
 
-  pi.on("tool_execution_end", async (_event, ctx) => {
-    updateWidget(ctx);
-  });
+            const lines: string[] = [];
+            lines.push(`  ${DIM}Description:${RESET} ${agent.description}`);
+            lines.push(`  ${DIM}Source:${RESET} ${agent.source}`);
+            lines.push(
+                `  ${DIM}Tools:${RESET} ${getEffectiveTools(agent, overrides).join(', ') || '—'}`,
+            );
+            lines.push(
+                `  ${DIM}Model:${RESET} ${agent.model ?? `${DIM}(inherited from default)${RESET}`}`,
+            );
+            lines.push(
+                `  ${DIM}Skills:${RESET} ${agent.skills.join(', ') || `${DIM}—${RESET}`}`,
+            );
+            if (agent.context)
+                lines.push(`  ${DIM}Default context:${RESET} ${agent.context}`);
 
-  pi.on("session_shutdown", async (_event, ctx) => {
-    widgetHandle?.remove(ctx);
-  });
+            const override = overrides[agent.name];
+            if (override) {
+                lines.push('');
+                lines.push(`  ${YELLOW}🔧 Active overrides:${RESET}`);
+                for (const [key, val] of Object.entries(override)) {
+                    if (val === undefined || val === null || val === false)
+                        continue;
+                    const valStr = Array.isArray(val)
+                        ? val.join(', ')
+                        : String(val);
+                    lines.push(`    ${DIM}${key}:${RESET} ${valStr}`);
+                }
+            }
+
+            if (agent.source === 'user') {
+                const filePath = path.join(USER_AGENTS_DIR, `${agent.name}.md`);
+                if (fs.existsSync(filePath)) {
+                    lines.push('');
+                    lines.push(`  File: ${filePath}`);
+                }
+            }
+
+            await (ctx.ui.custom as any)(
+                (
+                    _tui: unknown,
+                    theme: unknown,
+                    _kb: unknown,
+                    done: (_result: unknown) => void,
+                ) =>
+                    new AgentDetailView({
+                        theme: theme as any,
+                        content: lines.join('\n'),
+                        agentName: agent.name,
+                        done: done as () => void,
+                    }),
+                {
+                    overlay: true,
+                    overlayOptions: {
+                        anchor: 'center' as const,
+                        width: '80%' as const,
+                        maxWidth: 100,
+                    },
+                },
+            );
+        },
+    });
+
+    // ── Persistent Widget ─
+
+    widgetHandle = createWidget(pi, {
+        id: WIDGET_ID,
+        label: 'Subagents',
+        description: 'Shows subagent counts (builtin/user) and tools in use.',
+        row: 1,
+        order: 2,
+        align: 'left',
+        render: () => widgetText,
+    });
+
+    pi.on('session_start', async (_event, ctx) => {
+        clearSkillAgentCache();
+        // Defer registration to yield to git-status-widget's async setWidget()
+        setTimeout(() => {
+            updateWidget(ctx);
+        }, 0);
+    });
+
+    pi.on('input', async (_event, ctx) => {
+        updateWidget(ctx);
+        return { action: 'continue' };
+    });
+
+    pi.on('tool_execution_end', async (_event, ctx) => {
+        updateWidget(ctx);
+    });
+
+    pi.on('session_shutdown', async (_event, ctx) => {
+        widgetHandle?.remove(ctx);
+    });
 }
