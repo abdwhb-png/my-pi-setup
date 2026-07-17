@@ -38,6 +38,49 @@ export const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED = "plannotator-autoexecute-p
  */
 export const PROCESSED_MARKER_PREFIX = "plan-auto-switch:processed";
 
+const APPROVED_PLAN_CONTINUATION = "Continue with the approved plan.";
+const MAX_CONTINUATION_ATTEMPTS = 200;
+const CONTINUATION_RETRY_MS = 50;
+
+type ScheduleContinuation = (callback: () => void, delayMs: number) => void;
+
+/**
+ * Start a fresh top-level prompt after the current agent run becomes idle.
+ *
+ * A follow-up is consumed by `agent.continue()`, which bypasses
+ * `before_agent_start`; pi-roles therefore cannot consume its switch request.
+ * Bare `sendUserMessage` is correct only after Pi clears its active run.
+ */
+export function queueApprovedPlanContinuation(
+  pi: Pick<ExtensionAPI, "sendUserMessage">,
+  isIdle: () => boolean = () => true,
+  schedule: ScheduleContinuation = (callback, delayMs) => {
+    setTimeout(callback, delayMs);
+  },
+): void {
+  let attempts = 0;
+  const sendWhenIdle = (): void => {
+    if (!isIdle()) {
+      attempts += 1;
+      if (attempts <= MAX_CONTINUATION_ATTEMPTS) {
+        schedule(sendWhenIdle, CONTINUATION_RETRY_MS);
+      }
+      return;
+    }
+
+    try {
+      pi.sendUserMessage(APPROVED_PLAN_CONTINUATION);
+    } catch {
+      attempts += 1;
+      if (attempts <= MAX_CONTINUATION_ATTEMPTS) {
+        schedule(sendWhenIdle, CONTINUATION_RETRY_MS);
+      }
+    }
+  };
+
+  schedule(sendWhenIdle, 0);
+}
+
 /** Fully-qualified event name for the marker we write. */
 
 interface PlanApprovedPayload {
@@ -99,6 +142,8 @@ export function findUnprocessedPlanApproval(
 
 
 export default function planAutoSwitch(pi: ExtensionAPI): void {
+  let continuationPending = false;
+
   pi.on("turn_end", async (_event, ctx) => {
     let entries;
     try {
@@ -126,6 +171,12 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
 
     // Force a new turn so pi-roles' before_agent_start fires and
     // consumes the switch request we just wrote.
-    pi.sendUserMessage("Continue with the approved plan.");
+    continuationPending = true;
+  });
+
+  pi.on("agent_end", (_event, ctx) => {
+    if (!continuationPending) return;
+    continuationPending = false;
+    queueApprovedPlanContinuation(pi, () => ctx.isIdle());
   });
 }

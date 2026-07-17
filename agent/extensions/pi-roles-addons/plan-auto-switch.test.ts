@@ -17,7 +17,9 @@ import {
   findUnprocessedPlanApproval,
   PROCESSED_MARKER_PREFIX,
   PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED,
+  queueApprovedPlanContinuation,
 } from "./plan-auto-switch";
+import planAutoSwitch from "./plan-auto-switch";
 
 
 describe("findUnprocessedPlanApproval", () => {
@@ -79,6 +81,76 @@ describe("findUnprocessedPlanApproval", () => {
   });
 });
 
+
+describe("queueApprovedPlanContinuation", () => {
+  it("waits for idle, then starts a fresh top-level prompt", () => {
+    const sendUserMessage = mock();
+    const callbacks: Array<() => void> = [];
+    let idle = false;
+
+    queueApprovedPlanContinuation(
+      { sendUserMessage } as any,
+      () => idle,
+      (callback) => callbacks.push(callback),
+    );
+
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(callbacks).toHaveLength(1);
+
+    callbacks.shift()!();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(callbacks).toHaveLength(1);
+
+    idle = true;
+    callbacks.shift()!();
+    expect(sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      "Continue with the approved plan.",
+    );
+  });
+});
+
+describe("planAutoSwitch lifecycle", () => {
+  it("writes request at turn_end and sends fresh prompt at agent_end", async () => {
+    const handlers = new Map<string, (event: object, ctx: object) => unknown>();
+    const appendEntry = mock();
+    const sendUserMessage = mock();
+    const pi = {
+      on: (event: string, handler: (event: object, ctx: object) => unknown) => {
+        handlers.set(event, handler);
+      },
+      appendEntry,
+      sendUserMessage,
+    } as any;
+    const approval = {
+      type: "custom",
+      customType: "plannotator:plan-approved",
+      data: { planPath: "/tmp/PLAN.md", approved: true },
+      id: "approval-1",
+    };
+    const ctx = {
+      isIdle: () => true,
+      sessionManager: { getEntries: () => [approval] },
+    };
+
+    planAutoSwitch(pi);
+    await handlers.get("turn_end")!({}, ctx);
+    expect(appendEntry).toHaveBeenCalledWith(
+      "pi-roles:switch-request",
+      expect.objectContaining({ sourceEntryId: "approval-1" }),
+    );
+    expect(appendEntry).toHaveBeenCalledWith(
+      PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED,
+      expect.objectContaining({ sourceEntryId: "approval-1" }),
+    );
+
+    await handlers.get("agent_end")!({}, ctx);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      "Continue with the approved plan.",
+    );
+  });
+});
 
 describe("module exports", () => {
   it("exports PROCESSED_MARKER_PREFIX", () => {
