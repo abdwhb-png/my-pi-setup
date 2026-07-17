@@ -17,6 +17,15 @@ function makeTempDir(prefix: string): string {
 }
 
 describe('package-install-finalizer', () => {
+    it('does not create a nested project link root when launched from the pi config directory', () => {
+        const piDir = makeTempDir('pi-config-');
+        const agentDir = join(piDir, 'agent');
+
+        expect(
+            packageFinalizer.getPackageLinkRoots('user', piDir, agentDir),
+        ).toEqual([join(agentDir, 'node_modules')]);
+    });
+
     it('replaces a broken symlink with the correct one', () => {
         const agentDir = makeTempDir('pi-agent-');
         const cwd = makeTempDir('pi-cwd-');

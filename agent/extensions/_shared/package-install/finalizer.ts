@@ -233,7 +233,9 @@ export function getPackageLinkRoots(
 ): string[] {
     const roots = new Set<string>();
     roots.add(join(agentDir, 'node_modules'));
-    roots.add(join(cwd, '.pi', 'node_modules'));
+    if (resolve(cwd) !== resolve(dirname(agentDir))) {
+        roots.add(join(cwd, '.pi', 'node_modules'));
+    }
     if (scope === 'project') {
         roots.add(join(cwd, 'node_modules'));
     }
