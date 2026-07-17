@@ -1,0 +1,14 @@
+{
+    "name": "pi-extension-markdown-links",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "pi": {
+        "extensions": [
+            "./index.ts"
+        ]
+    },
+    "dependencies": {
+        "satteri": "0.9.5"
+    }
+}
