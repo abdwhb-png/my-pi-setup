@@ -6,6 +6,8 @@
  */
 
 import { afterEach, describe, expect, it, mock, beforeEach } from 'bun:test';
+import { PROVIDER_OVERRIDES } from '../constants/cpa-overrides';
+import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
 import {
     enrichModel,
     familyDefaults,
@@ -13,9 +15,7 @@ import {
     fetchOpenRouterMetadata,
     resetOrMetadataCache,
     buildCpaModels,
-    STATIC_FALLBACK_MODELS,
     STATIC_IMAGE_MODELS,
-    PROVIDER_OVERRIDES,
 } from './cpa-models.ts';
 import type { CpaModelEntry } from './cpa-models.ts';
 
