@@ -95,6 +95,7 @@ function createMockExtensionApi(
             sessionName = name;
         },
         getCommands: () => commands ?? [],
+        setThinkingLevel: mock(() => undefined),
     } as ExtensionAPI;
     return {
         pi,

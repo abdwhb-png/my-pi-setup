@@ -37,7 +37,7 @@ function createMockContext(): ExtensionContext {
 }
 
 async function loadExtension() {
-    const modulePath = `./model-thinking.ts?test=${Date.now()}-${Math.random()}`;
+    const modulePath = `./index.ts?test=${Date.now()}-${Math.random()}`;
     return (await import(modulePath)) as typeof import('./index.ts');
 }
 

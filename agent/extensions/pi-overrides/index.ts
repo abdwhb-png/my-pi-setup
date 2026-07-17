@@ -25,6 +25,7 @@ import {
 } from './config.ts';
 import { handleReadOnDirectory, handleLsOnFile } from './path-redirect';
 import piFileResolver from './pi-file-resolver';
+import { registerPromptThinking } from './prompt-thinking.ts';
 import {
     compactPromptSessionName,
     compactSkillSessionName,
@@ -339,6 +340,7 @@ function registerCompactSessionNames(pi: ExtensionAPI): void {
 export default function piOverrides(pi: ExtensionAPI): void {
     // --- Register piFileResolver
     piFileResolver(pi);
+    registerPromptThinking(pi);
     registerCompactSessionNames(pi);
 
     pi.on('session_start', async (_event, ctx) => {
