@@ -76,7 +76,12 @@ function createMockExtensionApi(
             event: string,
             handler: (event: object, ctx: object) => Promise<void> | void,
         ) {
-            handlers.set(event, handler);
+            handlers.set(event, (value, ctx) =>
+                handler(value, {
+                    sessionManager: { getEntries: () => [] },
+                    ...ctx,
+                }),
+            );
         },
         registerTool(tool: {
             name: string;
@@ -96,7 +101,7 @@ function createMockExtensionApi(
         },
         getCommands: () => commands ?? [],
         setThinkingLevel: mock(() => undefined),
-    } as ExtensionAPI;
+    } as unknown as ExtensionAPI;
     return {
         pi,
         handlers,
@@ -218,7 +223,7 @@ describe('pi-overrides', () => {
         expect(getSessionName()).toBe('/skill:diagnose Investigate color');
     });
 
-    it('names a still-unnamed session from a later skill message', async () => {
+    it('does not name a session from a skill after the first user message', async () => {
         const { pi, handlers, getSessionName } = createMockExtensionApi();
         piOverrides(pi);
         const handler = handlers.get('message_end');
@@ -241,7 +246,46 @@ describe('pi-overrides', () => {
             {},
         );
 
-        expect(getSessionName()).toBe('/skill:tdd Fix login');
+        expect(getSessionName()).toBeUndefined();
+    });
+
+    it('does not name a resumed session from a later skill message', async () => {
+        const { pi, handlers, getSessionName } = createMockExtensionApi();
+        piOverrides(pi);
+        const sessionStart = handlers.get('session_start');
+        const messageEnd = handlers.get('message_end');
+        if (!sessionStart) throw new Error('session_start not registered');
+        if (!messageEnd) throw new Error('message_end not registered');
+
+        await sessionStart(
+            {},
+            {
+                cwd: '/tmp',
+                sessionManager: {
+                    getEntries: () => [
+                        {
+                            type: 'message',
+                            message: {
+                                role: 'user',
+                                content: 'Ordinary first message',
+                            },
+                        },
+                    ],
+                },
+            },
+        );
+        await messageEnd(
+            {
+                message: {
+                    role: 'user',
+                    content:
+                        '<skill name="tdd" location="/skills/tdd/SKILL.md">instructions</skill>\n\nFix login',
+                },
+            },
+            {},
+        );
+
+        expect(getSessionName()).toBeUndefined();
     });
 
     it.each(['assistant', 'toolResult', 'custom'])(
@@ -956,6 +1000,32 @@ describe('pi-overrides', () => {
             expect(getSessionName()).toBeUndefined();
         });
 
+        it('names a first skill after its input expands', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                undefined,
+                nonPromptCommands,
+            );
+            piOverrides(pi);
+            const input = handlers.get('input');
+            const messageEnd = handlers.get('message_end');
+            if (!input) throw new Error('input handler not registered');
+            if (!messageEnd) throw new Error('message_end not registered');
+
+            await input({ text: '/diagnose investigate', type: 'input' }, {});
+            await messageEnd(
+                {
+                    message: {
+                        role: 'user',
+                        content:
+                            '<skill name="diagnose">instructions</skill>\n\nInvestigate',
+                    },
+                },
+                {},
+            );
+
+            expect(getSessionName()).toBe('/skill:diagnose Investigate');
+        });
+
         it('ignores extension-source commands', async () => {
             const { pi, handlers, getSessionName } = createMockExtensionApi(
                 undefined,
@@ -970,7 +1040,65 @@ describe('pi-overrides', () => {
             expect(getSessionName()).toBeUndefined();
         });
 
-        it('a later prompt names a still-unnamed session', async () => {
+        it('does not name a resumed session after an existing first user message', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                undefined,
+                promptCommands,
+            );
+            piOverrides(pi);
+            const sessionStart = handlers.get('session_start');
+            const input = handlers.get('input');
+            if (!sessionStart) throw new Error('session_start not registered');
+            if (!input) throw new Error('input handler not registered');
+
+            await sessionStart(
+                {},
+                {
+                    cwd: '/tmp',
+                    sessionManager: {
+                        getEntries: () => [
+                            {
+                                type: 'message',
+                                message: {
+                                    role: 'user',
+                                    content: 'Ordinary first message',
+                                },
+                            },
+                        ],
+                    },
+                },
+            );
+            await input({ text: '/debug-issue fix login', type: 'input' }, {});
+
+            expect(getSessionName()).toBeUndefined();
+        });
+
+        it('counts a first user message delivered without an input event', async () => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi(
+                undefined,
+                promptCommands,
+            );
+            piOverrides(pi);
+            const messageEnd = handlers.get('message_end');
+            const input = handlers.get('input');
+            if (!messageEnd) throw new Error('message_end not registered');
+            if (!input) throw new Error('input handler not registered');
+
+            await messageEnd(
+                {
+                    message: {
+                        role: 'user',
+                        content: 'Programmatic first message',
+                    },
+                },
+                {},
+            );
+            await input({ text: '/debug-issue fix login', type: 'input' }, {});
+
+            expect(getSessionName()).toBeUndefined();
+        });
+
+        it('does not name a session from a prompt after the first user input', async () => {
             const { pi, handlers, getSessionName } = createMockExtensionApi(
                 undefined,
                 promptCommands,
@@ -986,7 +1114,7 @@ describe('pi-overrides', () => {
                 { text: '/debug-issue fix login', type: 'input' },
                 {},
             );
-            expect(getSessionName()).toBe('/prompt:debug-issue fix login');
+            expect(getSessionName()).toBeUndefined();
         });
 
         it('existing skill message_end behavior still works unchanged', async () => {

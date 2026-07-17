@@ -7,7 +7,11 @@ import {
 import nodePath from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import type { ExtensionAPI, Theme } from '@earendil-works/pi-coding-agent';
+import type {
+    ExtensionAPI,
+    SessionEntry,
+    Theme,
+} from '@earendil-works/pi-coding-agent';
 import {
     createFindToolDefinition,
     createGrepToolDefinition,
@@ -305,9 +309,17 @@ const READ_DISAMBIGUATION = {
 
 // ─── Extension entry point ────────────────────────────────────────────────────
 
-function registerCompactSessionNames(pi: ExtensionAPI): void {
+function registerCompactSessionNames(
+    pi: ExtensionAPI,
+): (entries: readonly SessionEntry[]) => void {
+    let firstUserInputSeen = false;
+    let firstUserMessageSeen = false;
+
     pi.on('message_end', (event) => {
-        if (pi.getSessionName() || event.message.role !== 'user') return;
+        if (event.message.role !== 'user' || firstUserMessageSeen) return;
+        firstUserInputSeen = true;
+        firstUserMessageSeen = true;
+        if (pi.getSessionName()) return;
 
         const content = event.message.content;
         const text =
@@ -323,7 +335,10 @@ function registerCompactSessionNames(pi: ExtensionAPI): void {
     });
 
     pi.on('input', (event) => {
-        if (pi.getSessionName()) return { action: 'continue' };
+        if (firstUserInputSeen || pi.getSessionName()) {
+            return { action: 'continue' };
+        }
+        firstUserInputSeen = true;
 
         const commands = pi.getCommands();
         const promptNames = new Set(
@@ -335,15 +350,25 @@ function registerCompactSessionNames(pi: ExtensionAPI): void {
 
         return { action: 'continue' };
     });
+
+    return (entries) => {
+        const hasUserMessage = entries.some(
+            (entry) =>
+                entry.type === 'message' && entry.message.role === 'user',
+        );
+        firstUserInputSeen = hasUserMessage;
+        firstUserMessageSeen = hasUserMessage;
+    };
 }
 
 export default function piOverrides(pi: ExtensionAPI): void {
     // --- Register piFileResolver
     piFileResolver(pi);
     registerPromptThinking(pi);
-    registerCompactSessionNames(pi);
+    const restoreCompactSessionNameState = registerCompactSessionNames(pi);
 
     pi.on('session_start', async (_event, ctx) => {
+        restoreCompactSessionNameState(ctx.sessionManager.getEntries());
         // Load config fresh each session
         setFileResolverConfig(loadFileResolverConfig(ctx.cwd));
 
