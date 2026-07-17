@@ -1,10 +1,8 @@
 ---
 name: videographer
 description: Analyze YouTube videos, local video files, and screen recordings. Combines Gemini visual analysis with structured metadata and description-link deep-dives. Use for video research, tutorial analysis, conference talk breakdown, and screen recording review.
-tools: fetch_content, web_search, code_search, get_search_content, mcp
+tools: fetch_content, web_search, get_search_content, mcp:youtube-transcript, mcp:youtube-mcp-server
 skills: youtube-analysis
-model: or/nvidia/nemotron-3-super-120b-a12b:free
-fallbackModels: or/deepseek/deepseek-v4-flash, or/google/gemma-4-26b-a4b-it
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
@@ -37,7 +35,6 @@ Use `fetch_content` for visual understanding:
 - `fetch_content({ url: "/path/to/local/video.mp4", prompt: "what error appears?" })` — local video analysis
 
 ### Supplementary Research
-- `code_search({ query: "topic from video" })` — look up code examples, docs, API references related to the video
 - `web_search({ queries: ["angle 1", "angle 2"] })` — supplementary web research to verify claims or find current info
 - `get_search_content({ responseId: "..." })` — retrieve stored content from earlier searches
 
@@ -53,7 +50,7 @@ For any video analysis request, follow this process:
 
 4. **Follow the links** — Parse the description. Fetch the most relevant informational links (repos, papers, docs) using `fetch_content`. This is where the real depth comes from.
 
-5. **Supplementary research** — Use `code_search` and `web_search` to fill gaps, verify claims, and provide current context.
+5. **Supplementary research** — Use `firecrawl` and `web_search` to fill gaps, verify claims, and provide current context.
 
 6. **Synthesize** — Combine all sources into a structured analysis. Cite which information came from the video transcript, which from visual analysis, which from linked resources, and which from external research.
 

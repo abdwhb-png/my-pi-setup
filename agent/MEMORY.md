@@ -17,7 +17,6 @@
 - Architectural decisions for the package finalizer: (1) use a Pi extension + minimal wrapper instead of patching global Bun or upstream Pi core; (2) keep startup fast with a persistent cache and only repair configured packages; (3) reserve expensive rebuilds for invalid/missing artifacts or post-mutation wrapper runs (`install/remove/uninstall/update`); (4) create symlinks for package-name resolution rather than fragile re-export shim files; (5) do not automatically replace an existing non-shim package directory in `node_modules` to avoid clobbering user-managed dependencies — only stale generated shims and mismatched symlinks are replaced automatically.
 - Hypa versioning policy: `@hypabolic/pi-hypa` and `@hypabolic/hypa` may ship at different versions. If the Pi package lags behind the Hypa engine, prefer upgrading `@hypabolic/hypa` separately and pointing `HYPA_BIN` to that binary path instead of assuming the Pi package version must match the engine version.
 
-
 ## Règles de configuration des modèles
 
 ### 🔴 RÈGLE IMPÉRATIVE : Vérification factuelle des specs
@@ -28,20 +27,20 @@
 
 1. **Identifier le provider réel** du modèle (Anthropic, Google, OpenAI, DeepSeek, etc.)
 2. **Consulter la documentation officielle** :
-   - Anthropic → `https://platform.claude.com/docs/en/about-claude/models/overview`
-   - Google Gemini → `https://ai.google.dev/gemini-api/docs`
-   - OpenAI → `https://platform.openai.com/docs`
-   - DeepSeek → `https://api-docs.deepseek.com/`
-   - OpenRouter → `https://openrouter.ai/docs`
-   - OpenCode Go → prix sur leur page officielle, specs via le provider upstream
+    - Anthropic → `https://platform.claude.com/docs/en/about-claude/models/overview`
+    - Google Gemini → `https://ai.google.dev/gemini-api/docs`
+    - OpenAI → `https://platform.openai.com/docs`
+    - DeepSeek → `https://api-docs.deepseek.com/`
+    - OpenRouter → `https://openrouter.ai/docs`
+    - OpenCode Go → prix sur leur page officielle, specs via le provider upstream
 3. **Utiliser Context7** (`context7_query-docs`) pour interroger la doc officielle
 4. **Croiser avec des sources externes** si nécessaire (articles, benchmarks)
 5. **Ne remplir que les champs vérifiés** : `contextWindow`, `maxTokens`, `cost` (input/output/cacheRead/cacheWrite), `reasoning`, `input`
 
 **Champs à vérifier systématiquement :**
 
-| Champ             | Où vérifier                                                             | Ne pas deviner      |
-| ----------------- | ----------------------------------------------------------------------- | ------------------- |
+| Champ             | Où vérifier                                                             | Ne pas deviner       |
+| ----------------- | ----------------------------------------------------------------------- | -------------------- |
 | `contextWindow`   | Page "Models overview" du provider                                      | ❌                   |
 | `maxTokens`       | Specs API du modèle spécifique                                          | ❌                   |
 | `cost.input`      | Page "Pricing" du provider                                              | ❌                   |
@@ -67,7 +66,7 @@ Modèle: claude-sonnet-4-6
 → Résultat: 1M context, 64K max output (source: Anthropic Models Overview)
 → models.json: contextWindow=1000000, maxTokens=64000 ✓
 ```
-  
+
 ## CLIProxyAPI Integration (June 2026)
 
 ### Architecture
@@ -136,7 +135,7 @@ Chaque subagent a 2 fallbacks. Le principe général : **ocg → pool payé → 
 | researcher       | `cpa/ocg/go-deepseek-v4-pro`   | `cpa/deepseek/deepseek-v4-pro` (paid)   | `cpa/nvidia/nemotron-3-super-120b-a12b:free` |
 | planner          | `cpa/ocg/go-deepseek-v4-pro`   | `cpa/deepseek/deepseek-v4-pro` (paid)   | `cpa/nvidia/nemotron-3-super-120b-a12b:free` |
 | sdd-orchestrator | `cpa/ocg/go-deepseek-v4-pro`   | `cpa/deepseek/deepseek-v4-pro` (paid)   | `cpa/nvidia/nemotron-3-super-120b-a12b:free` |
-| **reviewer**     | `cpa/ocg/go-glm-5.2`           | `cpa/ocg/go-deepseek-v4-pro`            | `cpa/deepseek/deepseek-v4-pro` (paid)        |
+| **reviewer**     | `cpa/zai-coding/glm-5.2`       | `cpa/ocg/go-glm-5.2`                    | `cpa/ocg/go-deepseek-v4-pro` (paid)          |
 | **oracle**       | `cpa/ocg/go-glm-5.2`           | `cpa/ocg/go-deepseek-v4-pro`            | `cpa/deepseek/deepseek-v4-pro` (paid)        |
 
 #### Pourquoi ce schéma
@@ -158,9 +157,11 @@ Chaque subagent a 2 fallbacks. Le principe général : **ocg → pool payé → 
 #### Sub-agent resilience
 
 Sub-agents use `cpa/` provider prefix in settings.json to survive `/model` changes:
+
 ```json
 "worker": { "model": "cpa/ocg/go-deepseek-v4-flash" }
 ```
+
 `cpa/` locks the provider; the model ID determines CPA routing (ocg/ → Go, no prefix → pool global).
 
 ### Decisions
@@ -178,11 +179,11 @@ Sub-agents use `cpa/` provider prefix in settings.json to survive `/model` chang
 ```yaml
 # config.template.yaml
 api-key-entries:
-  - api-key: "${OCG_KEY_ONE}"    # from .env
-  - api-key: "${OCG_KEY_TWO}"
+    - api-key: '${OCG_KEY_ONE}' # from .env
+    - api-key: '${OCG_KEY_TWO}'
 models:
-  - name: "deepseek-v4-pro"      # upstream name
-    alias: "go-deepseek-v4-pro"  # client-visible alias
+    - name: 'deepseek-v4-pro' # upstream name
+      alias: 'go-deepseek-v4-pro' # client-visible alias
 ```
 
 ```bash

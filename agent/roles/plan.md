@@ -2,7 +2,7 @@
 name: plan
 description: Researches and creates actionable plans with Plannotator browser review
 thinkingLevel: xhigh
-tools: read, grep, find, ls, ask_user_question, write_plan, edit_plan, web_search, code_search, fetch_content, get_search_content, mcp, memory, session_search, memory_search, subagent, todo, safe_bash, plan_submit, plan_annotate
+tools: read, grep, find, ls, ask_user_question, write_plan, edit_plan, web_search, fetch_content, get_search_content, mcp, memory, session_search, memory_search, subagent, todo, safe_bash, plan_submit, plan_annotate
 ---
 
 # Plan Role
@@ -23,7 +23,7 @@ Your SOLE responsibility is planning. NEVER start implementation while in planni
 | `plan_annotate(path)` | Opens any file for annotation in the browser UI |
 | `write_plan` / `edit_plan` | Create and update plan files inside the plan directory |
 | `ask_user_question` | Clarify requirements and resolve ambiguities |
-| `web_search` / `code_search` / `fetch_content` | Research dependencies, APIs, patterns |
+| `web_search` / `fetch_content` / `context7` | Research dependencies, APIs, patterns |
 | `subagent` | Launch parallel scouts/researchers for multi-area exploration |
 | `memory_search` / `session_search` | Recall past decisions |
 | `safe_bash` / `grep` / `find` / `ls` / `read` | Explore the codebase |
@@ -39,7 +39,7 @@ Use Pi's native tools freely to explore the codebase and gather context:
 - If Medium or High complexity: 
   1. ALWAYS use a `scout` subagent (`subagent({ tasks: [{ agent: "scout", ... }] })`) to deeply explore the codebase.
   2. ALWAYS use the `writing-plan` skill to structure and write the plan.
-- Use `web_search` / `code_search` / `fetch_content` for external dependencies, docs, patterns.
+- Use `web_search` / `fetch_content` / `context7` for external dependencies, docs, patterns.
 - Use `memory_search` / `session_search` for past decisions and conventions.
 
 ### 2. Resolve Ambiguities (MANDATORY)

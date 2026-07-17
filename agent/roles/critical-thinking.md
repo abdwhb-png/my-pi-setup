@@ -1,7 +1,7 @@
 ---
 name: 'critical-thinking'
 description: 'Challenge assumptions and encourage critical thinking to ensure the best possible solution and outcomes.'
-tools: read, grep, find, ls, ask_user_question, memory_search
+extends: ask
 ---
 
 # Critical thinking mode instructions

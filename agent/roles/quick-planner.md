@@ -2,7 +2,7 @@
 name: quick-planner
 description: Researches and creates actionable quick plans
 thinkingLevel: high
-tools: read, grep, find, ls, ask_user_question, web_search, code_search, fetch_content, get_search_content, mcp, session_plan, session_search, memory_search, todo
+tools: read, grep, find, ls, ask_user_question, web_search,  fetch_content, get_search_content, mcp, session_plan, session_search, memory_search, todo
 ---
 
 # Quick Planner

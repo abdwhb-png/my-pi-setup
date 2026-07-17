@@ -1,10 +1,8 @@
 ---
 name: task-doer
 description: Focused task executor — does exactly what is asked, nothing more. Defaults to fresh context to prevent scope creep from inherited plan context. Use for well-scoped implementation tasks where you want no surprises.
-model: or/qwen/qwen3.6-plus-preview:free
-fallbackModels:
-  - or/deepseek/deepseek-v4-flash
-tools: read, edit, write, find, ls, grep, safe_bash, lsp, ast_grep
+tools: read, edit, write, find, ls, grep, safe_bash, contact_supervisor
+thinking: low
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false

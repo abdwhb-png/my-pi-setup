@@ -1,8 +1,8 @@
 ---
 name: ask
-description: Answers questions about the codebase without making changes
+description: Answers questions without making changes
 thinking: high
-tools: read, grep, find, ls, ask_user_question, memory_search, session_search, mcp, safe_bash, web_search, code_search, fetch_content
+tools: read, grep, find, ls, ask_user_question, memory_search, session_search, mcp, web_search, fetch_content,get_search_content
 ---
 
 # Ask Role
