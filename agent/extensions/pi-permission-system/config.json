@@ -1,5 +1,13 @@
 {
     "yoloMode": false,
+    "shellTools": {
+        "safe_bash": {
+            "commandArgument": "command"
+        },
+        "hypa_shell": {
+            "commandArgument": "command"
+        }
+    },
     "permission": {
         "*": "allow",
         "path": {
@@ -9,7 +17,6 @@
             "*.env.example": "allow"
         },
         "bash": {
-            "*": "allow",
             "rm -rf *": "ask",
             "sudo *": "ask",
             "docker *": "ask",
@@ -17,12 +24,27 @@
             "docker ps *": "allow",
             "docker logs *": "allow",
             "git *": "ask",
+            "git remote -v": "allow",
+            "git * remote -v": "allow",
             "git status *": "allow",
+            "git * status *": "allow",
             "git log *": "allow",
+            "git * log *": "allow",
             "git show *": "allow",
-            "agent-browser *": "allow",
-            "chrome-devtools *": "allow",
-            "* node_modules/*": "ask"
+            "git * show *": "allow",
+            "git diff *": "allow",
+            "git * diff *": "allow",
+            "git stash list": "allow",
+            "git * stash list": "allow",
+            "* */node_modules/*": "ask",
+            "ls */node_modules/*": "allow",
+            "grep */node_modules/*": "allow",
+            "cat */node_modules/*": "allow",
+            "find */node_modules/*": "allow",
+            "./node_modules/.bin/oxfmt *": "allow",
+            "* ./node_modules/.bin/oxfmt *": "allow",
+            "./node_modules/.bin/oxlint *": "allow",
+            "* ./node_modules/.bin/oxlint *": "allow"
         },
         "write": {
             "*": "allow",
@@ -34,21 +56,18 @@
             "node_modules/*": "deny",
             "AGENTS.md": "ask"
         },
-        "safe_bash": "allow",
-        "hypa_shell": "allow",
-        "hypa_write": "allow",
-        "hypa_edit": "allow",
         "external_directory": {
             "*": "ask",
+            "/tmp/*": "allow",
             "~/tmp/pi-*/*": "allow",
-            "/home/abdwhb/tmp/pi-*/*": "allow",
             "~/.pi/*": "allow",
-            "/home/abdwhb/.pi/*": "allow",
-            "/home/abdwhb/.bun/install/global/node_modules/@earendil-works/*": "allow",
-            "/home/abdwhb/.agents/skills/*": "allow",
-            "/home/abdwhb/projects/*": "allow",
-            "/home/abdwhb/projects/pi-integrations/*": "allow",
-            "/home/abdwhb/projects/shared-services/*": "allow"
+            "~/.bun/install/global/node_modules/@earendil-works": "allow",
+            "~/.bun/install/global/node_modules/@earendil-works/*": "allow",
+            "~/.agents/skills/*": "allow",
+            "~/.agents/*": "allow",
+            "~/projects/*": "allow",
+            "~/projects/pi-integrations/*": "allow",
+            "~/projects/shared-services/*": "allow"
         }
     }
 }

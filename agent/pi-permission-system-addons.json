@@ -1,7 +1,5 @@
 {
     "inherit": {
-        "safe_bash": "bash",
-        "hypa_shell": "bash",
         "hypa_write": "write",
         "hypa_edit": "edit"
     }
