@@ -27,4 +27,32 @@ describe('normalizeAiProvidersConfig', () => {
 
         expect(merged.cpa.refreshTtlMs).toBe(45_000);
     });
+
+    test('accepts a boolean cpa.silentCatalogDiff and defaults to false', () => {
+        const normalized = normalizeAiProvidersConfig({
+            cpa: { silentCatalogDiff: true },
+        });
+        expect(normalized.cpa?.silentCatalogDiff).toBe(true);
+        expect(normalized.providers).toEqual({});
+        expect(normalized.widgets).toEqual({});
+    });
+    test('ignores non-boolean cpa.silentCatalogDiff', () => {
+        expect(
+            normalizeAiProvidersConfig({
+                cpa: { silentCatalogDiff: 'yes' },
+            }).cpa?.silentCatalogDiff,
+        ).toBeUndefined();
+    });
+
+    test('propagates silentCatalogDiff through mergeAiProvidersConfig', () => {
+        const merged = mergeAiProvidersConfig(
+            {
+                providers: {},
+                widgets: {},
+                cpa: { refreshTtlMs: 30_000, silentCatalogDiff: true },
+            },
+            normalizeAiProvidersConfig({ providers: { cpa: true } }),
+        );
+        expect(merged.cpa.silentCatalogDiff).toBe(true);
+    });
 });

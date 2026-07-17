@@ -28,7 +28,16 @@ export interface AiProvidersConfig {
     widgets: Record<string, boolean>;
     maxVisibleRows?: number;
     cpa: {
-        refreshTtlMs: number;
+        /**
+         * Refresh TTL for the CPA catalog guard. Always resolved to a positive
+         * number by mergeAiProvidersConfig (defaults to 30_000ms).
+         */
+        refreshTtlMs?: number;
+        /**
+         * When true, suppresses catalog drift warnings (new/missing CPA models
+         * vs the static fallback list). Defaults to false.
+         */
+        silentCatalogDiff?: boolean;
     };
 }
 
@@ -63,12 +72,23 @@ export function normalizeAiProvidersConfig(
         providers: normalizeBooleanMap(value.providers),
         widgets: normalizeBooleanMap(value.widgets),
     };
+
+    const cpaPartial: {
+        refreshTtlMs?: number;
+        silentCatalogDiff?: boolean;
+    } = {};
     if (
         typeof rawCpa.refreshTtlMs === 'number' &&
         Number.isFinite(rawCpa.refreshTtlMs) &&
         rawCpa.refreshTtlMs > 0
     ) {
-        config.cpa = { refreshTtlMs: rawCpa.refreshTtlMs };
+        cpaPartial.refreshTtlMs = rawCpa.refreshTtlMs;
+    }
+    if (typeof rawCpa.silentCatalogDiff === 'boolean') {
+        cpaPartial.silentCatalogDiff = rawCpa.silentCatalogDiff;
+    }
+    if (Object.keys(cpaPartial).length > 0) {
+        config.cpa = cpaPartial;
     }
 
     if (typeof value.maxVisibleRows === 'number') {
@@ -93,6 +113,10 @@ export function mergeAiProvidersConfig(
     base: AiProvidersConfig,
     overrides: Partial<AiProvidersConfig>,
 ): AiProvidersConfig {
+    const baseCpa: AiProvidersConfig['cpa'] = base.cpa ?? {
+        refreshTtlMs: 30_000,
+    };
+    const overrideCpa: Partial<AiProvidersConfig['cpa']> = overrides.cpa ?? {};
     return {
         providers: {
             ...base.providers,
@@ -104,7 +128,10 @@ export function mergeAiProvidersConfig(
         },
         maxVisibleRows: overrides.maxVisibleRows ?? base.maxVisibleRows,
         cpa: {
-            refreshTtlMs: overrides.cpa?.refreshTtlMs ?? base.cpa.refreshTtlMs,
+            refreshTtlMs:
+                overrideCpa.refreshTtlMs ?? baseCpa.refreshTtlMs ?? 30_000,
+            silentCatalogDiff:
+                overrideCpa.silentCatalogDiff ?? baseCpa.silentCatalogDiff,
         },
     };
 }

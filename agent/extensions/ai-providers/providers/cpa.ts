@@ -20,6 +20,7 @@ import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { loadAiProvidersConfig } from '../config.ts';
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
+import { reportCatalogDiff } from './catalog-diff.ts';
 import { createCpaCatalogGuard } from './cpa-catalog-guard.ts';
 import { buildCpaModels } from './cpa-models.ts';
 
@@ -72,25 +73,6 @@ function buildProviderConfig(models: ProviderModelConfig[]) {
     };
 }
 
-function warnAboutCatalogDifferences(
-    dynamicModels: ProviderModelConfig[],
-): void {
-    const staticIds = new Set(STATIC_FALLBACK_MODELS.map((model) => model.id));
-    const dynamicIds = new Set(dynamicModels.map((model) => model.id));
-    for (const id of dynamicIds) {
-        if (!staticIds.has(id)) {
-            console.warn(
-                `[cpa] New model from CPA not in static fallback: ${id}`,
-            );
-        }
-    }
-    for (const id of staticIds) {
-        if (!dynamicIds.has(id)) {
-            console.warn(`[cpa] Static fallback model not found in CPA: ${id}`);
-        }
-    }
-}
-
 // ── Registration ──
 
 /**
@@ -104,9 +86,14 @@ export function registerCpaProvider(
     options?: { buildModels?: typeof buildCpaModels },
 ): void {
     const buildModels = options?.buildModels ?? buildCpaModels;
+    const cpaConfig = loadAiProvidersConfig().cpa;
     const catalogGuard = createCpaCatalogGuard({
-        refreshTtlMs: loadAiProvidersConfig().cpa?.refreshTtlMs ?? 30_000,
+        refreshTtlMs: cpaConfig?.refreshTtlMs ?? 30_000,
     });
+    const silentCatalogDiff = cpaConfig?.silentCatalogDiff ?? false;
+    // Tracks new live model ids already surfaced as catalog drift within this
+    // provider registration lifetime. Reset on extension reload.
+    const reportedCatalogDrift = new Set<string>();
     let lastNotifiedStaleModelId: string | undefined;
     let unverifiedWarningShown = false;
 
@@ -123,7 +110,10 @@ export function registerCpaProvider(
             loadCatalog: () => buildModels(PROVIDER_BASE_URL, apiKey),
             registerModels: (models) => {
                 pi.registerProvider(PROVIDER_NAME, buildProviderConfig(models));
-                warnAboutCatalogDifferences(models);
+                reportCatalogDiff(models, STATIC_FALLBACK_MODELS, {
+                    silent: silentCatalogDiff,
+                    reported: reportedCatalogDrift,
+                });
             },
             hasModel: (provider, id) =>
                 Boolean(ctx.modelRegistry.find(provider, id)),
