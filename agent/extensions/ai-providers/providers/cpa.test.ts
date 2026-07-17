@@ -13,7 +13,8 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
-import { STATIC_FALLBACK_MODELS, resetOrMetadataCache } from './cpa-models.ts';
+import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
+import { resetOrMetadataCache } from './cpa-models.ts';
 import { registerCpaProvider, getCliproxyApiKey } from './cpa.ts';
 
 interface RegisteredProvider {

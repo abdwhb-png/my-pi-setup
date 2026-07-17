@@ -19,8 +19,9 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { loadAiProvidersConfig } from '../config.ts';
+import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
 import { createCpaCatalogGuard } from './cpa-catalog-guard.ts';
-import { buildCpaModels, STATIC_FALLBACK_MODELS } from './cpa-models.ts';
+import { buildCpaModels } from './cpa-models.ts';
 
 // ── Constants ──
 
