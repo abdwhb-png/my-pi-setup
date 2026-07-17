@@ -168,9 +168,6 @@ export async function repairConfiguredPackageTrust(
         }
 
         summary.inspected += 1;
-        logger.info(
-            `[package-lifecycle-trust] Detected lifecycle scripts for ${pkg.name}: ${scripts.join(', ')}`,
-        );
 
         if (env.confirm && env.onConfirm) {
             const accepted = env.onConfirm(visit, scripts);
@@ -188,7 +185,6 @@ export async function repairConfiguredPackageTrust(
         const trustResult = trustPackage(pkg.name, installRoot);
         if (trustResult.ok) {
             summary.trusted.push(pkg.name);
-            logger.info(`[package-lifecycle-trust] Trusted ${pkg.name}`);
         } else {
             summary.warnings.push(`${pkg.name}: ${trustResult.error}`);
             logger.warn(
@@ -196,6 +192,15 @@ export async function repairConfiguredPackageTrust(
             );
         }
     });
+
+    if (summary.trusted.length > 0 || summary.warnings.length > 0) {
+        logger.info(
+            `[package-lifecycle-trust] Inspected ${summary.inspected}, trusted ${summary.trusted.length}, skipped ${summary.skipped}` +
+                (summary.warnings.length > 0
+                    ? `, ${summary.warnings.length} failed`
+                    : ''),
+        );
+    }
 
     return summary;
 }
