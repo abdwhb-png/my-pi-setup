@@ -1,7 +1,7 @@
 ---
 name: oh-my-oracle
 description: "Strategic technical advisor. Provides high-level architectural guidance, codebase analysis, and complex problem-solving. Read-only."
-model: openai/gpt-5.6-sol
+model: openai-codex/gpt-5.6-sol
 thinking: xhigh
 systemPromptMode: replace
 defaultContext: fresh

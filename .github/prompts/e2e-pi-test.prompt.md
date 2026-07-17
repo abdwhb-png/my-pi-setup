@@ -1,1 +1,1 @@
-Refer to [content](../../pi-prompts/e2e-pi-test.md).
+Read and follow instructions in [e2e-pi-test](../../.agents/prompts/e2e-pi-test.md).

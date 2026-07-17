@@ -1,7 +1,7 @@
 ---
 name: sdd-orchestrator
 description: Programmatic plan executor - dispatches implementers and reviewers per task with fix loops
-model: openai/gpt-5.6-sol
+model: openai-codex/gpt-5.6-sol
 thinking: high
 tools: read, write, edit, grep, find, ls, safe_bash, subagent, intercom
 systemPromptMode: replace
