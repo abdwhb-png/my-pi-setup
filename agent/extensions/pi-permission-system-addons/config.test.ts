@@ -1,9 +1,17 @@
 import { describe, it, expect } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import {
+    existsSync,
+    mkdtempSync,
+    mkdirSync,
+    readFileSync,
+    writeFileSync,
+    rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const { loadConfig } = await import('./config.ts');
+const { loadConfig, readUpstreamYoloMode, writeUpstreamYoloMode } =
+    await import('./config.ts');
 
 function withAgentConfig(
     configData: unknown | null,
@@ -78,5 +86,56 @@ describe('loadConfig', () => {
                 inherit: {},
             });
         });
+    });
+
+    it('ignores legacy addon yolo because upstream yoloMode is authoritative', () => {
+        withAgentConfig({ yolo: true, inherit: {} }, (agentDir) => {
+            expect(loadConfig(agentDir, agentDir)).toEqual({
+                inherit: {},
+            });
+        });
+    });
+});
+
+describe('upstream yolo config', () => {
+    it('reads yoloMode from pi-permission-system config', () => {
+        const agentDir = mkdtempSync(join(tmpdir(), 'perm-addon-test-'));
+        const configDir = join(agentDir, 'extensions', 'pi-permission-system');
+        mkdirSync(configDir, { recursive: true });
+        writeFileSync(
+            join(configDir, 'config.json'),
+            JSON.stringify({ yoloMode: true }),
+        );
+
+        try {
+            expect(readUpstreamYoloMode(agentDir)).toBe(true);
+        } finally {
+            rmSync(agentDir, { recursive: true, force: true });
+        }
+    });
+
+    it('writes yoloMode without changing existing permission policy', () => {
+        const agentDir = mkdtempSync(join(tmpdir(), 'perm-addon-test-'));
+        const configDir = join(agentDir, 'extensions', 'pi-permission-system');
+        const configPath = join(configDir, 'config.json');
+        mkdirSync(configDir, { recursive: true });
+        writeFileSync(
+            configPath,
+            JSON.stringify({
+                yoloMode: false,
+                permission: { bash: { '*': 'allow', 'sudo *': 'ask' } },
+            }),
+        );
+
+        try {
+            writeUpstreamYoloMode(agentDir, true);
+            expect(JSON.parse(readFileSync(configPath, 'utf-8'))).toEqual({
+                yoloMode: true,
+                permission: { bash: { '*': 'allow', 'sudo *': 'ask' } },
+            });
+            expect(existsSync(`${configPath}.tmp`)).toBe(false);
+        } finally {
+            rmSync(agentDir, { recursive: true, force: true });
+        }
     });
 });

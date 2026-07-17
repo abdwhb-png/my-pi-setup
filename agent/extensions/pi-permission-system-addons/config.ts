@@ -1,9 +1,16 @@
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    renameSync,
+    unlinkSync,
+    writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 import { loadExtensionConfig } from '../_shared/config-loader.ts';
 
 export interface AddonConfig {
     inherit: Record<string, string>;
-    /** Auto-approve all inherited 'ask' permission checks. */
-    yolo?: boolean;
 }
 
 export class AddonConfigError extends Error {
@@ -13,30 +20,72 @@ export class AddonConfigError extends Error {
     }
 }
 
-function normalize(raw: unknown): Partial<AddonConfig> {
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-        return {};
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function getUpstreamConfigPath(agentDir: string): string {
+    return join(agentDir, 'extensions', 'pi-permission-system', 'config.json');
+}
+
+function readUpstreamConfig(agentDir: string): Record<string, unknown> {
+    const configPath = getUpstreamConfigPath(agentDir);
+    if (!existsSync(configPath)) return {};
+
+    try {
+        const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'));
+        if (!isRecord(parsed)) {
+            throw new Error('config root must be an object');
+        }
+        return parsed;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new AddonConfigError(
+            `Cannot read pi-permission-system config at '${configPath}': ${message}`,
+        );
     }
-    const obj = raw as Record<string, unknown>;
+}
+
+export function readUpstreamYoloMode(agentDir: string): boolean {
+    return readUpstreamConfig(agentDir).yoloMode === true;
+}
+
+export function writeUpstreamYoloMode(
+    agentDir: string,
+    enabled: boolean,
+): void {
+    const configPath = getUpstreamConfigPath(agentDir);
+    const tmpPath = `${configPath}.tmp`;
+    const updated = { ...readUpstreamConfig(agentDir), yoloMode: enabled };
+
+    try {
+        mkdirSync(dirname(configPath), { recursive: true });
+        writeFileSync(
+            tmpPath,
+            `${JSON.stringify(updated, null, 4)}\n`,
+            'utf-8',
+        );
+        renameSync(tmpPath, configPath);
+    } catch (error) {
+        try {
+            if (existsSync(tmpPath)) unlinkSync(tmpPath);
+        } catch {}
+        const message = error instanceof Error ? error.message : String(error);
+        throw new AddonConfigError(
+            `Cannot write pi-permission-system config at '${configPath}': ${message}`,
+        );
+    }
+}
+
+function normalize(raw: unknown): Partial<AddonConfig> {
+    if (!isRecord(raw)) return {};
     const result: Partial<AddonConfig> = {};
 
-    // yolo flag
-    if (typeof obj.yolo === 'boolean') {
-        result.yolo = obj.yolo;
-    }
-
     // inherit map
-    const inheritRaw = obj.inherit;
-    if (
-        inheritRaw !== undefined &&
-        typeof inheritRaw === 'object' &&
-        inheritRaw !== null &&
-        !Array.isArray(inheritRaw)
-    ) {
+    const inheritRaw = raw.inherit;
+    if (isRecord(inheritRaw)) {
         const inherit: Record<string, string> = {};
-        for (const [tool, surface] of Object.entries(
-            inheritRaw as Record<string, unknown>,
-        )) {
+        for (const [tool, surface] of Object.entries(inheritRaw)) {
             if (typeof surface === 'string' && surface.length > 0) {
                 inherit[tool] = surface;
             }
