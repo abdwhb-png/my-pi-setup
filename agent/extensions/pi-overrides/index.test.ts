@@ -36,7 +36,7 @@ function createMockTheme() {
     };
 }
 
-function createMockExtensionApi() {
+function createMockExtensionApi(initialSessionName?: string) {
     const handlers = new Map<
         string,
         (event: object, ctx: object) => Promise<void> | void
@@ -51,6 +51,7 @@ function createMockExtensionApi() {
         }
     >();
     let activeTools: string[] = ['read', 'bash', 'edit', 'write'];
+    let sessionName = initialSessionName;
     const pi = {
         on(
             event: string,
@@ -70,8 +71,18 @@ function createMockExtensionApi() {
         setActiveTools: (tools: string[]) => {
             activeTools = tools;
         },
+        getSessionName: () => sessionName,
+        setSessionName: (name: string) => {
+            sessionName = name;
+        },
     } as ExtensionAPI;
-    return { pi, handlers, registeredTools, getActiveTools: () => activeTools };
+    return {
+        pi,
+        handlers,
+        registeredTools,
+        getActiveTools: () => activeTools,
+        getSessionName: () => sessionName,
+    };
 }
 
 describe('pi-overrides', () => {
@@ -105,6 +116,150 @@ describe('pi-overrides', () => {
         expect(getActiveTools()).toContain('bash');
         expect(getActiveTools()).toContain('edit');
         expect(getActiveTools()).toContain('write');
+    });
+
+    it('names an unnamed session from a skill-prefixed user message', async () => {
+        const { pi, handlers, getSessionName } = createMockExtensionApi();
+        piOverrides(pi);
+        const handler = handlers.get('message_end');
+        if (!handler) throw new Error('message_end handler not registered');
+
+        await handler(
+            {
+                message: {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: '<skill name="diagnose" location="/skills/diagnose/SKILL.md">instructions</skill>\n\nInvestigate color',
+                        },
+                    ],
+                },
+            },
+            {},
+        );
+
+        expect(getSessionName()).toBe('/skill:diagnose Investigate color');
+    });
+
+    it('preserves an existing explicit session name', async () => {
+        const { pi, handlers, getSessionName } =
+            createMockExtensionApi('custom name');
+        piOverrides(pi);
+        const handler = handlers.get('message_end');
+        if (!handler) throw new Error('message_end handler not registered');
+
+        await handler(
+            {
+                message: {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: '<skill name="diagnose" location="/skills/diagnose/SKILL.md">instructions</skill>\n\nInvestigate color',
+                        },
+                    ],
+                },
+            },
+            {},
+        );
+
+        expect(getSessionName()).toBe('custom name');
+    });
+
+    it('combines user text blocks before deriving the name', async () => {
+        const { pi, handlers, getSessionName } = createMockExtensionApi();
+        piOverrides(pi);
+        const handler = handlers.get('message_end');
+        if (!handler) throw new Error('message_end handler not registered');
+
+        await handler(
+            {
+                message: {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: '<skill name="diagnose" location="/skills/diagnose/SKILL.md">instructions</skill>',
+                        },
+                        { type: 'text', text: 'Investigate color' },
+                    ],
+                },
+            },
+            {},
+        );
+
+        expect(getSessionName()).toBe('/skill:diagnose Investigate color');
+    });
+
+    it('names a still-unnamed session from a later skill message', async () => {
+        const { pi, handlers, getSessionName } = createMockExtensionApi();
+        piOverrides(pi);
+        const handler = handlers.get('message_end');
+        if (!handler) throw new Error('message_end handler not registered');
+
+        await handler(
+            { message: { role: 'user', content: 'Ordinary first message' } },
+            {},
+        );
+        expect(getSessionName()).toBeUndefined();
+
+        await handler(
+            {
+                message: {
+                    role: 'user',
+                    content:
+                        '<skill name="tdd" location="/skills/tdd/SKILL.md">instructions</skill>\n\nFix login',
+                },
+            },
+            {},
+        );
+
+        expect(getSessionName()).toBe('/skill:tdd Fix login');
+    });
+
+    it.each(['assistant', 'toolResult', 'custom'])(
+        'ignores %s messages',
+        async (role) => {
+            const { pi, handlers, getSessionName } = createMockExtensionApi();
+            piOverrides(pi);
+            const handler = handlers.get('message_end');
+            if (!handler) throw new Error('message_end handler not registered');
+
+            await handler(
+                {
+                    message: {
+                        role,
+                        content:
+                            '<skill name="diagnose">instructions</skill>\n\nInvestigate color',
+                    },
+                },
+                {},
+            );
+
+            expect(getSessionName()).toBeUndefined();
+        },
+    );
+
+    it('does not mutate the original user message', async () => {
+        const { pi, handlers } = createMockExtensionApi();
+        piOverrides(pi);
+        const handler = handlers.get('message_end');
+        if (!handler) throw new Error('message_end handler not registered');
+        const message = {
+            role: 'user',
+            content: [
+                {
+                    type: 'text',
+                    text: '<skill name="diagnose">instructions</skill>\n\nInvestigate color',
+                },
+            ],
+        };
+        const original = structuredClone(message);
+
+        await handler({ message }, {});
+
+        expect(message).toEqual(original);
     });
 
     it('wraps read renderResult with compression footer when compression details exist', async () => {

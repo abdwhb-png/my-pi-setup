@@ -6,6 +6,7 @@ import {
 } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import type { ExtensionAPI, Theme } from '@earendil-works/pi-coding-agent';
 import {
     createFindToolDefinition,
@@ -24,6 +25,7 @@ import {
 } from './config.ts';
 import { handleReadOnDirectory, handleLsOnFile } from './path-redirect';
 import piFileResolver from './pi-file-resolver';
+import { compactSkillSessionName } from './session-name.ts';
 
 // ─── Audit-aware ls operations ───────────────────────────────────────────────
 
@@ -69,7 +71,7 @@ export const auditAwareLsOperations = {
  * Tests that call glob() directly will catch the breakage early.
  */
 const FD_BIN = nodePath.join(
-    nodePath.dirname(new URL(import.meta.url).pathname),
+    nodePath.dirname(fileURLToPath(import.meta.url)),
     '../../bin/fd',
 );
 
@@ -299,9 +301,28 @@ const READ_DISAMBIGUATION = {
 
 // ─── Extension entry point ────────────────────────────────────────────────────
 
+function registerCompactSkillSessionNames(pi: ExtensionAPI): void {
+    pi.on('message_end', (event) => {
+        if (pi.getSessionName() || event.message.role !== 'user') return;
+
+        const content = event.message.content;
+        const text =
+            typeof content === 'string'
+                ? content
+                : content
+                      .flatMap((block) =>
+                          block.type === 'text' ? [block.text] : [],
+                      )
+                      .join(' ');
+        const sessionName = compactSkillSessionName(text);
+        if (sessionName) pi.setSessionName(sessionName);
+    });
+}
+
 export default function piOverrides(pi: ExtensionAPI): void {
     // --- Register piFileResolver
     piFileResolver(pi);
+    registerCompactSkillSessionNames(pi);
 
     pi.on('session_start', async (_event, ctx) => {
         // Load config fresh each session
