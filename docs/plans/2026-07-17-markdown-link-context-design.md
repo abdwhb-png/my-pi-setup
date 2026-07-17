@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 -->
+
 # Markdown Link Context Extension
 
 **Date:** 2026-07-17  
@@ -14,7 +16,7 @@ The extension must resolve local Markdown links without changing Pi core, fetchi
 
 Build a directory-form Pi extension that listens to `before_agent_start` and augments the current system prompt with recursively linked local Markdown files.
 
-Use Sätteri `0.9.5` as the Markdown parser. Its JavaScript API exports `markdownToMdast` and `defineMdastPlugin`; MDAST visitors can collect `link`, `linkReference`, and `definition` nodes while respecting Markdown parsing rules. Sätteri uses precompiled Rust/N-API binaries. Bun supports N-API in general, but the extension must run a real Bun smoke test before acceptance.
+Use Sätteri `0.9.5` as the Markdown parser. Its JavaScript API exports `markdownToHtml` and `defineMdastPlugin`; the HTML pipeline accepts MDAST visitors that can collect `link`, `linkReference`, and `definition` nodes while respecting Markdown parsing rules. Sätteri uses precompiled Rust/N-API binaries. Bun supports N-API in general, but the extension must run a real Bun smoke test before acceptance.
 
 No regex fallback. If Sätteri cannot load on the current runtime, Pi continues without expansion and status reports the parser error.
 
@@ -49,7 +51,7 @@ The root `agent/package.json` must not receive this dependency.
 2. `before_agent_start` obtains `event.systemPromptOptions.contextFiles` and builds roots.
 3. In `scope: "context"`, roots are only Pi's context files.
 4. In `scope: "all"` (default), roots are all file-backed prompt roots available to the extension: context files plus discoverable `SYSTEM.md` and `APPEND_SYSTEM.md`. Skill files are not roots because Pi only exposes their metadata; it does not load their bodies into the prompt.
-5. Each root is parsed with Sätteri. Inline links, reference links, and definitions are collected in source order.
+5. Each root is parsed with Sätteri's `markdownToHtml` pipeline using a non-mutating MDAST collector. Inline links, reference links, and definitions are collected in source order.
 6. Relative targets resolve against the containing Markdown file. Fragments and query strings are removed. Only `.md` and `.markdown` targets are accepted. `http(s)`, `mailto`, empty destinations, images, and unsupported extensions are skipped.
 7. Files are read recursively. `realpath` provides canonical identity for duplicate and cycle detection. Depth and UTF-8 byte budgets apply globally per turn.
 8. The extension appends one section to the current `event.systemPrompt`, using `<project_instructions path="...">` blocks and preserving earlier extension changes.
