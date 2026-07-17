@@ -13,22 +13,21 @@
  * streamSimple handles all streaming. No custom streamSimple needed.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import {
-	buildCpaModels,
-	STATIC_FALLBACK_MODELS,
-} from "./cpa-models.ts";
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
+import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { loadAiProvidersConfig } from '../config.ts';
+import { createCpaCatalogGuard } from './cpa-catalog-guard.ts';
+import { buildCpaModels, STATIC_FALLBACK_MODELS } from './cpa-models.ts';
 
 // ── Constants ──
 
-const PROVIDER_NAME = "cpa";
-const PROVIDER_DISPLAY = "CLIProxyAPI (local)";
-const PROVIDER_BASE_URL = "http://localhost:8317/v1";
-const PROVIDER_API = "openai-completions" as const;
+const PROVIDER_NAME = 'cpa';
+const PROVIDER_DISPLAY = 'CLIProxyAPI (local)';
+const PROVIDER_BASE_URL = 'http://localhost:8317/v1';
+const PROVIDER_API = 'openai-completions' as const;
 
 // ── Helper to resolve the API Key dynamically from .env ──
 
@@ -37,37 +36,58 @@ const PROVIDER_API = "openai-completions" as const;
  * Checks process.env first, then falls back to reading the ~/.pi/agent/.env file.
  */
 export function getCliproxyApiKey(): string {
-	if (process.env.CLIPROXY_API_KEY) {
-		return process.env.CLIPROXY_API_KEY.replace(/^["']|["']$/g, "");
-	}
-	const envPath = join(getAgentDir(), ".env");
-	if (existsSync(envPath)) {
-		try {
-			const content = readFileSync(envPath, "utf-8");
-			for (const line of content.split(/\r?\n/)) {
-				const trimmed = line.trim();
-				if (trimmed.startsWith("CLIPROXY_API_KEY=")) {
-					const value = trimmed.slice("CLIPROXY_API_KEY=".length).trim();
-					return value.replace(/^["']|["']$/g, "");
-				}
-			}
-		} catch {
-			// ignore
-		}
-	}
-	return "";
+    if (process.env.CLIPROXY_API_KEY) {
+        return process.env.CLIPROXY_API_KEY.replace(/^["']|["']$/g, '');
+    }
+    const envPath = join(getAgentDir(), '.env');
+    if (existsSync(envPath)) {
+        try {
+            const content = readFileSync(envPath, 'utf-8');
+            for (const line of content.split(/\r?\n/)) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('CLIPROXY_API_KEY=')) {
+                    const value = trimmed
+                        .slice('CLIPROXY_API_KEY='.length)
+                        .trim();
+                    return value.replace(/^["']|["']$/g, '');
+                }
+            }
+        } catch {
+            // ignore
+        }
+    }
+    return '';
 }
 
 // ── Provider config helpers ──
 
 function buildProviderConfig(models: ProviderModelConfig[]) {
-	return {
-		name: PROVIDER_DISPLAY,
-		baseUrl: PROVIDER_BASE_URL,
-		api: PROVIDER_API,
-		apiKey: getCliproxyApiKey(),
-		models,
-	};
+    return {
+        name: PROVIDER_DISPLAY,
+        baseUrl: PROVIDER_BASE_URL,
+        api: PROVIDER_API,
+        apiKey: getCliproxyApiKey(),
+        models,
+    };
+}
+
+function warnAboutCatalogDifferences(
+    dynamicModels: ProviderModelConfig[],
+): void {
+    const staticIds = new Set(STATIC_FALLBACK_MODELS.map((model) => model.id));
+    const dynamicIds = new Set(dynamicModels.map((model) => model.id));
+    for (const id of dynamicIds) {
+        if (!staticIds.has(id)) {
+            console.warn(
+                `[cpa] New model from CPA not in static fallback: ${id}`,
+            );
+        }
+    }
+    for (const id of staticIds) {
+        if (!dynamicIds.has(id)) {
+            console.warn(`[cpa] Static fallback model not found in CPA: ${id}`);
+        }
+    }
 }
 
 // ── Registration ──
@@ -79,38 +99,133 @@ function buildProviderConfig(models: ProviderModelConfig[]) {
  * @param options - Optional overrides for testing (buildModels injects a mock)
  */
 export function registerCpaProvider(
-	pi: ExtensionAPI,
-	options?: { buildModels?: typeof buildCpaModels },
+    pi: ExtensionAPI,
+    options?: { buildModels?: typeof buildCpaModels },
 ): void {
-	const buildModels = options?.buildModels ?? buildCpaModels;
+    const buildModels = options?.buildModels ?? buildCpaModels;
+    const catalogGuard = createCpaCatalogGuard({
+        refreshTtlMs: loadAiProvidersConfig().cpa?.refreshTtlMs ?? 30_000,
+    });
+    let lastNotifiedStaleModelId: string | undefined;
+    let unverifiedWarningShown = false;
 
-	// Phase 1: Register with static fallback models immediately (synchronous)
-	pi.registerProvider(PROVIDER_NAME, buildProviderConfig(STATIC_FALLBACK_MODELS));
+    async function refreshCatalog(
+        ctx: Parameters<Parameters<ExtensionAPI['on']>[1]>[1],
+        force = false,
+    ) {
+        const apiKey = getCliproxyApiKey();
+        return catalogGuard.refresh({
+            force,
+            activeModel: ctx.model
+                ? { provider: ctx.model.provider, id: ctx.model.id }
+                : undefined,
+            loadCatalog: () => buildModels(PROVIDER_BASE_URL, apiKey),
+            registerModels: (models) => {
+                pi.registerProvider(PROVIDER_NAME, buildProviderConfig(models));
+                warnAboutCatalogDifferences(models);
+            },
+            hasModel: (provider, id) =>
+                Boolean(ctx.modelRegistry.find(provider, id)),
+        });
+    }
 
-	// Phase 2: On session_start, fetch dynamic models and re-register
-	pi.on("session_start", async (_event, ctx) => {
-		try {
-			const apiKey = getCliproxyApiKey();
-			const dynamicModels = await buildModels(PROVIDER_BASE_URL, apiKey);
-			if (dynamicModels.length > 0) {
-				ctx.modelRegistry.registerProvider(PROVIDER_NAME, buildProviderConfig(dynamicModels));
+    function notifyStaleModelOnce(
+        ctx: Parameters<Parameters<ExtensionAPI['on']>[1]>[1],
+        modelId: string,
+    ): void {
+        if (lastNotifiedStaleModelId === modelId) return;
+        lastNotifiedStaleModelId = modelId;
+        const message = `Le modèle CPA actif ${modelId} n’existe plus. Utilise /model pour choisir un modèle valide.`;
+        if (ctx.hasUI) ctx.ui.notify(message, 'warning');
+        else console.warn(`[cpa] ${message}`);
+    }
 
-				// Completeness check (console.warn only — never blocks startup)
-				const staticIds = new Set(STATIC_FALLBACK_MODELS.map((m) => m.id));
-				const dynamicIds = new Set(dynamicModels.map((m) => m.id));
-				for (const id of dynamicIds) {
-					if (!staticIds.has(id)) {
-						console.warn(`[cpa] New model from CPA not in static fallback: ${id}`);
-					}
-				}
-				for (const id of staticIds) {
-					if (!dynamicIds.has(id)) {
-						console.warn(`[cpa] Static fallback model not found in CPA: ${id}`);
-					}
-				}
-			}
-		} catch {
-			// If dynamic fetch fails, keep static fallback models
-		}
-	});
+    function notifyUnverifiedOnce(
+        ctx: Parameters<Parameters<ExtensionAPI['on']>[1]>[1],
+    ): void {
+        if (unverifiedWarningShown) return;
+        unverifiedWarningShown = true;
+        const message =
+            'Catalogue CPA indisponible. Le dernier état vérifié est conservé.';
+        if (ctx.hasUI) ctx.ui.notify(message, 'warning');
+        else console.warn(`[cpa] ${message}`);
+    }
+
+    // Phase 1: Register with static fallback models immediately (synchronous)
+    pi.registerProvider(
+        PROVIDER_NAME,
+        buildProviderConfig(STATIC_FALLBACK_MODELS),
+    );
+
+    // Phase 2: On session_start, fetch dynamic models and re-register
+    pi.on('session_start', async (_event, ctx) => {
+        try {
+            await refreshCatalog(ctx, true);
+        } catch {
+            // If dynamic fetch fails, keep static fallback models
+        }
+    });
+
+    pi.on('model_select', async (event, ctx) => {
+        if (event.model.provider !== PROVIDER_NAME) return;
+        try {
+            const result = await refreshCatalog(ctx, true);
+            if (result.state === 'stale')
+                notifyStaleModelOnce(ctx, result.modelId);
+            if (result.state === 'valid') {
+                lastNotifiedStaleModelId = undefined;
+                unverifiedWarningShown = false;
+            }
+        } catch {
+            // A failed verification must not block a newly selected model.
+        }
+    });
+
+    pi.on('input', async (_event, ctx) => {
+        if (ctx.model?.provider !== PROVIDER_NAME)
+            return { action: 'continue' };
+        const result = await refreshCatalog(ctx);
+        if (result.state === 'unverified') {
+            notifyUnverifiedOnce(ctx);
+            return { action: 'continue' };
+        }
+        if (result.state === 'valid') {
+            unverifiedWarningShown = false;
+            return { action: 'continue' };
+        }
+
+        notifyStaleModelOnce(ctx, result.modelId);
+        return { action: 'handled' };
+    });
+
+    pi.on('session_before_compact', async (_event, ctx) => {
+        if (ctx.model?.provider !== PROVIDER_NAME) return undefined;
+        const result = await refreshCatalog(ctx);
+        if (result.state !== 'stale') return undefined;
+
+        notifyStaleModelOnce(ctx, result.modelId);
+        return { cancel: true };
+    });
+
+    pi.registerCommand('cpa-refresh', {
+        description: 'Refresh CPA models and validate the active model',
+        handler: async (_args, ctx) => {
+            const result = await refreshCatalog(ctx, true);
+            if (result.state === 'stale') {
+                notifyStaleModelOnce(ctx, result.modelId);
+                return;
+            }
+
+            const message =
+                result.state === 'valid'
+                    ? 'Catalogue CPA actualisé. Le modèle actif est valide.'
+                    : 'Catalogue CPA indisponible. Le dernier état vérifié est conservé.';
+            if (ctx.hasUI)
+                ctx.ui.notify(
+                    message,
+                    result.state === 'valid' ? 'info' : 'warning',
+                );
+            else console.warn(`[cpa] ${message}`);
+        },
+    });
 }
