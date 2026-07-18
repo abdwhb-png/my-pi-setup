@@ -5,9 +5,8 @@ import { createUiColors } from '../_shared/ui-colors.ts';
 import { countToolUsage, formatSummary } from './summary.ts';
 
 function makeTheme(): Theme {
-    // minimal mock: fg returns the text itself (identity) for deterministic tests
     return {
-        fg: (_color: string, text: string) => text,
+        fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
         bg: (_color: string, text: string) => text,
         bold: (text: string) => text,
         dim: (text: string) => text,
@@ -101,11 +100,10 @@ describe('formatSummary', () => {
         expect(formatSummary({ total: {}, errors: {} }, [], colors)).toBe('');
     });
 
-    it('formats single tool with count', () => {
+    it('formats tool counts with muted color', () => {
         const counts = { total: { read: 3 }, errors: {} };
         const result = formatSummary(counts, [], colors);
-        expect(result).toContain('read');
-        expect(result).toContain('3');
+        expect(result).toBe('read<muted>(3)</muted>');
     });
 
     it('formats multiple tools', () => {

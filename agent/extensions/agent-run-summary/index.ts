@@ -42,7 +42,7 @@ export default function (pi: ExtensionAPI) {
             )
             .map(
                 (payload) =>
-                    `${colors.model(`[${payload.prefix}]`)} ${payload.text}`,
+                    `${colors.muted(`[${payload.prefix}]`)} ${payload.text}`,
             )
             .join(SEPARATOR);
         if (summary) {

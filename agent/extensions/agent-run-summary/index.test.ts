@@ -11,7 +11,7 @@ interface SummaryPayload {
 }
 
 const EXPECTED_COMBINED_SUMMARY =
-    '<toolTitle>[TPS]</toolTitle> ✓ 97 tok/s  8516 tokens in 87.4s streaming  ·  <toolTitle>[TOOLS]</toolTitle> 🔧 write_plan(1)';
+    '<muted>[TPS]</muted> ✓ 97 tok/s  8516 tokens in 87.4s streaming  ·  <muted>[TOOLS]</muted> 🔧 write_plan(1)';
 
 describe('agent-run-summary extension', () => {
     function createHarness() {
@@ -90,7 +90,7 @@ describe('agent-run-summary extension', () => {
         await handlers.get('agent_settled')?.({ type: 'agent_settled' }, ctx);
 
         expect(notify).toHaveBeenCalledWith(
-            '<toolTitle>[TPS]</toolTitle> ✓ 80 tok/s',
+            '<muted>[TPS]</muted> ✓ 80 tok/s',
             'info',
         );
     });

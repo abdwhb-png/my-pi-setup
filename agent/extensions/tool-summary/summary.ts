@@ -54,9 +54,10 @@ export function formatSummary(
         const errorCount = counts.errors[name] ?? 0;
         const hasErrors = errorCount > 0;
 
+        const mutedCount = colors.muted(`(${totalCount})`);
         const countStr = hasErrors
-            ? name + colors.danger('✗') + '(' + totalCount + ')'
-            : name + '(' + totalCount + ')';
+            ? name + colors.danger('✗') + mutedCount
+            : name + mutedCount;
 
         return countStr;
     });
