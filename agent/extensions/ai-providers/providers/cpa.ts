@@ -18,8 +18,10 @@ import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { createUiColors } from '../../_shared/ui-colors.ts';
 import { loadAiProvidersConfig } from '../config.ts';
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
+import type { CatalogDiffCounts } from './catalog-diff.ts';
 import { reportCatalogDiff } from './catalog-diff.ts';
 import { createCpaCatalogGuard } from './cpa-catalog-guard.ts';
 import { buildCpaModels } from './cpa-models.ts';
@@ -36,17 +38,53 @@ const PROVIDER_API = 'openai-completions' as const;
 type LifecycleCtx = Parameters<Parameters<ExtensionAPI['on']>[1]>[1];
 
 /**
- * Build the drift sink for a given lifecycle phase.
- * - At session_start: caller passes console.warn directly (startup logs,
- *   no TUI intrusion).
- * - At runtime hooks: ctx.ui.notify with a console.warn fallback when the
- *   UI is unavailable (headless mode).
+ * Plain console.warn sink used at startup. Counts are emitted as a single
+ * summary line (no theme available during synchronous registration).
  */
-function buildDriftSink(ctx: LifecycleCtx): (message: string) => void {
-    if (ctx.hasUI) {
-        return (message) => ctx.ui.notify(message, 'info');
+const consoleDriftSink = (counts: CatalogDiffCounts): void => {
+    console.warn(
+        `[cpa] Catalog drift: ${counts.newCount} new model(s), ${counts.missingFallbackCount} missing fallback(s)`,
+    );
+};
+
+/**
+ * Themed runtime sink. Builds a colored TUI notification with `createUiColors`
+ * lazily — colors are only resolved when drift actually flows, so callers
+ * that never drift pay no theme-lookup cost and headless runs never touch
+ * `ctx.ui.theme`.
+ *   - new models highlighted as "primary"
+ *   - missing fallbacks highlighted as "warning"
+ * Falls back to {@link consoleDriftSink} when the UI is unavailable (headless).
+ */
+function themedDriftSink(
+    ctx: LifecycleCtx,
+): (counts: CatalogDiffCounts) => void {
+    if (!ctx.hasUI || !ctx.ui.theme) {
+        return consoleDriftSink;
     }
-    return (message) => console.warn(`[cpa] ${message}`);
+    return (counts) => {
+        const theme = ctx.ui.theme;
+        if (!theme) {
+            consoleDriftSink(counts);
+            return;
+        }
+        const colors = createUiColors(theme);
+        const parts: string[] = [];
+        if (counts.newCount > 0) {
+            parts.push(colors.primary(`${counts.newCount} new model(s)`));
+        }
+        if (counts.missingFallbackCount > 0) {
+            parts.push(
+                colors.warning(
+                    `${counts.missingFallbackCount} missing fallback(s)`,
+                ),
+            );
+        }
+        ctx.ui.notify(
+            `${colors.model('[cpa]')} ${parts.join(colors.separator(' · '))}`,
+            'info',
+        );
+    };
 }
 
 // ── Helper to resolve the API Key dynamically from .env ──
@@ -118,7 +156,7 @@ export function registerCpaProvider(
     async function refreshCatalog(
         ctx: LifecycleCtx,
         force = false,
-        sink?: (message: string) => void,
+        sink: (counts: CatalogDiffCounts) => void = themedDriftSink(ctx),
     ) {
         const apiKey = getCliproxyApiKey();
         return catalogGuard.refresh({
@@ -132,7 +170,7 @@ export function registerCpaProvider(
                 reportCatalogDiff(models, STATIC_FALLBACK_MODELS, {
                     silent: silentCatalogDiff,
                     reported: reportedCatalogDrift,
-                    sink: sink ?? buildDriftSink(ctx),
+                    sink,
                 });
             },
             hasModel: (provider, id) =>
@@ -167,7 +205,7 @@ export function registerCpaProvider(
     // Startup phase: drift goes to console.warn (logs, no TUI intrusion).
     pi.on('session_start', async (_event, ctx) => {
         try {
-            await refreshCatalog(ctx, true, (message) => console.warn(message));
+            await refreshCatalog(ctx, true, consoleDriftSink);
         } catch {
             // If dynamic fetch fails, keep static fallback models
         }

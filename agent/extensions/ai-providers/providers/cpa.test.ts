@@ -538,6 +538,8 @@ describe('registerCpaProvider', () => {
         const warnSpy = mock(() => {});
         const originalWarn = console.warn;
         console.warn = warnSpy;
+        // Theme mock: capture fg calls so themed sink formats with colors.
+        const fg = mock((_color: string, text: string) => text);
         const notify = mock(() => {});
         try {
             const handler = registeredHandlers.find(
@@ -552,17 +554,18 @@ describe('registerCpaProvider', () => {
                     },
                     modelRegistry: { find: () => STATIC_FALLBACK_MODELS[0] },
                     hasUI: true,
-                    ui: { notify },
+                    ui: { notify, theme: { fg } },
                 },
             );
         } finally {
             console.warn = originalWarn;
         }
 
-        // Runtime sink: ctx.ui.notify used, no console.warn for drift.
+        // Runtime sink: themed drift message goes to ui.notify (no console).
+        // The themed body contains "[cpa]" + "new model(s)" + "missing fallback".
         const driftNotify = (notify.mock.calls as unknown[][])
             .map((c) => String(c[0]))
-            .filter((m) => m.includes('Catalog drift'));
+            .filter((m) => m.includes('new model') && m.includes('[cpa]'));
         expect(driftNotify.length).toBe(1);
         const driftConsole = (warnSpy.mock.calls as unknown[][])
             .map((c) => String(c[0]))
