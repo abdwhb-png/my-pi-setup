@@ -9,6 +9,18 @@
 
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 
+/**
+ * Drift signal emitted by {@link reportCatalogDiff}. The caller decides how
+ * to format it (plain console, themed `ui.notify`, JSON, etc.) — the
+ * structured counts keep the rendering decision in the TUI layer.
+ */
+export interface CatalogDiffCounts {
+    /** Number of newly seen live model ids absent from the static list. */
+    newCount: number;
+    /** Number of static fallback ids missing from the live catalog. */
+    missingFallbackCount: number;
+}
+
 export interface CatalogDiffOptions {
     /**
      * When true, suppresses all drift output. Backed by the
@@ -23,12 +35,13 @@ export interface CatalogDiffOptions {
      */
     reported: Set<string>;
     /**
-     * Sink for the summary line. The caller picks the channel depending on
-     * lifecycle phase: `console.warn` at session startup, `ctx.ui.notify`
-     * (with a console fallback when headless) during runtime hooks. Defaults
-     * to `console.warn`.
+     * Consumer for the drift counts. The caller picks the channel and the
+     * formatting: `console.warn` (startup logs), `ctx.ui.notify` with theme
+     * colors (runtime), or any custom rendering. Defaults to a plain
+     * `[cpa] Catalog drift: ...` `console.warn` to keep backwards
+     * compatibility with headless startup.
      */
-    sink?: (message: string) => void;
+    sink?: (counts: CatalogDiffCounts) => void;
 }
 
 /**
@@ -48,7 +61,12 @@ export function reportCatalogDiff(
     options: CatalogDiffOptions,
 ): void {
     if (options.silent) return;
-    const sink = options.sink ?? console.warn;
+    const sink: (counts: CatalogDiffCounts) => void =
+        options.sink ??
+        ((counts) =>
+            console.warn(
+                `[cpa] Catalog drift: ${counts.newCount} new model(s), ${counts.missingFallbackCount} missing fallback(s)`,
+            ));
 
     const staticIds = new Set(staticModels.map((model) => model.id));
     const dynamicIds = new Set(dynamicModels.map((model) => model.id));
@@ -70,7 +88,5 @@ export function reportCatalogDiff(
 
     if (newCount === 0 && missingFallbackCount === 0) return;
 
-    sink(
-        `[cpa] Catalog drift: ${newCount} new model(s), ${missingFallbackCount} missing fallback(s)`,
-    );
+    sink({ newCount, missingFallbackCount });
 }

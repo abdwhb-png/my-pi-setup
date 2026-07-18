@@ -11,7 +11,7 @@
 
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
-import { reportCatalogDiff } from './catalog-diff.ts';
+import { reportCatalogDiff, type CatalogDiffCounts } from './catalog-diff.ts';
 
 function mkModel(id: string): ProviderModelConfig {
     return {
@@ -27,17 +27,22 @@ function mkModel(id: string): ProviderModelConfig {
 
 const staticModels = ['alpha', 'beta'].map(mkModel);
 
-type DiffSink = (message: string) => void;
+type DiffSink = (counts: CatalogDiffCounts) => void;
 
-type WarnMock = ReturnType<typeof mock<DiffSink>>;
+type SinkMock = ReturnType<typeof mock<DiffSink>>;
 
-function createSinkMock(): WarnMock {
+function createSinkMock(): SinkMock {
     return mock<DiffSink>(() => {});
 }
 
-function callMessage(sink: WarnMock, callIndex = 0): string {
+function callCounts(sink: SinkMock, callIndex = 0): CatalogDiffCounts {
     const call = sink.mock.calls[callIndex];
-    return call ? (call[0] as string) : '';
+    return (
+        (call?.[0] as CatalogDiffCounts) ?? {
+            newCount: -1,
+            missingFallbackCount: -1,
+        }
+    );
 }
 
 describe('reportCatalogDiff', () => {
@@ -57,7 +62,7 @@ describe('reportCatalogDiff', () => {
         expect(reported.size).toBe(0);
     });
 
-    it('logs one summary line on first drift and grows the reported set', () => {
+    it('reports first drift counts and grows the reported set', () => {
         const sink = createSinkMock();
         const reported = new Set<string>();
         // Live contains gamma+delta (new) AND alpha+beta (kept static).
@@ -69,9 +74,8 @@ describe('reportCatalogDiff', () => {
             sink,
         });
         expect(sink).toHaveBeenCalledTimes(1);
-        const msg = callMessage(sink, 0);
-        expect(msg).toMatch(/2 new model/);
-        expect(msg).toMatch(/0 missing fallback/);
+        const counts = callCounts(sink, 0);
+        expect(counts).toEqual({ newCount: 2, missingFallbackCount: 0 });
         expect([...reported]).toEqual(
             expect.arrayContaining(['gamma', 'delta']),
         );
@@ -114,7 +118,10 @@ describe('reportCatalogDiff', () => {
             { silent: false, reported, sink },
         );
         expect(sink).toHaveBeenCalledTimes(2);
-        expect(callMessage(sink, 1)).toMatch(/2 new model/);
+        expect(callCounts(sink, 1)).toEqual({
+            newCount: 2,
+            missingFallbackCount: 2,
+        });
     });
 
     it('logs even with zero new ids when static fallbacks are missing', () => {
@@ -127,9 +134,10 @@ describe('reportCatalogDiff', () => {
             sink,
         });
         expect(sink).toHaveBeenCalledTimes(1);
-        const msg = callMessage(sink, 0);
-        expect(msg).toMatch(/0 new model/);
-        expect(msg).toMatch(/2 missing fallback/);
+        expect(callCounts(sink, 0)).toEqual({
+            newCount: 0,
+            missingFallbackCount: 2,
+        });
     });
 
     it('logs nothing when live matches static exactly', () => {
