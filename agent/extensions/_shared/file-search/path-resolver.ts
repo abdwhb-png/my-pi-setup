@@ -43,6 +43,8 @@ export interface SearchDirectoriesResult {
     dirs: string[];
     /** Basename query for fuzzy filtering results. Empty if listing all. */
     query: string;
+    /** Search roots whose basename matches the query. Caller should prepend these as top results. */
+    matchingRoots: string[];
 }
 
 /**
@@ -75,22 +77,26 @@ export function getSearchDirectories(
         const dir = isTrailing ? searchPath : dirname(searchPath);
         const query = isTrailing ? '' : basename(searchPath);
 
-        // Guard: skip root
-        if (dir === '/') return { dirs: [], query };
+        if (dir === '/') return { dirs: [], query, matchingRoots: [] };
 
-        // Guard: skip non-existent or non-directory
         try {
             const s = statSync(dir);
-            if (!s.isDirectory()) return { dirs: [], query };
+            if (!s.isDirectory()) return { dirs: [], query, matchingRoots: [] };
         } catch {
-            return { dirs: [], query };
+            return { dirs: [], query, matchingRoots: [] };
         }
 
-        return { dirs: [dir], query };
+        return { dirs: [dir], query, matchingRoots: [] };
     }
 
-    // Relative / bare name — search CWD + additional roots
     const config = getConfig(options.cwd);
     const dirs = [options.cwd, ...config.additionalDirectories];
-    return { dirs, query: prefix };
+
+    const q = prefix.toLowerCase();
+    const matchingRoots = dirs.filter((d) => {
+        const base = d.split('/').pop() ?? '';
+        return q && base.toLowerCase().includes(q);
+    });
+
+    return { dirs, query: prefix, matchingRoots };
 }

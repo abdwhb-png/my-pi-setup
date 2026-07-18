@@ -115,4 +115,25 @@ describe('getSearchDirectories', () => {
         expect(result.dirs).toContain('/cwd');
         expect(result.query).toBe('bare');
     });
+
+    it('returns matchingRoots when query matches search root basename', () => {
+        const result = getSearchDirectories('root', { cwd: '/projects' });
+        // '/extra/root' basename is 'root' which matches query 'root'
+        expect(result.matchingRoots).toContain('/extra/root');
+    });
+
+    it('matchingRoots is empty when query does not match any root', () => {
+        const result = getSearchDirectories('zzz', { cwd: '/projects' });
+        expect(result.matchingRoots).toEqual([]);
+    });
+
+    it('matchingRoots is empty for absolute paths', () => {
+        const dir = tempDir();
+        try {
+            const result = getSearchDirectories(dir + '/sub', { cwd: '/cwd' });
+            expect(result.matchingRoots).toEqual([]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });

@@ -368,11 +368,12 @@ export default function (pi: ExtensionAPI) {
             }
 
             const expandedPath = expandHomePath(cwdPath);
-            const { dirs, query } = getSearchDirectories(expandedPath, {
-                cwd: process.cwd(),
-            });
+            const { dirs, query, matchingRoots } = getSearchDirectories(
+                expandedPath,
+                { cwd: process.cwd() },
+            );
 
-            if (dirs.length === 0) return null;
+            if (dirs.length === 0 && matchingRoots.length === 0) return null;
 
             let allEntries: string[] = [];
             for (const dir of dirs) {
@@ -388,7 +389,16 @@ export default function (pi: ExtensionAPI) {
 
             allEntries = [...new Set(allEntries)];
 
-            if (allEntries.length === 0) return null;
+            // Prepend matching roots as top suggestions
+            const rootResults = matchingRoots.map((root) => ({
+                value: root,
+                label: root.split('/').pop() ?? root,
+                description: root,
+            }));
+
+            if (allEntries.length === 0 && rootResults.length === 0) {
+                return null;
+            }
 
             let matched = allEntries;
             if (query) {
@@ -399,13 +409,23 @@ export default function (pi: ExtensionAPI) {
                 );
             }
 
-            if (matched.length === 0) return null;
+            const combined = [...rootResults];
+            const seen = new Set(rootResults.map((r) => r.value));
+            for (const entry of matched) {
+                const mapped = {
+                    value: entry,
+                    label: entry.split('/').pop() ?? entry,
+                    description: entry,
+                };
+                if (!seen.has(mapped.value)) {
+                    combined.push(mapped);
+                    seen.add(mapped.value);
+                }
+            }
 
-            return matched.map((entry) => ({
-                value: entry,
-                label: entry.split('/').pop() ?? entry,
-                description: entry,
-            }));
+            if (combined.length === 0) return null;
+
+            return combined;
         },
         handler: async (args: string, ctx: any) => {
             const parsedArgs = parseYeetCommandArgs(args, ctx.cwd);

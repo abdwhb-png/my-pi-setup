@@ -165,8 +165,9 @@ export function enrichAutocompleteWithCache(
 
     const extraFiles = fuzzyFilter(
         cache.files,
-        parsed.path,
-        (f) => f.split('/').pop() ?? '',
+        // strip trailing slash so @dir/ also matches the dir root path
+        parsed.path.replace(/\/+$/, ''),
+        (f) => f, // match against full path so directory names are searchable
     );
     if (extraFiles.length === 0) return items;
 
@@ -382,18 +383,24 @@ function buildIndexBackground(
         const allFiles: string[] = [];
         const controller = new AbortController();
         indexAbortController = controller;
+        // Index both files and directories so directory names are searchable
+        const indexConfig = {
+            ...config,
+            fd: { ...config.fd, types: ['f', 'd'] as Array<'f' | 'd'> },
+        };
+        // Index root dirs first so they appear before their children
+        // (e.g. @pi-integrations → /home/.../pi-integrations, @.pi → cwd)
+        allFiles.push(...roots);
         for (const root of roots) {
             try {
                 const entries = await walkDirFd(
                     root,
                     10000,
                     controller.signal,
-                    config,
+                    indexConfig,
                 );
                 allFiles.push(...entries);
-            } catch {
-                // root not found, skip
-            }
+            } catch {}
         }
         cache.files = [
             ...new Set(
