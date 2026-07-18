@@ -1,6 +1,6 @@
 ---
 description: Proceed to implementation
-role: pi-caveman
+role: pi-agent
 thinking: medium
 ---
 
