@@ -23,9 +23,12 @@ export interface CatalogDiffOptions {
      */
     reported: Set<string>;
     /**
-     * Sink for the summary line. Defaults to console.warn. Injected for tests.
+     * Sink for the summary line. The caller picks the channel depending on
+     * lifecycle phase: `console.warn` at session startup, `ctx.ui.notify`
+     * (with a console fallback when headless) during runtime hooks. Defaults
+     * to `console.warn`.
      */
-    warn?: (message: string) => void;
+    sink?: (message: string) => void;
 }
 
 /**
@@ -45,7 +48,7 @@ export function reportCatalogDiff(
     options: CatalogDiffOptions,
 ): void {
     if (options.silent) return;
-    const warn = options.warn ?? console.warn;
+    const sink = options.sink ?? console.warn;
 
     const staticIds = new Set(staticModels.map((model) => model.id));
     const dynamicIds = new Set(dynamicModels.map((model) => model.id));
@@ -67,7 +70,7 @@ export function reportCatalogDiff(
 
     if (newCount === 0 && missingFallbackCount === 0) return;
 
-    warn(
+    sink(
         `[cpa] Catalog drift: ${newCount} new model(s), ${missingFallbackCount} missing fallback(s)`,
     );
 }

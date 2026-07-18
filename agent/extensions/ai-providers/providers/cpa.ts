@@ -31,6 +31,24 @@ const PROVIDER_DISPLAY = 'CLIProxyAPI (local)';
 const PROVIDER_BASE_URL = 'http://localhost:8317/v1';
 const PROVIDER_API = 'openai-completions' as const;
 
+// ── Lifecycle event context shape ──
+
+type LifecycleCtx = Parameters<Parameters<ExtensionAPI['on']>[1]>[1];
+
+/**
+ * Build the drift sink for a given lifecycle phase.
+ * - At session_start: caller passes console.warn directly (startup logs,
+ *   no TUI intrusion).
+ * - At runtime hooks: ctx.ui.notify with a console.warn fallback when the
+ *   UI is unavailable (headless mode).
+ */
+function buildDriftSink(ctx: LifecycleCtx): (message: string) => void {
+    if (ctx.hasUI) {
+        return (message) => ctx.ui.notify(message, 'info');
+    }
+    return (message) => console.warn(`[cpa] ${message}`);
+}
+
 // ── Helper to resolve the API Key dynamically from .env ──
 
 /**
@@ -98,8 +116,9 @@ export function registerCpaProvider(
     let unverifiedWarningShown = false;
 
     async function refreshCatalog(
-        ctx: Parameters<Parameters<ExtensionAPI['on']>[1]>[1],
+        ctx: LifecycleCtx,
         force = false,
+        sink?: (message: string) => void,
     ) {
         const apiKey = getCliproxyApiKey();
         return catalogGuard.refresh({
@@ -113,6 +132,7 @@ export function registerCpaProvider(
                 reportCatalogDiff(models, STATIC_FALLBACK_MODELS, {
                     silent: silentCatalogDiff,
                     reported: reportedCatalogDrift,
+                    sink: sink ?? buildDriftSink(ctx),
                 });
             },
             hasModel: (provider, id) =>
@@ -120,10 +140,7 @@ export function registerCpaProvider(
         });
     }
 
-    function notifyStaleModelOnce(
-        ctx: Parameters<Parameters<ExtensionAPI['on']>[1]>[1],
-        modelId: string,
-    ): void {
+    function notifyStaleModelOnce(ctx: LifecycleCtx, modelId: string): void {
         if (lastNotifiedStaleModelId === modelId) return;
         lastNotifiedStaleModelId = modelId;
         const message = `Le modèle CPA actif ${modelId} n’existe plus. Utilise /model pour choisir un modèle valide.`;
@@ -131,9 +148,7 @@ export function registerCpaProvider(
         else console.warn(`[cpa] ${message}`);
     }
 
-    function notifyUnverifiedOnce(
-        ctx: Parameters<Parameters<ExtensionAPI['on']>[1]>[1],
-    ): void {
+    function notifyUnverifiedOnce(ctx: LifecycleCtx): void {
         if (unverifiedWarningShown) return;
         unverifiedWarningShown = true;
         const message =
@@ -148,10 +163,11 @@ export function registerCpaProvider(
         buildProviderConfig(STATIC_FALLBACK_MODELS),
     );
 
-    // Phase 2: On session_start, fetch dynamic models and re-register
+    // Phase 2: On session_start, fetch dynamic models and re-register.
+    // Startup phase: drift goes to console.warn (logs, no TUI intrusion).
     pi.on('session_start', async (_event, ctx) => {
         try {
-            await refreshCatalog(ctx, true);
+            await refreshCatalog(ctx, true, (message) => console.warn(message));
         } catch {
             // If dynamic fetch fails, keep static fallback models
         }

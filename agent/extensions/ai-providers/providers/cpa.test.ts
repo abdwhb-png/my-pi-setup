@@ -304,7 +304,11 @@ describe('registerCpaProvider', () => {
         await handler.handler({ text: 'first' }, mockCtx);
         await handler.handler({ text: 'second' }, mockCtx);
 
-        expect(notify).toHaveBeenCalledTimes(1);
+        // Only one stale warning (drift is dedup'd separately).
+        const staleNotify = (notify.mock.calls as unknown[][]).filter((c) =>
+            String(c[0]).includes('/model'),
+        );
+        expect(staleNotify.length).toBe(1);
     });
 
     test('continues with one warning when the CPA catalog cannot be verified', async () => {
@@ -458,5 +462,111 @@ describe('registerCpaProvider', () => {
 
         const config = registeredProviders[0].config as Record<string, unknown>;
         expect(config.oauth).toBeUndefined();
+    });
+
+    test('routes catalog drift to console.warn at session_start', async () => {
+        const { pi, registeredHandlers } = createMockExtensionAPI();
+        // Live catalog includes a model NOT in STATIC_FALLBACK_MODELS → drift.
+        const driftModel: ProviderModelConfig = {
+            id: 'ocg/go-brand-new-drift-model',
+            name: 'Drift',
+            reasoning: true,
+            input: ['text'],
+            contextWindow: 2000,
+            maxTokens: 200,
+            cost: { input: 0.5, output: 1.0, cacheRead: 0, cacheWrite: 0 },
+        };
+        const mockBuild = mock(() =>
+            Promise.resolve({
+                models: [...STATIC_FALLBACK_MODELS, driftModel],
+                source: 'live' as const,
+            }),
+        );
+        registerCpaProvider(pi, { buildModels: mockBuild });
+
+        const warnSpy = mock(() => {});
+        const originalWarn = console.warn;
+        console.warn = warnSpy;
+        const notify = mock(() => {});
+        try {
+            const handler = registeredHandlers.find(
+                (h) => h.event === 'session_start',
+            )!;
+            await handler.handler(
+                {},
+                {
+                    modelRegistry: { find: () => undefined },
+                    hasUI: true,
+                    ui: { notify },
+                },
+            );
+        } finally {
+            console.warn = originalWarn;
+        }
+
+        // Drift surfaces once via console.warn at startup.
+        const driftCalls = (warnSpy.mock.calls as unknown[][])
+            .map((c) => String(c[0]))
+            .filter((m) => m.includes('Catalog drift'));
+        expect(driftCalls.length).toBe(1);
+        // Runtime sink (ui.notify) is not used for drift at startup.
+        const driftNotify = (notify.mock.calls as unknown[][])
+            .map((c) => String(c[0]))
+            .filter((m) => m.includes('Catalog drift'));
+        expect(driftNotify.length).toBe(0);
+    });
+
+    test('routes catalog drift to ctx.ui.notify at runtime (input hook)', async () => {
+        const { pi, registeredHandlers } = createMockExtensionAPI();
+        const driftModel: ProviderModelConfig = {
+            id: 'ocg/go-runtime-drift-model',
+            name: 'Drift',
+            reasoning: true,
+            input: ['text'],
+            contextWindow: 2000,
+            maxTokens: 200,
+            cost: { input: 0.5, output: 1.0, cacheRead: 0, cacheWrite: 0 },
+        };
+        const mockBuild = mock(() =>
+            Promise.resolve({
+                models: [...STATIC_FALLBACK_MODELS, driftModel],
+                source: 'live' as const,
+            }),
+        );
+        registerCpaProvider(pi, { buildModels: mockBuild });
+
+        const warnSpy = mock(() => {});
+        const originalWarn = console.warn;
+        console.warn = warnSpy;
+        const notify = mock(() => {});
+        try {
+            const handler = registeredHandlers.find(
+                (h) => h.event === 'input',
+            )!;
+            await handler.handler(
+                { text: 'hello' },
+                {
+                    model: {
+                        provider: 'cpa',
+                        id: STATIC_FALLBACK_MODELS[0].id,
+                    },
+                    modelRegistry: { find: () => STATIC_FALLBACK_MODELS[0] },
+                    hasUI: true,
+                    ui: { notify },
+                },
+            );
+        } finally {
+            console.warn = originalWarn;
+        }
+
+        // Runtime sink: ctx.ui.notify used, no console.warn for drift.
+        const driftNotify = (notify.mock.calls as unknown[][])
+            .map((c) => String(c[0]))
+            .filter((m) => m.includes('Catalog drift'));
+        expect(driftNotify.length).toBe(1);
+        const driftConsole = (warnSpy.mock.calls as unknown[][])
+            .map((c) => String(c[0]))
+            .filter((m) => m.includes('Catalog drift'));
+        expect(driftConsole.length).toBe(0);
     });
 });

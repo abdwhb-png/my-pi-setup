@@ -27,14 +27,16 @@ function mkModel(id: string): ProviderModelConfig {
 
 const staticModels = ['alpha', 'beta'].map(mkModel);
 
-type WarnMock = ReturnType<typeof mock<(message: string) => void>>;
+type DiffSink = (message: string) => void;
 
-function createWarnMock(): WarnMock {
-    return mock<(message: string) => void>(() => {});
+type WarnMock = ReturnType<typeof mock<DiffSink>>;
+
+function createSinkMock(): WarnMock {
+    return mock<DiffSink>(() => {});
 }
 
-function callMessage(warnMock: WarnMock, callIndex = 0): string {
-    const call = warnMock.mock.calls[callIndex];
+function callMessage(sink: WarnMock, callIndex = 0): string {
+    const call = sink.mock.calls[callIndex];
     return call ? (call[0] as string) : '';
 }
 
@@ -44,19 +46,19 @@ describe('reportCatalogDiff', () => {
     });
 
     it('stays silent when silent=true', () => {
-        const warn = createWarnMock();
+        const sink = createSinkMock();
         const reported = new Set<string>();
         reportCatalogDiff([mkModel('gamma')], staticModels, {
             silent: true,
             reported,
-            warn,
+            sink,
         });
-        expect(warn).not.toHaveBeenCalled();
+        expect(sink).not.toHaveBeenCalled();
         expect(reported.size).toBe(0);
     });
 
     it('logs one summary line on first drift and grows the reported set', () => {
-        const warn = createWarnMock();
+        const sink = createSinkMock();
         const reported = new Set<string>();
         // Live contains gamma+delta (new) AND alpha+beta (kept static).
         // Static list = alpha+beta → 0 missing fallback.
@@ -64,10 +66,10 @@ describe('reportCatalogDiff', () => {
         reportCatalogDiff(live, staticModels, {
             silent: false,
             reported,
-            warn,
+            sink,
         });
-        expect(warn).toHaveBeenCalledTimes(1);
-        const msg = callMessage(warn, 0);
+        expect(sink).toHaveBeenCalledTimes(1);
+        const msg = callMessage(sink, 0);
         expect(msg).toMatch(/2 new model/);
         expect(msg).toMatch(/0 missing fallback/);
         expect([...reported]).toEqual(
@@ -77,67 +79,67 @@ describe('reportCatalogDiff', () => {
     });
 
     it('does not log when the same drift recurs (dedup)', () => {
-        const warn = createWarnMock();
+        const sink = createSinkMock();
         const reported = new Set<string>();
         const live = [mkModel('gamma'), ...staticModels];
         reportCatalogDiff(live, staticModels, {
             silent: false,
             reported,
-            warn,
+            sink,
         });
-        expect(warn).toHaveBeenCalledTimes(1);
+        expect(sink).toHaveBeenCalledTimes(1);
         // second call with identical live set
         reportCatalogDiff(live, staticModels, {
             silent: false,
             reported,
-            warn,
+            sink,
         });
-        expect(warn).toHaveBeenCalledTimes(1);
+        expect(sink).toHaveBeenCalledTimes(1);
     });
 
     it('logs only newly seen models on subsequent passes', () => {
-        const warn = createWarnMock();
+        const sink = createSinkMock();
         const reported = new Set<string>();
         // first pass: gamma is new
         reportCatalogDiff([mkModel('gamma')], staticModels, {
             silent: false,
             reported,
-            warn,
+            sink,
         });
-        expect(warn).toHaveBeenCalledTimes(1);
+        expect(sink).toHaveBeenCalledTimes(1);
         // second pass: gamma already seen, delta + epsilon are new
         reportCatalogDiff(
             [mkModel('gamma'), mkModel('delta'), mkModel('epsilon')],
             staticModels,
-            { silent: false, reported, warn },
+            { silent: false, reported, sink },
         );
-        expect(warn).toHaveBeenCalledTimes(2);
-        expect(callMessage(warn, 1)).toMatch(/2 new model/);
+        expect(sink).toHaveBeenCalledTimes(2);
+        expect(callMessage(sink, 1)).toMatch(/2 new model/);
     });
 
     it('logs even with zero new ids when static fallbacks are missing', () => {
-        const warn = createWarnMock();
+        const sink = createSinkMock();
         const reported = new Set<string>();
         // live set lacks 'alpha' and 'beta' from static
         reportCatalogDiff([], staticModels, {
             silent: false,
             reported,
-            warn,
+            sink,
         });
-        expect(warn).toHaveBeenCalledTimes(1);
-        const msg = callMessage(warn, 0);
+        expect(sink).toHaveBeenCalledTimes(1);
+        const msg = callMessage(sink, 0);
         expect(msg).toMatch(/0 new model/);
         expect(msg).toMatch(/2 missing fallback/);
     });
 
     it('logs nothing when live matches static exactly', () => {
-        const warn = createWarnMock();
+        const sink = createSinkMock();
         const reported = new Set<string>();
         reportCatalogDiff(staticModels, staticModels, {
             silent: false,
             reported,
-            warn,
+            sink,
         });
-        expect(warn).not.toHaveBeenCalled();
+        expect(sink).not.toHaveBeenCalled();
     });
 });
