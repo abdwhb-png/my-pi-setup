@@ -1,0 +1,26 @@
+{
+    "skill_name": "pi-test-harness",
+    "evals": [
+        {
+            "id": 1,
+            "name": "in-process-common-case",
+            "prompt": "I'm writing a Pi extension that registers a tool called `summarize_doc`. When the user asks 'Summarize README.md', I want to verify my tool is invoked with { path: 'README.md' } and the assistant returns a citation-rich summary string — without ever calling an LLM or hitting the filesystem. Show me the test for that, using @marcfargas/pi-test-harness.",
+            "expected_output": "A working test spec (runner-agnostic — Vitest, bun:test, or Jest all fine) that uses createTestSession with the extension path, includes the tool the extension registers OUTSIDE mockTools (so its real execute runs), mocks the built-ins (read, write, edit, bash) only, drives the conversation with when/calls/says, and asserts against t.events.toolCallsFor('summarize_doc') and/or toolResultsFor. Should NOT mock summarize_doc itself.",
+            "files": []
+        },
+        {
+            "id": 2,
+            "name": "hook-blocking-vs-error",
+            "prompt": "My Pi extension registers a `tool_call` hook that blocks `bash` whenever it sees `rm -rf` in the command. I want a test that: (1) proves the hook fires when the model tries `bash -c 'rm -rf /tmp/foo'`, (2) verifies the block is distinct from a generic error (i.e. asserts on ToolBlockedError, not just isError), and (3) confirms the playbook's trailing `says('Done.')` is NOT reached. Assume default error propagation.",
+            "expected_output": "A test that uses createTestSession with the extension under test and a mockTools for bash (so the real bash doesn't run if the hook fails to block). The test should set propagateErrors: true (or rely on default), wrap t.run in try/catch on ToolBlockedError, assert the playbook is NOT fully consumed (or that says was never reached), and use instanceof ToolBlockedError to discriminate from generic errors. Should NOT just check isError === true.",
+            "files": []
+        },
+        {
+            "id": 3,
+            "name": "subprocess-extension-mock_pi",
+            "prompt": "I have a Pi extension that delegates high-risk work to a child Pi agent via `pi --mode json -p`. I want a test that simulates two consecutive subprocess calls where the first returns 'Task done' (exit 0) and the second crashes with stderr='agent crashed' and exit code 1, then verifies my extension surfaces a friendly error to the user rather than crashing. The fake pi shim must be installed and uninstalled cleanly.",
+            "expected_output": "A test that uses createMockPi(), calls install(), queues { output: 'Task done', exitCode: 0 } then { stderr: 'agent crashed', exitCode: 1 }, drives the extension via createTestSession + a playbook, asserts on the assistant's final text containing a friendly message (NOT the raw stderr), and calls mockPi.uninstall() in afterEach. Should not use createTestSession alone — it must use createMockPi for the subprocess simulation.",
+            "files": []
+        }
+    ]
+}
