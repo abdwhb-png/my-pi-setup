@@ -13,7 +13,7 @@ import type {
 /** Fallback target code when the configured default is missing from `languages`. */
 const FALLBACK_TARGET = 'en';
 
-export const icon = '㊗️';
+export const icon = '🌐';
 export const offIcon = '🚫';
 
 /** Create a fresh runtime state object from config defaults. */
