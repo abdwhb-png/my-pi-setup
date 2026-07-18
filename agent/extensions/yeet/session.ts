@@ -1,5 +1,11 @@
 import type { Theme } from '@earendil-works/pi-coding-agent';
-import { Input, truncateToWidth, type Component } from '@earendil-works/pi-tui';
+import {
+    Editor,
+    truncateToWidth,
+    type Component,
+    type EditorTheme,
+    type TUI,
+} from '@earendil-works/pi-tui';
 import { renderBoxHeader, renderBoxFooter } from '../_shared/box';
 import {
     isEnter,
@@ -84,10 +90,11 @@ export function handleCommitPlanInput(
 
 export class CommitPlanSession implements Component {
     private state: CommitPlanSessionState;
-    private inputComponent: Input;
+    private editorComponent: Editor;
 
     constructor(
         private config: {
+            tui: TUI;
             theme: Theme;
             params: CommitPlanParams;
             done: (result: CommitPlanResult) => void;
@@ -102,26 +109,34 @@ export class CommitPlanSession implements Component {
             fileCursorIndex: 0,
         };
 
-        this.inputComponent = new Input();
-        this.inputComponent.setValue(config.params.commit_message);
-        // Move cursor to the end of the initial message using the "End" key sequence
-        this.inputComponent.handleInput('\x1b[F');
+        const editorTheme: EditorTheme = {
+            borderColor: (text) => config.theme.fg('border', text),
+            selectList: {
+                selectedPrefix: (text) => config.theme.fg('accent', text),
+                selectedText: (text) => config.theme.fg('accent', text),
+                description: (text) => config.theme.fg('muted', text),
+                scrollInfo: (text) => config.theme.fg('muted', text),
+                noMatch: (text) => config.theme.fg('warning', text),
+            },
+        };
 
-        this.inputComponent.onSubmit = () => {
-            this.config.done({
-                accepted: true,
-                cancelled: false,
-                plan_summary: this.config.params.plan_summary,
-                cwd: this.config.params.cwd,
-                files: this.state.files
-                    .filter((f) => f.selected)
-                    .map((f) => f.path),
-                commit_message: this.inputComponent.getValue(),
-            });
-        };
-        this.inputComponent.onEscape = () => {
-            this.config.done(rejectResult(this.config.params, true));
-        };
+        this.editorComponent = new Editor(config.tui, editorTheme);
+        this.editorComponent.setText(config.params.commit_message);
+        this.editorComponent.onSubmit = (commitMessage) =>
+            this.accept(commitMessage);
+    }
+
+    private accept(commitMessage: string): void {
+        this.config.done({
+            accepted: true,
+            cancelled: false,
+            plan_summary: this.config.params.plan_summary,
+            cwd: this.config.params.cwd,
+            files: this.state.files
+                .filter((f) => f.selected)
+                .map((f) => f.path),
+            commit_message: commitMessage,
+        });
     }
 
     handleInput(data: string): void {
@@ -130,34 +145,25 @@ export class CommitPlanSession implements Component {
             return;
         }
 
-        // Intercept Tab to switch focus before the Input component can process it
+        if (isEscape(data)) {
+            this.config.done(rejectResult(this.config.params, true));
+            return;
+        }
+
+        // Intercept Tab to switch focus before the Editor component can process it
         if (isTab(data)) {
             this.state = handleCommitPlanInput(this.state, data);
             return;
         }
 
         if (this.state.focus === 'message') {
-            this.inputComponent.handleInput(data);
+            this.editorComponent.handleInput(data);
             return;
         }
 
-        // When focus is on files, handle Enter/Escape globally, not via Input component
+        // When focus is on files, handle Enter globally, not via Editor.
         if (isEnter(data)) {
-            this.config.done({
-                accepted: true,
-                cancelled: false,
-                plan_summary: this.config.params.plan_summary,
-                cwd: this.config.params.cwd,
-                files: this.state.files
-                    .filter((f) => f.selected)
-                    .map((f) => f.path),
-                commit_message: this.inputComponent.getValue(),
-            });
-            return;
-        }
-
-        if (isEscape(data)) {
-            this.config.done(rejectResult(this.config.params, true));
+            this.accept(this.editorComponent.getExpandedText());
             return;
         }
 
@@ -165,7 +171,7 @@ export class CommitPlanSession implements Component {
     }
 
     invalidate(): void {
-        this.inputComponent.invalidate();
+        this.editorComponent.invalidate();
     }
 
     render(width: number): string[] {
@@ -180,6 +186,7 @@ export class CommitPlanSession implements Component {
         lines.push(...renderCwd(theme, innerWidth, this.config.params.cwd));
 
         const isMessageFocused = focus === 'message';
+        this.editorComponent.focused = isMessageFocused;
         const msgLabel = isMessageFocused
             ? ' ✏️ Edit Message:'
             : ' Commit Message:';
@@ -189,8 +196,8 @@ export class CommitPlanSession implements Component {
                 theme.fg('accent', theme.bold(msgLabel)),
         );
 
-        const inputLines = this.inputComponent.render(innerWidth - 3);
-        for (const line of inputLines) {
+        const editorLines = this.editorComponent.render(innerWidth - 3);
+        for (const line of editorLines) {
             lines.push(theme.fg('border', '│') + '   ' + line);
         }
 
@@ -237,7 +244,7 @@ export class CommitPlanSession implements Component {
         }
 
         const footerText = isMessageFocused
-            ? '[Tab] Files  [Enter] Accept  [Ctrl+R] Reject  [Esc] Cancel'
+            ? '[Tab] Files [Enter] Accept [Shift+Enter] Line [Ctrl+R] Reject [Esc] Cancel'
             : '[Tab]Message [↑↓]Move [Space]Toggle [Enter]Accept [Ctrl+R]Rej [Esc]Cancel';
 
         lines.push(renderBoxFooter(theme, innerWidth, footerText));

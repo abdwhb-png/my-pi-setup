@@ -6,7 +6,7 @@ import {
     type ExtensionAPI,
     type AgentToolResult,
 } from '@earendil-works/pi-coding-agent';
-import { fuzzyFilter } from '@earendil-works/pi-tui';
+import { fuzzyFilter, type TUI } from '@earendil-works/pi-tui';
 import { fdSearch } from '../_shared/file-search/fd-utils';
 import { getSearchDirectories } from '../_shared/file-search/path-resolver';
 import { expandHomePath, parseYeetCommandArgs } from './command-args';
@@ -235,12 +235,13 @@ export default function (pi: ExtensionAPI) {
                 // Full TUI editor
                 result = (await ctx.ui.custom(
                     (
-                        _tui: unknown,
+                        tui: TUI,
                         theme: unknown,
                         _kb: unknown,
                         done: (r: CommitPlanResult) => void,
                     ) =>
                         new CommitPlanSession({
+                            tui,
                             theme: theme as any,
                             params,
                             done,

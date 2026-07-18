@@ -1,4 +1,5 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { CommitPlanSession } from './session';
 import { handleCommitPlanInput } from './session';
 import type { CommitPlanParams, CommitPlanResult } from './types';
@@ -12,6 +13,13 @@ function createMockTheme() {
         italic: (text: string) => text,
         inverse: (text: string) => text,
         underline: (text: string) => text,
+    };
+}
+
+function createMockTui() {
+    return {
+        terminal: { rows: 40 },
+        requestRender: mock(),
     };
 }
 
@@ -91,7 +99,7 @@ describe('handleCommitPlanInput', () => {
         expect(s2.files[0].selected).toBe(false);
     });
 
-    it('should ignore message editing keys when focus is message (handled by Input component)', () => {
+    it('should ignore message editing keys when focus is message (handled by Editor component)', () => {
         const s0 = makeState({ focus: 'message' });
         const s1 = handleCommitPlanInput(s0, ' ');
         expect(s1.files[0].selected).toBe(false);
@@ -125,6 +133,7 @@ describe('CommitPlanSession', () => {
     beforeEach(() => {
         done = mock();
         session = new CommitPlanSession({
+            tui: createMockTui() as never,
             theme: createMockTheme() as never,
             params: defaultParams,
             done,
@@ -149,10 +158,73 @@ describe('CommitPlanSession', () => {
         });
 
         it('includes the commit message', () => {
-            const _output = session.render(80); // The Input component renders the value, so we check if it's present in the output      expect(_output.some((line) => line.includes('/workspace/repo'))).toBe(true);
+            const _output = session.render(80);
             expect(
                 _output.some((line) => line.includes('feat: add new feature')),
             ).toBe(true);
+        });
+
+        it('renders a multiline commit message as terminal-safe lines', () => {
+            const multilineSession = new CommitPlanSession({
+                tui: createMockTui() as never,
+                theme: createMockTheme() as never,
+                params: {
+                    ...defaultParams,
+                    commit_message: [
+                        'feat: add a descriptive subject',
+                        '',
+                        'Explain why the change is needed.',
+                        '',
+                        '- keep the first concern',
+                        '- preserve the second concern',
+                    ].join('\n'),
+                },
+                done: mock(),
+            });
+
+            const output = multilineSession.render(56);
+
+            expect(
+                output.some((line) =>
+                    line.includes('feat: add a descriptive subject'),
+                ),
+            ).toBe(true);
+            expect(
+                output.some((line) =>
+                    line.includes('- keep the first concern'),
+                ),
+            ).toBe(true);
+            expect(
+                output.every(
+                    (line) => !line.includes('\n') && !line.includes('\r'),
+                ),
+            ).toBe(true);
+        });
+
+        it('wraps a long commit message without overflowing the dialog', () => {
+            const longSession = new CommitPlanSession({
+                tui: createMockTui() as never,
+                theme: createMockTheme() as never,
+                params: {
+                    ...defaultParams,
+                    commit_message:
+                        'feat: preserve the beginning while wrapping a deliberately long commit message so the user can review every word without horizontal scrolling',
+                },
+                done: mock(),
+            });
+
+            const output = longSession.render(56);
+
+            expect(
+                output.some((line) => line.includes('feat: preserve the')),
+            ).toBe(true);
+            expect(
+                output.some((line) => line.includes('without horizontal')),
+            ).toBe(true);
+            expect(output.some((line) => line.includes('scrolling'))).toBe(
+                true,
+            );
+            expect(output.every((line) => visibleWidth(line) <= 56)).toBe(true);
         });
 
         it('includes file paths', () => {
@@ -230,6 +302,17 @@ describe('CommitPlanSession', () => {
             expect(result.commit_message).toBe('feat: add new feature!');
         });
 
+        it('preserves a multiline body edited before acceptance', () => {
+            session.handleInput('\n');
+            session.handleInput('Explain why the change is needed.');
+            session.handleInput('\r');
+
+            const result: CommitPlanResult = done.mock.calls[0][0];
+            expect(result.commit_message).toBe(
+                'feat: add new feature\nExplain why the change is needed.',
+            );
+        });
+
         it('accepts on Enter when focus is files', () => {
             session.handleInput('\t');
             session.handleInput('\r');
@@ -250,6 +333,7 @@ describe('CommitPlanSession', () => {
         it('should append text to the end of the initial message (verifying cursor position)', () => {
             // Create a fresh session for this test to avoid interference with other tests
             const _freshSession = new CommitPlanSession({
+                tui: createMockTui() as never,
                 theme: createMockTheme() as never,
                 params: defaultParams,
                 done: mock(),
@@ -257,6 +341,7 @@ describe('CommitPlanSession', () => {
             const freshDone = mock();
             // Re-instantiate with the freshDone mock
             const sessionWithDone = new CommitPlanSession({
+                tui: createMockTui() as never,
                 theme: createMockTheme() as never,
                 params: defaultParams,
                 done: freshDone,
