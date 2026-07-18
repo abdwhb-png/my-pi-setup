@@ -17,8 +17,14 @@ export {
 import { readFileSync } from 'node:fs';
 import { parseFrontmatter } from '@earendil-works/pi-coding-agent';
 import { findLatestActiveRoleState, type ActiveRoleState } from 'pi-roles/api';
+import { getSettingsValue, type GetSettingsOptions } from './settings';
 
 // ── Shared helpers for pi-roles addons ──
+
+/** Resolve the configured pi-roles default through one shared fallback. */
+export function getDefaultRole(options?: GetSettingsOptions): string {
+    return getSettingsValue('pi-roles.defaultRole', 'pi-agent', options);
+}
 
 /**
  * Read a file and parse its YAML frontmatter.

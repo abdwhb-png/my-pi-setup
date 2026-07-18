@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getActiveRole, parseCommaList, readFrontmatter } from './pi-roles.ts';
+import {
+    getActiveRole,
+    getDefaultRole,
+    parseCommaList,
+    readFrontmatter,
+} from './pi-roles.ts';
 
 let tempDir: string;
 
@@ -161,5 +166,17 @@ describe('getActiveRole', () => {
 
         const result = getActiveRole(entries);
         expect(result!.name).toBe('newer-role');
+    });
+});
+
+describe('getDefaultRole', () => {
+    it('reads the configured default role through the shared bridge', () => {
+        const settingsPath = join(tempDir, 'settings.json');
+        writeFileSync(
+            settingsPath,
+            JSON.stringify({ 'pi-roles': { defaultRole: 'architect' } }),
+        );
+
+        expect(getDefaultRole({ path: settingsPath })).toBe('architect');
     });
 });

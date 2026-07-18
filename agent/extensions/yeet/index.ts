@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
@@ -5,12 +6,25 @@ import {
     defineTool,
     type ExtensionAPI,
     type AgentToolResult,
+    type ExtensionCommandContext,
+    type ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
 import { fuzzyFilter, type TUI } from '@earendil-works/pi-tui';
 import { fdSearch } from '../_shared/file-search/fd-utils';
 import { getSearchDirectories } from '../_shared/file-search/path-resolver';
+import {
+    findLatestActiveRoleState,
+    findUnprocessedSwitchRequest,
+    getDefaultRole,
+    writeRoleSwitchRequest,
+} from '../_shared/pi-roles';
+import { queueWhenIdle } from '../_shared/queue-when-idle';
 import { expandHomePath, parseYeetCommandArgs } from './command-args';
 import { CommitConfirmDialog } from './confirm';
+import {
+    findLatestYeetRoleTransition,
+    writeYeetRoleTransition,
+} from './role-transition';
 import { CommitPlanSession } from './session';
 import type { CommitPlanParams, CommitPlanResult } from './types';
 
@@ -35,6 +49,24 @@ const YEET_PROMPT_BASE = [
     'IMPORTANT: If the tool returns HARD_CANCEL, stop the entire commit process immediately and return to normal conversation.',
     'Do NOT push unless explicitly requested.',
 ];
+
+interface YeetRequest {
+    id: string;
+    targetCwd: string;
+    autoApprove: boolean;
+    instructions: string;
+    wasQueued: boolean;
+}
+
+interface ActiveYeetTransition {
+    id: string;
+    previousRole: string;
+    targetCwd: string;
+}
+
+type SessionEntries = ReturnType<
+    ExtensionContext['sessionManager']['getEntries']
+>;
 
 /** Build the prompt for the LLM, injecting auto-approve instructions if needed. */
 function buildYeetPrompt(isAutoApprove: boolean): string {
@@ -123,6 +155,209 @@ export async function executeCommit(
 }
 
 export default function (pi: ExtensionAPI) {
+    let activeYeet: ActiveYeetTransition | null = null;
+    let queuedYeet: YeetRequest | null = null;
+
+    const cancelQueuedRequest = (request: YeetRequest): void => {
+        if (!request.wasQueued) return;
+        writeYeetRoleTransition(pi, {
+            id: request.id,
+            phase: 'cancelled',
+            targetCwd: request.targetCwd,
+        });
+    };
+
+    const completeRoleTransition = (
+        transition: ActiveYeetTransition,
+        entries: SessionEntries = [],
+    ): void => {
+        const pendingSwitch = findUnprocessedSwitchRequest(entries);
+        const restoreAlreadyPending =
+            pendingSwitch?.data.targetRole === transition.previousRole &&
+            pendingSwitch.data.reason === 'command:yeet:restore';
+        if (transition.previousRole !== 'commiter' && !restoreAlreadyPending) {
+            writeRoleSwitchRequest(pi, {
+                targetRole: transition.previousRole,
+                reason: 'command:yeet:restore',
+            });
+        }
+        writeYeetRoleTransition(pi, {
+            ...transition,
+            phase: 'completed',
+        });
+    };
+
+    const startYeet = async (
+        request: YeetRequest,
+        ctx: ExtensionContext,
+    ): Promise<void> => {
+        const { targetCwd, autoApprove, instructions } = request;
+
+        // Inspect only when this top-level Yeet run is ready to start so a
+        // queued command cannot hand the model a stale worktree snapshot.
+        let gitStatus = '';
+        let gitDiffStat = '';
+        try {
+            const statusResult = await pi.exec('git', ['status', '--short'], {
+                cwd: targetCwd,
+            });
+            gitStatus = statusResult.stdout.trim();
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            ctx.ui.notify(
+                `Unable to inspect Git repository at ${targetCwd}: ${message}`,
+                'error',
+            );
+            cancelQueuedRequest(request);
+            return;
+        }
+
+        try {
+            const diffResult = await pi.exec('git', ['diff', '--stat'], {
+                cwd: targetCwd,
+            });
+            gitDiffStat = diffResult.stdout.trim();
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            ctx.ui.notify(
+                `Unable to inspect Git diff at ${targetCwd}: ${message}`,
+                'error',
+            );
+            cancelQueuedRequest(request);
+            return;
+        }
+
+        if (!gitStatus) {
+            ctx.ui.notify(`Working tree is clean: ${targetCwd}`, 'info');
+            cancelQueuedRequest(request);
+            return;
+        }
+        const extraLines: string[] = [];
+        if (instructions) {
+            extraLines.push(
+                '',
+                'Additional instructions from the user:\n' + instructions,
+            );
+        }
+
+        const prompt = [
+            buildYeetPrompt(autoApprove),
+            '',
+            '--- Required Commit CWD ---',
+            `Required commit CWD: ${targetCwd}`,
+            `Call propose_commit_plan with cwd exactly "${targetCwd}".`,
+            '',
+            '--- Current Git Status ---',
+            gitStatus || '(no changes)',
+            '',
+            '--- Diff Summary ---',
+            gitDiffStat || '(no diff)',
+            '',
+            'There are pending changes. Analyze them and propose the first atomic commit.',
+            ...extraLines,
+        ].join('\n');
+
+        let activeRole = null;
+        try {
+            activeRole = findLatestActiveRoleState(
+                ctx.sessionManager.getEntries(),
+            );
+        } catch {}
+        const previousRole = activeRole?.name ?? getDefaultRole();
+        activeYeet = {
+            id: request.id,
+            previousRole,
+            targetCwd,
+        };
+        writeYeetRoleTransition(pi, {
+            id: request.id,
+            phase: 'active',
+            previousRole,
+            targetCwd,
+        });
+        writeRoleSwitchRequest(pi, {
+            targetRole: 'commiter',
+            reason: 'command:yeet',
+        });
+        try {
+            pi.sendUserMessage(prompt);
+        } catch (error) {
+            const failedYeet = activeYeet;
+            activeYeet = null;
+            if (failedYeet) {
+                let entries: SessionEntries = [];
+                try {
+                    entries = ctx.sessionManager.getEntries();
+                } catch {}
+                completeRoleTransition(failedYeet, entries);
+            }
+            const message =
+                error instanceof Error ? error.message : String(error);
+            ctx.ui.notify(`Unable to start /yeet: ${message}`, 'error');
+        }
+    };
+
+    pi.on('session_start', (_event, ctx) => {
+        let entries: SessionEntries;
+        try {
+            entries = ctx.sessionManager.getEntries();
+        } catch {
+            return;
+        }
+
+        const interrupted = findLatestYeetRoleTransition(entries);
+        if (!interrupted) return;
+        if (interrupted.phase === 'queued') {
+            writeYeetRoleTransition(pi, {
+                id: interrupted.id,
+                phase: 'cancelled',
+                targetCwd: interrupted.targetCwd,
+            });
+            ctx.ui.notify(
+                'Queued /yeet cancelled after reload; run it again',
+                'warning',
+            );
+            return;
+        }
+        if (interrupted.phase !== 'active') return;
+
+        const previousRole = interrupted.previousRole;
+        if (!previousRole) return;
+
+        completeRoleTransition(
+            {
+                id: interrupted.id,
+                previousRole,
+                targetCwd: interrupted.targetCwd,
+            },
+            entries,
+        );
+    });
+
+    pi.on('agent_end', (_event, ctx) => {
+        if (!activeYeet) {
+            if (!queuedYeet) return;
+
+            const request = queuedYeet;
+            queuedYeet = null;
+            queueWhenIdle(
+                () => startYeet(request, ctx),
+                () => ctx.isIdle(),
+            );
+            return;
+        }
+
+        const completedYeet = activeYeet;
+        activeYeet = null;
+        let entries: SessionEntries = [];
+        try {
+            entries = ctx.sessionManager.getEntries();
+        } catch {}
+        completeRoleTransition(completedYeet, entries);
+    });
+
     const proposeCommitPlanTool = defineTool({
         name: 'propose_commit_plan',
         label: 'Propose Commit Plan',
@@ -275,6 +510,7 @@ export default function (pi: ExtensionAPI) {
                                 text: [
                                     `Commit successful (${outcome.sha}).`,
                                     '',
+                                    'Repo path: ' + result.cwd,
                                     'Files: ' + result.files.join(', '),
                                     'Message: ' + result.commit_message,
                                 ].join('\n'),
@@ -428,7 +664,7 @@ export default function (pi: ExtensionAPI) {
 
             return combined;
         },
-        handler: async (args: string, ctx: any) => {
+        handler: async (args: string, ctx: ExtensionCommandContext) => {
             const parsedArgs = parseYeetCommandArgs(args, ctx.cwd);
             if (parsedArgs.error) {
                 ctx.ui.notify(parsedArgs.error, 'error');
@@ -442,78 +678,49 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
 
-            // Programmatically check git status so the LLM always has real data
-            let gitStatus = '';
-            let gitDiffStat = '';
-            try {
-                const statusResult = await pi.exec(
-                    'git',
-                    ['status', '--short'],
-                    { cwd: targetCwd },
-                );
-                gitStatus = statusResult.stdout.trim();
-            } catch (error) {
-                const message =
-                    error instanceof Error ? error.message : String(error);
-                ctx.ui.notify(
-                    `Unable to inspect Git repository at ${targetCwd}: ${message}`,
-                    'error',
-                );
+            if (activeYeet) {
+                ctx.ui.notify('A /yeet workflow is already active', 'warning');
                 return;
             }
 
-            try {
-                const diffResult = await pi.exec('git', ['diff', '--stat'], {
-                    cwd: targetCwd,
+            if (!ctx.isIdle()) {
+                if (queuedYeet) {
+                    ctx.ui.notify(
+                        'A /yeet command is already queued',
+                        'warning',
+                    );
+                    return;
+                }
+                const transitionId = randomUUID();
+                queuedYeet = {
+                    id: transitionId,
+                    targetCwd,
+                    autoApprove: parsedArgs.autoApprove,
+                    instructions: parsedArgs.instructions,
+                    wasQueued: true,
+                };
+                writeYeetRoleTransition(pi, {
+                    id: transitionId,
+                    phase: 'queued',
+                    targetCwd,
                 });
-                gitDiffStat = diffResult.stdout.trim();
-            } catch (error) {
-                const message =
-                    error instanceof Error ? error.message : String(error);
                 ctx.ui.notify(
-                    `Unable to inspect Git diff at ${targetCwd}: ${message}`,
-                    'error',
+                    'Queued /yeet until the current agent run finishes',
+                    'info',
                 );
                 return;
             }
 
-            const hasChanges = gitStatus.length > 0;
-            const isAutoApprove = parsedArgs.autoApprove;
-            const userArgs = parsedArgs.instructions;
-
-            const extraLines: string[] = [];
-            if (userArgs) {
-                extraLines.push(
-                    '',
-                    'Additional instructions from the user:\n' + userArgs,
-                );
-            }
-
-            const prompt = [
-                buildYeetPrompt(isAutoApprove),
-                '',
-                '--- Required Commit CWD ---',
-                `Required commit CWD: ${targetCwd}`,
-                `Call propose_commit_plan with cwd exactly "${targetCwd}".`,
-                '',
-                '--- Current Git Status ---',
-                gitStatus || '(no changes)',
-                '',
-                '--- Diff Summary ---',
-                gitDiffStat || '(no diff)',
-                '',
-                hasChanges
-                    ? 'There are pending changes. Analyze them and propose the first atomic commit.'
-                    : 'The working tree is clean. There is nothing to commit.',
-                ...extraLines,
-            ].join('\n');
-
-            if (ctx.isIdle()) {
-                pi.sendUserMessage(prompt);
-            } else {
-                pi.sendUserMessage(prompt, { deliverAs: 'followUp' });
-                ctx.ui.notify('Queued /yeet as a follow-up', 'info');
-            }
+            await startYeet(
+                {
+                    id: randomUUID(),
+                    targetCwd,
+                    autoApprove: parsedArgs.autoApprove,
+                    instructions: parsedArgs.instructions,
+                    wasQueued: false,
+                },
+                ctx,
+            );
         },
     });
 }

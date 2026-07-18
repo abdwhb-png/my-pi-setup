@@ -19,8 +19,8 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { writeRoleSwitchRequest } from "../_shared/pi-roles";
-import { getSettingsValue } from "../_shared/settings";
+import { getDefaultRole, writeRoleSwitchRequest } from "../_shared/pi-roles";
+import { queueWhenIdle, type IdleTaskScheduler } from "../_shared/queue-when-idle";
 
 
 /** Custom entry type emitted by plannotator-bridge on plan approval. */
@@ -39,10 +39,6 @@ export const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED = "plannotator-autoexecute-p
 export const PROCESSED_MARKER_PREFIX = "plan-auto-switch:processed";
 
 const APPROVED_PLAN_CONTINUATION = "Continue with the approved plan.";
-const MAX_CONTINUATION_ATTEMPTS = 200;
-const CONTINUATION_RETRY_MS = 50;
-
-type ScheduleContinuation = (callback: () => void, delayMs: number) => void;
 
 /**
  * Start a fresh top-level prompt after the current agent run becomes idle.
@@ -54,31 +50,15 @@ type ScheduleContinuation = (callback: () => void, delayMs: number) => void;
 export function queueApprovedPlanContinuation(
   pi: Pick<ExtensionAPI, "sendUserMessage">,
   isIdle: () => boolean = () => true,
-  schedule: ScheduleContinuation = (callback, delayMs) => {
-    setTimeout(callback, delayMs);
-  },
+  schedule?: IdleTaskScheduler,
 ): void {
-  let attempts = 0;
-  const sendWhenIdle = (): void => {
-    if (!isIdle()) {
-      attempts += 1;
-      if (attempts <= MAX_CONTINUATION_ATTEMPTS) {
-        schedule(sendWhenIdle, CONTINUATION_RETRY_MS);
-      }
-      return;
-    }
-
-    try {
+  queueWhenIdle(
+    () => {
       pi.sendUserMessage(APPROVED_PLAN_CONTINUATION);
-    } catch {
-      attempts += 1;
-      if (attempts <= MAX_CONTINUATION_ATTEMPTS) {
-        schedule(sendWhenIdle, CONTINUATION_RETRY_MS);
-      }
-    }
-  };
-
-  schedule(sendWhenIdle, 0);
+    },
+    isIdle,
+    schedule,
+  );
 }
 
 /** Fully-qualified event name for the marker we write. */
@@ -155,7 +135,7 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
     const approval = findUnprocessedPlanApproval(entries);
     if (!approval) return;
 
-    const targetRole = getSettingsValue("pi-roles.defaultRole", "pi-agent");
+    const targetRole = getDefaultRole();
     writeRoleSwitchRequest(pi, {
       targetRole,
       reason: "plannotator:plan-approved",
