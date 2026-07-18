@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.80.7",
   "defaultProvider": "cpa",
-  "defaultModel": "ocg/go-deepseek-v4-pro",
+  "defaultModel": "ocg/go-deepseek-v4-flash",
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
   "theme": "dark",
@@ -49,6 +49,9 @@
   "saveTokens": {
     "caveman": {
       "defaultLevel": "full"
+    },
+    "ponytail": {
+      "enabled": true
     }
   },
   "fileResolver": {
@@ -81,7 +84,10 @@
       "session_plan",
       "safe_bash",
       "bash",
-      "hypa_shell"
+      "hypa_shell",
+      "load_skill",
+      "subagent",
+      "mcp"
     ]
   },
   "translate": {
@@ -94,7 +100,7 @@
   },
   "pi-roles": {
     "roleScope": "both",
-    "defaultRole": "pi-caveman",
+    "defaultRole": "pi-agent",
     "intercom": "both",
     "showStatus": false
   },
