@@ -151,6 +151,29 @@ Key difference from vitest's `vi.mock()`: bun's `mock.module()` executes in orde
 
 This catches import errors, type mismatches, and structural issues while keeping tests fast and isolated from the pi runtime.
 
+## When to use `@marcfargas/pi-test-harness` vs. plain `bun:test`
+
+`@marcfargas/pi-test-harness` boots a real Pi session (jiti, tool wrapping, hook runner, event bus) — that cost is justified only when the test must exercise real runtime behavior. It is **not** a default; it is a targeted tool. Refer to the `pi-test-harness` skill for the full API.
+
+**Use `bun:test` + `mock.module()` (default) when:**
+- Testing **pure helpers / pure logic** (string transforms, JSON shaping, schema validation, math, config parsing) — even if they live in an extension file.
+- Testing **imports in isolation** — `mock.module()` + `await import()` catches resolution/type/structural errors without paying for a session.
+- Testing **type shapes** — `tsc --noEmit` or `expectTypeOf` needs no runtime at all.
+
+**Reach for `pi-test-harness` when the test must exercise real Pi runtime wiring that mocks cannot reproduce faithfully:**
+- A `pi.registerTool(...)` whose `execute()` depends on the real tool-wrapping pipeline (params validation, `beforeExecute`, `renderResult` overrides).
+- A `pi.on("tool_call" | "tool_result", ...)` hook that **blocks** or **mutates** calls — the harness is the only way to reproduce `ToolBlockedError` + the `blocked`/`blockReason` fields on `ToolCallRecord`.
+- Multi-turn agent flow where one tool's output feeds the next call, or where `turn_end` / `agent_end` hooks gate the next step.
+- `ctx.ui.confirm / select / input / editor` interactions that branch extension logic — driven via `mockUI`, asserted via `t.events.uiCallsFor(...)`.
+- An extension that **spawns `pi` as a subprocess** — only `createMockPi()` provides the PATH shim.
+
+**Rule of thumb:** if dropping Pi's runtime would make the test trivially pass without exercising the bug you are guarding against → use the harness. Otherwise plain `bun:test` is faster and sufficient.
+
+**Caveats:**
+- `MockUIConfig` does **not** cover `ctx.ui.custom(...)` — TUI-overlay extensions cannot be driven through the harness; fall back to testing the handler function in isolation.
+- The harness upstream CI is Vitest-only. Running under `bun:test` works in theory; smoke-test the first harness-based test you add to confirm `bun` compatibility for your specific extension (process-exit timing for `safeRmSync`, `child_process.spawn` PATH-shim behavior).
+- Like any integrated layer, `verifySandboxInstall` is a release gate (one test per publish), not a per-PR loop — its `npm pack` + `npm install` cost is real.
+
 </test-driven-development>
 
 # More Resources
