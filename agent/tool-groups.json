@@ -1,0 +1,24 @@
+{
+    "groups": {
+        "inspect": ["read", "grep", "find", "ls"],
+        "web": ["web_search", "fetch_content", "get_search_content"],
+        "docs": ["mcp:context7", "mcp:deepwiki"],
+        "review": ["@inspect", "memory_search", "@docs", "@web"],
+        "memory": ["memory", "session_search", "memory_search"],
+        "files-write": ["edit", "write"],
+        "implement": ["@files-write", "safe_bash"],
+        "lens": [
+            "ast_grep_search",
+            "ast_grep_outline",
+            "ast_grep_dump",
+            "ast_dump",
+            "lens_diagnostics",
+            "lsp_diagnostics",
+            "lsp_navigation",
+            "module_report",
+            "read_symbol",
+            "read_enclosing"
+        ],
+        "lens-write": ["@lens", "ast_grep_replace"]
+    }
+}

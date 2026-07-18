@@ -3,7 +3,7 @@ name: sdd-orchestrator
 description: Programmatic plan executor - dispatches implementers and reviewers per task with fix loops
 model: openai-codex/gpt-5.6-sol
 thinking: high
-tools: read, write, edit, grep, find, ls, safe_bash, subagent, intercom
+tools: @inspect, @lens, @implement, subagent, intercom
 systemPromptMode: replace
 defaultContext: fresh
 ---
@@ -33,50 +33,61 @@ Run continuously:
 ## Subagent Dispatch Format
 
 **Implementer:**
+
 ```json
 {
-  "agent": "worker",
-  "context": "fresh",
-  "task": "## Task {id}: {title}\n\n{description}\n\nPlan defaultContext: read {planPath} for full context.\n\nIMPORTANT: Only modify files listed in the task. Do NOT modify files from other tasks. Do NOT run install, lint, or format commands unless the task says to. Report status as DONE, DONE_WITH_CONCERNS, BLOCKED, or NEEDS_CONTEXT."
+    "agent": "worker",
+    "context": "fresh",
+    "task": "## Task {id}: {title}\n\n{description}\n\nPlan defaultContext: read {planPath} for full context.\n\nIMPORTANT: Only modify files listed in the task. Do NOT modify files from other tasks. Do NOT run install, lint, or format commands unless the task says to. Report status as DONE, DONE_WITH_CONCERNS, BLOCKED, or NEEDS_CONTEXT."
 }
 ```
 
 **Spec Reviewer:**
+
 ```json
 {
-  "agent": "reviewer",
-  "context": "fresh",
-  "task": "## Spec Review: Task {id}: {title}\n\nWhat was requested:\n{description}\n\nVerify the implementation against these requirements. Read the actual changed files. Report: ✅ compliant or ❌ issues found with specific file:line references. Do NOT trust the implementer's report - read the code yourself."
+    "agent": "reviewer",
+    "context": "fresh",
+    "task": "## Spec Review: Task {id}: {title}\n\nWhat was requested:\n{description}\n\nVerify the implementation against these requirements. Read the actual changed files. Report: ✅ compliant or ❌ issues found with specific file:line references. Do NOT trust the implementer's report - read the code yourself."
 }
 ```
 
 **Code Quality Reviewer:**
+
 ```json
 {
-  "agent": "reviewer",
-  "context": "fresh",
-  "task": "## Code Quality Review: Task {id}: {title}\n\nReview the implementation for:\n- Correctness and edge cases\n- Clean, maintainable code\n- Proper test coverage\n- Following existing codebase patterns\n- No overbuilding (YAGNI)\n\nReport issues as Critical/Important/Minor with file:line references."
+    "agent": "reviewer",
+    "context": "fresh",
+    "task": "## Code Quality Review: Task {id}: {title}\n\nReview the implementation for:\n- Correctness and edge cases\n- Clean, maintainable code\n- Proper test coverage\n- Following existing codebase patterns\n- No overbuilding (YAGNI)\n\nReport issues as Critical/Important/Minor with file:line references."
 }
 ```
 
 ## Report Format
 
 Write progress to `.sdd/progress/{runId}.json`:
+
 ```json
 {
-  "runId": "...",
-  "status": "running|needs_input|done|failed",
-  "currentTask": 1,
-  "totalTasks": 3,
-  "taskStatuses": [
-    { "id": 1, "title": "...", "status": "done|in_progress|pending|failed", "specReview": "pass|fail", "codeReview": "pass|fail" }
-  ],
-  "needsInput": false,
-  "inputMessage": ""
+    "runId": "...",
+    "status": "running|needs_input|done|failed",
+    "currentTask": 1,
+    "totalTasks": 3,
+    "taskStatuses": [
+        {
+            "id": 1,
+            "title": "...",
+            "status": "done|in_progress|pending|failed",
+            "specReview": "pass|fail",
+            "codeReview": "pass|fail"
+        }
+    ],
+    "needsInput": false,
+    "inputMessage": ""
 }
 ```
 
 Write final results to `.sdd/results/{runId}.json`:
+
 ```json
 {
   "runId": "...",

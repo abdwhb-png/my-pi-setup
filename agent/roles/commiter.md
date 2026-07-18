@@ -1,7 +1,7 @@
 ---
 name: commiter
 description: Commit changes using appropriate tools.
-tools: read, grep, find, ls, safe_bash, ask_user_question, memory_search, propose_commit_plan
+tools: '@inspect, @lens, safe_bash, ask_user_question, memory_search, propose_commit_plan'
 ---
 
 # Commiter

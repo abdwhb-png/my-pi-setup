@@ -306,32 +306,29 @@ export function calculateExtensionFiles(commands: any[]): string[] {
 
     const paths = [...extensionsByPath.keys()];
 
-    // Disambiguate: if multiple distinct directories share the same basename
-    // (e.g. foo/index.ts and bar/index.ts), prefix with parent directory name.
-    const perBasename = new Map<string, string[]>();
-    for (const p of paths) {
-        if (p === '<unknown>') continue;
-        const bn = path.basename(p);
-        const arr = perBasename.get(bn) ?? [];
-        arr.push(p);
-        perBasename.set(bn, arr);
-    }
-
-    const ambiguous = new Set<string>();
-    for (const [bn, ps] of perBasename) {
-        const dirs = new Set(ps.map((p) => path.basename(path.dirname(p))));
-        if (dirs.size > 1) ambiguous.add(bn);
-    }
-
+    // Disambiguate: for each path, use minimal dir-prefixed suffix that is
+    // unique among all paths. Walk up directory by directory until unique.
     return paths
         .map((p) => {
             if (p === '<unknown>') return p;
             const bn = path.basename(p);
-            if (ambiguous.has(bn)) {
-                const parent = path.basename(path.dirname(p));
-                return `${parent}/${bn}`;
+            let suffix = bn;
+            let cursor = path.dirname(p);
+            // Keep walking up while ANY other path ends with the same suffix
+            // at a directory boundary (i.e. preceded by '/' or is the full path).
+            while (true) {
+                const collisions = paths.filter(
+                    (other) =>
+                        other !== '<unknown>' &&
+                        other !== p &&
+                        other.endsWith(`/${suffix}`),
+                );
+                if (collisions.length === 0) break;
+                const parent = path.basename(cursor);
+                suffix = `${parent}/${suffix}`;
+                cursor = path.dirname(cursor);
             }
-            return bn;
+            return suffix;
         })
         .toSorted((a, b) => a.localeCompare(b));
 }

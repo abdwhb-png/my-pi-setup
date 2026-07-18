@@ -7,6 +7,7 @@ import {
     type RepairSummary,
 } from './_shared/package-install/finalizer.ts';
 import { repairConfiguredPackageTrust } from './_shared/package-install/lifecycle-trust.ts';
+import { pinToolGroupsPackageLast } from './_shared/tool-groups/package-order.ts';
 
 function createStartupLogger(showStatus: boolean): RepairLogger {
     return {
@@ -29,12 +30,23 @@ export async function runPackageFinalizerStartup(
     cwd: string,
     agentDir = getDefaultAgentDir(),
 ): Promise<RepairSummary> {
-    return await repairConfiguredPiPackages({
+    // Pin tool-groups package to last position before repairing packages.
+    const pinResult = await pinToolGroupsPackageLast(cwd, agentDir);
+
+    const result = await repairConfiguredPiPackages({
         cwd,
         agentDir,
         logger: createStartupLogger(false),
         force: false,
     });
+
+    if (pinResult.changed) {
+        const msg = `[package-finalizer] Tool-groups package order repaired. Run /reload to apply updated tool-group configuration.`;
+        console.warn(msg);
+        result.warnings.push(msg);
+    }
+
+    return result;
 }
 
 export async function runPackageLifecycleTrustStartup(

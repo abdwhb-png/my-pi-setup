@@ -2,7 +2,7 @@
   "lastChangelogVersion": "0.80.7",
   "defaultProvider": "cpa",
   "defaultModel": "ocg/go-deepseek-v4-flash",
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,
   "theme": "dark",
   "steeringMode": "all",
@@ -28,7 +28,8 @@
     "npm:@gotgenes/pi-permission-system",
     "../../projects/pi-integrations/pi-roles",
     "/home/abdwhb/projects/shared-services/pi-lens",
-    "npm:context-mode"
+    "npm:context-mode",
+    "./extensions/tool-groups"
   ],
   "safeBash": {
     "mode": "replace",
@@ -107,8 +108,8 @@
   "subagents": {
     "defaultModel": "cpa/ocg/go-deepseek-v4-flash",
     "turnBudget": {
-      "maxTurns": 30,
-      "graceTurns": 5
+      "maxTurns": 40,
+      "graceTurns": 10
     },
     "agentOverrides": {
       "worker": {
@@ -118,13 +119,9 @@
           "cpa/qwen/qwen3.6-plus-preview:free"
         ],
         "tools": [
-          "read",
-          "grep",
-          "find",
-          "ls",
-          "write",
-          "edit",
-          "safe_bash",
+          "@inspect",
+          "@lens-write",
+          "@implement",
           "contact_supervisor"
         ]
       },
@@ -136,10 +133,8 @@
         ],
         "thinking": "high",
         "tools": [
-          "read",
-          "grep",
-          "find",
-          "ls",
+          "@inspect",
+          "@lens",
           "safe_bash",
           "write",
           "intercom"
@@ -168,10 +163,8 @@
           "cpa/nvidia/nemotron-3-super-120b-a12b:free"
         ],
         "tools": [
-          "read",
-          "grep",
-          "find",
-          "ls",
+          "@inspect",
+          "@lens",
           "write_plan",
           "intercom"
         ]
@@ -187,13 +180,9 @@
       },
       "delegate": {
         "tools": [
-          "read",
-          "grep",
-          "find",
-          "ls",
-          "write",
-          "edit",
-          "safe_bash",
+          "@inspect",
+          "@lens-write",
+          "@implement",
           "contact_supervisor"
         ]
       },
@@ -205,16 +194,11 @@
           "cpa/qwen/qwen3.6-plus-preview:free"
         ],
         "tools": [
-          "read",
-          "grep",
-          "find",
-          "ls",
+          "@inspect",
+          "@lens",
           "safe_bash",
           "write",
-          "web_search",
-          "get_search_content",
-          "fetch_content",
-          "ast_grep_search",
+          "@web",
           "intercom"
         ]
       },

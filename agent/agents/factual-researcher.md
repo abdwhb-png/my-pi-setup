@@ -8,7 +8,7 @@ defaultContext: fresh
 inheritProjectContext: false
 inheritSkills: false
 skills: factual-research, firecrawl, firecrawl-crawl, firecrawl-map, firecrawl-parse, firecrawl-scrape, firecrawl-search
-tools: read, grep, find, ls, safe_bash, mcp:context7, mcp:deepwiki, mcp:exa, web_search, fetch_content, get_search_content, intercom, contact_supervisor
+tools: @inspect, safe_bash, @docs, mcp:exa, @web, intercom, contact_supervisor
 ---
 
 # Factual Researcher

@@ -2,7 +2,8 @@
 name: ask
 description: Answers questions without making changes
 thinking: high
-tools: read, grep, find, ls, ask_user_question, memory_search, session_search, mcp, web_search, fetch_content,get_search_content
+tools: '@inspect, @lens, ask_user_question, memory_search, session_search, mcp, @web'
+subagents: scout, pi-expert, researcher, factual-researcher
 ---
 
 # Ask Role

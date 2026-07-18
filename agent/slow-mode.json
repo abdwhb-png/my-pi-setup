@@ -1,0 +1,6 @@
+{
+    "write": true,
+    "edit": true,
+    "bash": true,
+    "safe_bash": false
+}
