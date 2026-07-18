@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { fuzzyFilter } from '@earendil-works/pi-tui';
 import {
@@ -142,6 +142,10 @@ export function fuzzyMatchBasename(files: string[], query: string): string[] {
  * Enrich autocomplete items with cache-only files when git-ignore is disabled.
  * Only effective when `config.fd.respectGitignore` is false and cache is ready.
  *
+ * When `forceExternal` is true, the gitignore restriction is bypassed —
+ * this allows enrichment for absolute paths outside the CWD where the built-in
+ * autocomplete cannot provide results.
+ *
  * Existing items are preserved; cache matches not already present (by label)
  * are appended, capped at 20 extra entries.
  */
@@ -150,9 +154,10 @@ export function enrichAutocompleteWithCache(
     items: Array<{ value: string; label: string; description?: string }>,
     cache: { files: string[]; ready: boolean },
     config: FileResolverConfig,
+    options?: { forceExternal?: boolean },
 ): Array<{ value: string; label: string; description?: string }> {
     if (!prefix.startsWith('@')) return items;
-    if (config.fd.respectGitignore) return items;
+    if (!options?.forceExternal && config.fd.respectGitignore) return items;
     if (!cache.ready) return items;
 
     const parsed = parseAtValue(prefix);
@@ -186,6 +191,61 @@ export function enrichAutocompleteWithCache(
     return result;
 }
 
+/**
+ * Real-time fd file search for absolute paths outside indexed roots.
+ * Used as fallback when autocomplete cache has no matches for @/absolute/path.
+ *
+ * Expands ~/ prefixes, extracts directory + basename, runs fd on the directory,
+ * then fuzzy-filters results by basename.
+ */
+export async function realtimeFdSearch(
+    absolutePath: string,
+    signal: AbortSignal,
+    config: FileResolverConfig,
+    maxResults = 50,
+    _walker?: (
+        baseDir: string,
+        maxResults: number,
+        signal: AbortSignal,
+        config: FileResolverConfig,
+    ) => Promise<string[]>,
+): Promise<Array<{ value: string; label: string; description?: string }>> {
+    const walker = _walker ?? walkDirFd;
+    // Expand ~/ if needed
+    let searchPath = absolutePath;
+    if (searchPath.startsWith('~')) {
+        searchPath = join(
+            HOME,
+            searchPath.slice(searchPath[1] === '/' ? 2 : 1),
+        );
+    }
+
+    const dir = searchPath.endsWith('/') ? searchPath : dirname(searchPath);
+    const query = searchPath.endsWith('/') ? '' : basename(searchPath);
+
+    let files: string[];
+    try {
+        files = await walker(dir, 500, signal, config);
+        if (signal.aborted) return [];
+    } catch {
+        return [];
+    }
+
+    if (files.length === 0) return [];
+
+    // Fuzzy filter by basename when query is present
+    let matched = files;
+    if (query && query !== '.' && query !== '/') {
+        matched = fuzzyFilter(files, query, (f) => f.split('/').pop() ?? '');
+    }
+
+    return matched.slice(0, maxResults).map((f) => ({
+        value: `@${f}`,
+        label: f.split('/').pop() ?? f,
+        description: f,
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // Search roots
 // ---------------------------------------------------------------------------
@@ -199,15 +259,19 @@ const PI_DOCS_DIR = join(HOME, '.pi', 'docs');
 
 /**
  * Get the list of search roots for background indexing.
- * Roots are deduplicated.
+ * Roots are deduplicated. Optionally includes user-configured additional directories.
  */
-export function getSearchRoots(cwd: string): string[] {
+export function getSearchRoots(
+    cwd: string,
+    additionalDirectories?: string[],
+): string[] {
     const roots: string[] = [
         cwd,
         AGENT_DIR,
         EXTENSIONS_DIR,
         PI_PROMPTS_DIR,
         PI_DOCS_DIR,
+        ...(additionalDirectories ?? []),
     ];
     const seen = new Set<string>();
     return roots.filter((r) => {
@@ -366,6 +430,9 @@ let currentRoots: string[] = [];
 /** AbortController for in-flight fd indexing. Aborted on session_shutdown. */
 let indexAbortController: AbortController | null = null;
 
+/** AbortController for in-flight real-time fd search. Cancelled on each new keystroke. */
+let realtimeFdController: AbortController | null = null;
+
 // ---------------------------------------------------------------------------
 // Extension entry point
 // ---------------------------------------------------------------------------
@@ -399,15 +466,49 @@ export default function (pi: ExtensionAPI): void {
 
                     if (!prefix || !prefix.startsWith('@')) return result;
 
+                    const parsed = parseAtValue(prefix);
+                    const isExternalPath =
+                        parsed.path.startsWith('/') ||
+                        parsed.path.startsWith('~/');
+
                     // Inject cache-only files when git-ignore is disabled
+                    // Force external bypass for absolute/~/ paths outside CWD
                     const enrichedItems = enrichAutocompleteWithCache(
                         prefix,
                         result?.items ?? [],
                         currentCache,
                         getFileResolverConfig(),
+                        { forceExternal: isExternalPath },
                     );
 
-                    if (enrichedItems.length === 0) return null;
+                    if (enrichedItems.length === 0) {
+                        // Real-time fd fallback for absolute paths outside cache
+                        const config = getFileResolverConfig();
+                        if (isExternalPath && config.enableRealtimeFallback) {
+                            if (realtimeFdController) {
+                                realtimeFdController.abort();
+                            }
+                            realtimeFdController = new AbortController();
+                            const realtimeItems = await realtimeFdSearch(
+                                parsed.path,
+                                realtimeFdController.signal,
+                                config,
+                            );
+                            if (realtimeItems.length > 0) {
+                                return {
+                                    prefix,
+                                    items: realtimeItems.map((item) => ({
+                                        ...item,
+                                        value: transformAtValue(
+                                            item.value,
+                                            sessionCwd,
+                                        ),
+                                    })),
+                                };
+                            }
+                        }
+                        return null;
+                    }
 
                     return {
                         prefix,
@@ -446,7 +547,10 @@ export default function (pi: ExtensionAPI): void {
         // --- Part B: Preprocessor state (per-session) ---------------------------
 
         currentCache = { files: [], ready: false, running: false };
-        currentRoots = getSearchRoots(ctx.cwd);
+        currentRoots = getSearchRoots(
+            ctx.cwd,
+            getFileResolverConfig().additionalDirectories,
+        );
         buildIndexBackground(
             currentCache,
             currentRoots,
@@ -459,6 +563,10 @@ export default function (pi: ExtensionAPI): void {
         if (indexAbortController) {
             indexAbortController.abort();
             indexAbortController = null;
+        }
+        if (realtimeFdController) {
+            realtimeFdController.abort();
+            realtimeFdController = null;
         }
         currentCache = { files: [], ready: false, running: false };
         currentRoots = [];

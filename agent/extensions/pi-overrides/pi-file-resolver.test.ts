@@ -47,6 +47,7 @@ const {
     levenshteinDistance,
     fuzzyMatchBasename,
     enrichAutocompleteWithCache,
+    realtimeFdSearch,
 } = await import('./pi-file-resolver.ts');
 
 describe('parseAtValue', () => {
@@ -248,6 +249,26 @@ describe('getSearchRoots', () => {
         const unique = new Set(roots);
         expect(roots.length).toBe(unique.size);
     });
+
+    it('includes additional directories', () => {
+        const roots = getSearchRoots('/current/project', ['/foo', '/bar']);
+        expect(roots).toContain('/current/project');
+        expect(roots).toContain('/foo');
+        expect(roots).toContain('/bar');
+    });
+
+    it('deduplicates cwd with additional directories', () => {
+        const roots = getSearchRoots('/foo/bar', ['/foo/bar']);
+        const matching = roots.filter(
+            (r) => r.replace(/\/+$/, '') === '/foo/bar',
+        );
+        expect(matching.length).toBe(1);
+    });
+
+    it('handles empty additional directories', () => {
+        const roots = getSearchRoots('/current/project', []);
+        expect(roots).toContain('/current/project');
+    });
 });
 
 describe('parseAtValue -> rebuildAtValue round-trip', () => {
@@ -384,6 +405,10 @@ describe('enrichAutocompleteWithCache', () => {
             excludePatterns: ['.git', 'node_modules'],
             types: ['f'],
         },
+        rg: { respectGitignore: true },
+        ls: { respectGitignore: true },
+        additionalDirectories: [],
+        enableRealtimeFallback: true,
     };
 
     const gitNoRespConfig = {
@@ -394,6 +419,10 @@ describe('enrichAutocompleteWithCache', () => {
             excludePatterns: ['.git', 'node_modules'],
             types: ['f'],
         },
+        rg: { respectGitignore: true },
+        ls: { respectGitignore: true },
+        additionalDirectories: [],
+        enableRealtimeFallback: true,
     };
 
     it('adds cache-only files when respectGitignore is false', () => {
@@ -483,5 +512,145 @@ describe('enrichAutocompleteWithCache', () => {
             gitNoRespConfig,
         );
         expect(result.map((i) => i.label)).toContain('.env.development');
+    });
+
+    // forceExternal flag
+    it('enriches when respectGitignore is true and forceExternal is true', () => {
+        const result = enrichAutocompleteWithCache(
+            '@config',
+            existingItems,
+            cache,
+            gitRespConfig,
+            { forceExternal: true },
+        );
+        // Force external bypasses the gitignore check — should add config.json from cache
+        const labels = result.map((i) => i.label);
+        expect(labels).toContain('config.json');
+    });
+
+    it('does NOT enrich when respectGitignore is true and forceExternal is false', () => {
+        const result = enrichAutocompleteWithCache(
+            '@config',
+            existingItems,
+            cache,
+            gitRespConfig,
+            { forceExternal: false },
+        );
+        const labels = result.map((i) => i.label);
+        expect(labels).toEqual(['config.ts']);
+    });
+
+    it('default behavior unchanged without forceExternal (respectGitignore=true skips)', () => {
+        const result = enrichAutocompleteWithCache(
+            '@config',
+            existingItems,
+            cache,
+            gitRespConfig,
+        );
+        const labels = result.map((i) => i.label);
+        expect(labels).toEqual(['config.ts']);
+    });
+});
+
+describe('realtimeFdSearch', () => {
+    const mockAbsoluteFiles = [
+        '/projects/foo/index.ts',
+        '/projects/foo/utils.ts',
+        '/projects/foo/README.md',
+        '/projects/foo/package.json',
+    ];
+
+    function makeWalker(files: string[]) {
+        return async () => files;
+    }
+
+    const baseConfig = {
+        fd: {
+            respectGitignore: true,
+            followSymlinks: true,
+            includeHidden: true,
+            excludePatterns: ['.git', 'node_modules'],
+            types: ['f'],
+        },
+        rg: { respectGitignore: true },
+        ls: { respectGitignore: true },
+        additionalDirectories: [],
+        enableRealtimeFallback: true,
+    };
+
+    it('returns fuzzy-filtered files for absolute path with query', async () => {
+        const controller = new AbortController();
+        const results = await realtimeFdSearch(
+            '/projects/foo/index',
+            controller.signal,
+            baseConfig,
+            undefined,
+            makeWalker(mockAbsoluteFiles),
+        );
+        expect(results.length).toBeGreaterThan(0);
+        const labels = results.map((r) => r.label);
+        expect(labels).toContain('index.ts');
+    });
+
+    it('returns all files when query is empty (path ends with /)', async () => {
+        const controller = new AbortController();
+        const results = await realtimeFdSearch(
+            '/projects/foo/',
+            controller.signal,
+            baseConfig,
+            undefined,
+            makeWalker(mockAbsoluteFiles),
+        );
+        expect(results.length).toBe(4);
+    });
+
+    it('respects maxResults cap', async () => {
+        const controller = new AbortController();
+        const results = await realtimeFdSearch(
+            '/projects/foo/',
+            controller.signal,
+            baseConfig,
+            2,
+            makeWalker(mockAbsoluteFiles),
+        );
+        expect(results.length).toBeLessThanOrEqual(2);
+    });
+
+    it('returns empty array when walker returns nothing', async () => {
+        const controller = new AbortController();
+        const results = await realtimeFdSearch(
+            '/empty/dir/',
+            controller.signal,
+            baseConfig,
+            undefined,
+            makeWalker([]),
+        );
+        expect(results).toEqual([]);
+    });
+
+    it('handles aborted signal gracefully', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const results = await realtimeFdSearch(
+            '/projects/foo/',
+            controller.signal,
+            baseConfig,
+            undefined,
+            makeWalker(mockAbsoluteFiles),
+        );
+        expect(results).toEqual([]);
+    });
+
+    it('each result has @-prefixed value', async () => {
+        const controller = new AbortController();
+        const results = await realtimeFdSearch(
+            '/tmp/pi-agent/hello/',
+            controller.signal,
+            baseConfig,
+            undefined,
+            makeWalker(['/tmp/pi-agent/hello/world.ts']),
+        );
+        expect(results.length).toBe(1);
+        expect(results[0]!.value).toMatch(/^@/);
     });
 });
