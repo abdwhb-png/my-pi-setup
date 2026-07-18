@@ -16,7 +16,7 @@ In order to help me at the best of your ability I never want you to guess anythi
 
 ## Context about pi
 
-Always refer to the [ABOUT-PI.md](../docs/ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
+Always refer to the [ABOUT-PI.md](./docs/ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
 
 **Pi Packages**: Pi packages bundle extensions, skills, prompt templates, and themes so you can share them through npm or git. A package can declare resources in package.json under the pi key, or use conventional directories. Refer to the [pi package documentation](https://pi.dev/docs/latest/packages) for details on how to structure and publish your own packages.
 

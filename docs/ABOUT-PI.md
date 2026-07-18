@@ -51,5 +51,6 @@ $ pi install git:github.com/badlogic/pi-doom`
 ## Additional resources
 
 - [Documentation](https://pi.dev/docs/latest)
+- [News & Releases](https://pi.dev/news)
 - [GitHub](https://github.com/earendil-works/pi)
 - [Docs map](./resources/pi-docs.map.json)
