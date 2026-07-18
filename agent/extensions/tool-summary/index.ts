@@ -1,23 +1,28 @@
 /**
  * Tool Summary Extension
  *
- * Shows a compact tool-usage summary after each agent turn via ctx.ui.notify().
+ * Shows a compact tool-usage summary when the agent ends, via ctx.ui.notify().
+ * Extracts tool results directly from AgentEndEvent.messages — no accumulation needed.
  *
- * Hooks into `turn_end`, counts tool calls from `event.toolResults`,
- * and shows a compact bar like `read(3) grep(1) bash✗(2)`.
+ * Example output: 🔧 read(3) grep(1) bash✗(2)
  *
  * Configurable via settings.json key "toolSummary" and /tool-summary command.
  * When tools[] is empty (default), all tools used are shown.
  * When tools[] has entries, only those tools are displayed.
  */
 
+import type { ToolResultMessage } from '@earendil-works/pi-ai';
 import type {
     ExtensionAPI,
-    TurnEndEvent,
+    ToolResultEvent,
 } from '@earendil-works/pi-coding-agent';
+import { TOOL_SUMMARY_EVENT } from '../_shared/agent-run-summary.ts';
 import { createUiColors } from '../_shared/ui-colors.ts';
 import { ToolFilter, handleToolSummaryCommand } from './commands.ts';
+import { loadToolSummaryConfig } from './config.ts';
 import { countToolUsage, formatSummary } from './summary.ts';
+
+const ICON = '🔧';
 
 /** Check for RPC mode — skip TUI-only extension. */
 function isRPCMode(): boolean {
@@ -27,18 +32,46 @@ function isRPCMode(): boolean {
 export default function (pi: ExtensionAPI) {
     if (isRPCMode()) return;
 
-    let filter = new ToolFilter();
+    const filter = new ToolFilter();
+    let toolResults: ToolResultMessage[] = [];
 
-    pi.on('turn_end', async (event: TurnEndEvent, ctx) => {
+    pi.on('session_start', async (_event, ctx) => {
+        const config = loadToolSummaryConfig(ctx.cwd);
+        filter.reset();
+        if (config.tools.length > 0) {
+            filter.add(...config.tools);
+        }
+    });
+
+    pi.on('agent_start', async () => {
+        toolResults = [];
+    });
+
+    pi.on('tool_result', async (event: ToolResultEvent) => {
+        toolResults.push({
+            role: 'toolResult',
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            content: event.content,
+            details: event.details,
+            isError: event.isError,
+            timestamp: Date.now(),
+        });
+    });
+
+    pi.on('agent_end', async (_event, ctx) => {
         if (!ctx.hasUI) return;
 
         const colors = createUiColors(ctx.ui.theme);
-        const counts = countToolUsage(event.toolResults);
+        const counts = countToolUsage(toolResults);
         const effectiveFilter = filter.getFilterArray();
         const summary = formatSummary(counts, effectiveFilter, colors);
 
         if (summary) {
-            ctx.ui.notify(summary, 'info');
+            pi.events.emit(TOOL_SUMMARY_EVENT, {
+                prefix: 'TOOLS',
+                text: `${colors.primary(ICON)} ${summary}`,
+            });
         }
     });
 
