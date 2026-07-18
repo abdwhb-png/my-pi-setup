@@ -6,7 +6,10 @@ import {
     type ExtensionAPI,
     type AgentToolResult,
 } from '@earendil-works/pi-coding-agent';
-import { parseYeetCommandArgs } from './command-args';
+import { fuzzyFilter } from '@earendil-works/pi-tui';
+import { fdSearch } from '../_shared/file-search/fd-utils';
+import { getSearchDirectories } from '../_shared/file-search/path-resolver';
+import { expandHomePath, parseYeetCommandArgs } from './command-args';
 import { CommitConfirmDialog } from './confirm';
 import { CommitPlanSession } from './session';
 import type { CommitPlanParams, CommitPlanResult } from './types';
@@ -339,6 +342,71 @@ export default function (pi: ExtensionAPI) {
     pi.registerCommand('yeet', {
         description:
             'Stage and commit repo changes. Use --cwd <path> to select a repository and --go for auto-approve mode.',
+        async getArgumentCompletions(argumentPrefix: string) {
+            // Extract --cwd value from argument prefix
+            let cwdPath: string | null = null;
+
+            // Match --cwd=<value> form
+            const eqMatch = argumentPrefix.match(/--cwd=(.*)/);
+            if (eqMatch) {
+                cwdPath = eqMatch[1];
+            } else {
+                // Match --cwd <value> form (tokens already parsed by Pi)
+                const spaceMatch = argumentPrefix.match(/--cwd\s+(.*)/);
+                if (spaceMatch) {
+                    cwdPath = spaceMatch[1];
+                }
+            }
+
+            if (!cwdPath && !argumentPrefix.includes('--cwd')) {
+                return null;
+            }
+
+            // If --cwd is present but no path yet, return empty (don't start fd for nothing)
+            if (!cwdPath || cwdPath.trim() === '') {
+                return null;
+            }
+
+            const expandedPath = expandHomePath(cwdPath);
+            const { dirs, query } = getSearchDirectories(expandedPath, {
+                cwd: process.cwd(),
+            });
+
+            if (dirs.length === 0) return null;
+
+            let allEntries: string[] = [];
+            for (const dir of dirs) {
+                try {
+                    const entries = await fdSearch({
+                        baseDir: dir,
+                        types: ['d'],
+                        maxResults: 20,
+                    });
+                    allEntries.push(...entries);
+                } catch {}
+            }
+
+            allEntries = [...new Set(allEntries)];
+
+            if (allEntries.length === 0) return null;
+
+            let matched = allEntries;
+            if (query) {
+                matched = fuzzyFilter(
+                    allEntries,
+                    query,
+                    (e) => e.split('/').pop() ?? '',
+                );
+            }
+
+            if (matched.length === 0) return null;
+
+            return matched.map((entry) => ({
+                value: entry,
+                label: entry.split('/').pop() ?? entry,
+                description: entry,
+            }));
+        },
         handler: async (args: string, ctx: any) => {
             const parsedArgs = parseYeetCommandArgs(args, ctx.cwd);
             if (parsedArgs.error) {

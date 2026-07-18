@@ -47,6 +47,10 @@ export interface FileResolverConfig {
     fd: FdConfig;
     rg: RgConfig;
     ls: LsConfig;
+    /** Absolute paths to additional directories to index for autocomplete. */
+    additionalDirectories: string[];
+    /** Enable real-time fd fallback when @/absolute/path has no cache matches. Default: true. */
+    enableRealtimeFallback: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +71,8 @@ export const DEFAULT_CONFIG: FileResolverConfig = {
     ls: {
         respectGitignore: true,
     },
+    additionalDirectories: [],
+    enableRealtimeFallback: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -169,6 +175,14 @@ export function normalizeFileResolverConfig(
         if (Object.keys(ls).length > 0) result.ls = ls as LsConfig;
     }
 
+    if (Array.isArray(top.additionalDirectories)) {
+        result.additionalDirectories = isStringArray(top.additionalDirectories);
+    }
+
+    if (isBoolean(top.enableRealtimeFallback)) {
+        result.enableRealtimeFallback = top.enableRealtimeFallback;
+    }
+
     return result;
 }
 
@@ -201,19 +215,27 @@ function mergeLsConfig(base: LsConfig, overlay: Partial<LsConfig>): LsConfig {
     };
 }
 
-/** Deep-merge: overlay scalars override base; excludePatterns union; types replace. */
+/** Deep-merge: overlay scalars override base; excludePatterns and additionalDirectories union; types replace. */
 export function mergeFileResolverConfig(
     base: FileResolverConfig,
     overlay: Partial<{
         fd: Partial<FdConfig>;
         rg: Partial<RgConfig>;
         ls: Partial<LsConfig>;
+        additionalDirectories: string[];
+        enableRealtimeFallback: boolean;
     }>,
 ): FileResolverConfig {
     return {
         fd: overlay.fd ? mergeFdConfig(base.fd, overlay.fd) : base.fd,
         rg: overlay.rg ? mergeRgConfig(base.rg, overlay.rg) : base.rg,
         ls: overlay.ls ? mergeLsConfig(base.ls, overlay.ls) : base.ls,
+        additionalDirectories: [
+            ...base.additionalDirectories,
+            ...(overlay.additionalDirectories ?? []),
+        ],
+        enableRealtimeFallback:
+            overlay.enableRealtimeFallback ?? base.enableRealtimeFallback,
     };
 }
 

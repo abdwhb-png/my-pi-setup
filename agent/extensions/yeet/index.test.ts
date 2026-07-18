@@ -1,4 +1,11 @@
 import { describe, it, expect, mock } from 'bun:test';
+
+// Mock fd-utils to avoid spawning real fd in tests
+let mockFdResults: string[] = [];
+mock.module('../_shared/file-search/fd-utils', () => ({
+    fdSearch: async () => mockFdResults,
+}));
+
 import yeetExtension, {
     executeCommit,
     validateCommitCwd,
@@ -253,5 +260,81 @@ describe('executeCommit', () => {
         );
 
         expect(result).toEqual({ success: true, sha: 'def5678' });
+    });
+});
+
+describe('/yeet getArgumentCompletions', () => {
+    it('returns directory suggestions for --cwd=<path>', async () => {
+        let completionsFn: ((prefix: string) => Promise<any>) | undefined;
+
+        mockFdResults = ['/tmp/foo/src', '/tmp/foo/tests'];
+
+        const pi = {
+            exec: mock(async () => ({ stdout: '' })),
+            registerTool: () => {},
+            registerCommand: (
+                _name: string,
+                options: {
+                    getArgumentCompletions?: (prefix: string) => Promise<any>;
+                },
+            ) => {
+                completionsFn = options.getArgumentCompletions;
+            },
+            sendUserMessage: mock(),
+        };
+
+        yeetExtension(pi as never);
+
+        const result = await completionsFn?.('--cwd=/tmp/');
+        expect(result).toBeDefined();
+        expect(result.length).toBe(2);
+        expect(result[0].label).toBe('src');
+        expect(result[1].label).toBe('tests');
+    });
+
+    it('returns null when no --cwd in prefix', async () => {
+        let completionsFn: ((prefix: string) => Promise<any>) | undefined;
+
+        const pi = {
+            exec: mock(async () => ({ stdout: '' })),
+            registerTool: () => {},
+            registerCommand: (
+                _name: string,
+                options: {
+                    getArgumentCompletions?: (prefix: string) => Promise<any>;
+                },
+            ) => {
+                completionsFn = options.getArgumentCompletions;
+            },
+            sendUserMessage: mock(),
+        };
+
+        yeetExtension(pi as never);
+
+        const result = await completionsFn?.('--go commit docs');
+        expect(result).toBeNull();
+    });
+
+    it('returns null for empty --cwd= value', async () => {
+        let completionsFn: ((prefix: string) => Promise<any>) | undefined;
+
+        const pi = {
+            exec: mock(async () => ({ stdout: '' })),
+            registerTool: () => {},
+            registerCommand: (
+                _name: string,
+                options: {
+                    getArgumentCompletions?: (prefix: string) => Promise<any>;
+                },
+            ) => {
+                completionsFn = options.getArgumentCompletions;
+            },
+            sendUserMessage: mock(),
+        };
+
+        yeetExtension(pi as never);
+
+        const result = await completionsFn?.('--cwd=');
+        expect(result).toBeNull();
     });
 });

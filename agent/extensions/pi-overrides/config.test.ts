@@ -61,6 +61,16 @@ describe('DEFAULT_CONFIG', () => {
     it('ls.respectGitignore defaults to true', () => {
         expect(DEFAULT_CONFIG.ls.respectGitignore).toBe(true);
     });
+
+    // additionalDirectories
+    it('additionalDirectories defaults to empty array', () => {
+        expect(DEFAULT_CONFIG.additionalDirectories).toEqual([]);
+    });
+
+    // enableRealtimeFallback
+    it('enableRealtimeFallback defaults to true', () => {
+        expect(DEFAULT_CONFIG.enableRealtimeFallback).toBe(true);
+    });
 });
 
 describe('normalizeFileResolverConfig', () => {
@@ -186,6 +196,40 @@ describe('normalizeFileResolverConfig', () => {
         const result = normalizeFileResolverConfig({ unknownKey: 'value' });
         expect(result).toEqual({});
     });
+
+    // additionalDirectories normalization
+    it('normalizes additionalDirectories as string array', () => {
+        const result = normalizeFileResolverConfig({
+            additionalDirectories: ['/foo', '/bar'],
+        });
+        expect(result.additionalDirectories).toEqual(['/foo', '/bar']);
+    });
+    it('filters non-string values from additionalDirectories', () => {
+        const result = normalizeFileResolverConfig({
+            additionalDirectories: ['/foo', 42, true, '/bar'],
+        });
+        expect(result.additionalDirectories).toEqual(['/foo', '/bar']);
+    });
+    it('ignores non-array additionalDirectories', () => {
+        const result = normalizeFileResolverConfig({
+            additionalDirectories: '/single/path',
+        });
+        expect(result.additionalDirectories).toBeUndefined();
+    });
+
+    // enableRealtimeFallback normalization
+    it('normalizes enableRealtimeFallback as boolean', () => {
+        const result = normalizeFileResolverConfig({
+            enableRealtimeFallback: false,
+        });
+        expect(result.enableRealtimeFallback).toBe(false);
+    });
+    it('ignores non-boolean enableRealtimeFallback', () => {
+        const result = normalizeFileResolverConfig({
+            enableRealtimeFallback: 'yes',
+        });
+        expect(result.enableRealtimeFallback).toBeUndefined();
+    });
 });
 
 describe('mergeFileResolverConfig', () => {
@@ -256,6 +300,39 @@ describe('mergeFileResolverConfig', () => {
     it('keeps all base defaults when overlay is empty', () => {
         const merged = mergeFileResolverConfig(DEFAULT_CONFIG, {});
         expect(merged).toEqual(DEFAULT_CONFIG);
+    });
+
+    // additionalDirectories merge
+    it('merges additionalDirectories as union', () => {
+        const merged = mergeFileResolverConfig(
+            { ...DEFAULT_CONFIG, additionalDirectories: ['/foo', '/bar'] },
+            { additionalDirectories: ['/baz', '/qux'] },
+        );
+        expect(merged.additionalDirectories).toEqual([
+            '/foo',
+            '/bar',
+            '/baz',
+            '/qux',
+        ]);
+    });
+    it('uses base additionalDirectories when overlay omits', () => {
+        const merged = mergeFileResolverConfig(
+            { ...DEFAULT_CONFIG, additionalDirectories: ['/foo'] },
+            {},
+        );
+        expect(merged.additionalDirectories).toEqual(['/foo']);
+    });
+
+    // enableRealtimeFallback merge
+    it('uses overlay enableRealtimeFallback over base', () => {
+        const merged = mergeFileResolverConfig(DEFAULT_CONFIG, {
+            enableRealtimeFallback: false,
+        });
+        expect(merged.enableRealtimeFallback).toBe(false);
+    });
+    it('keeps base enableRealtimeFallback when overlay omits', () => {
+        const merged = mergeFileResolverConfig(DEFAULT_CONFIG, {});
+        expect(merged.enableRealtimeFallback).toBe(true);
     });
 });
 

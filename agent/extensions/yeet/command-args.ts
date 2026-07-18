@@ -7,7 +7,7 @@ export interface YeetCommandArgs {
     error?: string;
 }
 
-function expandHomePath(path: string): string {
+export function expandHomePath(path: string): string {
     if (path === '~') return homedir();
     if (path.startsWith('~/')) return homedir() + path.slice(1);
     return path;
