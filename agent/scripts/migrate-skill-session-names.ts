@@ -13,110 +13,26 @@
  * offline migration cannot race session writes.
  */
 
-import { randomUUID } from 'node:crypto';
-import { appendFile, readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import { compactSkillSessionName } from '../extensions/pi-overrides/session-name.ts';
+import {
+    formatMigrationFailureLine,
+    formatMigrationResultLine,
+    formatMigrationSummary,
+    migrateSessionFile as coreMigrateSessionFile,
+    migrateSessions as coreMigrateSessions,
+    SKILL_MIGRATION_LABELS,
+    type MigrationMode,
+    type SessionNameContext,
+    type SessionNameEntry,
+} from './session-name-migration.ts';
 
 const DEFAULT_SESSIONS_DIRECTORY = join(homedir(), '.pi', 'agent', 'sessions');
 
-export type MigrationMode = 'dry-run' | 'force';
+export type { MigrationMode };
 
-export type SessionMigrationResult =
-    | { status: 'would-migrate'; name: string }
-    | { status: 'migrated'; name: string }
-    | { status: 'skipped' };
-
-function parseSessionLines(content: string): Record<string, unknown>[] {
-    const entries: Record<string, unknown>[] = [];
-
-    for (const line of content.split('\n')) {
-        if (!line.trim()) continue;
-        try {
-            const value: unknown = JSON.parse(line);
-            if (typeof value === 'object' && value !== null) {
-                entries.push(value as Record<string, unknown>);
-            }
-        } catch {
-            // Malformed lines remain untouched and do not stop migration.
-        }
-    }
-
-    return entries;
-}
-
-function firstUserMessageText(
-    entries: Record<string, unknown>[],
-): string | undefined {
-    for (const entry of entries) {
-        if (entry.type !== 'message') continue;
-        const message = entry.message;
-        if (typeof message !== 'object' || message === null) continue;
-        const record = message as Record<string, unknown>;
-        if (record.role !== 'user') continue;
-
-        const content = record.content;
-        if (typeof content === 'string') return content;
-        if (!Array.isArray(content)) return undefined;
-
-        return content
-            .flatMap((block) => {
-                if (typeof block !== 'object' || block === null) return [];
-                const record = block as Record<string, unknown>;
-                return record.type === 'text' && typeof record.text === 'string'
-                    ? [record.text]
-                    : [];
-            })
-            .join(' ');
-    }
-
-    return undefined;
-}
-
-function currentSessionName(
-    entries: Record<string, unknown>[],
-): string | undefined {
-    for (let index = entries.length - 1; index >= 0; index--) {
-        const entry = entries[index];
-        if (entry.type !== 'session_info') continue;
-        return typeof entry.name === 'string'
-            ? entry.name.trim() || undefined
-            : undefined;
-    }
-
-    return undefined;
-}
-
-export async function migrateSessionFile(
-    filePath: string,
-    mode: MigrationMode = 'dry-run',
-): Promise<SessionMigrationResult> {
-    const content = await readFile(filePath, 'utf8');
-    const entries = parseSessionLines(content);
-    if (currentSessionName(entries)) return { status: 'skipped' };
-
-    const text = firstUserMessageText(entries);
-    const compactName = text ? compactSkillSessionName(text) : undefined;
-    const name = compactName?.replace(/[\r\n]+/g, ' ').trim();
-    if (!name) return { status: 'skipped' };
-    if (mode === 'dry-run') return { status: 'would-migrate', name };
-
-    const parentId = entries.findLast(
-        (entry) => typeof entry.id === 'string',
-    )?.id;
-    const sessionInfo = {
-        type: 'session_info',
-        id: randomUUID().slice(0, 8),
-        parentId: parentId ?? null,
-        timestamp: new Date().toISOString(),
-        name,
-    };
-    const prefix = content.endsWith('\n') ? '' : '\n';
-    await appendFile(filePath, `${prefix}${JSON.stringify(sessionInfo)}\n`);
-
-    return { status: 'migrated', name };
-}
+export type SessionMigrationResult = SessionNameEntry;
 
 export interface SessionMigrationSummary {
     scanned: number;
@@ -125,39 +41,36 @@ export interface SessionMigrationSummary {
         status: 'would-migrate' | 'migrated';
         name: string;
     }>;
+    failures: Array<{ filePath: string; message: string }>;
 }
 
-async function findSessionFiles(directory: string): Promise<string[]> {
-    const files: string[] = [];
-    const entries = await readdir(directory, { withFileTypes: true });
+/** Wrapper that adapts compactSkillSessionName to SessionNameContext. */
+function skillDetector(context: SessionNameContext): string | undefined {
+    if (!context.firstUserText) return undefined;
+    return compactSkillSessionName(context.firstUserText);
+}
 
-    for (const entry of entries) {
-        const fullPath = join(directory, entry.name);
-        if (entry.isDirectory()) {
-            files.push(...(await findSessionFiles(fullPath)));
-        } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-            files.push(fullPath);
-        }
-    }
-
-    return files.toSorted((left, right) => left.localeCompare(right));
+export async function migrateSessionFile(
+    filePath: string,
+    mode: MigrationMode = 'dry-run',
+): Promise<SessionMigrationResult> {
+    return coreMigrateSessionFile(filePath, skillDetector, mode);
 }
 
 export async function migrateSessions(
     sessionsDirectory: string,
     mode: MigrationMode = 'dry-run',
 ): Promise<SessionMigrationSummary> {
-    const files = await findSessionFiles(sessionsDirectory);
-    const results: SessionMigrationSummary['results'] = [];
-
-    for (const filePath of files) {
-        const result = await migrateSessionFile(filePath, mode);
-        if (result.status !== 'skipped') {
-            results.push({ filePath, ...result });
-        }
-    }
-
-    return { scanned: files.length, results };
+    const summary = await coreMigrateSessions(
+        sessionsDirectory,
+        skillDetector,
+        mode,
+    );
+    return {
+        scanned: summary.scanned,
+        results: summary.results,
+        failures: summary.failures,
+    };
 }
 
 export async function runMigrationCli(
@@ -188,23 +101,39 @@ export async function runMigrationCli(
     }
 
     for (const result of summary.results) {
-        const action = force ? 'migrated' : 'would migrate';
         output(
-            `  ${relative(sessionsDirectory, result.filePath)} → ${action}: ${result.name}`,
+            formatMigrationResultLine(
+                relative(sessionsDirectory, result.filePath),
+                result.status,
+                result.name,
+                SKILL_MIGRATION_LABELS,
+            ),
+        );
+    }
+    for (const failure of summary.failures) {
+        output(
+            formatMigrationFailureLine(
+                relative(sessionsDirectory, failure.filePath),
+                failure.message,
+            ),
         );
     }
 
-    if (summary.results.length === 0) {
-        output('No unnamed skill-prefixed sessions found.');
-    } else {
-        const verb = force ? 'Migrated' : 'Would migrate';
+    if (summary.results.length === 0 && summary.failures.length === 0) {
+        output(SKILL_MIGRATION_LABELS.noSessionsFoundMessage);
+    } else if (summary.results.length > 0) {
         output(
-            `${verb} ${summary.results.length} of ${summary.scanned} session files.`,
+            formatMigrationSummary(
+                summary.results.length,
+                summary.scanned,
+                force ? 'force' : 'dry-run',
+                SKILL_MIGRATION_LABELS,
+            ),
         );
     }
 
-    if (!force) output('Run with --force to apply changes.');
-    return 0;
+    if (!force) output(SKILL_MIGRATION_LABELS.forceHintMessage);
+    return summary.failures.length > 0 ? 1 : 0;
 }
 
 if (import.meta.main) {
