@@ -123,6 +123,39 @@ describe('calculateExtensionFiles', () => {
             'foo/index.ts',
         ]);
     });
+
+    it('should walk up until unique for deep duplicate paths', () => {
+        const mockCommands = [
+            {
+                name: 'cmd1',
+                source: 'extension',
+                sourceInfo: { path: '/extensions/pi-hypa/dist/src/index.ts' },
+            },
+            {
+                name: 'cmd2',
+                source: 'extension',
+                sourceInfo: { path: '/extensions/pi-roles/dist/src/index.ts' },
+            },
+            {
+                name: 'cmd3',
+                source: 'extension',
+                sourceInfo: { path: '/extensions/context-mode/build/index.ts' },
+            },
+            {
+                name: 'cmd4',
+                source: 'extension',
+                sourceInfo: { path: '/extensions/context.ts' },
+            },
+        ];
+
+        const result = calculateExtensionFiles(mockCommands);
+        expect(result).toEqual([
+            'build/index.ts',
+            'context.ts',
+            'pi-hypa/dist/src/index.ts',
+            'pi-roles/dist/src/index.ts',
+        ]);
+    });
 });
 
 describe('getSkillPathFromCommand', () => {

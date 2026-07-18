@@ -1,19 +1,26 @@
 #!/usr/bin/env bun
 import { resolve } from "node:path";
-import { isPackageMutationCommand, runPackageFinalizer, runRealPi } from "../agent/bin/pi-wrapper-lib.ts";
+import {
+  isPackageMutationCommand,
+  isToolGroupsPackageConfigured,
+  prepareToolGroupArgs,
+  runPackageFinalizer,
+  runRealPi,
+} from "../agent/bin/pi-wrapper-lib.ts";
 
 const args = process.argv.slice(2);
 const cwd = process.cwd();
 const realPi = process.env.PI_REAL_BIN || "/home/abdwhb/.bun/bin/pi";
 
 if (process.env.PI_PACKAGE_FINALIZER_ACTIVE !== "1") {
-  runPackageFinalizer(cwd, { force: false, quiet: true });
+  await runPackageFinalizer(cwd, { force: false, quiet: true });
 }
 
-const exitCode = runRealPi(resolve(realPi), args, cwd);
+const prepared = prepareToolGroupArgs(args, isToolGroupsPackageConfigured(cwd));
+const exitCode = runRealPi(resolve(realPi), prepared.args, cwd, prepared.requestedTools);
 
 if (exitCode === 0 && process.env.PI_PACKAGE_FINALIZER_ACTIVE !== "1" && isPackageMutationCommand(args)) {
-  runPackageFinalizer(cwd, { force: true, quiet: false });
+  await runPackageFinalizer(cwd, { force: true, quiet: false });
 }
 
 process.exit(exitCode);
