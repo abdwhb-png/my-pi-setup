@@ -41,7 +41,7 @@ export function buildStatusRenderText(
     return `${icon}translate → ${name} | ${mode}`;
 }
 
-export const offText = `${icon}translate ${offIcon}`
+export const offText = `${icon}translate: off`
 
 /** Render the fancy-footer status text for the current state. */
 export function buildStatusText(

@@ -1,7 +1,7 @@
 ---
 name: plan-reviewer
 description: "Plan reviewer. Verifies a work plan is executable: references exist, tasks are startable, QA scenarios are concrete. Issues OKAY, ITERATE, or REJECT. Read-only."
-tools: read, grep, find, ls, ast_grep, ask_user_question, write
+tools: read, grep, find, ls, ast_grep, write
 thinking: high
 completionGuard: false
 ---
