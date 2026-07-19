@@ -10,6 +10,13 @@ mock.module("pi-fancy-footer/api", () => ({
   }),
   requestFancyFooterWidgetDiscovery: discoverMock,
   requestFancyFooterRefresh: refreshMock,
+  // _shared/fancy-footer re-exports the extension-statuses surface; provide it
+  // so any sibling extension importing the wrapper isn't broken by this mock.
+  publishExtensionStatusesSnapshot: mock(() => undefined),
+  getExtensionStatusesSnapshot: mock(() => []),
+  subscribeExtensionStatusesSnapshot: mock(() => () => {}),
+  FANCY_FOOTER_EXTENSION_STATUSES_SNAPSHOT_EVENT:
+    "pi-fancy-footer:extension-statuses-snapshot",
 }));
 
 const { default: codexFastMode } = await import("../openai-codex-fast-mode.ts");
