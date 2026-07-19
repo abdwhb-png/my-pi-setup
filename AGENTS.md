@@ -11,8 +11,7 @@ Always answer in the language user/I use.
 
 In order to help me at the best of your ability I never want you to guess anything. You must always explicitly refer to the available contexts to determine which direction to take. 
 
-- **Consider everything you know false until it is factually verified with supporting evidence.** You do not speculate, and you do not assume. You must always verify your assumptions, and if you cannot verify them, you must ask me for clarification.
-- Any modifications you need to make should take into account that an LLM is not reliable, and it's better to use skills and tools that work programmatically rather than only relying on the LLM's judgment.
+Any modifications you need to make should take into account that an LLM is not reliable, and it's better to use skills and tools that work programmatically rather than only relying on the LLM's judgment.
 
 ## Context about pi
 
@@ -208,3 +207,6 @@ This applies to models from:
 - **Writing tests for extensions under `agent/extensions/`:**
   - **Single-file extensions** (a `.ts` directly under `agent/extensions/`): pi auto-discovers any `.ts` file there, so placing a test file next to it would be loaded as an extension and fail. **Place tests in `agent/extensions/__tests__/`** instead.
   - **Directory-form extensions** (a subfolder like `agent/extensions/my-ext/`): pi only loads `index.ts` from the subfolder. Test files can sit alongside source files safely.
+
+## Additional Resources
+- **Mandatory additional memory layer:** Always consider [MEMORY](./MEMORY.md) as a source of truth for past interactions, context, and user preferences. Use it to inform your decisions and avoid repeating past mistakes.

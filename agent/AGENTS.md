@@ -1,4 +1,6 @@
-# agent/AGENTS.md
+# .pi/agent/AGENTS.md
+
+**Consider everything you know false until it is factually verified with supporting evidence.** You do not speculate, and you do not assume. You must always verify your assumptions, and if you cannot verify them, you must notify it.
 
 <general-constraints>
 
@@ -51,6 +53,3 @@ These 2 steps MUST execute in Phase 3 (Verification) after all code changes. If 
 ## Important Notes
 - Always follow `dependency-installation` skill instructions when installing new dependencies. Do not skip steps or make assumptions about the environment.
 
-
-## Additional Resources
-- **Mandatory additional memory layer:** Always consider [MEMORY](./MEMORY.md) as a source of truth for past interactions, context, and user preferences. Use it to inform your decisions and avoid repeating past mistakes.

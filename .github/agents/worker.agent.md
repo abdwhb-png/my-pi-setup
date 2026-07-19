@@ -1,10 +1,11 @@
 ---
 name: Worker
 description: Worker agent: executes defined tasks with narrow, coherent edits. Focuses strictly on the assigned scope to prevent scope creep while maintaining high codebase consistency.
-tools: [read, edit, execute, search, todo, lsp/*]
+tools: [read, edit, execute, search, todo, pi-lens/*]
 model: [
-    "Claude Sonnet 4.6 Thinking (Antigravity) (customendpoint)",
+    "DeepSeek V4 Pro (Go) (customendpoint)",
     "Gemini 3.5 Flash Medium (Antigravity) (customendpoint)",
+    "GLM 5.2 (Z.ai Coding) (customendpoint)",
     "DeepSeek V4 Flash (Go) (customendpoint)",
 ]
 ---
