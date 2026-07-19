@@ -263,6 +263,28 @@ function isCavemanLevel(value: string): value is Exclude<Level, 'off'> {
 }
 
 // ---------------------------------------------------------------------------
+// Telemetry helper — detect effective Caveman level from system prompt
+// ---------------------------------------------------------------------------
+
+const CAVEMAN_LEVEL_RE = /ACTIVE LEVEL:\s*([\w-]+)/i;
+
+/**
+ * Scan a system prompt string for the canonical Caveman level marker.
+ *
+ * The Caveman `buildCavemanPrompt()` prepends `ACTIVE LEVEL: <level>.` so the
+ * model knows which intensity row to apply. This function extracts that level
+ * from the final assembled system prompt for telemetry snapshots.
+ *
+ * @returns The level string (e.g. `"full"`, `"ultra"`), or `null` if the
+ *          marker is absent (level off or no Caveman injection active).
+ */
+export function detectCavemanLevel(systemPrompt: string): string | null {
+    if (typeof systemPrompt !== 'string') return null;
+    const match = systemPrompt.match(CAVEMAN_LEVEL_RE);
+    return match ? match[1]!.toLowerCase() : null;
+}
+
+// ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
 

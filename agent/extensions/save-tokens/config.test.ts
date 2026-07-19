@@ -4,7 +4,10 @@ import {
     loadCompressorConfig,
     loadCavemanConfig,
     loadPonytailConfig,
+    loadTelemetryConfig,
     normalizeConfig,
+    normalizeTelemetry,
+    resolveDefaultTelemetryDirectory,
 } from './config';
 
 describe('config loader', () => {
@@ -98,5 +101,129 @@ describe('config loader', () => {
                 },
             }),
         ).toEqual({});
+    });
+
+    it('drops invalid telemetry fields, falls back to defaults', () => {
+        const cfg = normalizeConfig({
+            telemetry: {
+                enabled: 'yes',
+                directory: 123,
+                redactSecrets: 'no',
+                retentionDays: '90',
+                maxStringLength: -1,
+                maxArrayItems: 0,
+                maxDepth: Infinity,
+            },
+        });
+        // Invalid fields are ignored; valid ones fall back to defaults
+        expect(cfg.telemetry?.enabled).toBe(true);
+        expect(cfg.telemetry?.directory).toBe(resolveDefaultTelemetryDirectory());
+        expect(cfg.telemetry?.maxStringLength).toBe(10_000);
+    });
+
+    it('normalizes telemetry captureContent, redactSecrets, retentionDays, bounds', () => {
+        expect(
+            normalizeConfig({
+                telemetry: {
+                    enabled: true,
+                    directory: '/tmp/telemetry',
+                    captureContent: true,
+                    redactSecrets: true,
+                    retentionDays: 90,
+                    maxStringLength: 5000,
+                    maxArrayItems: 50,
+                    maxDepth: 10,
+                    ignored: 'nope',
+                },
+            }),
+        ).toEqual({
+            telemetry: {
+                enabled: true,
+                directory: '/tmp/telemetry',
+                captureContent: true,
+                redactSecrets: true,
+                retentionDays: 90,
+                maxStringLength: 5000,
+                maxArrayItems: 50,
+                maxDepth: 10,
+            },
+        });
+    });
+});
+
+describe('telemetry config loader', () => {
+    it('loadTelemetryConfig returns non-null object with defaults', () => {
+        const cfg = loadTelemetryConfig();
+        expect(cfg).toHaveProperty('enabled', true);
+        expect(cfg).toHaveProperty('captureContent', true);
+        expect(cfg).toHaveProperty('redactSecrets', true);
+        expect(cfg).toHaveProperty('retentionDays', 90);
+        expect(cfg).toHaveProperty('maxStringLength', 10_000);
+        expect(cfg).toHaveProperty('maxArrayItems', 100);
+        expect(cfg).toHaveProperty('maxDepth', 20);
+        expect(cfg).toHaveProperty('directory', resolveDefaultTelemetryDirectory());
+    });
+
+    it('normalizeTelemetry produces defaults from empty input', () => {
+        const cfg = normalizeTelemetry({});
+        expect(cfg).toEqual({
+            enabled: true,
+            directory: resolveDefaultTelemetryDirectory(),
+            captureContent: true,
+            redactSecrets: true,
+            retentionDays: 90,
+            maxStringLength: 10_000,
+            maxArrayItems: 100,
+            maxDepth: 20,
+        });
+    });
+
+    it('normalizeTelemetry rejects non-finite or non-positive numeric bounds', () => {
+        // These should be ignored (fall back to defaults)
+        const cfg = normalizeTelemetry({
+            maxStringLength: -5,
+            maxArrayItems: 0,
+            maxDepth: Infinity,
+        } as Record<string, unknown>);
+        // Since invalid values are ignored, defaults apply
+        expect(cfg).toEqual({
+            enabled: true,
+            directory: resolveDefaultTelemetryDirectory(),
+            captureContent: true,
+            redactSecrets: true,
+            retentionDays: 90,
+            maxStringLength: 10_000,
+            maxArrayItems: 100,
+            maxDepth: 20,
+        });
+    });
+
+    it('rejects decimal values for maxStringLength', () => {
+        const cfg = normalizeTelemetry({ maxStringLength: 1.5 });
+        // isFinitePositive rejects non-integers
+        expect(cfg.maxStringLength).toBe(10_000);
+    });
+
+    it('rejects float values for retentionDays', () => {
+        const cfg = normalizeTelemetry({ retentionDays: 90.1 });
+        // isFinitePositive rejects non-integers
+        expect(cfg.retentionDays).toBe(90);
+    });
+});
+
+describe('telemetry default directory', () => {
+    it('resolveDefaultTelemetryDirectory returns path ending with save-tokens-telemetry', async () => {
+        const mod = await import('./config');
+        const dir = mod.resolveDefaultTelemetryDirectory();
+        expect(dir.endsWith('.pi/agent/save-tokens-telemetry')).toBe(true);
+        expect(dir).toContain('save-tokens-telemetry');
+    });
+
+    it('resolveDefaultTelemetryDirectory uses homedir portable resolution', async () => {
+        const mod = await import('./config');
+        const dir = mod.resolveDefaultTelemetryDirectory();
+        // Must use os.homedir() or process.env.HOME, not hardcoded ~
+        expect(dir).not.toContain('~');
+        expect(dir).toContain('.pi/agent/save-tokens-telemetry');
     });
 });

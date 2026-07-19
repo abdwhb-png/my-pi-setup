@@ -28,6 +28,7 @@ mock.module('@earendil-works/pi-coding-agent', () => ({
 
 const {
     default: ponytail,
+    detectPonytailMode,
     setFactoryForTests,
     resetPonytailCacheForTests,
 } = await import('./ponytail.ts');
@@ -134,5 +135,38 @@ describe('ponytail wrapper — upstream shape', () => {
             (pi as unknown as { registerCommand: ReturnType<typeof mock> })
                 .registerCommand,
         ).toHaveBeenCalledTimes(0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// detectPonytailMode — telemetry helper: scan systemPrompt for marker
+// ---------------------------------------------------------------------------
+
+describe('detectPonytailMode', () => {
+    it('extracts mode from canonical PONYTAIL MODE ACTIVE marker (em dash)', () => {
+        const sp = 'Some text\nPONYTAIL MODE ACTIVE — level: full\nMore text\n';
+        expect(detectPonytailMode(sp)).toBe('full');
+    });
+
+    it('extracts mode with hyphen dash', () => {
+        const sp = 'PONYTAIL MODE ACTIVE - level: ultra\n';
+        expect(detectPonytailMode(sp)).toBe('ultra');
+    });
+
+    it('returns lowercased mode regardless of case', () => {
+        expect(detectPonytailMode('PONYTAIL MODE ACTIVE — level: LITE')).toBe('lite');
+    });
+
+    it('returns null when marker is absent', () => {
+        expect(detectPonytailMode('No ponytail here')).toBeNull();
+    });
+
+    it('returns null for empty string', () => {
+        expect(detectPonytailMode('')).toBeNull();
+    });
+
+    it('handles non-string input gracefully', () => {
+        expect(detectPonytailMode(null as never)).toBeNull();
+        expect(detectPonytailMode(undefined as never)).toBeNull();
     });
 });

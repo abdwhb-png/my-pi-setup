@@ -18,12 +18,24 @@
  *       "enabled": true,
  *       "defaultMode": "full",
  *       "showStatus": true
+ *     },
+ *     "telemetry": {
+ *       "enabled": true,
+ *       "directory": "/custom/path",
+ *       "captureContent": true,
+ *       "redactSecrets": true,
+ *       "retentionDays": 90,
+ *       "maxStringLength": 10000,
+ *       "maxArrayItems": 100,
+ *       "maxDepth": 20
  *     }
  *   }
  * }
  */
 
 import { SettingsManager } from '@earendil-works/pi-coding-agent';
+import { join } from 'path';
+import { homedir } from 'os';
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -52,15 +64,42 @@ export interface PonytailConfig {
     showStatus?: boolean;
 }
 
+export interface TelemetryConfig {
+    enabled?: boolean;
+    directory?: string;
+    captureContent?: boolean;
+    redactSecrets?: boolean;
+    retentionDays?: number;
+    maxStringLength?: number;
+    maxArrayItems?: number;
+    maxDepth?: number;
+}
+
 export interface SaveTokensConfig {
     compressor?: CompressorConfig;
     caveman?: CavemanConfig;
     ponytail?: PonytailConfig;
+    telemetry?: TelemetryConfig;
 }
 
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
+
+export function resolveDefaultTelemetryDirectory(): string {
+    return join(homedir(), '.pi', 'agent', 'save-tokens-telemetry');
+}
+
+const DEFAULT_TELEMETRY: TelemetryConfig = {
+    enabled: true,
+    directory: resolveDefaultTelemetryDirectory(),
+    captureContent: true,
+    redactSecrets: true,
+    retentionDays: 90,
+    maxStringLength: 10_000,
+    maxArrayItems: 100,
+    maxDepth: 20,
+};
 
 const DEFAULT_CONFIG: SaveTokensConfig = {};
 
@@ -121,6 +160,37 @@ function normalizePonytail(raw: object): PonytailConfig | undefined {
     return Object.keys(out).length > 0 ? out : undefined;
 }
 
+export function isFinitePositive(v: unknown): v is number {
+    return typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0;
+}
+
+export function normalizeTelemetry(raw: object): TelemetryConfig {
+    if (!raw || typeof raw !== 'object') {
+        return { ...DEFAULT_TELEMETRY };
+    }
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const r = raw as LooseDict;
+    // Start with defaults, overlay valid overrides
+    const out: TelemetryConfig = { ...DEFAULT_TELEMETRY };
+
+    if (typeof r.enabled === 'boolean') out.enabled = r.enabled;
+    if (typeof r.directory === 'string') out.directory = r.directory;
+    if (typeof r.captureContent === 'boolean')
+        out.captureContent = r.captureContent;
+    if (typeof r.redactSecrets === 'boolean')
+        out.redactSecrets = r.redactSecrets;
+
+    // Numeric bounds: must be finite, positive integers
+    if (isFinitePositive(r.retentionDays)) out.retentionDays = r.retentionDays;
+    if (isFinitePositive(r.maxStringLength))
+        out.maxStringLength = r.maxStringLength;
+    if (isFinitePositive(r.maxArrayItems))
+        out.maxArrayItems = r.maxArrayItems;
+    if (isFinitePositive(r.maxDepth)) out.maxDepth = r.maxDepth;
+
+    return out;
+}
+
 export function normalizeConfig(raw: object): Partial<SaveTokensConfig> {
     if (!raw || typeof raw !== 'object') return {};
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
@@ -128,6 +198,7 @@ export function normalizeConfig(raw: object): Partial<SaveTokensConfig> {
     const cv = r.compressor;
     const ca = r.caveman;
     const pt = r.ponytail;
+    const tl = r.telemetry;
     const compressor =
         typeof cv === 'object' && cv !== null
             ? normalizeCompressor(cv)
@@ -140,10 +211,17 @@ export function normalizeConfig(raw: object): Partial<SaveTokensConfig> {
         typeof pt === 'object' && pt !== null
             ? normalizePonytail(pt)
             : undefined;
+    const telemetry =
+        typeof tl === 'object' && tl !== null
+            ? normalizeTelemetry(tl)
+            : undefined;
     return {
         ...(compressor ? { compressor } : {}),
         ...(caveman ? { caveman } : {}),
         ...(ponytail ? { ponytail } : {}),
+        ...(telemetry && Object.keys(telemetry).length > 0
+            ? { telemetry }
+            : {}),
     };
 }
 
@@ -159,6 +237,11 @@ function mergeConfig(
         compressor: { ...base.compressor, ...overrides.compressor },
         caveman: { ...base.caveman, ...overrides.caveman },
         ponytail: { ...base.ponytail, ...overrides.ponytail },
+        telemetry: {
+            ...DEFAULT_TELEMETRY,
+            ...base.telemetry,
+            ...overrides.telemetry,
+        },
     };
 }
 
@@ -202,4 +285,9 @@ export function loadCavemanConfig(cwd = process.cwd()): CavemanConfig {
 
 export function loadPonytailConfig(cwd = process.cwd()): PonytailConfig {
     return loadSaveTokensConfig(cwd).ponytail ?? {};
+}
+
+export function loadTelemetryConfig(cwd = process.cwd()): TelemetryConfig {
+    const cfg = loadSaveTokensConfig(cwd).telemetry;
+    return cfg ?? DEFAULT_TELEMETRY;
 }

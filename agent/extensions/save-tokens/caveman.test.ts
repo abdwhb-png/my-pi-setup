@@ -83,6 +83,7 @@ mock.module('@earendil-works/pi-coding-agent', () => ({
 const {
     loadCavemanSkillBody,
     buildCavemanPrompt,
+    detectCavemanLevel,
     LEVELS,
     resetCavemanCacheForTests,
 } = await import('./caveman.ts');
@@ -281,5 +282,35 @@ describe('buildCavemanPrompt', () => {
                 expect(prompt.toLowerCase()).not.toMatch(/\bwenyan\b(?!-)/);
             }
         });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// detectCavemanLevel — telemetry helper: scan systemPrompt for marker
+// ---------------------------------------------------------------------------
+
+describe('detectCavemanLevel', () => {
+    it('extracts level from canonical ACTIVE LEVEL marker', () => {
+        const sp = 'Some preamble\nACTIVE LEVEL: full.\nRest of prompt\n';
+        expect(detectCavemanLevel(sp)).toBe('full');
+    });
+
+    it('returns lowercased level regardless of marker case', () => {
+        expect(detectCavemanLevel('ACTIVE LEVEL: Ultra.')).toBe('ultra');
+        expect(detectCavemanLevel('active level: LITE.')).toBe('lite');
+    });
+
+    it('returns null when marker is absent', () => {
+        expect(detectCavemanLevel('No caveman here')).toBeNull();
+    });
+
+    it('returns null for empty string', () => {
+        expect(detectCavemanLevel('')).toBeNull();
+    });
+
+    it('handles malformed input gracefully (no crash)', () => {
+        // Cast to bypass TS — simulate runtime non-string value
+        expect(detectCavemanLevel(null as never)).toBeNull();
+        expect(detectCavemanLevel(undefined as never)).toBeNull();
     });
 });

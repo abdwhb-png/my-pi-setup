@@ -122,3 +122,25 @@ export function resetPonytailCacheForTests(): void {
 export function setFactoryForTests(factory: PonytailFactory | null): void {
     cachedFactory = factory;
 }
+
+// ---------------------------------------------------------------------------
+// Telemetry helper — detect Ponytail mode from system prompt marker
+// ---------------------------------------------------------------------------
+
+const PONYTAIL_MODE_RE = /PONYTAIL MODE ACTIVE\s*[—–-]\s*level:\s*(\S+)/i;
+
+/**
+ * Scan a system prompt string for the canonical Ponytail mode marker.
+ *
+ * The upstream Ponytail extension prepends `PONYTAIL MODE ACTIVE — level:
+ * <mode>` to the system prompt when a non-off mode is active. This function
+ * extracts that mode for telemetry snapshots.
+ *
+ * @returns The mode string (e.g. `"lite"`, `"full"`, `"ultra"`), or `null` if
+ *          the marker is absent (mode off or Ponytail not injected).
+ */
+export function detectPonytailMode(systemPrompt: string): string | null {
+    if (typeof systemPrompt !== 'string') return null;
+    const match = systemPrompt.match(PONYTAIL_MODE_RE);
+    return match ? match[1]!.toLowerCase() : null;
+}
