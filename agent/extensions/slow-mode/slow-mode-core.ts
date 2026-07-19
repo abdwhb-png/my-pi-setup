@@ -7,6 +7,9 @@
  */
 
 import { relative, resolve } from 'node:path';
+import type { SettingsManager } from '@earendil-works/pi-coding-agent';
+import { loadExtensionConfig } from '../_shared/config-loader.ts';
+import { normalizeBooleanMap } from '../_shared/settings.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -415,45 +418,51 @@ export interface SlowModeConfigResult {
  * Non-boolean values are silently filtered out. Malformed
  * or missing files return an empty object (no config = no slow mode).
  *
- * @param configPath - Path to slow-mode.json. Defaults to ~/.pi/agent/slow-mode.json
- * @returns Parsed config (empty object on any error)
- */
 /**
- * Normalize raw JSON → SlowModeConfig. Filters out non-boolean values
- * and rejects arrays/non-objects.
- */
-function normalizeSlowModeConfig(raw: unknown): Partial<SlowModeConfig> {
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
-        return {};
-    const config: SlowModeConfig = {};
-    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-        if (typeof value !== 'boolean') continue;
-        config[key] = value;
-    }
-    return config;
-}
-
-import { loadExtensionConfig } from '../_shared/config-loader.ts';
-
-/**
- * Load slow-mode config from the legacy JSON file.
+ * Load slow-mode config.
  *
- * Loads from <agentDir>/slow-mode.json (global) and optionally
- * <cwd>/.pi/slow-mode.json (project), merged with project taking precedence.
+ * Reads the `slowMode` key from settings.json (global + project) via the
+ * shared config-loader, with a cascade fallback to the legacy standalone
+ * `slow-mode.json` file when the key is absent. Project settings override
+ * global. Non-boolean values are silently filtered out.
  *
  * @param cwd - Working directory (defaults to process.cwd())
  * @param agentDir - Agent directory override (for testing)
+ * @param _settingsManager - Injected SettingsManager (for testing)
  * @returns Parsed config (empty object on any error)
  */
+/** Default slow-mode config: core editing + shell tools reviewed by default.
+ *
+ * Under the opt-in regime (config === true required for review), these defaults
+ * preserve the historical UX where write/edit/bash are reviewed out of the box.
+ * Both `bash` and `safe_bash` are included for robustness across safe-bash
+ * `replace`/`coexist` modes — `validateSlowModeConfig` drops whichever is not
+ * in the active tool set.
+ */
+export const DEFAULT_SLOW_MODE_CONFIG: SlowModeConfig = {
+    write: true,
+    edit: true,
+    bash: true,
+    safe_bash: true,
+};
+
 export function loadSlowModeConfig(
     cwd: string = process.cwd(),
     agentDir?: string,
+    _settingsManager?: SettingsManager,
 ): SlowModeConfig {
-    return loadExtensionConfig(cwd, {
-        defaults: {} as SlowModeConfig,
-        normalize: normalizeSlowModeConfig,
-        sources: [{ legacyFilename: 'slow-mode.json' }],
+    return loadExtensionConfig<SlowModeConfig>(cwd, {
+        defaults: DEFAULT_SLOW_MODE_CONFIG,
+        normalize: normalizeBooleanMap,
+        sources: [
+            {
+                settingsKey: 'slowMode',
+                legacyFilename: 'slow-mode.json',
+                cumulative: true,
+            },
+        ],
         agentDir,
+        _settingsManager,
     });
 }
 
@@ -478,7 +487,7 @@ export function validateSlowModeConfig(
     for (const [toolName, enabled] of Object.entries(config)) {
         if (!activeSet.has(toolName)) {
             warnings.push(
-                `Tool "${toolName}" in slow-mode.json does not exist and will be ignored`,
+                `Tool "${toolName}" in slow-mode config does not exist and will be ignored`,
             );
             continue;
         }

@@ -60,8 +60,8 @@ describe("loadExtensionConfig", () => {
   });
 
   afterEach(() => {
-    try { rmSync(agentDir, { recursive: true }); } catch {}
-    try { rmSync(cwd, { recursive: true }); } catch {}
+    try { rmSync(agentDir, { recursive: true }); } catch { /* temp cleanup */ }
+    try { rmSync(cwd, { recursive: true }); } catch { /* temp cleanup */ }
   });
 
   // ── Defaults only ────────────────────────────────────
@@ -327,5 +327,138 @@ describe("loadExtensionConfig", () => {
 
     // With shallow spread, the legacy tools object *replaces* default tools entirely.
     expect(config.tools).toEqual({ write: true });
+  });
+});
+
+describe("loadExtensionConfig — cumulative sources", () => {
+  let agentDir: string;
+  let cwd: string;
+
+  beforeEach(() => {
+    agentDir = makeTempDir("pi-agent-");
+    cwd = makeTempDir("pi-cwd-");
+  });
+
+  afterEach(() => {
+    try { rmSync(agentDir, { recursive: true }); } catch { /* temp cleanup */ }
+    try { rmSync(cwd, { recursive: true }); } catch { /* temp cleanup */ }
+  });
+
+  it("cumulative merges legacy + settings, settings wins by default (deepMerge)", () => {
+    writeJson(join(agentDir, "my-ext.json"), {
+      tools: { write: true, edit: false },
+    });
+    const sm = SettingsManager.inMemory({
+      myExtension: { tools: { edit: true, grep: true } },
+    } as any);
+
+    const config = loadExtensionConfig(cwd, {
+      defaults: DEFAULT_TEST_CONFIG,
+      normalize: normalizeTestConfig,
+      merge: deepMerge,
+      sources: [{
+        settingsKey: "myExtension",
+        legacyFilename: "my-ext.json",
+        cumulative: true,
+      }],
+      agentDir,
+      _settingsManager: sm,
+    });
+
+    expect(config.tools).toEqual({ write: true, edit: true, grep: true });
+  });
+
+  it("cumulativeWinner 'legacy' makes legacy win per-key", () => {
+    writeJson(join(agentDir, "my-ext.json"), {
+      tools: { write: true, edit: false },
+    });
+    const sm = SettingsManager.inMemory({
+      myExtension: { tools: { edit: true, grep: true } },
+    } as any);
+
+    const config = loadExtensionConfig(cwd, {
+      defaults: DEFAULT_TEST_CONFIG,
+      normalize: normalizeTestConfig,
+      merge: deepMerge,
+      sources: [{
+        settingsKey: "myExtension",
+        legacyFilename: "my-ext.json",
+        cumulative: true,
+        cumulativeWinner: "legacy",
+      }],
+      agentDir,
+      _settingsManager: sm,
+    });
+
+    // legacy edit:false wins over settings edit:true; grep still comes from settings
+    expect(config.tools).toEqual({ write: true, edit: false, grep: true });
+  });
+
+  it("cumulative loads legacy when settings key absent", () => {
+    writeJson(join(agentDir, "my-ext.json"), {
+      tools: { write: true, grep: true },
+    });
+    const sm = SettingsManager.inMemory({} as any);
+
+    const config = loadExtensionConfig(cwd, {
+      defaults: DEFAULT_TEST_CONFIG,
+      normalize: normalizeTestConfig,
+      merge: deepMerge,
+      sources: [{
+        settingsKey: "myExtension",
+        legacyFilename: "my-ext.json",
+        cumulative: true,
+      }],
+      agentDir,
+      _settingsManager: sm,
+    });
+
+    expect(config.tools).toEqual({ write: true, grep: true });
+  });
+
+  it("cumulative loads settings when legacy file absent", () => {
+    const sm = SettingsManager.inMemory({
+      myExtension: { tools: { edit: true } },
+    } as any);
+
+    const config = loadExtensionConfig(cwd, {
+      defaults: DEFAULT_TEST_CONFIG,
+      normalize: normalizeTestConfig,
+      merge: deepMerge,
+      sources: [{
+        settingsKey: "myExtension",
+        legacyFilename: "my-ext.json",
+        cumulative: true,
+      }],
+      agentDir,
+      _settingsManager: sm,
+    });
+
+    expect(config.tools).toEqual({ edit: true });
+  });
+
+  it("cumulative off (default) preserves cascade — settings eclipses legacy", () => {
+    writeJson(join(agentDir, "my-ext.json"), {
+      tools: { fromLegacy: true },
+    });
+    const sm = SettingsManager.inMemory({
+      myExtension: { tools: { fromSettings: true } },
+    } as any);
+
+    const config = loadExtensionConfig(cwd, {
+      defaults: DEFAULT_TEST_CONFIG,
+      normalize: normalizeTestConfig,
+      merge: deepMerge,
+      sources: [{
+        settingsKey: "myExtension",
+        legacyFilename: "my-ext.json",
+        // cumulative omitted → default false → cascade
+      }],
+      agentDir,
+      _settingsManager: sm,
+    });
+
+    // cascade: legacy ignored entirely because settings produced data
+    expect(config.tools).toEqual({ fromSettings: true });
   });
 });

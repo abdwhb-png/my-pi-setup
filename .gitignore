@@ -5,6 +5,8 @@
 agent/ai-providers.secrets.json
 
 .vscode
+.zed
+
 exa-usage.json
 web-search.json
 **/pi-session-**.html
