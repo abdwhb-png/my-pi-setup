@@ -33,6 +33,48 @@ interface GoogleTokenResponse {
 	token_type: string;
 }
 
+function parseGoogleTokenResponse(
+	value: unknown,
+	requireRefreshToken: boolean,
+): GoogleTokenResponse | null {
+	if (
+		!value ||
+		typeof value !== "object" ||
+		!("access_token" in value) ||
+		typeof value.access_token !== "string" ||
+		!("expires_in" in value) ||
+		typeof value.expires_in !== "number" ||
+		!("token_type" in value) ||
+		typeof value.token_type !== "string"
+	) {
+		return null;
+	}
+	const refreshToken =
+		"refresh_token" in value && typeof value.refresh_token === "string"
+			? value.refresh_token
+			: "";
+	if (requireRefreshToken && !refreshToken) return null;
+	return {
+		access_token: value.access_token,
+		refresh_token: refreshToken,
+		expires_in: value.expires_in,
+		token_type: value.token_type,
+	};
+}
+
+async function readGoogleTokenResponse(
+	response: Response,
+	operation: "exchange" | "refresh",
+	requireRefreshToken: boolean,
+): Promise<GoogleTokenResponse> {
+	const value: unknown = await response.json();
+	const token = parseGoogleTokenResponse(value, requireRefreshToken);
+	if (!token) {
+		throw new Error(`Google token ${operation} returned invalid response`);
+	}
+	return token;
+}
+
 function getGoogleOAuthCredentials(options: { agentDir?: string } = {}): {
 	clientId: string;
 	clientSecret: string;
@@ -99,7 +141,7 @@ async function exchangeGoogleCode(
 		);
 	}
 
-	return response.json();
+	return readGoogleTokenResponse(response, "exchange", true);
 }
 
 async function refreshGoogleToken(
@@ -123,7 +165,7 @@ async function refreshGoogleToken(
 		);
 	}
 
-	return response.json();
+	return readGoogleTokenResponse(response, "refresh", false);
 }
 
 async function fetchGoogleUserInfo(accessToken: string): Promise<string> {
@@ -137,8 +179,16 @@ async function fetchGoogleUserInfo(accessToken: string): Promise<string> {
 		);
 	}
 
-	const data = await response.json();
-	if (!data.email) throw new Error("Google userinfo returned no email");
+	const data: unknown = await response.json();
+	if (
+		!data ||
+		typeof data !== "object" ||
+		!("email" in data) ||
+		typeof data.email !== "string" ||
+		!data.email
+	) {
+		throw new Error("Google userinfo returned no email");
+	}
 	return data.email;
 }
 

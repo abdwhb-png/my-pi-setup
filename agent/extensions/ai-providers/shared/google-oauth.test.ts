@@ -76,6 +76,24 @@ describe('exchangeGoogleCode', () => {
 
         expect(usedConfiguredCredentials).toBe(true);
     });
+
+    it('rejects a successful HTTP response with an invalid token payload', async () => {
+        process.env.PI_FACTORY_GOOGLE_OAUTH_CLIENT_ID = 'test-client-id';
+        process.env.PI_FACTORY_GOOGLE_OAUTH_CLIENT_SECRET =
+            'test-client-secret';
+        globalThis.fetch = (async (_input, _init) =>
+            new Response(JSON.stringify({}), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })) as typeof fetch;
+
+        await expect(
+            googleOauth.exchangeGoogleCode(
+                'authorization-code',
+                'http://localhost/callback',
+            ),
+        ).rejects.toThrow('Google token exchange returned invalid response');
+    });
 });
 
 describe('getGoogleOAuthCredentials', () => {
@@ -107,5 +125,19 @@ describe('getGoogleOAuthCredentials', () => {
             clientId: 'file-client-id',
             clientSecret: 'file-client-secret',
         });
+    });
+});
+
+describe('fetchGoogleUserInfo', () => {
+    it('rejects a non-object response with the domain error', async () => {
+        globalThis.fetch = (async (_input, _init) =>
+            new Response('null', {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })) as typeof fetch;
+
+        await expect(
+            googleOauth.fetchGoogleUserInfo('access-token'),
+        ).rejects.toThrow('Google userinfo returned no email');
     });
 });
