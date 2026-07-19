@@ -23,5 +23,8 @@ export function getLocalCompressorConfig(cwd = process.cwd()): LocalCompressorCo
     ...(typeof cfg.capFallbackBytes === "number" && cfg.capFallbackBytes > 0 ? { capFallbackBytes: cfg.capFallbackBytes } : {}),
     routingStrategy: cfg.routingStrategy ?? "edgee",
     summaryGranularity: cfg.summaryGranularity ?? "all",
+    enabled: cfg.enabled ?? true,
+    excludeTools: cfg.excludeTools ?? [],
+    minBytes: cfg.minBytes ?? 0,
   };
 }

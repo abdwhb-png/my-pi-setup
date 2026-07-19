@@ -79,6 +79,9 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
     archiveOriginal: config.archiveOriginal || config.capFallbackBytes ? archiveOriginalToolResult : undefined,
     capFallbackBytes: config.capFallbackBytes,
     routingStrategy: config.routingStrategy,
+    enabled: config.enabled,
+    excludeTools: config.excludeTools,
+    minBytes: config.minBytes,
     onObservation: handleObservation,
   });
 
@@ -95,6 +98,9 @@ export default function localToolResultCompressor(pi: ExtensionAPI): void {
       archiveOriginal: config.archiveOriginal || config.capFallbackBytes ? archiveOriginalToolResult : undefined,
       capFallbackBytes: config.capFallbackBytes,
       routingStrategy: config.routingStrategy,
+      enabled: config.enabled,
+      excludeTools: config.excludeTools,
+      minBytes: config.minBytes,
       onObservation: handleObservation,
     });
     updateUi(latestCtx, metrics.snapshot(), config.baseUrl, widget, setWidgetText, config.showStatus, config.showWidget);

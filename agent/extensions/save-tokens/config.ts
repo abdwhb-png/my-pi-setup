@@ -51,6 +51,9 @@ export interface CompressorConfig {
     capFallbackBytes?: number;
     routingStrategy?: 'edgee' | 'benchmark';
     summaryGranularity?: 'none' | 'turn' | 'agent' | 'all';
+    enabled?: boolean;
+    excludeTools?: string[];
+    minBytes?: number;
 }
 
 export interface CavemanConfig {
@@ -101,7 +104,13 @@ const DEFAULT_TELEMETRY: TelemetryConfig = {
     maxDepth: 20,
 };
 
-const DEFAULT_CONFIG: SaveTokensConfig = {};
+const DEFAULT_CONFIG: SaveTokensConfig = {
+    compressor: {
+        enabled: true,
+        excludeTools: [],
+        minBytes: 0,
+    },
+};
 
 // ---------------------------------------------------------------------------
 // Normalization (from raw settings.json values)
@@ -135,6 +144,24 @@ function normalizeCompressor(raw: object): CompressorConfig | undefined {
         r.summaryGranularity === 'all'
     ) {
         out.summaryGranularity = r.summaryGranularity;
+    }
+    if (typeof r.enabled === 'boolean') out.enabled = r.enabled;
+    if (Array.isArray(r.excludeTools)) {
+        out.excludeTools = [
+            ...new Set(
+                r.excludeTools.filter(
+                    (tool): tool is string => typeof tool === 'string',
+                ),
+            ),
+        ];
+    }
+    if (
+        typeof r.minBytes === 'number' &&
+        Number.isFinite(r.minBytes) &&
+        Number.isInteger(r.minBytes) &&
+        r.minBytes >= 0
+    ) {
+        out.minBytes = r.minBytes;
     }
     return Object.keys(out).length > 0 ? out : undefined;
 }

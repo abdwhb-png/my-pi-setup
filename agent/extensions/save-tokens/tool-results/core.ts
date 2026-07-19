@@ -170,10 +170,14 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
   const agent = options?.agent ?? env.agent;
   const timeoutMs = options?.timeoutMs ?? env.timeoutMs;
   const routingStrategy = options?.routingStrategy ?? env.routingStrategy;
+  const enabled = options?.enabled ?? env.enabled;
+  const excludedTools = new Set(options?.excludeTools ?? env.excludeTools);
+  const minBytes = options?.minBytes ?? env.minBytes;
 
   return async (event: ToolResultEvent, signal?: AbortSignal) => {
     if (event.isError) return;
     if (!isCompressibleToolName(event.toolName)) return;
+    if (!enabled || excludedTools.has(event.toolName)) return;
 
     // Consult shared audit policy — bypass compression if the active profile
     // disables it for this tool's category.
@@ -202,6 +206,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
       });
       return;
     }
+    if (new TextEncoder().encode(text).byteLength < minBytes) return;
 
     if (chooseCompressionRoute({ strategy: routingStrategy, toolName: event.toolName, text }) === "cap") {
       const capped = await maybeCreateArchivedCap(text, event, subject, options);

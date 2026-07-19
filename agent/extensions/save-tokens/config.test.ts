@@ -117,7 +117,9 @@ describe('config loader', () => {
         });
         // Invalid fields are ignored; valid ones fall back to defaults
         expect(cfg.telemetry?.enabled).toBe(true);
-        expect(cfg.telemetry?.directory).toBe(resolveDefaultTelemetryDirectory());
+        expect(cfg.telemetry?.directory).toBe(
+            resolveDefaultTelemetryDirectory(),
+        );
         expect(cfg.telemetry?.maxStringLength).toBe(10_000);
     });
 
@@ -161,7 +163,10 @@ describe('telemetry config loader', () => {
         expect(cfg).toHaveProperty('maxStringLength', 10_000);
         expect(cfg).toHaveProperty('maxArrayItems', 100);
         expect(cfg).toHaveProperty('maxDepth', 20);
-        expect(cfg).toHaveProperty('directory', resolveDefaultTelemetryDirectory());
+        expect(cfg).toHaveProperty(
+            'directory',
+            resolveDefaultTelemetryDirectory(),
+        );
     });
 
     it('normalizeTelemetry produces defaults from empty input', () => {
@@ -208,6 +213,113 @@ describe('telemetry config loader', () => {
         const cfg = normalizeTelemetry({ retentionDays: 90.1 });
         // isFinitePositive rejects non-integers
         expect(cfg.retentionDays).toBe(90);
+    });
+});
+
+describe('compressor enabled/excludeTools/minBytes', () => {
+    it('defaults enabled to true', () => {
+        const cfg = loadCompressorConfig();
+        expect(cfg.enabled).toBe(true);
+    });
+
+    it('defaults excludeTools to empty array', () => {
+        const cfg = loadCompressorConfig();
+        expect(cfg.excludeTools).toEqual([]);
+    });
+
+    it('defaults minBytes to 0', () => {
+        const cfg = loadCompressorConfig();
+        expect(cfg.minBytes).toBe(0);
+    });
+
+    it('normalizes enabled: false', () => {
+        expect(
+            normalizeConfig({
+                compressor: { enabled: false },
+            }),
+        ).toEqual({
+            compressor: { enabled: false },
+        });
+    });
+
+    it('normalizes excludeTools with deduplication', () => {
+        expect(
+            normalizeConfig({
+                compressor: { excludeTools: ['read', 'grep', 'read', 'bash'] },
+            }),
+        ).toEqual({
+            compressor: { excludeTools: ['read', 'grep', 'bash'] },
+        });
+    });
+
+    it('normalizes minBytes: 500', () => {
+        expect(
+            normalizeConfig({
+                compressor: { minBytes: 500 },
+            }),
+        ).toEqual({
+            compressor: { minBytes: 500 },
+        });
+    });
+
+    it('accepts minBytes: 0 as valid', () => {
+        expect(
+            normalizeConfig({
+                compressor: { minBytes: 0 },
+            }),
+        ).toEqual({
+            compressor: { minBytes: 0 },
+        });
+    });
+
+    it('rejects non-boolean enabled', () => {
+        expect(
+            normalizeConfig({
+                compressor: { enabled: 'yes' },
+            }),
+        ).toEqual({});
+    });
+
+    it('rejects negative minBytes', () => {
+        expect(
+            normalizeConfig({
+                compressor: { minBytes: -1 },
+            }),
+        ).toEqual({});
+    });
+
+    it('rejects float minBytes', () => {
+        expect(
+            normalizeConfig({
+                compressor: { minBytes: 1.5 },
+            }),
+        ).toEqual({});
+    });
+
+    it('rejects non-finite minBytes (Infinity)', () => {
+        expect(
+            normalizeConfig({
+                compressor: { minBytes: Infinity },
+            }),
+        ).toEqual({});
+    });
+
+    it('rejects non-array excludeTools', () => {
+        expect(
+            normalizeConfig({
+                compressor: { excludeTools: 'read' },
+            }),
+        ).toEqual({});
+    });
+
+    it('filters non-string items from excludeTools', () => {
+        expect(
+            normalizeConfig({
+                compressor: { excludeTools: ['read', 42, true, 'grep'] },
+            }),
+        ).toEqual({
+            compressor: { excludeTools: ['read', 'grep'] },
+        });
     });
 });
 

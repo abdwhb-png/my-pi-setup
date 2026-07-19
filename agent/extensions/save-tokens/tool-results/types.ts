@@ -38,6 +38,9 @@ export interface LocalCompressorConfig {
   capFallbackBytes?: number;
   routingStrategy: "edgee" | "benchmark";
   summaryGranularity: "none" | "turn" | "agent" | "all";
+  enabled: boolean;
+  excludeTools: string[];
+  minBytes: number;
 }
 
 export interface ArchiveOriginalInput {
@@ -57,6 +60,9 @@ export interface ToolResultHandlerOptions {
   archiveOriginal?: (input: ArchiveOriginalInput) => Promise<string | null>;
   capFallbackBytes?: number;
   routingStrategy?: "edgee" | "benchmark";
+  enabled?: boolean;
+  excludeTools?: string[];
+  minBytes?: number;
 }
 
 export interface CompressRequest {

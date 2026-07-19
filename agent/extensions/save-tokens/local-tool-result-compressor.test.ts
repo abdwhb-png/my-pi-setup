@@ -16,6 +16,16 @@ import {
 import { COMPRESSION_EVENT_ENTRY_TYPE } from "../_shared/compression-protocol";
 import type { CompressionDetails } from "../_shared/compression-protocol";
 
+function parseToolName(init?: RequestInit): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(String(init?.body));
+    if (typeof parsed !== "object" || parsed === null || !("tool_name" in parsed)) return undefined;
+    return typeof parsed.tool_name === "string" ? parsed.tool_name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 describe("isCompressibleToolName", () => {
   it("supports read grep bash safe_bash ls find", () => {
     expect(isCompressibleToolName("read")).toBe(true);
@@ -71,6 +81,9 @@ describe("getLocalCompressorConfig", () => {
       archiveOriginal: false,
       routingStrategy: "edgee",
       summaryGranularity: "all",
+      enabled: true,
+      excludeTools: [],
+      minBytes: 0,
     });
   });
 });
@@ -208,8 +221,7 @@ describe("createToolResultHandler", () => {
   it("records compression observations", async () => {
     const observations: unknown[] = [];
     const fetchImpl = mock(async (_url: string | URL | Request, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body));
-      expect(body.tool_name).toBe("read");
+      expect(parseToolName(init)).toBe("read");
       return Response.json({ compressed_output: "trimmed" }, { status: 200 });
     });
     const handler = createToolResultHandler({
@@ -448,8 +460,8 @@ describe("createToolResultHandler", () => {
   it("maps ls and find to glob and safe_bash to bash", async () => {
     const seenToolNames: string[] = [];
     const fetchImpl = mock(async (_url: string | URL | Request, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body));
-      seenToolNames.push(body.tool_name);
+      const toolName = parseToolName(init);
+      if (toolName) seenToolNames.push(toolName);
       return Response.json({ compressed_output: "trimmed" }, { status: 200 });
     });
     const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
@@ -769,6 +781,125 @@ describe("extension registration", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("compression turn: ok 1/3 • saved 9B • skipped 2 • fail 0"), "info");
 
     globalThis.fetch = realFetch;
+  });
+});
+
+describe("compressor enabled/excludeTools/minBytes bypass", () => {
+  it("bypasses compression silently when enabled is false", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
+    const observations: unknown[] = [];
+    const handler = createToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      enabled: false,
+      onObservation: (event) => observations.push(event),
+    });
+    const result = await handler({
+      toolName: "read",
+      toolCallId: "1",
+      input: { path: "src/main.ts" },
+      content: [{ type: "text", text: "very long output" }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(result).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(observations).toEqual([]);
+  });
+
+  it("bypasses compression silently for excluded tools", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
+    const handler = createToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      excludeTools: ["read", "ls"],
+    });
+
+    const excluded = await handler({
+      toolName: "read",
+      toolCallId: "r1",
+      input: { path: "file.txt" },
+      content: [{ type: "text", text: "some text" }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(excluded).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    const eligible = await handler({
+      toolName: "grep",
+      toolCallId: "g1",
+      input: { pattern: "foo" },
+      content: [{ type: "text", text: "found something here" }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(eligible).toBeDefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("bypasses compression silently for output below minBytes", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
+    const observations: unknown[] = [];
+    const handler = createToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      minBytes: 100,
+      onObservation: (event) => observations.push(event),
+    });
+
+    const belowThreshold = await handler({
+      toolName: "read",
+      toolCallId: "1",
+      input: { path: "small.txt" },
+      content: [{ type: "text", text: "short" }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(belowThreshold).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(observations).toEqual([]);
+
+    const eligible = await handler({
+      toolName: "read",
+      toolCallId: "2",
+      input: { path: "large.txt" },
+      content: [{ type: "text", text: "a".repeat(150) }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(eligible).toBeDefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("measures minBytes using UTF-8 bytes", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "x" }, { status: 200 })));
+    const handler = createToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      minBytes: 4,
+    });
+
+    const result = await handler({
+      toolName: "read",
+      toolCallId: "utf8",
+      input: { path: "utf8.txt" },
+      content: [{ type: "text", text: "éé" }],
+      isError: false,
+      details: undefined,
+    } as any);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toBeDefined();
+  });
+
+  it("includes enabled/excludeTools/minBytes in config defaults", () => {
+    delete process.env.EDGEE_COMPRESSOR_BASE_URL;
+    delete process.env.EDGEE_COMPRESSOR_AGENT;
+    const cfg = getLocalCompressorConfig();
+    expect(cfg.enabled).toBe(true);
+    expect(cfg.excludeTools).toEqual([]);
+    expect(cfg.minBytes).toBe(0);
   });
 });
 
