@@ -1,3 +1,5 @@
-{
-    "autoExecute": false
+{                                                            
+    "browserCommand": "/usr/bin/google-chrome-stable",           
+    "autoExecute": true,
+    "planFileDir": "pi-plans"
 }

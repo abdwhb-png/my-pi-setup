@@ -8,6 +8,7 @@ exa-usage.json
 web-search.json
 **/pi-session-**.html
 .pi-lens/
+.pi-subagents/
 
 .pi/
 !.pi/prompts/
@@ -38,6 +39,7 @@ node_modules/
 .agents/skills/last30days
 context.md
 docs/resources/about-caveman/
+save-tokens-telemetry/
 
 .bash_profile
 .bashrc
