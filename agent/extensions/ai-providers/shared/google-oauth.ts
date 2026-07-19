@@ -1,14 +1,13 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+
 /**
  * Google OAuth constants and helpers for Factory AI cloudcode fallback.
  *
- * Uses the same Google OAuth client as the official droid CLI and CLIProxyAPI.
- * The client ID and secret are public — they're distributed with every droid
- * binary and the CLIProxyAPI source.
+ * Credentials are resolved lazily from environment variables or the ignored
+ * agent/ai-providers.secrets.json file so they never enter Git history.
  */
-
-const GOOGLE_OAUTH_CLIENT_ID =
-	"REDACTED_GOOGLE_OAUTH_CLIENT_ID";
-const GOOGLE_OAUTH_CLIENT_SECRET = "REDACTED_GOOGLE_OAUTH_CLIENT_SECRET";
 
 const GOOGLE_OAUTH_SCOPES = [
 	"https://www.googleapis.com/auth/cloud-platform",
@@ -34,17 +33,61 @@ interface GoogleTokenResponse {
 	token_type: string;
 }
 
+function getGoogleOAuthCredentials(options: { agentDir?: string } = {}): {
+	clientId: string;
+	clientSecret: string;
+} {
+	const clientId = process.env.PI_FACTORY_GOOGLE_OAUTH_CLIENT_ID?.trim();
+	const clientSecret =
+		process.env.PI_FACTORY_GOOGLE_OAUTH_CLIENT_SECRET?.trim();
+	if (clientId && clientSecret) return { clientId, clientSecret };
+
+	const secretsPath = join(
+		options.agentDir ?? getAgentDir(),
+		"ai-providers.secrets.json",
+	);
+	let fileCredentials: unknown;
+	try {
+		const parsed = JSON.parse(readFileSync(secretsPath, "utf8")) as {
+			googleOAuth?: unknown;
+		};
+		fileCredentials = parsed.googleOAuth;
+	} catch {
+		throw new Error(
+			"Factory Google OAuth credentials are not configured. Set PI_FACTORY_GOOGLE_OAUTH_CLIENT_ID and PI_FACTORY_GOOGLE_OAUTH_CLIENT_SECRET, or create ai-providers.secrets.json in the Pi agent directory",
+		);
+	}
+
+	if (!fileCredentials || typeof fileCredentials !== "object") {
+		throw new Error(
+			"Invalid googleOAuth credentials in ai-providers.secrets.json",
+		);
+	}
+	const value = fileCredentials as Record<string, unknown>;
+	const fileClientId =
+		typeof value.clientId === "string" ? value.clientId.trim() : "";
+	const fileClientSecret =
+		typeof value.clientSecret === "string" ? value.clientSecret.trim() : "";
+	if (!fileClientId || !fileClientSecret) {
+		throw new Error(
+			"Invalid googleOAuth credentials in ai-providers.secrets.json",
+		);
+	}
+	return { clientId: fileClientId, clientSecret: fileClientSecret };
+}
+
 async function exchangeGoogleCode(
 	code: string,
 	redirectUri: string,
 ): Promise<GoogleTokenResponse> {
+	const { clientId, clientSecret } = getGoogleOAuthCredentials();
 	const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
 			grant_type: "authorization_code",
-			client_id: GOOGLE_OAUTH_CLIENT_ID,
-			client_secret: GOOGLE_OAUTH_CLIENT_SECRET,
+			client_id: clientId,
+			client_secret: clientSecret,
 			code,
 			redirect_uri: redirectUri,
 		}),
@@ -62,13 +105,14 @@ async function exchangeGoogleCode(
 async function refreshGoogleToken(
 	refreshToken: string,
 ): Promise<GoogleTokenResponse> {
+	const { clientId, clientSecret } = getGoogleOAuthCredentials();
 	const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
 			grant_type: "refresh_token",
-			client_id: GOOGLE_OAUTH_CLIENT_ID,
-			client_secret: GOOGLE_OAUTH_CLIENT_SECRET,
+			client_id: clientId,
+			client_secret: clientSecret,
 			refresh_token: refreshToken,
 		}),
 	});
@@ -99,8 +143,7 @@ async function fetchGoogleUserInfo(accessToken: string): Promise<string> {
 }
 
 export {
-	GOOGLE_OAUTH_CLIENT_ID,
-	GOOGLE_OAUTH_CLIENT_SECRET,
+	getGoogleOAuthCredentials,
 	GOOGLE_OAUTH_SCOPES,
 	GOOGLE_TOKEN_ENDPOINT,
 	GOOGLE_AUTH_ENDPOINT,

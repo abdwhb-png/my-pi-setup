@@ -35,14 +35,11 @@
 /**
  * Google OAuth constants and helpers for Factory AI cloudcode fallback.
  *
- * Uses the same Google OAuth client as the official droid CLI and CLIProxyAPI.
- * The client ID and secret are public — they're distributed with every droid
- * binary and the CLIProxyAPI source.
+ * Credentials come from environment variables or the ignored
+ * agent/ai-providers.secrets.json file.
  */
 
-const GOOGLE_OAUTH_CLIENT_ID =
-  "REDACTED_GOOGLE_OAUTH_CLIENT_ID";
-const GOOGLE_OAUTH_CLIENT_SECRET = "REDACTED_GOOGLE_OAUTH_CLIENT_SECRET";
+const { clientId, clientSecret } = getGoogleOAuthCredentials();
 
 const GOOGLE_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",

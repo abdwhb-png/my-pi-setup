@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 .envrc
+agent/ai-providers.secrets.json
 
 .vscode
 exa-usage.json

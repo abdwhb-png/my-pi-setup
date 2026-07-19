@@ -13,10 +13,10 @@ import type {
 } from "@earendil-works/pi-ai";
 import {
 	GOOGLE_AUTH_ENDPOINT,
-	GOOGLE_OAUTH_CLIENT_ID,
 	GOOGLE_OAUTH_SCOPES,
 	exchangeGoogleCode,
 	fetchGoogleUserInfo,
+	getGoogleOAuthCredentials,
 	refreshGoogleToken,
 } from "./google-oauth.ts";
 import type { GoogleTokenResponse } from "./google-oauth.ts";
@@ -160,11 +160,12 @@ export function createFactoryOAuth(config: {
 			callbacks: import("@earendil-works/pi-ai").OAuthLoginCallbacks,
 		): Promise<OAuthCredentials> {
 			// Phase 1: Google OAuth browser flow
+			const { clientId } = getGoogleOAuthCredentials();
 			const state = await generateState();
 			const redirectUri = `http://localhost:${callbackPort}/oauth-callback`;
 
 			const authParams = new URLSearchParams({
-				client_id: GOOGLE_OAUTH_CLIENT_ID,
+				client_id: clientId,
 				response_type: "code",
 				redirect_uri: redirectUri,
 				scope: GOOGLE_OAUTH_SCOPES.join(" "),
