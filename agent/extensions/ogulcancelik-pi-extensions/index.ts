@@ -5,8 +5,8 @@
  */
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import piHerdr from './pi-herdr.ts';
+import modelAgents from './model-agents.ts';
 
 export default function ogulcancelikExtensions(pi: ExtensionAPI) {
-    piHerdr(pi);
+    modelAgents(pi);
 }

@@ -29,6 +29,7 @@
     "../../projects/pi-integrations/pi-roles",
     "/home/abdwhb/projects/shared-services/pi-lens",
     "npm:context-mode",
+    "npm:@ogulcancelik/pi-herdr",
     "./extensions/tool-groups"
   ],
   "safeBash": {
