@@ -49,5 +49,7 @@
         "*.exe",
         ".github/agents/copilot-instructions.md",
         ".github/instructions/*.instructions.md",
+        "*.test.ts",
+        "extensions/_legacy/",
     ],
 }

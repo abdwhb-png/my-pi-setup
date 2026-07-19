@@ -8,7 +8,6 @@
     "skipLibCheck": true,
     "strict": true,
     "noImplicitAny": true,
-    "stableTypeOrdering": true,
     // "ignoreDeprecations": "6.0",
     "paths": {
       "pi-fancy-footer": ["../../projects/pi-integrations/pi-fancy-footer/src/index.ts"],
@@ -18,5 +17,5 @@
     }
   },
   "include": ["extensions/**/*.ts", "bin/**/*.ts", "../.pi/extensions/**/*.ts"],
-  "exclude": ["node_modules", "git", "npm", "skills"]
+  "exclude": ["node_modules", "git", "npm", "skills", "extensions/_legacy",]
 }
