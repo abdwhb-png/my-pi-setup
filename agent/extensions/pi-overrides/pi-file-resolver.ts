@@ -142,19 +142,23 @@ export function fuzzyMatchBasename(files: string[], query: string): string[] {
  * Enrich autocomplete items with cache-only files when git-ignore is disabled.
  * Only effective when `config.fd.respectGitignore` is false and cache is ready.
  *
- * When `forceExternal` is true, the gitignore restriction is bypassed —
- * this allows enrichment for absolute paths outside the CWD where the built-in
- * autocomplete cannot provide results.
+ * Matching strategy:
+ * - Bare name (no `/`): exact basename match first. If exact matches exist,
+ *   use only those (no .bak, no fuzzy noise). If no exact match, fall back to
+ *   fuzzy basename match (so partial @config still finds config.json).
+ * - Path query (has `/`): fuzzy match on full path.
  *
- * Existing items are preserved; cache matches not already present (by label)
- * are appended, capped at 20 extra entries.
+ * No basename dedup — all matches are shown (disambiguated by description).
+ * Dedup is by full path only (skips files already in built-in items).
+ * Results ordered: CWD first, then additionalDirectories, then other roots.
+ * Capped at 20 extra entries.
  */
 export function enrichAutocompleteWithCache(
     prefix: string,
     items: Array<{ value: string; label: string; description?: string }>,
     cache: { files: string[]; ready: boolean },
     config: FileResolverConfig,
-    options?: { forceExternal?: boolean },
+    options?: { forceExternal?: boolean; cwd?: string },
 ): Array<{ value: string; label: string; description?: string }> {
     if (!prefix.startsWith('@')) return items;
     if (!options?.forceExternal && config.fd.respectGitignore) return items;
@@ -163,33 +167,75 @@ export function enrichAutocompleteWithCache(
     const parsed = parseAtValue(prefix);
     if (!parsed.path) return items;
 
-    const extraFiles = fuzzyFilter(
-        cache.files,
-        // strip trailing slash so @dir/ also matches the dir root path
-        parsed.path.replace(/\/+$/, ''),
-        (f) => f, // match against full path so directory names are searchable
-    );
+    const query = parsed.path.replace(/\/+$/, '');
+    const isBareName = !query.includes('/');
+
+    let extraFiles: string[];
+    if (isBareName) {
+        const lowerQuery = query.toLowerCase();
+        // Exact basename match first
+        const exact = cache.files.filter((f) => {
+            const base = f.split('/').pop() ?? '';
+            return base.toLowerCase() === lowerQuery;
+        });
+        // Use exact if found, else fuzzy basename fallback
+        extraFiles =
+            exact.length > 0
+                ? exact
+                : fuzzyFilter(
+                      cache.files,
+                      query,
+                      (f) => f.split('/').pop() ?? '',
+                  );
+    } else {
+        extraFiles = fuzzyFilter(cache.files, query, (f) => f);
+    }
     if (extraFiles.length === 0) return items;
 
-    const existingLabels = new Set(items.map((i) => i.label));
+    // Order: CWD first, then additionalDirectories, then other roots.
+    const cwd = options?.cwd;
+    const addlDirs = config.additionalDirectories;
+    if (cwd) {
+        extraFiles = extraFiles.toSorted((a, b) => {
+            return tierOf(a, cwd, addlDirs) - tierOf(b, cwd, addlDirs);
+        });
+    }
+
+    // Dedup by full path (skip files already in built-in items).
+    const existingPaths = new Set(items.map((i) => i.description));
+    const seen = new Set<string>();
     const result = [...items];
 
     for (const file of extraFiles) {
-        const basename = file.split('/').pop() ?? '';
-        if (existingLabels.has(basename)) continue;
+        if (seen.has(file) || existingPaths.has(file)) continue;
+        seen.add(file);
 
+        const basename = file.split('/').pop() ?? '';
         result.push({
             value: `@${file}`,
             label: basename,
             description: file,
         });
-        existingLabels.add(basename);
 
-        // Cap extra injections at 20 to avoid flooding the dropdown
         if (result.length - items.length >= 20) break;
     }
 
     return result;
+}
+
+/**
+ * Sort tier: 0 = under CWD, 1 = under additionalDirectories, 2 = other.
+ */
+function tierOf(
+    path: string,
+    cwd: string,
+    additionalDirectories: readonly string[],
+): number {
+    if (path.startsWith(cwd)) return 0;
+    for (const d of additionalDirectories) {
+        if (path.startsWith(d)) return 1;
+    }
+    return 2;
 }
 
 /**
@@ -485,7 +531,7 @@ export default function (pi: ExtensionAPI): void {
                         result?.items ?? [],
                         currentCache,
                         getFileResolverConfig(),
-                        { forceExternal: isExternalPath },
+                        { forceExternal: isExternalPath, cwd: sessionCwd },
                     );
 
                     if (enrichedItems.length === 0) {

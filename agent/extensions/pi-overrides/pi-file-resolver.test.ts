@@ -550,6 +550,106 @@ describe('enrichAutocompleteWithCache', () => {
         const labels = result.map((i) => i.label);
         expect(labels).toEqual(['config.ts']);
     });
+
+    it('bare name: exact basename match only (no fuzzy noise)', () => {
+        const cache2 = {
+            files: [
+                '/proj/settings.json',
+                '/proj/settings.json.bak',
+                '/proj/composer.json',
+                '/proj/settings-snippet.json',
+            ],
+            ready: true,
+            running: false,
+        };
+        const result = enrichAutocompleteWithCache(
+            '@settings.json',
+            [],
+            cache2,
+            gitNoRespConfig,
+        );
+        const labels = result.map((i) => i.label);
+        expect(labels).toContain('settings.json');
+        expect(labels).not.toContain('settings.json.bak');
+        expect(labels).not.toContain('composer.json');
+        expect(labels).not.toContain('settings-snippet.json');
+    });
+
+    it('bare name: shows all same-basename files (no dedup)', () => {
+        const cache2 = {
+            files: [
+                '/proj/.pi/settings.json',
+                '/proj/.vscode/settings.json',
+                '/home/.pi/agent/settings.json',
+            ],
+            ready: true,
+            running: false,
+        };
+        const result = enrichAutocompleteWithCache(
+            '@settings.json',
+            [],
+            cache2,
+            gitNoRespConfig,
+        );
+        const settings = result.filter((i) => i.label === 'settings.json');
+        expect(settings.length).toBe(3);
+    });
+
+    it('bare name: orders CWD first, then additionalDirectories, then others', () => {
+        const cache2 = {
+            files: [
+                '/home/.pi/agent/settings.json',
+                '/proj/.vscode/settings.json',
+                '/proj/.pi/settings.json',
+                '/home/.pi/.pi/settings.json',
+            ],
+            ready: true,
+            running: false,
+        };
+        const cfgWithAddl = {
+            ...gitNoRespConfig,
+            additionalDirectories: ['/home/.pi'],
+        };
+        const result = enrichAutocompleteWithCache(
+            '@settings.json',
+            [],
+            cache2,
+            cfgWithAddl,
+            { cwd: '/proj' },
+        );
+        const descs = result.map((i) => i.description!);
+        // CWD before additionalDirectories
+        expect(descs.indexOf('/proj/.pi/settings.json')).toBeLessThan(
+            descs.indexOf('/home/.pi/agent/settings.json'),
+        );
+        expect(descs.indexOf('/proj/.vscode/settings.json')).toBeLessThan(
+            descs.indexOf('/home/.pi/agent/settings.json'),
+        );
+        // additionalDirectories before other roots
+        expect(descs.indexOf('/home/.pi/agent/settings.json')).toBeLessThan(
+            descs.indexOf('/home/.pi/.pi/settings.json'),
+        );
+    });
+
+    it('path query: fuzzy match on full path still works', () => {
+        const cache2 = {
+            files: [
+                '/proj/.pi/settings.json',
+                '/proj/src/index.ts',
+            ],
+            ready: true,
+            running: false,
+        };
+        const result = enrichAutocompleteWithCache(
+            '@.pi/settings',
+            [],
+            cache2,
+            gitNoRespConfig,
+        );
+        const labels = result.map((i) => i.label);
+        expect(labels).toContain('settings.json');
+        expect(labels).not.toContain('index.ts');
+    });
 });
 
 describe('realtimeFdSearch', () => {
