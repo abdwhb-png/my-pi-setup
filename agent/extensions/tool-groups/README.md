@@ -59,12 +59,17 @@ matches nothing emits `unmatched-pattern`.
 Group names must match `/^[a-z][a-z0-9_-]*$/`. Invalid names, invalid member
 values, and empty members are discarded during normalization.
 
-### Canonical groups
+### Mutable policy and stable invariants
 
-Canonical definitions live in
-`agent/extensions/_shared/tool-groups/definitions.ts`. Migration tests assert
-that `agent/tool-groups.json` matches this helper and that `settings.json`
-contains no duplicate definitions.
+`agent/tool-groups.json` is the source of truth for user-owned group policy.
+Role frontmatter and subagent overrides may change over time without updating a
+hardcoded test snapshot. `settings.json` contains no duplicate group definitions.
+
+Migration tests validate only durable contracts: configuration parses, aliases
+exist and resolve without cycles, resolutions are non-empty and deduplicated,
+the package remains last, and protected read/write boundaries remain intact.
+Concrete tool availability is still validated against the live registry at
+runtime.
 
 Pi-lens uses two safety tiers:
 

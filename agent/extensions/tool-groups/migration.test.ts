@@ -1,416 +1,69 @@
 import { describe, expect, it } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { parseRoleSource } from '../../../../projects/pi-integrations/pi-roles/src/roles.ts';
-import {
-    PI_LENS_READ_ONLY_TOOLS,
-    PI_LENS_WRITE_TOOLS,
-    TOOL_GROUP_DEFINITIONS,
-} from '../_shared/tool-groups/definitions.ts';
 import {
     isToolGroupsPackageLast,
     TOOL_GROUPS_PACKAGE_SOURCE,
 } from '../_shared/tool-groups/package-order.ts';
 import { resolveToolAliases } from '../_shared/tool-groups/resolver.ts';
-import { TOOL_GROUP_PREFIX } from '../_shared/tool-groups/types.ts';
-
-// ── fixture available tool names (union of all known tools in this repo) ─
-const ALL_TOOLS: string[] = [
-    'read',
-    'grep',
-    'find',
-    'ls',
-    'write',
-    'edit',
-    'safe_bash',
-    'bash',
-    'hypa_shell',
-    'contact_supervisor',
-    'intercom',
-    'web_search',
-    'fetch_content',
-    'get_search_content',
-    'mcp',
-    'mcp:context7',
-    'mcp:deepwiki',
-    'mcp:exa',
-    'mcp:youtube-transcript',
-    'mcp:youtube-mcp-server',
-    'memory',
-    'session_search',
-    'memory_search',
-    'ask_user_question',
-    'subagent',
-    'todo',
-    'write_plan',
-    'edit_plan',
-    'plan_submit',
-    'plan_annotate',
-    'session_plan',
-    'propose_commit_plan',
-    'ast_grep',
-    ...PI_LENS_WRITE_TOOLS,
-];
-
-// ── expected pre-migration concrete tool SETS (order-insensitive) ─────
-const EXPECTED = {
-    roles: {
-        ask: new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'ask_user_question',
-            'memory_search',
-            'session_search',
-            'mcp',
-            'web_search',
-            'fetch_content',
-            'get_search_content',
-        ]),
-        commiter: new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'safe_bash',
-            'ask_user_question',
-            'memory_search',
-            'propose_commit_plan',
-        ]),
-        'herdr-expert': new Set([
-            'safe_bash',
-            'hypa_shell',
-            'bash',
-            'read',
-            'ls',
-            'grep',
-            'find',
-            'mcp:deepwiki',
-            'mcp:context7',
-            'web_search',
-            'fetch_content',
-            'get_search_content',
-        ]),
-        plan: new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'ask_user_question',
-            'write_plan',
-            'edit_plan',
-            'web_search',
-            'fetch_content',
-            'get_search_content',
-            'mcp',
-            'memory',
-            'session_search',
-            'memory_search',
-            'subagent',
-            'todo',
-            'safe_bash',
-            'plan_submit',
-            'plan_annotate',
-        ]),
-        'quick-planner': new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'ask_user_question',
-            'web_search',
-            'fetch_content',
-            'get_search_content',
-            'mcp',
-            'session_plan',
-            'session_search',
-            'memory_search',
-            'todo',
-            'subagent',
-        ]),
-    },
-    agents: {
-        architect: new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'memory_search',
-            'mcp:context7',
-            'mcp:deepwiki',
-            'web_search',
-            'fetch_content',
-            'get_search_content',
-        ]),
-        'code-simplifier': new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'edit',
-            'write',
-            'safe_bash',
-        ]),
-        'expert-reviewer': new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'memory_search',
-            'mcp:context7',
-            'mcp:deepwiki',
-            'web_search',
-            'fetch_content',
-            'get_search_content',
-            'intercom',
-        ]),
-        'factual-researcher': new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'safe_bash',
-            'mcp:context7',
-            'mcp:deepwiki',
-            'mcp:exa',
-            'web_search',
-            'fetch_content',
-            'get_search_content',
-            'intercom',
-            'contact_supervisor',
-        ]),
-        'performance-reviewer': new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'memory_search',
-            'mcp:context7',
-            'mcp:deepwiki',
-            'web_search',
-            'fetch_content',
-            'get_search_content',
-            'intercom',
-        ]),
-        'pi-expert': new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'safe_bash',
-            'mcp:context7',
-            'mcp:deepwiki',
-            'web_search',
-            'fetch_content',
-            'get_search_content',
-            'intercom',
-            'contact_supervisor',
-        ]),
-        'plan-reviewer': new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'ast_grep',
-            'write',
-        ]),
-        'sdd-orchestrator': new Set([
-            'read',
-            'write',
-            'edit',
-            'grep',
-            'find',
-            'ls',
-            'safe_bash',
-            'subagent',
-            'intercom',
-        ]),
-        'task-doer': new Set([
-            'read',
-            'edit',
-            'write',
-            'find',
-            'ls',
-            'grep',
-            'safe_bash',
-            'contact_supervisor',
-        ]),
-        videographer: new Set([
-            'fetch_content',
-            'web_search',
-            'get_search_content',
-            'mcp:youtube-transcript',
-            'mcp:youtube-mcp-server',
-        ]),
-    },
-    subagents: {
-        worker: new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'write',
-            'edit',
-            'safe_bash',
-            'contact_supervisor',
-        ]),
-        scout: new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'safe_bash',
-            'write',
-            'intercom',
-        ]),
-        planner: new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'write_plan',
-            'intercom',
-        ]),
-        delegate: new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'write',
-            'edit',
-            'safe_bash',
-            'contact_supervisor',
-        ]),
-        'context-builder': new Set([
-            'read',
-            'grep',
-            'find',
-            'ls',
-            'safe_bash',
-            'write',
-            'web_search',
-            'get_search_content',
-            'fetch_content',
-            'ast_grep_search',
-            'intercom',
-        ]),
-    },
-};
-
-for (const expected of [
-    EXPECTED.roles.ask,
-    EXPECTED.roles.commiter,
-    EXPECTED.roles.plan,
-    EXPECTED.roles['quick-planner'],
-    EXPECTED.agents.architect,
-    EXPECTED.agents['expert-reviewer'],
-    EXPECTED.agents['performance-reviewer'],
-    EXPECTED.agents['pi-expert'],
-    EXPECTED.agents['plan-reviewer'],
-    EXPECTED.agents['sdd-orchestrator'],
-    EXPECTED.subagents.scout,
-    EXPECTED.subagents.planner,
-    EXPECTED.subagents['context-builder'],
-]) {
-    for (const tool of PI_LENS_READ_ONLY_TOOLS) expected.add(tool);
-}
-
-for (const expected of [
-    EXPECTED.agents['code-simplifier'],
-    EXPECTED.agents['task-doer'],
-    EXPECTED.subagents.worker,
-    EXPECTED.subagents.delegate,
-]) {
-    for (const tool of PI_LENS_WRITE_TOOLS) expected.add(tool);
-}
-
-// ── helpers ───────────────────────────────────────────────────────────
 
 function agentDir(): string {
     return getAgentDir();
 }
 
-/** Read and parse YAML frontmatter from a markdown file. */
 function parseFrontmatter(content: string): Record<string, unknown> {
     const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
     if (!match) return {};
-    const yaml = match[1];
 
-    // Simple line-based YAML parser (handles only scalar values and arrays)
     const result: Record<string, unknown> = {};
     let currentKey: string | null = null;
     let currentArray: string[] | null = null;
 
-    for (const line of yaml.split('\n')) {
+    for (const line of match[1].split('\n')) {
         const keyMatch = line.match(/^(\w[\w_-]*):\s*(.*)$/);
         if (keyMatch) {
-            // Flush any pending array
-            if (currentKey && currentArray !== null) {
-                result[currentKey] = currentArray;
-                currentArray = null;
-            }
+            if (currentKey && currentArray) result[currentKey] = currentArray;
             currentKey = keyMatch[1];
-            let val = keyMatch[2].trim();
+            let value = keyMatch[2].trim();
             if (
-                (val.startsWith('"') && val.endsWith('"')) ||
-                (val.startsWith("'") && val.endsWith("'"))
+                (value.startsWith('"') && value.endsWith('"')) ||
+                (value.startsWith("'") && value.endsWith("'"))
             ) {
-                val = val.slice(1, -1);
+                value = value.slice(1, -1);
             }
-            if (val === '' || val === '|' || val === '>') {
-                // Multi-line or empty — start array context
+            if (value === '' || value === '|' || value === '>') {
                 currentArray = [];
             } else {
-                result[currentKey] = val;
+                result[currentKey] = value;
                 currentArray = null;
             }
-        } else if (currentKey && currentArray !== null) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith('- ')) {
-                currentArray.push(trimmed.slice(2).trim());
-            } else if (trimmed.startsWith('-')) {
-                currentArray.push(trimmed.slice(1).trim());
-            } else if (trimmed !== '') {
-                // continuation line — append to last array element? skip
-            }
+        } else if (currentKey && currentArray) {
+            const value = line.trim();
+            if (value.startsWith('- ')) currentArray.push(value.slice(2).trim());
         }
     }
-    // Flush final array
-    if (currentKey && currentArray !== null) {
-        result[currentKey] = currentArray;
-    }
-
+    if (currentKey && currentArray) result[currentKey] = currentArray;
     return result;
 }
 
-/** Parse a comma-separated tools string into an array of trimmed tool names. */
-function parseCommaTools(val: unknown): string[] {
-    if (typeof val !== 'string') return [];
-    return val
-        .split(',')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-}
-
-/** Parse tools frontmatter value — either a comma string or an inline YAML array. */
-function getFrontmatterTools(fm: Record<string, unknown>): string[] {
-    const raw = fm['tools'];
+function getFrontmatterTools(frontmatter: Record<string, unknown>): string[] {
+    const raw = frontmatter.tools;
     if (Array.isArray(raw)) {
-        return (raw as string[])
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0);
+        return raw.filter((tool): tool is string => typeof tool === 'string');
     }
-    return parseCommaTools(raw);
+    if (typeof raw !== 'string') return [];
+    return raw
+        .split(',')
+        .map((tool) => tool.trim())
+        .filter(Boolean);
 }
 
-/** Read settings JSON and return parsed object. */
 function readSettings(): Record<string, unknown> {
     const path = join(agentDir(), 'settings.json');
     try {
-        const raw = readFileSync(path, 'utf-8');
-        return JSON.parse(raw) as Record<string, unknown>;
+        return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     } catch (cause) {
         throw new Error(`Failed to read/parse settings.json: ${path}`, {
             cause,
@@ -418,15 +71,27 @@ function readSettings(): Record<string, unknown> {
     }
 }
 
-/** Read dedicated global tool-groups JSON. */
 function readConfiguredGroups(): Record<string, string[]> {
     const path = join(agentDir(), 'tool-groups.json');
     try {
-        const raw = JSON.parse(readFileSync(path, 'utf-8')) as Record<
-            string,
-            unknown
-        >;
-        return raw['groups'] as Record<string, string[]>;
+        const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+        if (!parsed || typeof parsed !== 'object' || !('groups' in parsed)) {
+            throw new Error('missing groups object');
+        }
+        const groups = parsed.groups;
+        if (!groups || typeof groups !== 'object' || Array.isArray(groups)) {
+            throw new Error('groups must be an object');
+        }
+        for (const [name, members] of Object.entries(groups)) {
+            if (
+                !name ||
+                !Array.isArray(members) ||
+                !members.every((member) => typeof member === 'string')
+            ) {
+                throw new Error(`invalid group: ${name}`);
+            }
+        }
+        return groups as Record<string, string[]>;
     } catch (cause) {
         throw new Error(`Failed to read/parse tool-groups.json: ${path}`, {
             cause,
@@ -434,275 +99,248 @@ function readConfiguredGroups(): Record<string, string[]> {
     }
 }
 
-/** Read a markdown file's content from the appropriate directory. */
-function readMd(dir: string, name: string): string {
-    const path = join(agentDir(), dir, `${name}.md`);
-    if (!existsSync(path)) return '';
-    return readFileSync(path, 'utf-8');
+function configuredMarkdownTools(
+    directory: 'roles' | 'agents',
+): Array<{ name: string; path: string; content: string; tools: string[] }> {
+    const root = join(agentDir(), directory);
+    if (!existsSync(root)) return [];
+    return readdirSync(root)
+        .filter((name) => name.endsWith('.md'))
+        .map((name) => {
+            const path = join(root, name);
+            const content = readFileSync(path, 'utf8');
+            return {
+                name,
+                path,
+                content,
+                tools: getFrontmatterTools(parseFrontmatter(content)),
+            };
+        })
+        .filter((entry) => entry.tools.length > 0);
 }
 
-// ── tests ─────────────────────────────────────────────────────────────
+function configuredSubagentTools(): Array<{ name: string; tools: string[] }> {
+    const settings = readSettings();
+    const subagents = settings.subagents;
+    if (!subagents || typeof subagents !== 'object') return [];
+    const overrides = (subagents as Record<string, unknown>).agentOverrides;
+    if (!overrides || typeof overrides !== 'object') return [];
 
-describe('tool-groups migration', () => {
-    describe('package order', () => {
-        it('tool-groups package is the final packages entry', () => {
-            const settings = readSettings();
-            const packages = settings['packages'] as unknown[];
-            expect(packages).toBeDefined();
-            expect(packages.length).toBeGreaterThan(0);
+    return Object.entries(overrides).flatMap(([name, config]) => {
+        if (!config || typeof config !== 'object') return [];
+        const tools = (config as Record<string, unknown>).tools;
+        return Array.isArray(tools) &&
+            tools.every((tool) => typeof tool === 'string')
+            ? [{ name, tools }]
+            : [];
+    });
+}
 
-            const lastRaw = packages[packages.length - 1];
-            const lastSource =
-                typeof lastRaw === 'string'
-                    ? lastRaw
-                    : (lastRaw as Record<string, unknown>).source;
-            expect(lastSource).toBe(TOOL_GROUPS_PACKAGE_SOURCE);
+function availableConcreteNames(
+    groups: Record<string, string[]>,
+    activeNames: string[] = [],
+): string[] {
+    return [
+        ...new Set(
+            [...Object.values(groups).flat(), ...activeNames].filter(
+                (name) => !name.startsWith('@'),
+            ),
+        ),
+    ];
+}
 
-            // Also verify via the shared utility
-            const ad = agentDir();
-            const last = isToolGroupsPackageLast(
-                packages as Parameters<typeof isToolGroupsPackageLast>[0],
-                ad,
-            );
-            expect(last).toBe(true);
-        });
+function validateGroupGraph(groups: Record<string, string[]>): string[] {
+    const issues: string[] = [];
+    const available = availableConcreteNames(groups);
+
+    for (const [name, members] of Object.entries(groups)) {
+        if (members.length === 0) issues.push(`${name}: empty group`);
+        if (new Set(members).size !== members.length) {
+            issues.push(`${name}: duplicate members`);
+        }
+        const result = resolveToolAliases([`@${name}`], available, groups);
+        for (const diagnostic of result.diagnostics) {
+            issues.push(`${name}: ${diagnostic.code}: ${diagnostic.member}`);
+        }
+        if (result.names.length === 0) issues.push(`${name}: empty resolution`);
+    }
+    return issues;
+}
+
+function validateToolList(
+    label: string,
+    tools: string[],
+    groups: Record<string, string[]>,
+): string[] {
+    const issues: string[] = [];
+    if (new Set(tools).size !== tools.length) {
+        issues.push(`${label}: duplicate tools`);
+    }
+    const result = resolveToolAliases(
+        tools,
+        availableConcreteNames(groups, tools),
+        groups,
+    );
+    for (const diagnostic of result.diagnostics) {
+        issues.push(`${label}: ${diagnostic.code}: ${diagnostic.member}`);
+    }
+    if (result.names.length === 0) issues.push(`${label}: empty resolution`);
+    if (new Set(result.names).size !== result.names.length) {
+        issues.push(`${label}: duplicate resolved tools`);
+    }
+    return issues;
+}
+
+function resolveGroup(
+    name: string,
+    groups: Record<string, string[]>,
+): string[] {
+    return resolveToolAliases(
+        [`@${name}`],
+        availableConcreteNames(groups),
+        groups,
+    ).names;
+}
+
+function validateProtectedBoundaries(
+    groups: Record<string, string[]>,
+): string[] {
+    const issues: string[] = [];
+    for (const required of ['files-write', 'implement']) {
+        if (!groups[required]) issues.push(`missing protected group: ${required}`);
+    }
+    if (issues.length > 0) return issues;
+
+    const fileWrites = new Set(resolveGroup('files-write', groups));
+    for (const required of ['edit', 'write']) {
+        if (!fileWrites.has(required)) {
+            issues.push(`files-write missing ${required}`);
+        }
+    }
+
+    const implementation = new Set(resolveGroup('implement', groups));
+    for (const required of [...fileWrites, 'safe_bash']) {
+        if (!implementation.has(required)) {
+            issues.push(`implement missing ${required}`);
+        }
+    }
+
+    const lens = new Set(groups.lens ? resolveGroup('lens', groups) : []);
+    const lensWrite = new Set(
+        groups['lens-write'] ? resolveGroup('lens-write', groups) : [],
+    );
+    const mutating = new Set([
+        ...fileWrites,
+        ...[...lensWrite].filter((tool) => !lens.has(tool)),
+    ]);
+    for (const name of ['inspect', 'review', 'lens']) {
+        if (!groups[name]) continue;
+        const leaked = resolveGroup(name, groups).filter((tool) =>
+            mutating.has(tool),
+        );
+        if (leaked.length > 0) {
+            issues.push(`${name} contains mutating tools: ${leaked.join(', ')}`);
+        }
+    }
+    return issues;
+}
+
+describe('tool-groups configuration invariants', () => {
+    it('keeps the tool-groups package last', () => {
+        const packages = readSettings().packages;
+        expect(Array.isArray(packages)).toBe(true);
+        if (!Array.isArray(packages)) throw new Error('packages must be an array');
+        expect(packages.length).toBeGreaterThan(0);
+        const list = packages as Parameters<typeof isToolGroupsPackageLast>[0];
+        expect(isToolGroupsPackageLast(list, agentDir())).toBe(true);
+        const last = list[list.length - 1];
+        expect(typeof last === 'string' ? last : last.source).toBe(
+            TOOL_GROUPS_PACKAGE_SOURCE,
+        );
     });
 
-    describe('configured tool groups', () => {
-        it('keeps definitions out of settings.json', () => {
-            expect(readSettings()['toolGroups']).toBeUndefined();
-        });
-
-        it('matches the canonical shared definitions', () => {
-            expect(readConfiguredGroups()).toEqual(TOOL_GROUP_DEFINITIONS);
-        });
-
-        it('defines nested file-write and implementation capabilities', () => {
-            expect(TOOL_GROUP_DEFINITIONS['files-write']).toEqual([
-                'edit',
-                'write',
-            ]);
-            expect(TOOL_GROUP_DEFINITIONS['implement']).toEqual([
-                '@files-write',
-                'safe_bash',
-            ]);
-        });
-
-        it('assigns implementation capability without widening access', () => {
-            for (const name of [
-                'code-simplifier',
-                'sdd-orchestrator',
-                'task-doer',
-            ]) {
-                const tools = getFrontmatterTools(
-                    parseFrontmatter(readMd('agents', name)),
-                );
-                expect(tools).toContain('@implement');
-                expect(tools).not.toContain('edit');
-                expect(tools).not.toContain('write');
-                expect(tools).not.toContain('safe_bash');
-            }
-
-            const settings = readSettings();
-            const subagents = settings['subagents'] as Record<string, unknown>;
-            const overrides = subagents['agentOverrides'] as Record<
-                string,
-                Record<string, unknown>
-            >;
-            for (const name of ['worker', 'delegate']) {
-                const tools = overrides[name]['tools'] as string[];
-                expect(tools).toContain('@implement');
-                expect(tools).not.toContain('edit');
-                expect(tools).not.toContain('write');
-                expect(tools).not.toContain('safe_bash');
-            }
-        });
-
-        it('assigns lens aliases to coding roles and agents', () => {
-            const assignments: Array<[string, string, string]> = [
-                ['roles', 'ask', '@lens'],
-                ['roles', 'commiter', '@lens'],
-                ['roles', 'plan', '@lens'],
-                ['roles', 'quick-planner', '@lens'],
-                ['agents', 'architect', '@lens'],
-                ['agents', 'code-simplifier', '@lens-write'],
-                ['agents', 'expert-reviewer', '@lens'],
-                ['agents', 'performance-reviewer', '@lens'],
-                ['agents', 'pi-expert', '@lens'],
-                ['agents', 'plan-reviewer', '@lens'],
-                ['agents', 'sdd-orchestrator', '@lens'],
-                ['agents', 'task-doer', '@lens-write'],
-            ];
-
-            for (const [dir, name, alias] of assignments) {
-                const tools = getFrontmatterTools(
-                    parseFrontmatter(readMd(dir, name)),
-                );
-                expect(tools).toContain(alias);
-            }
-        });
-
-        it('assigns lens aliases to coding subagents', () => {
-            const settings = readSettings();
-            const subagents = settings['subagents'] as Record<string, unknown>;
-            const overrides = subagents['agentOverrides'] as Record<
-                string,
-                Record<string, unknown>
-            >;
-            const assignments: Array<[string, string]> = [
-                ['worker', '@lens-write'],
-                ['delegate', '@lens-write'],
-                ['scout', '@lens'],
-                ['planner', '@lens'],
-                ['context-builder', '@lens'],
-            ];
-
-            for (const [name, alias] of assignments) {
-                expect(overrides[name]['tools']).toContain(alias);
-            }
-        });
-
-        it('keeps general pi roles unrestricted', () => {
-            for (const name of ['pi-agent', 'pi-caveman']) {
-                const fm = parseFrontmatter(readMd('roles', name));
-                expect(fm['tools']).toBeUndefined();
-            }
-        });
+    it('keeps group definitions in the dedicated mutable config', () => {
+        expect(readSettings().toolGroups).toBeUndefined();
+        expect(validateGroupGraph(readConfiguredGroups())).toEqual([]);
     });
 
-    // ── roles ────────────────────────────────────────────────────────
-    describe('role frontmatter tools', () => {
-        const CASES: Array<[string, string, Set<string>]> = [
-            ['ask', 'roles', EXPECTED.roles.ask],
-            ['commiter', 'roles', EXPECTED.roles.commiter],
-            ['herdr-expert', 'roles', EXPECTED.roles['herdr-expert']],
-            ['plan', 'roles', EXPECTED.roles.plan],
-            ['quick-planner', 'roles', EXPECTED.roles['quick-planner']],
-        ];
+    it('preserves protected write and read-only boundaries', () => {
+        expect(validateProtectedBoundaries(readConfiguredGroups())).toEqual([]);
+    });
 
-        for (const [name, dir, expected] of CASES) {
-            it(`${name}.md tools resolve to expected concrete set`, () => {
-                const content = readMd(dir, name);
-                parseRoleSource(
-                    content,
-                    join(agentDir(), dir, `${name}.md`),
-                    'user',
-                );
-                const fm = parseFrontmatter(content);
-                const rawTools = getFrontmatterTools(fm);
-                expect(rawTools.length).toBeGreaterThan(0);
+    it('accepts valid custom groups without a canonical snapshot', () => {
+        const groups = {
+            inspect: ['read'],
+            'files-write': ['edit', 'write'],
+            implement: ['@files-write', 'safe_bash'],
+            lens: ['read'],
+            'lens-write': ['@lens', 'edit'],
+            custom: ['@inspect', 'custom_tool'],
+        };
+        expect(validateGroupGraph(groups)).toEqual([]);
+        expect(validateToolList('custom role', ['@custom'], groups)).toEqual(
+            [],
+        );
+    });
 
-                const result = resolveToolAliases(
-                    rawTools,
-                    ALL_TOOLS,
-                    readConfiguredGroups(),
-                );
-                const resolved = new Set(result.names);
+    it('rejects missing aliases, cycles, and empty groups', () => {
+        expect(
+            validateGroupGraph({ broken: ['@missing'], empty: [], ok: ['read'] }),
+        ).toEqual(
+            expect.arrayContaining([
+                expect.stringContaining('missing-group'),
+                'empty: empty group',
+                'empty: empty resolution',
+            ]),
+        );
+        expect(
+            validateGroupGraph({ left: ['@right'], right: ['@left'] }),
+        ).toEqual(expect.arrayContaining([expect.stringContaining('cycle')]));
+    });
 
-                // No unresolved @ aliases
-                const leftoverAliases = result.names.filter((n) =>
-                    n.startsWith(TOOL_GROUP_PREFIX),
-                );
-                expect(leftoverAliases).toEqual([]);
+    it('rejects protected boundary widening', () => {
+        const groups = {
+            inspect: ['read', 'edit'],
+            'files-write': ['edit', 'write'],
+            implement: ['@files-write', 'safe_bash'],
+        };
+        expect(validateProtectedBoundaries(groups)).toContain(
+            'inspect contains mutating tools: edit',
+        );
+    });
 
-                // No diagnostics
-                expect(result.diagnostics).toEqual([]);
-
-                // Set equivalence
-                expect(resolved).toEqual(expected);
+    for (const directory of ['roles', 'agents'] as const) {
+        for (const entry of configuredMarkdownTools(directory)) {
+            it(`${directory}/${entry.name} has valid configurable tools`, () => {
+                if (directory === 'roles') {
+                    expect(() =>
+                        parseRoleSource(
+                            entry.content,
+                            entry.path,
+                            'user',
+                        ),
+                    ).not.toThrow();
+                }
+                expect(
+                    validateToolList(
+                        `${directory}/${entry.name}`,
+                        entry.tools,
+                        readConfiguredGroups(),
+                    ),
+                ).toEqual([]);
             });
         }
-    });
+    }
 
-    // ── agents ───────────────────────────────────────────────────────
-    describe('agent frontmatter tools', () => {
-        const CASES: Array<[string, string, Set<string>]> = [
-            ['architect', 'agents', EXPECTED.agents.architect],
-            ['code-simplifier', 'agents', EXPECTED.agents['code-simplifier']],
-            ['expert-reviewer', 'agents', EXPECTED.agents['expert-reviewer']],
-            [
-                'factual-researcher',
-                'agents',
-                EXPECTED.agents['factual-researcher'],
-            ],
-            [
-                'performance-reviewer',
-                'agents',
-                EXPECTED.agents['performance-reviewer'],
-            ],
-            ['pi-expert', 'agents', EXPECTED.agents['pi-expert']],
-            ['plan-reviewer', 'agents', EXPECTED.agents['plan-reviewer']],
-            ['sdd-orchestrator', 'agents', EXPECTED.agents['sdd-orchestrator']],
-            ['task-doer', 'agents', EXPECTED.agents['task-doer']],
-            ['videographer', 'agents', EXPECTED.agents.videographer],
-        ];
-
-        for (const [name, dir, expected] of CASES) {
-            it(`${name}.md tools resolve to expected concrete set`, () => {
-                const content = readMd(dir, name);
-                const fm = parseFrontmatter(content);
-                const rawTools = getFrontmatterTools(fm);
-                expect(rawTools.length).toBeGreaterThan(0);
-
-                const result = resolveToolAliases(
-                    rawTools,
-                    ALL_TOOLS,
+    for (const entry of configuredSubagentTools()) {
+        it(`subagent ${entry.name} has valid configurable tools`, () => {
+            expect(
+                validateToolList(
+                    `subagent ${entry.name}`,
+                    entry.tools,
                     readConfiguredGroups(),
-                );
-                const resolved = new Set(result.names);
-
-                const leftoverAliases = result.names.filter((n) =>
-                    n.startsWith(TOOL_GROUP_PREFIX),
-                );
-                expect(leftoverAliases).toEqual([]);
-                expect(result.diagnostics).toEqual([]);
-                expect(resolved).toEqual(expected);
-            });
-        }
-    });
-
-    // ── subagent overrides ───────────────────────────────────────────
-    describe('subagent override tools', () => {
-        const CASES: Array<[string, Set<string>]> = [
-            ['worker', EXPECTED.subagents.worker],
-            ['scout', EXPECTED.subagents.scout],
-            ['planner', EXPECTED.subagents.planner],
-            ['delegate', EXPECTED.subagents.delegate],
-            ['context-builder', EXPECTED.subagents['context-builder']],
-        ];
-
-        for (const [name, expected] of CASES) {
-            it(`${name} override tools resolve to expected concrete set`, () => {
-                const settings = readSettings();
-                const subagents = settings['subagents'] as Record<
-                    string,
-                    unknown
-                >;
-                const overrides = subagents?.['agentOverrides'] as Record<
-                    string,
-                    unknown
-                >;
-                const agentCfg = overrides?.[name] as Record<string, unknown>;
-                expect(agentCfg).toBeDefined();
-
-                const rawTools = agentCfg['tools'] as string[];
-                expect(Array.isArray(rawTools)).toBe(true);
-                expect(rawTools.length).toBeGreaterThan(0);
-
-                const result = resolveToolAliases(
-                    rawTools,
-                    ALL_TOOLS,
-                    readConfiguredGroups(),
-                );
-                const resolved = new Set(result.names);
-
-                const leftoverAliases = result.names.filter((n) =>
-                    n.startsWith(TOOL_GROUP_PREFIX),
-                );
-                expect(leftoverAliases).toEqual([]);
-                expect(result.diagnostics).toEqual([]);
-                expect(resolved).toEqual(expected);
-            });
-        }
-    });
+                ),
+            ).toEqual([]);
+        });
+    }
 });
