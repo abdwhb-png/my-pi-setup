@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createCompressionMetrics,
   createCompressionMetricsFromEvents,
@@ -15,6 +18,24 @@ import {
 } from "./local-tool-result-compressor";
 import { COMPRESSION_EVENT_ENTRY_TYPE } from "../_shared/compression-protocol";
 import type { CompressionDetails } from "../_shared/compression-protocol";
+
+type HandlerOptions = Parameters<typeof createToolResultHandler>[0];
+
+const TEST_CONFIG = {
+  minBytesByGroup: { shell: 0, read: 0, search: 0 },
+  archiveOriginal: false,
+};
+
+function createTestToolResultHandler(options: HandlerOptions = {}) {
+  const hasExplicitThreshold =
+    options.minBytes !== undefined || options.minBytesByGroup !== undefined;
+  return createToolResultHandler({
+    ...(hasExplicitThreshold
+      ? {}
+      : { minBytesByGroup: { shell: 0, read: 0, search: 0 } }),
+    ...options,
+  });
+}
 
 function parseToolName(init?: RequestInit): string | undefined {
   try {
@@ -78,12 +99,20 @@ describe("getLocalCompressorConfig", () => {
       timeoutMs: 800,
       showStatus: false,
       showWidget: true,
-      archiveOriginal: false,
+      archiveOriginal: true,
+      archiveRetention: {
+        maxAgeDays: 30,
+        maxBytes: 1_073_741_824,
+      },
       routingStrategy: "edgee",
       summaryGranularity: "all",
       enabled: true,
       excludeTools: [],
-      minBytes: 0,
+      minBytesByGroup: {
+        shell: 4096,
+        read: 8192,
+        search: 4096,
+      },
     });
   });
 });
@@ -205,7 +234,7 @@ describe("notification granularity", () => {
 describe("createToolResultHandler", () => {
   it("skips unsupported tools", async () => {
     const fetchImpl = mock(() => Promise.resolve(new Response("{}")));
-    const handler = createToolResultHandler({ fetchImpl });
+    const handler = createTestToolResultHandler({ fetchImpl });
     const event = {
       toolName: "write",
       toolCallId: "1",
@@ -224,7 +253,7 @@ describe("createToolResultHandler", () => {
       expect(parseToolName(init)).toBe("read");
       return Response.json({ compressed_output: "trimmed" }, { status: 200 });
     });
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       onObservation: (event) => observations.push(event),
@@ -263,7 +292,7 @@ describe("createToolResultHandler", () => {
 
   it("can archive original output and expose the path in compressed content", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-c1.txt"),
@@ -280,12 +309,15 @@ describe("createToolResultHandler", () => {
 
     expect(result?.content[0]?.text).toContain("trimmed");
     expect(result?.content[0]?.text).toContain("Full original tool result saved: /tmp/pi-tool-results/full-c1.txt");
-    expect(result?.details?.compression.archivePath).toBe("/tmp/pi-tool-results/full-c1.txt");
+    expect(
+      (result?.details as { compression: CompressionDetails } | undefined)
+        ?.compression.archivePath,
+    ).toBe("/tmp/pi-tool-results/full-c1.txt");
   });
 
   it("can fall back to archived head-tail cap when backend returns no output", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: null }, { status: 200 })));
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       capFallbackBytes: 240,
@@ -308,12 +340,15 @@ describe("createToolResultHandler", () => {
     expect(output).toContain("omitted by head/tail cap");
     expect(output).toContain("Full original tool result saved: /tmp/pi-tool-results/full-cap1.txt");
     expect(output.length).toBeLessThan(source.length);
-    expect(result?.details?.compression.archivePath).toBe("/tmp/pi-tool-results/full-cap1.txt");
+    expect(
+      (result?.details as { compression: CompressionDetails } | undefined)
+        ?.compression.archivePath,
+    ).toBe("/tmp/pi-tool-results/full-cap1.txt");
   });
 
   it("can route benchmark-selected payloads directly to archived cap", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "should not call" }, { status: 200 })));
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       routingStrategy: "benchmark",
@@ -333,14 +368,17 @@ describe("createToolResultHandler", () => {
 
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(result?.content[0]?.text).toContain("Full original tool result saved: /tmp/pi-tool-results/full-grep1.txt");
-    expect(result?.details?.compression.archivePath).toBe("/tmp/pi-tool-results/full-grep1.txt");
+    expect(
+      (result?.details as { compression: CompressionDetails } | undefined)
+        ?.compression.archivePath,
+    ).toBe("/tmp/pi-tool-results/full-grep1.txt");
   });
 
   it("compression details match expected shape and types", async () => {
     const fetchImpl = mock(() =>
       Promise.resolve(Response.json({ compressed_output: "short" }, { status: 200 }))
     );
-    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+    const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
     const result = await handler({
       toolName: "bash",
       toolCallId: "1",
@@ -365,7 +403,7 @@ describe("createToolResultHandler", () => {
     const fetchImpl = mock(() =>
       Promise.resolve(Response.json({ compressed_output: "1F 1D:\n\n./ (no output)\n" }, { status: 200 }))
     );
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       onObservation: (event) => observations.push(event),
@@ -397,7 +435,7 @@ describe("createToolResultHandler", () => {
   it("records skipped events for mixed content", async () => {
     const observations: unknown[] = [];
     const fetchImpl = mock(() => Promise.resolve(new Response("{}")));
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       onObservation: (event) => observations.push(event),
     });
@@ -430,7 +468,7 @@ describe("createToolResultHandler", () => {
   it("records failed events when service unavailable", async () => {
     const observations: unknown[] = [];
     const fetchImpl = mock(() => Promise.reject(new Error("offline")));
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       onObservation: (event) => observations.push(event),
@@ -464,7 +502,7 @@ describe("createToolResultHandler", () => {
       if (toolName) seenToolNames.push(toolName);
       return Response.json({ compressed_output: "trimmed" }, { status: 200 });
     });
-    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+    const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
 
     await handler({
       toolName: "ls",
@@ -492,6 +530,175 @@ describe("createToolResultHandler", () => {
     } as any);
 
     expect(seenToolNames).toEqual(["glob", "glob", "bash"]);
+  });
+});
+
+describe("grouped thresholds and result integrity", () => {
+  it("uses the threshold for each compression group", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(
+        Response.json({ compressed_output: "x" }, { status: 200 }),
+      ),
+    );
+    const handler = createToolResultHandler({
+      fetchImpl,
+      minBytesByGroup: { shell: 4, read: 6, search: 5 },
+    });
+
+    const cases = [
+      ["bash", "é", false],
+      ["bash", "éé", true],
+      ["bash", "ééa", true],
+      ["read", "ééa", false],
+      ["read", "ééé", true],
+      ["read", "éééa", true],
+      ["grep", "éé", false],
+      ["grep", "ééa", true],
+      ["grep", "ééaa", true],
+    ] as const;
+
+    for (const [toolName, text, eligible] of cases) {
+      fetchImpl.mockClear();
+      await handler({
+        toolName,
+        toolCallId: `${toolName}-${Buffer.byteLength(text, "utf8")}`,
+        input: {},
+        content: [{ type: "text", text }],
+        isError: false,
+        details: undefined,
+      } as any);
+      expect(fetchImpl).toHaveBeenCalledTimes(eligible ? 1 : 0);
+    }
+  });
+
+  it("preserves original details and archives Pi full output", async () => {
+    const archiveOriginal = mock(async () => "/archive/full.txt");
+    const handler = createTestToolResultHandler({
+      fetchImpl: mock(() =>
+        Promise.resolve(
+          Response.json({ compressed_output: "short" }, { status: 200 }),
+        ),
+      ),
+      archiveOriginal,
+    });
+    const details = {
+      truncation: { truncated: true },
+      fullOutputPath: "/tmp/pi-full-output.txt",
+    };
+    const originalText = "a sufficiently long output".repeat(10);
+
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "details-1",
+      input: { command: "printf output" },
+      content: [{ type: "text", text: originalText }],
+      isError: false,
+      details,
+    } as any);
+
+    expect(archiveOriginal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourcePath: "/tmp/pi-full-output.txt",
+        text: originalText,
+      }),
+    );
+    expect(result?.details).toMatchObject({
+      truncation: { truncated: true },
+      fullOutputPath: "/tmp/pi-full-output.txt",
+      compression: { archivePath: "/archive/full.txt" },
+    });
+  });
+
+  it("keeps non-object custom details recoverable", async () => {
+    const handler = createTestToolResultHandler({
+      fetchImpl: mock(() =>
+        Promise.resolve(
+          Response.json({ compressed_output: "short" }, { status: 200 }),
+        ),
+      ),
+    });
+
+    const result = await handler({
+      toolName: "safe_bash",
+      toolCallId: "details-2",
+      input: { command: "printf output" },
+      content: [{ type: "text", text: "a sufficiently long output" }],
+      isError: false,
+      details: "opaque-details",
+    } as any);
+
+    expect(result?.details).toMatchObject({
+      originalDetails: "opaque-details",
+      compression: expect.any(Object),
+    });
+  });
+
+  it("fails open when cap-route archiving fails", async () => {
+    const handler = createTestToolResultHandler({
+      fetchImpl: mock(() =>
+        Promise.resolve(Response.json({}, { status: 200 })),
+      ),
+      routingStrategy: "benchmark",
+      capFallbackBytes: 8,
+      archiveOriginal: mock(async () => {
+        throw new Error("archive unavailable");
+      }),
+    });
+
+    await expect(
+      handler({
+        toolName: "grep",
+        toolCallId: "archive-fail",
+        input: { pattern: "x" },
+        content: [{ type: "text", text: "long grep output" }],
+        isError: false,
+        details: { preserved: true },
+      } as any),
+    ).resolves.toBeUndefined();
+  });
+
+  it("fails open when enabled archiving produces no archive path", async () => {
+    const handler = createTestToolResultHandler({
+      fetchImpl: mock(() =>
+        Promise.resolve(
+          Response.json({ compressed_output: "short" }, { status: 200 }),
+        ),
+      ),
+      archiveOriginal: mock(async () => null),
+    });
+
+    await expect(
+      handler({
+        toolName: "bash",
+        toolCallId: "archive-null",
+        input: { command: "printf output" },
+        content: [{ type: "text", text: "a sufficiently long output" }],
+        isError: false,
+        details: { preserved: true },
+      } as any),
+    ).resolves.toBeUndefined();
+  });
+
+  it("fails open when compressed output cannot include its archive path", async () => {
+    const handler = createTestToolResultHandler({
+      fetchImpl: mock(() =>
+        Promise.resolve(
+          Response.json({ compressed_output: "x" }, { status: 200 }),
+        ),
+      ),
+      archiveOriginal: mock(async () => "/archive/long-path.txt"),
+    });
+
+    await expect(
+      handler({
+        toolName: "bash",
+        toolCallId: "archive-note",
+        input: { command: "printf output" },
+        content: [{ type: "text", text: "small original" }],
+        isError: false,
+        details: { preserved: true },
+      } as any),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -547,10 +754,75 @@ describe("extension registration", () => {
     };
   }
 
+  it("respects archiveOriginal false even when cap fallback is configured", async () => {
+    const archiveRoot = mkdtempSync(join(tmpdir(), "compressor-opt-out-"));
+    const previousRoot = process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
+    const realFetch = globalThis.fetch;
+    process.env.PI_TOOL_RESULT_ARCHIVE_DIR = archiveRoot;
+    globalThis.fetch = mock(async () =>
+      Response.json({ compressed_output: "x" }),
+    ) as unknown as typeof fetch;
+
+    try {
+      const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+      const { pi, handlers } = createMockExtensionAPI();
+      localToolResultCompressor(pi, {
+        ...TEST_CONFIG,
+        archiveOriginal: false,
+        capFallbackBytes: 8,
+        routingStrategy: "edgee",
+      });
+      const ctx = createMockContext() as any;
+      await handlers.get("session_start")?.({}, ctx);
+      await handlers.get("tool_result")?.({
+        toolName: "bash",
+        toolCallId: "archive-opt-out",
+        input: { command: "printf output" },
+        content: [{ type: "text", text: "a sufficiently long output" }],
+        isError: false,
+        details: undefined,
+      }, ctx);
+
+      expect(readdirSync(archiveRoot)).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+      if (previousRoot === undefined) delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
+      else process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previousRoot;
+      rmSync(archiveRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes managed archives once on session start", async () => {
+    const archiveRoot = mkdtempSync(join(tmpdir(), "compressor-prune-"));
+    const previousRoot = process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
+    process.env.PI_TOOL_RESULT_ARCHIVE_DIR = archiveRoot;
+    const oldPath = join(
+      archiveRoot,
+      `${Date.now() - 31 * 86_400_000}-bash-call-aaaaaaaaaaaa.txt`,
+    );
+    writeFileSync(oldPath, "old");
+
+    try {
+      const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+      const { pi, handlers } = createMockExtensionAPI();
+      localToolResultCompressor(pi, {
+        ...TEST_CONFIG,
+        archiveOriginal: true,
+        archiveRetention: { maxAgeDays: 30, maxBytes: 1024 },
+      });
+      await handlers.get("session_start")?.({}, createMockContext() as any);
+      expect(existsSync(oldPath)).toBe(false);
+    } finally {
+      if (previousRoot === undefined) delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
+      else process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previousRoot;
+      rmSync(archiveRoot, { recursive: true, force: true });
+    }
+  });
+
   it("registers hooks, fancy-footer widget, and stats command without registering tools", async () => {
     const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
     const { pi, handlers, commands, emittedEvents, registeredTools } = createMockExtensionAPI();
-    localToolResultCompressor(pi);
+    localToolResultCompressor(pi, TEST_CONFIG);
     expect(handlers.has("session_start")).toBe(true);
     expect(handlers.has("turn_start")).toBe(true);
     expect(handlers.has("turn_end")).toBe(true);
@@ -571,7 +843,7 @@ describe("extension registration", () => {
 
     const { pi, handlers, entries } = createMockExtensionAPI();
     const ctx = createMockContext() as any;
-    localToolResultCompressor(pi);
+    localToolResultCompressor(pi, TEST_CONFIG);
 
     await handlers.get("session_start")?.({}, ctx);
   await handlers.get("agent_start")?.({}, ctx);
@@ -629,7 +901,7 @@ describe("extension registration", () => {
         },
       },
     ]) as any;
-    localToolResultCompressor(pi);
+    localToolResultCompressor(pi, TEST_CONFIG);
 
     await handlers.get("session_start")?.({}, ctx);
     await commands.get("compressor-stats")?.handler("", ctx);
@@ -645,7 +917,7 @@ describe("extension registration", () => {
 
     const { pi, handlers, entries } = createMockExtensionAPI();
     const ctx = createMockContext() as any;
-    localToolResultCompressor(pi);
+    localToolResultCompressor(pi, TEST_CONFIG);
 
     await handlers.get("session_start")?.({}, ctx);
     await handlers.get("turn_start")?.({}, ctx);
@@ -685,7 +957,7 @@ describe("extension registration", () => {
 
     const { pi, handlers, entries } = createMockExtensionAPI();
     const ctx = createMockContext() as any;
-    localToolResultCompressor(pi);
+    localToolResultCompressor(pi, TEST_CONFIG);
 
     await handlers.get("session_start")?.({}, ctx);
     await handlers.get("turn_start")?.({}, ctx);
@@ -748,7 +1020,7 @@ describe("extension registration", () => {
 
     const { pi, handlers } = createMockExtensionAPI();
     const ctx = createMockContext() as any;
-    localToolResultCompressor(pi);
+    localToolResultCompressor(pi, TEST_CONFIG);
 
     await handlers.get("session_start")?.({}, ctx);
     await handlers.get("turn_start")?.({}, ctx);
@@ -788,7 +1060,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
   it("bypasses compression silently when enabled is false", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
     const observations: unknown[] = [];
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       enabled: false,
@@ -809,7 +1081,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
 
   it("bypasses compression silently for excluded tools", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       excludeTools: ["read", "ls"],
@@ -841,7 +1113,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
   it("bypasses compression silently for output below minBytes", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
     const observations: unknown[] = [];
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       minBytes: 100,
@@ -874,7 +1146,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
 
   it("measures minBytes using UTF-8 bytes", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "x" }, { status: 200 })));
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       minBytes: 4,
@@ -893,13 +1165,17 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
     expect(result).toBeDefined();
   });
 
-  it("includes enabled/excludeTools/minBytes in config defaults", () => {
+  it("includes enabled, exclusions, and grouped thresholds in config defaults", () => {
     delete process.env.EDGEE_COMPRESSOR_BASE_URL;
     delete process.env.EDGEE_COMPRESSOR_AGENT;
     const cfg = getLocalCompressorConfig();
     expect(cfg.enabled).toBe(true);
     expect(cfg.excludeTools).toEqual([]);
-    expect(cfg.minBytes).toBe(0);
+    expect(cfg.minBytesByGroup).toEqual({
+      shell: 4096,
+      read: 8192,
+      search: 4096,
+    });
   });
 });
 
@@ -938,7 +1214,7 @@ describe("audit-aware compression policy", () => {
   it("standard profile: compresses all tool types", async () => {
     // standard is the default — no setActiveProfile needed
     const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
-    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+    const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
 
     for (const toolName of ["grep", "find", "ls", "read", "bash", "safe_bash"]) {
       fetchImpl.mockClear();
@@ -958,7 +1234,7 @@ describe("audit-aware compression policy", () => {
   it("audit profile: keeps compression enabled for all tool types", async () => {
     setActiveProfile("audit");
     const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
-    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+    const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
 
     for (const toolName of ["grep", "find", "ls", "read", "bash", "safe_bash"]) {
       fetchImpl.mockClear();
@@ -978,7 +1254,7 @@ describe("audit-aware compression policy", () => {
   it("advanced profile: disables compression for search tools (grep, find, ls)", async () => {
     setActiveProfile("advanced");
     const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
-    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+    const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
 
     for (const toolName of ["grep", "find", "ls"]) {
       fetchImpl.mockClear();
@@ -998,7 +1274,7 @@ describe("audit-aware compression policy", () => {
   it("advanced profile: disables compression for shell tools (bash, safe_bash)", async () => {
     setActiveProfile("advanced");
     const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
-    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+    const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
 
     for (const toolName of ["bash", "safe_bash"]) {
       fetchImpl.mockClear();
@@ -1018,7 +1294,7 @@ describe("audit-aware compression policy", () => {
   it("advanced profile: keeps compression enabled for read tool (disableForRead is false)", async () => {
     setActiveProfile("advanced");
     const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
-    const handler = createToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
+    const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
 
     const result = await handler({
       toolName: "read",

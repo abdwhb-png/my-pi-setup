@@ -227,9 +227,65 @@ describe('compressor enabled/excludeTools/minBytes', () => {
         expect(cfg.excludeTools).toEqual([]);
     });
 
-    it('defaults minBytes to 0', () => {
+    it('does not inject a legacy minBytes default', () => {
         const cfg = loadCompressorConfig();
-        expect(cfg.minBytes).toBe(0);
+        expect(cfg.minBytes).toBeUndefined();
+    });
+
+    it('defaults raw archiving to enabled', () => {
+        const cfg = loadCompressorConfig();
+        expect(cfg.archiveOriginal).toBe(true);
+    });
+
+    it('normalizes grouped thresholds and archive retention', () => {
+        expect(
+            normalizeConfig({
+                compressor: {
+                    minBytesByGroup: {
+                        shell: 4096,
+                        read: 8192,
+                        search: 0,
+                    },
+                    archiveRetention: {
+                        maxAgeDays: 30,
+                        maxBytes: 1_073_741_824,
+                    },
+                },
+            }),
+        ).toEqual({
+            compressor: {
+                minBytesByGroup: {
+                    shell: 4096,
+                    read: 8192,
+                    search: 0,
+                },
+                archiveRetention: {
+                    maxAgeDays: 30,
+                    maxBytes: 1_073_741_824,
+                },
+            },
+        });
+    });
+
+    it('rejects grouped thresholds containing unknown keys', () => {
+        expect(
+            normalizeConfig({
+                compressor: {
+                    minBytesByGroup: { shell: 4096, typo: 1 },
+                },
+            }),
+        ).toEqual({});
+    });
+
+    it('drops invalid grouped and retention values', () => {
+        expect(
+            normalizeConfig({
+                compressor: {
+                    minBytesByGroup: { shell: -1, read: 1.5 },
+                    archiveRetention: { maxAgeDays: 0, maxBytes: Infinity },
+                },
+            }),
+        ).toEqual({});
     });
 
     it('normalizes enabled: false', () => {

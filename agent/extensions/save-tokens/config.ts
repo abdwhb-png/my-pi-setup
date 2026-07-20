@@ -33,9 +33,13 @@
  * }
  */
 
-import { SettingsManager } from '@earendil-works/pi-coding-agent';
-import { join } from 'path';
 import { homedir } from 'os';
+import { join } from 'path';
+import { SettingsManager } from '@earendil-works/pi-coding-agent';
+import type {
+    ArchiveRetentionConfig,
+    CompressionThresholds,
+} from './tool-results/types';
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -53,7 +57,10 @@ export interface CompressorConfig {
     summaryGranularity?: 'none' | 'turn' | 'agent' | 'all';
     enabled?: boolean;
     excludeTools?: string[];
+    /** Legacy global threshold; group values take precedence. */
     minBytes?: number;
+    minBytesByGroup?: Partial<CompressionThresholds>;
+    archiveRetention?: Partial<ArchiveRetentionConfig>;
 }
 
 export interface CavemanConfig {
@@ -108,7 +115,7 @@ const DEFAULT_CONFIG: SaveTokensConfig = {
     compressor: {
         enabled: true,
         excludeTools: [],
-        minBytes: 0,
+        archiveOriginal: true,
     },
 };
 
@@ -119,6 +126,49 @@ const DEFAULT_CONFIG: SaveTokensConfig = {
 /** Non-recursive loose dict for safe property reads (avoids `any`/`unknown`). */
 interface LooseDict {
     [key: string]: string | number | boolean | null | object;
+}
+
+const COMPRESSION_GROUPS = ['shell', 'read', 'search'] as const;
+
+function isNonNegativeInteger(value: unknown): value is number {
+    return (
+        typeof value === 'number' &&
+        Number.isFinite(value) &&
+        Number.isInteger(value) &&
+        value >= 0
+    );
+}
+
+function normalizeThresholds(
+    raw: unknown,
+): Partial<CompressionThresholds> | undefined {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const entries = Object.entries(raw);
+    if (entries.some(([key]) => !COMPRESSION_GROUPS.includes(key as never))) {
+        return undefined;
+    }
+    const normalized: Partial<CompressionThresholds> = {};
+    for (const [key, value] of entries) {
+        if (isNonNegativeInteger(value)) {
+            normalized[key as keyof CompressionThresholds] = value;
+        }
+    }
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeArchiveRetention(
+    raw: unknown,
+): Partial<ArchiveRetentionConfig> | undefined {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const value = raw as Record<string, unknown>;
+    const normalized: Partial<ArchiveRetentionConfig> = {};
+    if (isFinitePositive(value.maxAgeDays)) {
+        normalized.maxAgeDays = value.maxAgeDays;
+    }
+    if (isFinitePositive(value.maxBytes)) {
+        normalized.maxBytes = value.maxBytes;
+    }
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
 function normalizeCompressor(raw: object): CompressorConfig | undefined {
@@ -155,14 +205,11 @@ function normalizeCompressor(raw: object): CompressorConfig | undefined {
             ),
         ];
     }
-    if (
-        typeof r.minBytes === 'number' &&
-        Number.isFinite(r.minBytes) &&
-        Number.isInteger(r.minBytes) &&
-        r.minBytes >= 0
-    ) {
-        out.minBytes = r.minBytes;
-    }
+    if (isNonNegativeInteger(r.minBytes)) out.minBytes = r.minBytes;
+    const minBytesByGroup = normalizeThresholds(r.minBytesByGroup);
+    if (minBytesByGroup) out.minBytesByGroup = minBytesByGroup;
+    const archiveRetention = normalizeArchiveRetention(r.archiveRetention);
+    if (archiveRetention) out.archiveRetention = archiveRetention;
     return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -188,7 +235,12 @@ function normalizePonytail(raw: object): PonytailConfig | undefined {
 }
 
 export function isFinitePositive(v: unknown): v is number {
-    return typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0;
+    return (
+        typeof v === 'number' &&
+        Number.isFinite(v) &&
+        Number.isInteger(v) &&
+        v > 0
+    );
 }
 
 export function normalizeTelemetry(raw: object): TelemetryConfig {
@@ -211,8 +263,7 @@ export function normalizeTelemetry(raw: object): TelemetryConfig {
     if (isFinitePositive(r.retentionDays)) out.retentionDays = r.retentionDays;
     if (isFinitePositive(r.maxStringLength))
         out.maxStringLength = r.maxStringLength;
-    if (isFinitePositive(r.maxArrayItems))
-        out.maxArrayItems = r.maxArrayItems;
+    if (isFinitePositive(r.maxArrayItems)) out.maxArrayItems = r.maxArrayItems;
     if (isFinitePositive(r.maxDepth)) out.maxDepth = r.maxDepth;
 
     return out;
@@ -260,8 +311,27 @@ function mergeConfig(
     base: SaveTokensConfig,
     overrides: Partial<SaveTokensConfig>,
 ): SaveTokensConfig {
+    const baseCompressor = base.compressor ?? {};
+    const overrideCompressor = overrides.compressor ?? {};
+    const minBytesByGroup = {
+        ...baseCompressor.minBytesByGroup,
+        ...overrideCompressor.minBytesByGroup,
+    };
+    const archiveRetention = {
+        ...baseCompressor.archiveRetention,
+        ...overrideCompressor.archiveRetention,
+    };
     return {
-        compressor: { ...base.compressor, ...overrides.compressor },
+        compressor: {
+            ...baseCompressor,
+            ...overrideCompressor,
+            ...(Object.keys(minBytesByGroup).length > 0
+                ? { minBytesByGroup }
+                : {}),
+            ...(Object.keys(archiveRetention).length > 0
+                ? { archiveRetention }
+                : {}),
+        },
         caveman: { ...base.caveman, ...overrides.caveman },
         ponytail: { ...base.ponytail, ...overrides.ponytail },
         telemetry: {
