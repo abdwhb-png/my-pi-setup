@@ -20,8 +20,12 @@
  */
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { createBashToolDefinition } from '@earendil-works/pi-coding-agent';
-import { Type } from '@sinclair/typebox';
 import { shouldEnforceNativeTools } from '../_shared/audit-mode/audit-tool-routing';
+import {
+    bashWithStdinSchema,
+    createBashOperations,
+    killActiveBashProcesses,
+} from '../_shared/bash-exec';
 import {
     isDangerous,
     redirectShellCommandWithPolicy,
@@ -69,12 +73,7 @@ export default function (pi: ExtensionAPI) {
         label: '🔒Safe Bash',
         description:
             'Execute a bash command. Provides basic guardrails against accidentally destructive operations (e.g., rm -rf /, sudo). NOT a security sandbox — determined attackers can bypass these checks.',
-        parameters: Type.Object({
-            command: Type.String({ description: 'Bash command to execute' }),
-            timeout: Type.Optional(
-                Type.Number({ description: 'Timeout in seconds (optional)' }),
-            ),
-        }),
+        parameters: bashWithStdinSchema,
         // Custom renderCall shows 🔒 prefix so user knows safe_bash ran
         renderCall: createBashPrefixRenderer('🔒'),
         // renderResult delegates to bash's and optionally appends compression footer
@@ -116,9 +115,12 @@ export default function (pi: ExtensionAPI) {
             if (redirect) {
                 throw new Error(redirect);
             }
-            return bashDefinition.execute(
+            const executionDefinition = createBashToolDefinition(ctx.cwd, {
+                operations: createBashOperations({ stdin: params.stdin }),
+            });
+            return executionDefinition.execute(
                 toolCallId,
-                params,
+                { command: params.command, timeout: params.timeout },
                 signal,
                 onUpdate,
                 ctx,
@@ -147,6 +149,10 @@ export default function (pi: ExtensionAPI) {
     // prompt still included it). Idempotent.
     pi.on('before_agent_start', async () => {
         if (currentMode === 'replace') applyMode(pi, 'replace');
+    });
+
+    pi.on('session_shutdown', () => {
+        killActiveBashProcesses();
     });
 
     pi.registerCommand('safe-bash', {

@@ -38,7 +38,6 @@
  * Linux also requires: bubblewrap, socat, ripgrep
  */
 
-import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import {
@@ -56,6 +55,11 @@ import {
     createBashToolDefinition,
     getAgentDir,
 } from '@earendil-works/pi-coding-agent';
+import {
+    bashWithStdinSchema,
+    createBashOperations,
+    killActiveBashProcesses,
+} from '../_shared/bash-exec';
 import { createBashPrefixRenderer } from '../_shared/bash-prefix-renderer';
 import { appendCompressionFooter } from '../_shared/compression-render';
 import { createWidget } from '../_shared/fancy-footer';
@@ -98,7 +102,7 @@ function readLegacyConfig(path: string): Partial<SandboxConfig> {
     try {
         return normalizeConfig(JSON.parse(readFileSync(path, 'utf-8')));
     } catch (e) {
-        console.error(`Warning: Could not parse ${path}: ${e}`);
+        console.error(`Warning: Could not parse ${path}: ${String(e)}`);
         return {};
     }
 }
@@ -256,85 +260,23 @@ export function buildSandboxShellEnv(
     };
 }
 
-function createSandboxedBashOps(): BashOperations {
-    return {
-        async exec(command, cwd, { onData, signal, timeout }) {
-            if (!existsSync(cwd)) {
-                throw new Error(`Working directory does not exist: ${cwd}`);
+export function createSandboxedBashOps(stdin?: string): BashOperations {
+    return createBashOperations({
+        stdin,
+        detached: true,
+        prepareCommand: async ({ command, cwd }) => ({
+            command: await SandboxManager.wrapWithSandbox(command),
+            cwd,
+            env: buildSandboxShellEnv(),
+        }),
+        afterClose: ({ cwd }) => {
+            try {
+                SandboxManager.cleanupAfterCommand();
+            } catch {
+                ensureGitignored(cwd);
             }
-
-            const wrappedCommand =
-                await SandboxManager.wrapWithSandbox(command);
-            const shellEnv = buildSandboxShellEnv();
-
-            return new Promise((resolve, reject) => {
-                const child = spawn('bash', ['-c', wrappedCommand], {
-                    cwd,
-                    detached: true,
-                    env: shellEnv,
-                    stdio: ['ignore', 'pipe', 'pipe'],
-                });
-
-                let timedOut = false;
-                let timeoutHandle: NodeJS.Timeout | undefined;
-
-                if (timeout !== undefined && timeout > 0) {
-                    timeoutHandle = setTimeout(() => {
-                        timedOut = true;
-                        if (child.pid) {
-                            try {
-                                process.kill(-child.pid, 'SIGKILL');
-                            } catch {
-                                child.kill('SIGKILL');
-                            }
-                        }
-                    }, timeout * 1000);
-                }
-
-                child.stdout?.on('data', (chunk: any) => onData(chunk));
-                child.stderr?.on('data', (chunk: any) => onData(chunk));
-
-                child.on('error', (err) => {
-                    if (timeoutHandle) clearTimeout(timeoutHandle);
-                    reject(err);
-                });
-
-                const onAbort = () => {
-                    if (child.pid) {
-                        try {
-                            process.kill(-child.pid, 'SIGKILL');
-                        } catch {
-                            child.kill('SIGKILL');
-                        }
-                    }
-                };
-
-                signal?.addEventListener('abort', onAbort, { once: true });
-
-                child.on('close', (code) => {
-                    if (timeoutHandle) clearTimeout(timeoutHandle);
-                    signal?.removeEventListener('abort', onAbort);
-
-                    // Clean up bwrap ghost dotfiles (.bashrc, .gitconfig, etc.)
-                    // that are created as mount points for deny-write protection.
-                    try {
-                        SandboxManager.cleanupAfterCommand();
-                    } catch {
-                        // Fallback: ensure ghost dotfiles are gitignored
-                        ensureGitignored(cwd);
-                    }
-
-                    if (signal?.aborted) {
-                        reject(new Error('aborted'));
-                    } else if (timedOut) {
-                        reject(new Error(`timeout:${timeout}`));
-                    } else {
-                        resolve({ exitCode: code });
-                    }
-                });
-            });
         },
-    };
+    });
 }
 
 export default function (pi: ExtensionAPI) {
@@ -383,6 +325,7 @@ export default function (pi: ExtensionAPI) {
 
     pi.registerTool({
         ...cachedBash,
+        parameters: bashWithStdinSchema,
         label: 'bash (sandboxed)',
         // Show 🛡️ prefix when sandbox active, no prefix when disabled
         renderCall: createBashPrefixRenderer(() =>
@@ -406,14 +349,18 @@ export default function (pi: ExtensionAPI) {
             return component;
         },
         async execute(id, params, signal, onUpdate, _ctx) {
+            const input = { command: params.command, timeout: params.timeout };
             if (!sandboxEnabled || !sandboxInitialized) {
-                return cachedBash.execute(id, params, signal, onUpdate);
+                const localBash = createBashTool(projectCwd, {
+                    operations: createBashOperations({ stdin: params.stdin }),
+                });
+                return localBash.execute(id, input, signal, onUpdate);
             }
 
             const sandboxedBash = createBashTool(projectCwd, {
-                operations: createSandboxedBashOps(),
+                operations: createSandboxedBashOps(params.stdin),
             });
-            return sandboxedBash.execute(id, params, signal, onUpdate);
+            return sandboxedBash.execute(id, input, signal, onUpdate);
         },
     });
 
@@ -478,13 +425,14 @@ export default function (pi: ExtensionAPI) {
             sandboxInitialized = false;
             updateSandboxStatus(ctx, 'error');
             ctx.ui.notify(
-                `Sandbox initialization failed: ${err instanceof Error ? err.message : err}`,
+                `Sandbox initialization failed: ${err instanceof Error ? err.message : String(err)}`,
                 'error',
             );
         }
     });
 
     pi.on('session_shutdown', async () => {
+        killActiveBashProcesses();
         if (sandboxInitialized) {
             try {
                 await SandboxManager.reset();
@@ -554,7 +502,7 @@ export default function (pi: ExtensionAPI) {
                     sandboxInitialized = false;
                     updateSandboxStatus(ctx, 'error');
                     ctx.ui.notify(
-                        `Sandbox initialization failed: ${err instanceof Error ? err.message : err}`,
+                        `Sandbox initialization failed: ${err instanceof Error ? err.message : String(err)}`,
                         'error',
                     );
                 }
