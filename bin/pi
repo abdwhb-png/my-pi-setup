@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   isPackageMutationCommand,
   isToolGroupsPackageConfigured,
@@ -11,6 +12,9 @@ import {
 const args = process.argv.slice(2);
 const cwd = process.cwd();
 const realPi = process.env.PI_REAL_BIN || "/home/abdwhb/.bun/bin/pi";
+if (!process.env.PI_SUBAGENT_PI_BINARY?.trim()) {
+  process.env.PI_SUBAGENT_PI_BINARY = fileURLToPath(import.meta.url);
+}
 
 if (process.env.PI_PACKAGE_FINALIZER_ACTIVE !== "1") {
   await runPackageFinalizer(cwd, { force: false, quiet: true });

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 describe("pi-wrapper-lib", () => {
   it("detects package mutation commands", async () => {
@@ -100,6 +101,36 @@ describe("pi-wrapper-lib", () => {
     expect(captured).toEqual({
       args: ["-p", "task"],
       requested: JSON.stringify(["@inspect", "write"]),
+    });
+  });
+
+  it("makes subagents relaunch through the wrapper", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pi-fw-subagent-"));
+    const output = join(cwd, "capture.json");
+    const executable = join(cwd, "capture.ts");
+    const wrapper = resolve(import.meta.dir, "../../bin/pi");
+    writeFileSync(
+      executable,
+      `#!/usr/bin/env bun\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(output)}, JSON.stringify({ subagentPiBinary: process.env.PI_SUBAGENT_PI_BINARY }));\n`,
+    );
+    chmodSync(executable, 0o755);
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PI_PACKAGE_FINALIZER_ACTIVE: "1",
+      PI_REAL_BIN: executable,
+    };
+    delete env.PI_SUBAGENT_PI_BINARY;
+
+    const result = spawnSync(wrapper, ["-p", "task"], {
+      cwd,
+      encoding: "utf-8",
+      env,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(readFileSync(output, "utf-8"))).toEqual({
+      subagentPiBinary: wrapper,
     });
   });
 });
