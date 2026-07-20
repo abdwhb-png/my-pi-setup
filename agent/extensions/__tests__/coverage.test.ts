@@ -25,10 +25,13 @@ function moduleBasename(filePath: string): string {
 
 function isImportedByTest(moduleName: string, testFiles: string[]): boolean {
   const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`from\\s+['"][^'"]*\\/${escaped}(\\.ts)?['"]`);
+  const patterns = [
+    new RegExp(`from\\s+['"][^'"]*\\/${escaped}(\\.ts)?['"]`),
+    new RegExp(`import\\(\\s*['"][^'"]*\\/${escaped}(\\.ts)?['"]\\s*\\)`),
+  ];
   for (const tf of testFiles) {
     const content = fs.readFileSync(tf, "utf-8");
-    if (pattern.test(content)) return true;
+    if (patterns.some((pattern) => pattern.test(content))) return true;
   }
   return false;
 }

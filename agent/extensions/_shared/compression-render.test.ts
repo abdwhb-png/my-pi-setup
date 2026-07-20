@@ -3,10 +3,10 @@ import { Container } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   appendCompressionFooter,
-  formatCompressionFooter,
   icon,
   readCompressionDetails,
 } from "./compression-render";
+import { formatCompressionFooter } from "../save-tokens/tool-renderers";
 
 function createMockTheme() {
   return {

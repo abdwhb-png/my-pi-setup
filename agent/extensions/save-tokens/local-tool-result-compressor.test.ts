@@ -4,18 +4,20 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  createCompressionMetrics,
-  createCompressionMetricsFromEvents,
   createToolResultHandler,
   extractCompressibleText,
-  formatDetailedStats,
-  formatStatsStatus,
-  formatStatsWidgetLines,
-  getLocalCompressorConfig,
   isCompressibleToolName,
   chooseCompressionRoute,
   shouldNotifyCompressionSummary,
 } from "./local-tool-result-compressor";
+import { getLocalCompressorConfig } from "./config-runtime";
+import {
+  createCompressionMetrics,
+  createCompressionMetricsFromEvents,
+  formatDetailedStats,
+  formatStatsStatus,
+  formatStatsWidgetLines,
+} from "./tool-results/metrics";
 import { COMPRESSION_EVENT_ENTRY_TYPE } from "../_shared/compression-protocol";
 import type { CompressionDetails } from "../_shared/compression-protocol";
 

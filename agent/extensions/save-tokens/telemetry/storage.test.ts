@@ -29,7 +29,7 @@ import {
     type TelemetryReadResult,
     type TelemetryPurgeResult,
 } from './storage';
-import { TELEMETRY_SCHEMA_VERSION } from './types';
+import { TELEMETRY_SCHEMA_VERSION, type TelemetryEvent } from './types';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -38,7 +38,9 @@ import { TELEMETRY_SCHEMA_VERSION } from './types';
 /**
  * Create a minimal valid telemetry event for writer tests.
  */
-function makeEvent(overrides: Record<string, unknown> = {}) {
+function makeEvent(
+    overrides: Record<string, unknown> = {},
+): TelemetryEvent {
     return {
         schemaVersion: TELEMETRY_SCHEMA_VERSION,
         eventId: 'evt-test-001',
@@ -47,7 +49,7 @@ function makeEvent(overrides: Record<string, unknown> = {}) {
         event: 'experiment_tag',
         tag: 'test',
         ...overrides,
-    };
+    } as TelemetryEvent;
 }
 
 /**
@@ -414,7 +416,11 @@ describe('writer — concurrent writes ordering', () => {
         await Promise.all([p1, p2, p3]);
         await writer.flush();
 
-        const result = await readTelemetryFile(root, datePartition(), 'sess-concur');
+        const result = await readTelemetryFile(
+            root,
+            datePartition('2026-07-18T00:00:01Z'),
+            'sess-concur',
+        );
         expect(result.records).toHaveLength(3);
         expect(result.records[0].eventId).toBe('evt-con-1');
         expect(result.records[1].eventId).toBe('evt-con-2');

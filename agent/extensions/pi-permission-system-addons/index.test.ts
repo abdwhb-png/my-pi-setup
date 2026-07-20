@@ -13,6 +13,11 @@ let agentDir = '';
 
 mock.module('@earendil-works/pi-coding-agent', () => ({
     getAgentDir: () => agentDir,
+    SettingsManager: {
+        create: () => {
+            throw new Error('settings unavailable in unit test');
+        },
+    },
 }));
 
 const { default: extension } = await import('./index.ts');

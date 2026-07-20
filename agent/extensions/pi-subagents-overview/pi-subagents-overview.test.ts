@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { resolveToolAliases } from '../_shared/tool-groups/resolver';
 import { icon } from './ui';
 
 const HOME = process.env.HOME || '/home/abdwhb';
@@ -37,14 +38,27 @@ describe('pi-subagents-overview', () => {
             expect(agentNames.length).toBeGreaterThan(0);
         });
 
-        it('worker override has safe_bash tool', () => {
+        it('worker override resolves to safe_bash without raw bash', () => {
             const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8');
             const parsed = JSON.parse(raw);
             const overrides = parsed?.subagents?.agentOverrides ?? {};
             const workerTools = overrides.worker?.tools;
             expect(Array.isArray(workerTools)).toBe(true);
-            expect(workerTools).toContain('safe_bash');
             expect(workerTools).not.toContain('bash');
+
+            const groupsPath = path.join(HOME, '.pi', 'agent', 'tool-groups.json');
+            const groups = JSON.parse(fs.readFileSync(groupsPath, 'utf8')).groups;
+            const available = [
+                ...new Set(
+                    [...Object.values(groups).flat(), ...workerTools].filter(
+                        (tool): tool is string =>
+                            typeof tool === 'string' && !tool.startsWith('@'),
+                    ),
+                ),
+            ];
+            const result = resolveToolAliases(workerTools, available, groups);
+            expect(result.diagnostics).toEqual([]);
+            expect(result.names).toContain('safe_bash');
         });
 
         it('scout override tools are valid', () => {
