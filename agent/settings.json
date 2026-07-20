@@ -1,8 +1,8 @@
 {
   "lastChangelogVersion": "0.80.7",
-  "defaultProvider": "cpa",
-  "defaultModel": "ocg/go-deepseek-v4-flash",
-  "defaultThinkingLevel": "high",
+  "defaultProvider": "zai",
+  "defaultModel": "glm-5.2",
+  "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
   "theme": "dark",
   "steeringMode": "all",
@@ -12,6 +12,7 @@
   ],
   "extensions": [
     "/home/abdwhb/.pi/agent/extensions/package-finalizer.ts",
+    "/home/abdwhb/projects/shared-services/pi-lens-dist/index.js",
     "/home/abdwhb/.pi/agent/extensions/pi-overrides/index.ts"
   ],
   "packages": [
@@ -27,17 +28,10 @@
     "npm:@hypabolic/pi-hypa",
     "npm:@gotgenes/pi-permission-system",
     "../../projects/pi-integrations/pi-roles",
-    "/home/abdwhb/projects/shared-services/pi-lens",
     "npm:context-mode",
     "npm:@ogulcancelik/pi-herdr",
     "./extensions/tool-groups"
   ],
-  "safeBash": {
-    "mode": "replace",
-    "allowedShellCommands": [
-      "find"
-    ]
-  },
   "packageLifecycleTrust": {
     "confirm": false,
     "showStatus": true
@@ -47,6 +41,9 @@
       "factory-ai": false,
       "cpa": true
     }
+  },
+  "safeBash": {
+    "mode": "coexist"
   },
   "saveTokens": {
     "caveman": {
@@ -72,15 +69,13 @@
       "respectGitignore": false
     },
     "additionalDirectories": [
-      "/home/abdwhb/projects/pi-integrations",
+      "/home/abdwhb/.pi",
       "/home/abdwhb/projects/shared-services"
     ],
     "enableRealtimeFallback": true
   },
   "toolSummary": {
     "tools": [
-      "edit",
-      "write",
       "edit_plan",
       "write_plan",
       "session_plan",
@@ -89,7 +84,11 @@
       "hypa_shell",
       "load_skill",
       "subagent",
-      "mcp"
+      "mcp",
+      "@files-write",
+      "@memory",
+      "lens_diagnostics",
+      "ast_grep_replace"
     ]
   },
   "translate": {
@@ -119,6 +118,7 @@
           "cpa/deepseek/deepseek-v4-flash",
           "cpa/qwen/qwen3.6-plus-preview:free"
         ],
+        "thinking": "high",
         "tools": [
           "@inspect",
           "@lens-write",

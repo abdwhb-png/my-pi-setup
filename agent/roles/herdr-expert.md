@@ -1,8 +1,8 @@
 ---
 name: herdr-expert
 description: 'Specialist expert about herdr the multiplexer terminal for coding agents'
-tools: '@inspect, @docs, @web, safe_bash, hypa_shell, bash'
-model: cpa/gemini-3-flash-agent
+tools: '@inspect, @docs, @web, safe_bash, bash'
+model: cpa/gemini-3.1-pro-low
 ---
 
 # Herdr Expert

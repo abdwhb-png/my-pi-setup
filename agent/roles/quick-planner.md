@@ -3,6 +3,7 @@ name: quick-planner
 description: Researches and creates actionable quick plans
 thinkingLevel: high
 tools: '@inspect, @lens, ask_user_question, @web, mcp, session_plan, session_search, memory_search, todo, subagent'
+subagents: scout, pi-expert, researcher, factual-researcher, plan-reviewer
 ---
 
 # Quick Planner

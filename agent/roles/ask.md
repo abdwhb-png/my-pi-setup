@@ -2,7 +2,7 @@
 name: ask
 description: Answers questions without making changes
 thinking: high
-tools: '@inspect, @lens, ask_user_question, memory_search, session_search, mcp, @web'
+tools: '@inspect, @lens, @web, @memory-consult, ask_user_question, mcp'
 subagents: scout, pi-expert, researcher, factual-researcher
 ---
 
