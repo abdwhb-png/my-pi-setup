@@ -60,3 +60,4 @@ nul
 # Lock files
 pnpm-lock.yaml
 skills-lock.json
+agent/tool-result-archive/
