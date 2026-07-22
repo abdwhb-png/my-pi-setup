@@ -91,6 +91,7 @@ export function handleCommitPlanInput(
 export class CommitPlanSession implements Component {
     private state: CommitPlanSessionState;
     private editorComponent: Editor;
+    private fileViewportStart = 0;
 
     constructor(
         private config: {
@@ -153,6 +154,7 @@ export class CommitPlanSession implements Component {
         // Intercept Tab to switch focus before the Editor component can process it
         if (isTab(data)) {
             this.state = handleCommitPlanInput(this.state, data);
+            this.config.tui.requestRender();
             return;
         }
 
@@ -167,7 +169,11 @@ export class CommitPlanSession implements Component {
             return;
         }
 
-        this.state = handleCommitPlanInput(this.state, data);
+        const nextState = handleCommitPlanInput(this.state, data);
+        if (nextState !== this.state) {
+            this.state = nextState;
+            this.config.tui.requestRender();
+        }
     }
 
     invalidate(): void {
@@ -203,7 +209,35 @@ export class CommitPlanSession implements Component {
 
         lines.push(theme.fg('border', '├' + '─'.repeat(innerWidth) + '┤'));
 
-        const filesLabel = focus === 'files' ? ' 📁 Select Files:' : ' Files:';
+        const terminalRows = Math.max(1, this.config.tui.terminal.rows);
+        const fileViewportHeight = Math.max(1, terminalRows - lines.length - 2);
+        const maxViewportStart = Math.max(0, files.length - fileViewportHeight);
+
+        if (fileCursorIndex < this.fileViewportStart) {
+            this.fileViewportStart = fileCursorIndex;
+        } else if (
+            fileCursorIndex >=
+            this.fileViewportStart + fileViewportHeight
+        ) {
+            this.fileViewportStart = fileCursorIndex - fileViewportHeight + 1;
+        }
+        this.fileViewportStart = Math.max(
+            0,
+            Math.min(this.fileViewportStart, maxViewportStart),
+        );
+
+        const fileViewportEnd = Math.min(
+            files.length,
+            this.fileViewportStart + fileViewportHeight,
+        );
+        const rangeLabel =
+            files.length > fileViewportHeight
+                ? ` ${this.fileViewportStart + 1}-${fileViewportEnd} of ${files.length}`
+                : '';
+        const filesLabel =
+            focus === 'files'
+                ? ` 📁 Select Files:${rangeLabel}`
+                : ` Files:${rangeLabel}`;
         lines.push(
             theme.fg('border', '│') +
                 ' ' +
@@ -217,7 +251,7 @@ export class CommitPlanSession implements Component {
                     theme.fg('muted', '(no files)'),
             );
         } else {
-            for (let i = 0; i < files.length; i++) {
+            for (let i = this.fileViewportStart; i < fileViewportEnd; i++) {
                 const f = files[i];
                 const isFocused = focus === 'files' && i === fileCursorIndex;
                 const checkbox = f.selected

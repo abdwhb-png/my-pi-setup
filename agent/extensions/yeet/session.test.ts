@@ -16,9 +16,9 @@ function createMockTheme() {
     };
 }
 
-function createMockTui() {
+function createMockTui(rows = 40) {
     return {
-        terminal: { rows: 40 },
+        terminal: { rows },
         requestRender: mock(),
     };
 }
@@ -237,6 +237,36 @@ describe('CommitPlanSession', () => {
             );
         });
 
+        it('keeps the focused file visible when the file list exceeds the terminal height', () => {
+            const tui = createMockTui(16);
+            const files = Array.from(
+                { length: 20 },
+                (_, index) => `src/file-${index + 1}.ts`,
+            );
+            const scrollingSession = new CommitPlanSession({
+                tui: tui as never,
+                theme: createMockTheme() as never,
+                params: { ...defaultParams, files },
+                done: mock(),
+            });
+
+            scrollingSession.handleInput('\t');
+            for (let index = 0; index < 15; index++) {
+                scrollingSession.handleInput('ArrowDown');
+            }
+
+            const visibleOutput = scrollingSession
+                .render(80)
+                .slice(0, tui.terminal.rows);
+
+            expect(
+                visibleOutput.some((line) => line.includes('src/file-16.ts')),
+            ).toBe(true);
+            expect(
+                visibleOutput.some((line) => line.includes('src/file-1.ts')),
+            ).toBe(false);
+        });
+
         it('includes the help hint bar', () => {
             const output = session.render(80);
             expect(output.some((line) => line.includes('[Enter] Accept'))).toBe(
@@ -264,6 +294,22 @@ describe('CommitPlanSession', () => {
             expect(() => session.handleInput('ArrowDown')).not.toThrow();
             expect(() => session.handleInput('a')).not.toThrow();
             expect(() => session.handleInput('Backspace')).not.toThrow();
+        });
+
+        it('requests a rerender when file navigation changes the viewport', () => {
+            const tui = createMockTui();
+            const navigatingSession = new CommitPlanSession({
+                tui: tui as never,
+                theme: createMockTheme() as never,
+                params: defaultParams,
+                done: mock(),
+            });
+
+            navigatingSession.handleInput('\t');
+            tui.requestRender.mockClear();
+            navigatingSession.handleInput('ArrowDown');
+
+            expect(tui.requestRender).toHaveBeenCalledTimes(1);
         });
 
         it('calls done with accepted=true, cancelled=false on Enter', () => {
