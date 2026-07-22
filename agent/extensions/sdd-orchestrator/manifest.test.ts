@@ -13,7 +13,8 @@ import type { ParsedPlan } from './types.ts';
 const config: SddConfig = {
     agents: {
         assessor: 'orchestration-assessor',
-        worker: 'worker',
+        quickWorker: 'quick-worker',
+        worker: 'sdd-worker',
         combinedReviewer: 'sdd-combined-reviewer',
         specReviewer: 'sdd-spec-reviewer',
         qualityReviewer: 'sdd-quality-reviewer',

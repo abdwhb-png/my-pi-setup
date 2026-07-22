@@ -172,10 +172,14 @@ function assertRepairWithinLimit(
 export function buildWorkerRequest(
     input: WorkerRequestInput,
 ): SubagentDelegationRequest {
+    const agent =
+        input.task.effectiveProfile === 'light'
+            ? input.config.agents.quickWorker
+            : input.config.agents.worker;
     return {
         version: 1,
         requestId: input.requestId,
-        agent: input.config.agents.worker,
+        agent,
         task: [
             'Implement the following approved task and no other scope.',
             '',

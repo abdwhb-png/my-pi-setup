@@ -2,6 +2,7 @@ import { loadExtensionConfig } from '../_shared/config-loader.ts';
 
 const AGENT_KEYS = [
     'assessor',
+    'quickWorker',
     'worker',
     'combinedReviewer',
     'specReviewer',
@@ -30,7 +31,8 @@ interface ConfigLayer {
 const DEFAULT_CONFIG: SddConfig = {
     agents: {
         assessor: 'orchestration-assessor',
-        worker: 'worker',
+        quickWorker: 'quick-worker',
+        worker: 'sdd-worker',
         combinedReviewer: 'sdd-combined-reviewer',
         specReviewer: 'sdd-spec-reviewer',
         qualityReviewer: 'sdd-quality-reviewer',

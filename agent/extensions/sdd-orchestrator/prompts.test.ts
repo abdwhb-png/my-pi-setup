@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import type { SubagentDelegationResponse } from 'pi-subagents/delegation';
 import type { Assessment } from './assessment.ts';
 import type { SddConfig } from './config.ts';
@@ -18,7 +18,8 @@ import type { ParsedPlan } from './types.ts';
 const config: SddConfig = {
     agents: {
         assessor: 'orchestration-assessor',
-        worker: 'worker',
+        quickWorker: 'quick-worker',
+        worker: 'sdd-worker',
         combinedReviewer: 'sdd-combined-reviewer',
         specReviewer: 'sdd-spec-reviewer',
         qualityReviewer: 'sdd-quality-reviewer',
@@ -92,7 +93,7 @@ describe('buildWorkerRequest', () => {
         expect(request).toMatchObject({
             version: 1,
             requestId: 'run-1:task-6:worker:1',
-            agent: 'worker',
+            agent: 'sdd-worker',
             model: 'worker-model',
             context: 'fresh',
             cwd: '/repo',
@@ -124,6 +125,18 @@ describe('buildWorkerRequest', () => {
         for (const file of approvedTask.files) expect(request.task).toContain(file);
         expect(request.task).toContain(approvedTask.verify[0]!.command);
         expect(request.task).toContain('RED-GREEN-REFACTOR');
+    });
+
+    test('routes Light tasks to the quick worker', () => {
+        const request = buildWorkerRequest({
+            requestId: 'run-1:task-6:worker:1',
+            cwd: '/repo',
+            config,
+            task: { ...approvedTask, effectiveProfile: 'light' },
+        });
+
+        expect(request.agent).toBe('quick-worker');
+        expect(request.model).toBe('worker-model');
     });
 });
 
@@ -582,8 +595,8 @@ describe('read-only agent contracts', () => {
         expect(agent).toContain(
             'description: Read-only SDD complexity and risk signal assessor',
         );
-        expect(agent).toContain('tools: read, grep, find, ls');
-        expect(agent).toContain('thinking: high');
+        expect(agent).toContain("tools: '@inspect, @lens-inspect'");
+        expect(agent).toContain('thinking: medium');
         expect(agent).toContain('systemPromptMode: replace');
         expect(agent).toContain('inheritProjectContext: true');
         expect(agent).toContain('inheritSkills: false');
@@ -608,7 +621,9 @@ describe('read-only agent contracts', () => {
         for (const [name, focus] of Object.entries(contracts)) {
             const agent = readAgent(name);
             expect(agent).toContain(`name: ${name}`);
-            expect(agent).toContain('tools: read, grep, find, ls, safe_bash');
+            expect(agent).toContain(
+                "tools: '@inspect, @lens-inspect, safe_bash'",
+            );
             expect(agent).toContain('defaultContext: fresh');
             expect(agent).toContain('acceptanceRole: read-only');
             expect(agent).toContain('completionGuard: false');
@@ -652,5 +667,72 @@ describe('read-only agent contracts', () => {
         expect(request.task).toContain('Review stage: integration');
         expect(agent).toContain('supplied review stage');
         expect(agent).toContain('`combined` or `integration`');
+    });
+});
+
+describe('writer agent contracts', () => {
+    const agentUrl = (name: string) =>
+        new URL(`../../agents/${name}.md`, import.meta.url);
+
+    test('defines quick-worker as a strict bounded medium-thinking writer', () => {
+        const agent = readFileSync(agentUrl('quick-worker'), 'utf8');
+
+        expect(agent).toContain('name: quick-worker');
+        expect(agent).toContain('thinking: medium');
+        expect(agent).toContain('inheritProjectContext: true');
+        expect(agent).toContain('defaultContext: fresh');
+        expect(agent).toContain(
+            'turnBudget: {"maxTurns":16,"graceTurns":4}',
+        );
+        expect(agent).toContain('acceptanceRole: writer');
+        expect(agent).not.toContain('contact_supervisor');
+        expect(agent).toContain('DONE:');
+        expect(agent).toContain('BLOCKED:');
+        expect(agent).toMatch(/do not promote yourself/i);
+        expect(existsSync(agentUrl('task-doer'))).toBeFalse();
+    });
+
+    test('defines sdd-worker as a high-thinking autonomous SDD writer', () => {
+        const agent = readFileSync(agentUrl('sdd-worker'), 'utf8');
+
+        expect(agent).toContain('name: sdd-worker');
+        expect(agent).toContain('thinking: high');
+        expect(agent).toContain('inheritProjectContext: true');
+        expect(agent).toContain('defaultContext: fresh');
+        expect(agent).toContain('acceptanceRole: writer');
+        expect(agent).not.toContain('contact_supervisor');
+        expect(agent).toContain('RED-GREEN-REFACTOR');
+        expect(agent).toContain('BLOCKED:');
+    });
+
+    test('configures quick-worker and sdd-worker without the legacy override', () => {
+        const settings = JSON.parse(
+            readFileSync(new URL('../../settings.json', import.meta.url), 'utf8'),
+        ) as {
+            subagents?: {
+                agentOverrides?: Record<string, { model?: string }>;
+            };
+        };
+        const overrides = settings.subagents?.agentOverrides;
+
+        expect(overrides?.['quick-worker']?.model).toBe(
+            'cpa/ocg/go-deepseek-v4-flash',
+        );
+        expect(overrides?.['sdd-worker']?.model).toBe(
+            'cpa/ocg/go-deepseek-v4-flash',
+        );
+        expect(overrides?.['task-doer']).toBeUndefined();
+    });
+
+    test('limits the pi-subagents intercom bridge to forked children', () => {
+        const configPath = new URL(
+            '../subagent/config.json',
+            import.meta.url,
+        );
+        const subagentConfig = JSON.parse(
+            readFileSync(configPath, 'utf8'),
+        ) as { intercomBridge?: { mode?: string } };
+
+        expect(subagentConfig.intercomBridge?.mode).toBe('fork-only');
     });
 });

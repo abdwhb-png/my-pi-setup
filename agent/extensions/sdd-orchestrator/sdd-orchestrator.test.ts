@@ -49,7 +49,8 @@ afterEach(() => {
 const config: SddConfig = {
     agents: {
         assessor: 'orchestration-assessor',
-        worker: 'worker',
+        quickWorker: 'quick-worker',
+        worker: 'sdd-worker',
         combinedReviewer: 'sdd-combined-reviewer',
         specReviewer: 'sdd-spec-reviewer',
         qualityReviewer: 'sdd-quality-reviewer',
@@ -451,6 +452,33 @@ test('prepare performs one bounded JSON repair and stores a complete draft', asy
             globalProfile: 'standard',
         }),
     ).rejects.toThrow();
+});
+
+test('prepare reuses one validated assessment for an unchanged plan', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    const rt = runtime(store, [
+        {
+            version: 1,
+            requestId: 'ignored',
+            status: 'completed',
+            output: assessment,
+        },
+    ]);
+    registerSddExtension(pi.api as never, rt);
+
+    const first = await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    });
+    const second = await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    });
+
+    expect(rt.requests).toHaveLength(1);
+    expect(second.details.manifest).toEqual(first.details.manifest);
 });
 
 test('approval stores manifest and run before workflow and appends only the SDD entry', async () => {
@@ -1126,6 +1154,45 @@ test('status merges legacy queue read-only and operational tools return snapshot
     });
     expect(direct.details.snapshot.state).toBe('completed');
     expect(readFileSync(legacyPath, 'utf8')).toBe(before);
+});
+
+test('status exposes the exact blocked worker output', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'blocked-run';
+    const manifest = {
+        ...approvedManifest(runId),
+        globalProfile: 'light' as const,
+        maximumLaunches: 1,
+        tasks: [approvedTask('task-1', 'light')],
+    };
+    const blocked = snapshot(runId);
+    blocked.state = 'needs_input';
+    blocked.terminalReason = 'worker_blocked';
+    blocked.tasks['task-1'] = {
+        id: 'task-1',
+        state: 'needs_input',
+        launches: 1,
+        maxLaunches: 1,
+        terminalReason: 'worker_blocked',
+        terminalResponses: {
+            'blocked-request': {
+                version: 1,
+                requestId: 'blocked-request',
+                status: 'acceptance_failed',
+                output: 'BLOCKED: choose the public API shape',
+            },
+        },
+    };
+    seedApproved(store, manifest, blocked);
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+
+    const listed = await execute(pi.tools.get('sdd_status'), { runId });
+
+    expect(listed.details.observation).toMatchObject({
+        blockedDecision: 'worker_blocked',
+        blockedOutput: 'BLOCKED: choose the public API shape',
+    });
 });
 
 test('Direct completion resumes a dependent task and returns the durable result', async () => {

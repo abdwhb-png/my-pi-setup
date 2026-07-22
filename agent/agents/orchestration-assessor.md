@@ -2,7 +2,7 @@
 name: orchestration-assessor
 description: Read-only SDD complexity and risk signal assessor
 tools: '@inspect, @lens-inspect'
-thinking: high
+thinking: medium
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

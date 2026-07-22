@@ -1770,6 +1770,10 @@ export class SddWorkflow {
         response: SubagentDelegationResponse,
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
+        if (/^BLOCKED:\s+\S/.test(response.output?.trimStart() ?? '')) {
+            this.failTask(runId, taskId, 'worker_blocked', 'needs_input');
+            return this.finishRun(runId, 'needs_input');
+        }
         if (response.error === 'source_digest_changed') {
             this.failTask(
                 runId,

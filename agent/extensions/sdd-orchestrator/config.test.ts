@@ -11,7 +11,8 @@ test('loads the SDD defaults when settings are absent', () => {
         expect(loadSddConfig(cwd, agentDir)).toEqual({
             agents: {
                 assessor: 'orchestration-assessor',
-                worker: 'worker',
+                quickWorker: 'quick-worker',
+                worker: 'sdd-worker',
                 combinedReviewer: 'sdd-combined-reviewer',
                 specReviewer: 'sdd-spec-reviewer',
                 qualityReviewer: 'sdd-quality-reviewer',
@@ -39,7 +40,11 @@ test('deep-merges valid global and project settings and ignores invalid fields',
             join(agentDir, 'settings.json'),
             JSON.stringify({
                 sddOrchestrator: {
-                    agents: { assessor: 'custom-assessor', worker: 42 },
+                    agents: {
+                        assessor: 'custom-assessor',
+                        quickWorker: 'custom-quick-worker',
+                        worker: 42,
+                    },
                     models: { worker: 'worker-model', unknown: 'ignored' },
                     timeoutsMs: { assessor: 1_000, reviewer: -1 },
                     maxConcurrentWriters: 4,
@@ -67,6 +72,7 @@ test('deep-merges valid global and project settings and ignores invalid fields',
         expect(loadSddConfig(cwd, agentDir)).toEqual({
             agents: {
                 assessor: 'custom-assessor',
+                quickWorker: 'custom-quick-worker',
                 worker: 'custom-worker',
                 combinedReviewer: 'sdd-combined-reviewer',
                 specReviewer: 'sdd-spec-reviewer',

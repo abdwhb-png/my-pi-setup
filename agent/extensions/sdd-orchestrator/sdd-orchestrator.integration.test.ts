@@ -24,7 +24,8 @@ import { SddWorkflow } from './workflow.ts';
 const config: SddConfig = {
     agents: {
         assessor: 'orchestration-assessor',
-        worker: 'worker',
+        quickWorker: 'quick-worker',
+        worker: 'sdd-worker',
         combinedReviewer: 'sdd-combined-reviewer',
         specReviewer: 'sdd-spec-reviewer',
         qualityReviewer: 'sdd-quality-reviewer',
@@ -144,6 +145,16 @@ function acceptedWorker(output: string): ResponseFactory {
         status: 'completed',
         output,
         acceptance: { status: 'verified', explicit: true },
+    });
+}
+
+function blockedWorker(reason: string): ResponseFactory {
+    return (request) => ({
+        version: 1,
+        requestId: request.requestId,
+        status: 'acceptance_failed',
+        output: `BLOCKED: ${reason}\nDecision needed: approve the missing decision`,
+        error: 'acceptance report rejected',
     });
 }
 
@@ -681,7 +692,7 @@ test('Light, Standard, and Critical honor their exact correction-path ceilings',
         },
     });
     expect(light.requests.slice(1).map((request) => request.agent)).toEqual([
-        'worker',
+        'quick-worker',
     ]);
 
     const standard = await runProfile(
@@ -701,9 +712,9 @@ test('Light, Standard, and Critical honor their exact correction-path ceilings',
         },
     });
     expect(standard.requests.slice(1).map((request) => request.agent)).toEqual([
-        'worker',
+        'sdd-worker',
         'sdd-combined-reviewer',
-        'worker',
+        'sdd-worker',
         'sdd-combined-reviewer',
     ]);
 
@@ -728,16 +739,16 @@ test('Light, Standard, and Critical honor their exact correction-path ceilings',
         },
     });
     expect(critical.requests.slice(1).map((request) => request.agent)).toEqual([
-        'worker',
+        'sdd-worker',
         'sdd-spec-reviewer',
-        'worker',
+        'sdd-worker',
         'sdd-spec-reviewer',
         'sdd-quality-reviewer',
-        'worker',
+        'sdd-worker',
         'sdd-quality-reviewer',
         'sdd-combined-reviewer',
     ]);
-});
+}, 15_000);
 
 test('worker and reviewer restart boundaries require explicit public-tool attestation', async () => {
     for (const boundary of ['worker', 'reviewer'] as const) {
@@ -1269,7 +1280,7 @@ test('review JSON repair stays inside Standard ceiling and terminal statuses fai
         },
     });
     expect(repaired.requests.slice(1).map((request) => request.agent)).toEqual([
-        'worker',
+        'sdd-worker',
         'sdd-combined-reviewer',
         'sdd-combined-reviewer',
     ]);
@@ -1301,6 +1312,25 @@ test('review JSON repair stays inside Standard ceiling and terminal statuses fai
             },
         });
     }
+}, 15_000);
+
+test('an exact worker BLOCKED result pauses the run for user input', async () => {
+    const result = await runProfile(
+        'light',
+        ['isolated_scope', 'clear_requirements', 'existing_test_pattern'],
+        [blockedWorker('an unapproved API choice is required')],
+    );
+
+    expect(result.snapshot).toMatchObject({
+        state: 'needs_input',
+        tasks: {
+            'task-1': {
+                state: 'needs_input',
+                terminalReason: 'worker_blocked',
+                launches: 1,
+            },
+        },
+    });
 });
 
 test('assessor gets one repair and plan drift blocks public approval', async () => {

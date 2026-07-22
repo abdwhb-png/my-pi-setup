@@ -7,6 +7,7 @@ import type {
     ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import { AssessmentCache, assessmentCacheKey } from './assessment-cache.ts';
 import { loadSddConfig, type SddConfig } from './config.ts';
 import type { DelegationClient } from './delegation-client.ts';
 import {
@@ -317,6 +318,31 @@ function runtimeConfig(runtime: SddRuntime, cwd: string): SddConfig {
     return runtime.config?.(cwd) ?? loadSddConfig(cwd);
 }
 
+const assessmentCaches = new WeakMap<SddRuntime, AssessmentCache>();
+
+function assessmentCache(runtime: SddRuntime): AssessmentCache {
+    const existing = assessmentCaches.get(runtime);
+    if (existing) return existing;
+    const created = new AssessmentCache(runtime.agentDir);
+    assessmentCaches.set(runtime, created);
+    return created;
+}
+
+function assessorContract(
+    runtime: SddRuntime,
+    cwd: string,
+    agent: string,
+): string | undefined {
+    if (!/^[A-Za-z0-9._-]+$/.test(agent)) return undefined;
+    for (const path of [
+        join(cwd, '.pi', 'agents', `${agent}.md`),
+        join(runtime.agentDir, 'agents', `${agent}.md`),
+    ]) {
+        if (existsSync(path)) return readFileSync(path, 'utf8');
+    }
+    return undefined;
+}
+
 function now(runtime: SddRuntime): string {
     return runtime.now?.() ?? new Date().toISOString();
 }
@@ -332,56 +358,74 @@ async function assess(
     const plan = parseSddPlan(planContent);
     const digest = createHash('sha256').update(planContent).digest('hex');
     const logicalJobId = `sdd:${digest}:assessment`;
-    let originalOutput = '';
-    let validationError = '';
-    for (
-        let attempt = 0;
-        attempt <= config.structuredOutputRetries;
-        attempt++
-    ) {
-        const request = buildAssessmentRequest({
-            requestId: `${logicalJobId}:${attempt + 1}`,
-            logicalJobId,
-            cwd: ctx.cwd,
-            config,
-            planPath,
-            plan,
-            ...(attempt === 0
-                ? {}
-                : {
-                      repair: {
-                          attempt,
-                          validationError,
-                          originalOutput,
-                      },
-                  }),
-        });
-        // oxlint-disable-next-line no-await-in-loop -- a repair uses the previous validation failure and must remain sequential.
-        const response = await runtime.delegation.run(request, {
-            signal,
-            deadlineMs: config.timeoutsMs.assessor,
-        });
-        if (response.status !== 'completed' || response.output === undefined) {
-            throw new Error(
-                `Assessment delegation failed: ${response.status}${response.error ? `: ${response.error}` : ''}.`,
-            );
-        }
-        try {
-            return {
-                plan,
-                assessment: parseAssessmentResponse(
-                    response.output,
-                    plan.tasks.map((task) => task.id),
-                ),
-            };
-        } catch (error) {
-            originalOutput = response.output;
-            validationError =
-                error instanceof Error ? error.message : String(error);
-            if (attempt === config.structuredOutputRetries) throw error;
-        }
-    }
-    throw new Error('Assessment retry ceiling exhausted.');
+    const expectedTaskIds = plan.tasks.map((task) => task.id);
+    const key = assessmentCacheKey({
+        planContent,
+        assessorAgent: config.agents.assessor,
+        assessorModel: config.models.assessor,
+        assessorContract: assessorContract(
+            runtime,
+            ctx.cwd,
+            config.agents.assessor,
+        ),
+    });
+    const assessment = await assessmentCache(runtime).resolve(
+        key,
+        expectedTaskIds,
+        async () => {
+            let originalOutput = '';
+            let validationError = '';
+            for (
+                let attempt = 0;
+                attempt <= config.structuredOutputRetries;
+                attempt++
+            ) {
+                const request = buildAssessmentRequest({
+                    requestId: `${logicalJobId}:${attempt + 1}`,
+                    logicalJobId,
+                    cwd: ctx.cwd,
+                    config,
+                    planPath,
+                    plan,
+                    ...(attempt === 0
+                        ? {}
+                        : {
+                              repair: {
+                                  attempt,
+                                  validationError,
+                                  originalOutput,
+                              },
+                          }),
+                });
+                // oxlint-disable-next-line no-await-in-loop -- a repair uses the previous validation failure and must remain sequential.
+                const response = await runtime.delegation.run(request, {
+                    signal,
+                    deadlineMs: config.timeoutsMs.assessor,
+                });
+                if (
+                    response.status !== 'completed' ||
+                    response.output === undefined
+                ) {
+                    throw new Error(
+                        `Assessment delegation failed: ${response.status}${response.error ? `: ${response.error}` : ''}.`,
+                    );
+                }
+                try {
+                    return parseAssessmentResponse(
+                        response.output,
+                        expectedTaskIds,
+                    );
+                } catch (error) {
+                    originalOutput = response.output;
+                    validationError =
+                        error instanceof Error ? error.message : String(error);
+                    if (attempt === config.structuredOutputRetries) throw error;
+                }
+            }
+            throw new Error('Assessment retry ceiling exhausted.');
+        },
+    );
+    return { plan, assessment };
 }
 
 async function approveDraft(
@@ -554,6 +598,12 @@ function observeRun(
             plannedAt: planned?.plannedAt ?? manifest.decision.approvedAt,
         });
     }
+    const blockedOutput = Object.values(snapshot.tasks)
+        .filter((task) => task.terminalReason === 'worker_blocked')
+        .flatMap((task) => Object.values(task.terminalResponses ?? {}))
+        .findLast((response) =>
+            /^BLOCKED:\s+\S/.test(response.output?.trimStart() ?? ''),
+        )?.output;
     return {
         manifest,
         snapshot,
@@ -624,6 +674,7 @@ function observeRun(
             ),
         ),
         blockedDecision: snapshot.terminalReason,
+        ...(blockedOutput ? { blockedOutput } : {}),
         recoveryActions: manifest.tasks.flatMap((task) => {
             const choice = snapshot.tasks[task.id]?.recoveryChoice;
             return choice ? [{ taskId: task.id, choice }] : [];
