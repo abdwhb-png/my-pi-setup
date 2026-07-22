@@ -1,9 +1,11 @@
 # ADR-002: CLIProxyAPI as Central Model Provider with Static Model Registry
 
 ## Status
+
 Accepted
 
 ## Date
+
 2025-06-29
 
 ## Context
@@ -18,7 +20,7 @@ Model metadata (context window, max output tokens, pricing) is not available fro
 
 ### 1. CLIProxyAPI (CPA) as central router
 
-CLIProxyAPI runs as a Docker service at `/home/abdwhb/projects/shared-services/cliproxy/`. It exposes an OpenAI-compatible API on `localhost:8317`. All upstream providers are configured within CPA's `config.yaml` — Pi only knows about the single `cpa` provider in `models.json`.
+CLIProxyAPI runs as a Docker service at `~/projects/shared-services/cliproxy/`. It exposes an OpenAI-compatible API on `localhost:8317`. All upstream providers are configured within CPA's `config.yaml` — Pi only knows about the single `cpa` provider in `models.json`.
 
 ```
 Pi → CPA (localhost:8317) → OpenCode Go (round-robin, 2 API keys)
@@ -32,11 +34,11 @@ This keeps Pi's configuration minimal and makes CPA reusable by other tools (Cla
 
 CPA routes models by matching the requested model name against configured aliases. Same alias across multiple providers = round-robin between them. Different alias = isolated routing.
 
-| Group | CPA prefix | Alias pattern | Rotation scope |
-|---|---|---|---|
-| OpenCode Go (isolated) | `ocg` | `go-deepseek-v4-flash` | Between Go API keys only |
-| Pool global (OpenRouter) | `or` | `deepseek/deepseek-v4-flash` | All providers with same alias |
-| Antigravity | (none) | `claude-sonnet-4-6` | Single OAuth account |
+| Group                    | CPA prefix | Alias pattern                | Rotation scope                |
+| ------------------------ | ---------- | ---------------------------- | ----------------------------- |
+| OpenCode Go (isolated)   | `ocg`      | `go-deepseek-v4-flash`       | Between Go API keys only      |
+| Pool global (OpenRouter) | `or`       | `deepseek/deepseek-v4-flash` | All providers with same alias |
+| Antigravity              | (none)     | `claude-sonnet-4-6`          | Single OAuth account          |
 
 Pi sends prefixed model IDs: `ocg/go-deepseek-v4-flash` → CPA strips `ocg/` → matches alias `go-deepseek-v4-flash` → routes exclusively to the OpenCode Go provider group. Unprefixed models (e.g. `deepseek/deepseek-v4-flash`) match the pool global and rotate across all providers that declare that alias.
 
@@ -51,6 +53,7 @@ Despite the appeal of dynamic model discovery from APIs, we use a static `models
 - A static registry guarantees Pi starts with a known-good model list regardless of upstream API availability.
 
 The maintenance burden is mitigated by:
+
 - Using CPA's `/v1/models` as a completeness check (models appearing there should be in models.json)
 - Family-based defaults for Antigravity models (Claude=1M/64K, Gemini=1M/65K)
 - Documenting pricing sources in CONTEXT.md
@@ -114,17 +117,20 @@ A full-featured Next.js dashboard with 6 containers (Caddy, Dashboard, PostgreSQ
 ## Consequences
 
 ### Positive
+
 - **Single configuration point**: Adding a new model means adding it to CPA config (for routing) and models.json (for metadata). No Pi extension code changes needed.
 - **Reusable**: CPA serves Pi, Claude Code, and Codex CLI from the same Docker container with the same accounts and routing.
 - **Sub-agent resilience**: `cpa/` prefix + pool global aliases provide automatic failover when a model is exhausted or unavailable.
 - **Survivable**: `/model` changes in a session don't break sub-agent configurations.
 
 ### Negative
+
 - **Static model registry maintenance**: models.json must be updated when models are added, removed, or when pricing changes. This is mitigated by the stability of context/pricing data and CPA's `/v1/models` as a completeness check.
 - **Docker dependency**: Pi requires the CPA Docker container to be running. If Docker is down, all AI providers are unavailable.
 - **Single point of failure**: If CPA goes down, all model access is lost. Mitigated by CPA's stability (single Go binary, low resource usage) and `restart: unless-stopped`.
 - **CPAMC is basic**: The built-in management panel lacks the polish of the community dashboard (no setup wizard, no config sharing). Acceptable for single-user local use.
 
 ### Workarounds
+
 - **Developer role bug**: CPA v7.2.46 doesn't normalize `developer` → `system` for OpenAI-compatible providers (PR #3898, fix in `dev` but untagged). Workaround: `payload.override` forcing `messages.0.role: "system"` for all models. Remove when fix is released.
 - **OpenCode Go only supports OpenAI-compatible endpoint**: Anthropic-format models (MiniMax M3/M2.7, Qwen 3.7/3.6 via `/v1/messages`) are not routable through the `openai-compatibility` provider type. These models are excluded from the CPA config.

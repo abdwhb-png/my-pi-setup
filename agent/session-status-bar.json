@@ -2,7 +2,7 @@
     "enabled": true,
     "twoLine": false,
     "showContext": true,
-    "showCost": true,
+    "showCost": false,
     "showModel": true,
     "showCwd": true,
     "showBranch": false,

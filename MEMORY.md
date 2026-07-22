@@ -27,12 +27,12 @@
 
 1. **Identifier le provider réel** du modèle (Anthropic, Google, OpenAI, DeepSeek, etc.)
 2. **Consulter la documentation officielle** :
-    - Anthropic → `https://platform.claude.com/docs/en/about-claude/models/overview`
-    - Google Gemini → `https://ai.google.dev/gemini-api/docs`
-    - OpenAI → `https://platform.openai.com/docs`
-    - DeepSeek → `https://api-docs.deepseek.com/`
-    - OpenRouter → `https://openrouter.ai/docs`
-    - OpenCode Go → prix sur leur page officielle, specs via le provider upstream
+   - Anthropic → `https://platform.claude.com/docs/en/about-claude/models/overview`
+   - Google Gemini → `https://ai.google.dev/gemini-api/docs`
+   - OpenAI → `https://platform.openai.com/docs`
+   - DeepSeek → `https://api-docs.deepseek.com/`
+   - OpenRouter → `https://openrouter.ai/docs`
+   - OpenCode Go → prix sur leur page officielle, specs via le provider upstream
 3. **Utiliser Context7** (`context7_query-docs`) pour interroger la doc officielle
 4. **Croiser avec des sources externes** si nécessaire (articles, benchmarks)
 5. **Ne remplir que les champs vérifiés** : `contextWindow`, `maxTokens`, `cost` (input/output/cacheRead/cacheWrite), `reasoning`, `input`
@@ -84,12 +84,12 @@ Pi (models.json: provider "cpa")
 
 ### Files & locations
 
-| What                    | Where                                             |
-| ----------------------- | ------------------------------------------------- |
-| Docker Compose + config | `/home/abdwhb/projects/shared-services/cliproxy/` |
-| CPA API key for Pi      | `auth.json` → `cliproxy` entry                    |
-| Pi provider + models    | `models.json` → `cpa` provider                    |
-| Management UI (CPAMC)   | `http://localhost:8317/management.html`           |
+| What                    | Where                                   |
+| ----------------------- | --------------------------------------- |
+| Docker Compose + config | `~/projects/shared-services/cliproxy/`  |
+| CPA API key for Pi      | `auth.json` → `cliproxy` entry          |
+| Pi provider + models    | `models.json` → `cpa` provider          |
+| Management UI (CPAMC)   | `http://localhost:8317/management.html` |
 
 ### Provider isolation via aliases
 
@@ -179,11 +179,11 @@ Sub-agents use `cpa/` provider prefix in settings.json to survive `/model` chang
 ```yaml
 # config.template.yaml
 api-key-entries:
-    - api-key: '${OCG_KEY_ONE}' # from .env
-    - api-key: '${OCG_KEY_TWO}'
+  - api-key: "${OCG_KEY_ONE}" # from .env
+  - api-key: "${OCG_KEY_TWO}"
 models:
-    - name: 'deepseek-v4-pro' # upstream name
-      alias: 'go-deepseek-v4-pro' # client-visible alias
+  - name: "deepseek-v4-pro" # upstream name
+    alias: "go-deepseek-v4-pro" # client-visible alias
 ```
 
 ```bash

@@ -8,18 +8,17 @@
         "memory": ["@memory-consult", "memory"],
         "files-write": ["edit", "write"],
         "implement": ["@files-write", "safe_bash"],
-        "lens": [
-            "lens_diagnostics",
+        "lens-inspect": [
             "ast_grep_search",
             "ast_grep_outline",
-            "ast_grep_dump",
-            "lsp_diagnostics",
             "lsp_navigation",
+            "lsp_diagnostics",
             "symbol_search",
             "module_report",
             "read_symbol",
             "read_enclosing"
         ],
+        "lens": ["lens_diagnostics", "ast_grep_dump", "@lens-inspect"],
         "lens-write": ["@lens", "ast_grep_replace", "lens_diagnostic_mark"]
     }
 }

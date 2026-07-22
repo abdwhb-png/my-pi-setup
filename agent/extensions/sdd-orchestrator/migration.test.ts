@@ -13,7 +13,7 @@ import { expect, test } from 'bun:test';
 const AGENT_DIR = resolve(import.meta.dir, '..', '..');
 const RUN_ID = 'sdd-mqxpovpu-8m9fgo';
 const ORIGINAL_PLAN_PATH =
-    '/home/abdwhb/projects/pi-integrations/pi-roles/docs/plans/2026-06-28-pi-roles-switch-request-protocol-impl.md';
+    '~/projects/pi-integrations/pi-roles/docs/plans/2026-06-28-pi-roles-switch-request-protocol-impl.md';
 const QUEUE_DIGEST =
     'ac1041330d3d5064a1d4acb0f2179e6730c1fb4a97db873527a91bd4f2a1e874';
 const PROGRESS_DIGEST =
@@ -222,7 +222,7 @@ test('legacy agent operates only on an explicitly authorized exact run', () => {
     expect(legacy).not.toMatch(/`\.sdd\/(?:queue|progress|results)\//);
     for (const directory of ['queue', 'progress', 'results']) {
         expect(legacy).toContain(
-            `/home/abdwhb/.pi/agent/.sdd/${directory}/<runId>.json`,
+            `~/.pi/agent/.sdd/${directory}/<runId>.json`,
         );
     }
 });

@@ -238,14 +238,14 @@ describe('getSearchRoots', () => {
     it('returns all configured roots', () => {
         const roots = getSearchRoots('/current/project');
         expect(roots).toContain('/current/project');
-        expect(roots).toContain('/home/abdwhb/.pi/agent');
-        expect(roots).toContain('/home/abdwhb/.pi/agent/extensions');
-        expect(roots).toContain('/home/abdwhb/.pi/pi-prompts');
-        expect(roots).toContain('/home/abdwhb/.pi/docs');
+        expect(roots).toContain('~/.pi/agent');
+        expect(roots).toContain('~/.pi/agent/extensions');
+        expect(roots).toContain('~/.pi/pi-prompts');
+        expect(roots).toContain('~/.pi/docs');
     });
 
     it('deduplicates roots', () => {
-        const roots = getSearchRoots('/home/abdwhb/.pi/agent/');
+        const roots = getSearchRoots('~/.pi/agent/');
         const unique = new Set(roots);
         expect(roots.length).toBe(unique.size);
     });

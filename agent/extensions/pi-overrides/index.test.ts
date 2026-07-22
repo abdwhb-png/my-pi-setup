@@ -128,7 +128,7 @@ describe('pi-overrides', () => {
         expect(getActiveTools()).toEqual(['read', 'bash', 'edit', 'write']);
         await handlers.get('session_start')?.(
             {},
-            { cwd: '/home/abdwhb/.pi/agent' },
+            { cwd: '~/.pi/agent' },
         );
         expect(Array.from(registeredTools.keys()).toSorted()).toEqual([
             'find',
@@ -144,7 +144,7 @@ describe('pi-overrides', () => {
         expect(getActiveTools()).toContain('edit');
         expect(getActiveTools()).toContain('write');
         expect(settingsManagerCreate).toHaveBeenCalledWith(
-            '/home/abdwhb/.pi/agent',
+            '~/.pi/agent',
             '/tmp/pi-agent',
         );
     });
@@ -337,7 +337,7 @@ describe('pi-overrides', () => {
         piOverrides(pi);
         await handlers.get('session_start')?.(
             {},
-            { cwd: '/home/abdwhb/.pi/agent' },
+            { cwd: '~/.pi/agent' },
         );
         const readTool = registeredTools.get('read');
         if (!readTool?.renderResult)
@@ -528,11 +528,11 @@ describe('pi-overrides', () => {
     // so that any FD_BIN path breakage is caught early.
     // The --no-ignore behaviour difference is verified against node_modules/:
     // standard mode respects .gitignore (node_modules hidden), audit mode does
-    // not (node_modules visible). /home/abdwhb/.pi/agent has a .gitignore that
+    // not (node_modules visible). ~/.pi/agent has a .gitignore that
     // ignores node_modules/ and has a populated node_modules tree.
 
     describe('auditAwareFindOperations.glob', () => {
-        const AGENT_DIR = '/home/abdwhb/.pi/agent';
+        const AGENT_DIR = '~/.pi/agent';
 
         it('glob runs without error in standard mode (fd binary is reachable)', async () => {
             resetAuditState('standard');
@@ -619,7 +619,7 @@ describe('pi-overrides', () => {
             piOverrides(pi);
             await handlers.get('session_start')?.(
                 {},
-                { cwd: '/home/abdwhb/.pi/agent' },
+                { cwd: '~/.pi/agent' },
             );
             expect(registeredTools.has('grep')).toBe(true);
             // NOTE: grep.ignoreGitignore is NOT enforced. rg --no-ignore cannot be
@@ -633,7 +633,7 @@ describe('pi-overrides', () => {
             piOverrides(pi);
             await handlers.get('session_start')?.(
                 {},
-                { cwd: '/home/abdwhb/.pi/agent' },
+                { cwd: '~/.pi/agent' },
             );
             expect(registeredTools.has('grep')).toBe(true);
             // NOTE: See above — grep.ignoreGitignore is blocked (no factory hook).

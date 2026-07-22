@@ -10,14 +10,16 @@
 ## Verification Results
 
 ### Tests: 37 passed, 2 test files
+
 ```
-RUN  v4.1.8 /home/abdwhb/.pi/agent
+RUN  v4.1.8 ~/.pi/agent
 Test Files  2 passed (2)
 Tests  37 passed (37)
 Duration  431ms
 ```
 
 ### Lint: Pre-existing warnings/errors in other files
+
 - flow-title.ts, safe-bash/index.ts, update.ts, pi-subagents-overview/index.ts, ephemeral/ui.ts
 - These are not from my changes
 

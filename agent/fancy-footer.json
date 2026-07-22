@@ -9,14 +9,20 @@
     "model": {
       "enabled": true,
       "align": "right",
-      "row": 1,
+      "row": 0,
       "position": 1
     },
     "thinking": {
       "enabled": true,
-      "row": 1,
+      "row": 0,
       "position": 2,
       "align": "right"
+    },
+    "total-cost": {
+        "enabled": true,
+      "align": "right",
+      "row": 0,
+      "position": 4
     },
     "context-capacity": {
       "enabled": false,
@@ -24,16 +30,10 @@
       "position": 2
     },
     "context-bar": {
-      "enabled": false,
+      "enabled": true,
       "row": 1,
       "align": "right",
       "position": 3
-    },
-    "total-cost": {
-      "enabled": false,
-      "align": "right",
-      "row": 1,
-      "position": 4
     },
     "location": {
       "enabled": false
@@ -60,6 +60,17 @@
   "extensionWidgets": {
     "session-status-bar": {
       "row": 0
+    },
+    "session-status-bar.model": {
+        "row": 1,
+        "position": 0
+    },
+    "session-status-bar.context": {
+        "row": 1,
+        "position": 1
+    },
+    "session-status-bar.cost": {
+        "row": 1
     },
     "local-compressor": {
       "row": 1,

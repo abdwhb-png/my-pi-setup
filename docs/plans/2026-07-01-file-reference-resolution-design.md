@@ -20,7 +20,7 @@ Wrap `CombinedAutocompleteProvider` via `ctx.ui.addAutocompleteProvider`. Transf
 
 **How**: Intercept `getSuggestions` return value. For items with `@` prefix, parse the path, if not already absolute → `path.join(cwd, parsedPath)`. Same transform in `applyCompletion`.
 
-**Result**: `@pi-prompts/plan-fork.md` becomes `@/home/abdwhb/.pi/pi-prompts/plan-fork.md`. LLM always reads correct file regardless of context switches.
+**Result**: `@pi-prompts/plan-fork.md` becomes `@~/.pi/pi-prompts/plan-fork.md`. LLM always reads correct file regardless of context switches.
 
 ### Part B — Preprocessor Hook
 
@@ -136,28 +136,38 @@ function findUnresolvedAtRefs(text: string): Array<{ raw: string; name: string }
 ```typescript
 let cachePromise: Promise<void> | null = null;
 
-function buildIndexBackground(
-  cache: { files: string[] },
-  roots: string[],
-  fdPath: string,
-): void {
+function buildIndexBackground(cache: { files: string[] }, roots: string[], fdPath: string): void {
   if (cachePromise) return; // already running or completed
   cachePromise = (async () => {
     const results: string[] = [];
     for (const root of roots) {
       try {
         const entries = await walkDirectoryWithFd(
-          root, fdPath, "", 10000, new AbortController().signal
+          root,
+          fdPath,
+          "",
+          10000,
+          new AbortController().signal,
         );
         for (const entry of entries) {
           results.push(join(root, entry.path));
         }
-      } catch { /* root not found, skip */ }
+      } catch {
+        /* root not found, skip */
+      }
     }
     // Deduplicate by canonical path
-    cache.files = [...new Set(results.map(p => {
-      try { return realpathSync(p); } catch { return p; }
-    }))];
+    cache.files = [
+      ...new Set(
+        results.map((p) => {
+          try {
+            return realpathSync(p);
+          } catch {
+            return p;
+          }
+        }),
+      ),
+    ];
     cachePromise = null;
   })();
 }
@@ -185,18 +195,18 @@ Roots are deduplicated via path canonicalization.
 
 **Mock strategy**: Mock `@earendil-works/pi-tui` and pi extension environment. Mock `fd` spawn via `mock.module("child_process")`. Use temp directories.
 
-| # | Test | Validates |
-|---|------|-----------|
-| 1 | `@file-in-cwd.md` → absolute path | Relative → absolute transform |
-| 2 | `@nested/deep/file.ts` → absolute | Nested paths preserved |
-| 3 | `@"/path with spaces/file.md"` → absolute | Quoted paths with spaces |
-| 4 | `@/already/absolute` → unchanged | Absolute passthrough |
-| 5 | `@nonexistent` → no match, leaves as-is | Graceful failure |
-| 6 | `@prompt-file.md` in ~/.pi/prompts/ → found | Multi-root search |
-| 7 | Background index fills after delay | Async cache population |
-| 8 | `findUnresolvedAtRefs` skips already-resolved | No double-processing |
-| 9 | `parseAtValue` → `rebuildAtValue` round-trip | Format preservation |
-| 10 | Autocomplete + preprocessor integrate cleanly | Components don't conflict |
+| #   | Test                                          | Validates                     |
+| --- | --------------------------------------------- | ----------------------------- |
+| 1   | `@file-in-cwd.md` → absolute path             | Relative → absolute transform |
+| 2   | `@nested/deep/file.ts` → absolute             | Nested paths preserved        |
+| 3   | `@"/path with spaces/file.md"` → absolute     | Quoted paths with spaces      |
+| 4   | `@/already/absolute` → unchanged              | Absolute passthrough          |
+| 5   | `@nonexistent` → no match, leaves as-is       | Graceful failure              |
+| 6   | `@prompt-file.md` in ~/.pi/prompts/ → found   | Multi-root search             |
+| 7   | Background index fills after delay            | Async cache population        |
+| 8   | `findUnresolvedAtRefs` skips already-resolved | No double-processing          |
+| 9   | `parseAtValue` → `rebuildAtValue` round-trip  | Format preservation           |
+| 10  | Autocomplete + preprocessor integrate cleanly | Components don't conflict     |
 
 ## Edge Cases
 

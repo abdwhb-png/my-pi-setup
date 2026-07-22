@@ -1,10 +1,11 @@
-
-I have installed this pi package/extension, but when I used it I noticed I need to customize it so I forked it in `/home/abdwhb/projects/pi-integrations`.
+I have installed this pi package/extension, but when I used it I noticed I need to customize it so I forked it in `~/projects/pi-integrations`.
 
 ## Fork Workflow
 
 ### 1. Discovery
+
 Read the project's discovery files (package.json, tsconfig, tests, .gitignore) to understand:
+
 - Package manager and build system (bun, npm, pnpm)
 - Test framework (vitest, bun:test, jest)
 - Whether `dist/` is gitignored (it always is → `prepare` script needed)
@@ -12,40 +13,47 @@ Read the project's discovery files (package.json, tsconfig, tests, .gitignore) t
 - Whether the package has peer deps that may be missing locally
 
 ### 2. Implementation (TDD — RED → GREEN → REFACTOR)
+
 - Write a failing test first that captures the broken behavior
 - Write minimal code to fix it
 - Refactor without breaking tests
 - Run the **full** test suite
 
 **⚠ Watch for persisted state:** If the bug involves data that gets written to session logs or disk (e.g. `pi.appendEntry`, `pi.setSessionName`, config files), old persisted values may outlive the code fix. Fix both:
-  - The code that *writes* the bad value (prevent future occurrences)
-  - The code that *reads* the bad value (handle legacy data gracefully)
+
+- The code that _writes_ the bad value (prevent future occurrences)
+- The code that _reads_ the bad value (handle legacy data gracefully)
 
 ### 3. Determine Install Strategy: Standalone or Monorepo?
 
 The fork's project structure determines how it can be installed.
 
 **Standalone package** (e.g. pi-roles): a single package at repo root.
+
 - Can use **remote GitHub URL** in `settings.json`
 - Must add `"prepare": "npm run build"` to package.json (see §4)
 
 **Monorepo package** (e.g. plannotator): the extension lives in a subdirectory (`apps/pi-extension/`) of a larger project.
+
 - **Cannot use remote GitHub URL** — pi's `installGit` always clones the full repo and reads from root; it has no mechanism to target a subdirectory.
-- Must use **local path** in `settings.json` instead (e.g. `/home/abdwhb/projects/pi-integrations/<fork>/apps/pi-extension`)
+- Must use **local path** in `settings.json` instead (e.g. `~/projects/pi-integrations/<fork>/apps/pi-extension`)
 - Also needs `prepare: true` in `trust.json` if the extension has TypeScript files that pi loads directly (pi may need to report trust before running `.ts` extensions)
 
 Check these to decide:
+
 - Does the pi extension's `package.json` have a `"pi"` key with extension paths?
 - Does the **root** package.json have that key? If only the subdirectory has it, it's a monorepo.
 - Are the extension's build-time assets gitignored (generated/ , .html files from sibling apps)?
 
 ### 4. Local Installation Test
+
 - Build the package (`npm run build` or equivalent)
-- Point pi's `settings.json` to the local path (e.g. `/home/abdwhb/projects/pi-integrations/<fork>` or the monorepo subdir)
+- Point pi's `settings.json` to the local path (e.g. `~/projects/pi-integrations/<fork>` or the monorepo subdir)
 - If the extension uses TypeScript entry points directly (not `dist/`), ensure `trust.json` marks it as trusted or includes `"prepare": true` so pi pre-compiles it
 - **Run the actual pi command that was broken** to confirm the fix works end-to-end
 
 ### 5. Remote Installation (standalone packages only)
+
 - Commit and push to the remote fork
 - Update `settings.json` to point to the remote GitHub URL
 - Run `pi install <url>` to test fresh clone flow
@@ -54,10 +62,12 @@ Check these to decide:
 - **Run the actual pi command** again to confirm the remote install works
 
 ### 6. Fallback
+
 - **Standalone**: if remote installation fails (network, auth, etc.), keep the local path installation as fallback
 - **Monorepo**: local path is the primary (and only) option — no fallback needed
 
 ### 7. Keep the Prompt Updated
+
 After completing the customisation, update this prompt with any new pitfalls or patterns you discovered so future iterations benefit from the experience.
 
 ## Common Pitfalls

@@ -11,7 +11,7 @@ import {
 
 const args = process.argv.slice(2);
 const cwd = process.cwd();
-const realPi = process.env.PI_REAL_BIN || "/home/abdwhb/.bun/bin/pi";
+const realPi = process.env.PI_REAL_BIN || "~/.bun/bin/pi";
 if (!process.env.PI_SUBAGENT_PI_BINARY?.trim()) {
   process.env.PI_SUBAGENT_PI_BINARY = fileURLToPath(import.meta.url);
 }
