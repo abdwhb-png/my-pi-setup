@@ -814,6 +814,43 @@ test('session startup and resume reconcile every nonterminal durable run only', 
     expect(rt.requests).toHaveLength(0);
 });
 
+test('subagent child startup leaves parent durable runs untouched', async () => {
+    const store = new SddStore(agentDir);
+    const activeParentRun: RunSnapshot = {
+        ...snapshot('active-parent-run', 'running'),
+        tasks: {
+            'task-1': {
+                id: 'task-1',
+                state: 'implementing',
+                launches: 1,
+                maxLaunches: 1,
+                activeRequestId: 'active-parent-request',
+            },
+        },
+    };
+    store.create(activeParentRun);
+    const pi = fakePi();
+    const rt = runtime(store);
+    registerSddExtension(pi.api as never, rt);
+    const start = pi.handlers.get('session_start')?.[0];
+    expect(typeof start).toBe('function');
+
+    const previousChildMarker = process.env.PI_SUBAGENT_CHILD;
+    process.env.PI_SUBAGENT_CHILD = '1';
+    try {
+        await start!({ type: 'session_start', reason: 'startup' }, context());
+    } finally {
+        if (previousChildMarker === undefined) {
+            delete process.env.PI_SUBAGENT_CHILD;
+        } else {
+            process.env.PI_SUBAGENT_CHILD = previousChildMarker;
+        }
+    }
+
+    expect(rt.order).toEqual([]);
+    expect(store.load(activeParentRun.runId)).toEqual(activeParentRun);
+});
+
 test('session startup continues one newly reconciled persisted terminal boundary', async () => {
     const runId = 'persisted-terminal-boundary';
     const requestId = `${runId}:task-1:worker:1`;

@@ -867,6 +867,9 @@ export function registerSddExtension(
     });
 
     pi.on('session_start', async (event, ctx) => {
+        // Delegated Pi children share the controller's agent directory but must
+        // not passively reconcile runs that are still owned by that controller.
+        if (process.env.PI_SUBAGENT_CHILD === '1') return;
         if (
             event.reason !== 'startup' &&
             event.reason !== 'reload' &&
