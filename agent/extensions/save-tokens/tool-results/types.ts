@@ -57,6 +57,8 @@ export interface LocalCompressorConfig {
     excludeTools: string[];
     minBytesByGroup: CompressionThresholds;
     archiveRetention: ArchiveRetentionConfig;
+    aggregates: boolean;
+    capErrors: boolean;
 }
 
 export interface ArchiveOriginalInput {
@@ -81,6 +83,8 @@ export interface ToolResultHandlerOptions {
     excludeTools?: string[];
     minBytes?: number;
     minBytesByGroup?: CompressionThresholds;
+    aggregates?: boolean;
+    capErrors?: boolean;
 }
 
 export interface CompressRequest {

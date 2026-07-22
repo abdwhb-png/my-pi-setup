@@ -61,6 +61,8 @@ export interface CompressorConfig {
     minBytes?: number;
     minBytesByGroup?: Partial<CompressionThresholds>;
     archiveRetention?: Partial<ArchiveRetentionConfig>;
+    aggregates?: boolean;
+    capErrors?: boolean;
 }
 
 export interface CavemanConfig {
@@ -210,6 +212,8 @@ function normalizeCompressor(raw: object): CompressorConfig | undefined {
     if (minBytesByGroup) out.minBytesByGroup = minBytesByGroup;
     const archiveRetention = normalizeArchiveRetention(r.archiveRetention);
     if (archiveRetention) out.archiveRetention = archiveRetention;
+    if (typeof r.aggregates === 'boolean') out.aggregates = r.aggregates;
+    if (typeof r.capErrors === 'boolean') out.capErrors = r.capErrors;
     return Object.keys(out).length > 0 ? out : undefined;
 }
 

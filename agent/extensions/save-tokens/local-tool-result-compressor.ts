@@ -5,6 +5,15 @@ import type {
 import { appendCompressionEvent } from '../_shared/compression-protocol';
 import { createWidget } from '../_shared/fancy-footer';
 import { getLocalCompressorConfig } from './config-runtime';
+
+/** Marker for idempotent system-prompt injection (§7 AXI). */
+const ARCHIVE_CONVENTION_MARKER = '# Tool Result Compression';
+const ARCHIVE_CONVENTION_PROMPT = [
+    ARCHIVE_CONVENTION_MARKER,
+    '',
+    'Tool results may be compressed to save tokens. The original output is archived;',
+    'run `read <archivePath>` to retrieve the full content.',
+].join('\n');
 import {
     archiveOriginalToolResult,
     pruneToolResultArchive,
@@ -134,6 +143,8 @@ export default function localToolResultCompressor(
         enabled: config.enabled,
         excludeTools: config.excludeTools,
         minBytesByGroup: config.minBytesByGroup,
+        aggregates: config.aggregates,
+        capErrors: config.capErrors,
         onObservation: handleObservation,
     });
 
@@ -168,6 +179,8 @@ export default function localToolResultCompressor(
             enabled: config.enabled,
             excludeTools: config.excludeTools,
             minBytesByGroup: config.minBytesByGroup,
+            aggregates: config.aggregates,
+            capErrors: config.capErrors,
             onObservation: handleObservation,
         });
         updateUi(
@@ -179,6 +192,18 @@ export default function localToolResultCompressor(
             config.showStatus,
             config.showWidget,
         );
+    });
+
+    // §7 AXI — Inject archive convention into system prompt at agent start.
+    // Makes the escape hatch reliable by telling the LLM about compression
+    // and the `read <archivePath>` retrieval pattern (~30 tokens/session).
+    pi.on('before_agent_start', async (event) => {
+        config = loadConfig();
+        if (!config.enabled || !config.archiveOriginal) return;
+        if (event.systemPrompt.includes(ARCHIVE_CONVENTION_MARKER)) return;
+        return {
+            systemPrompt: `${event.systemPrompt}\n\n${ARCHIVE_CONVENTION_PROMPT}`,
+        };
     });
 
     pi.on('agent_start', async () => {

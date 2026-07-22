@@ -3,6 +3,7 @@ import type { ToolResultEvent } from '@earendil-works/pi-coding-agent';
 import { getActivePolicy } from '../../_shared/audit-mode';
 import type { CompressionDetails } from '../../_shared/compression-protocol';
 import { getLocalCompressorConfig } from '../config-runtime';
+import { buildAggregateHeader } from './aggregates';
 import type {
     ArchiveOriginalInput,
     CompressRequest,
@@ -11,6 +12,23 @@ import type {
 } from './types';
 
 type CompressionRoute = 'edgee' | 'cap';
+
+/** Default cap target for large error outputs when capFallbackBytes is not set. */
+const DEFAULT_ERROR_CAP_BYTES = 8192;
+
+/**
+ * §3 AXI — Unified escape hatch note for compressed results.
+ *
+ * Appears on both cap and Edgee routes when the original is archived.
+ * Exposes the total original size so the LLM can judge whether retrieval
+ * is worth a follow-up call.
+ */
+export function buildEscapeHatchNote(
+    originalLength: number,
+    archivePath: string,
+): string {
+    return `\n\n... (compressed, ${originalLength} chars total) — run read ${archivePath} for full output`;
+}
 
 export function chooseCompressionRoute(input: {
     strategy: 'edgee' | 'benchmark';
@@ -190,6 +208,7 @@ async function maybeCreateArchivedCap(
     event: ToolResultEvent,
     subject: string | undefined,
     options?: ToolResultHandlerOptions,
+    aggregatePrefix?: string | null,
 ) {
     const targetBytes = options?.capFallbackBytes;
     if (
@@ -203,9 +222,10 @@ async function maybeCreateArchivedCap(
         archiveInput(event, subject, text),
     );
     if (!archivePath) throw new Error('archive did not return a path');
-    const note = `\n\nFull original tool result saved: ${archivePath}`;
-    const capped = headTailCap(text, Math.max(0, targetBytes - note.length));
-    const outputText = `${capped}${note}`;
+    const note = buildEscapeHatchNote(text.length, archivePath);
+    const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : '';
+    const capped = headTailCap(text, Math.max(0, targetBytes - note.length - prefix.length));
+    const outputText = `${prefix}${capped}${note}`;
     if (outputText.length >= text.length) return null;
     const originalLength = text.length;
     const compressedLength = outputText.length;
@@ -247,6 +267,8 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
     const routingStrategy = options?.routingStrategy ?? env.routingStrategy;
     const enabled = options?.enabled ?? env.enabled;
     const excludedTools = new Set(options?.excludeTools ?? env.excludeTools);
+    const aggregates = options?.aggregates ?? env.aggregates;
+    const capErrors = options?.capErrors ?? env.capErrors;
     const legacyMinBytes = options?.minBytes;
     const minBytesByGroup =
         options?.minBytesByGroup ??
@@ -259,7 +281,6 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
               });
 
     return async (event: ToolResultEvent, signal?: AbortSignal) => {
-        if (event.isError) return;
         if (!isCompressibleToolName(event.toolName)) return;
         if (!enabled || excludedTools.has(event.toolName)) return;
 
@@ -277,6 +298,33 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
 
         const subject = summarizeToolSubject(event.toolName, event.input);
 
+        // §6 AXI — Cap large error outputs (head/tail + archive, never Edgee)
+        if (event.isError) {
+            if (!capErrors) return;
+            const text = extractCompressibleText(event.content);
+            if (!text) return;
+            if (!ctx) return;
+            if (Buffer.byteLength(text, 'utf8') < minBytesByGroup[ctx]) return;
+            const aggregatePrefix = aggregates
+                ? buildAggregateHeader(event.toolName, event.input, text)
+                : null;
+            const errorCapBytes =
+                options?.capFallbackBytes ?? DEFAULT_ERROR_CAP_BYTES;
+            try {
+                const capped = await maybeCreateArchivedCap(
+                    text,
+                    event,
+                    subject,
+                    { ...options, capFallbackBytes: errorCapBytes },
+                    aggregatePrefix,
+                );
+                if (capped) return capped;
+            } catch {
+                // fail open: return intact
+            }
+            return;
+        }
+
         const text = extractCompressibleText(event.content);
         if (!text) {
             options?.onObservation?.({
@@ -293,6 +341,10 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
         if (!ctx) return;
         if (Buffer.byteLength(text, 'utf8') < minBytesByGroup[ctx]) return;
 
+        const aggregatePrefix = aggregates
+            ? buildAggregateHeader(event.toolName, event.input, text)
+            : null;
+
         try {
             if (
                 chooseCompressionRoute({
@@ -306,6 +358,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                     event,
                     subject,
                     options,
+                    aggregatePrefix,
                 );
                 if (capped) return capped;
             }
@@ -344,6 +397,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                     event,
                     subject,
                     options,
+                    aggregatePrefix,
                 );
                 if (capped) return capped;
                 options?.onObservation?.({
@@ -366,6 +420,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                     event,
                     subject,
                     options,
+                    aggregatePrefix,
                 );
                 if (capped) return capped;
                 options?.onObservation?.({
@@ -393,9 +448,10 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                 throw new Error('archive did not return a path');
             }
             const archiveNote = archivePath
-                ? `\n\nFull original tool result saved: ${archivePath}`
+                ? buildEscapeHatchNote(originalLength, archivePath)
                 : '';
-            const outputText = `${result.compressed_output}${archiveNote}`;
+            const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : '';
+            const outputText = `${prefix}${result.compressed_output}${archiveNote}`;
             if (outputText.length >= originalLength) {
                 options?.onObservation?.({
                     kind: 'skipped',

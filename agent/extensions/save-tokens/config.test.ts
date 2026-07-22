@@ -377,6 +377,24 @@ describe('compressor enabled/excludeTools/minBytes', () => {
             compressor: { excludeTools: ['read', 'grep'] },
         });
     });
+
+    it('normalizes aggregates and capErrors booleans', () => {
+        expect(
+            normalizeConfig({
+                compressor: { aggregates: false, capErrors: true },
+            }),
+        ).toEqual({
+            compressor: { aggregates: false, capErrors: true },
+        });
+    });
+
+    it('drops invalid aggregates and capErrors values', () => {
+        expect(
+            normalizeConfig({
+                compressor: { aggregates: 'yes', capErrors: 1 },
+            }),
+        ).toEqual({});
+    });
 });
 
 describe('telemetry default directory', () => {

@@ -26,6 +26,8 @@ type HandlerOptions = Parameters<typeof createToolResultHandler>[0];
 const TEST_CONFIG = {
   minBytesByGroup: { shell: 0, read: 0, search: 0 },
   archiveOriginal: false,
+  aggregates: false,
+  capErrors: false,
 };
 
 function createTestToolResultHandler(options: HandlerOptions = {}) {
@@ -35,6 +37,8 @@ function createTestToolResultHandler(options: HandlerOptions = {}) {
     ...(hasExplicitThreshold
       ? {}
       : { minBytesByGroup: { shell: 0, read: 0, search: 0 } }),
+    aggregates: false,
+    capErrors: false,
     ...options,
   });
 }
@@ -115,6 +119,8 @@ describe("getLocalCompressorConfig", () => {
         read: 8192,
         search: 4096,
       },
+      aggregates: true,
+      capErrors: true,
     });
   });
 });
@@ -310,7 +316,7 @@ describe("createToolResultHandler", () => {
     } as any);
 
     expect(result?.content[0]?.text).toContain("trimmed");
-    expect(result?.content[0]?.text).toContain("Full original tool result saved: /tmp/pi-tool-results/full-c1.txt");
+    expect(result?.content[0]?.text).toContain("run read /tmp/pi-tool-results/full-c1.txt for full output");
     expect(
       (result?.details as { compression: CompressionDetails } | undefined)
         ?.compression.archivePath,
@@ -340,7 +346,7 @@ describe("createToolResultHandler", () => {
     expect(output).toContain("HEAD");
     expect(output).toContain("TAIL");
     expect(output).toContain("omitted by head/tail cap");
-    expect(output).toContain("Full original tool result saved: /tmp/pi-tool-results/full-cap1.txt");
+    expect(output).toContain("run read /tmp/pi-tool-results/full-cap1.txt for full output");
     expect(output.length).toBeLessThan(source.length);
     expect(
       (result?.details as { compression: CompressionDetails } | undefined)
@@ -369,7 +375,7 @@ describe("createToolResultHandler", () => {
     } as any);
 
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(result?.content[0]?.text).toContain("Full original tool result saved: /tmp/pi-tool-results/full-grep1.txt");
+    expect(result?.content[0]?.text).toContain("run read /tmp/pi-tool-results/full-grep1.txt for full output");
     expect(
       (result?.details as { compression: CompressionDetails } | undefined)
         ?.compression.archivePath,
@@ -832,10 +838,66 @@ describe("extension registration", () => {
     expect(handlers.has("agent_end")).toBe(true);
     expect(handlers.has("tool_result")).toBe(true);
     expect(handlers.has("session_shutdown")).toBe(true);
+    expect(handlers.has("before_agent_start")).toBe(true);
     expect(handlers.has("before_provider_request")).toBe(false);
     expect(commands.has("compressor-stats")).toBe(true);
     expect(emittedEvents).toContain("pi-fancy-footer:request-widget-discovery");
     expect(registeredTools.size).toBe(0);
+  });
+
+  it("injects archive convention into system prompt when enabled && archiveOriginal", async () => {
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+    const { pi, handlers } = createMockExtensionAPI();
+    localToolResultCompressor(pi, {
+      ...TEST_CONFIG,
+      archiveOriginal: true,
+    });
+    const handler = handlers.get("before_agent_start");
+    expect(handler).toBeDefined();
+    const result = await handler?.({ systemPrompt: "You are a helpful assistant." });
+    expect(result?.systemPrompt).toContain("Tool results may be compressed");
+    expect(result?.systemPrompt).toContain("read <archivePath>");
+    expect(result?.systemPrompt).toContain("You are a helpful assistant.");
+  });
+
+  it("does not inject archive convention when archiveOriginal is false", async () => {
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+    const { pi, handlers } = createMockExtensionAPI();
+    localToolResultCompressor(pi, {
+      ...TEST_CONFIG,
+      archiveOriginal: false,
+    });
+    const handler = handlers.get("before_agent_start");
+    expect(handler).toBeDefined();
+    const result = await handler?.({ systemPrompt: "You are a helpful assistant." });
+    expect(result).toBeUndefined();
+  });
+
+  it("does not inject archive convention when enabled is false", async () => {
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+    const { pi, handlers } = createMockExtensionAPI();
+    localToolResultCompressor(pi, {
+      ...TEST_CONFIG,
+      enabled: false,
+      archiveOriginal: true,
+    });
+    const handler = handlers.get("before_agent_start");
+    const result = await handler?.({ systemPrompt: "You are a helpful assistant." });
+    expect(result).toBeUndefined();
+  });
+
+  it("is idempotent — does not double-inject on repeated calls", async () => {
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+    const { pi, handlers } = createMockExtensionAPI();
+    localToolResultCompressor(pi, {
+      ...TEST_CONFIG,
+      archiveOriginal: true,
+    });
+    const handler = handlers.get("before_agent_start");
+    const first = await handler?.({ systemPrompt: "Base prompt." });
+    expect(first?.systemPrompt).toContain("Tool results may be compressed");
+    const second = await handler?.({ systemPrompt: first.systemPrompt });
+    expect(second).toBeUndefined();
   });
 
   it("appends compressed outcome entry and reports summary-only turn and agent notifications", async () => {
@@ -1178,6 +1240,8 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
       read: 8192,
       search: 4096,
     });
+    expect(cfg.aggregates).toBe(true);
+    expect(cfg.capErrors).toBe(true);
   });
 });
 
@@ -1308,5 +1372,327 @@ describe("audit-aware compression policy", () => {
     } as any);
     expect(fetchImpl).toHaveBeenCalled();
     expect(result).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §3 AXI — Unified escape hatch
+// ---------------------------------------------------------------------------
+
+describe("buildEscapeHatchNote", () => {
+  it("produces the unified format with original length and archive path", async () => {
+    const { buildEscapeHatchNote } = await import("./tool-results/core");
+    const note = buildEscapeHatchNote(50000, "/tmp/pi-archive/result.txt");
+    expect(note).toBe(
+      "\n\n... (compressed, 50000 chars total) — run read /tmp/pi-archive/result.txt for full output",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §4 AXI — Aggregate header integration
+// ---------------------------------------------------------------------------
+
+describe("aggregate header integration", () => {
+  it("prefixes grep aggregate to compressed output", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })),
+    );
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      aggregates: true,
+    });
+    const grepText = [
+      "src/a.ts:10: const foo = 1;",
+      "src/a.ts:25: const foo = 2;",
+      "src/b.ts:5: const foo = 3;",
+    ].join("\n");
+    const result = await handler({
+      toolName: "grep",
+      toolCallId: "agg-1",
+      input: { pattern: "foo", path: "src" },
+      content: [{ type: "text", text: grepText }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(result?.content[0]?.text).toContain("[stats] matches: 3 | files: 2");
+    expect(result?.content[0]?.text).toContain("trimmed");
+  });
+
+  it("prefixes read aggregate to compressed output", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })),
+    );
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      aggregates: true,
+    });
+    const readText = "line of content\n".repeat(100);
+    const result = await handler({
+      toolName: "read",
+      toolCallId: "agg-2",
+      input: { path: "src/main.ts" },
+      content: [{ type: "text", text: readText }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(result?.content[0]?.text).toContain("[stats] chars:");
+    expect(result?.content[0]?.text).toContain("lines: 101");
+    expect(result?.content[0]?.text).toContain("trimmed");
+  });
+
+  it("prefixes bash aggregate to cap-route output", async () => {
+    const handler = createTestToolResultHandler({
+      fetchImpl: mock(() =>
+        Promise.resolve(Response.json({ compressed_output: null }, { status: 200 })),
+      ),
+      baseUrl: "http://127.0.0.1:8320",
+      routingStrategy: "benchmark",
+      capFallbackBytes: 500,
+      aggregates: true,
+      archiveOriginal: mock(async () => "/tmp/pi-archive/bash-out.txt"),
+    });
+    const bashText = Array.from({ length: 200 }, (_, i) => `line-${i}`).join("\n");
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "agg-3",
+      input: { command: "cat big.log" },
+      content: [{ type: "text", text: bashText }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(result?.content[0]?.text).toContain("[stats] lines: 200");
+    expect(result?.content[0]?.text).toContain("run read /tmp/pi-archive/bash-out.txt for full output");
+  });
+
+  it("omits aggregate prefix when aggregates is false", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })),
+    );
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      aggregates: false,
+    });
+    const result = await handler({
+      toolName: "grep",
+      toolCallId: "agg-4",
+      input: { pattern: "foo" },
+      content: [{ type: "text", text: "src/a.ts:10: foo\nsrc/b.ts:5: foo" }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(result?.content[0]?.text).not.toContain("[stats]");
+    expect(result?.content[0]?.text).toContain("trimmed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §6 AXI — Cap large error outputs
+// ---------------------------------------------------------------------------
+
+describe("error cap behavior", () => {
+  it("caps large error output with head/tail and archive, never calls Edgee", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "should not happen" }, { status: 200 })),
+    );
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      capErrors: true,
+      capFallbackBytes: 500,
+      archiveOriginal: mock(async () => "/tmp/pi-archive/err.txt"),
+    });
+    const errorText = Array.from({ length: 200 }, (_, i) => `error line ${i}`).join("\n");
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "err-1",
+      input: { command: "failing-cmd" },
+      content: [{ type: "text", text: errorText }],
+      isError: true,
+      details: undefined,
+    } as any);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result).toBeDefined();
+    const output = result?.content[0]?.text ?? "";
+    expect(output).toContain("error line 0");
+    expect(output).toContain("error line 199");
+    expect(output).toContain("omitted by head/tail cap");
+    expect(output).toContain("run read /tmp/pi-archive/err.txt for full output");
+  });
+
+  it("passes small error output through intact", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "no" }, { status: 200 })),
+    );
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      capErrors: true,
+      capFallbackBytes: 500,
+      archiveOriginal: mock(async () => "/tmp/pi-archive/err.txt"),
+    });
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "err-2",
+      input: { command: "failing-cmd" },
+      content: [{ type: "text", text: "small error" }],
+      isError: true,
+      details: undefined,
+    } as any);
+    expect(result).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("passes error output through intact when capErrors is false", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "no" }, { status: 200 })),
+    );
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      capErrors: false,
+      capFallbackBytes: 10,
+      archiveOriginal: mock(async () => "/tmp/pi-archive/err.txt"),
+    });
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "err-3",
+      input: { command: "failing-cmd" },
+      content: [{ type: "text", text: "a".repeat(5000) }],
+      isError: true,
+      details: undefined,
+    } as any);
+    expect(result).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("passes error through intact when archiveOriginal is not set", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "no" }, { status: 200 })),
+    );
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      capErrors: true,
+      capFallbackBytes: 10,
+      archiveOriginal: undefined,
+    });
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "err-4",
+      input: { command: "failing-cmd" },
+      content: [{ type: "text", text: "a".repeat(5000) }],
+      isError: true,
+      details: undefined,
+    } as any);
+    expect(result).toBeUndefined();
+  });
+
+  it("uses default cap size when capFallbackBytes is not configured", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "no" }, { status: 200 })),
+    );
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      capErrors: true,
+      archiveOriginal: mock(async () => "/tmp/pi-archive/err-default.txt"),
+    });
+    // 20000 chars — well above DEFAULT_ERROR_CAP_BYTES (8192)
+    const errorText = "x".repeat(20000);
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "err-5",
+      input: { command: "failing-cmd" },
+      content: [{ type: "text", text: errorText }],
+      isError: true,
+      details: undefined,
+    } as any);
+    expect(result).toBeDefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const output = result?.content[0]?.text ?? "";
+    expect(output).toContain("omitted by head/tail cap");
+    expect(output).toContain("run read /tmp/pi-archive/err-default.txt for full output");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §5 AXI — Empty-state guard
+// ---------------------------------------------------------------------------
+
+describe("empty-state guard", () => {
+  it("passes empty text output through intact", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "x" }, { status: 200 })),
+    );
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      aggregates: true,
+      capErrors: true,
+    });
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "empty-1",
+      input: { command: "echo" },
+      content: [{ type: "text", text: "" }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(result).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("passes output below minBytes through intact without aggregate", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(Response.json({ compressed_output: "x" }, { status: 200 })),
+    );
+    const handler = createToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8320",
+      minBytesByGroup: { shell: 100, read: 100, search: 100 },
+      aggregates: true,
+      capErrors: true,
+    });
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "empty-2",
+      input: { command: "echo hi" },
+      content: [{ type: "text", text: "short" }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(result).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("capped output is never empty — always contains head content", async () => {
+    const handler = createTestToolResultHandler({
+      fetchImpl: mock(() =>
+        Promise.resolve(Response.json({ compressed_output: null }, { status: 200 })),
+      ),
+      baseUrl: "http://127.0.0.1:8320",
+      routingStrategy: "benchmark",
+      capFallbackBytes: 300,
+      aggregates: true,
+      archiveOriginal: mock(async () => "/tmp/pi-archive/guard.txt"),
+    });
+    const source = Array.from({ length: 100 }, (_, i) => `line-${i}`).join("\n");
+    const result = await handler({
+      toolName: "bash",
+      toolCallId: "empty-3",
+      input: { command: "cat big.log" },
+      content: [{ type: "text", text: source }],
+      isError: false,
+      details: undefined,
+    } as any);
+    expect(result).toBeDefined();
+    const output = result?.content[0]?.text ?? "";
+    expect(output.length).toBeGreaterThan(0);
+    expect(output).toContain("line-0");
+    expect(output).toContain("run read /tmp/pi-archive/guard.txt for full output");
   });
 });

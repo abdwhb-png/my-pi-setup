@@ -73,5 +73,7 @@ export function getLocalCompressorConfig(
                 cfg.archiveRetention?.maxBytes ??
                 DEFAULT_ARCHIVE_RETENTION.maxBytes,
         },
+        aggregates: cfg.aggregates ?? true,
+        capErrors: cfg.capErrors ?? true,
     };
 }
