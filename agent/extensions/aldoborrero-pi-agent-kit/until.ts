@@ -7,7 +7,8 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { complete, type Api, type Model, type UserMessage } from "@earendil-works/pi-ai";
+import { complete } from "@earendil-works/pi-ai/compat";
+import type { Api, Model, UserMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { compact } from "@earendil-works/pi-coding-agent";
 import { createUiColors } from "../_shared/ui-colors.js";

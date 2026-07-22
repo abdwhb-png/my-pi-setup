@@ -5,6 +5,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 describe("pi-wrapper-lib", () => {
+  it("resolves the default Bun binary from the home directory", async () => {
+    const mod = await import("./pi-wrapper-lib.ts");
+
+    expect(mod.resolveRealPiPath(undefined, "/tmp/pi-home")).toBe("/tmp/pi-home/.bun/bin/pi");
+    expect(mod.resolveRealPiPath("/opt/custom/pi", "/tmp/pi-home")).toBe("/opt/custom/pi");
+  });
+
   it("detects package mutation commands", async () => {
     const mod = await import("./pi-wrapper-lib.ts");
     expect(mod.isPackageMutationCommand(["install", "x"])).toBe(true);

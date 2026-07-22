@@ -4,13 +4,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-    AuthStorage,
     createAgentSession,
     DefaultResourceLoader,
-    ModelRegistry,
+    ModelRuntime,
     SessionManager,
     SettingsManager,
 } from '@earendil-works/pi-coding-agent';
+import {
+    InMemoryCredentialStore,
+    InMemoryModelsStore,
+} from '@earendil-works/pi-ai';
 
 const { createToolGroupsExtension: createRuntimeToolGroupsExtension } =
     await import('./index.ts');
@@ -24,6 +27,14 @@ function createToolGroupsExtension(
     return createRuntimeToolGroupsExtension(loadConfig, loadRequestedTools);
 }
 
+async function createInMemoryModelRuntime(): Promise<ModelRuntime> {
+    return ModelRuntime.create({
+        credentials: new InMemoryCredentialStore(),
+        modelsStore: new InMemoryModelsStore(),
+        modelsPath: null,
+    });
+}
+
 // ---------------------------------------------------------------------------
 // SDK integration test – verifies extension lifecycle through the real SDK
 // ---------------------------------------------------------------------------
@@ -33,8 +44,7 @@ describe('tool-groups SDK integration', () => {
         const tmpDir = await mkdtemp(join(tmpdir(), 'tool-groups-sdk-'));
         try {
             const settings = SettingsManager.inMemory({});
-            const auth = AuthStorage.inMemory({});
-            const modelRegistry = ModelRegistry.inMemory(auth);
+            const modelRuntime = await createInMemoryModelRuntime();
             const sessionManager = SessionManager.inMemory(tmpDir);
 
             const loader = new DefaultResourceLoader({
@@ -71,8 +81,7 @@ describe('tool-groups SDK integration', () => {
                 ],
                 settingsManager: settings,
                 sessionManager,
-                authStorage: auth,
-                modelRegistry,
+                modelRuntime,
                 resourceLoader: loader,
             });
 
@@ -97,8 +106,7 @@ describe('tool-groups SDK integration', () => {
         const tmpDir = await mkdtemp(join(tmpdir(), 'tool-groups-deferred-'));
         try {
             const settings = SettingsManager.inMemory({});
-            const auth = AuthStorage.inMemory({});
-            const modelRegistry = ModelRegistry.inMemory(auth);
+            const modelRuntime = await createInMemoryModelRuntime();
             const sessionManager = SessionManager.inMemory(tmpDir);
 
             const loader = new DefaultResourceLoader({
@@ -124,8 +132,7 @@ describe('tool-groups SDK integration', () => {
                 agentDir: tmpDir,
                 settingsManager: settings,
                 sessionManager,
-                authStorage: auth,
-                modelRegistry,
+                modelRuntime,
                 resourceLoader: loader,
             });
 

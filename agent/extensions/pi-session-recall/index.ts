@@ -23,7 +23,8 @@
  *   pi_session_query(path, "what approach did we take for X?")
  */
 
-import { complete, type Model, type Api, type Message } from "@earendil-works/pi-ai";
+import { complete } from "@earendil-works/pi-ai/compat";
+import type { Model, Api, Message } from "@earendil-works/pi-ai";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {

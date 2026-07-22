@@ -1,240 +1,227 @@
 {
-  "lastChangelogVersion": "0.80.7",
-  "defaultProvider": "zai",
-  "defaultModel": "glm-5.2",
-  "defaultThinkingLevel": "medium",
-  "hideThinkingBlock": false,
-  "theme": "dark",
-  "steeringMode": "all",
-  "followUpMode": "all",
-  "npmCommand": [
-    "bun"
-  ],
-  "extensions": [
-    "/home/abdwhb/.pi/agent/extensions/package-finalizer.ts",
-    "/home/abdwhb/projects/shared-services/pi-lens-dist/index.js",
-    "/home/abdwhb/.pi/agent/extensions/pi-overrides/index.ts"
-  ],
-  "packages": [
-    "npm:pi-subagents",
-    "npm:pi-web-access",
-    "npm:@juicesharp/rpiv-ask-user-question",
-    "npm:pi-mcp-adapter",
-    "npm:@juicesharp/rpiv-todo",
-    "npm:pi-hermes-memory",
-    "npm:pi-intercom",
-    "/home/abdwhb/projects/pi-integrations/plannotator/apps/pi-extension",
-    "/home/abdwhb/projects/pi-integrations/pi-fancy-footer",
-    "npm:@hypabolic/pi-hypa",
-    "npm:@gotgenes/pi-permission-system",
-    "../../projects/pi-integrations/pi-roles",
-    "npm:context-mode",
-    "npm:@ogulcancelik/pi-herdr",
-    "./extensions/tool-groups"
-  ],
-  "packageLifecycleTrust": {
-    "confirm": false,
-    "showStatus": true
-  },
-  "aiProviders": {
-    "providers": {
-      "factory-ai": false,
-      "cpa": true
-    }
-  },
-  "safeBash": {
-    "mode": "coexist"
-  },
-  "saveTokens": {
-    "caveman": {
-      "defaultLevel": "full"
-    },
-    "ponytail": {
-      "enabled": true
-    }
-  },
-  "fileResolver": {
-    "fd": {
-      "respectGitignore": false,
-      "excludePatterns": [
-        ".git",
-        "node_modules",
-        ".cache"
-      ]
-    },
-    "rg": {
-      "respectGitignore": false
-    },
-    "ls": {
-      "respectGitignore": false
-    },
-    "additionalDirectories": [
-      "/home/abdwhb/.pi",
-      "/home/abdwhb/projects/shared-services"
+    "lastChangelogVersion": "0.80.7",
+    "defaultProvider": "cpa",
+    "defaultModel": "deepseek/deepseek-v4-flash",
+    "defaultThinkingLevel": "medium",
+    "hideThinkingBlock": false,
+    "theme": "dark",
+    "steeringMode": "all",
+    "followUpMode": "all",
+    "npmCommand": ["bun"],
+    "extensions": [
+        "~/.pi/agent/extensions/package-finalizer.ts",
+        "~/projects/shared-services/pi-lens-dist/index.js",
+        "~/.pi/agent/extensions/pi-overrides/index.ts"
     ],
-    "enableRealtimeFallback": true
-  },
-  "toolSummary": {
-    "tools": [
-      "edit_plan",
-      "write_plan",
-      "session_plan",
-      "safe_bash",
-      "bash",
-      "hypa_shell",
-      "load_skill",
-      "subagent",
-      "mcp",
-      "@files-write",
-      "@memory",
-      "lens_diagnostics",
-      "ast_grep_replace"
-    ]
-  },
-  "translate": {
-    "model": "ocg/go-deepseek-v4-flash",
-    "defaultTargetLanguage": "en",
-    "languages": {
-      "en": "English",
-      "fr": "French"
-    }
-  },
-  "pi-roles": {
-    "roleScope": "both",
-    "defaultRole": "pi-agent",
-    "intercom": "both",
-    "showStatus": false
-  },
-  "subagents": {
-    "defaultModel": "cpa/ocg/go-deepseek-v4-flash",
-    "turnBudget": {
-      "maxTurns": 40,
-      "graceTurns": 10
+    "packages": [
+        "npm:pi-subagents",
+        "npm:pi-web-access",
+        "npm:@juicesharp/rpiv-ask-user-question",
+        "npm:pi-mcp-adapter",
+        "npm:@juicesharp/rpiv-todo",
+        "npm:pi-hermes-memory",
+        "npm:pi-intercom",
+        "~/projects/pi-integrations/plannotator/apps/pi-extension",
+        "~/projects/pi-integrations/pi-fancy-footer",
+        "npm:@hypabolic/pi-hypa",
+        "npm:@gotgenes/pi-permission-system",
+        "../../projects/pi-integrations/pi-roles",
+        "npm:context-mode",
+        "npm:@ogulcancelik/pi-herdr",
+        "./extensions/tool-groups"
+    ],
+    "packageLifecycleTrust": {
+        "confirm": false,
+        "showStatus": true
     },
-    "agentOverrides": {
-      "worker": {
-        "model": "cpa/ocg/go-deepseek-v4-flash",
-        "fallbackModels": [
-          "cpa/deepseek/deepseek-v4-flash",
-          "cpa/qwen/qwen3.6-plus-preview:free"
-        ],
-        "thinking": "high",
+    "aiProviders": {
+        "providers": {
+            "factory-ai": false,
+            "cpa": true
+        }
+    },
+    "safeBash": {
+        "mode": "coexist"
+    },
+    "saveTokens": {
+        "caveman": {
+            "defaultLevel": "full"
+        },
+        "ponytail": {
+            "enabled": true
+        }
+    },
+    "fileResolver": {
+        "fd": {
+            "respectGitignore": false,
+            "excludePatterns": [".git", "node_modules", ".cache"]
+        },
+        "rg": {
+            "respectGitignore": false
+        },
+        "ls": {
+            "respectGitignore": false
+        },
+        "additionalDirectories": ["~/.pi", "~/projects/shared-services"],
+        "enableRealtimeFallback": true
+    },
+    "toolSummary": {
         "tools": [
-          "@inspect",
-          "@lens-write",
-          "@implement",
-          "contact_supervisor"
+            "edit_plan",
+            "write_plan",
+            "session_plan",
+            "safe_bash",
+            "bash",
+            "hypa_shell",
+            "load_skill",
+            "subagent",
+            "mcp",
+            "@files-write",
+            "@memory",
+            "lens_diagnostics",
+            "ast_grep_replace"
         ]
-      },
-      "scout": {
-        "model": "cpa/ocg/mimo-v2.5",
-        "fallbackModels": [
-          "cpa/deepseek/deepseek-v4-flash",
-          "cpa/qwen/qwen3.6-plus-preview:free"
-        ],
-        "thinking": "high",
-        "tools": [
-          "@inspect",
-          "@lens",
-          "safe_bash",
-          "write",
-          "intercom"
-        ]
-      },
-      "researcher": {
-        "model": "cpa/ocg/go-deepseek-v4-pro",
-        "fallbackModels": [
-          "cpa/deepseek/deepseek-v4-pro",
-          "cpa/nvidia/nemotron-3-super-120b-a12b:free"
-        ]
-      },
-      "reviewer": {
-        "model": "zai/glm-5.2",
-        "fallbackModels": [
-          "cpa/zai-coding/glm-5.2",
-          "cpa/ocg/go-glm-5.2",
-          "cpa/ocg/go-deepseek-v4-pro",
-          "cpa/deepseek/deepseek-v4-pro"
-        ]
-      },
-      "planner": {
-        "model": "cpa/ocg/go-deepseek-v4-pro",
-        "fallbackModels": [
-          "cpa/deepseek/deepseek-v4-pro",
-          "cpa/nvidia/nemotron-3-super-120b-a12b:free"
-        ],
-        "tools": [
-          "@inspect",
-          "@lens",
-          "write_plan",
-          "intercom"
-        ]
-      },
-      "oracle": {
-        "model": "zai/glm-5.2",
-        "fallbackModels": [
-          "cpa/ocg/go-glm-5.2",
-          "cpa/ocg/go-deepseek-v4-pro",
-          "cpa/deepseek/deepseek-v4-pro"
-        ],
-        "thinking": "xhigh"
-      },
-      "delegate": {
-        "tools": [
-          "@inspect",
-          "@lens-write",
-          "@implement",
-          "contact_supervisor"
-        ]
-      },
-      "context-builder": {
-        "model": "cpa/ocg/mimo-v2.5",
-        "fallbackModels": [
-          "cpa/ocg/go-deepseek-v4-pro",
-          "cpa/deepseek/deepseek-v4-flash",
-          "cpa/qwen/qwen3.6-plus-preview:free"
-        ],
-        "tools": [
-          "@inspect",
-          "@lens",
-          "safe_bash",
-          "write",
-          "@web",
-          "intercom"
-        ]
-      },
-      "plan-reviewer": {
-        "model": "openai-codex/gpt-5.6-luna",
-        "fallbackModels": [
-          "cpa/ocg/go-deepseek-v4-pro",
-          "cpa/deepseek/deepseek-v4-pro",
-          "cpa/nvidia/nemotron-3-super-120b-a12b:free"
-        ]
-      },
-      "sdd-orchestrator": {
-        "fallbackModels": [
-          "zai/glm-5.2",
-          "cpa/zai-coding/glm-5.2",
-          "cpa/ocg/go-deepseek-v4-pro",
-          "cpa/deepseek/deepseek-v4-pro",
-          "cpa/nvidia/nemotron-3-super-120b-a12b:free"
-        ]
-      },
-      "oh-my-oracle": {
-        "fallbackModels": [
-          "zai/glm-5.2",
-          "cpa/zai-coding/glm-5.2",
-          "cpa/ocg/go-deepseek-v4-pro",
-          "cpa/deepseek/deepseek-v4-pro"
-        ]
-      },
-      "task-doer": {
-        "model": "cpa/ocg/go-deepseek-v4-flash",
-        "fallbackModels": [
-          "cpa/deepseek/deepseek-v4-flash",
-          "cpa/qwen/qwen3.6-plus-preview:free"
-        ]
-      }
+    },
+    "translate": {
+        "model": "ocg/go-deepseek-v4-flash",
+        "defaultTargetLanguage": "en",
+        "languages": {
+            "en": "English",
+            "fr": "French"
+        }
+    },
+    "pi-roles": {
+        "roleScope": "both",
+        "defaultRole": "pi-agent",
+        "intercom": "both",
+        "showStatus": false
+    },
+    "subagents": {
+        "defaultModel": "cpa/ocg/go-deepseek-v4-flash",
+        "turnBudget": {
+            "maxTurns": 40,
+            "graceTurns": 10
+        },
+        "agentOverrides": {
+            "worker": {
+                "model": "cpa/ocg/go-deepseek-v4-flash",
+                "fallbackModels": [
+                    "cpa/deepseek/deepseek-v4-flash",
+                    "cpa/qwen/qwen3.6-plus-preview:free"
+                ],
+                "thinking": "high",
+                "tools": [
+                    "@inspect",
+                    "@lens-write",
+                    "@implement",
+                    "contact_supervisor"
+                ]
+            },
+            "scout": {
+                "model": "cpa/ocg/mimo-v2.5",
+                "fallbackModels": [
+                    "cpa/deepseek/deepseek-v4-flash",
+                    "cpa/qwen/qwen3.6-plus-preview:free"
+                ],
+                "thinking": "high",
+                "tools": ["@inspect", "@lens", "safe_bash", "write", "intercom"]
+            },
+            "researcher": {
+                "model": "cpa/ocg/go-deepseek-v4-pro",
+                "fallbackModels": [
+                    "cpa/deepseek/deepseek-v4-pro",
+                    "cpa/nvidia/nemotron-3-super-120b-a12b:free"
+                ]
+            },
+            "reviewer": {
+                "model": "zai/glm-5.2",
+                "fallbackModels": [
+                    "cpa/zai-coding/glm-5.2",
+                    "cpa/ocg/go-glm-5.2",
+                    "cpa/ocg/go-deepseek-v4-pro",
+                    "cpa/deepseek/deepseek-v4-pro"
+                ]
+            },
+            "planner": {
+                "model": "cpa/ocg/go-deepseek-v4-pro",
+                "fallbackModels": [
+                    "cpa/deepseek/deepseek-v4-pro",
+                    "cpa/nvidia/nemotron-3-super-120b-a12b:free"
+                ],
+                "tools": ["@inspect", "@lens", "write_plan", "intercom"]
+            },
+            "oracle": {
+                "model": "zai/glm-5.2",
+                "fallbackModels": [
+                    "cpa/ocg/go-glm-5.2",
+                    "cpa/ocg/go-deepseek-v4-pro",
+                    "cpa/deepseek/deepseek-v4-pro"
+                ],
+                "thinking": "xhigh"
+            },
+            "delegate": {
+                "tools": [
+                    "@inspect",
+                    "@lens-write",
+                    "@implement",
+                    "contact_supervisor"
+                ]
+            },
+            "context-builder": {
+                "model": "cpa/ocg/mimo-v2.5",
+                "fallbackModels": [
+                    "cpa/ocg/go-deepseek-v4-pro",
+                    "cpa/deepseek/deepseek-v4-flash",
+                    "cpa/qwen/qwen3.6-plus-preview:free"
+                ],
+                "tools": [
+                    "@inspect",
+                    "@lens",
+                    "safe_bash",
+                    "write",
+                    "@web",
+                    "intercom"
+                ]
+            },
+            "plan-reviewer": {
+                "model": "openai-codex/gpt-5.6-luna",
+                "fallbackModels": [
+                    "cpa/ocg/go-deepseek-v4-pro",
+                    "cpa/deepseek/deepseek-v4-pro",
+                    "cpa/nvidia/nemotron-3-super-120b-a12b:free"
+                ]
+            },
+            "sdd-orchestrator": {
+                "fallbackModels": [
+                    "zai/glm-5.2",
+                    "cpa/zai-coding/glm-5.2",
+                    "cpa/ocg/go-deepseek-v4-pro",
+                    "cpa/deepseek/deepseek-v4-pro",
+                    "cpa/nvidia/nemotron-3-super-120b-a12b:free"
+                ]
+            },
+            "oh-my-oracle": {
+                "fallbackModels": [
+                    "zai/glm-5.2",
+                    "cpa/zai-coding/glm-5.2",
+                    "cpa/ocg/go-deepseek-v4-pro",
+                    "cpa/deepseek/deepseek-v4-pro"
+                ]
+            },
+            "quick-worker": {
+                "model": "cpa/ocg/go-deepseek-v4-flash",
+                "fallbackModels": [
+                    "cpa/deepseek/deepseek-v4-flash",
+                    "cpa/qwen/qwen3.6-plus-preview:free"
+                ]
+            },
+            "sdd-worker": {
+                "model": "cpa/ocg/go-deepseek-v4-flash",
+                "fallbackModels": [
+                    "cpa/deepseek/deepseek-v4-flash",
+                    "cpa/qwen/qwen3.6-plus-preview:free"
+                ]
+            }
+        }
     }
-  }
 }

@@ -31,7 +31,6 @@ import {
 import {
 	createFactoryOAuth,
 	getGoogleAccessToken,
-	refreshGoogleAccessToken,
 } from "../shared/oauth.ts";
 import {
 	streamFactory,
@@ -43,7 +42,6 @@ import {
 const PROVIDER_NAME = "factory-ai";
 const PROVIDER_DISPLAY = "Factory AI";
 const API_KEY_URL = "https://app.factory.ai/settings/api-keys";
-const AUTH_STORAGE_KEY = PROVIDER_NAME;
 const PROVIDER_BASE_URL = "https://api.factory.ai";
 const PROVIDER_API = "openai-completions" as const;
 
@@ -151,24 +149,12 @@ export function registerFactoryProvider(pi: ExtensionAPI): void {
 	// Re-register on session start if user is already logged in
 	pi.on("session_start", async (_event, ctx) => {
 		try {
-			const cred = ctx.modelRegistry.authStorage.get(AUTH_STORAGE_KEY);
-			if (cred && cred.type === "oauth") {
-				// Refresh Google token if available
-				let updatedCred = cred;
-				try {
-					const refreshed = await refreshGoogleAccessToken(
-						cred as import("@earendil-works/pi-ai").OAuthCredentials,
-					);
-					if (refreshed !== cred) {
-						updatedCred = { ...cred, ...refreshed };
-					}
-				} catch {
-					// Refresh failed — use existing creds
-				}
+			const auth = await ctx.modelRegistry.getProviderAuth(PROVIDER_NAME);
+			const apiKey = auth?.auth.apiKey;
+			if (!apiKey) return;
 
-				await fetchFactoryModels(updatedCred.access, ctx.cwd);
-				ctx.modelRegistry.registerProvider(PROVIDER_NAME, buildProviderConfig());
-			}
+			await fetchFactoryModels(apiKey, ctx.cwd);
+			ctx.modelRegistry.registerProvider(PROVIDER_NAME, buildProviderConfig());
 		} catch {
 			// If model refresh fails, keep whatever model list we already have cached.
 		}

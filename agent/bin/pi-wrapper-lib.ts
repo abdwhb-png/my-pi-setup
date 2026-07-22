@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { getDefaultAgentDir, repairConfiguredPiPackages } from "../extensions/_shared/package-install/finalizer.ts";
 import {
@@ -11,6 +13,10 @@ import { TOOL_GROUPS_REQUESTED_TOOLS_ENV } from "../extensions/_shared/tool-grou
 export interface PreparedToolGroupArgs {
   args: string[];
   requestedTools?: string[];
+}
+
+export function resolveRealPiPath(realPi = process.env.PI_REAL_BIN, homeDir = homedir()): string {
+  return resolve(realPi?.trim() || join(homeDir, ".bun", "bin", "pi"));
 }
 
 function parseToolList(value: string): string[] {

@@ -7,6 +7,7 @@ export const THINKING_LEVELS = [
     'medium',
     'high',
     'xhigh',
+    'max',
 ] as const satisfies readonly ThinkingLevel[];
 
 export function isThinkingLevel(value: unknown): value is ThinkingLevel {

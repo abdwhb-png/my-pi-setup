@@ -4,14 +4,13 @@
  * No pi runtime imports — only types — so this module is unit-testable
  * without jiti mocks. The extension wires these into fancy-footer widgets.
  */
-import type { Provider } from '@earendil-works/pi-ai';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import type { UiColorsCreation } from './ui-colors';
 
 export interface StatusBarState {
     workspace: { shortCwd: string; shortBranch: string };
     context: { tokens: number; window: number; percent: number };
-    model: { id: string; provider?: Provider };
+    model: { id: string; provider?: string };
     session: { name?: string };
     cost: { totalUsd: number };
 }

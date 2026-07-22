@@ -8,8 +8,8 @@ const completeMock = mock(async () => ({
   content: [{ type: "text" as const, text: "fallback answer" }],
 }));
 
-mock.module("@earendil-works/pi-ai", () => ({
-  complete: completeMock,
+mock.module("@earendil-works/pi-ai/compat", () => ({
+    complete: completeMock,
 }));
 
 let agentDir = mkdtempSync(join(tmpdir(), "pi-session-recall-agent-"));

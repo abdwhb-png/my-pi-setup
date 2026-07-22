@@ -28,7 +28,7 @@ describe('isThinkingLevel', () => {
 });
 
 describe('THINKING_LEVELS', () => {
-    it('contains all 6 canonical levels', () => {
+    it('contains all 7 canonical levels', () => {
         expect(THINKING_LEVELS).toEqual([
             'off',
             'minimal',
@@ -36,6 +36,7 @@ describe('THINKING_LEVELS', () => {
             'medium',
             'high',
             'xhigh',
+            'max',
         ]);
     });
 
