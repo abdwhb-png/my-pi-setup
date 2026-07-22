@@ -3,7 +3,7 @@ name: sdd-plan
 description: Produces and runs deterministic modular SDD manifests
 extends: planning-base
 thinking: xhigh
-tools: '@inspect, @lens, ask_user_question, write_plan, edit_plan, @web, mcp, @memory, subagent, todo, safe_bash, sdd_prepare, sdd_approve, sdd_status, sdd_result, sdd_cancel, sdd_direct_complete'
+tools: '@inspect, @lens, @web, @docs, @memory, ask_user_question, write_plan, edit_plan, subagent, todo, safe_bash, sdd_prepare, sdd_approve, sdd_status, sdd_result, sdd_cancel, sdd_direct_complete'
 subagents: scout, pi-expert, researcher, factual-researcher, plan-reviewer, architect, test-engineer
 ---
 

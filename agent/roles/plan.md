@@ -3,8 +3,8 @@ name: plan
 description: Researches and creates actionable plans with Plannotator browser review
 extends: planning-base
 thinking: xhigh
-tools: '@inspect, @lens, ask_user_question, write_plan, edit_plan, @web, mcp, @memory, subagent, todo, safe_bash, plan_submit, plan_annotate'
-subagents: scout, pi-expert, researcher, factual-researcher, plan-reviewer, architect, test-engineer
+tools: '@inspect, @lens, @web, @docs, @memory, ask_user_question, write_plan, edit_plan, subagent, todo, plan_submit, plan_annotate'
+subagents: scout, pi-expert, researcher, factual-researcher, plan-reviewer, architect, oracle
 ---
 
 # Plan Role

@@ -13,8 +13,8 @@ When a subagent needs a specific model, follow the tier-based pattern.
 
 | Tier       | Agent types                                         | Need                                 | Primary                  | Fallback chain                                      |
 | ---------- | --------------------------------------------------- | ------------------------------------ | ------------------------ | --------------------------------------------------- |
-| **Low**    | worker, delegate, scout, task-doer, context-builder | Simple tasks, code reading/writing   | Fastest & cheapest model | paid pool → free pool                               |
-| **Medium** | researcher, planner, sdd-orchestrator               | Analysis, research, planning         | Capable reasoning model  | paid pool → free pool                               |
+| **Low**    | quick-worker, delegate, scout, context-builder      | Small bounded tasks, code reading/writing | Fastest & cheapest model | paid pool → free pool                               |
+| **Medium** | worker, researcher, planner, sdd-orchestrator       | Autonomous implementation, analysis, research, planning | Capable reasoning model | paid pool → free pool                               |
 | **High**   | reviewer, oracle                                    | Critical review, strategic decisions | Most capable model       | same-provider backup → paid pool (no free fallback) |
 
 ### Rules
