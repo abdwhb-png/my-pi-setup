@@ -14,6 +14,7 @@
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { TelemetryConfig } from '../config';
+import type { PurgeOptions, TelemetryPurgeResult } from './storage';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -64,7 +65,7 @@ mock.module('./redaction', () => ({
 
 // Writer mock — injected via deps instead of mock.module('./storage')
 // to avoid contaminating storage.test.ts with a global mock.
-const writerAppendMock = mock(() => Promise.resolve());
+const writerAppendMock = mock(async (_record: unknown): Promise<void> => {});
 const writerFlushMock = mock(() => Promise.resolve());
 let writerCreateCount = 0;
 
@@ -80,7 +81,13 @@ const createWriterMock = mock(
 );
 
 // Purge mock
-const purgeTelemetryMock = mock(() => Promise.resolve({ deleted: 0, skipped: 0, errors: 0 }));
+const purgeTelemetryMock = mock(
+    async (_root: string, _options: PurgeOptions): Promise<TelemetryPurgeResult> => ({
+        deleted: 0,
+        skipped: 0,
+        errors: 0,
+    }),
+);
 
 // ---------------------------------------------------------------------------
 // Imports

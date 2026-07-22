@@ -132,7 +132,7 @@ export default function slowMode(pi: ExtensionAPI) {
         row: 1,
         order: 8,
         align: 'right',
-        render: (ctx: any) => {
+        render: (ctx) => {
             const text = buildWidgetText(enabled, toolConfig);
             if (!text) return null;
             const colors = createUiColors(ctx.theme);

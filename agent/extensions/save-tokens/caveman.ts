@@ -90,6 +90,10 @@ const DEFAULT_SETTINGS: CavemanSettings = {
 };
 let saveSettingsQueue: Promise<void> = Promise.resolve();
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 async function saveCavemanSettings(
     updates: Partial<CavemanSettings>,
 ): Promise<void> {
@@ -100,7 +104,8 @@ async function saveCavemanSettings(
         let settings: Record<string, unknown> = {};
         try {
             const raw = await readFile(settingsPath, 'utf8');
-            settings = JSON.parse(raw);
+            const parsed: unknown = JSON.parse(raw);
+            if (isRecord(parsed)) settings = parsed;
         } catch {
             // empty or doesn't exist
         }
@@ -137,6 +142,10 @@ interface Animation {
     label: string;
     /** ms between frames */
     interval: number;
+}
+
+class AnimationTimer {
+    handle?: ReturnType<typeof setInterval>;
 }
 
 const R = '\x1b[38;5;196m'; // red
@@ -291,7 +300,7 @@ export function detectCavemanLevel(systemPrompt: string): string | null {
 export default function caveman(pi: ExtensionAPI) {
     let level: Level = 'off';
     let settings: CavemanSettings = { ...DEFAULT_SETTINGS };
-    let timer: ReturnType<typeof setInterval> | null = null;
+    const timer = new AnimationTimer();
     let frameIndex = 0;
     let isActive = false;
     let configLoaded = false;
@@ -314,9 +323,9 @@ export default function caveman(pi: ExtensionAPI) {
     // -- Animation helpers --
 
     function stopAnimation() {
-        if (timer) {
-            clearInterval(timer);
-            timer = null;
+        if (timer.handle !== undefined) {
+            clearInterval(timer.handle);
+            timer.handle = undefined;
         }
         frameIndex = 0;
     }
@@ -352,7 +361,10 @@ export default function caveman(pi: ExtensionAPI) {
         };
 
         renderFrame();
-        timer = setInterval(renderFrame, anim.interval);
+        // Bun and Node expose overlapping timer globals; tsc verifies the handle type,
+        // but Oxlint 1.70 treats the resolved return value as error-typed here.
+        // oxlint-disable-next-line typescript/no-unsafe-assignment
+        timer.handle = setInterval(renderFrame, anim.interval);
     }
 
     // -- Restore state on session load --
@@ -498,7 +510,7 @@ export default function caveman(pi: ExtensionAPI) {
                 } else if (id === 'showStatus') {
                     settings.showStatus = newValue === 'on';
                 }
-                saveCavemanSettings({
+                void saveCavemanSettings({
                     defaultLevel: settings.defaultLevel,
                     showStatus: settings.showStatus,
                 });

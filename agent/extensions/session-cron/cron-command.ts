@@ -128,7 +128,7 @@ export function registerCronCommand(
 
 			const task = store.createFromParsed(parsed, true);
 			store.add(task);
-			scheduler.start();
+			void scheduler.start();
 			updateStatus();
 			onTasksChanged();
 

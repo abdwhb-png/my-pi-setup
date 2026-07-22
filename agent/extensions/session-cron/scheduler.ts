@@ -11,8 +11,8 @@ export interface LoopSchedulerCallbacks {
 }
 
 export class LoopScheduler {
-	private checkTimer: ReturnType<typeof setInterval> | null = null;
-	private lockProbeTimer: ReturnType<typeof setInterval> | null = null;
+	private checkTimer?: ReturnType<typeof setInterval>;
+	private lockProbeTimer?: ReturnType<typeof setInterval>;
 	private agentBusy = false;
 	private latestCtx: ExtensionContext | null = null;
 	private isOwner = false;
@@ -58,7 +58,7 @@ export class LoopScheduler {
 					this.isOwner = true;
 					if (this.lockProbeTimer) {
 						clearInterval(this.lockProbeTimer);
-						this.lockProbeTimer = null;
+						this.lockProbeTimer = undefined;
 					}
 					this.startCheckTimer();
 					await this.callbacks.onOwnershipAcquired?.();
@@ -70,11 +70,11 @@ export class LoopScheduler {
 	async stop(): Promise<void> {
 		if (this.checkTimer) {
 			clearInterval(this.checkTimer);
-			this.checkTimer = null;
+			this.checkTimer = undefined;
 		}
 		if (this.lockProbeTimer) {
 			clearInterval(this.lockProbeTimer);
-			this.lockProbeTimer = null;
+			this.lockProbeTimer = undefined;
 		}
 		const wasOwner = this.isOwner;
 		this.isOwner = false;
@@ -88,7 +88,7 @@ export class LoopScheduler {
 	}
 
 	clearAll(): number {
-		this.stop();
+		void this.stop();
 		this.nextFireAt.clear();
 		this.inFlight.clear();
 		const count = this.store.clear();
@@ -103,7 +103,7 @@ export class LoopScheduler {
 			this.inFlight.delete(id);
 		}
 		if (deleted && this.store.size() === 0) {
-			this.stop();
+			void this.stop();
 		}
 		if (deleted) {
 			this.callbacks.onStatusChange?.();
@@ -147,7 +147,7 @@ export class LoopScheduler {
 			}
 
 			if (this.store.size() === 0) {
-				this.stop();
+				void this.stop();
 			}
 			this.callbacks.onStatusChange?.();
 			return;

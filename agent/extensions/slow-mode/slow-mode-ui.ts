@@ -298,9 +298,13 @@ function openExternalDiff(oldPath: string, newPath: string, label: string) {
         input: diff,
         stdio: ["pipe", "inherit", "inherit"],
       });
-    } catch (e: any) {
-      if (e.stdout) {
-        let diff = e.stdout as string;
+    } catch (error) {
+      const stdout =
+        typeof error === "object" && error !== null && "stdout" in error
+          ? error.stdout
+          : undefined;
+      if (typeof stdout === "string" || Buffer.isBuffer(stdout)) {
+        let diff = typeof stdout === "string" ? stdout : stdout.toString("utf8");
         diff = diff.replace(/^--- .*$/m, `--- a/${label}`);
         diff = diff.replace(/^\+\+\+ .*$/m, `+++ b/${label}`);
         execFileSync(cmd, ["--paging", "always", "--side-by-side"], {

@@ -961,7 +961,7 @@ describe("integration: scan → filter → aggregate", () => {
     expect(scanResult.records.length).toBe(8);
 
     // Filter + Annotate
-    const fa = filterAndAnnotate(scanResult.records, { ...scanResult.diagnostics });
+    const fa = filterAndAnnotate(scanResult.records, {});
     expect(fa.annotated.length).toBe(8);
 
     // Aggregate

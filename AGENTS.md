@@ -126,6 +126,7 @@ Some extensions bridge pi's generic TypeScript types (e.g. `ToolDefinition<TDeta
 ### Test Framework
 
 - **`bun test` is prefered when applicable.** Use bun's native test runner (`bun:test` imports) for all testing — it's 10x faster startup and 2.5-8x faster execution than vitest. Never use manual console.log test harnesses.
+- **Run the agent test suite with `agent/` as Bun's working directory.** Bun loads `bunfig.toml` from the process `cwd`; it does not discover a nested config from a positional test path. From `/home/abdwhb/.pi/agent`, use `bun test --isolate`. From `/home/abdwhb/.pi`, use `bun --cwd=/home/abdwhb/.pi/agent test --isolate`. Do not use `bun test agent` from the parent directory: that bypasses `agent/bunfig.toml` and discovers vendored tests under `agent/git/**`.
 - Import the module under test directly — **never copy-paste functions** into the test file. Testing copies of code instead of real imports is the most common silent failure pattern: the copy diverges from the source, and errors like missing dependencies or broken imports go undetected.
 - If an import cannot be resolved by the test runner (e.g. pi extension packages requiring jiti), **mock it with `mock.module()`** — do not inline a copy. The goal is to exercise the real module and catch resolution errors at test time.
 

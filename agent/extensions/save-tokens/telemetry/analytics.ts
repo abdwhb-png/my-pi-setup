@@ -671,7 +671,12 @@ export function aggregateGroups(annotated: AnnotatedEvent[]): { rows: AggregateR
 // 4. Export helpers
 // ---------------------------------------------------------------------------
 
-const CSV_COLUMNS: Array<{ key: keyof AggregateRow | string; label: string }> = [
+type CsvColumnKey =
+  | Exclude<keyof AggregateRow, "observedCompression">
+  | `compression.${keyof CompressionAggregate}`;
+type CsvFieldValue = string | number | boolean | null | undefined;
+
+const CSV_COLUMNS: Array<{ key: CsvColumnKey; label: string }> = [
   { key: "groupKey", label: "groupKey" },
   { key: "sessionCount", label: "sessionCount" },
   { key: "runCount", label: "runCount" },
@@ -696,7 +701,7 @@ const CSV_COLUMNS: Array<{ key: keyof AggregateRow | string; label: string }> = 
   { key: "compression.savingsPct", label: "compression_savingsPct" },
 ];
 
-function escapeCsvField(value: unknown): string {
+function escapeCsvField(value: CsvFieldValue): string {
   const str = value == null ? "" : String(value);
   if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
     return '"' + str.replace(/"/g, '""') + '"';
@@ -755,7 +760,7 @@ export function exportCsv(result: AnalyticsResult): string {
   const header = CSV_COLUMNS.map((c) => c.label).join(",");
   const dataRows = result.rows.map((row) => {
     // Convert row to flat record for column access
-    const flat: Record<string, unknown> = {
+    const flat: Record<CsvColumnKey, CsvFieldValue> = {
       groupKey: row.groupKey,
       sessionCount: row.sessionCount,
       runCount: row.runCount,
@@ -779,7 +784,7 @@ export function exportCsv(result: AnalyticsResult): string {
       "compression.savedBytes": row.observedCompression.savedBytes,
       "compression.savingsPct": row.observedCompression.savingsPct,
     };
-    return CSV_COLUMNS.map((c) => escapeCsvField(flat[c.key as string])).join(",");
+    return CSV_COLUMNS.map((c) => escapeCsvField(flat[c.key])).join(",");
   });
 
   return header + "\n" + dataRows.join("\n") + (dataRows.length > 0 ? "\n" : "");

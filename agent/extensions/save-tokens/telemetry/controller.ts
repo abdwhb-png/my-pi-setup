@@ -15,7 +15,7 @@
  * When telemetry is disabled (`enabled === false`), both functions are no-ops.
  */
 
-import type { ExtensionAPI, ExtensionContext, BeforeAgentStartEvent, SessionStartEvent, SessionShutdownEvent, AgentStartEvent, AgentEndEvent, TurnStartEvent, TurnEndEvent, ToolResultEvent, MessageStartEvent, MessageUpdateEvent, MessageEndEvent, ModelSelectEvent, ThinkingLevelSelectEvent } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext, ExtensionEvent, BeforeAgentStartEvent, SessionStartEvent, SessionShutdownEvent, AgentStartEvent, AgentEndEvent, TurnStartEvent, TurnEndEvent, ToolResultEvent } from '@earendil-works/pi-coding-agent';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { loadTelemetryConfig } from '../config';
@@ -39,6 +39,12 @@ import {
     type JsonValue,
     type UsageMetrics,
 } from './types';
+
+type MessageStartEvent = Extract<ExtensionEvent, { type: 'message_start' }>;
+type MessageUpdateEvent = Extract<ExtensionEvent, { type: 'message_update' }>;
+type MessageEndEvent = Extract<ExtensionEvent, { type: 'message_end' }>;
+type ModelSelectEvent = Extract<ExtensionEvent, { type: 'model_select' }>;
+type ThinkingLevelSelectEvent = Extract<ExtensionEvent, { type: 'thinking_level_select' }>;
 
 // ---------------------------------------------------------------------------
 // Mode markers for systemPrompt scanning
@@ -615,20 +621,19 @@ function handleTurnEnd(state: TelemetryState) {
         const durationMs = state.turnStartTime ? state.clock() - state.turnStartTime : undefined;
 
         // Extract usage from message if available
-        const msg = event.message as Record<string, unknown> | undefined;
-        const usage = msg?.usage as Record<string, unknown> | undefined;
+        const usage = event.message.role === 'assistant'
+            ? event.message.usage
+            : undefined;
         let usageMetrics: UsageMetrics | undefined;
 
-        if (usage && typeof usage === 'object') {
+        if (usage) {
             usageMetrics = {
-                inputTokens: typeof usage.input === 'number' ? usage.input : undefined,
-                outputTokens: typeof usage.output === 'number' ? usage.output : undefined,
-                cacheReadTokens: typeof usage.cacheRead === 'number' ? usage.cacheRead : undefined,
-                cacheWriteTokens: typeof usage.cacheWrite === 'number' ? usage.cacheWrite : undefined,
-                totalTokens: typeof usage.totalTokens === 'number' ? usage.totalTokens : undefined,
-                cost: typeof usage.cost === 'object' && usage.cost !== null
-                    ? ((usage.cost as Record<string, unknown>).total as number) ?? undefined
-                    : (typeof usage.cost === 'number' ? usage.cost : undefined),
+                inputTokens: usage.input,
+                outputTokens: usage.output,
+                cacheReadTokens: usage.cacheRead,
+                cacheWriteTokens: usage.cacheWrite,
+                totalTokens: usage.totalTokens,
+                cost: usage.cost?.total,
             };
         }
 

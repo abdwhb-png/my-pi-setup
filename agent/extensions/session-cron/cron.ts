@@ -19,7 +19,7 @@ export default function sessionCronExtension(pi: ExtensionAPI) {
 	const store = new InMemoryTaskStore();
 	let persistChain: Promise<void> = Promise.resolve();
 	let fileWatcher: FSWatcher | null = null;
-	let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+	let reloadTimer: { handle: ReturnType<typeof setTimeout> } | undefined;
 
 	function persistTasks(): void {
 		persistChain = persistChain
@@ -29,12 +29,14 @@ export default function sessionCronExtension(pi: ExtensionAPI) {
 
 	function scheduleReloadFromDisk(): void {
 		if (reloadTimer) {
-			clearTimeout(reloadTimer);
+			clearTimeout(reloadTimer.handle);
 		}
-		reloadTimer = setTimeout(() => {
-			reloadTimer = null;
-			void reloadFromDisk();
-		}, FILE_RELOAD_DEBOUNCE_MS);
+		reloadTimer = {
+			handle: setTimeout(() => {
+				reloadTimer = undefined;
+				void reloadFromDisk();
+			}, FILE_RELOAD_DEBOUNCE_MS),
+		};
 	}
 
 	async function reloadFromDisk(): Promise<void> {
@@ -88,8 +90,8 @@ export default function sessionCronExtension(pi: ExtensionAPI) {
 		fileWatcher?.close();
 		fileWatcher = null;
 		if (reloadTimer) {
-			clearTimeout(reloadTimer);
-			reloadTimer = null;
+			clearTimeout(reloadTimer.handle);
+			reloadTimer = undefined;
 		}
 	}
 
