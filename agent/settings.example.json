@@ -1,5 +1,4 @@
 {
-    "lastChangelogVersion": "0.80.7",
     "defaultProvider": "cpa",
     "defaultModel": "deepseek/deepseek-v4-flash",
     "defaultThinkingLevel": "medium",
@@ -25,7 +24,7 @@
         "~/projects/pi-integrations/pi-fancy-footer",
         "npm:@hypabolic/pi-hypa",
         "npm:@gotgenes/pi-permission-system",
-        "../../projects/pi-integrations/pi-roles",
+        "~/projects/pi-integrations/pi-roles",
         "npm:context-mode",
         "npm:@ogulcancelik/pi-herdr",
         "./extensions/tool-groups"

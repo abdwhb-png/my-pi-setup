@@ -1,4 +1,6 @@
 import { describe, it, expect, mock } from 'bun:test';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 // Mock pi-tui modules before importing the module under test
 mock.module('@earendil-works/pi-tui', () => ({
@@ -238,10 +240,10 @@ describe('getSearchRoots', () => {
     it('returns all configured roots', () => {
         const roots = getSearchRoots('/current/project');
         expect(roots).toContain('/current/project');
-        expect(roots).toContain('~/.pi/agent');
-        expect(roots).toContain('~/.pi/agent/extensions');
-        expect(roots).toContain('~/.pi/pi-prompts');
-        expect(roots).toContain('~/.pi/docs');
+        expect(roots).toContain(join(homedir(), '.pi/agent'));
+        expect(roots).toContain(join(homedir(), '.pi/agent/extensions'));
+        expect(roots).toContain(join(homedir(), '.pi/pi-prompts'));
+        expect(roots).toContain(join(homedir(), '.pi/docs'));
     });
 
     it('deduplicates roots', () => {

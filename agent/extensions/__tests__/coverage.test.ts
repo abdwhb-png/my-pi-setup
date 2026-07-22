@@ -1,4 +1,5 @@
-import { describe, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -92,4 +93,26 @@ describe("Meta: every non-entry-point module is imported by a test", () => {
       }
     });
   }
+});
+
+describe("Meta: tracked files do not hardcode the previous home directory", () => {
+  it("contains no legacy home path", () => {
+    const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
+    const legacyHomePath = ["/home", "abdwhb"].join("/");
+    const trackedFiles = execFileSync("git", ["ls-files", "-z"], {
+      cwd: repoRoot,
+      encoding: "buffer",
+    })
+      .toString("utf8")
+      .split("\0")
+      .filter(Boolean);
+    const offenders = trackedFiles.filter((file) => {
+      const fullPath = path.join(repoRoot, file);
+      if (!fs.statSync(fullPath).isFile()) return false;
+      const content = fs.readFileSync(fullPath);
+      return !content.includes(0) && content.toString("utf8").includes(legacyHomePath);
+    });
+
+    expect(offenders).toEqual([]);
+  });
 });

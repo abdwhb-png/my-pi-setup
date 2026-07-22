@@ -1,32 +1,32 @@
 {
-    "enabled": true,
-    "filesystem": {
-        "denyRead": [
-            "~/.ssh",
-            "~/.gnupg"
-        ],
-        "allowWrite": [
-            ".",
-            "/tmp"
-        ],
-        "denyWrite": [
-            ".env",
-            ".env.*",
-            "*.pem",
-            "*.key",
-            "*/node_modules/*"
-        ]
-    },
-    "network": {
-        "allowedDomains": [
-            "github.com",
-            "*.github.com",
-            "localhost",
-            "localhost:8317",
-            "localhost:8320"
-        ],
-        "deniedDomains": [],
-        "allowLocalBinding": true,
-        "allowAllUnixSockets": true
-    }
+  "enabled": true,
+  "filesystem": {
+    "denyRead": [
+      "~/.ssh",
+      "~/.gnupg"
+    ],
+    "allowWrite": [
+      ".",
+      "/tmp"
+    ],
+    "denyWrite": [
+      ".env",
+      ".env.*",
+      "*.pem",
+      "*.key",
+      "*/node_modules/*"
+    ]
+  },
+  "network": {
+    "allowedDomains": [
+      "github.com",
+      "*.github.com",
+      "localhost",
+      "localhost:8317",
+      "localhost:8320"
+    ],
+    "deniedDomains": [],
+    "allowLocalBinding": true,
+    "allowAllUnixSockets": true
+  }
 }

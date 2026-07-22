@@ -35,5 +35,6 @@ research.md
 skills-lock.json
 
 models.backup
+.portable-path-backups/
 
 bin/hypa.legacy

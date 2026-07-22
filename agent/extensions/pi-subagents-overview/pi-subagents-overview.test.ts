@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'bun:test';
 import * as fs from 'node:fs';
+import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { resolveToolAliases } from '../_shared/tool-groups/resolver';
 import { icon } from './ui';
 
-const HOME = process.env.HOME || '/home/abdwhb';
-const SETTINGS_PATH = path.join(HOME, '.pi', 'agent', 'settings.json');
+const HOME = homedir();
+const EXAMPLE_SETTINGS_PATH = path.resolve(
+    import.meta.dir,
+    '../../settings.example.json',
+);
 
 function parseFrontmatterSimple(raw: string): Record<string, string> | null {
     const match = raw.match(/^---\n([\s\S]*?)\n---\n/);
@@ -31,7 +35,7 @@ function renderLine(line: string, width: number): string {
 describe('pi-subagents-overview', () => {
     describe('readOverrides', () => {
         it('finds agents with overrides in settings.json', () => {
-            const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8');
+            const raw = fs.readFileSync(EXAMPLE_SETTINGS_PATH, 'utf-8');
             const parsed = JSON.parse(raw);
             const overrides = parsed?.subagents?.agentOverrides ?? {};
             const agentNames = Object.keys(overrides);
@@ -39,7 +43,7 @@ describe('pi-subagents-overview', () => {
         });
 
         it('worker override resolves to safe_bash without raw bash', () => {
-            const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8');
+            const raw = fs.readFileSync(EXAMPLE_SETTINGS_PATH, 'utf-8');
             const parsed = JSON.parse(raw);
             const overrides = parsed?.subagents?.agentOverrides ?? {};
             const workerTools = overrides.worker?.tools;
@@ -62,7 +66,7 @@ describe('pi-subagents-overview', () => {
         });
 
         it('scout override tools are valid', () => {
-            const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8');
+            const raw = fs.readFileSync(EXAMPLE_SETTINGS_PATH, 'utf-8');
             const parsed = JSON.parse(raw);
             const overrides = parsed?.subagents?.agentOverrides ?? {};
             const scoutTools = overrides.scout?.tools;
@@ -71,7 +75,7 @@ describe('pi-subagents-overview', () => {
         });
 
         it('all override tools are arrays', () => {
-            const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8');
+            const raw = fs.readFileSync(EXAMPLE_SETTINGS_PATH, 'utf-8');
             const parsed = JSON.parse(raw);
             const overrides = parsed?.subagents?.agentOverrides ?? {};
             for (const [name, ov] of Object.entries(overrides)) {
@@ -158,7 +162,7 @@ describe('pi-subagents-overview', () => {
 
     describe('widget line formatting', () => {
         it('widget line does not exceed reasonable length', () => {
-            const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8');
+            const raw = fs.readFileSync(EXAMPLE_SETTINGS_PATH, 'utf-8');
             const parsed = JSON.parse(raw);
             const overrides = parsed?.subagents?.agentOverrides ?? {};
             const overrideCount = Object.keys(overrides).length;

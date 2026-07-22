@@ -19,7 +19,7 @@
       "align": "right"
     },
     "total-cost": {
-        "enabled": true,
+      "enabled": true,
       "align": "right",
       "row": 0,
       "position": 4
@@ -62,15 +62,15 @@
       "row": 0
     },
     "session-status-bar.model": {
-        "row": 1,
-        "position": 0
+      "row": 1,
+      "position": 0
     },
     "session-status-bar.context": {
-        "row": 1,
-        "position": 1
+      "row": 1,
+      "position": 1
     },
     "session-status-bar.cost": {
-        "row": 1
+      "row": 1
     },
     "local-compressor": {
       "row": 1,

@@ -1,11 +1,12 @@
 import * as fs from "node:fs/promises";
+import { homedir } from "node:os";
 import * as path from "node:path";
 
 import type { ModelRates } from "./types";
 
 /** Default cache file path */
 export const PRICING_CACHE_PATH: string = path.join(
-  process.env.HOME || "/home/abdwhb",
+  homedir(),
   ".pi",
   "agent",
   "pricing-cache.json",

@@ -707,7 +707,10 @@ describe('writer agent contracts', () => {
 
     test('configures quick-worker and sdd-worker without the legacy override', () => {
         const settings = JSON.parse(
-            readFileSync(new URL('../../settings.json', import.meta.url), 'utf8'),
+            readFileSync(
+                new URL('../../settings.example.json', import.meta.url),
+                'utf8',
+            ),
         ) as {
             subagents?: {
                 agentOverrides?: Record<string, { model?: string }>;

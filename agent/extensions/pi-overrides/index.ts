@@ -22,6 +22,7 @@ import { Container, Text } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { getActivePolicy } from '../_shared/audit-mode/audit-state';
 import { appendCompressionFooter } from '../_shared/compression-render';
+import { expandHomePath } from '../_shared/home-path.ts';
 import {
     loadFileResolverConfig,
     setFileResolverConfig,
@@ -133,7 +134,7 @@ export const auditAwareFindOperations = {
             }
         }
 
-        args.push(effectivePattern, cwd);
+        args.push(effectivePattern, expandHomePath(cwd));
 
         return new Promise<string[]>((resolve, reject) => {
             const child = spawn(FD_BIN, args, {

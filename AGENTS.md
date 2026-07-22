@@ -29,6 +29,7 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 - Always use `pi-extensions` skill for pi packages and extensions development.
 - Use the `pi-cli` skill for any questions regarding the `pi` command-line interface, flags, and automation.
 - Always provide factual and accurate information. If you are unsure about something, search for reliable sources before taking action or providing an answer.
+- **Portable home paths:** Persist and document paths under the user home as `~/…`; expand them with `homedir()` before filesystem or child-process I/O. Never hardcode `/home/<user>` in tracked files. Tests must use `homedir()` or disposable fixtures, never the real home directory.
 
 **NEVER SPECULATE ON PI TYPES**: Always refer to the pi types in the harness or in the pi packages. Never assume a type or a property exists without verifying it in the codebase. That ensure you always import the correct types or built a specific type for your needs based on pi's actual types. If you cannot find the type, ask `pi-expert` for clarification.
 

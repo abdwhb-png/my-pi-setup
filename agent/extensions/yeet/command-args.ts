@@ -1,16 +1,12 @@
-import { homedir } from 'node:os';
+import { expandHomePath } from '../_shared/home-path.ts';
+
+export { expandHomePath } from '../_shared/home-path.ts';
 
 export interface YeetCommandArgs {
     cwd: string;
     autoApprove: boolean;
     instructions: string;
     error?: string;
-}
-
-export function expandHomePath(path: string): string {
-    if (path === '~') return homedir();
-    if (path.startsWith('~/')) return homedir() + path.slice(1);
-    return path;
 }
 
 function tokenizeArgs(args: string): string[] {

@@ -3,6 +3,7 @@
 !.env.example
 .envrc
 agent/ai-providers.secrets.json
+agent/settings.json
 
 .vscode
 .zed

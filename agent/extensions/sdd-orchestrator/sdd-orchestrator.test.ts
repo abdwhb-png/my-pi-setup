@@ -13,8 +13,8 @@ import {
     rmSync,
     writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { SubagentDelegationResponse } from 'pi-subagents/delegation';
 import type { SddConfig } from './config.ts';
@@ -452,6 +452,37 @@ test('prepare performs one bounded JSON repair and stores a complete draft', asy
             globalProfile: 'standard',
         }),
     ).rejects.toThrow();
+});
+
+test('prepare accepts and persists a home-relative plan path', async () => {
+    const homePlanDir = mkdtempSync(join(homedir(), 'sdd-portable-path-'));
+    try {
+        writeFileSync(join(homePlanDir, 'plan.md'), planContent);
+        const store = new SddStore(agentDir);
+        const pi = fakePi();
+        const rt = runtime(store, [
+            {
+                version: 1,
+                requestId: 'ignored',
+                status: 'completed',
+                output: assessment,
+            },
+        ]);
+        registerSddExtension(pi.api as never, rt);
+
+        const input = `~/${relative(homedir(), join(homePlanDir, 'plan.md'))}`;
+        const result = await execute(
+            pi.tools.get('sdd_prepare'),
+            { planPath: input, globalProfile: 'standard' },
+            { ...context(), cwd: homePlanDir },
+        );
+        const draft = result.details.manifest as DraftManifest;
+
+        expect(draft.planPath).toBe(input);
+        expect(store.loadManifest(draft.manifestId)?.planPath).toBe(input);
+    } finally {
+        rmSync(homePlanDir, { recursive: true, force: true });
+    }
 });
 
 test('prepare reuses one validated assessment for an unchanged plan', async () => {

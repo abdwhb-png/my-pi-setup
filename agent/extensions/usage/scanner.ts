@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { homedir } from "node:os";
 import * as path from "node:path";
 import type { UsageRecord } from "./types";
 
@@ -97,7 +98,7 @@ export function parseSessionFile(filePath: string): UsageRecord[] {
 export function walkAllSessions(sessionsDir?: string): UsageRecord[] {
   const dir =
     sessionsDir ??
-    path.join(process.env.HOME || "/home/abdwhb", ".pi", "agent", "sessions");
+    path.join(homedir(), ".pi", "agent", "sessions");
 
   const records: UsageRecord[] = [];
 

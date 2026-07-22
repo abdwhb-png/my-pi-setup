@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import nodePath from 'node:path';
 import type {
@@ -526,19 +526,35 @@ describe('pi-overrides', () => {
     //
     // glob() spawns the fd binary. We test it directly against a real directory
     // so that any FD_BIN path breakage is caught early.
-    // The --no-ignore behaviour difference is verified against node_modules/:
-    // standard mode respects .gitignore (node_modules hidden), audit mode does
-    // not (node_modules visible). ~/.pi/agent has a .gitignore that
-    // ignores node_modules/ and has a populated node_modules tree.
+    // The --no-ignore behaviour difference is verified in a disposable fixture:
+    // standard mode respects its .gitignore while audit mode traverses
+    // node_modules. The fixture keeps this contract independent of the user home.
 
     describe('auditAwareFindOperations.glob', () => {
-        const AGENT_DIR = '~/.pi/agent';
+        let fixtureDir: string;
+
+        beforeEach(async () => {
+            fixtureDir = await mkdtemp(nodePath.join(tmpdir(), 'pi-fd-'));
+            await writeFile(nodePath.join(fixtureDir, '.gitignore'), 'node_modules/\n');
+            await writeFile(nodePath.join(fixtureDir, 'fixture.json'), '{}\n');
+            await mkdir(nodePath.join(fixtureDir, 'node_modules', 'fixture'), {
+                recursive: true,
+            });
+            await writeFile(
+                nodePath.join(fixtureDir, 'node_modules', 'fixture', 'package.json'),
+                '{}\n',
+            );
+        });
+
+        afterEach(async () => {
+            await rm(fixtureDir, { recursive: true, force: true });
+        });
 
         it('glob runs without error in standard mode (fd binary is reachable)', async () => {
             resetAuditState('standard');
             const results = await auditAwareFindOperations.glob(
                 '*.json',
-                AGENT_DIR,
+                fixtureDir,
                 {
                     ignore: [],
                     limit: 10,
@@ -551,7 +567,7 @@ describe('pi-overrides', () => {
             setActiveProfile('audit');
             const results = await auditAwareFindOperations.glob(
                 '*.json',
-                AGENT_DIR,
+                fixtureDir,
                 {
                     ignore: [],
                     limit: 10,
@@ -564,36 +580,34 @@ describe('pi-overrides', () => {
             resetAuditState('standard');
             const results = await auditAwareFindOperations.glob(
                 '**/node_modules/*/package.json',
-                AGENT_DIR,
+                fixtureDir,
                 { ignore: [], limit: 500 },
             );
-            // With .gitignore respected, node_modules is excluded — very few or zero results
-            expect(results.length).toBeLessThan(50);
+            expect(results).toEqual([]);
         });
 
         it('audit mode ignores gitignore: node_modules package.json visible', async () => {
             setActiveProfile('audit');
             const results = await auditAwareFindOperations.glob(
                 '**/node_modules/*/package.json',
-                AGENT_DIR,
+                fixtureDir,
                 { ignore: [], limit: 500 },
             );
-            // With --no-ignore, fd traverses node_modules freely — many results
-            expect(results.length).toBeGreaterThan(10);
+            expect(results).toHaveLength(1);
         });
 
         it('audit sees more gitignored content than standard — canonical behavioral contract', async () => {
             setActiveProfile('audit');
             const auditResults = await auditAwareFindOperations.glob(
                 '**/node_modules/*/package.json',
-                AGENT_DIR,
+                fixtureDir,
                 { ignore: [], limit: 1000 },
             );
 
             resetAuditState('standard');
             const standardResults = await auditAwareFindOperations.glob(
                 '**/node_modules/*/package.json',
-                AGENT_DIR,
+                fixtureDir,
                 { ignore: [], limit: 1000 },
             );
 

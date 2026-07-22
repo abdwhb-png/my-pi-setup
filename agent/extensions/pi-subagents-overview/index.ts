@@ -13,6 +13,7 @@
  */
 
 import * as fs from 'node:fs';
+import { homedir } from 'node:os';
 import * as path from 'node:path';
 import type {
     ExtensionAPI,
@@ -58,7 +59,7 @@ interface AgentOverride {
 
 // ── Paths ──────────────────────────────────────────────
 
-const HOME = process.env.HOME || '/home/abdwhb';
+const HOME = homedir();
 const SETTINGS_PATH = path.join(HOME, '.pi', 'agent', 'settings.json');
 const USER_AGENTS_DIR = path.join(HOME, '.pi', 'agent', 'agents');
 const BUILTIN_AGENTS_DIR = path.join(

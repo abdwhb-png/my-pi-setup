@@ -7,9 +7,9 @@
  */
 
 import { statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { loadFileResolverConfig } from '../../pi-overrides/config';
+import { expandHomePath } from '../home-path.ts';
 
 /** Config cache per CWD to avoid re-loading on every keystroke. */
 const configCache = new Map<
@@ -64,12 +64,7 @@ export function getSearchDirectories(
     let searchPath = prefix;
 
     // Expand ~/ if needed
-    if (searchPath.startsWith('~')) {
-        searchPath = join(
-            homedir(),
-            searchPath.slice(searchPath[1] === '/' ? 2 : 1),
-        );
-    }
+    searchPath = expandHomePath(searchPath);
 
     // Absolute path
     if (searchPath.startsWith('/')) {

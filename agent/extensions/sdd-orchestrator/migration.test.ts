@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
     mkdirSync,
     mkdtempSync,
@@ -12,19 +11,6 @@ import { expect, test } from 'bun:test';
 
 const AGENT_DIR = resolve(import.meta.dir, '..', '..');
 const RUN_ID = 'sdd-mqxpovpu-8m9fgo';
-const ORIGINAL_PLAN_PATH =
-    '~/projects/pi-integrations/pi-roles/docs/plans/2026-06-28-pi-roles-switch-request-protocol-impl.md';
-const QUEUE_DIGEST =
-    'ac1041330d3d5064a1d4acb0f2179e6730c1fb4a97db873527a91bd4f2a1e874';
-const PROGRESS_DIGEST =
-    'a901712793bb551cf571a9a79aa44e0332799255d59908bad768e6a2ecb54fdf';
-const QUEUE_PATH = join(AGENT_DIR, '.sdd', 'queue', `${RUN_ID}.json`);
-const PROGRESS_PATH = join(
-    AGENT_DIR,
-    '.sdd',
-    'progress',
-    `${RUN_ID}.json`,
-);
 
 function readAgentFile(...parts: string[]): string {
     return readFileSync(join(AGENT_DIR, ...parts), 'utf8');
@@ -59,10 +45,6 @@ function expectInOrder(source: string, values: readonly string[]): void {
         expect(index).toBeGreaterThan(previous);
         previous = index;
     }
-}
-
-function digest(bytes: Buffer): string {
-    return createHash('sha256').update(bytes).digest('hex');
 }
 
 function unsupportedOperation(): never {
@@ -227,26 +209,20 @@ test('legacy agent operates only on an explicitly authorized exact run', () => {
     }
 });
 
-test('real legacy bytes survive dynamic extension import and temporary-store status', async () => {
-    const queueBefore = readFileSync(QUEUE_PATH);
-    const progressBefore = readFileSync(PROGRESS_PATH);
-    expect(digest(queueBefore)).toBe(QUEUE_DIGEST);
-    expect(digest(progressBefore)).toBe(PROGRESS_DIGEST);
-
+test('portable legacy fixture survives dynamic extension import and temporary-store status', async () => {
     const temporaryAgentDir = mkdtempSync(join(tmpdir(), 'sdd-migration-'));
     try {
         const queueDirectory = join(temporaryAgentDir, '.sdd', 'queue');
-        const progressDirectory = join(temporaryAgentDir, '.sdd', 'progress');
         mkdirSync(queueDirectory, { recursive: true });
-        mkdirSync(progressDirectory, { recursive: true });
         const temporaryQueuePath = join(queueDirectory, `${RUN_ID}.json`);
-        const temporaryProgressPath = join(progressDirectory, `${RUN_ID}.json`);
+        const portablePlanPath =
+            '~/projects/pi-integrations/pi-roles/docs/plans/portable.md';
+        const queueBefore = `${JSON.stringify(
+            { runId: RUN_ID, planPath: portablePlanPath },
+            null,
+            2,
+        )}\n`;
         writeFileSync(temporaryQueuePath, queueBefore);
-        writeFileSync(temporaryProgressPath, progressBefore);
-        const temporaryQueueBefore = readFileSync(temporaryQueuePath);
-        const temporaryProgressBefore = readFileSync(temporaryProgressPath);
-        expect(digest(temporaryQueueBefore)).toBe(QUEUE_DIGEST);
-        expect(digest(temporaryProgressBefore)).toBe(PROGRESS_DIGEST);
 
         const { registerSddExtension } = await import('./index.ts');
         const { SddStore } = await import('./store.ts');
@@ -289,27 +265,16 @@ test('real legacy bytes survive dynamic extension import and temporary-store sta
             { cwd: temporaryAgentDir, mode: 'print' },
         );
         expect(result.content[0].text).toContain(
-            `${RUN_ID}: legacy_queued (${ORIGINAL_PLAN_PATH})`,
+            `${RUN_ID}: legacy_queued (${portablePlanPath})`,
         );
         expect(result.details.snapshot).toMatchObject({
             runId: RUN_ID,
             status: 'legacy_queued',
-            planPath: ORIGINAL_PLAN_PATH,
+            planPath: portablePlanPath,
         });
-        const temporaryQueueAfter = readFileSync(temporaryQueuePath);
-        const temporaryProgressAfter = readFileSync(temporaryProgressPath);
-        expect(temporaryQueueAfter).toEqual(temporaryQueueBefore);
-        expect(temporaryProgressAfter).toEqual(temporaryProgressBefore);
-        expect(digest(temporaryQueueAfter)).toBe(QUEUE_DIGEST);
-        expect(digest(temporaryProgressAfter)).toBe(PROGRESS_DIGEST);
+        const temporaryQueueAfter = readFileSync(temporaryQueuePath, 'utf8');
+        expect(temporaryQueueAfter).toBe(queueBefore);
     } finally {
         rmSync(temporaryAgentDir, { recursive: true, force: true });
     }
-
-    const queueAfter = readFileSync(QUEUE_PATH);
-    const progressAfter = readFileSync(PROGRESS_PATH);
-    expect(queueAfter).toEqual(queueBefore);
-    expect(progressAfter).toEqual(progressBefore);
-    expect(digest(queueAfter)).toBe(QUEUE_DIGEST);
-    expect(digest(progressAfter)).toBe(PROGRESS_DIGEST);
 });

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { SubagentDelegationResponse } from 'pi-subagents/delegation';
+import { resolveRuntimePath } from '../_shared/home-path.ts';
 import { loadSddConfig } from './config.ts';
 import type { DelegationClient } from './delegation-client.ts';
 import type { ApprovedManifest, ApprovedManifestTask } from './manifest.ts';
@@ -1272,7 +1273,9 @@ export class SddWorkflow {
 
     private sourceDigestMatches(manifest: ApprovedManifest): boolean {
         try {
-            const source = readFileSync(manifest.planPath);
+            const source = readFileSync(
+                resolveRuntimePath(manifest.planPath, process.cwd()),
+            );
             return (
                 createHash('sha256').update(source).digest('hex') ===
                 manifest.sourceDigest

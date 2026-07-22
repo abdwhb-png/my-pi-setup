@@ -1,12 +1,16 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { StringEnum } from '@earendil-works/pi-ai';
 import type {
     ExtensionAPI,
     ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import {
+    resolveRuntimePath,
+    toPortableHomePath,
+} from '../_shared/home-path.ts';
 import { AssessmentCache, assessmentCacheKey } from './assessment-cache.ts';
 import { loadSddConfig, type SddConfig } from './config.ts';
 import type { DelegationClient } from './delegation-client.ts';
@@ -451,7 +455,10 @@ async function approveDraft(
         approved = manifest;
         snapshot = requireSnapshot(runtime.store, manifest.manifestId);
     } else {
-        const currentPlanContent = readFileSync(manifest.planPath, 'utf8');
+        const currentPlanContent = readFileSync(
+            resolveRuntimePath(manifest.planPath, ctx.cwd),
+            'utf8',
+        );
         const candidate = applyApproval(manifest, decision, currentPlanContent);
         const persisted = runtime.store.approveManifest(
             manifest,
@@ -489,7 +496,7 @@ async function prepare(
     recordedApprovalEntries: Set<string>,
     signal?: AbortSignal,
 ) {
-    const planPath = resolve(ctx.cwd, planPathInput);
+    const planPath = resolveRuntimePath(planPathInput, ctx.cwd);
     const planContent = readFileSync(planPath, 'utf8');
     const config = runtimeConfig(runtime, ctx.cwd);
     const { plan, assessment } = await assess(
@@ -501,7 +508,7 @@ async function prepare(
         config,
     );
     const draft = compileManifest({
-        planPath,
+        planPath: toPortableHomePath(planPath),
         planContent,
         parsedPlan: plan,
         assessment,
@@ -865,7 +872,10 @@ export function registerSddExtension(
                 params.runId,
                 params.taskId,
                 evidence,
-                readFileSync(manifest.planPath, 'utf8'),
+                readFileSync(
+                    resolveRuntimePath(manifest.planPath, ctx.cwd),
+                    'utf8',
+                ),
                 params.recovery as RecoveryAttestation | undefined,
             );
             const snapshot = await runtime.workflow.run(
