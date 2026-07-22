@@ -111,9 +111,29 @@ describe("queueApprovedPlanContinuation", () => {
 });
 
 describe("planAutoSwitch lifecycle", () => {
-  it("writes request at turn_end and sends fresh prompt at agent_end", async () => {
+  it("reconciles a persisted request again after a continuation loses the race", async () => {
     const handlers = new Map<string, (event: object, ctx: object) => unknown>();
-    const appendEntry = mock();
+    const approval = {
+      type: "custom",
+      customType: "plannotator:plan-approved",
+      data: { planPath: "/tmp/PLAN.md", approved: true },
+      id: "approval-1",
+    };
+    const entries: Array<{
+      type: string;
+      customType: string;
+      data: unknown;
+      id: string;
+    }> = [approval];
+    let nextEntryId = 1;
+    const appendEntry = mock((customType: string, data: unknown) => {
+      entries.push({
+        type: "custom",
+        customType,
+        data,
+        id: `appended-${nextEntryId++}`,
+      });
+    });
     const sendUserMessage = mock();
     const pi = {
       on: (event: string, handler: (event: object, ctx: object) => unknown) => {
@@ -122,15 +142,9 @@ describe("planAutoSwitch lifecycle", () => {
       appendEntry,
       sendUserMessage,
     } as any;
-    const approval = {
-      type: "custom",
-      customType: "plannotator:plan-approved",
-      data: { planPath: "/tmp/PLAN.md", approved: true },
-      id: "approval-1",
-    };
     const ctx = {
       isIdle: () => true,
-      sessionManager: { getEntries: () => [approval] },
+      sessionManager: { getEntries: () => entries },
     };
 
     planAutoSwitch(pi);
@@ -149,6 +163,10 @@ describe("planAutoSwitch lifecycle", () => {
     expect(sendUserMessage).toHaveBeenCalledWith(
       "Continue with the approved plan.",
     );
+
+    await handlers.get("agent_end")!({}, ctx);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(sendUserMessage).toHaveBeenCalledTimes(2);
   });
 });
 

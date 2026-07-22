@@ -27,6 +27,8 @@ import planAutoSwitch, {
 const PLAN_APPROVED_ENTRY_TYPE = 'plannotator:plan-approved';
 const APPROVED_PLAN_CONTINUATION = 'Continue with the approved plan.';
 const APPROVE_PLAN_FIXTURE_TOOL = 'approve_plan_fixture';
+const COMPETING_MESSAGE_TYPE = 'plan-auto-switch:test-competing-message';
+const HIDDEN_SWITCH_REQUEST_TYPE = 'plan-auto-switch:test-hidden-switch-request';
 
 interface SessionEntry {
     id: string;
@@ -62,6 +64,57 @@ function approvalFixture(pi: ExtensionAPI): void {
                 details: {},
             };
         },
+    });
+}
+
+function competingTriggerTurnFixture(pi: ExtensionAPI): void {
+    let sent = false;
+    let bypassedRoleSwitchHook = false;
+    let hiddenRequest: SessionEntry | undefined;
+
+    // pi-intercom's raced turn did not let pi-roles consume the request in the
+    // captured session. Hide it for exactly one before_agent_start lifecycle
+    // to reproduce that persisted-but-unprocessed state with the real runtime.
+    pi.on('before_agent_start', (_event, ctx) => {
+        if (!sent || bypassedRoleSwitchHook) return;
+        const entries = ctx.sessionManager.getEntries() as SessionEntry[];
+        const request = entries.findLast(
+            (entry) => entry.customType === ROLE_SWITCH_REQUEST_ENTRY_TYPE,
+        );
+        if (!request) return;
+
+        bypassedRoleSwitchHook = true;
+        hiddenRequest = request;
+        request.customType = HIDDEN_SWITCH_REQUEST_TYPE;
+    });
+
+    pi.on('agent_start', () => {
+        if (!hiddenRequest) return;
+        hiddenRequest.customType = ROLE_SWITCH_REQUEST_ENTRY_TYPE;
+        hiddenRequest = undefined;
+    });
+
+    pi.on('agent_end', (_event, ctx) => {
+        if (sent) return;
+        sent = true;
+
+        const sendWhenIdle = (): void => {
+            if (!ctx.isIdle()) {
+                setTimeout(sendWhenIdle, 1);
+                return;
+            }
+
+            pi.sendMessage(
+                {
+                    customType: COMPETING_MESSAGE_TYPE,
+                    content: 'Competing intercom-style turn.',
+                    display: true,
+                },
+                { triggerTurn: true },
+            );
+        };
+
+        setTimeout(sendWhenIdle, 0);
     });
 }
 
@@ -215,5 +268,60 @@ describe('plan-auto-switch real Pi lifecycle', () => {
             },
         );
         expect(automaticContinuation).toBeDefined();
+    });
+
+    it('reconciles the pending switch after a competing triggerTurn wins the idle race', async () => {
+        const targetRole = getDefaultRole();
+        const cwd = createFixtureProject(targetRole);
+        const previousInitialRole = process.env.PI_ROLE;
+        process.env.PI_ROLE = 'plan';
+
+        let session: TestSession;
+        try {
+            session = await createTestSession({
+                cwd,
+                extensionFactories: [
+                    competingTriggerTurnFixture,
+                    piRoles,
+                    planAutoSwitch,
+                    approvalFixture,
+                ],
+            });
+        } finally {
+            if (previousInitialRole === undefined) delete process.env.PI_ROLE;
+            else process.env.PI_ROLE = previousInitialRole;
+        }
+        sessions.push(session);
+
+        await session.run(
+            when('Submit the approved plan.', [
+                calls(APPROVE_PLAN_FIXTURE_TOOL),
+                says('Approval recorded.'),
+            ]),
+        );
+
+        const competingMessage = await waitForEntry(
+            session,
+            (entry) => entry.customType === COMPETING_MESSAGE_TYPE,
+        );
+        expect(competingMessage).toBeDefined();
+
+        const request = await waitForEntry(
+            session,
+            (entry) => entry.customType === ROLE_SWITCH_REQUEST_ENTRY_TYPE,
+        );
+        const processed = await waitForEntry(
+            session,
+            (entry) =>
+                entry.customType === ROLE_SWITCH_PROCESSED_TYPE &&
+                (entry.data as { sourceEntryId?: string } | undefined)
+                    ?.sourceEntryId === request.id,
+        );
+        expect(processed).toBeDefined();
+
+        const entries = getEntries(session);
+        expect(entries.indexOf(competingMessage)).toBeLessThan(
+            entries.indexOf(processed),
+        );
     });
 });

@@ -3,6 +3,11 @@ const RETRY_DELAY_MS = 50;
 
 export type IdleTaskScheduler = (callback: () => void, delayMs: number) => void;
 
+export interface LatestIdleTaskScheduler {
+    schedule(task: () => void | Promise<void>, isIdle?: () => boolean): void;
+    invalidate(): void;
+}
+
 /** Run a task in a fresh top-level turn context once Pi is idle. */
 export function queueWhenIdle(
     task: () => void | Promise<void>,
@@ -34,4 +39,28 @@ export function queueWhenIdle(
     };
 
     schedule(run, 0);
+}
+
+/** Queue at most the latest logical task, invalidating older pending work. */
+export function createLatestIdleTaskScheduler(
+    schedule?: IdleTaskScheduler,
+): LatestIdleTaskScheduler {
+    let generation = 0;
+
+    return {
+        schedule(task, isIdle = () => true): void {
+            const taskGeneration = ++generation;
+            queueWhenIdle(
+                () => {
+                    if (taskGeneration !== generation) return;
+                    return task();
+                },
+                () => taskGeneration !== generation || isIdle(),
+                schedule,
+            );
+        },
+        invalidate(): void {
+            generation += 1;
+        },
+    };
 }

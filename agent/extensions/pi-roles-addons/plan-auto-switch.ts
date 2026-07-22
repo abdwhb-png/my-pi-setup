@@ -18,27 +18,39 @@
  * possible moment.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getDefaultRole, writeRoleSwitchRequest } from "../_shared/pi-roles";
-import { queueWhenIdle, type IdleTaskScheduler } from "../_shared/queue-when-idle";
-
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+} from '@earendil-works/pi-coding-agent';
+import {
+    findUnprocessedSwitchRequest,
+    getDefaultRole,
+    writeRoleSwitchRequest,
+} from '../_shared/pi-roles';
+import {
+    createLatestIdleTaskScheduler,
+    queueWhenIdle,
+    type IdleTaskScheduler,
+} from '../_shared/queue-when-idle';
 
 /** Custom entry type emitted by plannotator-bridge on plan approval. */
-const PLAN_APPROVED_ENTRY_TYPE = "plannotator:plan-approved";
+const PLAN_APPROVED_ENTRY_TYPE = 'plannotator:plan-approved';
 
 /**
  * Processed marker used by this extension AND the main plannotator.
  * Using the same marker prevents both from firing on the same approval.
  */
-export const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED = "plannotator-autoexecute-processed";
+export const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED =
+    'plannotator-autoexecute-processed';
 
 /**
  * Legacy marker — kept exported for backward-compatible dedup in
  * `findUnprocessedPlanApproval`. New entries use the shared marker above.
  */
-export const PROCESSED_MARKER_PREFIX = "plan-auto-switch:processed";
+export const PROCESSED_MARKER_PREFIX = 'plan-auto-switch:processed';
 
-const APPROVED_PLAN_CONTINUATION = "Continue with the approved plan.";
+const APPROVED_PLAN_CONTINUATION = 'Continue with the approved plan.';
+const PLAN_APPROVED_SWITCH_REASON = 'plannotator:plan-approved';
 
 /**
  * Start a fresh top-level prompt after the current agent run becomes idle.
@@ -48,28 +60,27 @@ const APPROVED_PLAN_CONTINUATION = "Continue with the approved plan.";
  * Bare `sendUserMessage` is correct only after Pi clears its active run.
  */
 export function queueApprovedPlanContinuation(
-  pi: Pick<ExtensionAPI, "sendUserMessage">,
-  isIdle: () => boolean = () => true,
-  schedule?: IdleTaskScheduler,
+    pi: Pick<ExtensionAPI, 'sendUserMessage'>,
+    isIdle: () => boolean = () => true,
+    schedule?: IdleTaskScheduler,
 ): void {
-  queueWhenIdle(
-    () => {
-      pi.sendUserMessage(APPROVED_PLAN_CONTINUATION);
-    },
-    isIdle,
-    schedule,
-  );
+    queueWhenIdle(
+        () => {
+            pi.sendUserMessage(APPROVED_PLAN_CONTINUATION);
+        },
+        isIdle,
+        schedule,
+    );
 }
 
 /** Fully-qualified event name for the marker we write. */
 
 interface PlanApprovedPayload {
-  planPath?: string;
-  approved?: boolean;
-  feedback?: string;
-  timestamp?: number;
+    planPath?: string;
+    approved?: boolean;
+    feedback?: string;
+    timestamp?: number;
 }
-
 
 /**
  * Scan session entries (newest-first) for an unprocessed
@@ -81,82 +92,119 @@ interface PlanApprovedPayload {
  */
 // oxlint-disable-next-line typescript/no-restricted-types -- pi entry data is unknown by API contract
 export function findUnprocessedPlanApproval(
-  entries: ReadonlyArray<{
-    type: string;
-    customType?: string;
-    // oxlint-disable-next-line typescript/no-restricted-types -- pi entry data is unknown by API contract
-    data?: unknown;
-    id: string;
-  }>,
+    entries: ReadonlyArray<{
+        type: string;
+        customType?: string;
+        // oxlint-disable-next-line typescript/no-restricted-types -- pi entry data is unknown by API contract
+        data?: unknown;
+        id: string;
+    }>,
 ): { entry: { id: string }; data: PlanApprovedPayload } | null {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i];
-    if (!e || e.type !== "custom" || e.customType !== PLAN_APPROVED_ENTRY_TYPE) continue;
+    for (let i = entries.length - 1; i >= 0; i--) {
+        const e = entries[i];
+        if (
+            !e ||
+            e.type !== 'custom' ||
+            e.customType !== PLAN_APPROVED_ENTRY_TYPE
+        )
+            continue;
 
-    const data = (e.data ?? {}) as PlanApprovedPayload;
-    if (data.approved !== true) continue;
+        const data = (e.data ?? {}) as PlanApprovedPayload;
+        if (data.approved !== true) continue;
 
-    // Check both our legacy marker and the shared marker
-    const processed = entries
-      .slice(i + 1)
-      .some(
-        (p) =>
-          p &&
-          p.type === "custom" &&
-          (
-            p.customType === PROCESSED_MARKER_PREFIX ||
-            p.customType === PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED
-          ) &&
-          (
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- pi entry data is unknown
-            (p.data as { sourceEntryId?: string } | undefined)?.sourceEntryId === e.id
-          ),
-      );
+        // Check both our legacy marker and the shared marker
+        const processed = entries.slice(i + 1).some(
+            (p) =>
+                p &&
+                p.type === 'custom' &&
+                (p.customType === PROCESSED_MARKER_PREFIX ||
+                    p.customType === PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED) &&
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- pi entry data is unknown
+                (p.data as { sourceEntryId?: string } | undefined)
+                    ?.sourceEntryId === e.id,
+        );
 
-    if (!processed) {
-      return { entry: { id: e.id }, data };
+        if (!processed) {
+            return { entry: { id: e.id }, data };
+        }
     }
-  }
-  return null;
+    return null;
 }
 
-
 export default function planAutoSwitch(pi: ExtensionAPI): void {
-  let continuationPending = false;
+    const continuationScheduler = createLatestIdleTaskScheduler();
 
-  pi.on("turn_end", async (_event, ctx) => {
-    let entries;
-    try {
-      entries = ctx.sessionManager.getEntries();
-    } catch {
-      return;
-    }
+    const reconcileApprovedPlanSwitch = (ctx: ExtensionContext): void => {
+        let entries;
+        try {
+            entries = ctx.sessionManager.getEntries();
+        } catch {
+            continuationScheduler.invalidate();
+            return;
+        }
 
-    const approval = findUnprocessedPlanApproval(entries);
-    if (!approval) return;
+        const pending = findUnprocessedSwitchRequest(entries);
+        if (!pending || pending.data.reason !== PLAN_APPROVED_SWITCH_REASON) {
+            continuationScheduler.invalidate();
+            return;
+        }
 
-    const targetRole = getDefaultRole();
-    writeRoleSwitchRequest(pi, {
-      targetRole,
-      reason: "plannotator:plan-approved",
-      sourceEntryId: approval.entry.id,
+        const requestEntryId = pending.entry.id;
+        continuationScheduler.schedule(
+            () => {
+                let latestEntries;
+                try {
+                    latestEntries = ctx.sessionManager.getEntries();
+                } catch {
+                    return;
+                }
+
+                const latestPending =
+                    findUnprocessedSwitchRequest(latestEntries);
+                if (
+                    latestPending?.entry.id !== requestEntryId ||
+                    latestPending.data.reason !== PLAN_APPROVED_SWITCH_REASON
+                ) {
+                    return;
+                }
+
+                pi.sendUserMessage(APPROVED_PLAN_CONTINUATION);
+            },
+            () => ctx.isIdle(),
+        );
+    };
+
+    pi.on('turn_end', async (_event, ctx) => {
+        let entries;
+        try {
+            entries = ctx.sessionManager.getEntries();
+        } catch {
+            return;
+        }
+
+        const approval = findUnprocessedPlanApproval(entries);
+        if (!approval) return;
+
+        const targetRole = getDefaultRole();
+        writeRoleSwitchRequest(pi, {
+            targetRole,
+            reason: PLAN_APPROVED_SWITCH_REASON,
+            sourceEntryId: approval.entry.id,
+        });
+
+        // Use the shared marker so the main plannotator's agent_end
+        // handler sees this as already processed.
+        pi.appendEntry(PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED, {
+            sourceEntryId: approval.entry.id,
+            timestamp: Date.now(),
+        });
     });
 
-    // Use the shared marker so the main plannotator's agent_end
-    // handler sees this as already processed.
-    pi.appendEntry(PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED, {
-      sourceEntryId: approval.entry.id,
-      timestamp: Date.now(),
+    pi.on('agent_end', (_event, ctx) => {
+        reconcileApprovedPlanSwitch(ctx);
     });
 
-    // Force a new turn so pi-roles' before_agent_start fires and
-    // consumes the switch request we just wrote.
-    continuationPending = true;
-  });
-
-  pi.on("agent_end", (_event, ctx) => {
-    if (!continuationPending) return;
-    continuationPending = false;
-    queueApprovedPlanContinuation(pi, () => ctx.isIdle());
-  });
+    pi.on('session_start', (_event, ctx) => {
+        reconcileApprovedPlanSwitch(ctx);
+    });
 }
