@@ -333,12 +333,62 @@ describe('CommitPlanSession', () => {
             expect(result.commit_message).toBe('');
         });
 
-        it('calls done with accepted=false, cancelled=false on Ctrl+R (reject)', () => {
+        it('opens rejection mode on Ctrl+R and allows an empty reason', () => {
             session.handleInput('\x12');
+
+            expect(done).not.toHaveBeenCalled();
+            expect(
+                session
+                    .render(80)
+                    .some((line) => line.includes('Reason for rejection')),
+            ).toBe(true);
+
+            session.handleInput('\r');
+
             expect(done).toHaveBeenCalledTimes(1);
             const result: CommitPlanResult = done.mock.calls[0][0];
             expect(result.accepted).toBe(false);
             expect(result.cancelled).toBe(false);
+            expect(result.rejection_reason).toBe('');
+        });
+
+        it('returns a supplied rejection reason', () => {
+            session.handleInput('\x12');
+            session.handleInput('Split the refactor from the fix.');
+            session.handleInput('\r');
+
+            const result: CommitPlanResult = done.mock.calls[0][0];
+            expect(result.accepted).toBe(false);
+            expect(result.cancelled).toBe(false);
+            expect(result.rejection_reason).toBe(
+                'Split the refactor from the fix.',
+            );
+        });
+
+        it('returns from rejection mode without losing review edits', () => {
+            session.handleInput('!');
+            session.handleInput('\t');
+            session.handleInput(' ');
+            session.handleInput('\x12');
+            session.handleInput('Temporary reason');
+            session.handleInput('\x1b');
+
+            expect(done).not.toHaveBeenCalled();
+            const output = session.render(80);
+            expect(
+                output.some((line) => line.includes('Commit Plan Review')),
+            ).toBe(true);
+            expect(
+                output.some((line) =>
+                    line.includes('feat: add new feature!'),
+                ),
+            ).toBe(true);
+
+            session.handleInput('\r');
+            const result: CommitPlanResult = done.mock.calls[0][0];
+            expect(result.accepted).toBe(true);
+            expect(result.files).toEqual(['src/session.ts']);
+            expect(result.commit_message).toBe('feat: add new feature!');
         });
 
         it('processes text input and returns accepted result with updated message on Enter', () => {

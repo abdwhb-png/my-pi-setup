@@ -12,6 +12,8 @@ export interface CommitPlanResult {
     accepted: boolean;
     /** true = user pressed Esc (stop everything), false = user pressed Enter or Ctrl+R */
     cancelled: boolean;
+    /** Optional explanation supplied when the user rejects the plan. */
+    rejection_reason?: string;
     plan_summary: string;
     /** The explicit working directory used for this commit. */
     cwd: string;

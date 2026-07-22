@@ -539,12 +539,17 @@ export default function (pi: ExtensionAPI) {
 
             // Reject (Ctrl+R) → repropose
             if (!result.cancelled) {
+                const rejectionReason = result.rejection_reason?.trim();
                 return {
                     content: [
                         {
                             type: 'text' as const,
                             text: [
                                 'User REJECTED the commit plan.',
+                                '',
+                                rejectionReason
+                                    ? `Reason: ${rejectionReason}`
+                                    : 'Reason: No specific reason provided; the user wants a different plan.',
                                 '',
                                 'You MUST call propose_commit_plan again with a different plan.',
                                 'Do NOT stage or commit without approval.',

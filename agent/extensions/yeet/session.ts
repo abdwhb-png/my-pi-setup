@@ -25,10 +25,14 @@ import type {
 function rejectResult(
     params: CommitPlanParams,
     cancelled: boolean,
+    rejectionReason?: string,
 ): CommitPlanResult {
     return {
         accepted: false,
         cancelled,
+        ...(cancelled
+            ? {}
+            : { rejection_reason: rejectionReason?.trim() ?? '' }),
         plan_summary: params.plan_summary,
         cwd: params.cwd,
         files: [],
@@ -91,6 +95,8 @@ export function handleCommitPlanInput(
 export class CommitPlanSession implements Component {
     private state: CommitPlanSessionState;
     private editorComponent: Editor;
+    private rejectionReasonEditor: Editor;
+    private rejecting = false;
     private fileViewportStart = 0;
 
     constructor(
@@ -125,6 +131,12 @@ export class CommitPlanSession implements Component {
         this.editorComponent.setText(config.params.commit_message);
         this.editorComponent.onSubmit = (commitMessage) =>
             this.accept(commitMessage);
+
+        this.rejectionReasonEditor = new Editor(config.tui, editorTheme);
+        this.rejectionReasonEditor.onSubmit = (rejectionReason) =>
+            this.config.done(
+                rejectResult(this.config.params, false, rejectionReason),
+            );
     }
 
     private accept(commitMessage: string): void {
@@ -141,8 +153,20 @@ export class CommitPlanSession implements Component {
     }
 
     handleInput(data: string): void {
+        if (this.rejecting) {
+            if (isEscape(data)) {
+                this.rejecting = false;
+                this.config.tui.requestRender();
+                return;
+            }
+
+            this.rejectionReasonEditor.handleInput(data);
+            return;
+        }
+
         if (isCtrlR(data)) {
-            this.config.done(rejectResult(this.config.params, false));
+            this.rejecting = true;
+            this.config.tui.requestRender();
             return;
         }
 
@@ -178,13 +202,51 @@ export class CommitPlanSession implements Component {
 
     invalidate(): void {
         this.editorComponent.invalidate();
+        this.rejectionReasonEditor.invalidate();
     }
 
     render(width: number): string[] {
         const { theme } = this.config;
+        const innerWidth = Math.max(40, width - 4);
+
+        if (this.rejecting) {
+            const lines = [
+                renderBoxHeader(theme, innerWidth, ' 📦 Reject Commit Plan '),
+                ...renderCwd(theme, innerWidth, this.config.params.cwd),
+                theme.fg('border', '│') +
+                    ' ' +
+                    theme.fg(
+                        'accent',
+                        theme.bold(' ✏️ Reason for rejection (optional):'),
+                    ),
+            ];
+
+            this.rejectionReasonEditor.focused = true;
+            for (const line of this.rejectionReasonEditor.render(
+                innerWidth - 3,
+            )) {
+                lines.push(theme.fg('border', '│') + '   ' + line);
+            }
+            lines.push(
+                theme.fg('border', '│') +
+                    '   ' +
+                    theme.fg(
+                        'muted',
+                        'Leave empty to request a different plan.',
+                    ),
+            );
+            lines.push(
+                renderBoxFooter(
+                    theme,
+                    innerWidth,
+                    '[Enter] Reject [Shift+Enter] Line [Esc] Back',
+                ),
+            );
+            return lines;
+        }
+
         const { focus, fileCursorIndex, files } = this.state;
         const lines: string[] = [];
-        const innerWidth = Math.max(40, width - 4);
 
         lines.push(
             renderBoxHeader(theme, innerWidth, ' 📦 Commit Plan Review '),

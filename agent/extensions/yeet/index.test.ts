@@ -12,6 +12,38 @@ import yeetExtension, {
     validateCommitFiles,
 } from './index';
 
+interface ProposeCommitPlanTool {
+    execute: (
+        toolCallId: string,
+        params: unknown,
+        signal: AbortSignal | undefined,
+        onUpdate: unknown,
+        ctx: unknown,
+    ) => Promise<{ content: { text: string }[] }>;
+}
+
+function registerProposeCommitPlanTool(): ProposeCommitPlanTool {
+    let registeredTool: ProposeCommitPlanTool | undefined;
+    const pi = {
+        exec: mock(async () => ({ stdout: 'true\n' })),
+        appendEntry: mock(),
+        on: mock(),
+        registerCommand: mock(),
+        registerTool: (tool: unknown) => {
+            if ((tool as { name?: unknown }).name === 'propose_commit_plan') {
+                registeredTool = tool as ProposeCommitPlanTool;
+            }
+        },
+        sendUserMessage: mock(),
+    };
+
+    yeetExtension(pi as never);
+    if (!registeredTool) {
+        throw new Error('propose_commit_plan was not registered');
+    }
+    return registeredTool;
+}
+
 describe('commit CWD validation', () => {
     it('rejects an empty CWD', () => {
         expect(validateCommitCwd(' ')).toContain('required');
@@ -31,6 +63,72 @@ describe('commit CWD validation', () => {
         expect(
             validateCommitFiles('/workspace/repo', ['../other/file.ts']),
         ).toContain('outside');
+    });
+});
+
+describe('propose_commit_plan rejection feedback', () => {
+    it('returns the optional rejection reason to the agent', async () => {
+        const proposeCommitPlan = registerProposeCommitPlanTool();
+        const result = await proposeCommitPlan.execute(
+            'tool-call-1',
+            {
+                cwd: process.cwd(),
+                plan_summary: 'Test plan',
+                files: ['target.ts'],
+                commit_message: 'test: target',
+            },
+            undefined,
+            undefined,
+            {
+                ui: {
+                    custom: mock(async () => ({
+                        accepted: false,
+                        cancelled: false,
+                        rejection_reason: 'Split the refactor from the fix.',
+                        plan_summary: 'Test plan',
+                        cwd: process.cwd(),
+                        files: [],
+                        commit_message: '',
+                    })),
+                },
+            },
+        );
+
+        expect(result?.content[0].text).toContain(
+            'Split the refactor from the fix.',
+        );
+    });
+
+    it('tells the agent to produce a different plan when the reason is empty', async () => {
+        const proposeCommitPlan = registerProposeCommitPlanTool();
+        const result = await proposeCommitPlan.execute(
+            'tool-call-2',
+            {
+                cwd: process.cwd(),
+                plan_summary: 'Test plan',
+                files: ['target.ts'],
+                commit_message: 'test: target',
+            },
+            undefined,
+            undefined,
+            {
+                ui: {
+                    custom: mock(async () => ({
+                        accepted: false,
+                        cancelled: false,
+                        rejection_reason: '   ',
+                        plan_summary: 'Test plan',
+                        cwd: process.cwd(),
+                        files: [],
+                        commit_message: '',
+                    })),
+                },
+            },
+        );
+
+        expect(result?.content[0].text).toContain(
+            'No specific reason provided; the user wants a different plan.',
+        );
     });
 });
 
