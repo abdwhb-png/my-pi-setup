@@ -7,6 +7,8 @@ import {
     type ParsedPlan,
     type Profile,
     type VerifyCommand,
+    type QaCommand,
+    type BrowserScenario,
 } from './types.ts';
 
 export interface ProfileBudget {
@@ -27,6 +29,8 @@ export interface DraftManifestTask {
     readonly dependencies: readonly string[];
     readonly files: readonly string[];
     readonly verify: readonly VerifyCommand[];
+    readonly qa?: readonly QaCommand[];
+    readonly browser?: readonly BrowserScenario[];
     readonly budgets: ProfileBudget;
     readonly parallelEligible: boolean;
 }
@@ -45,6 +49,10 @@ export interface DraftManifest {
     readonly parallelismEnabled: boolean;
     readonly maxConcurrentWriters: number;
     readonly finalIntegrationReview: boolean;
+    readonly profileLaunches?: number;
+    readonly qaLaunches?: number;
+    readonly browserLaunches?: number;
+    readonly validationLaunches?: number;
     readonly maximumLaunches: number;
     readonly tasks: readonly DraftManifestTask[];
 }
@@ -205,7 +213,25 @@ function requiresFinalIntegrationReview(
 
 export interface LaunchPreview {
     readonly finalIntegrationReview: boolean;
+    readonly profileLaunches: number;
+    readonly qaLaunches: number;
+    readonly browserLaunches: number;
+    readonly validationLaunches: number;
     readonly maximumLaunches: number;
+}
+
+function countValidationLaunches(tasks: ReadonlyArray<{ qa?: readonly QaCommand[]; browser?: readonly BrowserScenario[] }>): {
+    readonly qaLaunches: number;
+    readonly browserLaunches: number;
+    readonly validationLaunches: number;
+} {
+    const qaLaunches = tasks.filter((task) => task.qa?.length).length;
+    const browserLaunches = tasks.some((task) => task.browser?.length) ? 1 : 0;
+    return {
+        qaLaunches,
+        browserLaunches,
+        validationLaunches: qaLaunches + browserLaunches,
+    };
 }
 
 export function calculateLaunchPreview(
@@ -219,14 +245,19 @@ export function calculateLaunchPreview(
     }));
     const finalIntegrationReview =
         requiresFinalIntegrationReview(profiled) || requestedIntegrationReview;
+    const validation = countValidationLaunches(tasks);
+    const profileLaunches = profiled.reduce(
+        (sum, task) => sum + budgetsFor(task.effectiveProfile).maxLaunches,
+        0,
+    );
     return {
         finalIntegrationReview,
+        profileLaunches,
+        qaLaunches: validation.qaLaunches,
+        browserLaunches: validation.browserLaunches,
+        validationLaunches: validation.validationLaunches,
         maximumLaunches:
-            profiled.reduce(
-                (sum, task) =>
-                    sum + budgetsFor(task.effectiveProfile).maxLaunches,
-                0,
-            ) + (finalIntegrationReview ? 1 : 0),
+            profileLaunches + validation.validationLaunches + (finalIntegrationReview ? 1 : 0),
     };
 }
 
@@ -326,6 +357,14 @@ export function compileManifest(input: {
             dependencies: [...task.dependsOn],
             files: [...task.files],
             verify: task.verify.map((command) => ({ ...command })),
+            qa: task.qa?.map((command) => ({ ...command })),
+            browser: task.browser?.map((scenario) => ({
+                ...scenario,
+                preconditions: [...scenario.preconditions],
+                steps: [...scenario.steps],
+                expected: [...scenario.expected],
+                cleanup: scenario.cleanup ? [...scenario.cleanup] : undefined,
+            })),
             budgets: budgetsFor(recommendedProfile),
             parallelEligible: canRunInParallel(
                 {
@@ -431,6 +470,14 @@ export function applyApproval(
             dependencies: [...task.dependencies],
             files: [...task.files],
             verify: task.verify.map((command) => ({ ...command })),
+            qa: task.qa?.map((command) => ({ ...command })),
+            browser: task.browser?.map((scenario) => ({
+                ...scenario,
+                preconditions: [...scenario.preconditions],
+                steps: [...scenario.steps],
+                expected: [...scenario.expected],
+                cleanup: scenario.cleanup ? [...scenario.cleanup] : undefined,
+            })),
             effectiveProfile: approvedProfile,
             budgets: budgetsFor(approvedProfile),
             parallelEligible: canRunInParallel(

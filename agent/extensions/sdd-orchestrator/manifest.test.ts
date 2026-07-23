@@ -51,6 +51,22 @@ function plan(secondFile = 'src/two.ts'): ParsedPlan {
     };
 }
 
+function planWithValidation(): ParsedPlan {
+    const parsed = plan();
+    parsed.tasks[0]!.qa = [{ id: 'a11y', command: 'bun run test:a11y src/one.ts' }];
+    parsed.tasks[1]!.browser = [
+        {
+            id: 'ui-flow',
+            baseUrl: 'https://example.test',
+            preconditions: ['build passes'],
+            steps: ['open /one', 'submit'],
+            expected: ['ok'],
+            cleanup: ['snapshot'],
+        },
+    ];
+    return parsed;
+}
+
 function assessment(taskIds = ['task-1', 'task-2']): Assessment {
     return {
         version: 1,
@@ -156,11 +172,52 @@ test('calculates one shared launch preview from explicit effective profiles', ()
 
     expect(direct).toEqual({
         finalIntegrationReview: false,
+        profileLaunches: 0,
+        qaLaunches: 0,
+        browserLaunches: 0,
+        validationLaunches: 0,
         maximumLaunches: 0,
     });
     expect(critical).toEqual({
         finalIntegrationReview: true,
+        profileLaunches: 8,
+        qaLaunches: 0,
+        browserLaunches: 0,
+        validationLaunches: 0,
         maximumLaunches: 9,
+    });
+});
+
+test('adds one QA launch per task and one aggregate browser launch', () => {
+    const draft = compileManifest({
+        planPath: '/repo/plan.md',
+        planContent: '# Plan',
+        parsedPlan: planWithValidation(),
+        assessment: assessment(),
+        globalProfile: 'light',
+        parallelismEnabled: true,
+        config,
+    });
+
+    expect(draft.tasks[0]!.qa).toEqual([
+        { id: 'a11y', command: 'bun run test:a11y src/one.ts' },
+    ]);
+    expect(draft.tasks[1]!.browser).toEqual([
+        {
+            id: 'ui-flow',
+            baseUrl: 'https://example.test',
+            preconditions: ['build passes'],
+            steps: ['open /one', 'submit'],
+            expected: ['ok'],
+            cleanup: ['snapshot'],
+        },
+    ]);
+    expect(draft).toMatchObject({
+        maximumLaunches: 4,
+        profileLaunches: 2,
+        qaLaunches: 1,
+        browserLaunches: 1,
+        validationLaunches: 2,
     });
 });
 
@@ -179,6 +236,40 @@ test('requires final integration review for a Critical task', () => {
 
     expect(draft.finalIntegrationReview).toBe(true);
     expect(draft.maximumLaunches).toBe(9);
+});
+
+test('retains qa and browser declarations through approval', () => {
+    const decision: ManifestDecision = {
+        globalProfile: 'light',
+        taskOverrides: {},
+        parallelismEnabled: true,
+        criticalDowngradeConfirmations: {},
+        criticalDowngradeJustifications: {},
+        approvedBy: 'operator',
+        approvedAt: '2026-07-21T00:00:00.000Z',
+    };
+    const draft = compileManifest({
+        planPath: '/repo/plan.md',
+        planContent: '# Plan',
+        parsedPlan: planWithValidation(),
+        assessment: assessment(),
+        globalProfile: 'light',
+        parallelismEnabled: true,
+        config,
+    });
+    const approved = applyApproval(draft, decision, '# Plan');
+
+    expect(approved).toMatchObject({
+        maximumLaunches: 4,
+        profileLaunches: 2,
+        qaLaunches: 1,
+        browserLaunches: 1,
+        validationLaunches: 2,
+    });
+    expect(approved.tasks[0]!.qa).toEqual(draft.tasks[0]!.qa);
+    expect(approved.tasks[1]!.browser).toEqual(draft.tasks[1]!.browser);
+    expect(Object.isFrozen(approved.tasks[0].qa)).toBe(true);
+    expect(Object.isFrozen(approved.tasks[1].browser)).toBe(true);
 });
 
 test('keeps final integration review for multiple approved shared-contract tasks', () => {

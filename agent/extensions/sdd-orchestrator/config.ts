@@ -4,16 +4,21 @@ const AGENT_KEYS = [
     'assessor',
     'quickWorker',
     'worker',
+    'qaTester',
+    'browserTester',
     'combinedReviewer',
     'specReviewer',
     'qualityReviewer',
 ] as const;
 type AgentKey = (typeof AGENT_KEYS)[number];
+type ValidationAgentKey = 'qaTester' | 'browserTester';
+type CoreAgentKey = Exclude<AgentKey, ValidationAgentKey>;
 const TIMEOUT_KEYS = ['assessor', 'worker', 'reviewer'] as const;
 type TimeoutKey = (typeof TIMEOUT_KEYS)[number];
 
 export interface SddConfig {
-    agents: Record<AgentKey, string>;
+    agents: Record<CoreAgentKey, string> &
+        Partial<Record<ValidationAgentKey, string>>;
     models: Partial<Record<AgentKey, string>>;
     timeoutsMs: Record<TimeoutKey, number>;
     maxConcurrentWriters: number;
@@ -33,6 +38,8 @@ const DEFAULT_CONFIG: SddConfig = {
         assessor: 'orchestration-assessor',
         quickWorker: 'quick-worker',
         worker: 'sdd-worker',
+        qaTester: 'qa-tester',
+        browserTester: 'browser-tester',
         combinedReviewer: 'sdd-combined-reviewer',
         specReviewer: 'sdd-spec-reviewer',
         qualityReviewer: 'sdd-quality-reviewer',

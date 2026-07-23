@@ -11,6 +11,55 @@ describe("profiles", () => {
 });
 
 describe("parseSddPlan", () => {
+  it("parses optional qa and browser metadata", () => {
+    const plan = [
+      "# Feature",
+      "",
+      "### Task 1: Add parser",
+      "",
+      "~~~sdd-task",
+      JSON.stringify({
+        id: "task-1",
+        dependsOn: [],
+        files: ["src/parser.ts", "src/parser.test.ts"],
+        verify: [{ id: "parser", command: "bun test src/parser.test.ts" }],
+        qa: [{ id: "a11y", command: "bun run test:a11y parser" }],
+        browser: [
+          {
+            id: "parser-flow",
+            baseUrl: "http://localhost:4173",
+            preconditions: ["Parser UI loads"],
+            steps: ["Open parser page", "Run checks", "Submit form"],
+            expected: ["Checks complete"],
+          },
+        ],
+      }),
+      "~~~",
+      "",
+      "Implement with TDD.",
+    ].join("\n");
+
+    expect(parseSddPlan(plan).tasks[0]).toEqual({
+      id: "task-1",
+      ordinal: 1,
+      title: "Add parser",
+      body: "Implement with TDD.",
+      dependsOn: [],
+      files: ["src/parser.ts", "src/parser.test.ts"],
+      verify: [{ id: "parser", command: "bun test src/parser.test.ts" }],
+      qa: [{ id: "a11y", command: "bun run test:a11y parser" }],
+      browser: [
+        {
+          id: "parser-flow",
+          baseUrl: "http://localhost:4173",
+          preconditions: ["Parser UI loads"],
+          steps: ["Open parser page", "Run checks", "Submit form"],
+          expected: ["Checks complete"],
+        },
+      ],
+    });
+  });
+
   it("compiles an exact task heading and sdd-task metadata", () => {
     const plan = [
       "# Feature",
@@ -281,7 +330,181 @@ describe("parseSddPlan", () => {
       "~~~",
     ].join("\n");
 
+      expect(() => parseSddPlan(plan)).toThrow("Task 1 metadata is invalid:");
+  });
+
+  it("rejects duplicate qa ids", () => {
+    const plan = [
+      "# Feature",
+      "### Task 1: Duplicate qa ids",
+      "~~~sdd-task",
+      JSON.stringify({
+        id: "task-1",
+        dependsOn: [],
+        files: ["src/parser.ts"],
+        verify: [{ id: "test", command: "bun test" }],
+        qa: [
+          { id: "a11y", command: "bun run test:a11y parser" },
+          { id: "a11y", command: "bun run test:a11y ui" },
+        ],
+      }),
+      "~~~",
+    ].join("\n");
+
     expect(() => parseSddPlan(plan)).toThrow("Task 1 metadata is invalid:");
+  });
+
+  it("rejects duplicate browser scenario ids", () => {
+    const plan = [
+      "# Feature",
+      "### Task 1: Duplicate browser ids",
+      "~~~sdd-task",
+      JSON.stringify({
+        id: "task-1",
+        dependsOn: [],
+        files: ["src/parser.ts"],
+        verify: [{ id: "test", command: "bun test" }],
+        browser: [
+          {
+            id: "flow",
+            baseUrl: "http://localhost:4173",
+            preconditions: ["Parser UI loads"],
+            steps: ["Open page"],
+            expected: ["Parser loads"],
+          },
+          {
+            id: "flow",
+            baseUrl: "http://localhost:4173",
+            preconditions: ["Parser UI loads"],
+            steps: ["Open page"],
+            expected: ["Parser loads"],
+          },
+        ],
+      }),
+      "~~~",
+    ].join("\n");
+
+    expect(() => parseSddPlan(plan)).toThrow("Task 1 metadata is invalid:");
+  });
+
+  it("rejects empty browser step and expected values", () => {
+    for (const browser of [
+      {
+        id: "missing-steps",
+        baseUrl: "http://localhost:4173",
+        preconditions: ["Parser UI loads"],
+        steps: [],
+        expected: ["Parser loads"],
+      },
+      {
+        id: "missing-expected",
+        baseUrl: "http://localhost:4173",
+        preconditions: ["Parser UI loads"],
+        steps: ["Open page"],
+        expected: [],
+      },
+    ]) {
+      const plan = [
+        "# Feature",
+        "### Task 1: Empty browser checks",
+        "~~~sdd-task",
+        JSON.stringify({
+          id: "task-1",
+          dependsOn: [],
+          files: ["src/parser.ts"],
+          verify: [{ id: "test", command: "bun test" }],
+          browser: [browser],
+        }),
+        "~~~",
+      ].join("\n");
+
+      expect(() => parseSddPlan(plan)).toThrow("Task 1 metadata is invalid:");
+    }
+  });
+
+  it("rejects unknown qa fields", () => {
+    const plan = [
+      "# Feature",
+      "### Task 1: Unknown qa field",
+      "~~~sdd-task",
+      JSON.stringify({
+        id: "task-1",
+        dependsOn: [],
+        files: ["src/parser.ts"],
+        verify: [{ id: "test", command: "bun test" }],
+        qa: [{ id: "a11y", command: "bun run test:a11y parser", timeout: 5000 }],
+      }),
+      "~~~",
+    ].join("\n");
+
+    expect(() => parseSddPlan(plan)).toThrow("Task 1 metadata is invalid:");
+  });
+
+  it("rejects unknown browser fields", () => {
+    const plan = [
+      "# Feature",
+      "### Task 1: Unknown browser field",
+      "~~~sdd-task",
+      JSON.stringify({
+        id: "task-1",
+        dependsOn: [],
+        files: ["src/parser.ts"],
+        verify: [{ id: "test", command: "bun test" }],
+        browser: [
+          {
+            id: "parser-flow",
+            baseUrl: "http://localhost:4173",
+            preconditions: ["Parser UI loads"],
+            steps: ["Open page"],
+            expected: ["Parser loads"],
+            extra: true,
+          },
+        ],
+      }),
+      "~~~",
+    ].join("\n");
+
+    expect(() => parseSddPlan(plan)).toThrow("Task 1 metadata is invalid:");
+  });
+
+  it("rejects blank and overlong validation metadata text", () => {
+    const blank = [
+      "# Feature",
+      "### Task 1: Blank validation text",
+      "~~~sdd-task",
+      JSON.stringify({
+        id: "task-1",
+        dependsOn: [],
+        files: ["src/parser.ts"],
+        verify: [{ id: "test", command: "bun test" }],
+        qa: [{ id: "   ", command: "bun test" }],
+      }),
+      "~~~",
+    ].join("\n");
+    const overlong = [
+      "# Feature",
+      "### Task 1: Overlong browser text",
+      "~~~sdd-task",
+      JSON.stringify({
+        id: "task-1",
+        dependsOn: [],
+        files: ["src/parser.ts"],
+        verify: [{ id: "test", command: "bun test" }],
+        browser: [{
+          id: "flow",
+          baseUrl: "http://localhost:4173",
+          preconditions: ["Ready"],
+          steps: ["x".repeat(4097)],
+          expected: ["Complete"],
+        }],
+      }),
+      "~~~",
+    ].join("\n");
+
+    expect(() => parseSddPlan(blank)).toThrow("Task 1 metadata is invalid:");
+    expect(() => parseSddPlan(overlong)).toThrow(
+      "Task 1 metadata is invalid:",
+    );
   });
 });
 

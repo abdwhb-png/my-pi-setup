@@ -67,6 +67,10 @@ export interface ReviewDecisionState {
     readonly criticalDowngradeConfirmations: Readonly<Record<string, boolean>>;
     readonly criticalDowngradeJustifications: Readonly<Record<string, string>>;
     readonly finalIntegrationReview: boolean;
+    readonly profileLaunches: number;
+    readonly qaLaunches: number;
+    readonly browserLaunches: number;
+    readonly validationLaunches: number;
     readonly maximumLaunches: number;
     readonly estimatedQualitativeDuration: QualitativeDuration;
 }
@@ -233,6 +237,7 @@ class ManifestReviewComponent implements Component {
             `Parallel writers [p]: ${state.parallelismEnabled ? 'enabled' : 'disabled'}`,
             `Estimated qualitative duration: ${state.estimatedQualitativeDuration}`,
             `Maximum launches: ${state.maximumLaunches}`,
+            `Validation launches: qa=${state.qaLaunches}, browser=${state.browserLaunches}, total=${state.validationLaunches} (of profile budget ${state.profileLaunches})`,
             `Final integration review: ${state.finalIntegrationReview ? 'required' : 'not required'}`,
             '',
         ];
@@ -253,6 +258,9 @@ class ManifestReviewComponent implements Component {
                     `  CRITICAL DOWNGRADE confirmed=${state.criticalDowngradeConfirmations[task.id] ? 'yes' : 'no'}`,
                     `  justification=${state.criticalDowngradeJustifications[task.id] || '(required)'}`,
                 );
+            }
+            if (task.qa?.length) {
+                lines.push(`  validation=QA launch (${task.qa.length})`);
             }
         }
         lines.push(

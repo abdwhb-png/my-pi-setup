@@ -5,6 +5,30 @@ import type { ParsedPlan } from './types.ts';
 
 const TASK_HEADING = /^### Task ([1-9][0-9]*):[ \t]+(.+)$/gm;
 
+const NonBlankText = (maxLength: number) =>
+    Type.String({ minLength: 1, maxLength, pattern: '\\S' });
+
+const ValidationCommandSchema = Type.Object(
+    {
+        id: NonBlankText(128),
+        command: NonBlankText(4_096),
+        timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+    },
+    { additionalProperties: false },
+);
+
+const BrowserScenarioSchema = Type.Object(
+    {
+        id: NonBlankText(128),
+        baseUrl: NonBlankText(2_048),
+        preconditions: Type.Array(NonBlankText(4_096), { minItems: 1 }),
+        steps: Type.Array(NonBlankText(4_096), { minItems: 1 }),
+        expected: Type.Array(NonBlankText(4_096), { minItems: 1 }),
+        cleanup: Type.Optional(Type.Array(NonBlankText(4_096))),
+    },
+    { additionalProperties: false },
+);
+
 function canonicalizeProjectFile(file: string, taskId: string): string {
     const portable = file.trim().replaceAll('\\', '/');
     const canonical = posix.normalize(portable);
@@ -27,20 +51,30 @@ const MetadataSchema = Type.Object(
         id: Type.String({ pattern: '^task-[1-9][0-9]*$' }),
         dependsOn: Type.Array(Type.String({ pattern: '^task-[1-9][0-9]*$' })),
         files: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-        verify: Type.Array(
-            Type.Object(
-                {
-                    id: Type.String({ minLength: 1 }),
-                    command: Type.String({ minLength: 1 }),
-                    timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
-                },
-                { additionalProperties: false },
-            ),
-            { minItems: 1 },
-        ),
+        verify: Type.Array(ValidationCommandSchema, { minItems: 1 }),
+        qa: Type.Optional(Type.Array(ValidationCommandSchema, { minItems: 1 })),
+        browser: Type.Optional(Type.Array(BrowserScenarioSchema, { minItems: 1 })),
     },
     { additionalProperties: false },
 );
+
+function assertUniqueIds(
+    taskId: string,
+    ordinal: number,
+    fieldName: string,
+    values: Array<{ id: string }> | undefined,
+): void {
+    if (!values) return;
+    const seen = new Set<string>();
+    for (const item of values) {
+        if (seen.has(item.id)) {
+            throw new Error(
+                `Task ${ordinal} metadata is invalid: duplicate ${fieldName} id ${JSON.stringify(item.id)}.`,
+            );
+        }
+        seen.add(item.id);
+    }
+}
 
 export function parseSddPlan(content: string): ParsedPlan {
     const titleMatches = [...content.matchAll(/^#[ \t]+(.+)$/gm)];
@@ -89,6 +123,9 @@ export function parseSddPlan(content: string): ParsedPlan {
                 .join('; ');
             throw new Error(`Task ${ordinal} metadata is invalid: ${errors}`);
         }
+        assertUniqueIds(metadata.id, ordinal, 'verify', metadata.verify);
+        assertUniqueIds(metadata.id, ordinal, 'qa', metadata.qa);
+        assertUniqueIds(metadata.id, ordinal, 'browser', metadata.browser);
         if (metadata.id !== `task-${ordinal}`) {
             throw new Error(
                 `Task ${ordinal} metadata id must be task-${ordinal}.`,

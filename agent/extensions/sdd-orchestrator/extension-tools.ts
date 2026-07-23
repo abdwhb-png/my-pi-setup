@@ -570,6 +570,10 @@ function observeRun(
         {
             maximumLaunches: manifest.maximumLaunches,
             finalIntegrationReview: manifest.finalIntegrationReview,
+            profileLaunches: manifest.profileLaunches ?? manifest.maximumLaunches,
+            qaLaunches: manifest.qaLaunches ?? 0,
+            browserLaunches: manifest.browserLaunches ?? 0,
+            validationLaunches: manifest.validationLaunches ?? 0,
         },
     );
     const approvedAtMs = Date.parse(manifest.decision.approvedAt);

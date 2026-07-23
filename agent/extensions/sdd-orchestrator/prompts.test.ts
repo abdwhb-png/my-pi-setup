@@ -6,7 +6,9 @@ import type { SddConfig } from './config.ts';
 import type { ApprovedManifestTask } from './manifest.ts';
 import {
     buildAssessmentRequest,
+    buildBrowserRequest,
     buildCorrectionRequest,
+    buildQaRequest,
     buildReviewRequest,
     buildWorkerRequest,
     parseAssessmentResponse,
@@ -138,6 +140,43 @@ describe('buildWorkerRequest', () => {
         expect(request.agent).toBe('quick-worker');
         expect(request.model).toBe('worker-model');
     });
+});
+
+test('builds bounded QA and AXI-first browser validation requests', () => {
+    const task = {
+        ...approvedTask,
+        qa: [{ id: 'a11y', command: 'bun run test:a11y profile' }],
+        browser: [
+            {
+                id: 'save-profile',
+                baseUrl: 'http://app.local',
+                preconditions: ['Demo account exists'],
+                steps: ['Open profile', 'Save'],
+                expected: ['Success message'],
+            },
+        ],
+    };
+    const qa = buildQaRequest({
+        requestId: 'run-1:task-6:qa:1',
+        cwd: '/repo',
+        config,
+        task,
+    });
+    const browser = buildBrowserRequest({
+        requestId: 'run-1:browser:1',
+        cwd: '/repo',
+        config,
+        tasks: [task],
+        artifactDir: '/tmp/sdd-artifacts/run-1',
+        session: 'sdd-run-1-browser',
+    });
+
+    expect(qa.agent).toBe('qa-tester');
+    expect(qa.task).toContain('bun run test:a11y profile');
+    expect(browser.agent).toBe('browser-tester');
+    expect(browser.task).toContain('AXI-first');
+    expect(browser.task).toContain('sdd-run-1-browser');
+    expect(browser.task).toContain('/tmp/sdd-artifacts/run-1');
 });
 
 describe('buildCorrectionRequest', () => {
@@ -644,6 +683,55 @@ describe('read-only agent contracts', () => {
                 'For blocked, the finding must explain the block.',
             );
         }
+    });
+
+    test('defines qa-tester as a fresh medium read-only JSON-only role', () => {
+        const agent = readAgent('qa-tester');
+
+        expect(agent).toContain('name: qa-tester');
+        expect(agent).toContain('description: Read-only QA execution tester');
+        expect(agent).toContain("tools: '@inspect, @lens-inspect, safe_bash'");
+        expect(agent).toContain('thinking: medium');
+        expect(agent).toContain('systemPromptMode: replace');
+        expect(agent).toContain('inheritProjectContext: true');
+        expect(agent).toContain('inheritSkills: false');
+        expect(agent).toContain('defaultContext: fresh');
+        expect(agent).toContain('acceptanceRole: read-only');
+        expect(agent).toContain('completionGuard: false');
+        expect(agent).toContain('version-1 JSON only');
+        expect(agent).toContain('Never edit files');
+        expect(agent).toContain('Never launch other agents');
+        expect(agent).toContain('Do not use intercom');
+        expect(agent).not.toContain('contact_supervisor');
+        expect(agent).not.toContain('skills:');
+        expect(agent).toContain('only as listed');
+    });
+
+    test('defines browser-tester as a fresh medium AXI-first read-only role', () => {
+        const agent = readAgent('browser-tester');
+
+        expect(agent).toContain('name: browser-tester');
+        expect(agent).toContain('description: Read-only browser validation tester');
+        expect(agent).toContain("tools: '@inspect, safe_bash'");
+        expect(agent).toContain('skills: chrome-devtools-axi, agent-browser');
+        expect(agent).toContain('thinking: medium');
+        expect(agent).toContain('systemPromptMode: replace');
+        expect(agent).toContain('inheritProjectContext: true');
+        expect(agent).toContain('inheritSkills: false');
+        expect(agent).toContain('defaultContext: fresh');
+        expect(agent).toContain('acceptanceRole: read-only');
+        expect(agent).toContain('completionGuard: false');
+        expect(agent).toContain('Version-1 JSON only');
+        expect(agent).toContain('AXI-first');
+        expect(agent).toContain('isolated named session');
+        expect(agent).toContain('fresh snapshot');
+        expect(agent).toContain('cleanup');
+        expect(agent).toContain('fallback only for technical unavailability');
+        expect(agent).toContain('Do not use intercom');
+        expect(agent).toContain('No prose');
+        expect(agent).toContain('Do not edit');
+        expect(agent).not.toContain('contact_supervisor');
+        expect(agent).not.toContain('@lens-inspect');
     });
 
     test('lets the combined reviewer return the supplied integration stage', () => {

@@ -45,6 +45,55 @@ function draft(): DraftManifest {
     };
 }
 
+function draftWithValidation(): DraftManifest {
+    return {
+        ...draft(),
+        globalProfile: 'light',
+        finalIntegrationReview: false,
+        tasks: [
+            {
+                ...draft().tasks[0]!,
+                id: 'task-1',
+                title: 'Task one',
+                qa: [{ id: 'a11y', command: 'bun run test:a11y' }],
+                budgets: {
+                    initialWorkers: 1,
+                    correctionWorkers: 0,
+                    reviewerAttempts: 0,
+                    maxLaunches: 1,
+                },
+                effectiveProfile: 'light',
+                recommendedProfile: 'light',
+            },
+            {
+                ...draft().tasks[0]!,
+                id: 'task-2',
+                title: 'Task two',
+                qa: undefined,
+                browser: [
+                    {
+                        id: 'flow',
+                        baseUrl: 'https://example.test',
+                        preconditions: ['ready'],
+                        steps: ['start', 'submit'],
+                        expected: ['ok'],
+                    },
+                ],
+                budgets: {
+                    initialWorkers: 1,
+                    correctionWorkers: 0,
+                    reviewerAttempts: 0,
+                    maxLaunches: 1,
+                },
+                effectiveProfile: 'light',
+                recommendedProfile: 'light',
+            },
+        ],
+        parallelismEnabled: false,
+        maximumLaunches: 4,
+    };
+}
+
 test('review controller recalculates previews and blocks unconfirmed critical downgrades', () => {
     const source = draft();
     const controller = createReviewController(source);
@@ -81,6 +130,27 @@ test('review controller recalculates previews and blocks unconfirmed critical do
     );
     expect(controller.cancel()).toBeNull();
     expect(source).toEqual(draft());
+});
+
+test('review controller exposes separate validation launch accounting', () => {
+    const controller = createReviewController(draftWithValidation());
+
+    expect(controller.current).toMatchObject({
+        profileLaunches: 2,
+        qaLaunches: 1,
+        browserLaunches: 1,
+        validationLaunches: 2,
+        maximumLaunches: 4,
+    });
+
+    controller.setGlobalProfile('direct');
+    expect(controller.current).toMatchObject({
+        profileLaunches: 0,
+        qaLaunches: 1,
+        browserLaunches: 1,
+        validationLaunches: 2,
+        maximumLaunches: 2,
+    });
 });
 
 test('approving the untouched review preserves deterministic task recommendations', () => {
@@ -166,4 +236,30 @@ test('review UI module imports and calls one native custom overlay', async () =>
     });
     expect(calls).toBe(1);
     expect(rendered).toContain('Estimated qualitative duration: extended');
+    expect(rendered).toContain('Validation launches: qa=0, browser=0, total=0 (of profile budget 7)');
+});
+
+test('review overlay shows task QA validation and browser aggregate preview', async () => {
+    let rendered: string[] = [];
+    const ctx = {
+        mode: 'tui',
+        ui: {
+            custom: async (factory: Function) => {
+                const component = factory(
+                    { requestRender() {} },
+                    {},
+                    { matches: () => false },
+                    () => {},
+                );
+                rendered = component.render(120);
+                return { type: 'cancel' as const };
+            },
+        },
+    };
+
+    await expect(openManifestReview(ctx as never, draftWithValidation())).resolves.toEqual(
+        { type: 'cancel' },
+    );
+    expect(rendered).toContain('Validation launches: qa=1, browser=1, total=2 (of profile budget 2)');
+    expect(rendered.join('\n')).toContain('validation=QA launch (1)');
 });
