@@ -1,11 +1,12 @@
 # Design: write_plan / edit_plan Tools
 
 **Date:** 2026-07-06
+**Superseded ownership:** Since 2026-07-22, these tools are owned by the native `pi-scoped-write` extension. The behavioural contract below remains applicable; only the extension boundary changed.
 **Context:** Agent fails to write plan files in the designated `pi-plans/` directory, causing `plan_submit` rejections. The plan role's `write`/`edit` tools need path-guarding wrappers.
 
 ## Architecture
 
-Two new tools registered by `pi-roles-addons` extension, replacing `write`/`edit` in the plan role:
+Two path-scoped tools registered by the `pi-scoped-write` extension, replacing `write`/`edit` in the plan role:
 
 - `write_plan(path, content)` — file write restricted to configured plan directory
 - `edit_plan(path, edits)` — file edit restricted to configured plan directory
@@ -29,6 +30,7 @@ resolvePlanPath(rawPath, cwd, planFileDir):
 **Parameters:** `{ path: string, content: string }`
 
 **Execute:**
+
 1. Load `planFileDir` from plannotator config chain
 2. If unset → error: "No plan directory configured"
 3. Resolve target path via `resolvePlanPath`
@@ -41,23 +43,23 @@ resolvePlanPath(rawPath, cwd, planFileDir):
 **Parameters:** `{ path: string, edits: Array<{ oldText: string, newText: string }> }`
 
 **Execute:**
-1-3. Same as write_plan
-4. File must exist → else error
-5. Read original content
-6. For each edit: find unique `oldText` match → replace
-7. Write back
-8. Return success with edit count
+
+1. Resolve the configured directory and target path as for `write_plan`.
+2. Require the file to exist.
+3. Read the original content.
+4. Require each `oldText` to have one unique match, then replace it.
+5. Write the updated content and return the edit count.
 
 ## Error Cases
 
-| Condition | Message |
-|---|---|
-| No planFileDir | "No plan directory configured. Set 'planFileDir' in plannotator.json." |
-| Path contains `..` | "Path must be inside the plan directory: {path}" |
-| Absolute path outside dir | "Path must be inside the plan directory ({dir}): {path}" |
-| File not found (edit) | "File not found: {path}" |
-| oldText not found | "Could not find match in {path}" |
-| oldText ambiguous | "oldText matches N locations — must be unique" |
+| Condition                 | Message                                                                |
+| ------------------------- | ---------------------------------------------------------------------- |
+| No planFileDir            | "No plan directory configured. Set 'planFileDir' in plannotator.json." |
+| Path contains `..`        | "Path must be inside the plan directory: {path}"                       |
+| Absolute path outside dir | "Path must be inside the plan directory ({dir}): {path}"               |
+| File not found (edit)     | "File not found: {path}"                                               |
+| oldText not found         | "Could not find match in {path}"                                       |
+| oldText ambiguous         | "oldText matches N locations — must be unique"                         |
 
 ## Role Update
 
@@ -65,7 +67,7 @@ resolvePlanPath(rawPath, cwd, planFileDir):
 
 ## Files
 
-- `extensions/pi-roles-addons/plan-tools.ts` — new module
-- `extensions/pi-roles-addons/plan-tools.test.ts` — unit tests
-- `extensions/pi-roles-addons/index.ts` — register tools (modify)
+- `extensions/pi-scoped-write/plan-tools.ts` — Plannotator adapter and helpers
+- `extensions/pi-scoped-write/plan-tools.test.ts` — unit and compatibility tests
+- `extensions/pi-scoped-write/index.ts` — register tools
 - `agent/roles/plan.md` — tool list update (modify)

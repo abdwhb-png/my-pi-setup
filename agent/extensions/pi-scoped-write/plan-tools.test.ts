@@ -1,5 +1,5 @@
 /**
- * Tests for plan-tools — write_plan / edit_plan path-guarded wrappers.
+ * Tests for the scoped write_plan / edit_plan adapters.
  *
  * Tests pure helpers in isolation. Tool registration + role integration
  * tested via integration smoke tests.
@@ -114,7 +114,7 @@ describe("writePlan + editPlan", () => {
     try { rmSync(testDir, { recursive: true, force: true }); } catch {}
   });
 
-  describe("writePlan", () => {
+    describe("writePlan", () => {
     it("writes content to a relative path inside plan dir", () => {
       const result = writePlan("my-plan.md", testDir, "pi-plans", "# Hello Plan");
       expect(result.error).toBeNull();
@@ -124,12 +124,43 @@ describe("writePlan + editPlan", () => {
       expect(written).toBe("# Hello Plan");
     });
 
-    it("auto-creates parent directories", () => {
+        it("auto-creates parent directories", () => {
       const result = writePlan("deep/nested/plan.md", testDir, "pi-plans", "content");
       expect(result.error).toBeNull();
       const written = readFileSync(join(planDir, "deep/nested/plan.md"), "utf-8");
       expect(written).toBe("content");
-    });
+        });
+
+        it("writes through an absolute path that is inside the plan directory", () => {
+            const absolutePath = join(planDir, "absolute.md");
+
+            const result = writePlan(absolutePath, testDir, "pi-plans", "# Absolute");
+
+            expect(result.error).toBeNull();
+            expect(readFileSync(absolutePath, "utf-8")).toBe("# Absolute");
+        });
+
+        it("records an audited scoped-write event when creating a plan", () => {
+            const result = writePlan(
+                "audited.md",
+                testDir,
+                "pi-plans",
+                "# Audited",
+                { agent: "plan", role: "plan", runId: "session-1" },
+            );
+
+            expect(result.error).toBeNull();
+            const audit = readFileSync(
+                join(testDir, ".pi", "artifacts", ".audit", "session-1.jsonl"),
+                "utf-8",
+            );
+            expect(JSON.parse(audit)).toMatchObject({
+                tool: "write_plan",
+                operation: "create",
+                path: "pi-plans/audited.md",
+                agent: "plan",
+            });
+        });
 
     it("rejects path outside plan dir", () => {
       const result = writePlan("../outside.md", testDir, "pi-plans", "x");
