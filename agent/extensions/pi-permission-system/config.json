@@ -49,12 +49,16 @@
         "write": {
             "*": "allow",
             "node_modules/*": "deny",
-            "AGENTS.md": "ask"
+            "AGENTS.md": "ask",
+            "*/agent/settings.json": "ask",
+            "*/agent/pi-hermes-memory": "ask"
         },
         "edit": {
             "*": "allow",
             "node_modules/*": "deny",
-            "AGENTS.md": "ask"
+            "AGENTS.md": "ask",
+            "*/agent/settings.json": "ask",
+            "*/agent/pi-hermes-memory": "ask"
         },
         "external_directory": {
             "*": "ask",

@@ -1,8 +1,8 @@
 {
-  "write": true,
-  "edit": true,
-  "bash": true,
-  "safe_bash": false,
-  "mcp:ctx_execute": true,
-  "ctx_execute": true
+    "write": true,
+    "edit": true,
+    "bash": true,
+    "safe_bash": false,
+    "mcp:ctx_execute": true,
+    "ctx_execute": true
 }

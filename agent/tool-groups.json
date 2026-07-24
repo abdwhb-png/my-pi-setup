@@ -1,61 +1,29 @@
 {
-  "groups": {
-    "inspect": [
-      "read",
-      "grep",
-      "find",
-      "ls"
-    ],
-    "web": [
-      "web_search",
-      "fetch_content",
-      "get_search_content"
-    ],
-    "docs": [
-      "mcp:context7",
-      "mcp:deepwiki"
-    ],
-    "review": [
-      "@inspect",
-      "memory_search",
-      "@docs",
-      "@web"
-    ],
-    "memory-consult": [
-      "session_search",
-      "memory_search"
-    ],
-    "memory": [
-      "@memory-consult",
-      "memory"
-    ],
-    "files-write": [
-      "edit",
-      "write"
-    ],
-    "implement": [
-      "@files-write",
-      "safe_bash"
-    ],
-    "lens-inspect": [
-      "ast_grep_search",
-      "ast_grep_outline",
-      "lsp_navigation",
-      "lsp_diagnostics",
-      "symbol_search",
-      "module_report",
-      "read_symbol",
-      "read_enclosing"
-    ],
-    "lens": [
-      "lens_diagnostics",
-      "ast_grep_dump",
-      "@lens-inspect"
-    ],
-    "lens-write": [
-      "@lens",
-      "ast_grep_replace",
-      "lens_diagnostic_mark"
-    ]
-  }
+    "groups": {
+        "inspect": ["read", "grep", "find", "ls"],
+        "web": ["web_search", "fetch_content", "get_search_content"],
+        "docs": ["mcp:context7", "mcp:deepwiki"],
+        "review": ["@inspect", "memory_search", "@docs", "@web"],
+        "memory-consult": [
+            "pi_session_find",
+            "pi_session_search",
+            "pi_session_query",
+            "memory_search"
+        ],
+        "memory": ["@memory-consult", "memory"],
+        "files-write": ["edit", "write"],
+        "implement": ["@files-write", "safe_bash"],
+        "lens-inspect": [
+            "ast_grep_search",
+            "ast_grep_outline",
+            "lsp_navigation",
+            "lsp_diagnostics",
+            "symbol_search",
+            "module_report",
+            "read_symbol",
+            "read_enclosing"
+        ],
+        "lens": ["lens_diagnostics", "ast_grep_dump", "@lens-inspect"],
+        "lens-write": ["@lens", "ast_grep_replace", "lens_diagnostic_mark"]
+    }
 }

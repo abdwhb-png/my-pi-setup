@@ -1,6 +1,7 @@
 {
-  "queryModel": {
-    "provider": "cpa",
-    "id": "gemini-3.1-flash-lite"
-  }
+    "queryModel": {
+        "provider": "cpa",
+        "id": "ocg/go-deepseek-v4-flash"
+    },
+    "fallback-models": [{ "provider": "cpa", "id": "gemini-3.1-pro-low" }]
 }

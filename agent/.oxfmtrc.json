@@ -1,6 +1,6 @@
 {
-  "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "semi": true,
+    "$schema": "./node_modules/oxfmt/configuration_schema.json",
+    "semi": true,
     "singleQuote": true,
     "singleAttributePerLine": false,
     "htmlWhitespaceSensitivity": "css",
@@ -16,6 +16,17 @@
             "files": ["**/*.yml", "**/*.yaml"],
             "options": {
                 "tabWidth": 2
+            }
+        },
+        {
+            "files": [
+                "extensions/**/*.ts",
+                "scripts/**/*.ts",
+                "**/*.json",
+                "**/*.jsonc"
+            ],
+            "options": {
+                "singleQuote": false
             }
         }
     ],
@@ -51,5 +62,7 @@
         ".github/instructions/*.instructions.md",
         "*.test.ts",
         "extensions/_legacy/",
-    ],
+        "sessions/",
+        "skills/"
+    ]
 }

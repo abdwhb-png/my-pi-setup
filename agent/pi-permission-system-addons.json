@@ -1,6 +1,6 @@
 {
-  "inherit": {
-    "hypa_write": "write",
-    "hypa_edit": "edit"
-  }
+    "inherit": {
+        "hypa_write": "write",
+        "hypa_edit": "edit"
+    }
 }
