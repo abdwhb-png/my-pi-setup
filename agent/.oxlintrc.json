@@ -40,7 +40,7 @@
     "skills/",
     "scripts/",
     "*.test.ts",
-    "extensions/_legacy/",
+    "extensions-legacy/",
     "extensions/ogulcancelik/pi-herdr.ts",
   ],
   "overrides": [
