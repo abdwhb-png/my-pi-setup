@@ -1,80 +1,84 @@
 ---
 name: brainstorm-forcer
-description: "Research-driven brainstorming and design for new features, components, or behavior modifications. Use this skill whenever the user wants to implement a new feature, change existing logic, design a system, or asks 'how should I approach X'. It mandates a discovery phase to ground all designs in the actual codebase before proposing solutions."
+description: 'Research-driven brainstorming controlled phase by phase with durable artifacts. Use for feature design, behavior changes, or system design while brainstorm-forcer is active.'
 ---
 
-# Brainstorming Ideas Into Designs
+# Controlled Brainstorming Into Designs
 
-## Overview
+## Contract
 
-Help turn ideas into fully formed designs and specs through natural collaborative dialogue.
+Act as research-driven designer, not implementer or planner.
 
-**Crucial Mindset:** You are a **Research-Driven Designer**, not a guesser. Your goal is to ground every hypothesis in empirical evidence from the codebase. Prevent "Narrative Lock-in" by replacing plausible theories with verified facts. Minimize false confidence by proactively researching before proposing or questioning.
+While brainstorm is active:
 
-Start by understanding the current project context, then use the `ask_user_question` tool to ask questions one at a time to refine the idea. Once you understand what you're building, present the design in small sections (200-300 words), checking after each section whether it looks right so far.
+1. Work only on current phase shown in `brainstorm-forcer-status`.
+2. Use current phase submission tool to provide complete structured content directly.
+3. Call `brainstorm_transition` with `next` only after artifact submission succeeds.
+4. Use `previous` when evidence or user feedback invalidates earlier reasoning.
+5. Never start next phase before transition succeeds.
+6. Never create implementation plan, select planning workflow, create worktree, commit, or implement code.
 
-## The Process
+Generic file mutation and planning tools are intentionally blocked. Phase submission tools own artifact paths and writes.
 
-**Discovery Phase (Mandatory):**
-Before asking questions or proposing designs, you MUST perform a discovery phase to understand the technical reality of the project.
+## Phase 1 — Discovery
 
-- Use `semantic_search`, `grep_search`, and `read_file` to explore relevant modules, data structures, and existing patterns.
-- Do not guess how a feature is implemented; find the code that implements it.
-- **Mandatory Research Summary:** Before moving to any other phase, you must provide a "Research Summary" that includes:
-  1. **Files Accessed:** A list of the specific files you read.
-  2. **Key Findings:** Concrete facts found in the code (e.g., "The `LoanService` handles repayments in `app/Services/LoanService.php` using a `repay()` method").
-  3. **Gaps:** What you were unable to find or what remains ambiguous.
-- Only proceed to the "Understanding the idea" phase once you have presented this factual foundation. Proposing options before this summary is a failure of the skill.
+Research codebase and relevant evidence. Do not propose solutions yet.
 
-**Understanding the idea:**
+Submit with `brainstorm_submit_discovery`:
 
-- Use the facts gathered during the Discovery Phase to inform your understanding.
-- Use the `ask_user_question` tool to ask questions one at a time to refine the idea, focusing on gaps in your research or user-specific intent.
-- **Avoid Narrative Lock-in:** Do not immediately validate the user's premise. Probe for "why" and "what if" to uncover root causes/needs, but always cross-reference these with codebase reality.
-- Prefer multiple choice questions when possible, but open-ended is fine too
-- Only one question per message - if a topic needs more exploration, break it into multiple questions
-- Focus on understanding: purpose, constraints, success criteria
+- `filesAccessed`: concrete files or sources inspected;
+- `keyFindings`: verified facts;
+- `gaps`: unknown or unverifiable points.
 
-**Exploring approaches:**
+After successful submission, call `brainstorm_transition(next)`.
 
-- Propose 2-3 different approaches with trade-offs
-- **Identify Uncertainties:** For each approach, list "Critical Uncertainties" (what we don't know yet) and "Conditions for Failure" (when would this approach be wrong?).
-- Present options conversationally with your recommendation and reasoning
-- Lead with your recommended option and explain why, but remain open to being wrong.
+## Phase 2 — Understanding
 
-**Presenting the design:**
+Use verified Discovery facts. Ask one `ask_user_question` question at a time. Probe purpose, constraints, success criteria, and rejected assumptions.
 
-- Once you believe you understand what you're building, present the design
-- Break it into sections of 200-300 words
-- Ask after each section whether it looks right so far
-- Cover: architecture, components, data flow, error handling, testing
-- Be ready to go back and clarify if something doesn't make sense
+Submit with `brainstorm_submit_understanding`:
 
-## After the Design
+- objective;
+- requirements;
+- constraints;
+- success criteria;
+- open questions.
 
-**Documentation:**
+Transition forward is blocked while open questions remain.
 
-- Write the validated design to `docs/plans/YYYY-MM-DD-<topic>-design.md`
-- Use elements-of-style:writing-clearly-and-concisely skill if available
-- Commit the design document to git
+## Phase 3 — Exploring
 
-**Implementation (if continuing):**
+Present 2–3 materially different approaches. For each include summary, trade-offs, critical uncertainties, and failure conditions. Give recommendation, then obtain explicit user choice.
 
-- Ask: "Ready to set up for implementation?"
-- Use superpowers:using-git-worktrees to create isolated workspace
-- Use superpowers:writing-plans to create detailed implementation plan
+Submit with `brainstorm_submit_exploring`. Transition only after `userChoice` is explicit.
 
-## Key Principles
+## Phase 4 — Presenting
 
-- **Hypothesis Generator** - You generate possibilities, you do not dictate truth.
-- **Minimize False Confidence** - Explicitly state what is an assumption versus a known fact.
-- **One question at a time** - Don't overwhelm with multiple questions
-- **Multiple choice preferred** - Easier to answer than open-ended when possible
-- **YAGNI ruthlessly** - Remove unnecessary features from all designs
-- **Explore alternatives** - Always propose 2-3 approaches before settling
-- **Incremental validation** - Present design in sections, validate each
-- **Be flexible** - Go back and clarify when something doesn't make sense
+Present design in small reviewable sections. Cover architecture, components, data flow, error handling, and testing where relevant. Capture feedback and decisions. Ask for explicit final approval.
 
-## Mandatory Use
+Submit with `brainstorm_submit_presenting`. `approved` must be true before transition.
 
-Always use `askQuestion` or equivalent to ask questions to the user. It's mandatory to use that tool to make it easier for user to answer and for you to track the conversation history. Do not ask questions in free text without using the tool.
+## Phase 5 — Documenting
+
+Submit final design with `brainstorm_submit_design`:
+
+- title and summary;
+- final design sections;
+- decisions;
+- residual risks.
+
+Design contains no implementation plan. After successful submission, call `brainstorm_transition(next)` to finish brainstorming. Workflow ends there. User alone decides whether and how planning continues.
+
+## Artifact Revisions
+
+Artifacts live under `docs/brainstorms/`. Returning to earlier phase and resubmitting creates new immutable revision. Downstream artifacts become stale but remain consultable. Read current status or `/brainstorm artifacts` before relying on prior output.
+
+## Principles
+
+- Verified facts over plausible narratives.
+- One phase at a time.
+- One question at a time during Understanding.
+- Explicit alternatives and failure conditions.
+- Explicit user choice and approval.
+- YAGNI.
+- Design only; planning remains separate user decision.

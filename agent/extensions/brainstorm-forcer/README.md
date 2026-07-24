@@ -1,81 +1,82 @@
 # brainstorm-forcer
 
-Pi extension that **starts and enforces** a brainstorming workflow programmatically.
+Pi extension that runs brainstorming as a controlled, artifact-backed state machine.
 
-## What changed in redesign
+## Workflow
 
-Old behavior:
-- `/brainstorm <topic>` only armed state
-- user had to send a second message manually
-- tool allowlists were hardcoded and blocked real environment tools like `hypa_find`
-- workflow was mostly a deny-list
+`/brainstorm <topic>` starts immediately in Discovery. While active:
 
-New behavior:
-- `/brainstorm <topic>` **starts immediately** by sending topic into agent loop
-- `/brainstorm arm <topic>` arms only
-- tool policy is built from **actual runtime tool inventory** via `pi.getAllTools()`
-- discovery allows research wrappers like `hypa_find`, `hypa_ls`, etc.
-- only **mutation tools** (`write`, `edit`) are blocked before documenting
-- phase advancement is evidence-based
+- current status is injected through Pi's `context` hook before every LLM call;
+- only adjacent LLM transitions are accepted;
+- every phase requires a structured Markdown artifact;
+- generic mutation, shell, and planning tools remain blocked;
+- completion stops after final design and never starts planning or implementation.
 
 ## Commands
 
-- `/brainstorm <topic>` — start immediately
-- `/brainstorm start <topic>` — explicit start
-- `/brainstorm arm <topic>` — arm only, no LLM turn
-- `/brainstorm status` — show phase + evidence counters
-- `/brainstorm next` — advance if completion criteria met
-- `/brainstorm force-next` — bypass criteria manually
-- `/brainstorm phase <name|number>` — jump to phase
-- `/brainstorm stop` — clear workflow state
+- `/brainstorm <topic>` or `/brainstorm start <topic>` — start immediately
+- `/brainstorm arm <topic>` — arm without starting an LLM turn
+- `/brainstorm status` — show current phase, gate, and restrictions
+- `/brainstorm artifacts` — list durable active/stale revisions
+- `/brainstorm next` / `/brainstorm previous` — adjacent user transition
+- `/brainstorm next --force` / `/brainstorm phase <name|number>` — explicit user overrides
+- `/brainstorm stop` — stop workflow
 
-## Phases
+`force` and phase jumps are user commands only. LLM tool cannot skip phases.
 
-1. **Discovery** — research tools + `ask_user_question`; mutation blocked
-2. **Understanding** — research tools + `ask_user_question`; mutation blocked
-3. **Exploring** — research tools + `ask_user_question`; mutation blocked
-4. **Presenting** — research tools + `ask_user_question`; mutation blocked
-5. **Documenting** — all tools allowed
+## Phase tools
 
-## Enforcement
+1. Discovery → `brainstorm_submit_discovery`
+2. Understanding → `brainstorm_submit_understanding`
+3. Exploring → `brainstorm_submit_exploring`
+4. Presenting → `brainstorm_submit_presenting`
+5. Documenting → `brainstorm_submit_design`
 
-### Runtime tool grouping
-Tool groups are derived dynamically from `pi.getAllTools()`:
-- **research**: `read`, `grep`, `find`, `ls`, `bash`, `hypa_read`, `hypa_grep`, `hypa_find`, `hypa_ls`, etc.
-- **questioning**: `ask_user_question`
-- **mutation**: `write`, `edit`
+After submitting current phase, LLM calls `brainstorm_transition` with `next`, `previous`, or `status`.
 
-### Evidence gates
-- Discovery → requires at least one research tool call
-- Understanding → requires at least one `ask_user_question`
-- Exploring → requires at least one assistant turn in exploring phase
-- Presenting → requires at least one approval/validation capture
+Transition gates:
 
-## UX
+- every phase needs active artifact revision;
+- Understanding needs zero open questions;
+- Exploring requires 2–3 approaches and explicit user choice;
+- Presenting requires explicit final approval;
+- Documenting `next` completes brainstorm without starting planning.
 
-- Footer status uses shared `ui-colors` helper
-- Tool blocks notify user visibly
-- Custom brainstorm messages render with a dedicated renderer
+## Artifacts
+
+Each run writes under:
+
+```text
+docs/brainstorms/YYYY-MM-DD-<topic>/
+```
+
+Files are immutable revisions:
+
+```text
+01-discovery-r001.md
+02-understanding-r001.md
+03-exploring-r001.md
+04-presenting-r001.md
+05-design-r001.md
+manifest.json
+```
+
+Resubmitting an earlier phase creates a new revision and marks current/downstream revisions stale. History is preserved. Same-day duplicate topics receive a run-specific suffix.
+
+Writes reuse `pi-scoped-write`: project confinement, traversal/symlink rejection, atomic writes, size limits, hashes, and audit trail. LLM never supplies artifact paths.
+
+## Context status
+
+Exactly one transient `brainstorm-forcer-status` message is present per LLM call. It includes topic, phase, expected submit tool, transition gate, artifact root, active revisions, stale revisions, and design-only restriction. Full artifact content stays on disk and can be read when needed.
 
 ## Bundled skill
 
-Bundled at:
-
-```text
-skills/brainstorm-forcer/SKILL.md
-```
-
-Registered through `resources_discover`, so no settings.json entry is required when the extension lives in:
-
-```text
-~/.pi/agent/extensions/brainstorm-forcer/
-```
+`skills/brainstorm-forcer/SKILL.md` is registered through `resources_discover`.
 
 ## Tests
 
-```bash
-cd ~/.pi/agent/extensions/brainstorm-forcer
-bun test
-```
+From `~/.pi/agent`:
 
-Current status: **15 passing tests**.
+```bash
+bun test extensions/brainstorm-forcer/index.test.ts extensions/brainstorm-forcer/artifacts.test.ts --isolate
+```

@@ -1,14 +1,29 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const { default: brainstormForcer } = await import("./index");
 
+async function expectRejection(promise: Promise<unknown>, message: string): Promise<void> {
+  let actual = "";
+  try {
+    await promise;
+  } catch (error) {
+    actual = error instanceof Error ? error.message : String(error);
+  }
+  expect(actual).toContain(message);
+}
+
 function createMockAPI() {
   const commands = new Map<string, { description: string; handler: (args: string, ctx: any) => Promise<void> }>();
+  const tools = new Map<string, any>();
   const handlers = new Map<string, (...args: any[]) => any>();
   const entries: Array<{ customType: string; data: unknown }> = [];
   const renderers = new Map<string, any>();
   const sentUserMessages: Array<{ content: unknown; options?: unknown }> = [];
+  const sentMessages: Array<{ message: unknown; options?: unknown }> = [];
   const toolInfo = [
     { name: "read" },
     { name: "grep" },
@@ -24,20 +39,26 @@ function createMockAPI() {
 
   const pi = {
     registerCommand: (name: string, cmd: any) => commands.set(name, cmd),
+    registerTool: (tool: any) => tools.set(tool.name, tool),
     on: (event: string, handler: any) => handlers.set(event, handler),
     appendEntry: (customType: string, data?: unknown) => entries.push({ customType, data }),
     registerMessageRenderer: (customType: string, renderer: any) => renderers.set(customType, renderer),
     sendUserMessage: (content: unknown, options?: unknown) => sentUserMessages.push({ content, options }),
+    sendMessage: (message: unknown, options?: unknown) => sentMessages.push({ message, options }),
     getAllTools: () => toolInfo,
     events: { emit: mock(() => undefined) },
   } as unknown as ExtensionAPI;
 
-  return { pi, commands, handlers, entries, renderers, sentUserMessages };
+  return { pi, commands, tools, handlers, entries, renderers, sentUserMessages, sentMessages };
 }
 
-function createMockContext(sessionEntries?: Array<{ type: string; customType?: string; data?: unknown }>) {
+function createMockContext(
+  sessionEntries?: Array<{ type: string; customType?: string; data?: unknown }>,
+  cwd = process.cwd(),
+) {
   const entries = sessionEntries ?? [];
   return {
+    cwd,
     hasUI: true,
     isIdle: () => true,
     signal: undefined as any,
@@ -72,12 +93,305 @@ describe("brainstorm-forcer redesign", () => {
     expect(handlers.has("tool_result")).toBe(true);
     expect(handlers.has("message_end")).toBe(true);
     expect(handlers.has("before_agent_start")).toBe(true);
+    expect(handlers.has("context")).toBe(true);
     expect(renderers.has("brainstorm-forcer")).toBe(true);
   });
 
-  it("provides argument completions like sandbox-style commands", async () => {
+  it("registers one structured artifact submission tool per phase", () => {
+    const { pi, tools } = createMockAPI();
+    brainstormForcer(pi);
+    expect([...tools.keys()].filter((name) => name.startsWith("brainstorm_submit_"))).toEqual([
+      "brainstorm_submit_discovery",
+      "brainstorm_submit_understanding",
+      "brainstorm_submit_exploring",
+      "brainstorm_submit_presenting",
+      "brainstorm_submit_design",
+    ]);
+  });
+
+  it("writes discovery content directly through its phase tool", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-tool-"));
+    try {
+      const { pi, tools, commands } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("Safer workflow", ctx);
+
+      const result = await tools.get("brainstorm_submit_discovery")!.execute(
+        "call-1",
+        {
+          filesAccessed: ["agent/extensions/brainstorm-forcer/index.ts"],
+          keyFindings: ["Transitions are user commands only."],
+          gaps: ["No LLM transition tool."],
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      const path = result.details.artifact.path as string;
+      expect(path).toMatch(/docs\/brainstorms\/.+\/01-discovery-r001\.md$/);
+      expect(await readFile(join(projectRoot, path), "utf8")).toContain("## Key Findings\n\n- Transitions are user commands only.");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("writes each remaining phase through its matching structured tool", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-tools-"));
+    try {
+      const { pi, tools, commands } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      const command = commands.get("brainstorm")!;
+      await command.handler("Artifact workflow", ctx);
+
+      const submissions = [
+        [
+          "understanding",
+          "brainstorm_submit_understanding",
+          {
+            objective: "Control brainstorming phases.",
+            requirements: ["One phase at a time."],
+            constraints: ["No planning."],
+            successCriteria: ["Every phase leaves an artifact."],
+            openQuestions: [],
+          },
+          "02-understanding-r001.md",
+        ],
+        [
+          "exploring",
+          "brainstorm_submit_exploring",
+          {
+            approaches: [
+              {
+                title: "Dedicated tools",
+                summary: "One schema per phase.",
+                tradeoffs: ["More tools."],
+                uncertainties: ["Model compliance."],
+                failureConditions: ["Wrong phase tool accepted."],
+              },
+              {
+                title: "Generic tool",
+                summary: "One loose schema.",
+                tradeoffs: ["Less validation."],
+                uncertainties: [],
+                failureConditions: ["Malformed artifact."],
+              },
+            ],
+            recommendation: "Dedicated tools",
+            userChoice: "Dedicated tools",
+          },
+          "03-exploring-r001.md",
+        ],
+        [
+          "presenting",
+          "brainstorm_submit_presenting",
+          {
+            sections: [{ title: "Architecture", content: "State machine plus artifact store.", feedback: "Approved." }],
+            decisions: ["Use project files."],
+            approved: true,
+          },
+          "04-presenting-r001.md",
+        ],
+        [
+          "documenting",
+          "brainstorm_submit_design",
+          {
+            title: "Controlled brainstorming",
+            summary: "Persist every phase without choosing a planning workflow.",
+            sections: [{ title: "Architecture", content: "Tools submit versioned artifacts." }],
+            decisions: ["Stop after design."],
+            residualRisks: ["LLM content quality remains probabilistic."],
+          },
+          "05-design-r001.md",
+        ],
+      ] as const;
+
+      for (const [phase, toolName, params, expectedSuffix] of submissions) {
+        await command.handler(`phase ${phase}`, ctx);
+        const result = await tools.get(toolName)!.execute("call", params, undefined, undefined, ctx);
+        expect(result.details.artifact.path).toEndWith(expectedSuffix);
+      }
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("lets the LLM move only between adjacent phases after submitting the current artifact", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-transition-"));
+    try {
+      const { pi, tools, commands, sentMessages } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("Controlled transitions", ctx);
+      await tools.get("brainstorm_submit_discovery")!.execute(
+        "artifact",
+        { filesAccessed: ["index.ts"], keyFindings: ["No transition tool."], gaps: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      const transition = tools.get("brainstorm_transition")!;
+      const advanced = await transition.execute("next", { action: "next" }, undefined, undefined, ctx);
+      expect(advanced.details).toMatchObject({ phase: "understanding", completed: false });
+      expect(sentMessages.at(-1)).toMatchObject({
+        message: { customType: "brainstorm-forcer-transition" },
+        options: { deliverAs: "steer" },
+      });
+      const blockedNext = Promise.resolve(transition.execute("next-again", { action: "next" }, undefined, undefined, ctx));
+      await expectRejection(blockedNext, "Understanding incomplete");
+
+      const returned = await transition.execute("previous", { action: "previous" }, undefined, undefined, ctx);
+      expect(returned.details).toMatchObject({ phase: "discovery", completed: false });
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("finishes after the final design without starting planning", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-complete-"));
+    try {
+      const { pi, tools, commands, handlers } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("Design only", ctx);
+      await commands.get("brainstorm")!.handler("phase documenting", ctx);
+      await tools.get("brainstorm_submit_design")!.execute(
+        "design",
+        {
+          title: "Design only",
+          summary: "Final design artifact.",
+          sections: [{ title: "Architecture", content: "Controlled state machine." }],
+          decisions: ["No planning."],
+          residualRisks: [],
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      const result = await tools.get("brainstorm_transition")!.execute("complete", { action: "next" }, undefined, undefined, ctx);
+      expect(result.details).toEqual({ phase: null, completed: true });
+      expect(result.content[0].text).toContain("No planning workflow was started");
+      expect((await handlers.get("context")!({ messages: [] }, ctx)).messages).toHaveLength(0);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the same completion behavior for /brainstorm next", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-command-complete-"));
+    try {
+      const { pi, tools, commands, handlers } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      const command = commands.get("brainstorm")!;
+      await command.handler("Command completion", ctx);
+      await command.handler("phase documenting", ctx);
+      await tools.get("brainstorm_submit_design")!.execute(
+        "design",
+        {
+          title: "Command completion",
+          summary: "Final design.",
+          sections: [{ title: "Architecture", content: "Shared transition engine." }],
+          decisions: ["Stop after design."],
+          residualRisks: [],
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      await command.handler("next", ctx);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("No planning workflow was started"), "info");
+      expect((await handlers.get("context")!({ messages: [] }, ctx)).messages).toHaveLength(0);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("injects exactly one current brainstorm status before every LLM call", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-context-"));
+    try {
+      const { pi, commands, handlers } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("Persistent context", ctx);
+      const context = handlers.get("context")!;
+
+      const first = await context({ messages: [] }, ctx);
+      expect(first.messages).toHaveLength(1);
+      expect(first.messages[0]).toMatchObject({ role: "custom", customType: "brainstorm-forcer-status", display: false });
+      expect(first.messages[0].content).toContain("brainstorm_submit_discovery");
+      expect(first.messages[0].content).toContain("docs/brainstorms/");
+
+      const second = await context({ messages: first.messages }, ctx);
+      expect(second.messages.filter((message: any) => message.customType === "brainstorm-forcer-status")).toHaveLength(1);
+
+      await commands.get("brainstorm")!.handler("stop", ctx);
+      const stopped = await context({ messages: second.messages }, ctx);
+      expect(stopped.messages).toHaveLength(0);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("restores phase artifacts and status after session reload", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-restore-"));
+    try {
+      const first = createMockAPI();
+      const firstContext = createMockContext(undefined, projectRoot);
+      brainstormForcer(first.pi);
+      await first.commands.get("brainstorm")!.handler("Reloadable workflow", firstContext);
+      await first.tools.get("brainstorm_submit_discovery")!.execute(
+        "artifact",
+        { filesAccessed: ["index.ts"], keyFindings: ["State is persisted."], gaps: [] },
+        undefined,
+        undefined,
+        firstContext,
+      );
+      const saved = first.entries.at(-1)!;
+      expect(saved.data).toMatchObject({ phase: "discovery", startedAt: expect.any(String) });
+
+      const second = createMockAPI();
+      const secondContext = createMockContext([{ type: "custom", customType: saved.customType, data: saved.data }], projectRoot);
+      brainstormForcer(second.pi);
+      await second.handlers.get("session_start")!({}, secondContext);
+      const status = await second.handlers.get("context")!({ messages: [] }, secondContext);
+      expect(status.messages[0].content).toContain("01-discovery-r001.md");
+      expect(status.messages[0].content).toContain("Phase: Discovery");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("lists durable artifact revisions through /brainstorm artifacts", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-list-"));
+    try {
+      const { pi, commands, tools } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      const command = commands.get("brainstorm")!;
+      await command.handler("Inspectable artifacts", ctx);
+      await tools.get("brainstorm_submit_discovery")!.execute(
+        "artifact",
+        { filesAccessed: ["index.ts"], keyFindings: ["Durable files."], gaps: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      await command.handler("artifacts", ctx);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("01-discovery-r001.md"), "info");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("provides argument completions like sandbox-style commands", () => {
     const { pi, commands } = createMockAPI();
-    const ctx = createMockContext();
     brainstormForcer(pi);
     const cmd = commands.get("brainstorm")! as any;
 
@@ -94,12 +408,8 @@ describe("brainstorm-forcer redesign", () => {
     expect(filtered[0]).toMatchObject({ value: "status" });
     expect(filtered[1]).toMatchObject({ value: "start " });
 
-    await cmd.handler("topic", ctx);
-    await cmd.handler("force-next", ctx); // understanding
-    const nextFiltered = cmd.getArgumentCompletions("next ");
-    expect(nextFiltered.some((item: any) => item.value === "next exploring")).toBe(true);
-    const previousFiltered = cmd.getArgumentCompletions("previous ");
-    expect(previousFiltered.some((item: any) => item.value === "previous discovery")).toBe(true);
+    expect(cmd.getArgumentCompletions("next ")).toBeNull();
+    expect(cmd.getArgumentCompletions("previous ")).toBeNull();
   });
 
   it("/brainstorm <topic> starts immediately and sends user message", async () => {
@@ -147,7 +457,7 @@ describe("brainstorm-forcer redesign", () => {
     expect(result.skillPaths[0]).toMatch(/brainstorm-forcer\/skills$/);
   });
 
-  it("dynamic tool groups allow hypa research tools in discovery", async () => {
+  it("allows dedicated research tools but blocks generic shell access in discovery", async () => {
     const { pi, handlers, commands } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
@@ -156,7 +466,7 @@ describe("brainstorm-forcer redesign", () => {
     expect(await toolCall({ toolName: "hypa_find" }, ctx)).toBeUndefined();
     expect(await toolCall({ toolName: "hypa_ls" }, ctx)).toBeUndefined();
     expect(await toolCall({ toolName: "read" }, ctx)).toBeUndefined();
-    expect(await toolCall({ toolName: "bash" }, ctx)).toBeUndefined();
+    expect((await toolCall({ toolName: "bash" }, ctx)).block).toBe(true);
   });
 
   it("discovery blocks only mutation tools, not research/question/unknown non-mutating tools", async () => {
@@ -169,6 +479,22 @@ describe("brainstorm-forcer redesign", () => {
     expect(blocked.block).toBe(true);
     expect(await toolCall({ toolName: "ask_user_question" }, ctx)).toBeUndefined();
     expect(await toolCall({ toolName: "web_search" }, ctx)).toBeUndefined();
+  });
+
+  it("blocks generic mutation and planning tools even during Documenting", async () => {
+    const { pi, handlers, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const cmd = commands.get("brainstorm")!;
+    await cmd.handler("topic", ctx);
+    await cmd.handler("phase documenting", ctx);
+    const toolCall = handlers.get("tool_call")!;
+
+    for (const toolName of ["write", "edit", "bash", "safe_bash", "session_plan", "write_plan", "edit_plan"]) {
+      expect((await toolCall({ toolName }, ctx)).block).toBe(true);
+    }
+    expect(await toolCall({ toolName: "brainstorm_submit_design" }, ctx)).toBeUndefined();
+    expect(await toolCall({ toolName: "brainstorm_transition" }, ctx)).toBeUndefined();
   });
 
   it("exploring allows any non-mutating tools, but blocks mutation", async () => {
@@ -196,15 +522,26 @@ describe("brainstorm-forcer redesign", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Discovery incomplete"), "warning");
   });
 
-  it("/brainstorm next advances after evidence exists", async () => {
-    const { pi, commands, handlers } = createMockAPI();
-    const ctx = createMockContext();
-    brainstormForcer(pi);
-    const cmd = commands.get("brainstorm")!;
-    await cmd.handler("topic", ctx);
-    await handlers.get("tool_result")!({ toolName: "read" }, ctx);
-    await cmd.handler("next", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Understanding"), "info");
+  it("/brainstorm next advances after the phase artifact exists", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-command-"));
+    try {
+      const { pi, commands, tools } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      const cmd = commands.get("brainstorm")!;
+      await cmd.handler("topic", ctx);
+      await tools.get("brainstorm_submit_discovery")!.execute(
+        "artifact",
+        { filesAccessed: ["index.ts"], keyFindings: ["Artifact gate."], gaps: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+      await cmd.handler("next", ctx);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Understanding"), "info");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it("/brainstorm force-next bypasses completion checks (deprecated alias)", async () => {
@@ -227,75 +564,70 @@ describe("brainstorm-forcer redesign", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Understanding (2/5) (forced)"), "warning");
   });
 
-  it("/brainstorm next exploring --force skips blocker", async () => {
+  it("/brainstorm previous returns one phase and /brainstorm phase handles explicit jumps", async () => {
     const { pi, commands } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
     const cmd = commands.get("brainstorm")!;
     await cmd.handler("topic", ctx);
-    await cmd.handler("next exploring --force", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Exploring"), "warning");
-  });
-
-  it("/brainstorm previous returns to previous or specified earlier phase", async () => {
-    const { pi, commands, handlers } = createMockAPI();
-    const ctx = createMockContext();
-    brainstormForcer(pi);
-    const cmd = commands.get("brainstorm")!;
-    await cmd.handler("topic", ctx);
-    await handlers.get("tool_result")!({ toolName: "read" }, ctx);
-    await cmd.handler("next", ctx); // understanding
-    await cmd.handler("force-next", ctx); // exploring
-    await cmd.handler("previous", ctx); // back to understanding
+    await cmd.handler("phase exploring", ctx);
+    await cmd.handler("previous", ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Returned to Understanding"), "info");
-    await cmd.handler("previous discovery --force", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Returned to Discovery"), "warning");
+    await cmd.handler("phase discovery", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Jumped to Discovery"), "info");
   });
 
-  it("tool_result tracks research + question evidence", async () => {
-    const { pi, handlers, commands } = createMockAPI();
-    const ctx = createMockContext();
-    brainstormForcer(pi);
-    await commands.get("brainstorm")!.handler("topic", ctx);
-    await handlers.get("tool_result")!({ toolName: "read" }, ctx);
-    await handlers.get("tool_result")!({ toolName: "hypa_ls" }, ctx);
-    await handlers.get("tool_result")!({ toolName: "ask_user_question" }, ctx);
-    await commands.get("brainstorm")!.handler("status", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Research calls: 1"), "info");
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Questions: 1"), "info");
-  });
+  it("requires resolved questions and explicit final approval in submitted artifacts", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-gates-"));
+    try {
+      const { pi, commands, tools } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      const command = commands.get("brainstorm")!;
+      const transition = tools.get("brainstorm_transition")!;
+      await command.handler("topic", ctx);
+      await command.handler("phase understanding", ctx);
+      const baseUnderstanding = {
+        objective: "Understand scope.",
+        requirements: ["Artifacts."],
+        constraints: ["No planning."],
+        successCriteria: ["Explicit phase gates."],
+      };
+      await tools.get("brainstorm_submit_understanding")!.execute(
+        "open",
+        { ...baseUnderstanding, openQuestions: ["Which format?"] },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const blockedUnderstanding = Promise.resolve(transition.execute("blocked", { action: "next" }, undefined, undefined, ctx));
+      await expectRejection(blockedUnderstanding, "open questions remain");
+      await tools.get("brainstorm_submit_understanding")!.execute(
+        "closed",
+        { ...baseUnderstanding, openQuestions: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+      expect((await transition.execute("advance", { action: "next" }, undefined, undefined, ctx)).details.phase).toBe("exploring");
 
-  it("tool_result captures approval for understanding + exploring + presenting", async () => {
-    const { pi, handlers, commands } = createMockAPI();
-    const ctx = createMockContext();
-    brainstormForcer(pi);
-    const cmd = commands.get("brainstorm")!;
-    await cmd.handler("topic", ctx);
-    await handlers.get("tool_result")!({ toolName: "read" }, ctx);
-    await cmd.handler("next", ctx); // discovery→understanding
-    await handlers.get("tool_result")!({ toolName: "ask_user_question" }, ctx);
-    // approval captured in understanding phase
-    await cmd.handler("next", ctx); // understanding→exploring (approval present)
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Exploring"), "info");
-  });
-
-  it("exploring blocked without approval, advances with approval", async () => {
-    const { pi, handlers, commands } = createMockAPI();
-    const ctx = createMockContext();
-    brainstormForcer(pi);
-    const cmd = commands.get("brainstorm")!;
-    await cmd.handler("topic", ctx);
-    await handlers.get("tool_result")!({ toolName: "read" }, ctx);
-    await cmd.handler("next", ctx); // discovery→understanding
-    await handlers.get("tool_result")!({ toolName: "ask_user_question" }, ctx);
-    await cmd.handler("next", ctx); // understanding→exploring
-    // No approval in exploring yet — should be blocked
-    await cmd.handler("next", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Exploring incomplete"), "warning");
-    // Now capture approval via ask_user_question in exploring
-    await handlers.get("tool_result")!({ toolName: "ask_user_question" }, ctx);
-    await cmd.handler("next", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Presenting"), "info");
+      await command.handler("phase presenting", ctx);
+      const presentation = {
+        sections: [{ title: "Architecture", content: "State machine." }],
+        decisions: ["Dedicated tools."],
+      };
+      await tools.get("brainstorm_submit_presenting")!.execute(
+        "unapproved",
+        { ...presentation, approved: false },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const blockedPresentation = Promise.resolve(transition.execute("blocked", { action: "next" }, undefined, undefined, ctx));
+      await expectRejection(blockedPresentation, "approval is missing");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it("before_agent_start injects system prompt + custom message", async () => {
@@ -309,6 +641,9 @@ describe("brainstorm-forcer redesign", () => {
     );
     expect(result.systemPrompt).toContain("Current phase: DISCOVERY");
     expect(result.systemPrompt).toContain("bundled skill `brainstorm-forcer`");
+    expect(result.systemPrompt).toContain("brainstorm_submit_discovery");
+    expect(result.systemPrompt).toContain("brainstorm_transition");
+    expect(result.systemPrompt).toContain("Do not start the next phase before the transition succeeds");
     expect(result.message.customType).toBe("brainstorm-forcer");
     expect(result.message.content).toContain("Brainstorm Discovery");
   });

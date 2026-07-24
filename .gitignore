@@ -7,6 +7,7 @@ agent/settings.json
 
 .vscode
 .zed
+node_modules
 
 exa-usage.json
 web-search.json
@@ -38,7 +39,7 @@ context-mode/
 .sdd/
 .hypa/
 .firecrawl/
-node_modules/
+docs/brainstorms
 
 .agents/skills/last30days
 context.md
