@@ -89,7 +89,11 @@ export function registerArtifactRunRoot(root: ArtifactRunRoot): void {
 }
 
 function currentRole(ctx: ExtensionContext): string | undefined {
-    return getActiveRole(ctx.sessionManager.getEntries())?.name;
+    const activeRole = getActiveRole(ctx.sessionManager.getEntries())?.name;
+    if (activeRole) return activeRole;
+    return process.env.PI_SUBAGENT_CHILD === '1'
+        ? process.env.PI_SUBAGENT_CHILD_AGENT
+        : undefined;
 }
 
 function reportQueuePath(

@@ -119,3 +119,70 @@ test('the scoped-write extension owns all five scoped tools and attributes write
         'write_report',
     ]);
 });
+
+test('report tools attribute a subagent write to its declared child agent', async () => {
+    const registered = new Map<string, { execute: Function }>();
+    const { default: registerScopedWrite } = await import('./index.ts');
+    registerScopedWrite({
+        registerTool(tool: { name: string; execute: Function }) {
+            registered.set(tool.name, tool);
+        },
+    } as unknown as ExtensionAPI);
+    const cwd = mkdtempSync(join(tmpdir(), 'pi-scoped-write-subagent-'));
+    temporaryDirectories.push(cwd);
+    const previousChild = process.env.PI_SUBAGENT_CHILD;
+    const previousAgent = process.env.PI_SUBAGENT_CHILD_AGENT;
+    process.env.PI_SUBAGENT_CHILD = '1';
+    process.env.PI_SUBAGENT_CHILD_AGENT = 'qa-tester';
+
+    try {
+        const write = registered.get('write_report');
+        if (!write) throw new Error('write_report was not registered');
+        await write.execute(
+            'call-1',
+            { path: 'qa-result.json', content: '{"version":1}\n' },
+            undefined,
+            undefined,
+            {
+                cwd,
+                hasUI: false,
+                sessionManager: {
+                    getSessionId: () => 'child-session-1',
+                    getEntries: () => [],
+                },
+            },
+        );
+    } finally {
+        if (previousChild === undefined) {
+            delete process.env.PI_SUBAGENT_CHILD;
+        } else {
+            process.env.PI_SUBAGENT_CHILD = previousChild;
+        }
+        if (previousAgent === undefined) {
+            delete process.env.PI_SUBAGENT_CHILD_AGENT;
+        } else {
+            process.env.PI_SUBAGENT_CHILD_AGENT = previousAgent;
+        }
+    }
+
+    expect(
+        readFileSync(
+            join(
+                cwd,
+                '.pi/artifacts/reports/qa-tester/child-session-1/qa-result.json',
+            ),
+            'utf8',
+        ),
+    ).toBe('{"version":1}\n');
+    const audit = JSON.parse(
+        readFileSync(
+            join(cwd, '.pi/artifacts/.audit/child-session-1.jsonl'),
+            'utf8',
+        ),
+    );
+    expect(audit).toMatchObject({
+        agent: 'qa-tester',
+        role: 'qa-tester',
+        tool: 'write_report',
+    });
+});
