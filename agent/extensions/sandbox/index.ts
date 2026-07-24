@@ -63,6 +63,38 @@ import {
 import { createBashPrefixRenderer } from '../_shared/bash-prefix-renderer';
 import { appendCompressionFooter } from '../_shared/compression-render';
 import { createWidget } from '../_shared/fancy-footer';
+import { createUiColors, type UiColorsCreation } from '../_shared/ui-colors';
+
+/** Footer widget state for the sandbox indicator. */
+export type SandboxFooterState = 'on' | 'restricted' | 'off' | 'error';
+
+/** Shield glyph shown in the footer widget (same metaphor as the bash 🛡️ prefix). */
+const SANDBOX_ICON = '🛡️';
+const WIDGET_ID = 'pi-sandbox';
+
+/**
+ * Pure render for the sandbox footer widget.
+ *
+ * Returns a pre-themed composite string: a dim label (`🛡️ sandbox:`) followed
+ * by the status value colored by severity (accent / warning / danger). Hidden
+ * (null) when the sandbox is off. The widget contribution sets `styled: true`
+ * so pi-fancy-footer uses this string verbatim instead of re-wrapping it.
+ */
+export function renderSandboxWidget(
+    theme: import('@earendil-works/pi-coding-agent').Theme,
+    state: SandboxFooterState,
+): string | null {
+    if (state === 'off') return null;
+    const colors: UiColorsCreation = createUiColors(theme);
+    const label = colors.subtle(`${SANDBOX_ICON}sandbox:`);
+    const value =
+        state === 'on'
+            ? colors.primary(state)
+            : state === 'restricted'
+              ? colors.warning(state)
+              : colors.danger(state);
+    return `${label} ${value}`;
+}
 
 interface SandboxConfig extends SandboxRuntimeConfig {
     enabled?: boolean;
@@ -291,9 +323,9 @@ export default function (pi: ExtensionAPI) {
     let bashDef = createBashToolDefinition(projectCwd);
     let sandboxEnabled = false;
     let sandboxInitialized = false;
-    let sandboxFooterState: 'on' | 'restricted' | 'off' | 'error' = 'off';
+    let sandboxFooterState: SandboxFooterState = 'off';
     const w = createWidget(pi, {
-        id: 'pi-agent-kit.sandbox',
+        id: WIDGET_ID,
         label: 'Sandbox',
         description:
             'Shows whether sandboxed bash execution is enabled for the current session.',
@@ -301,18 +333,8 @@ export default function (pi: ExtensionAPI) {
         order: 13,
         align: 'right',
         grow: false,
-        render: () => {
-            if (sandboxFooterState === 'off') return null;
-            return {
-                text: `sandbox:${sandboxFooterState}`,
-                textColor:
-                    sandboxFooterState === 'on'
-                        ? ('accent' as const)
-                        : sandboxFooterState === 'restricted'
-                          ? ('warning' as const)
-                          : ('error' as const),
-            };
-        },
+        styled: true,
+        render: (ctx) => renderSandboxWidget(ctx.theme, sandboxFooterState),
     });
 
     function updateSandboxStatus(

@@ -1,123 +1,128 @@
 {
-  "refreshMs": 1500,
-  "iconFamily": "emoji",
-  "gaugeStyle": "blocks",
-  "gaugeWidth": 10,
-  "defaultTextColor": "dim",
-  "defaultIconColor": "text",
-  "widgets": {
-    "model": {
-      "enabled": true,
-      "align": "right",
-      "row": 0,
-      "position": 1
+    "refreshMs": 1500,
+    "iconFamily": "emoji",
+    "gaugeStyle": "blocks",
+    "gaugeWidth": 10,
+    "defaultTextColor": "dim",
+    "defaultIconColor": "text",
+    "widgets": {
+        "model": {
+            "enabled": true,
+            "align": "right",
+            "row": 0,
+            "position": 1
+        },
+        "thinking": {
+            "enabled": true,
+            "row": 0,
+            "position": 2,
+            "align": "right"
+        },
+        "total-cost": {
+            "enabled": true,
+            "align": "right",
+            "row": 0,
+            "position": 4
+        },
+        "context-capacity": {
+            "enabled": false,
+            "row": 1,
+            "position": 2
+        },
+        "context-bar": {
+            "enabled": true,
+            "row": 1,
+            "align": "right",
+            "position": 3
+        },
+        "location": {
+            "enabled": false
+        },
+        "branch": {
+            "enabled": false
+        },
+        "commit": {
+            "enabled": false
+        },
+        "diff-added": {
+            "enabled": false
+        },
+        "diff-removed": {
+            "enabled": false
+        },
+        "git-status": {
+            "enabled": false
+        },
+        "extension-statuses": {
+            "row": 0
+        }
     },
-    "thinking": {
-      "enabled": true,
-      "row": 0,
-      "position": 2,
-      "align": "right"
+    "extensionWidgets": {
+        "session-status-bar": {
+            "row": 0
+        },
+        "session-status-bar.model": {
+            "row": 1,
+            "position": 0
+        },
+        "session-status-bar.context": {
+            "row": 1,
+            "position": 1
+        },
+        "session-status-bar.cost": {
+            "row": 1
+        },
+        "local-compressor": {
+            "row": 1,
+            "placement": "aboveEditor"
+        },
+        "git-status-widget": {
+            "row": 1,
+            "align": "left",
+            "position": 0
+        },
+        "pi-sandbox": {
+            "row": 2,
+            "position": 1,
+            "align": "left"
+        },
+        "audit-mode": {
+            "row": 2,
+            "position": 2,
+            "align": "left"
+        },
+        "slow-mode": {
+            "row": 2,
+            "align": "left"
+        },
+        "pi-subagents-overview-widget": {
+            "row": 2,
+            "align": "right"
+        },
+        "factory-credits": {
+            "row": 1
+        },
+        "brainstorm-forcer": {
+            "row": 3
+        },
+        "auto-translate": {
+            "row": 3,
+            "align": "left"
+        },
+        "codex-fast-mode": {
+            "enabled": false
+        },
+        "pi-lens": {
+            "row": 4
+        }
     },
-    "total-cost": {
-      "enabled": true,
-      "align": "right",
-      "row": 0,
-      "position": 4
-    },
-    "context-capacity": {
-      "enabled": false,
-      "row": 1,
-      "position": 2
-    },
-    "context-bar": {
-      "enabled": true,
-      "row": 1,
-      "align": "right",
-      "position": 3
-    },
-    "location": {
-      "enabled": false
-    },
-    "branch": {
-      "enabled": false
-    },
-    "commit": {
-      "enabled": false
-    },
-    "diff-added": {
-      "enabled": false
-    },
-    "diff-removed": {
-      "enabled": false
-    },
-    "git-status": {
-      "enabled": false
-    },
-    "extension-statuses": {
-      "row": 0
+    "extensionStatusPositions": {
+        "pi-roles": 0,
+        "mcp": 1,
+        "lsp": 2,
+        "ponytail": 8,
+        "caveman": 9,
+        "pi-permission-system": 10,
+        "tps": 20
     }
-  },
-  "extensionWidgets": {
-    "session-status-bar": {
-      "row": 0
-    },
-    "session-status-bar.model": {
-      "row": 1,
-      "position": 0
-    },
-    "session-status-bar.context": {
-      "row": 1,
-      "position": 1
-    },
-    "session-status-bar.cost": {
-      "row": 1
-    },
-    "local-compressor": {
-      "row": 1,
-      "placement": "aboveEditor"
-    },
-    "git-status-widget": {
-      "row": 1,
-      "align": "left",
-      "position": 0
-    },
-    "pi-agent-kit.sandbox": {
-      "row": 2,
-      "position": 1,
-      "align": "left"
-    },
-    "slow-mode": {
-      "row": 2,
-      "align": "left"
-    },
-    "pi-subagents-overview-widget": {
-      "row": 2,
-      "align": "right"
-    },
-    "factory-credits": {
-      "row": 1
-    },
-    "brainstorm-forcer": {
-      "row": 3
-    },
-    "auto-translate": {
-      "row": 3,
-      "align": "left"
-    },
-    "codex-fast-mode": {
-      "enabled": false
-    },
-    "pi-lens": {
-      "row": 4
-    }
-  },
-  "extensionStatusPositions": {
-    "pi-roles": 0,
-    "mcp": 1,
-    "lsp": 2,
-    "ponytail": 8,
-    "caveman": 9,
-    "pi-permission-system": 10,
-    "tps": 20
-  }
 }

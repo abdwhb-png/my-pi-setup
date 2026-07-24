@@ -2,12 +2,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Theme } from '@earendil-works/pi-coding-agent';
 import {
     buildSandboxShellEnv,
     ensureGitignored,
     GHOST_PATTERNS,
     _resetGitignoreEnsured,
+    renderSandboxWidget,
 } from './index';
+
+function fakeTheme(): Theme {
+    return { fg: (color: string, text: string) => `fg:${color}:${text}` } as unknown as Theme;
+}
 
 describe('ensureGitignored', () => {
     let tmpDir: string;
@@ -112,6 +118,36 @@ describe('buildSandboxShellEnv', () => {
         );
         expect(env.Path).toBe(
             '~/.pi/agent/bin:/usr/local/bin:/usr/bin',
+        );
+    });
+});
+
+describe('renderSandboxWidget', () => {
+    it('returns null when state is off (widget hidden)', () => {
+        expect(renderSandboxWidget(fakeTheme(), 'off')).toBeNull();
+    });
+
+    it('embeds the shield icon', () => {
+        expect(renderSandboxWidget(fakeTheme(), 'on')).toContain('🛡️');
+    });
+
+    it('keeps the label dim', () => {
+        expect(renderSandboxWidget(fakeTheme(), 'on')).toContain('fg:dim:');
+    });
+
+    it('colors only the on value accent', () => {
+        expect(renderSandboxWidget(fakeTheme(), 'on')).toContain('fg:accent:on');
+    });
+
+    it('colors only the restricted value warning', () => {
+        expect(renderSandboxWidget(fakeTheme(), 'restricted')).toContain(
+            'fg:warning:restricted',
+        );
+    });
+
+    it('colors only the error value danger', () => {
+        expect(renderSandboxWidget(fakeTheme(), 'error')).toContain(
+            'fg:error:error',
         );
     });
 });

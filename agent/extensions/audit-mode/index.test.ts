@@ -64,6 +64,8 @@ void mock.module("@earendil-works/pi-coding-agent", () => ({
 
 const { default: activate } = await import("./index.ts");
 
+const { renderAuditWidget } = await import("./index.ts");
+
 // Activate the extension with the mock pi object.
 // The mock only implements the slim API surface this test exercises; the real
 // `ExtensionAPI` is large and repo lint forbids `unknown`, so we bypass it.
@@ -282,5 +284,35 @@ describe("audit-mode command — completions", () => {
     const values = completions.map((c) => c.value);
     expect(values).toContain("advanced");
     expect(values).not.toContain("on");
+  });
+});
+
+describe("renderAuditWidget", () => {
+  const fakeTheme = {
+    fg: (color: string, text: string) => `fg:${color}:${text}`,
+  } as never;
+
+  it("returns null for the standard profile", () => {
+    expect(renderAuditWidget(fakeTheme, "standard")).toBeNull();
+  });
+
+  it("embeds the magnifier icon", () => {
+    expect(renderAuditWidget(fakeTheme, "audit")).toContain("🔍");
+  });
+
+  it("keeps the label dim", () => {
+    expect(renderAuditWidget(fakeTheme, "audit")).toContain("fg:dim:");
+  });
+
+  it("colors only the audit value warning", () => {
+    expect(renderAuditWidget(fakeTheme, "audit")).toContain(
+      "fg:warning:audit",
+    );
+  });
+
+  it("colors only the advanced value accent", () => {
+    expect(renderAuditWidget(fakeTheme, "advanced")).toContain(
+      "fg:accent:advanced",
+    );
   });
 });

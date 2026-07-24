@@ -47,6 +47,8 @@ import {
     type ReviewResult,
 } from './slow-mode-ui.ts';
 
+const WIDGET_ID = 'slow-mode';
+
 export default function slowMode(pi: ExtensionAPI) {
     const isRPC =
         process.argv.includes('--mode') && process.argv.includes('rpc');
@@ -114,7 +116,7 @@ export default function slowMode(pi: ExtensionAPI) {
             activeTools.length > maxShow
                 ? ` +${activeTools.length - maxShow}`
                 : '';
-        return `slow ■ [${shown.join(', ')}${suffix}]`;
+        return `■slow: [${shown.join(', ')}${suffix}]`;
     }
 
     /** Tool names under review (config === true), sorted for stable display. */
@@ -126,7 +128,7 @@ export default function slowMode(pi: ExtensionAPI) {
     }
 
     const w = createWidget(pi, {
-        id: 'slow-mode',
+        id: WIDGET_ID,
         label: 'Slow Mode',
         description: 'Shows whether slow mode is active.',
         row: 1,
