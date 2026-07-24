@@ -1226,6 +1226,77 @@ test('status exposes the exact blocked worker output', async () => {
     });
 });
 
+test('targeted status and result expose task, review, and acceptance evidence to the model', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'completed-run';
+    const task = {
+        ...approvedTask('task-1', 'light'),
+        recommendedProfile: 'standard' as const,
+        effectiveProfile: 'standard' as const,
+        budgets: {
+            initialWorkers: 1,
+            correctionWorkers: 1,
+            reviewerAttempts: 2,
+            maxLaunches: 4,
+        },
+    };
+    const completed = snapshot(runId, 'completed');
+    completed.tasks['task-1'] = {
+        id: 'task-1',
+        state: 'verified',
+        launches: 2,
+        maxLaunches: 4,
+        reviewResults: {
+            'review-1': {
+                version: 1,
+                taskId: 'task-1',
+                stage: 'combined',
+                verdict: 'pass',
+                findings: [],
+                evidence: ['Focused tests passed.'],
+            },
+        },
+        terminalResponses: {
+            'worker-1': {
+                version: 1,
+                requestId: 'worker-1',
+                status: 'completed',
+                runId: 'child-1',
+                acceptance: { status: 'verified', explicit: true },
+            },
+        },
+    };
+    seedApproved(
+        store,
+        {
+            ...approvedManifest(runId),
+            globalProfile: 'standard',
+            maximumLaunches: 4,
+            tasks: [task],
+        },
+        completed,
+    );
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+
+    const status = await execute(pi.tools.get('sdd_status'), { runId });
+    const result = await execute(pi.tools.get('sdd_result'), { runId });
+
+    for (const output of [status.content[0].text, result.content[0].text]) {
+        expect(output).toContain(`${runId}: completed`);
+        expect(output).toContain(
+            'task-1: verified [standard], launches 2/4',
+        );
+        expect(output).toContain(
+            'task-1/combined: pass, findings 0, evidence 1',
+        );
+        expect(output).toContain(
+            'task-1: completed, acceptance verified, child child-1',
+        );
+        expect(output).toContain('active requests: none');
+    }
+});
+
 test('Direct completion resumes a dependent task and returns the durable result', async () => {
     const runId = 'mixed-direct-run';
     writeFileSync(join(cwd, 'plan.md'), planContent);

@@ -690,7 +690,9 @@ describe('read-only agent contracts', () => {
 
         expect(agent).toContain('name: qa-tester');
         expect(agent).toContain('description: Read-only QA execution tester');
-        expect(agent).toContain("tools: '@inspect, @lens-inspect, safe_bash'");
+        expect(agent).toContain(
+            "tools: '@inspect, @lens-inspect, safe_bash, write_report'",
+        );
         expect(agent).toContain('thinking: medium');
         expect(agent).toContain('systemPromptMode: replace');
         expect(agent).toContain('inheritProjectContext: true');
@@ -702,6 +704,9 @@ describe('read-only agent contracts', () => {
         expect(agent).toContain('Never edit files');
         expect(agent).toContain('Never launch other agents');
         expect(agent).toContain('Do not use intercom');
+        expect(agent).toContain(
+            'Persist the final JSON payload with `write_report` at `qa-result.json`.',
+        );
         expect(agent).not.toContain('contact_supervisor');
         expect(agent).not.toContain('skills:');
         expect(agent).toContain('only as listed');
@@ -712,7 +717,9 @@ describe('read-only agent contracts', () => {
 
         expect(agent).toContain('name: browser-tester');
         expect(agent).toContain('description: Read-only browser validation tester');
-        expect(agent).toContain("tools: '@inspect, safe_bash'");
+        expect(agent).toContain(
+            "tools: '@inspect, safe_bash, write_report'",
+        );
         expect(agent).toContain('skills: chrome-devtools-axi, agent-browser');
         expect(agent).toContain('thinking: medium');
         expect(agent).toContain('systemPromptMode: replace');
@@ -728,6 +735,9 @@ describe('read-only agent contracts', () => {
         expect(agent).toContain('cleanup');
         expect(agent).toContain('fallback only for technical unavailability');
         expect(agent).toContain('Do not use intercom');
+        expect(agent).toContain(
+            'Persist the final JSON payload with `write_report` at `browser-result.json`.',
+        );
         expect(agent).toContain('No prose');
         expect(agent).toContain('Do not edit');
         expect(agent).not.toContain('contact_supervisor');

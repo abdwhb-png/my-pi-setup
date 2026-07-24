@@ -38,8 +38,8 @@
 {"id":"task-3","dependsOn":["task-1"],"files":["agent/agents/qa-tester.md","agent/agents/browser-tester.md","agent/settings.json","agent/extensions/sdd-orchestrator/prompts.test.ts"],"verify":[{"id":"agent-contract-tests","command":"cd ~/.pi/agent && bun test extensions/sdd-orchestrator/prompts.test.ts"},{"id":"settings-json","command":"cd ~/.pi/agent && bun -e \"JSON.parse(require('node:fs').readFileSync('settings.json','utf8'))\""}]}
 ~~~
 
-- [ ] RED: Add frontmatter/contract tests for `qa-tester` and `browser-tester`: fresh, medium reasoning, project context, explicit read-only acceptance, no `contact_supervisor`, no edit/write capability, and exact skills.
-- [ ] GREEN: Create both agents. `qa-tester` may use `@inspect`, `@lens-inspect`, and `safe_bash` only. `browser-tester` may use `@inspect` and `safe_bash` only, declares `skills: chrome-devtools-axi, agent-browser`, and requires AXI-first, named-session isolation, fresh snapshots, evidence, cleanup, and honest fallback failure reporting.
+- [ ] RED: Add frontmatter/contract tests for `qa-tester` and `browser-tester`: fresh, medium reasoning, project context, explicit read-only acceptance, no `contact_supervisor`, no general edit/write capability, exact skills, and `write_report` as the sole bounded mutation.
+- [ ] GREEN: Create both agents. `qa-tester` may use `@inspect`, `@lens-inspect`, `safe_bash`, and `write_report`. `browser-tester` may use `@inspect`, `safe_bash`, and `write_report`, declares `skills: chrome-devtools-axi, agent-browser`, and requires AXI-first, named-session isolation, fresh snapshots, evidence, cleanup, durable final JSON reporting, and honest fallback failure reporting.
 - [ ] GREEN: Add only minimal model/fallback overrides if existing settings conventions require them; otherwise inherit the configured subagent default. Do not alter existing agent overrides.
 - [ ] REFACTOR: Keep agent output contracts aligned with the schemas introduced in Task 4.
 
@@ -107,4 +107,3 @@
 - [ ] Verify agent allowlists resolve through the Pi wrapper/tool-groups path; do not run children through the bare Pi binary.
 - [ ] Run the focused SDD suite, then project gates. Attribute unrelated pre-existing failures separately and do not mask them.
 - [ ] Inspect `git status --short` for only expected files and no generated browser profiles, screenshots outside SDD artefacts, package-lock changes, or modifications to the existing unrelated permission-system config.
-

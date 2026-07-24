@@ -27,7 +27,7 @@ The desired addition is therefore explicit and typed: a plan opts into QA checks
 ## Non-goals
 
 - Do not make browser testing automatic merely because a task changes frontend files.
-- Do not give either tester file-editing tools, nested delegation, or supervisor intercom.
+- Do not give either tester general source-editing tools, nested delegation, or supervisor intercom. Their only file mutation is the bounded `write_report` tool from `pi-scoped-write`.
 - Do not start application dev servers, seed data, or access a user's existing Chrome profile implicitly.
 - Do not repair or reinstall `agent-browser` as part of this change.
 - Do not replace existing code-review stages or turn QA into another design/code reviewer.
@@ -38,13 +38,15 @@ The desired addition is therefore explicit and typed: a plan opts into QA checks
 
 `qa-tester` is a fresh, read-only, medium-reasoning execution validator. It receives the approved task contract plus only the task's declared QA commands. It may inspect source, diagnostics, and command output, but it cannot edit files, broaden the command list, launch another agent, or contact a supervisor.
 
-Its terminal output is a schema-validated `QaResult` containing the task ID, verdict (`pass`, `fail`, or `blocked`), commands executed, evidence, and reproducible findings. `fail` and `blocked` both move that task and the run to `needs_input`; no correction is inferred.
+Its terminal output is a schema-validated `QaResult` containing the task ID, verdict (`pass`, `fail`, or `blocked`), commands executed, evidence, and reproducible findings. Before returning that same JSON payload, it persists it as `qa-result.json` through `write_report`. It has no `write`, `edit`, or `edit_report` authority. `fail` and `blocked` both move that task and the run to `needs_input`; no correction is inferred.
 
 The existing `verify` array remains worker acceptance evidence. New `qa` commands are independent checks that deliberately rerun only when a plan asks for independent QA.
 
 ### `browser-tester`
 
 `browser-tester` is a fresh, read-only, medium-reasoning scenario executor. It receives all approved browser scenarios for one manifest, an orchestrator-provided artefact directory, and an isolated session name derived from the run ID. It has the explicit skills `chrome-devtools-axi` and `agent-browser`, even though its global skill inheritance remains disabled. Its shell access is limited to `safe_bash` plus read-only inspection tools.
+
+Its only file mutation is `write_report`, used once to persist the final JSON payload as `browser-result.json` before returning the same payload to the orchestrator. It has no general `write`, `edit`, or `edit_report` authority.
 
 For every scenario it must:
 
@@ -67,8 +69,8 @@ The agent never silently attaches to a user's existing browser/profile. A scenar
   "id": "task-2",
   "dependsOn": ["task-1"],
   "files": ["src/profile.tsx"],
-  "verify": [{"id": "unit", "command": "bun test src/profile.test.ts"}],
-  "qa": [{"id": "a11y", "command": "bun run test:a11y profile"}],
+  "verify": [{"id":"unit","command":"bun test src/profile.test.ts"}],
+  "qa": [{"id":"a11y","command":"bun run test:a11y profile"}],
   "browser": [{
     "id": "save-profile",
     "baseUrl": "http://app.local",
@@ -106,7 +108,7 @@ Cancellation, idempotency, restart recovery, and active-request ownership follow
 
 - Parser compatibility and rejection tests for all new metadata fields.
 - Pure manifest tests for aggregation, launch preview, and unchanged legacy budgets.
-- Prompt and agent-contract tests for skills, tool restrictions, AXI-first/fallback wording, and absence of intercom/write tools.
+- Prompt and agent-contract tests for skills, tool restrictions, AXI-first/fallback wording, absence of intercom/general write tools, and the scoped `write_report` exception.
 - State-machine and store tests for QA/browser transitions, cancellation, failure, and restart uncertainty.
 - Workflow tests with delegation doubles for task QA, one aggregated browser wave, and fail-to-`needs_input` behavior.
 - One real Pi CLI smoke test in a temporary fixture: a tiny local browser scenario, a unique AXI session, visible artefact output, and explicit proof that no fallback is attempted when AXI succeeds.
@@ -118,4 +120,3 @@ Cancellation, idempotency, restart recovery, and active-request ownership follow
 2. Run the temporary-fixture Pi CLI smoke test using AXI.
 3. Use QA commands first on one Standard SDD plan and browser scenarios on one small local UI plan.
 4. Measure extra launches and elapsed time from `sdd_status` before making validation defaults broader.
-

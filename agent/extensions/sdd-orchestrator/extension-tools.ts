@@ -570,7 +570,8 @@ function observeRun(
         {
             maximumLaunches: manifest.maximumLaunches,
             finalIntegrationReview: manifest.finalIntegrationReview,
-            profileLaunches: manifest.profileLaunches ?? manifest.maximumLaunches,
+            profileLaunches:
+                manifest.profileLaunches ?? manifest.maximumLaunches,
             qaLaunches: manifest.qaLaunches ?? 0,
             browserLaunches: manifest.browserLaunches ?? 0,
             validationLaunches: manifest.validationLaunches ?? 0,
@@ -693,6 +694,54 @@ function observeRun(
     };
 }
 
+function renderRunObservation(
+    observation: ReturnType<typeof observeRun>,
+): string {
+    const lines = [
+        `${observation.snapshot.runId}: ${observation.snapshot.state}`,
+        `estimate: ${observation.qualitativeEstimate} (${observation.estimateDrift})`,
+        'tasks:',
+        ...observation.selectedProfiles.map((task) => {
+            const taskSnapshot = observation.snapshot.tasks[task.taskId];
+            const terminalReason = taskSnapshot?.terminalReason
+                ? `, reason ${taskSnapshot.terminalReason}`
+                : '';
+            return `- ${task.taskId}: ${taskSnapshot?.state ?? 'missing'} [${task.profile}], launches ${taskSnapshot?.launches ?? 0}/${taskSnapshot?.maxLaunches ?? 0}${terminalReason}`;
+        }),
+        `active requests: ${
+            observation.activeRequests.length
+                ? observation.activeRequests
+                      .map(
+                          (request) =>
+                              `${request.taskId}/${request.stage} (${request.requestId})`,
+                      )
+                      .join(', ')
+                : 'none'
+        }`,
+        'reviewers:',
+        ...(observation.reviewerVerdicts.length
+            ? observation.reviewerVerdicts.map(
+                  (review) =>
+                      `- ${review.taskId}/${review.stage}: ${review.verdict}, findings ${review.findings.length}, evidence ${review.evidence.length}`,
+              )
+            : ['- none']),
+        'acceptance:',
+        ...(observation.acceptanceEvidence.length
+            ? observation.acceptanceEvidence.map(
+                  (evidence) =>
+                      `- ${evidence.taskId}: ${evidence.status}, acceptance ${evidence.acceptance?.status ?? 'not_reported'}, child ${evidence.childRunId ?? 'not_reported'}`,
+              )
+            : ['- none']),
+    ];
+    if (observation.blockedDecision) {
+        lines.push(`blocked: ${observation.blockedDecision}`);
+    }
+    if (observation.blockedOutput) {
+        lines.push(`blocked output: ${observation.blockedOutput}`);
+    }
+    return lines.join('\n');
+}
+
 export function registerSddExtension(
     pi: ExtensionAPI,
     runtime: SddRuntime,
@@ -796,10 +845,15 @@ export function registerSddExtension(
                     !('status' in entry) && manifest?.state === 'approved'
                         ? observeRun(manifest, entry, now(runtime))
                         : undefined;
-                return textResult(renderObservable(entry), {
-                    snapshot: entry,
-                    observation,
-                });
+                return textResult(
+                    observation
+                        ? renderRunObservation(observation)
+                        : renderObservable(entry),
+                    {
+                        snapshot: entry,
+                        observation,
+                    },
+                );
             }
             const runs = entries.flatMap((entry) => {
                 if ('status' in entry) return [];
@@ -831,9 +885,10 @@ export function registerSddExtension(
                     `Approved manifest not found: ${params.runId}.`,
                 );
             }
-            return textResult(`${snapshot.runId}: ${snapshot.state}`, {
+            const observation = observeRun(manifest, snapshot, now(runtime));
+            return textResult(renderRunObservation(observation), {
                 snapshot,
-                observation: observeRun(manifest, snapshot, now(runtime)),
+                observation,
             });
         },
     });
