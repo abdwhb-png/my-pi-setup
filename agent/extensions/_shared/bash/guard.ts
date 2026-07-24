@@ -81,14 +81,14 @@ function normalize(command: string): string {
     return (
         command
             // Shell line continuation
-            .replace(/\\\n/g, ' ')
+            .replace(/\\\n/g, " ")
             // Escaped spaces (e.g., rm\ -rf\ /)
-            .replace(/\\ /g, ' ')
+            .replace(/\\ /g, " ")
             // HTML entities for /
-            .replace(/&#x2F;/gi, '/')
-            .replace(/&#47;/gi, '/')
+            .replace(/&#x2F;/gi, "/")
+            .replace(/&#47;/gi, "/")
             // Collapse multiple spaces
-            .replace(/\s{2,}/g, ' ')
+            .replace(/\s{2,}/g, " ")
             .trim()
     );
 }
@@ -113,13 +113,13 @@ export function isDangerous(command: string): string | null {
  * redirect it to the better native implementation.
  */
 const SHELL_TO_NATIVE_MAP: Record<string, string> = {
-    grep: 'grep',
-    rg: 'grep',
-    find: 'find',
-    fd: 'find',
-    ls: 'ls',
-    ack: 'grep',
-    ag: 'grep',
+    grep: "grep",
+    rg: "grep",
+    find: "find",
+    fd: "find",
+    ls: "ls",
+    ack: "grep",
+    ag: "grep",
 };
 
 /**
@@ -127,7 +127,7 @@ const SHELL_TO_NATIVE_MAP: Record<string, string> = {
  */
 function firstWord(command: string): string | undefined {
     const norm = normalize(command);
-    const space = norm.indexOf(' ');
+    const space = norm.indexOf(" ");
     if (space === -1) return norm;
     return norm.slice(0, space);
 }
@@ -146,14 +146,14 @@ export function redirectShellCommand(command: string): string | null {
     if (!native) return null;
 
     const toolName =
-        native === 'grep' ? 'grep' : native === 'find' ? 'find' : 'ls';
+        native === "grep" ? "grep" : native === "find" ? "find" : "ls";
 
     const speedNote =
-        native === 'grep'
-            ? ' (uses ripgrep, 10-100x faster with structured JSON output)'
-            : native === 'find'
-              ? ' (uses fd, faster and respects .gitignore)'
-              : ' (uses Node.js fs APIs, more reliable parsing)';
+        native === "grep"
+            ? " (uses ripgrep, 10-100x faster with structured JSON output)"
+            : native === "find"
+              ? " (uses fd, faster and respects .gitignore)"
+              : " (uses Node.js fs APIs, more reliable parsing)";
 
     return `BLOCKED: Use native '${toolName}' tool${speedNote} instead of safe_bash '${first}'`;
 }

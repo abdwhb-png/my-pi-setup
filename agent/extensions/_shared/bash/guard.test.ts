@@ -3,7 +3,7 @@ import {
     isDangerous,
     redirectShellCommand,
     redirectShellCommandWithPolicy,
-} from './bash-guard.ts';
+} from './guard.ts';
 
 describe('bash guard', () => {
     it('blocks destructive commands but allows ordinary shell commands', () => {

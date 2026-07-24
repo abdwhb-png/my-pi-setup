@@ -5,4 +5,8 @@
  * Kept as a thin wrapper so existing tests in guard.test.ts
  * continue to work without changes.
  */
-export { isDangerous, redirectShellCommand, redirectShellCommandWithPolicy } from "../_shared/bash-guard";
+export {
+    isDangerous,
+    redirectShellCommand,
+    redirectShellCommandWithPolicy,
+} from "../_shared/bash/guard";

@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "bun:test";
 import { Text } from "@earendil-works/pi-tui";
-import { createBashPrefixRenderer } from "./bash-prefix-renderer";
+import { createBashPrefixRenderer } from "./prefix-renderer";
 
 function createMockTheme(): any {
   return {

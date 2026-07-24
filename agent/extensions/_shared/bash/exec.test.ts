@@ -21,7 +21,7 @@ const {
     bashWithStdinSchema,
     createBashOperations,
     killActiveBashProcesses,
-} = await import('./bash-exec');
+} = await import('./exec');
 
 type SpawnCall = {
     command: string;
@@ -312,6 +312,48 @@ describe('createBashOperations', () => {
             }),
         ).rejects.toThrow('aborted');
         expect(harness.spawn).not.toHaveBeenCalled();
+    });
+    it('applies rewriteCommand after prepareCommand and before spawn', async () => {
+        const harness = createSpawnHarness();
+        const operations = createBashOperations({
+            spawn: harness.spawn,
+            prepareCommand: async ({ command, cwd, env }) => ({
+                command: `wrapped ${command}`,
+                cwd,
+                env,
+            }),
+            rewriteCommand: (command) =>
+                command.startsWith('wrapped echo')
+                    ? command.replace('wrapped echo', 'wrapped printf REWRITTEN')
+                    : null,
+        });
+        const execution = operations.exec('echo test', '/tmp', {
+            onData: () => undefined,
+        });
+        await nextTurn();
+        harness.children[0]?.close();
+        await execution;
+
+        expect(harness.calls[0]?.args).toEqual([
+            '-c',
+            'wrapped printf REWRITTEN test',
+        ]);
+    });
+
+    it('leaves command unchanged when rewriteCommand returns null', async () => {
+        const harness = createSpawnHarness();
+        const operations = createBashOperations({
+            spawn: harness.spawn,
+            rewriteCommand: () => null,
+        });
+        const execution = operations.exec('echo test', '/tmp', {
+            onData: () => undefined,
+        });
+        await nextTurn();
+        harness.children[0]?.close();
+        await execution;
+
+        expect(harness.calls[0]?.args).toEqual(['-c', 'echo test']);
     });
 });
 

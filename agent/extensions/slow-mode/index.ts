@@ -14,21 +14,21 @@ import {
     readFileSync,
     unlinkSync,
     rmSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, basename, join, resolve, extname } from 'node:path';
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, basename, join, resolve, extname } from "node:path";
 import type {
     ExtensionAPI,
     ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     createWriteTool,
     createEditTool,
-} from '@earendil-works/pi-coding-agent';
-import type { AutocompleteItem } from '@earendil-works/pi-tui';
-import { isDangerous } from '../_shared/bash-guard';
-import { createWidget } from '../_shared/fancy-footer.ts';
-import { createUiColors } from '../_shared/ui-colors.ts';
+} from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { isDangerous } from "../_shared/bash/guard";
+import { createWidget } from "../_shared/fancy-footer.ts";
+import { createUiColors } from "../_shared/ui-colors.ts";
 import {
     resolvePath,
     generateUnifiedDiff,
@@ -39,19 +39,19 @@ import {
     loadSlowModeConfig,
     validateSlowModeConfig,
     type SlowModeConfigResult,
-} from './slow-mode-core.ts';
+} from "./slow-mode-core.ts";
 import {
     showReview,
     openExternalFile,
     renderWithDelta,
     type ReviewResult,
-} from './slow-mode-ui.ts';
+} from "./slow-mode-ui.ts";
 
-const WIDGET_ID = 'slow-mode';
+const WIDGET_ID = "slow-mode";
 
 export default function slowMode(pi: ExtensionAPI) {
     const isRPC =
-        process.argv.includes('--mode') && process.argv.includes('rpc');
+        process.argv.includes("--mode") && process.argv.includes("rpc");
 
     let enabled = false;
 
@@ -72,7 +72,7 @@ export default function slowMode(pi: ExtensionAPI) {
     let _tmpDir: string | null = null;
     function tmpDir(): string {
         if (!_tmpDir) {
-            _tmpDir = mkdtempSync(join(tmpdir(), 'pi-slow-mode-'));
+            _tmpDir = mkdtempSync(join(tmpdir(), "pi-slow-mode-"));
         }
         return _tmpDir;
     }
@@ -109,31 +109,31 @@ export default function slowMode(pi: ExtensionAPI) {
     ): string | null {
         if (!enabled) return null;
         const activeTools = reviewedTools(config);
-        if (activeTools.length === 0) return 'slow ■';
+        if (activeTools.length === 0) return "slow ■";
         const maxShow = 4;
         const shown = activeTools.slice(0, maxShow);
         const suffix =
             activeTools.length > maxShow
                 ? ` +${activeTools.length - maxShow}`
-                : '';
-        return `■slow: [${shown.join(', ')}${suffix}]`;
+                : "";
+        return `■slow: [${shown.join(", ")}${suffix}]`;
     }
 
     /** Tool names under review (config === true), sorted for stable display. */
     function reviewedTools(config: Map<string, boolean>): string[] {
         return [...config.entries()]
-            .filter(([, v]) =>  v)
+            .filter(([, v]) => v)
             .map(([k]) => k)
             .toSorted();
     }
 
     const w = createWidget(pi, {
         id: WIDGET_ID,
-        label: 'Slow Mode',
-        description: 'Shows whether slow mode is active.',
+        label: "Slow Mode",
+        description: "Shows whether slow mode is active.",
         row: 1,
         order: 8,
-        align: 'right',
+        align: "right",
         render: (ctx) => {
             const text = buildWidgetText(enabled, toolConfig);
             if (!text) return null;
@@ -142,20 +142,20 @@ export default function slowMode(pi: ExtensionAPI) {
         },
     });
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         originalWrite = createWriteTool(ctx.cwd);
         originalEdit = createEditTool(ctx.cwd);
 
         // Load tool config first (needed for widget display)
         const result = reloadToolConfig();
         for (const warning of result.warnings) {
-            ctx.ui.notify(warning, 'warning');
+            ctx.ui.notify(warning, "warning");
         }
 
         const entries = ctx.sessionManager.getEntries();
         for (let i = entries.length - 1; i >= 0; i--) {
             const e = entries[i];
-            if (e.type === 'custom' && e.customType === 'slow-mode') {
+            if (e.type === "custom" && e.customType === "slow-mode") {
                 enabled = (e.data as { enabled: boolean }).enabled;
                 w.update(ctx, buildWidgetText(enabled, toolConfig));
                 break;
@@ -163,7 +163,7 @@ export default function slowMode(pi: ExtensionAPI) {
         }
     });
 
-    pi.on('session_shutdown', async () => {
+    pi.on("session_shutdown", async () => {
         if (_tmpDir) {
             try {
                 rmSync(_tmpDir, { recursive: true });
@@ -173,15 +173,15 @@ export default function slowMode(pi: ExtensionAPI) {
         }
     });
 
-    pi.on('turn_end', async () => {
+    pi.on("turn_end", async () => {
         clearAutoAccept();
     });
 
-    pi.registerCommand('slow-mode', {
+    pi.registerCommand("slow-mode", {
         description:
-            'Toggle slow mode — review configured tools (write/edit/bash/...) before applying',
+            "Toggle slow mode — review configured tools (write/edit/bash/...) before applying",
         getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
-            const values = ['on', 'enable', 'off', 'disable', 'reload'];
+            const values = ["on", "enable", "off", "disable", "reload"];
             const items = values.map((v) => ({ value: v, label: v }));
             const filtered = items.filter((i) => i.value.startsWith(prefix));
             return filtered.length > 0 ? filtered : null;
@@ -193,31 +193,31 @@ export default function slowMode(pi: ExtensionAPI) {
 
             if (isRPC) {
                 ctx.ui.notify(
-                    'Slow mode is unavailable in RPC mode',
-                    'warning',
+                    "Slow mode is unavailable in RPC mode",
+                    "warning",
                 );
                 return;
             }
 
             const arg = args.trim().toLowerCase();
 
-            if (arg === 'reload' || arg === 'refresh') {
+            if (arg === "reload" || arg === "refresh") {
                 const result = reloadToolConfig();
                 w.update(ctx, buildWidgetText(enabled, toolConfig));
                 for (const warning of result.warnings) {
-                    ctx.ui.notify(warning, 'warning');
+                    ctx.ui.notify(warning, "warning");
                 }
                 const count = [...result.tools.values()].filter(Boolean).length;
                 ctx.ui.notify(
                     `Slow-mode config reloaded (${count} tools under review)`,
-                    'info',
+                    "info",
                 );
                 return;
             }
 
-            if (arg === 'on' || arg === 'enable') {
+            if (arg === "on" || arg === "enable") {
                 enabled = true;
-            } else if (arg === 'off' || arg === 'disable') {
+            } else if (arg === "off" || arg === "disable") {
                 enabled = false;
             } else {
                 enabled = !enabled;
@@ -225,30 +225,30 @@ export default function slowMode(pi: ExtensionAPI) {
 
             w.update(ctx, buildWidgetText(enabled, toolConfig));
 
-            pi.appendEntry('slow-mode', { enabled });
+            pi.appendEntry("slow-mode", { enabled });
 
             if (enabled) {
                 const tools = reviewedTools(toolConfig);
-                const list = tools.length > 0 ? ` [${tools.join(', ')}]` : '';
+                const list = tools.length > 0 ? ` [${tools.join(", ")}]` : "";
                 ctx.ui.notify(
                     `Slow mode enabled${list} — changes require approval`,
-                    'info',
+                    "info",
                 );
             } else {
-                ctx.ui.notify('Slow mode disabled', 'info');
+                ctx.ui.notify("Slow mode disabled", "info");
             }
         },
     });
 
     pi.registerTool({
         ...originalWrite,
-        label: 'write (slow mode)',
+        label: "write (slow mode)",
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             if (
                 !enabled ||
                 isRPC ||
                 !ctx.hasUI ||
-                toolConfig.get('write') !== true
+                toolConfig.get("write") !== true
             ) {
                 return originalWrite.execute(
                     toolCallId,
@@ -269,8 +269,8 @@ export default function slowMode(pi: ExtensionAPI) {
                 );
             }
 
-            const key = autoAcceptKey('write', params);
-            if (isAutoAccepted('write', key)) {
+            const key = autoAcceptKey("write", params);
+            if (isAutoAccepted("write", key)) {
                 return originalWrite.execute(
                     toolCallId,
                     params,
@@ -287,14 +287,14 @@ export default function slowMode(pi: ExtensionAPI) {
             );
 
             if (review.autoAccept) {
-                recordAutoAccept('write', key);
+                recordAutoAccept("write", key);
             }
 
             if (!review.approved) {
                 throw new Error(
                     review.reason
                         ? `User rejected the write: ${review.reason}`
-                        : 'User rejected the write in slow mode review.',
+                        : "User rejected the write in slow mode review.",
                 );
             }
 
@@ -306,7 +306,7 @@ export default function slowMode(pi: ExtensionAPI) {
                     original: content,
                     edited: review.editedContent,
                 });
-                ctx.ui.notify('Using edited content', 'info');
+                ctx.ui.notify("Using edited content", "info");
                 const modifiedParams = {
                     ...params,
                     content: review.editedContent,
@@ -325,13 +325,13 @@ export default function slowMode(pi: ExtensionAPI) {
 
     pi.registerTool({
         ...originalEdit,
-        label: 'edit (slow mode)',
+        label: "edit (slow mode)",
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             if (
                 !enabled ||
                 isRPC ||
                 !ctx.hasUI ||
-                toolConfig.get('edit') !== true
+                toolConfig.get("edit") !== true
             ) {
                 return originalEdit.execute(
                     toolCallId,
@@ -351,8 +351,8 @@ export default function slowMode(pi: ExtensionAPI) {
                 );
             }
 
-            const key = autoAcceptKey('edit', params);
-            if (isAutoAccepted('edit', key)) {
+            const key = autoAcceptKey("edit", params);
+            if (isAutoAccepted("edit", key)) {
                 return originalEdit.execute(
                     toolCallId,
                     params,
@@ -364,14 +364,14 @@ export default function slowMode(pi: ExtensionAPI) {
             const review = await reviewEdit(toolCallId, params, ctx);
 
             if (review.autoAccept) {
-                recordAutoAccept('edit', key);
+                recordAutoAccept("edit", key);
             }
 
             if (!review.approved) {
                 throw new Error(
                     review.reason
                         ? `User rejected the edit: ${review.reason}`
-                        : 'User rejected the edit in slow mode review.',
+                        : "User rejected the edit in slow mode review.",
                 );
             }
 
@@ -384,8 +384,8 @@ export default function slowMode(pi: ExtensionAPI) {
                     return {
                         content: [
                             {
-                                type: 'text' as const,
-                                text: 'Applied via slow mode review (content was edited externally).',
+                                type: "text" as const,
+                                text: "Applied via slow mode review (content was edited externally).",
                             },
                         ],
                         details: undefined,
@@ -396,7 +396,7 @@ export default function slowMode(pi: ExtensionAPI) {
                         original: review.originalNewText!,
                         edited: review.editedContent,
                     });
-                    ctx.ui.notify('Using edited content', 'info');
+                    ctx.ui.notify("Using edited content", "info");
                     const modifiedParams = constructModifiedEditParams(
                         params,
                         review.editedContent,
@@ -414,7 +414,7 @@ export default function slowMode(pi: ExtensionAPI) {
         },
     });
 
-    pi.on('tool_result', async (event, ctx) => {
+    pi.on("tool_result", async (event, ctx) => {
         if (!enabled || !ctx.hasUI) return;
 
         const edited = editedCalls.get(event.toolCallId);
@@ -422,18 +422,18 @@ export default function slowMode(pi: ExtensionAPI) {
 
         editedCalls.delete(event.toolCallId);
 
-        const originalLines = edited.original.split('\n').length;
-        const editedLines = edited.edited.split('\n').length;
+        const originalLines = edited.original.split("\n").length;
+        const editedLines = edited.edited.split("\n").length;
         const lineDiff = editedLines - originalLines;
         const lineDiffText =
             lineDiff > 0
                 ? `+${lineDiff} lines`
                 : lineDiff < 0
                   ? `${lineDiff} lines`
-                  : 'same line count';
+                  : "same line count";
 
         const note = {
-            type: 'text' as const,
+            type: "text" as const,
             text: `\n\n**Note:** Content was modified in slow mode review before writing (${lineDiffText}).`,
         };
 
@@ -442,17 +442,17 @@ export default function slowMode(pi: ExtensionAPI) {
         };
     });
 
-    pi.on('tool_call', async (event, ctx) => {
+    pi.on("tool_call", async (event, ctx) => {
         if (!enabled || isRPC || !ctx.hasUI) return;
 
         // Opt-in: review only tools explicitly enabled (=== true) in config.
         // Defaults populate write/edit/bash/safe_bash so they are reviewed out of the box.
         if (toolConfig.get(event.toolName) !== true) return;
 
-        if (event.toolName === 'bash' || event.toolName === 'safe_bash') {
+        if (event.toolName === "bash" || event.toolName === "safe_bash") {
             const input = event.input as { command?: unknown };
             const command =
-                typeof input.command === 'string' ? input.command : undefined;
+                typeof input.command === "string" ? input.command : undefined;
             if (command == null) return;
 
             const key = autoAcceptKey(
@@ -468,33 +468,33 @@ export default function slowMode(pi: ExtensionAPI) {
                 ? `⚠ DANGEROUS (${danger})\n\n$ ${command}`
                 : `$ ${command}`;
 
-            pi.events.emit('slow-mode:waiting', {});
+            pi.events.emit("slow-mode:waiting", {});
             let decision: ReviewResult;
             try {
                 decision = await showReview(ctx, {
-                    operation: 'BASH',
+                    operation: "BASH",
                     filePath: event.toolName,
                     body,
                     allowEdit: false,
                 });
             } finally {
-                pi.events.emit('slow-mode:resolved', {});
+                pi.events.emit("slow-mode:resolved", {});
             }
 
-            if (decision === 'approve') {
+            if (decision === "approve") {
                 return;
             }
-            if (decision === 'approve-auto') {
+            if (decision === "approve-auto") {
                 recordAutoAccept(event.toolName, key);
                 return;
             }
-            if (decision === 'edit') {
+            if (decision === "edit") {
                 return;
             }
-            if (decision === 'reject') {
+            if (decision === "reject") {
                 return {
                     block: true as const,
-                    reason: 'User rejected the bash command in slow mode review.',
+                    reason: "User rejected the bash command in slow mode review.",
                 };
             }
             return {
@@ -508,26 +508,26 @@ export default function slowMode(pi: ExtensionAPI) {
         const bodyLines = [`Tool: ${event.toolName}`];
         for (const [key, value] of Object.entries(input)) {
             const valStr =
-                typeof value === 'string' ? value : JSON.stringify(value);
+                typeof value === "string" ? value : JSON.stringify(value);
             bodyLines.push(`  ${key}: ${valStr}`);
         }
-        const body = bodyLines.join('\n');
+        const body = bodyLines.join("\n");
 
-        pi.events.emit('slow-mode:waiting', {});
+        pi.events.emit("slow-mode:waiting", {});
         let decision: ReviewResult;
         try {
             decision = await showReview(ctx, {
-                operation: 'BASH',
+                operation: "BASH",
                 filePath: event.toolName,
                 body,
                 allowEdit: false,
             });
         } finally {
-            pi.events.emit('slow-mode:resolved', {});
+            pi.events.emit("slow-mode:resolved", {});
         }
 
-        if (decision === 'approve' || decision === 'approve-auto') {
-            if (decision === 'approve-auto') {
+        if (decision === "approve" || decision === "approve-auto") {
+            if (decision === "approve-auto") {
                 recordAutoAccept(
                     event.toolName,
                     autoAcceptKey(event.toolName, input),
@@ -535,13 +535,13 @@ export default function slowMode(pi: ExtensionAPI) {
             }
             return;
         }
-        if (decision === 'reject') {
+        if (decision === "reject") {
             return {
                 block: true as const,
                 reason: `User rejected the ${event.toolName} tool call in slow mode review.`,
             };
         }
-        if (typeof decision === 'object' && decision.action === 'rejected') {
+        if (typeof decision === "object" && decision.action === "rejected") {
             return {
                 block: true as const,
                 reason: `User rejected the ${event.toolName} tool call: ${decision.reason}`,
@@ -566,39 +566,39 @@ export default function slowMode(pi: ExtensionAPI) {
         const stagePath = join(tmpDir(), relPath);
 
         ensureDir(dirname(stagePath));
-        writeFileSync(stagePath, content, 'utf-8');
+        writeFileSync(stagePath, content, "utf-8");
 
-        pi.events.emit('slow-mode:waiting', {});
+        pi.events.emit("slow-mode:waiting", {});
         const result = await showReview(ctx, {
-            operation: 'WRITE',
+            operation: "WRITE",
             filePath: relPath,
             stagePath,
             body: content,
             allowEdit: true,
         });
-        pi.events.emit('slow-mode:resolved', {});
+        pi.events.emit("slow-mode:resolved", {});
 
         let editedContent: string | null = null;
         let autoAcceptVal = false;
         let reason: string | null = null;
 
-        if (result === 'approve' || result === 'approve-auto') {
-            autoAcceptVal = result === 'approve-auto';
+        if (result === "approve" || result === "approve-auto") {
+            autoAcceptVal = result === "approve-auto";
             try {
-                const readBack = readFileSync(stagePath, 'utf-8');
+                const readBack = readFileSync(stagePath, "utf-8");
                 if (readBack !== content) {
                     editedContent = readBack;
                 }
             } catch {}
-        } else if (result === 'reject') {
-        } else if (typeof result === 'object' && result.action === 'rejected') {
+        } else if (result === "reject") {
+        } else if (typeof result === "object" && result.action === "rejected") {
             reason = result.reason;
         }
 
         cleanup(stagePath);
 
         return {
-            approved: result === 'approve' || result === 'approve-auto',
+            approved: result === "approve" || result === "approve-auto",
             editedContent,
             autoAccept: autoAcceptVal,
             reason,
@@ -643,7 +643,7 @@ export default function slowMode(pi: ExtensionAPI) {
         if (patches.length > 1) {
             try {
                 const absolutePath = resolve(ctx.cwd, filePath);
-                const fileContent = readFileSync(absolutePath, 'utf-8');
+                const fileContent = readFileSync(absolutePath, "utf-8");
                 oldText = fileContent;
                 newText = applyEdits(fileContent, patches);
                 usedRealFile = true;
@@ -683,18 +683,18 @@ export default function slowMode(pi: ExtensionAPI) {
         const oldPath = join(tmpDir(), `${nameWithoutExt}-${ts}.old${ext}`);
         const newPath = join(tmpDir(), `${nameWithoutExt}-${ts}.new${ext}`);
         ensureDir(tmpDir());
-        writeFileSync(oldPath, oldText, 'utf-8');
-        writeFileSync(newPath, newText, 'utf-8');
+        writeFileSync(oldPath, oldText, "utf-8");
+        writeFileSync(newPath, newText, "utf-8");
 
-        pi.events.emit('slow-mode:waiting', {});
+        pi.events.emit("slow-mode:waiting", {});
 
         let approved = false;
         let autoAcceptVal = false;
         let reason: string | null = null;
 
         reviewLoop: while (true) {
-            const currentOldText = readFileSync(oldPath, 'utf-8');
-            const currentNewText = readFileSync(newPath, 'utf-8');
+            const currentOldText = readFileSync(oldPath, "utf-8");
+            const currentNewText = readFileSync(newPath, "utf-8");
             const diff = generateUnifiedDiff(
                 relPath,
                 currentOldText,
@@ -703,7 +703,7 @@ export default function slowMode(pi: ExtensionAPI) {
             const renderedDiff = renderWithDelta(diff);
 
             const decision = await showReview(ctx, {
-                operation: 'EDIT',
+                operation: "EDIT",
                 filePath: relPath,
                 body: renderedDiff,
                 stagePath: newPath,
@@ -713,21 +713,21 @@ export default function slowMode(pi: ExtensionAPI) {
             });
 
             switch (decision) {
-                case 'approve':
-                case 'approve-auto':
+                case "approve":
+                case "approve-auto":
                     approved = true;
-                    autoAcceptVal = decision === 'approve-auto';
+                    autoAcceptVal = decision === "approve-auto";
                     break reviewLoop;
-                case 'reject':
+                case "reject":
                     approved = false;
                     break reviewLoop;
-                case 'edit':
+                case "edit":
                     openExternalFile(newPath);
                     continue;
                 default:
                     if (
-                        typeof decision === 'object' &&
-                        decision.action === 'rejected'
+                        typeof decision === "object" &&
+                        decision.action === "rejected"
                     ) {
                         reason = decision.reason;
                         approved = false;
@@ -741,11 +741,11 @@ export default function slowMode(pi: ExtensionAPI) {
 
         if (approved) {
             try {
-                const editedNewText = readFileSync(newPath, 'utf-8');
+                const editedNewText = readFileSync(newPath, "utf-8");
                 if (editedNewText !== newText) {
                     if (usedRealFile) {
                         const absolutePath = resolve(ctx.cwd, filePath);
-                        writeFileSync(absolutePath, editedNewText, 'utf-8');
+                        writeFileSync(absolutePath, editedNewText, "utf-8");
                         wroteDirectly = true;
                     }
                     editedContent = editedNewText;
@@ -753,7 +753,7 @@ export default function slowMode(pi: ExtensionAPI) {
             } catch {}
         }
 
-        pi.events.emit('slow-mode:resolved', {});
+        pi.events.emit("slow-mode:resolved", {});
         cleanup(oldPath);
         cleanup(newPath);
 
@@ -789,7 +789,7 @@ export default function slowMode(pi: ExtensionAPI) {
             path: params.path,
             edits: [
                 {
-                    oldText: params.edits.map((e) => e.oldText).join('\n'),
+                    oldText: params.edits.map((e) => e.oldText).join("\n"),
                     newText: editedNewText,
                 },
             ],

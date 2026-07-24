@@ -18,22 +18,23 @@
  *   - Mode changes via `/safe-bash` are runtime-only and do not persist to
  *     settings.json; they reset to the configured value on next session start.
  */
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { createBashToolDefinition } from '@earendil-works/pi-coding-agent';
-import { shouldEnforceNativeTools } from '../_shared/audit-mode/audit-tool-routing';
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
+import { shouldEnforceNativeTools } from "../_shared/audit-mode/audit-tool-routing";
 import {
     bashWithStdinSchema,
     createBashOperations,
     killActiveBashProcesses,
-} from '../_shared/bash-exec';
+} from "../_shared/bash/exec";
 import {
     isDangerous,
     redirectShellCommandWithPolicy,
-} from '../_shared/bash-guard';
-import { createBashPrefixRenderer } from '../_shared/bash-prefix-renderer';
-import { appendCompressionFooter } from '../_shared/compression-render';
-import { applyMode, restoreBash, shouldBlockBashCall } from './apply-mode.ts';
-import { loadSafeBashConfig, type SafeBashMode } from './config.ts';
+} from "../_shared/bash/guard";
+import { createBashPrefixRenderer } from "../_shared/bash/prefix-renderer";
+import { applyFirstRewrite, loadBashRewrites } from "../_shared/bash/rewrites";
+import { appendCompressionFooter } from "../_shared/compression-render";
+import { applyMode, restoreBash, shouldBlockBashCall } from "./apply-mode.ts";
+import { loadSafeBashConfig, type SafeBashMode } from "./config.ts";
 
 export default function (pi: ExtensionAPI) {
     // Use createBashToolDefinition to get renderCall/renderResult
@@ -41,7 +42,7 @@ export default function (pi: ExtensionAPI) {
     const bashDefinition = createBashToolDefinition(process.cwd());
 
     /** Current safe-bash mode, (re)loaded from settings.json or flipped via /safe-bash. */
-    let currentMode: SafeBashMode = 'coexist';
+    let currentMode: SafeBashMode = "coexist";
 
     /**
      * Current allowed-shell-commands list (by first word), reloaded from
@@ -49,19 +50,21 @@ export default function (pi: ExtensionAPI) {
      * `isDangerous()` still runs on them.
      */
     let currentAllowedShellCommands: string[] = [];
+    let currentRewriteRules = loadBashRewrites(process.cwd()).rules;
 
     /** Reload config from settings.json and apply the mode to the active tools. */
     function reloadConfig(cwd: string): SafeBashMode {
         const config = loadSafeBashConfig(cwd);
         currentAllowedShellCommands = config.allowedShellCommands;
+        currentRewriteRules = loadBashRewrites(cwd).rules;
         return setMode(config.mode);
     }
 
     /** Transition to a new mode and mutate the active tool list accordingly. */
     function setMode(next: SafeBashMode): SafeBashMode {
         currentMode = next;
-        if (next === 'replace') {
-            applyMode(pi, 'replace');
+        if (next === "replace") {
+            applyMode(pi, "replace");
         } else {
             restoreBash(pi);
         }
@@ -69,13 +72,13 @@ export default function (pi: ExtensionAPI) {
     }
 
     pi.registerTool({
-        name: 'safe_bash',
-        label: '🔒Safe Bash',
+        name: "safe_bash",
+        label: "🔒Safe Bash",
         description:
-            'Execute a bash command. Provides basic guardrails against accidentally destructive operations (e.g., rm -rf /, sudo). NOT a security sandbox — determined attackers can bypass these checks.',
+            "Execute a bash command. Provides basic guardrails against accidentally destructive operations (e.g., rm -rf /, sudo). NOT a security sandbox — determined attackers can bypass these checks.",
         parameters: bashWithStdinSchema,
         // Custom renderCall shows 🔒 prefix so user knows safe_bash ran
-        renderCall: createBashPrefixRenderer('🔒'),
+        renderCall: createBashPrefixRenderer("🔒"),
         // renderResult delegates to bash's and optionally appends compression footer
         renderResult: (
             result: Parameters<
@@ -116,7 +119,15 @@ export default function (pi: ExtensionAPI) {
                 throw new Error(redirect);
             }
             const executionDefinition = createBashToolDefinition(ctx.cwd, {
-                operations: createBashOperations({ stdin: params.stdin }),
+                operations: createBashOperations({
+                    stdin: params.stdin,
+                    rewriteCommand: (command) =>
+                        applyFirstRewrite(
+                            command,
+                            "safe_bash",
+                            currentRewriteRules,
+                        ),
+                }),
             });
             return executionDefinition.execute(
                 toolCallId,
@@ -130,51 +141,51 @@ export default function (pi: ExtensionAPI) {
 
     // Apply safe-bash mode from settings.json on every session start / reload.
     // Runs after the tool list is built so applyMode sees the final active set.
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         reloadConfig(ctx.cwd);
     });
 
     // Hard guarantee: even if the LLM references `bash` from earlier history,
     // block execution in replace mode. setActiveTools only filters the prompt.
-    pi.on('tool_call', async (event) => {
+    pi.on("tool_call", async (event) => {
         if (!shouldBlockBashCall(event.toolName, currentMode)) return;
         return {
             block: true as const,
-            reason: 'bash is disabled in safe-bash `replace` mode — use the `safe_bash` tool instead.',
+            reason: "bash is disabled in safe-bash `replace` mode — use the `safe_bash` tool instead.",
         };
     });
 
     // Re-assert the mode before each agent loop so the system prompt never
     // lists `bash` (closes the turn-1 window where the constructor-built
     // prompt still included it). Idempotent.
-    pi.on('before_agent_start', async () => {
-        if (currentMode === 'replace') applyMode(pi, 'replace');
+    pi.on("before_agent_start", async () => {
+        if (currentMode === "replace") applyMode(pi, "replace");
     });
 
-    pi.on('session_shutdown', () => {
+    pi.on("session_shutdown", () => {
         killActiveBashProcesses();
     });
 
-    pi.registerCommand('safe-bash', {
+    pi.registerCommand("safe-bash", {
         description:
-            'Manage safe-bash mode: [replace|coexist|on|off|reload|status].',
+            "Manage safe-bash mode: [replace|coexist|on|off|reload|status].",
         getArgumentCompletions: (prefix: string) => {
             const items = [
                 {
-                    value: 'replace',
-                    label: 'replace — drop bash, force safe_bash only',
+                    value: "replace",
+                    label: "replace — drop bash, force safe_bash only",
                 },
                 {
-                    value: 'coexist',
-                    label: 'coexist — both bash + safe_bash available',
+                    value: "coexist",
+                    label: "coexist — both bash + safe_bash available",
                 },
-                { value: 'on', label: 'on — alias for replace' },
-                { value: 'off', label: 'off — alias for coexist' },
+                { value: "on", label: "on — alias for replace" },
+                { value: "off", label: "off — alias for coexist" },
                 {
-                    value: 'reload',
-                    label: 'reload — re-read safeBash from settings.json',
+                    value: "reload",
+                    label: "reload — re-read safeBash from settings.json",
                 },
-                { value: 'status', label: 'status — show current mode' },
+                { value: "status", label: "status — show current mode" },
             ];
             const filtered = items.filter((i) => i.value.startsWith(prefix));
             return filtered.length > 0 ? filtered : null;
@@ -182,35 +193,35 @@ export default function (pi: ExtensionAPI) {
         handler: async (args, ctx) => {
             const arg = args.trim().toLowerCase();
 
-            if (arg === 'reload' || arg === 'refresh') {
+            if (arg === "reload" || arg === "refresh") {
                 const mode = reloadConfig(ctx.cwd);
                 ctx.ui.notify(
                     `safe-bash config reloaded (mode: ${mode})`,
-                    'info',
+                    "info",
                 );
                 return;
             }
-            if (arg === 'status' || arg === '') {
-                ctx.ui.notify(`safe-bash mode: ${currentMode}`, 'info');
+            if (arg === "status" || arg === "") {
+                ctx.ui.notify(`safe-bash mode: ${currentMode}`, "info");
                 return;
             }
 
             let next: SafeBashMode | null = null;
-            if (arg === 'replace' || arg === 'on') next = 'replace';
-            else if (arg === 'coexist' || arg === 'off') next = 'coexist';
+            if (arg === "replace" || arg === "on") next = "replace";
+            else if (arg === "coexist" || arg === "off") next = "coexist";
 
             if (next) {
                 const mode = setMode(next);
                 ctx.ui.notify(
                     `safe-bash mode set to ${mode} (runtime only — not persisted)`,
-                    'info',
+                    "info",
                 );
                 return;
             }
 
             ctx.ui.notify(
                 `Usage: /safe-bash [replace|coexist|on|off|reload|status] (current: ${currentMode})`,
-                'info',
+                "info",
             );
         },
     });

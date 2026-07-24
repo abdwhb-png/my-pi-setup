@@ -38,39 +38,40 @@
  * Linux also requires: bubblewrap, socat, ripgrep
  */
 
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import {
     SandboxManager,
     type SandboxRuntimeConfig,
-} from '@anthropic-ai/sandbox-runtime';
+} from "@anthropic-ai/sandbox-runtime";
 import {
     SettingsManager,
     type ExtensionAPI,
     type ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     type BashOperations,
     createBashTool,
     createBashToolDefinition,
     getAgentDir,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     bashWithStdinSchema,
     createBashOperations,
     killActiveBashProcesses,
-} from '../_shared/bash-exec';
-import { createBashPrefixRenderer } from '../_shared/bash-prefix-renderer';
-import { appendCompressionFooter } from '../_shared/compression-render';
-import { createWidget } from '../_shared/fancy-footer';
-import { createUiColors, type UiColorsCreation } from '../_shared/ui-colors';
+} from "../_shared/bash/exec";
+import { createBashPrefixRenderer } from "../_shared/bash/prefix-renderer";
+import { applyFirstRewrite, loadBashRewrites } from "../_shared/bash/rewrites";
+import { appendCompressionFooter } from "../_shared/compression-render";
+import { createWidget } from "../_shared/fancy-footer";
+import { createUiColors, type UiColorsCreation } from "../_shared/ui-colors";
 
 /** Footer widget state for the sandbox indicator. */
-export type SandboxFooterState = 'on' | 'restricted' | 'off' | 'error';
+export type SandboxFooterState = "on" | "restricted" | "off" | "error";
 
 /** Shield glyph shown in the footer widget (same metaphor as the bash 🛡️ prefix). */
-const SANDBOX_ICON = '🛡️';
-const WIDGET_ID = 'pi-sandbox';
+const SANDBOX_ICON = "🛡️";
+const WIDGET_ID = "pi-sandbox";
 
 /**
  * Pure render for the sandbox footer widget.
@@ -81,16 +82,16 @@ const WIDGET_ID = 'pi-sandbox';
  * so pi-fancy-footer uses this string verbatim instead of re-wrapping it.
  */
 export function renderSandboxWidget(
-    theme: import('@earendil-works/pi-coding-agent').Theme,
+    theme: import("@earendil-works/pi-coding-agent").Theme,
     state: SandboxFooterState,
 ): string | null {
-    if (state === 'off') return null;
+    if (state === "off") return null;
     const colors: UiColorsCreation = createUiColors(theme);
     const label = colors.subtle(`${SANDBOX_ICON}sandbox:`);
     const value =
-        state === 'on'
+        state === "on"
             ? colors.primary(state)
-            : state === 'restricted'
+            : state === "restricted"
               ? colors.warning(state)
               : colors.danger(state);
     return `${label} ${value}`;
@@ -104,35 +105,35 @@ const DEFAULT_CONFIG: SandboxConfig = {
     enabled: false,
     network: {
         allowedDomains: [
-            'npmjs.org',
-            '*.npmjs.org',
-            'registry.npmjs.org',
-            'registry.yarnpkg.com',
-            'pypi.org',
-            '*.pypi.org',
-            'github.com',
-            '*.github.com',
-            'api.github.com',
-            'raw.githubusercontent.com',
+            "npmjs.org",
+            "*.npmjs.org",
+            "registry.npmjs.org",
+            "registry.yarnpkg.com",
+            "pypi.org",
+            "*.pypi.org",
+            "github.com",
+            "*.github.com",
+            "api.github.com",
+            "raw.githubusercontent.com",
         ],
         deniedDomains: [],
     },
     filesystem: {
-        denyRead: ['~/.ssh', '~/.aws', '~/.gnupg'],
-        allowWrite: ['.', '/tmp'],
-        denyWrite: ['.env', '.env.*', '*.pem', '*.key'],
+        denyRead: ["~/.ssh", "~/.aws", "~/.gnupg"],
+        allowWrite: [".", "/tmp"],
+        denyWrite: [".env", ".env.*", "*.pem", "*.key"],
     },
 };
 
 function normalizeConfig(raw: unknown): Partial<SandboxConfig> {
-    if (!raw || typeof raw !== 'object') return {};
+    if (!raw || typeof raw !== "object") return {};
     return raw as Partial<SandboxConfig>;
 }
 
 function readLegacyConfig(path: string): Partial<SandboxConfig> {
     if (!existsSync(path)) return {};
     try {
-        return normalizeConfig(JSON.parse(readFileSync(path, 'utf-8')));
+        return normalizeConfig(JSON.parse(readFileSync(path, "utf-8")));
     } catch (e) {
         console.error(`Warning: Could not parse ${path}: ${String(e)}`);
         return {};
@@ -140,8 +141,8 @@ function readLegacyConfig(path: string): Partial<SandboxConfig> {
 }
 
 function loadConfig(cwd: string): SandboxConfig {
-    const projectConfigPath = join(cwd, '.pi', 'sandbox.json');
-    const globalConfigPath = join(getAgentDir(), 'sandbox.json');
+    const projectConfigPath = join(cwd, ".pi", "sandbox.json");
+    const globalConfigPath = join(getAgentDir(), "sandbox.json");
 
     let globalConfig: Partial<SandboxConfig> = {};
     let projectConfig: Partial<SandboxConfig> = {};
@@ -215,19 +216,19 @@ function deepMerge(
  *   → DANGEROUS_FILES + getDangerousDirectories()
  */
 export const GHOST_PATTERNS = [
-    '.gitconfig',
-    '.gitmodules',
-    '.bashrc',
-    '.bash_profile',
-    '.zshrc',
-    '.zprofile',
-    '.profile',
-    '.ripgreprc',
-    '.mcp.json',
-    '.vscode/',
-    '.idea/',
-    '.claude/commands/',
-    '.claude/agents/',
+    ".gitconfig",
+    ".gitmodules",
+    ".bashrc",
+    ".bash_profile",
+    ".zshrc",
+    ".zprofile",
+    ".profile",
+    ".ripgreprc",
+    ".mcp.json",
+    ".vscode/",
+    ".idea/",
+    ".claude/commands/",
+    ".claude/agents/",
 ];
 
 /**
@@ -244,15 +245,15 @@ export function _resetGitignoreEnsured(): void {
 export function ensureGitignored(cwd: string): void {
     if (gitignoreEnsured) return;
 
-    const gitignorePath = join(cwd, '.gitignore');
+    const gitignorePath = join(cwd, ".gitignore");
     const header =
-        '# Sandbox ghost files (auto-generated by pi sandbox extension)';
+        "# Sandbox ghost files (auto-generated by pi sandbox extension)";
 
     try {
         let existingLines: string[] = [];
         if (existsSync(gitignorePath)) {
-            existingLines = readFileSync(gitignorePath, 'utf-8')
-                .split('\n')
+            existingLines = readFileSync(gitignorePath, "utf-8")
+                .split("\n")
                 .map((l) => l.trim());
         }
 
@@ -265,7 +266,7 @@ export function ensureGitignored(cwd: string): void {
             return;
         }
 
-        const toAppend = '\n' + header + '\n' + missing.join('\n') + '\n';
+        const toAppend = "\n" + header + "\n" + missing.join("\n") + "\n";
         appendFileSync(gitignorePath, toAppend);
         gitignoreEnsured = true;
     } catch {
@@ -278,10 +279,10 @@ export function buildSandboxShellEnv(
     agentDir: string = getAgentDir(),
 ): NodeJS.ProcessEnv {
     const pathKey =
-        Object.keys(baseEnv).find((key) => key.toLowerCase() === 'path') ??
-        'PATH';
-    const currentPath = baseEnv[pathKey] ?? '';
-    const binDir = join(agentDir, 'bin');
+        Object.keys(baseEnv).find((key) => key.toLowerCase() === "path") ??
+        "PATH";
+    const currentPath = baseEnv[pathKey] ?? "";
+    const binDir = join(agentDir, "bin");
     const pathEntries = currentPath.split(delimiter).filter(Boolean);
     const updatedPath = pathEntries.includes(binDir)
         ? currentPath
@@ -312,9 +313,9 @@ export function createSandboxedBashOps(stdin?: string): BashOperations {
 }
 
 export default function (pi: ExtensionAPI) {
-    pi.registerFlag('no-sandbox', {
-        description: 'Disable OS-level sandboxing for bash commands',
-        type: 'boolean',
+    pi.registerFlag("no-sandbox", {
+        description: "Disable OS-level sandboxing for bash commands",
+        type: "boolean",
         default: false,
     });
 
@@ -323,15 +324,16 @@ export default function (pi: ExtensionAPI) {
     let bashDef = createBashToolDefinition(projectCwd);
     let sandboxEnabled = false;
     let sandboxInitialized = false;
-    let sandboxFooterState: SandboxFooterState = 'off';
+    let rewriteRules = loadBashRewrites(projectCwd).rules;
+    let sandboxFooterState: SandboxFooterState = "off";
     const w = createWidget(pi, {
         id: WIDGET_ID,
-        label: 'Sandbox',
+        label: "Sandbox",
         description:
-            'Shows whether sandboxed bash execution is enabled for the current session.',
+            "Shows whether sandboxed bash execution is enabled for the current session.",
         row: 1,
         order: 13,
-        align: 'right',
+        align: "right",
         grow: false,
         styled: true,
         render: (ctx) => renderSandboxWidget(ctx.theme, sandboxFooterState),
@@ -339,7 +341,7 @@ export default function (pi: ExtensionAPI) {
 
     function updateSandboxStatus(
         ctx: ExtensionContext,
-        status: 'on' | 'restricted' | 'off' | 'error',
+        status: "on" | "restricted" | "off" | "error",
     ): void {
         sandboxFooterState = status;
         w.update(ctx);
@@ -348,10 +350,10 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
         ...cachedBash,
         parameters: bashWithStdinSchema,
-        label: 'bash (sandboxed)',
+        label: "bash (sandboxed)",
         // Show 🛡️ prefix when sandbox active, no prefix when disabled
         renderCall: createBashPrefixRenderer(() =>
-            sandboxEnabled ? '🛡️' : '',
+            sandboxEnabled ? "🛡️" : "",
         ),
         renderResult: (
             result: Parameters<NonNullable<typeof bashDef.renderResult>>[0],
@@ -374,35 +376,66 @@ export default function (pi: ExtensionAPI) {
             const input = { command: params.command, timeout: params.timeout };
             if (!sandboxEnabled || !sandboxInitialized) {
                 const localBash = createBashTool(projectCwd, {
-                    operations: createBashOperations({ stdin: params.stdin }),
+                    operations: createBashOperations({
+                        stdin: params.stdin,
+                        rewriteCommand: (command) =>
+                            applyFirstRewrite(command, "bash", rewriteRules),
+                    }),
                 });
                 return localBash.execute(id, input, signal, onUpdate);
             }
 
+            // Sandbox path: rewrite BEFORE sandbox-wrap (design D2).
+            // Rules are composed into prepareCommand so rewrite runs first,
+            // then SandboxManager wraps the rewritten command.
             const sandboxedBash = createBashTool(projectCwd, {
-                operations: createSandboxedBashOps(params.stdin),
+                operations: createBashOperations({
+                    stdin: params.stdin,
+                    detached: true,
+                    prepareCommand: async ({ command, cwd }) => {
+                        const rewritten = applyFirstRewrite(
+                            command,
+                            "bash",
+                            rewriteRules,
+                        ).command;
+                        return {
+                            command:
+                                await SandboxManager.wrapWithSandbox(rewritten),
+                            cwd,
+                            env: buildSandboxShellEnv(),
+                        };
+                    },
+                    afterClose: ({ cwd }) => {
+                        try {
+                            SandboxManager.cleanupAfterCommand();
+                        } catch {
+                            ensureGitignored(cwd);
+                        }
+                    },
+                }),
             });
             return sandboxedBash.execute(id, input, signal, onUpdate);
         },
     });
 
-    pi.on('user_bash', () => {
+    pi.on("user_bash", () => {
         if (!sandboxEnabled || !sandboxInitialized) return;
         return { operations: createSandboxedBashOps() };
     });
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         gitignoreEnsured = false;
         projectCwd = ctx.cwd;
         cachedBash = createBashTool(projectCwd);
         bashDef = createBashToolDefinition(projectCwd);
-        const noSandbox = pi.getFlag('no-sandbox') as boolean;
+        rewriteRules = loadBashRewrites(projectCwd).rules;
+        const noSandbox = pi.getFlag("no-sandbox") as boolean;
 
         if (noSandbox) {
             sandboxEnabled = false;
             sandboxInitialized = false;
-            updateSandboxStatus(ctx, 'off');
-            ctx.ui.notify('Sandbox disabled via --no-sandbox', 'warning');
+            updateSandboxStatus(ctx, "off");
+            ctx.ui.notify("Sandbox disabled via --no-sandbox", "warning");
             return;
         }
 
@@ -411,16 +444,16 @@ export default function (pi: ExtensionAPI) {
         if (!config.enabled) {
             sandboxEnabled = false;
             sandboxInitialized = false;
-            updateSandboxStatus(ctx, 'off');
+            updateSandboxStatus(ctx, "off");
             return;
         }
 
         const platform = process.platform;
-        if (platform !== 'darwin' && platform !== 'linux') {
+        if (platform !== "darwin" && platform !== "linux") {
             sandboxEnabled = false;
             sandboxInitialized = false;
-            updateSandboxStatus(ctx, 'restricted');
-            ctx.ui.notify(`Sandbox not supported on ${platform}`, 'warning');
+            updateSandboxStatus(ctx, "restricted");
+            ctx.ui.notify(`Sandbox not supported on ${platform}`, "warning");
             return;
         }
 
@@ -440,20 +473,20 @@ export default function (pi: ExtensionAPI) {
             sandboxEnabled = true;
             sandboxInitialized = true;
 
-            updateSandboxStatus(ctx, 'on');
-            ctx.ui.notify('Sandbox initialized', 'info');
+            updateSandboxStatus(ctx, "on");
+            ctx.ui.notify("Sandbox initialized", "info");
         } catch (err) {
             sandboxEnabled = false;
             sandboxInitialized = false;
-            updateSandboxStatus(ctx, 'error');
+            updateSandboxStatus(ctx, "error");
             ctx.ui.notify(
                 `Sandbox initialization failed: ${err instanceof Error ? err.message : String(err)}`,
-                'error',
+                "error",
             );
         }
     });
 
-    pi.on('session_shutdown', async () => {
+    pi.on("session_shutdown", async () => {
         killActiveBashProcesses();
         if (sandboxInitialized) {
             try {
@@ -464,11 +497,11 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    pi.registerCommand('sandbox', {
+    pi.registerCommand("sandbox", {
         description:
-            'Toggle sandbox or show status (/sandbox, /sandbox on, /sandbox off)',
+            "Toggle sandbox or show status (/sandbox, /sandbox on, /sandbox off)",
         getArgumentCompletions: (prefix: string) => {
-            const values = ['on', 'enable', 'off', 'disable'];
+            const values = ["on", "enable", "off", "disable"];
             const trimmed = prefix.trimStart().toLowerCase();
             if (!trimmed)
                 return values.map((value) => ({ value, label: value }));
@@ -483,18 +516,18 @@ export default function (pi: ExtensionAPI) {
             const arg = args.trim().toLowerCase();
 
             // /sandbox on
-            if (arg === 'on' || arg === 'enable') {
+            if (arg === "on" || arg === "enable") {
                 if (sandboxEnabled && sandboxInitialized) {
-                    ctx.ui.notify('Sandbox is already enabled', 'info');
+                    ctx.ui.notify("Sandbox is already enabled", "info");
                     return;
                 }
 
                 const platform = process.platform;
-                if (platform !== 'darwin' && platform !== 'linux') {
-                    updateSandboxStatus(ctx, 'restricted');
+                if (platform !== "darwin" && platform !== "linux") {
+                    updateSandboxStatus(ctx, "restricted");
                     ctx.ui.notify(
                         `Sandbox not supported on ${platform}`,
-                        'error',
+                        "error",
                     );
                     return;
                 }
@@ -517,24 +550,24 @@ export default function (pi: ExtensionAPI) {
                     sandboxEnabled = true;
                     sandboxInitialized = true;
 
-                    updateSandboxStatus(ctx, 'on');
-                    ctx.ui.notify('Sandbox enabled', 'info');
+                    updateSandboxStatus(ctx, "on");
+                    ctx.ui.notify("Sandbox enabled", "info");
                 } catch (err) {
                     sandboxEnabled = false;
                     sandboxInitialized = false;
-                    updateSandboxStatus(ctx, 'error');
+                    updateSandboxStatus(ctx, "error");
                     ctx.ui.notify(
                         `Sandbox initialization failed: ${err instanceof Error ? err.message : String(err)}`,
-                        'error',
+                        "error",
                     );
                 }
                 return;
             }
 
             // /sandbox off
-            if (arg === 'off' || arg === 'disable') {
+            if (arg === "off" || arg === "disable") {
                 if (!sandboxEnabled) {
-                    ctx.ui.notify('Sandbox is already disabled', 'info');
+                    ctx.ui.notify("Sandbox is already disabled", "info");
                     return;
                 }
 
@@ -547,34 +580,34 @@ export default function (pi: ExtensionAPI) {
                     }
                     sandboxInitialized = false;
                 }
-                updateSandboxStatus(ctx, 'off');
-                ctx.ui.notify('Sandbox disabled', 'info');
+                updateSandboxStatus(ctx, "off");
+                ctx.ui.notify("Sandbox disabled", "info");
                 return;
             }
 
             // /sandbox (no args) — toggle or show status
             if (!arg) {
                 const config = loadConfig(ctx.cwd);
-                const status = sandboxEnabled ? 'ENABLED' : 'DISABLED';
+                const status = sandboxEnabled ? "ENABLED" : "DISABLED";
                 const lines = [
                     `Sandbox: ${status}`,
-                    '',
-                    'Network:',
-                    `  Allowed: ${config.network?.allowedDomains?.join(', ') || '(none)'}`,
-                    `  Denied: ${config.network?.deniedDomains?.join(', ') || '(none)'}`,
-                    '',
-                    'Filesystem:',
-                    `  Deny Read: ${config.filesystem?.denyRead?.join(', ') || '(none)'}`,
-                    `  Allow Write: ${config.filesystem?.allowWrite?.join(', ') || '(none)'}`,
-                    `  Deny Write: ${config.filesystem?.denyWrite?.join(', ') || '(none)'}`,
-                    '',
+                    "",
+                    "Network:",
+                    `  Allowed: ${config.network?.allowedDomains?.join(", ") || "(none)"}`,
+                    `  Denied: ${config.network?.deniedDomains?.join(", ") || "(none)"}`,
+                    "",
+                    "Filesystem:",
+                    `  Deny Read: ${config.filesystem?.denyRead?.join(", ") || "(none)"}`,
+                    `  Allow Write: ${config.filesystem?.allowWrite?.join(", ") || "(none)"}`,
+                    `  Deny Write: ${config.filesystem?.denyWrite?.join(", ") || "(none)"}`,
+                    "",
                     `Use /sandbox on or /sandbox off to toggle.`,
                 ];
-                ctx.ui.notify(lines.join('\n'), 'info');
+                ctx.ui.notify(lines.join("\n"), "info");
                 return;
             }
 
-            ctx.ui.notify('Usage: /sandbox [on|off]', 'error');
+            ctx.ui.notify("Usage: /sandbox [on|off]", "error");
         },
     });
 }
