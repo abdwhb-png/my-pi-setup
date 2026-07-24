@@ -6,6 +6,24 @@
 - `~/projects/shared-services/edgee-compressor-service` already uses root compose as source of truth; service now explicitly uses local image `edgee-compressor-service-local:dev` with `pull_policy: never` and local build from root `Dockerfile`.
 - gpt-5.5 in Codex is capped at 400K total (272K input + 128K output), per upstream limitation (openai/codex#19464). Pi's CPA model enrichment sets `contextWindow: 272_000` for gpt-5.5. The API version supports 1M but Codex subscription is still limited as of 2026-07. Use gpt-5.4 for 1M context needs.
 
+## Pi sandbox & Docker access (corrected July 2026)
+
+**Root cause (verified empirically):** `@anthropic-ai/sandbox-runtime` (v0.0.65) always runs `bwrap --unshare-net` when `network.allowedDomains` is non-empty. This creates an isolated network namespace with its **own empty loopback**, so any TCP endpoint bound on the host loopback (`tcp://127.0.0.1:2375` socat bridge, etc.) is unreachable from inside the sandbox (`Connection refused`).
+
+**What `allowAllUnixSockets: true` actually does:** only skips the seccomp-BPF filter that blocks the `socket(AF_UNIX, ...)` syscall (`linux-sandbox-utils.js:1113`). It does **not** affect TCP or bypass `--unshare-net`.
+
+**Working path (verified):** docker CLI talking to `/var/run/docker.sock` directly — the default when `DOCKER_HOST` is unset. AF_UNIX pathname sockets are filesystem-visible via `--ro-bind / /` and are not network-namespace-scoped, so they survive `--unshare-net`. Requirements: `allowAllUnixSockets: true` in `sandbox.json` + user in `docker` group.
+
+**Non-working paths:** any TCP endpoint — all killed by `--unshare-net`'s independent loopback. A TCP bridge is only useful when the sandbox is OFF.
+
+**Decisions applied:**
+
+- No `DOCKER_HOST` env var exported anywhere (removed from `~/.profile` and `~/.zprofile`; `~/.bashrc:181` already commented out). Docker falls back to default `unix:///var/run/docker.sock`.
+- `docker-socat-bridge.service` disabled, unit file removed, port 2375 freed.
+- `allowAllUnixSockets: true` kept in `~/.pi/agent/sandbox.json`.
+
+**Lesson:** do not add an env var to work around a sandbox you do not understand. Trace the isolation primitive (`bwrap --unshare-net` → independent loopback) before proposing a bridge.
+
 ## LSP Type Dedup: pi-fancy-footer
 
 - **Problem**: LSP diagnostics showed `ExtensionAPI` type mismatch for all `createWidget(pi, ...)` calls across extensions. Two copies of `@earendil-works/pi-coding-agent` existed: agent's at `agent/node_modules/` and pi-fancy-footer's at `pi-fancy-footer/node_modules/`. tsconfig path mapping `pi-fancy-footer/api` → workspace source caused tsserver to resolve imports from pi-fancy-footer source through its local `node_modules`, producing a structurally-identical but nominally-different `ExtensionAPI` type.
