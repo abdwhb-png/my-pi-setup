@@ -115,6 +115,13 @@ describe('familyDefaults', () => {
         expect(result.contextWindow).toBe(1_000_000);
     });
 
+    it('returns DeepSeek defaults for ocg/go- prefixed model', () => {
+        const result = familyDefaults('ocg/go-deepseek-v4-pro');
+        expect(result.contextWindow).toBe(1_000_000);
+        expect(result.maxTokens).toBe(384_000);
+        expect(result.reasoning).toBe(true);
+    });
+
     it('returns Kimi defaults', () => {
         const result = familyDefaults('kimi-k2.6');
         expect(result.contextWindow).toBe(262_144);
@@ -383,6 +390,19 @@ describe('enrichModel enrichment pipeline', () => {
         expect(result.maxTokens).toBe(131_072);
     });
 
+    it('applies provider-specific overrides for OpenCode Go (2nd)', () => {
+        const entry: CpaModelEntry = {
+            id: 'ocg/go-deepseek-v4-pro',
+            owned_by: 'ocode-go (2nd)',
+        };
+        const result = enrichModel(entry, emptyOrMeta)!;
+        expect(result.cost.input).toBe(1.74);
+        expect(result.cost.output).toBe(3.48);
+        expect(result.cost.cacheRead).toBe(0.0145);
+        expect(result.contextWindow).toBe(1_000_000);
+        expect(result.maxTokens).toBe(384_000);
+    });
+
     it('always includes compat: supportsDeveloperRole: false', () => {
         const entry: CpaModelEntry = {
             id: 'gemini-3-flash',
@@ -490,9 +510,19 @@ describe('PROVIDER_OVERRIDES', () => {
         expect(PROVIDER_OVERRIDES['ocode-go (main)']).toBeDefined();
     });
 
+    it('has entry for ocode-go (2nd)', () => {
+        expect(PROVIDER_OVERRIDES['ocode-go (2nd)']).toBeDefined();
+    });
+
     it('has 8 Go models with pricing overrides', () => {
         const goOverrides = PROVIDER_OVERRIDES['ocode-go (main)'];
         expect(Object.keys(goOverrides).length).toBe(8);
+    });
+
+    it('shares the same Go overrides across Go instances', () => {
+        expect(PROVIDER_OVERRIDES['ocode-go (main)']).toBe(
+            PROVIDER_OVERRIDES['ocode-go (2nd)'],
+        );
     });
 
     it('each Go override has cost with all fields', () => {

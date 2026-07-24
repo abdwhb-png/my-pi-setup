@@ -237,6 +237,11 @@ export function familyDefaults(
 > {
     const id = modelId.toLowerCase();
 
+    // Normalize ocg/go- prefixed models to their base family name
+    if (id.startsWith('ocg/go-')) {
+        return familyDefaults(id.slice(7));
+    }
+
     // Claude family
     if (id.startsWith('claude-')) {
         const isThinking = id.includes('opus') || id.includes('thinking');
