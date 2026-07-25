@@ -55,4 +55,75 @@ describe('normalizeAiProvidersConfig', () => {
         );
         expect(merged.cpa.silentCatalogDiff).toBe(true);
     });
+
+    // ── cpa.overridePrefixes (prefix → table-name map) ──
+
+    test('accepts a prefix→table map for cpa.overridePrefixes', () => {
+        const normalized = normalizeAiProvidersConfig({
+            cpa: { overridePrefixes: { ocg: 'go', ogo: 'go', foo: 'foo' } },
+        });
+        expect(normalized.cpa?.overridePrefixes).toEqual({
+            ocg: 'go',
+            ogo: 'go',
+            foo: 'foo',
+        });
+    });
+
+    test('drops entries whose value is not a non-empty string', () => {
+        const normalized = normalizeAiProvidersConfig({
+            cpa: {
+                overridePrefixes: {
+                    ocg: 'go',
+                    bad: '',
+                    num: 42,
+                    nul: null,
+                    ok: 'foo',
+                },
+            },
+        });
+        expect(normalized.cpa?.overridePrefixes).toEqual({
+            ocg: 'go',
+            ok: 'foo',
+        });
+    });
+
+    test('ignores non-object cpa.overridePrefixes', () => {
+        expect(
+            normalizeAiProvidersConfig({
+                cpa: { overridePrefixes: 'ocg' },
+            }).cpa?.overridePrefixes,
+        ).toBeUndefined();
+    });
+
+    test('project overridePrefixes replaces (not merges) the global map', () => {
+        const global = mergeAiProvidersConfig(
+            {
+                providers: {},
+                widgets: {},
+                cpa: {
+                    refreshTtlMs: 30_000,
+                    overridePrefixes: { ocg: 'go' },
+                },
+            },
+            normalizeAiProvidersConfig({
+                cpa: { overridePrefixes: { ogo: 'go' } },
+            }),
+        );
+        expect(global.cpa.overridePrefixes).toEqual({ ogo: 'go' });
+    });
+
+    test('default config ships overridePrefixes { ocg: "go" }', () => {
+        const merged = mergeAiProvidersConfig(
+            {
+                providers: {},
+                widgets: {},
+                cpa: {
+                    refreshTtlMs: 30_000,
+                    overridePrefixes: { ocg: 'go' },
+                },
+            },
+            normalizeAiProvidersConfig({}),
+        );
+        expect(merged.cpa.overridePrefixes).toEqual({ ocg: 'go' });
+    });
 });

@@ -12,12 +12,13 @@
  * to CPA appear automatically with family-based defaults.
  */
 
-import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
-import { PROVIDER_OVERRIDES } from '../constants/cpa-overrides';
+import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { loadAiProvidersConfig } from "../config.ts";
+import { OVERRIDE_TABLES } from "../constants/cpa-overrides";
 import {
     STATIC_FALLBACK_MODELS,
     NO_DEV_ROLE_COMPAT,
-} from '../constants/cpa-static-models';
+} from "../constants/cpa-static-models";
 
 // ── Types ──
 
@@ -28,7 +29,7 @@ export interface CpaModelEntry {
 
 export interface CpaCatalogResult {
     models: ProviderModelConfig[];
-    source: 'live' | 'fallback';
+    source: "live" | "fallback";
 }
 
 interface OpenRouterModel {
@@ -46,26 +47,26 @@ interface OpenRouterModel {
 // OpenRouter models are checked dynamically via architecture.input_modalities.
 export const STATIC_IMAGE_MODELS = new Set<string>([
     // Antigravity — Claude models (vision)
-    'claude-sonnet-4-6',
-    'claude-opus-4-6-thinking',
+    "claude-sonnet-4-6",
+    "claude-opus-4-6-thinking",
     // Antigravity — Gemini models (multimodal by default)
-    'gemini-3.1-pro-low',
-    'gemini-3-flash',
-    'gemini-3-flash-agent',
-    'gemini-3.1-flash-lite',
-    'gemini-3.1-flash-image',
-    'gemini-3.5-flash-low',
-    'gemini-3.5-flash-extra-low',
-    'gemini-pro-agent',
+    "gemini-3.1-pro-low",
+    "gemini-3-flash",
+    "gemini-3-flash-agent",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-image",
+    "gemini-3.5-flash-low",
+    "gemini-3.5-flash-extra-low",
+    "gemini-pro-agent",
     // Codex — GPT models (vision)
-    'gpt-5.4',
-    'gpt-5.4-mini',
-    'gpt-5.5',
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.5",
     // OpenCode Go — models with confirmed vision support
-    'ocg/go-kimi-k2.7-code',
-    'ocg/go-kimi-k2.6',
-    'ocg/go-deepseek-v4-pro',
-    'ocg/go-deepseek-v4-flash',
+    "ocg/go-kimi-k2.7-code",
+    "ocg/go-kimi-k2.6",
+    "ocg/go-deepseek-v4-pro",
+    "ocg/go-deepseek-v4-flash",
 ]);
 
 // ── Module-level cache ──
@@ -92,7 +93,7 @@ function parseOrCost(s: string): number {
 // ── Helper: strip ocg/ prefix to get alias ──
 
 function ocgAlias(modelId: string): string {
-    return modelId.startsWith('ocg/') ? modelId.slice(4) : modelId;
+    return modelId.startsWith("ocg/") ? modelId.slice(4) : modelId;
 }
 
 // ── Step 1a: Fetch model IDs from CPA ──
@@ -105,7 +106,7 @@ export async function fetchCpaModelIds(
     const timeout = setTimeout(() => controller.abort(), 3000);
 
     try {
-        const url = `${baseUrl.replace(/\/$/, '')}/models`;
+        const url = `${baseUrl.replace(/\/$/, "")}/models`;
         const response = await fetch(url, {
             headers: { Authorization: `Bearer ${apiKey}` },
             signal: controller.signal,
@@ -128,19 +129,19 @@ export async function fetchCpaModelIds(
               }>
             | undefined;
         if (!data || !Array.isArray(data)) {
-            console.warn('[cpa-models] Unexpected /v1/models response shape');
+            console.warn("[cpa-models] Unexpected /v1/models response shape");
             return [];
         }
 
         return data.map((m) => ({
-            id: String(m.id ?? ''),
-            owned_by: String(m.owned_by ?? 'unknown'),
+            id: String(m.id ?? ""),
+            owned_by: String(m.owned_by ?? "unknown"),
         }));
     } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-            console.warn('[cpa-models] CPA /v1/models fetch timed out');
+        if (err instanceof DOMException && err.name === "AbortError") {
+            console.warn("[cpa-models] CPA /v1/models fetch timed out");
         } else {
-            console.warn('[cpa-models] CPA /v1/models fetch failed:', err);
+            console.warn("[cpa-models] CPA /v1/models fetch failed:", err);
         }
         return [];
     } finally {
@@ -159,7 +160,7 @@ export async function fetchOpenRouterMetadata(): Promise<
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
-        const response = await fetch('https://openrouter.ai/api/v1/models', {
+        const response = await fetch("https://openrouter.ai/api/v1/models", {
             signal: controller.signal,
         });
 
@@ -185,7 +186,7 @@ export async function fetchOpenRouterMetadata(): Promise<
 
         if (!data || !Array.isArray(data)) {
             console.warn(
-                '[cpa-models] Unexpected OpenRouter /v1/models response shape',
+                "[cpa-models] Unexpected OpenRouter /v1/models response shape",
             );
             return new Map();
         }
@@ -195,11 +196,11 @@ export async function fetchOpenRouterMetadata(): Promise<
             if (m.id) {
                 map.set(String(m.id), {
                     id: String(m.id),
-                    name: String(m.name ?? ''),
+                    name: String(m.name ?? ""),
                     context_length: m.context_length ?? 0,
                     pricing: {
-                        prompt: String(m.pricing?.prompt ?? '0'),
-                        completion: String(m.pricing?.completion ?? '0'),
+                        prompt: String(m.pricing?.prompt ?? "0"),
+                        completion: String(m.pricing?.completion ?? "0"),
                     },
                     top_provider: {
                         max_completion_tokens:
@@ -214,11 +215,11 @@ export async function fetchOpenRouterMetadata(): Promise<
         orMetadataCache = map;
         return map;
     } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-            console.warn('[cpa-models] OpenRouter /v1/models fetch timed out');
+        if (err instanceof DOMException && err.name === "AbortError") {
+            console.warn("[cpa-models] OpenRouter /v1/models fetch timed out");
         } else {
             console.warn(
-                '[cpa-models] OpenRouter /v1/models fetch failed:',
+                "[cpa-models] OpenRouter /v1/models fetch failed:",
                 err,
             );
         }
@@ -233,18 +234,18 @@ export async function fetchOpenRouterMetadata(): Promise<
 export function familyDefaults(
     modelId: string,
 ): Partial<
-    Pick<ProviderModelConfig, 'contextWindow' | 'maxTokens' | 'reasoning'>
+    Pick<ProviderModelConfig, "contextWindow" | "maxTokens" | "reasoning">
 > {
     const id = modelId.toLowerCase();
 
     // Normalize ocg/go- prefixed models to their base family name
-    if (id.startsWith('ocg/go-')) {
+    if (id.startsWith("ocg/go-")) {
         return familyDefaults(id.slice(7));
     }
 
     // Claude family
-    if (id.startsWith('claude-')) {
-        const isThinking = id.includes('opus') || id.includes('thinking');
+    if (id.startsWith("claude-")) {
+        const isThinking = id.includes("opus") || id.includes("thinking");
         return {
             contextWindow: 1_000_000,
             maxTokens: isThinking ? 128_000 : 64_000,
@@ -253,11 +254,11 @@ export function familyDefaults(
     }
 
     // Gemini family
-    if (id.startsWith('gemini-')) {
-        const isSmall = id.includes('flash-lite') || id.includes('extra-low');
-        const isImage = id.includes('flash-image');
+    if (id.startsWith("gemini-")) {
+        const isSmall = id.includes("flash-lite") || id.includes("extra-low");
+        const isImage = id.includes("flash-image");
         return {
-            contextWindow: id.includes('3.5-flash') ? 1_000_000 : 1_048_576,
+            contextWindow: id.includes("3.5-flash") ? 1_000_000 : 1_048_576,
             maxTokens: isSmall ? 32_768 : 65_536,
             reasoning: !isImage,
         };
@@ -267,31 +268,31 @@ export function familyDefaults(
     // GPT-5.5 in Codex (subscription) is capped at 400K total (272K input + 128K output).
     // The API version supports 1M, but Codex is still limited upstream.
     // See: https://github.com/openai/codex/issues/19464
-    if (id.includes('gpt-5.5')) {
+    if (id.includes("gpt-5.5")) {
         return { contextWindow: 272_000, maxTokens: 128_000, reasoning: true };
     }
-    if (id.includes('gpt-5.4-mini') || id.includes('gpt-5.3-codex')) {
+    if (id.includes("gpt-5.4-mini") || id.includes("gpt-5.3-codex")) {
         return { contextWindow: 400_000, maxTokens: 128_000, reasoning: true };
     }
     // GPT-5.4 in Codex allows up to 1M context via model_context_window.
-    if (id.includes('gpt-5.4')) {
+    if (id.includes("gpt-5.4")) {
         return {
             contextWindow: 1_000_000,
             maxTokens: 128_000,
             reasoning: true,
         };
     }
-    if (id.startsWith('gpt-oss')) {
+    if (id.startsWith("gpt-oss")) {
         return { contextWindow: 128_000, maxTokens: 32_768, reasoning: true };
     }
 
     // Grok family
-    if (id.startsWith('grok-')) {
+    if (id.startsWith("grok-")) {
         return { contextWindow: 256_000, maxTokens: 32_768, reasoning: true };
     }
 
     // DeepSeek family
-    if (id.startsWith('deepseek-') || id.startsWith('deepseek/')) {
+    if (id.startsWith("deepseek-") || id.startsWith("deepseek/")) {
         return {
             contextWindow: 1_000_000,
             maxTokens: 384_000,
@@ -300,17 +301,17 @@ export function familyDefaults(
     }
 
     // Moonshot family (check BEFORE generic Kimi — more specific)
-    if (id.startsWith('moonshotai/')) {
+    if (id.startsWith("moonshotai/")) {
         return { contextWindow: 262_144, maxTokens: 262_144, reasoning: true };
     }
 
     // Kimi family
-    if (id.startsWith('kimi-') || id.includes('/kimi-')) {
+    if (id.startsWith("kimi-") || id.includes("/kimi-")) {
         return { contextWindow: 262_144, maxTokens: 32_768, reasoning: true };
     }
 
     // GLM family
-    if (id.startsWith('glm-') || id.includes('/glm-')) {
+    if (id.startsWith("glm-") || id.includes("/glm-")) {
         return {
             contextWindow: 1_000_000,
             maxTokens: 131_072,
@@ -319,7 +320,7 @@ export function familyDefaults(
     }
 
     // MiMo family
-    if (id.startsWith('mimo-') || id.includes('/mimo-')) {
+    if (id.startsWith("mimo-") || id.includes("/mimo-")) {
         return {
             contextWindow: 1_000_000,
             maxTokens: 128_000,
@@ -329,25 +330,25 @@ export function familyDefaults(
 
     // Qwen family
     if (
-        id.startsWith('qwen-') ||
-        id.startsWith('qwen3') ||
-        id.includes('/qwen')
+        id.startsWith("qwen-") ||
+        id.startsWith("qwen3") ||
+        id.includes("/qwen")
     ) {
         return { contextWindow: 1_000_000, maxTokens: 64_000, reasoning: true };
     }
 
     // Gemma family
-    if (id.startsWith('gemma-') || id.includes('/gemma-')) {
+    if (id.startsWith("gemma-") || id.includes("/gemma-")) {
         return { contextWindow: 262_144, maxTokens: 32_768, reasoning: true };
     }
 
     // Nemotron family
-    if (id.startsWith('nemotron-') || id.includes('/nemotron-')) {
+    if (id.startsWith("nemotron-") || id.includes("/nemotron-")) {
         return { contextWindow: 1_000_000, maxTokens: 65_536, reasoning: true };
     }
 
     // MiniMax family
-    if (id.startsWith('minimax-') || id.includes('/minimax-')) {
+    if (id.startsWith("minimax-") || id.includes("/minimax-")) {
         return {
             contextWindow: 1_000_000,
             maxTokens: 131_072,
@@ -356,22 +357,22 @@ export function familyDefaults(
     }
 
     // Laguna family
-    if (id.startsWith('laguna-') || id.includes('/laguna')) {
+    if (id.startsWith("laguna-") || id.includes("/laguna")) {
         return { contextWindow: 262_144, maxTokens: 32_768, reasoning: true };
     }
 
     // Google models via OpenRouter
-    if (id.startsWith('google/')) {
+    if (id.startsWith("google/")) {
         return { contextWindow: 262_144, maxTokens: 32_768, reasoning: true };
     }
 
     // Nvidia models via OpenRouter
-    if (id.startsWith('nvidia/')) {
+    if (id.startsWith("nvidia/")) {
         return { contextWindow: 1_000_000, maxTokens: 65_536, reasoning: true };
     }
 
     // Poolside models
-    if (id.startsWith('poolside/')) {
+    if (id.startsWith("poolside/")) {
         return { contextWindow: 262_144, maxTokens: 32_768, reasoning: true };
     }
 
@@ -389,57 +390,57 @@ function formatModelName(id: string, ownedBy: string): string {
         const upper = w.charAt(0).toUpperCase() + w.slice(1);
         // Known multi-letter acronyms that should stay uppercase
         const acronyms: Record<string, string> = {
-            Glm: 'GLM',
-            Mimo: 'MiMo',
-            Gpt: 'GPT',
-            Oss: 'OSS',
-            Kimi: 'Kimi',
-            Qwen: 'Qwen',
-            Gemma: 'Gemma',
-            Grok: 'Grok',
-            Nemotron: 'Nemotron',
-            Deepseek: 'DeepSeek',
-            Moonshotai: 'MoonshotAI',
-            Laguna: 'Laguna',
+            Glm: "GLM",
+            Mimo: "MiMo",
+            Gpt: "GPT",
+            Oss: "OSS",
+            Kimi: "Kimi",
+            Qwen: "Qwen",
+            Gemma: "Gemma",
+            Grok: "Grok",
+            Nemotron: "Nemotron",
+            Deepseek: "DeepSeek",
+            Moonshotai: "MoonshotAI",
+            Laguna: "Laguna",
         };
         return acronyms[upper] ?? upper;
     };
 
-    if (id.startsWith('ocg/go-')) {
+    if (id.startsWith("ocg/go-")) {
         const base = id.slice(7); // remove "ocg/go-"
         const readable = base
-            .split('-')
+            .split("-")
             .map((w) => normalizeWord(w))
-            .join(' ')
-            .replace(/V(\d+)/gi, 'V$1');
+            .join(" ")
+            .replace(/V(\d+)/gi, "V$1");
         return `${readable} (Go)`;
     }
 
-    if (ownedBy === 'antigravity') {
+    if (ownedBy === "antigravity") {
         const readable = id
-            .split('-')
+            .split("-")
             .map((w) => normalizeWord(w))
-            .join(' ')
-            .replace(/V(\d+)/gi, 'V$1');
+            .join(" ")
+            .replace(/V(\d+)/gi, "V$1");
         return `${readable} (Antigravity)`;
     }
 
-    if (ownedBy === 'openai') {
+    if (ownedBy === "openai") {
         const readable = id
-            .split('-')
+            .split("-")
             .map((w) => normalizeWord(w))
-            .join(' ');
+            .join(" ");
         return `${readable} (Codex)`;
     }
 
     // Pool / OpenRouter models: use slashes as separators, add "(Pool)"
     const readable = id
-        .replace(/\//g, ' ')
+        .replace(/\//g, " ")
         .split(/[-\s]/)
         .map((w) => normalizeWord(w))
-        .join(' ')
-        .replace(/:free/gi, ' Free')
-        .replace(/V(\d+)/gi, 'V$1');
+        .join(" ")
+        .replace(/:free/gi, " Free")
+        .replace(/V(\d+)/gi, "V$1");
     return `${readable} (Pool)`;
 }
 
@@ -448,15 +449,17 @@ function formatModelName(id: string, ownedBy: string): string {
 export function enrichModel(
     entry: CpaModelEntry,
     orMetadata: Map<string, OpenRouterModel>,
+    overridePrefixes: Record<string, string> = loadAiProvidersConfig().cpa
+        .overridePrefixes ?? { ocg: "go" },
 ): ProviderModelConfig | null {
     const modelId = entry.id;
     const ownedBy = entry.owned_by;
 
     // ── Filtering: skip duplicate prefixed variants ──
     // Skip or/ prefix — redundant with unprefixed OpenRouter variant
-    if (modelId.startsWith('or/')) return null;
+    if (modelId.startsWith("or/")) return null;
     // Skip bare go- prefix without ocg/ — redundant with ocg/go- variant
-    if (modelId.startsWith('go-') && !modelId.startsWith('ocg/')) return null;
+    if (modelId.startsWith("go-") && !modelId.startsWith("ocg/")) return null;
 
     // ── Layer 1: Generic fallback ──
     const genericCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -473,7 +476,7 @@ export function enrichModel(
 
     // ── Layer 3: OpenRouter API metadata ──
     // Try matching the model ID directly, and also try without the ocg/ prefix
-    const orForOcg = modelId.startsWith('ocg/') ? ocgAlias(modelId) : null;
+    const orForOcg = modelId.startsWith("ocg/") ? ocgAlias(modelId) : null;
     const orMatch =
         orMetadata.get(modelId) ??
         (orForOcg ? orMetadata.get(orForOcg) : undefined);
@@ -486,8 +489,8 @@ export function enrichModel(
             // Fallback: if no explicit max tokens, use a fraction of context
             maxTokens = Math.min(orMatch.context_length, maxTokens);
         }
-        const promptCost = parseOrCost(orMatch.pricing?.prompt ?? '0');
-        const completionCost = parseOrCost(orMatch.pricing?.completion ?? '0');
+        const promptCost = parseOrCost(orMatch.pricing?.prompt ?? "0");
+        const completionCost = parseOrCost(orMatch.pricing?.completion ?? "0");
         if (promptCost > 0 || completionCost > 0) {
             cost = {
                 ...genericCost,
@@ -496,17 +499,24 @@ export function enrichModel(
             };
         }
         if (orMatch.supported_parameters) {
-            reasoning = orMatch.supported_parameters.includes('reasoning');
+            reasoning = orMatch.supported_parameters.includes("reasoning");
         }
     }
 
-    // ── Layer 4: Provider-specific overrides ──
-    const providerOverrides = PROVIDER_OVERRIDES[ownedBy];
-    // For Go models, look up by alias (without ocg/ prefix)
-    const overrideKey = modelId.startsWith('ocg/')
-        ? ocgAlias(modelId)
-        : modelId;
-    const override = providerOverrides?.[overrideKey];
+    // ── Layer 4: Prefix-driven alias overrides ──
+    // Config-gated: `overridePrefixes` maps a model-id prefix to an
+    // OVERRIDE_TABLES key (default { ocg: "go" }). Dispatches on the
+    // model-id prefix instead of the provider display name, so adding or
+    // renaming a provider in cliproxy needs no code change here — only a
+    // config entry pointing at the right table.
+    const slashIdx = modelId.indexOf("/");
+    const prefix = slashIdx > 0 ? modelId.slice(0, slashIdx) : null;
+    const tableName = prefix ? overridePrefixes[prefix] : undefined;
+    const aliasKey = tableName ? modelId.slice(slashIdx + 1) : null;
+    const override =
+        tableName && aliasKey
+            ? OVERRIDE_TABLES[tableName]?.[aliasKey]
+            : undefined;
 
     if (override?.contextWindow) contextWindow = override.contextWindow;
     if (override?.maxTokens) maxTokens = override.maxTokens;
@@ -522,14 +532,14 @@ export function enrichModel(
     }
 
     // ── Image support detection ──
-    let input: Array<'text' | 'image'> = ['text'];
+    let input: Array<"text" | "image"> = ["text"];
     // Check OpenRouter architecture.input_modalities for OR-routed models
-    if (orMatch?.architecture?.input_modalities?.includes('image')) {
-        input = ['text', 'image'];
+    if (orMatch?.architecture?.input_modalities?.includes("image")) {
+        input = ["text", "image"];
     }
     // Check static image map (for non-OR models or when OR metadata is unavailable)
     if (STATIC_IMAGE_MODELS.has(modelId)) {
-        input = ['text', 'image'];
+        input = ["text", "image"];
     }
 
     return {
@@ -555,7 +565,7 @@ export async function buildCpaModels(
 
     // 2. If CPA down, return static fallback
     if (entries.length === 0) {
-        return { models: STATIC_FALLBACK_MODELS, source: 'fallback' };
+        return { models: STATIC_FALLBACK_MODELS, source: "fallback" };
     }
 
     // 3. Fetch OpenRouter metadata
@@ -570,8 +580,8 @@ export async function buildCpaModels(
 
     // 5. If all enrichment failed, return static fallback
     if (models.length === 0) {
-        return { models: STATIC_FALLBACK_MODELS, source: 'fallback' };
+        return { models: STATIC_FALLBACK_MODELS, source: "fallback" };
     }
 
-    return { models, source: 'live' };
+    return { models, source: "live" };
 }

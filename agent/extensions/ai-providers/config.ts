@@ -19,9 +19,9 @@
  * }
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { getAgentDir, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 export interface AiProvidersConfig {
     providers: Record<string, boolean>;
@@ -38,20 +38,31 @@ export interface AiProvidersConfig {
          * vs the static fallback list). Defaults to false.
          */
         silentCatalogDiff?: boolean;
+        /**
+         * Model-id prefixes whose models should consult the named override
+         * tables during enrichment. Maps a CPA model-id prefix to an
+         * `OVERRIDE_TABLES` key, e.g. `{ "ocg": "go" }` → models like
+         * `cpa/ocg/go-glm-5.2` consult `OVERRIDE_TABLES.go`. Defaults to
+         * `{ ocg: "go" }`. Adding/renaming a provider in cliproxy only needs
+         * an entry here (pointing at the right table); adding a whole new
+         * family also needs a new entry in `OVERRIDE_TABLES`. A project
+         * setting replaces (does not merge) the global map.
+         */
+        overridePrefixes?: Record<string, string>;
     };
 }
 
 const DEFAULT_CONFIG: AiProvidersConfig = {
     providers: {},
     widgets: {},
-    cpa: { refreshTtlMs: 30_000 },
+    cpa: { refreshTtlMs: 30_000, overridePrefixes: { ocg: "go" } },
 };
 
 function normalizeBooleanMap(raw: unknown): Record<string, boolean> {
-    if (!raw || typeof raw !== 'object') return {};
+    if (!raw || typeof raw !== "object") return {};
     const result: Record<string, boolean> = {};
     for (const [key, value] of Object.entries(raw)) {
-        if (typeof value === 'boolean') {
+        if (typeof value === "boolean") {
             result[key] = value;
         }
     }
@@ -61,10 +72,10 @@ function normalizeBooleanMap(raw: unknown): Record<string, boolean> {
 export function normalizeAiProvidersConfig(
     raw: unknown,
 ): Partial<AiProvidersConfig> {
-    if (!raw || typeof raw !== 'object') return {};
+    if (!raw || typeof raw !== "object") return {};
     const value = raw as Record<string, unknown>;
     const rawCpa =
-        value.cpa && typeof value.cpa === 'object'
+        value.cpa && typeof value.cpa === "object"
             ? (value.cpa as Record<string, unknown>)
             : {};
 
@@ -76,22 +87,45 @@ export function normalizeAiProvidersConfig(
     const cpaPartial: {
         refreshTtlMs?: number;
         silentCatalogDiff?: boolean;
+        overridePrefixes?: Record<string, string>;
     } = {};
     if (
-        typeof rawCpa.refreshTtlMs === 'number' &&
+        typeof rawCpa.refreshTtlMs === "number" &&
         Number.isFinite(rawCpa.refreshTtlMs) &&
         rawCpa.refreshTtlMs > 0
     ) {
         cpaPartial.refreshTtlMs = rawCpa.refreshTtlMs;
     }
-    if (typeof rawCpa.silentCatalogDiff === 'boolean') {
+    if (typeof rawCpa.silentCatalogDiff === "boolean") {
         cpaPartial.silentCatalogDiff = rawCpa.silentCatalogDiff;
+    }
+    if (
+        rawCpa.overridePrefixes &&
+        typeof rawCpa.overridePrefixes === "object" &&
+        !Array.isArray(rawCpa.overridePrefixes)
+    ) {
+        const prefixes: Record<string, string> = {};
+        for (const [k, v] of Object.entries(
+            rawCpa.overridePrefixes as Record<string, unknown>,
+        )) {
+            if (
+                typeof k === "string" &&
+                k.length > 0 &&
+                typeof v === "string" &&
+                v.length > 0
+            ) {
+                prefixes[k] = v;
+            }
+        }
+        if (Object.keys(prefixes).length > 0) {
+            cpaPartial.overridePrefixes = prefixes;
+        }
     }
     if (Object.keys(cpaPartial).length > 0) {
         config.cpa = cpaPartial;
     }
 
-    if (typeof value.maxVisibleRows === 'number') {
+    if (typeof value.maxVisibleRows === "number") {
         config.maxVisibleRows = value.maxVisibleRows;
     }
 
@@ -102,7 +136,7 @@ function readLegacyConfig(path: string): Partial<AiProvidersConfig> {
     if (!existsSync(path)) return {};
     try {
         return normalizeAiProvidersConfig(
-            JSON.parse(readFileSync(path, 'utf-8')),
+            JSON.parse(readFileSync(path, "utf-8")),
         );
     } catch {
         return {};
@@ -113,10 +147,10 @@ export function mergeAiProvidersConfig(
     base: AiProvidersConfig,
     overrides: Partial<AiProvidersConfig>,
 ): AiProvidersConfig {
-    const baseCpa: AiProvidersConfig['cpa'] = base.cpa ?? {
+    const baseCpa: AiProvidersConfig["cpa"] = base.cpa ?? {
         refreshTtlMs: 30_000,
     };
-    const overrideCpa: Partial<AiProvidersConfig['cpa']> = overrides.cpa ?? {};
+    const overrideCpa: Partial<AiProvidersConfig["cpa"]> = overrides.cpa ?? {};
     return {
         providers: {
             ...base.providers,
@@ -132,13 +166,15 @@ export function mergeAiProvidersConfig(
                 overrideCpa.refreshTtlMs ?? baseCpa.refreshTtlMs ?? 30_000,
             silentCatalogDiff:
                 overrideCpa.silentCatalogDiff ?? baseCpa.silentCatalogDiff,
+            overridePrefixes: overrideCpa.overridePrefixes ??
+                baseCpa.overridePrefixes ?? { ocg: "go" },
         },
     };
 }
 
 export function loadAiProvidersConfig(cwd = process.cwd()): AiProvidersConfig {
-    const projectLegacyPath = join(cwd, '.pi', 'ai-providers.json');
-    const globalLegacyPath = join(getAgentDir(), 'ai-providers.json');
+    const projectLegacyPath = join(cwd, ".pi", "ai-providers.json");
+    const globalLegacyPath = join(getAgentDir(), "ai-providers.json");
 
     let globalConfig: Partial<AiProvidersConfig> = {};
     let projectConfig: Partial<AiProvidersConfig> = {};

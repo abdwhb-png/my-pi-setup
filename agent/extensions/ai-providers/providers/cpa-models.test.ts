@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, it, mock, beforeEach } from 'bun:test';
-import { PROVIDER_OVERRIDES } from '../constants/cpa-overrides';
+import { OVERRIDE_TABLES } from '../constants/cpa-overrides';
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
 import {
     enrichModel,
@@ -403,6 +403,45 @@ describe('enrichModel enrichment pipeline', () => {
         expect(result.maxTokens).toBe(384_000);
     });
 
+    it('skips overrides when overridePrefixes map is empty (config-gated)', () => {
+        const entry: CpaModelEntry = {
+            id: 'ocg/go-glm-5.2',
+            owned_by: 'ocode-go (main)',
+        };
+        // Empty map → no prefix matches → override table not consulted; cost
+        // falls back to the zero-cost generic (the override would set 1.4/4.4).
+        const result = enrichModel(entry, emptyOrMeta, {})!;
+        expect(result.cost.input).toBe(0);
+        expect(result.cost.output).toBe(0);
+    });
+
+    it('applies Go override for a prefix mapped to the go table', () => {
+        // Pretend cliproxy renamed `ocg` → `ogo`. Same alias table applies
+        // because the prefix is mapped to "go" in overridePrefixes.
+        const entry: CpaModelEntry = {
+            id: 'ogo/go-glm-5.2',
+            owned_by: 'ocode-go (main)',
+        };
+        const result = enrichModel(entry, emptyOrMeta, { ogo: 'go' })!;
+        expect(result.cost.input).toBe(1.4);
+        expect(result.cost.output).toBe(4.4);
+        expect(result.contextWindow).toBe(1_000_000);
+        expect(result.maxTokens).toBe(131_072);
+    });
+
+    it('does not cross-contaminate tables on alias collision', () => {
+        // A non-go family `foo` happens to ship a model aliased `go-glm-5.2`.
+        // Dispatch must look in the `foo` table only, not leak into `go`.
+        const entry: CpaModelEntry = {
+            id: 'foo/go-glm-5.2',
+            owned_by: 'foo-provider',
+        };
+        const result = enrichModel(entry, emptyOrMeta, { foo: 'foo' })!;
+        // foo table is empty → no override → zero-cost generic fallback.
+        expect(result.cost.input).toBe(0);
+        expect(result.cost.output).toBe(0);
+    });
+
     it('always includes compat: supportsDeveloperRole: false', () => {
         const entry: CpaModelEntry = {
             id: 'gemini-3-flash',
@@ -503,31 +542,24 @@ describe('STATIC_FALLBACK_MODELS', () => {
     });
 });
 
-// ── PROVIDER_OVERRIDES ──
+// ── OVERRIDE_TABLES ──
 
-describe('PROVIDER_OVERRIDES', () => {
-    it('has entry for ocode-go (main)', () => {
-        expect(PROVIDER_OVERRIDES['ocode-go (main)']).toBeDefined();
+describe('OVERRIDE_TABLES', () => {
+    it('exposes the "go" table for OpenCode Go models', () => {
+        expect(OVERRIDE_TABLES.go).toBeDefined();
     });
 
-    it('has entry for ocode-go (2nd)', () => {
-        expect(PROVIDER_OVERRIDES['ocode-go (2nd)']).toBeDefined();
+    it('go table has 8 models with pricing overrides', () => {
+        expect(Object.keys(OVERRIDE_TABLES.go).length).toBe(8);
     });
 
-    it('has 8 Go models with pricing overrides', () => {
-        const goOverrides = PROVIDER_OVERRIDES['ocode-go (main)'];
-        expect(Object.keys(goOverrides).length).toBe(8);
+    it('keys go entries by the post-prefix alias (e.g. go-glm-5.2)', () => {
+        expect(OVERRIDE_TABLES.go['go-glm-5.2']).toBeDefined();
+        expect(OVERRIDE_TABLES.go['go-deepseek-v4-pro']).toBeDefined();
     });
 
-    it('shares the same Go overrides across Go instances', () => {
-        expect(PROVIDER_OVERRIDES['ocode-go (main)']).toBe(
-            PROVIDER_OVERRIDES['ocode-go (2nd)'],
-        );
-    });
-
-    it('each Go override has cost with all fields', () => {
-        const goOverrides = PROVIDER_OVERRIDES['ocode-go (main)'];
-        for (const [, override] of Object.entries(goOverrides)) {
+    it('each go override has cost with all fields', () => {
+        for (const [, override] of Object.entries(OVERRIDE_TABLES.go)) {
             expect(override.cost).toBeDefined();
             expect(override.cost!.input).not.toBeUndefined();
             expect(override.cost!.output).not.toBeUndefined();
