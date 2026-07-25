@@ -1,40 +1,47 @@
-import { spawn } from 'node:child_process';
+import { spawn } from "node:child_process";
 import {
     readdir as fsReaddir,
     readFile as fsReadFile,
     stat as fsStat,
-} from 'node:fs/promises';
-import nodePath from 'node:path';
-import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
+} from "node:fs/promises";
+import nodePath from "node:path";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import type {
     ExtensionAPI,
     SessionEntry,
     Theme,
-} from '@earendil-works/pi-coding-agent';
+    ToolResultEvent,
+} from "@earendil-works/pi-coding-agent";
 import {
     createFindToolDefinition,
     createGrepToolDefinition,
     createLsToolDefinition,
     createReadToolDefinition,
-} from '@earendil-works/pi-coding-agent';
-import { Container, Text } from '@earendil-works/pi-tui';
-import type { Component } from '@earendil-works/pi-tui';
-import { getActivePolicy } from '../_shared/audit-mode/audit-state';
-import { appendCompressionFooter } from '../_shared/compression-render';
-import { expandHomePath } from '../_shared/home-path.ts';
+} from "@earendil-works/pi-coding-agent";
+import { Container, Text } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
+import { getActivePolicy } from "../_shared/audit-mode/audit-state";
+import { appendCompressionFooter } from "../_shared/compression-render";
+import { expandHomePath } from "../_shared/home-path.ts";
 import {
     loadFileResolverConfig,
     setFileResolverConfig,
     getFileResolverConfig,
-} from './config.ts';
-import { handleReadOnDirectory, handleLsOnFile } from './path-redirect';
-import piFileResolver from './pi-file-resolver';
-import { registerPromptThinking } from './prompt-thinking.ts';
+} from "./config.ts";
+import { handleReadOnDirectory, handleLsOnFile } from "./path-redirect";
+import piFileResolver from "./pi-file-resolver";
+import { registerPromptThinking } from "./prompt-thinking.ts";
 import {
     compactPromptSessionName,
     compactSkillSessionName,
-} from './session-name.ts';
+} from "./session-name.ts";
+import {
+    discoverSkillFallbacks,
+    formatRescuedSkillBlock,
+    getSkillRoots,
+    type RescuedSkill,
+} from "./skill-rescue.ts";
 
 // ─── Audit-aware ls operations ───────────────────────────────────────────────
 
@@ -59,11 +66,11 @@ export const auditAwareLsOperations = {
         if (!getFileResolverConfig().ls.respectGitignore) {
             return entries;
         }
-        if (getActivePolicy()['listing.showHidden']) {
+        if (getActivePolicy()["listing.showHidden"]) {
             return entries;
         }
         // Standard mode: hide dotfiles
-        return entries.filter((e) => !e.startsWith('.'));
+        return entries.filter((e) => !e.startsWith("."));
     },
 };
 
@@ -81,7 +88,7 @@ export const auditAwareLsOperations = {
  */
 const FD_BIN = nodePath.join(
     nodePath.dirname(fileURLToPath(import.meta.url)),
-    '../../bin/fd',
+    "../../bin/fd",
 );
 
 /**
@@ -108,28 +115,28 @@ export const auditAwareFindOperations = {
         options: { ignore: string[]; limit: number },
     ): Promise<string[]> => {
         const ignoreGitignore =
-            getActivePolicy()['find.ignoreGitignore'] ||
+            getActivePolicy()["find.ignoreGitignore"] ||
             !getFileResolverConfig().fd.respectGitignore;
 
         const args: string[] = [
-            '--glob',
-            '--color=never',
-            '--hidden',
-            '--no-require-git',
-            '--max-results',
+            "--glob",
+            "--color=never",
+            "--hidden",
+            "--no-require-git",
+            "--max-results",
             String(options.limit),
         ];
 
         if (ignoreGitignore) {
             // Bypass .gitignore so audit sees everything on disk.
-            args.push('--no-ignore');
+            args.push("--no-ignore");
         }
 
         // Mirror the factory's --full-path logic for path-containing patterns.
         let effectivePattern = pattern;
-        if (pattern.includes('/')) {
-            args.push('--full-path');
-            if (!pattern.startsWith('**')) {
+        if (pattern.includes("/")) {
+            args.push("--full-path");
+            if (!pattern.startsWith("**")) {
                 effectivePattern = `**/${pattern}`;
             }
         }
@@ -138,10 +145,10 @@ export const auditAwareFindOperations = {
 
         return new Promise<string[]>((resolve, reject) => {
             const child = spawn(FD_BIN, args, {
-                stdio: ['ignore', 'pipe', 'pipe'],
+                stdio: ["ignore", "pipe", "pipe"],
             });
             if (!child.stdout || !child.stderr) {
-                reject(new Error('Failed to open stdio for fd'));
+                reject(new Error("Failed to open stdio for fd"));
                 return;
             }
             const stdout = child.stdout;
@@ -150,21 +157,21 @@ export const auditAwareFindOperations = {
                 input: stdout as NodeJS.ReadableStream,
             });
             const results: string[] = [];
-            let stderr = '';
+            let stderr = "";
 
-            child.stderr.on('data', (chunk: Buffer | string) => {
-                stderr += typeof chunk === 'string' ? chunk : chunk.toString();
+            child.stderr.on("data", (chunk: Buffer | string) => {
+                stderr += typeof chunk === "string" ? chunk : chunk.toString();
             });
 
-            rl.on('line', (line: string) => {
+            rl.on("line", (line: string) => {
                 if (line.trim()) results.push(line.trim());
             });
 
-            child.on('error', (err: Error) =>
+            child.on("error", (err: Error) =>
                 reject(new Error(`Failed to run fd: ${err.message}`)),
             );
 
-            child.on('close', (code: number | null) => {
+            child.on("close", (code: number | null) => {
                 rl.close();
                 if (code !== 0 && results.length === 0) {
                     reject(
@@ -226,7 +233,7 @@ function makeRenderResult<F extends (...args: any[]) => Component>(
     ) => {
         let text = textByCallId.get(context.toolCallId);
         if (!text) {
-            text = new Text('', 0, 0);
+            text = new Text("", 0, 0);
             textByCallId.set(context.toolCallId, text);
         }
         const baseContext = { ...context, lastComponent: text };
@@ -265,46 +272,46 @@ function makeRenderResult<F extends (...args: any[]) => Component>(
 
 const GREP_DISAMBIGUATION = {
     description:
-        'Search file contents (ripgrep). Arguments: ' +
-        '{ pattern: string, path?: string, glob?: string, ignoreCase?: boolean, ' +
-        'literal?: boolean, context?: number, limit?: number }. ' +
-        'REQUIRED: pass the regex/text to search for in the `pattern` argument. ' +
-        'Do NOT use `description` as an argument — it is JSON-Schema metadata that ' +
-        'annotates the `pattern` field, not itself a parameter. ' +
+        "Search file contents (ripgrep). Arguments: " +
+        "{ pattern: string, path?: string, glob?: string, ignoreCase?: boolean, " +
+        "literal?: boolean, context?: number, limit?: number }. " +
+        "REQUIRED: pass the regex/text to search for in the `pattern` argument. " +
+        "Do NOT use `description` as an argument — it is JSON-Schema metadata that " +
+        "annotates the `pattern` field, not itself a parameter. " +
         'Correct call shape = { "pattern": "foo", "path": "./src" }.',
     promptSnippet:
-        'Search file contents for the regex/text in `pattern` (NOT `description`). Respects .gitignore.',
+        "Search file contents for the regex/text in `pattern` (NOT `description`). Respects .gitignore.",
     promptGuidelines: [
-        'grep: pass the search text in the `pattern` argument. `description` is schema metadata, not a parameter.',
+        "grep: pass the search text in the `pattern` argument. `description` is schema metadata, not a parameter.",
         'grep: correct shape = { "pattern": "foo", "path": "./src" }. Do not emit { "description": ... }.',
     ],
 };
 
 const FIND_DISAMBIGUATION = {
     description:
-        'Find files by glob pattern (fd). Arguments: ' +
-        '{ pattern: string, path?: string, limit?: number }. ' +
-        'REQUIRED: pass the glob expression in the `pattern` argument. ' +
-        'Do NOT use `description` as an argument — it is JSON-Schema metadata that ' +
-        'annotates the `pattern` field. ' +
+        "Find files by glob pattern (fd). Arguments: " +
+        "{ pattern: string, path?: string, limit?: number }. " +
+        "REQUIRED: pass the glob expression in the `pattern` argument. " +
+        "Do NOT use `description` as an argument — it is JSON-Schema metadata that " +
+        "annotates the `pattern` field. " +
         'Correct call shape = { "pattern": "**/*.ts", "path": "./src" }.',
     promptSnippet:
-        'Find files matching a glob in `pattern` (NOT `description`). Respects .gitignore.',
+        "Find files matching a glob in `pattern` (NOT `description`). Respects .gitignore.",
     promptGuidelines: [
-        'find: pass the glob expression in the `pattern` argument. `description` is schema metadata, not a parameter.',
+        "find: pass the glob expression in the `pattern` argument. `description` is schema metadata, not a parameter.",
         'find: correct shape = { "pattern": "**/*.ts", "path": "./src" }. Do not emit { "description": ... }.',
     ],
 };
 
 const LS_DISAMBIGUATION = {
     promptGuidelines: [
-        'ls: pass the directory to list in the `path` argument (optional). No other arguments expected.',
+        "ls: pass the directory to list in the `path` argument (optional). No other arguments expected.",
     ],
 };
 
 const READ_DISAMBIGUATION = {
     promptGuidelines: [
-        'read: pass the file to read in the `path` argument (required). Optional: `offset`, `limit` (1-indexed line numbers).',
+        "read: pass the file to read in the `path` argument (required). Optional: `offset`, `limit` (1-indexed line numbers).",
     ],
 };
 
@@ -312,50 +319,57 @@ const READ_DISAMBIGUATION = {
 
 function registerCompactSessionNames(
     pi: ExtensionAPI,
+    transformSkillInput: (text: string) => string | undefined,
 ): (entries: readonly SessionEntry[]) => void {
     let firstUserInputSeen = false;
     let firstUserMessageSeen = false;
 
-    pi.on('message_end', (event) => {
-        if (event.message.role !== 'user' || firstUserMessageSeen) return;
+    pi.on("message_end", (event) => {
+        if (event.message.role !== "user" || firstUserMessageSeen) return;
         firstUserInputSeen = true;
         firstUserMessageSeen = true;
         if (pi.getSessionName()) return;
 
         const content = event.message.content;
         const text =
-            typeof content === 'string'
+            typeof content === "string"
                 ? content
                 : content
                       .flatMap((block) =>
-                          block.type === 'text' ? [block.text] : [],
+                          block.type === "text" ? [block.text] : [],
                       )
-                      .join(' ');
+                      .join(" ");
         const sessionName = compactSkillSessionName(text);
         if (sessionName) pi.setSessionName(sessionName);
     });
 
-    pi.on('input', (event) => {
+    pi.on("input", (event) => {
+        const rescuedSkillInput = transformSkillInput(event.text);
+        if (rescuedSkillInput) {
+            firstUserInputSeen = true;
+            return { action: "transform", text: rescuedSkillInput };
+        }
+
         if (firstUserInputSeen || pi.getSessionName()) {
-            return { action: 'continue' };
+            return { action: "continue" };
         }
         firstUserInputSeen = true;
 
         const commands = pi.getCommands();
         const promptNames = new Set(
-            commands.filter((c) => c.source === 'prompt').map((c) => c.name),
+            commands.filter((c) => c.source === "prompt").map((c) => c.name),
         );
 
         const sessionName = compactPromptSessionName(event.text, promptNames);
         if (sessionName) pi.setSessionName(sessionName);
 
-        return { action: 'continue' };
+        return { action: "continue" };
     });
 
     return (entries) => {
         const hasUserMessage = entries.some(
             (entry) =>
-                entry.type === 'message' && entry.message.role === 'user',
+                entry.type === "message" && entry.message.role === "user",
         );
         firstUserInputSeen = hasUserMessage;
         firstUserMessageSeen = hasUserMessage;
@@ -366,10 +380,164 @@ export default function piOverrides(pi: ExtensionAPI): void {
     // --- Register piFileResolver
     piFileResolver(pi);
     registerPromptThinking(pi);
-    const restoreCompactSessionNameState = registerCompactSessionNames(pi);
+    let rescuedSkills: RescuedSkill[] = [];
+    pi.registerCommand("validate-skills", {
+        description:
+            "Report BOM and frontmatter problems in discoverable skills",
+        handler: async (_args, ctx) => {
+            const trusted =
+                typeof ctx.isProjectTrusted === "function" &&
+                ctx.isProjectTrusted();
+            const roots = await getSkillRoots(ctx.cwd, trusted);
+            const discovery = await discoverSkillFallbacks(roots);
+            const content =
+                discovery.diagnostics.length === 0
+                    ? "All discoverable skills passed BOM/frontmatter validation."
+                    : discovery.diagnostics
+                          .map(
+                              (diagnostic) =>
+                                  `${diagnostic.path}: ${diagnostic.message}`,
+                          )
+                          .join("\n");
+            pi.sendMessage(
+                {
+                    customType: "skill-validation",
+                    content,
+                    display: true,
+                },
+                { triggerTurn: false },
+            );
+        },
+    });
+    const restoreCompactSessionNameState = registerCompactSessionNames(
+        pi,
+        (text) => {
+            const match = text.match(/^\/skill:([^\s]+)(?:\s+([\s\S]*))?$/);
+            if (!match) return undefined;
 
-    pi.on('session_start', async (_event, ctx) => {
+            const coreOwnsSkill = pi
+                .getCommands()
+                .some(
+                    (command) =>
+                        command.source === "skill" &&
+                        command.name.replace(/^skill:/, "").toLowerCase() ===
+                            match[1].toLowerCase(),
+                );
+            if (coreOwnsSkill) return undefined;
+
+            const skill = rescuedSkills.find(
+                (candidate) =>
+                    candidate.name.toLowerCase() === match[1].toLowerCase(),
+            );
+            return skill
+                ? formatRescuedSkillBlock(skill, match[2] ?? "")
+                : undefined;
+        },
+    );
+
+    const availableRescuedSkills = () => {
+        const coreSkillNames = new Set(
+            pi
+                .getCommands()
+                .filter((command) => command.source === "skill")
+                .map((command) =>
+                    command.name.replace(/^skill:/, "").toLowerCase(),
+                ),
+        );
+        return rescuedSkills.filter(
+            (skill) => !coreSkillNames.has(skill.name.toLowerCase()),
+        );
+    };
+
+    pi.on("before_agent_start", (event) => {
+        const skills = availableRescuedSkills();
+        if (skills.length === 0) return undefined;
+
+        const catalog = skills
+            .map(
+                (skill) =>
+                    `- \`${skill.name}\`: ${skill.description}\n  Load full instructions with \`load_skill\`.`,
+            )
+            .join("\n");
+        return {
+            systemPrompt: `${event.systemPrompt}\n\n## BOM-normalized fallback skills\n${catalog}`,
+        };
+    });
+
+    pi.on("tool_result", (event: ToolResultEvent) => {
+        const output = event.content
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("\n");
+
+        if (event.toolName === "load_skill") {
+            const name = event.input.name;
+            if (typeof name !== "string") return undefined;
+            if (!output.includes(`Skill "${name}" not found`)) return undefined;
+
+            const skill = availableRescuedSkills().find(
+                (candidate) =>
+                    candidate.name.toLowerCase() === name.toLowerCase(),
+            );
+            if (!skill) return undefined;
+
+            return {
+                content: [{ type: "text", text: skill.content }],
+                details: undefined,
+                isError: false,
+            };
+        }
+
+        if (event.toolName !== "search_skill") return undefined;
+        const query = event.input.query;
+        if (typeof query !== "string") return undefined;
+        const lowerQuery = query.toLowerCase();
+        const matches = availableRescuedSkills().filter((skill) =>
+            `${skill.name} ${skill.description}`
+                .toLowerCase()
+                .includes(lowerQuery),
+        );
+        if (matches.length === 0) return undefined;
+
+        const lines = [
+            `Found ${matches.length} BOM-normalized fallback skill(s) matching "${query}":`,
+            "",
+            ...matches.flatMap((skill) => [
+                `  • ${skill.name}`,
+                `    ${skill.description}`,
+            ]),
+            "",
+            `Use load_skill("${matches[0].name}") to load its full instructions.`,
+        ];
+        const fallbackOutput = lines.join("\n");
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: output.startsWith("No skills found")
+                        ? fallbackOutput
+                        : `${output}\n\n${fallbackOutput}`,
+                },
+            ],
+            details: undefined,
+            isError: false,
+        };
+    });
+
+    pi.on("session_start", async (_event, ctx) => {
         restoreCompactSessionNameState(ctx.sessionManager.getEntries());
+        const trusted =
+            typeof ctx.isProjectTrusted === "function" &&
+            ctx.isProjectTrusted();
+        const roots = await getSkillRoots(ctx.cwd, trusted);
+        const discovery = await discoverSkillFallbacks(roots);
+        rescuedSkills = discovery.skills;
+        if (ctx.hasUI && discovery.diagnostics.length > 0) {
+            ctx.ui.notify(
+                `Normalized ${discovery.diagnostics.length} invalid skill file(s). Run /validate-skills for paths.`,
+                "warning",
+            );
+        }
         // Load config fresh each session
         setFileResolverConfig(loadFileResolverConfig(ctx.cwd));
 
@@ -481,15 +649,15 @@ export default function piOverrides(pi: ExtensionAPI): void {
         // shelling out via bash. This augments rather than replaces so it
         // composes safely with pi-roles inherit semantics.
         const current = pi.getActiveTools();
-        const added = ['grep', 'find', 'ls'].filter(
+        const added = ["grep", "find", "ls"].filter(
             (t) => !current.includes(t),
         );
         const newTools = [...new Set([...current, ...added])];
         pi.setActiveTools(newTools);
         if (ctx.hasUI && added.length > 0) {
             ctx.ui.notify(
-                `🛠️ Updated active tools: ${newTools.join(', ')}`,
-                'info',
+                `🛠️ Updated active tools: ${newTools.join(", ")}`,
+                "info",
             );
         }
     });

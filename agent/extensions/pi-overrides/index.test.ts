@@ -58,7 +58,7 @@ function createMockExtensionApi(
 ) {
     const handlers = new Map<
         string,
-        (event: object, ctx: object) => Promise<void> | void
+        (event: object, ctx: object) => Promise<unknown> | unknown
     >();
     const registeredTools = new Map<
         string,
@@ -74,7 +74,7 @@ function createMockExtensionApi(
     const pi = {
         on(
             event: string,
-            handler: (event: object, ctx: object) => Promise<void> | void,
+            handler: (event: object, ctx: object) => Promise<unknown> | unknown,
         ) {
             handlers.set(event, (value, ctx) =>
                 handler(value, {
@@ -101,6 +101,8 @@ function createMockExtensionApi(
         },
         getCommands: () => commands ?? [],
         setThinkingLevel: mock(() => undefined),
+        registerCommand: mock(() => undefined),
+        sendMessage: mock(() => undefined),
     } as unknown as ExtensionAPI;
     return {
         pi,
@@ -147,6 +149,178 @@ describe('pi-overrides', () => {
             '~/.pi/agent',
             '/tmp/pi-agent',
         );
+    });
+
+    it('transforms a rescued BOM skill slash command before Pi core expansion', async () => {
+        const root = await mkdtemp(nodePath.join(tmpdir(), 'pi-overrides-skill-'));
+        try {
+            const skillDir = nodePath.join(root, '.agents', 'skills', 'bom-skill');
+            await mkdir(skillDir, { recursive: true });
+            await writeFile(
+                nodePath.join(skillDir, 'SKILL.md'),
+                '\uFEFF---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n',
+            );
+
+            const { pi, handlers } = createMockExtensionApi();
+            piOverrides(pi);
+            await handlers.get('session_start')?.(
+                {},
+                {
+                    cwd: root,
+                    hasUI: false,
+                    isProjectTrusted: () => true,
+                },
+            );
+            const input = handlers.get('input');
+            if (!input) throw new Error('input handler not registered');
+
+            const result = await input(
+                { text: '/skill:bom-skill Apply it now', source: 'user' },
+                {},
+            );
+
+            expect(result).toEqual({
+                action: 'transform',
+                text: `<skill name="bom-skill" location="${nodePath.join(skillDir, 'SKILL.md')}">\nReferences are relative to ${skillDir}.\n\n# Instructions\n</skill>\n\nApply it now`,
+            });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('returns normalized rescued content when load_skill misses a BOM skill', async () => {
+        const root = await mkdtemp(nodePath.join(tmpdir(), 'pi-overrides-skill-'));
+        try {
+            const skillDir = nodePath.join(root, '.agents', 'skills', 'bom-skill');
+            await mkdir(skillDir, { recursive: true });
+            const skillPath = nodePath.join(skillDir, 'SKILL.md');
+            await writeFile(
+                skillPath,
+                '\uFEFF---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n',
+            );
+
+            const { pi, handlers } = createMockExtensionApi();
+            piOverrides(pi);
+            await handlers.get('session_start')?.(
+                {},
+                { cwd: root, hasUI: false, isProjectTrusted: () => true },
+            );
+            const toolResult = handlers.get('tool_result');
+            if (!toolResult) throw new Error('tool_result handler not registered');
+
+            const result = await toolResult(
+                {
+                    toolName: 'load_skill',
+                    input: { name: 'bom-skill' },
+                    content: [
+                        {
+                            type: 'text',
+                            text: 'Skill "bom-skill" not found. Use search_skill to discover available skills.',
+                        },
+                    ],
+                    details: undefined,
+                    isError: false,
+                },
+                {},
+            );
+
+            expect(result).toEqual({
+                content: [
+                    {
+                        type: 'text',
+                        text: '---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n',
+                    },
+                ],
+                details: undefined,
+                isError: false,
+            });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('adds rescued BOM skills to search_skill results', async () => {
+        const root = await mkdtemp(nodePath.join(tmpdir(), 'pi-overrides-skill-'));
+        try {
+            const skillDir = nodePath.join(root, '.agents', 'skills', 'bom-skill');
+            await mkdir(skillDir, { recursive: true });
+            await writeFile(
+                nodePath.join(skillDir, 'SKILL.md'),
+                '\uFEFF---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n',
+            );
+
+            const { pi, handlers } = createMockExtensionApi();
+            piOverrides(pi);
+            await handlers.get('session_start')?.(
+                {},
+                { cwd: root, hasUI: false, isProjectTrusted: () => true },
+            );
+            const toolResult = handlers.get('tool_result');
+            if (!toolResult) throw new Error('tool_result handler not registered');
+
+            const result = await toolResult(
+                {
+                    toolName: 'search_skill',
+                    input: { query: 'bom' },
+                    content: [
+                        {
+                            type: 'text',
+                            text: 'No skills found matching your query. Try a different search term.',
+                        },
+                    ],
+                    details: undefined,
+                    isError: false,
+                },
+                {},
+            );
+
+            expect(result).toEqual({
+                content: [
+                    {
+                        type: 'text',
+                        text: 'Found 1 BOM-normalized fallback skill(s) matching "bom":\n\n  • bom-skill\n    Rescued skill\n\nUse load_skill("bom-skill") to load its full instructions.',
+                    },
+                ],
+                details: undefined,
+                isError: false,
+            });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('advertises rescued skills to the model before an agent starts', async () => {
+        const root = await mkdtemp(nodePath.join(tmpdir(), 'pi-overrides-skill-'));
+        try {
+            const skillDir = nodePath.join(root, '.agents', 'skills', 'bom-skill');
+            await mkdir(skillDir, { recursive: true });
+            await writeFile(
+                nodePath.join(skillDir, 'SKILL.md'),
+                '\uFEFF---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n',
+            );
+
+            const { pi, handlers } = createMockExtensionApi();
+            piOverrides(pi);
+            await handlers.get('session_start')?.(
+                {},
+                { cwd: root, hasUI: false, isProjectTrusted: () => true },
+            );
+            const beforeAgentStart = handlers.get('before_agent_start');
+            if (!beforeAgentStart)
+                throw new Error('before_agent_start handler not registered');
+
+            const result = await beforeAgentStart(
+                { systemPrompt: 'Base prompt' },
+                {},
+            );
+
+            expect(result).toEqual({
+                systemPrompt:
+                    'Base prompt\n\n## BOM-normalized fallback skills\n- `bom-skill`: Rescued skill\n  Load full instructions with `load_skill`.',
+            });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
     });
 
     it('names an unnamed session from a skill-prefixed user message', async () => {
