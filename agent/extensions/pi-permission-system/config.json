@@ -17,7 +17,7 @@
             "*.env.example": "allow"
         },
         "bash": {
-            "rm -rf *": "ask",
+            "rm *": "ask",
             "sudo *": "ask",
             "docker *": "ask",
             "docker info *": "allow",
@@ -37,6 +37,7 @@
             "git * diff *": "allow",
             "git stash list": "allow",
             "git * stash list": "allow",
+            "readlink *": "allow",
             "* */node_modules/*": "ask",
             "ls */node_modules/*": "allow",
             "grep */node_modules/*": "allow",

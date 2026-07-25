@@ -73,7 +73,7 @@ function createMockContext(
       setWidget: mock(() => undefined),
       custom: mock(() => undefined),
       confirm: mock(async () => true),
-      select: mock(async () => "yes"),
+      select: mock(async () => "Approve"),
       input: mock(async () => ""),
     } as any,
     sessionManager: {
@@ -235,7 +235,11 @@ describe("brainstorm-forcer redesign", () => {
 
       const transition = tools.get("brainstorm_transition")!;
       const advanced = await transition.execute("next", { action: "next" }, undefined, undefined, ctx);
-      expect(advanced.details).toMatchObject({ phase: "understanding", completed: false });
+      expect(ctx.ui.select).toHaveBeenCalledWith(
+        "Approve brainstorm transition: Discovery → Understanding?",
+        ["Approve", "Reject", "Reject with reason"],
+      );
+      expect(advanced.details).toMatchObject({ phase: "understanding", completed: false, approved: true });
       expect(sentMessages.at(-1)).toMatchObject({
         message: { customType: "brainstorm-forcer-transition" },
         options: { deliverAs: "steer" },
@@ -244,7 +248,129 @@ describe("brainstorm-forcer redesign", () => {
       await expectRejection(blockedNext, "Understanding incomplete");
 
       const returned = await transition.execute("previous", { action: "previous" }, undefined, undefined, ctx);
-      expect(returned.details).toMatchObject({ phase: "discovery", completed: false });
+      expect(returned.details).toMatchObject({ phase: "discovery", completed: false, approved: true });
+      expect(ctx.ui.select).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports transition status without asking for approval", async () => {
+    const { pi, tools, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("Status only", ctx);
+
+    const result = await tools
+      .get("brainstorm_transition")!
+      .execute("status", { action: "status" }, undefined, undefined, ctx);
+    expect(result.details).toMatchObject({ phase: "discovery", completed: false });
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+  });
+
+  it("keeps the current phase and requires a revised artifact after a plain rejection", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-rejection-"));
+    try {
+      const { pi, tools, commands, sentMessages } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      (ctx.ui.select as any).mockResolvedValue("Reject");
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("Rejected transition", ctx);
+      const discovery = tools.get("brainstorm_submit_discovery")!;
+      await discovery.execute(
+        "artifact",
+        { filesAccessed: ["index.ts"], keyFindings: ["Initial finding."], gaps: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      const transition = tools.get("brainstorm_transition")!;
+      const rejected = await transition.execute("next", { action: "next" }, undefined, undefined, ctx);
+      expect(rejected.details).toMatchObject({ phase: "discovery", completed: false, approved: false });
+      expect(rejected.content[0].text).toContain("Refine the current phase");
+      expect(sentMessages.at(-1)).toMatchObject({
+        message: { customType: "brainstorm-forcer-transition-rejected" },
+        options: { deliverAs: "steer" },
+      });
+
+      await expectRejection(
+        Promise.resolve(transition.execute("retry", { action: "next" }, undefined, undefined, ctx)),
+        "Refine the current phase",
+      );
+      expect(ctx.ui.select).toHaveBeenCalledTimes(1);
+
+      await discovery.execute(
+        "revision",
+        { filesAccessed: ["index.ts"], keyFindings: ["Deeper validated finding."], gaps: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+      (ctx.ui.select as any).mockResolvedValue("Approve");
+      const advanced = await transition.execute("next-after-revision", { action: "next" }, undefined, undefined, ctx);
+      expect(advanced.details).toMatchObject({ phase: "understanding", approved: true });
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the optional custom rejection reason", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-rejection-reason-"));
+    try {
+      const { pi, tools, commands, sentMessages } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      (ctx.ui.select as any).mockResolvedValue("Reject with reason");
+      (ctx.ui.input as any).mockResolvedValue("Validate claims against primary sources.");
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("Reasoned rejection", ctx);
+      await tools.get("brainstorm_submit_discovery")!.execute(
+        "artifact",
+        { filesAccessed: ["index.ts"], keyFindings: ["Unverified finding."], gaps: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      const rejected = await tools
+        .get("brainstorm_transition")!
+        .execute("next", { action: "next" }, undefined, undefined, ctx);
+      expect(ctx.ui.input).toHaveBeenCalledWith("Why reject this transition? (optional)");
+      expect(rejected.details).toMatchObject({
+        phase: "discovery",
+        approved: false,
+        rejectionReason: "Validate claims against primary sources.",
+      });
+      expect(sentMessages.at(-1)?.message).toMatchObject({
+        content: expect.stringContaining("Validate claims against primary sources."),
+      });
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the default refinement reason when optional input is empty", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-empty-reason-"));
+    try {
+      const { pi, tools, commands } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      (ctx.ui.select as any).mockResolvedValue("Reject with reason");
+      (ctx.ui.input as any).mockResolvedValue("   ");
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("Empty rejection reason", ctx);
+      await tools.get("brainstorm_submit_discovery")!.execute(
+        "artifact",
+        { filesAccessed: ["index.ts"], keyFindings: ["Initial finding."], gaps: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      const rejected = await tools
+        .get("brainstorm_transition")!
+        .execute("next", { action: "next" }, undefined, undefined, ctx);
+      expect(rejected.details.rejectionReason).toContain("Refine the current phase");
+      expect(rejected.content[0].text).toContain("investigate remaining gaps");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -273,7 +399,7 @@ describe("brainstorm-forcer redesign", () => {
       );
 
       const result = await tools.get("brainstorm_transition")!.execute("complete", { action: "next" }, undefined, undefined, ctx);
-      expect(result.details).toEqual({ phase: null, completed: true });
+      expect(result.details).toEqual({ phase: null, completed: true, approved: true });
       expect(result.content[0].text).toContain("No planning workflow was started");
       expect((await handlers.get("context")!({ messages: [] }, ctx)).messages).toHaveLength(0);
     } finally {
@@ -539,6 +665,7 @@ describe("brainstorm-forcer redesign", () => {
       );
       await cmd.handler("next", ctx);
       expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Understanding"), "info");
+      expect(ctx.ui.select).not.toHaveBeenCalled();
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -643,6 +770,7 @@ describe("brainstorm-forcer redesign", () => {
     expect(result.systemPrompt).toContain("bundled skill `brainstorm-forcer`");
     expect(result.systemPrompt).toContain("brainstorm_submit_discovery");
     expect(result.systemPrompt).toContain("brainstorm_transition");
+    expect(result.systemPrompt).toContain("explicit user approval");
     expect(result.systemPrompt).toContain("Do not start the next phase before the transition succeeds");
     expect(result.message.customType).toBe("brainstorm-forcer");
     expect(result.message.content).toContain("Brainstorm Discovery");

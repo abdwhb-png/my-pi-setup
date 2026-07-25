@@ -34,6 +34,8 @@ Pi extension that runs brainstorming as a controlled, artifact-backed state mach
 
 After submitting current phase, LLM calls `brainstorm_transition` with `next`, `previous`, or `status`.
 
+LLM-requested `next` and `previous` transitions open a blocking user approval dialog with three choices: Approve, Reject, or Reject with reason. A rejection keeps the current phase and steers feedback back to the LLM. Empty or omitted reasons use a default instruction to investigate gaps, validate assumptions, go deeper, revise the artifact, and request transition again. Rejected forward transitions require a new artifact revision before another approval request. `status` and explicit user slash commands do not prompt.
+
 Transition gates:
 
 - every phase needs active artifact revision;

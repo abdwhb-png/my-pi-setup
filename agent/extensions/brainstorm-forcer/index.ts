@@ -10,69 +10,71 @@
  * - `/brainstorm force-next` bypasses criteria manually
  */
 
-import { randomUUID } from 'node:crypto';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { StringEnum } from '@earendil-works/pi-ai';
+import { randomUUID } from "node:crypto";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { StringEnum } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ExtensionContext,
     MessageRenderer,
-} from '@earendil-works/pi-coding-agent';
-import { Text } from '@earendil-works/pi-tui';
-import { Type } from 'typebox';
-import { createWidget, type WidgetHandle } from '../_shared/fancy-footer';
-import { createUiColors } from '../_shared/ui-colors';
-import { createBrainstormArtifactStore } from './artifacts';
+} from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
+import { createUiColors } from "../_shared/ui-colors";
+import { createBrainstormArtifactStore } from "./artifacts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const PHASES = [
-    'discovery',
-    'understanding',
-    'exploring',
-    'presenting',
-    'documenting',
+    "discovery",
+    "understanding",
+    "exploring",
+    "presenting",
+    "documenting",
 ] as const;
 type Phase = (typeof PHASES)[number];
 
 const PHASE_LABELS: Record<Phase, string> = {
-    discovery: 'Discovery',
-    understanding: 'Understanding',
-    exploring: 'Exploring',
-    presenting: 'Presenting',
-    documenting: 'Documenting',
+    discovery: "Discovery",
+    understanding: "Understanding",
+    exploring: "Exploring",
+    presenting: "Presenting",
+    documenting: "Documenting",
 };
 
 const PHASE_ICONS: Record<Phase, string> = {
-    discovery: '🔬',
-    understanding: '❓',
-    exploring: '💡',
-    presenting: '📐',
-    documenting: '📝',
+    discovery: "🔬",
+    understanding: "❓",
+    exploring: "💡",
+    presenting: "📐",
+    documenting: "📝",
 };
 
 const PHASE_SUBMISSION_TOOLS: Record<Phase, string> = {
-    discovery: 'brainstorm_submit_discovery',
-    understanding: 'brainstorm_submit_understanding',
-    exploring: 'brainstorm_submit_exploring',
-    presenting: 'brainstorm_submit_presenting',
-    documenting: 'brainstorm_submit_design',
+    discovery: "brainstorm_submit_discovery",
+    understanding: "brainstorm_submit_understanding",
+    exploring: "brainstorm_submit_exploring",
+    presenting: "brainstorm_submit_presenting",
+    documenting: "brainstorm_submit_design",
 };
 
 const ALWAYS_BLOCKED_TOOLS = new Set([
-    'write',
-    'edit',
-    'bash',
-    'safe_bash',
-    'session_plan',
-    'write_plan',
-    'edit_plan',
+    "write",
+    "edit",
+    "bash",
+    "safe_bash",
+    "session_plan",
+    "write_plan",
+    "edit_plan",
 ]);
 
-const SESSION_KEY = 'brainstorm-forcer';
-const WIDGET_ID = 'brainstorm-forcer';
+const SESSION_KEY = "brainstorm-forcer";
+const WIDGET_ID = "brainstorm-forcer";
+const DEFAULT_REJECTION_REASON =
+    "Refine the current phase: investigate remaining gaps, validate assumptions, go deeper, revise its artifact, then request transition again.";
 
 type TopicState = {
     raw: string;
@@ -80,13 +82,13 @@ type TopicState = {
 };
 
 function summarizeTopicForUi(raw: string): string {
-    const singleLine = raw.replace(/\s+/g, ' ').trim();
+    const singleLine = raw.replace(/\s+/g, " ").trim();
     if (singleLine.length <= 64) return singleLine;
     return `${singleLine.slice(0, 61).trimEnd()}…`;
 }
 
 function markdownList(items: readonly string[]): string[] {
-    return items.length > 0 ? items.map((item) => `- ${item}`) : ['- None.'];
+    return items.length > 0 ? items.map((item) => `- ${item}`) : ["- None."];
 }
 
 function markdownSections(
@@ -94,10 +96,10 @@ function markdownSections(
 ): string[] {
     return sections.flatMap((section) => [
         `## ${section.title}`,
-        '',
+        "",
         section.content,
-        ...(section.feedback ? ['', `**Feedback:** ${section.feedback}`] : []),
-        '',
+        ...(section.feedback ? ["", `**Feedback:** ${section.feedback}`] : []),
+        "",
     ]);
 }
 
@@ -161,8 +163,8 @@ function buildToolGroups(pi: ExtensionAPI): ToolGroups {
 
     for (const tool of tools) {
         const name = tool.name;
-        const description = tool.description ?? '';
-        if (name === 'ask_user_question') questioning.add(name);
+        const description = tool.description ?? "";
+        if (name === "ask_user_question") questioning.add(name);
         if (isMutationLike(name, description)) mutation.add(name);
         if (isResearchLike(name, description)) research.add(name);
     }
@@ -175,7 +177,7 @@ function canUseTool(
     toolName: string,
     groups: ToolGroups,
 ): boolean {
-    if (toolName === 'brainstorm_transition') return true;
+    if (toolName === "brainstorm_transition") return true;
     if (Object.values(PHASE_SUBMISSION_TOOLS).includes(toolName))
         return toolName === PHASE_SUBMISSION_TOOLS[phase];
     if (ALWAYS_BLOCKED_TOOLS.has(toolName)) return false;
@@ -184,16 +186,16 @@ function canUseTool(
 
 function phaseRestrictionSummary(phase: Phase): string {
     switch (phase) {
-        case 'discovery':
-            return 'Discovery phase. Any non-mutating tool is allowed. Mutation blocked. Gather evidence + produce Research Summary.';
-        case 'understanding':
-            return 'Understanding phase. Any non-mutating tool is allowed; prefer ask_user_question to refine requirements. Mutation blocked.';
-        case 'exploring':
-            return 'Exploring phase. Any non-mutating tool is allowed. Compare 2-3 approaches with trade-offs. Mutation blocked.';
-        case 'presenting':
-            return 'Presenting phase. Any non-mutating tool is allowed. Present design sections, validate with user. Mutation blocked.';
-        case 'documenting':
-            return 'Submit final design with brainstorm_submit_design. Generic mutation and planning tools remain blocked.';
+        case "discovery":
+            return "Discovery phase. Any non-mutating tool is allowed. Mutation blocked. Gather evidence + produce Research Summary.";
+        case "understanding":
+            return "Understanding phase. Any non-mutating tool is allowed; prefer ask_user_question to refine requirements. Mutation blocked.";
+        case "exploring":
+            return "Exploring phase. Any non-mutating tool is allowed. Compare 2-3 approaches with trade-offs. Mutation blocked.";
+        case "presenting":
+            return "Presenting phase. Any non-mutating tool is allowed. Present design sections, validate with user. Mutation blocked.";
+        case "documenting":
+            return "Submit final design with brainstorm_submit_design. Generic mutation and planning tools remain blocked.";
     }
 }
 
@@ -216,19 +218,20 @@ function phasePrompt(
     const phaseControl = [
         `Submit this phase's complete content with \`${PHASE_SUBMISSION_TOOLS[phase]}\`.`,
         `After submission succeeds, call \`brainstorm_transition\` with action \`next\`. Use action \`previous\` to go back.`,
+        `The transition requires explicit user approval. On rejection, stay in the current phase, follow the feedback, deepen the work, and submit a new revision before requesting \`next\` again.`,
         `Do not start the next phase before the transition succeeds.`,
     ];
 
     switch (phase) {
-        case 'discovery':
+        case "discovery":
             return [
                 `Current topic: ${topic.raw}`,
                 `Current phase: DISCOVERY`,
                 `Use the bundled skill \`brainstorm-forcer\` and research tools to understand the codebase and produce a Research Summary with Files Accessed / Key Findings / Gaps.`,
                 ...phaseControl,
                 evidenceLine,
-            ].join('\n\n');
-        case 'understanding':
+            ].join("\n\n");
+        case "understanding":
             return [
                 `Current topic: ${topic.raw}`,
                 `Current phase: UNDERSTANDING`,
@@ -236,8 +239,8 @@ function phasePrompt(
                 ...phaseControl,
                 evidenceLine,
                 ...completed,
-            ].join('\n\n');
-        case 'exploring':
+            ].join("\n\n");
+        case "exploring":
             return [
                 `Current topic: ${topic.raw}`,
                 `Current phase: EXPLORING`,
@@ -245,8 +248,8 @@ function phasePrompt(
                 ...phaseControl,
                 evidenceLine,
                 ...completed,
-            ].join('\n\n');
-        case 'presenting':
+            ].join("\n\n");
+        case "presenting":
             return [
                 `Current topic: ${topic.raw}`,
                 `Current phase: PRESENTING`,
@@ -254,8 +257,8 @@ function phasePrompt(
                 ...phaseControl,
                 evidenceLine,
                 ...completed,
-            ].join('\n\n');
-        case 'documenting':
+            ].join("\n\n");
+        case "documenting":
             return [
                 `Current topic: ${topic.raw}`,
                 `Current phase: DOCUMENTING`,
@@ -263,7 +266,7 @@ function phasePrompt(
                 ...phaseControl,
                 evidenceLine,
                 ...completed,
-            ].join('\n\n');
+            ].join("\n\n");
     }
 }
 
@@ -273,10 +276,10 @@ const brainstormMessageRenderer: MessageRenderer = (
     theme,
 ) => {
     const colors = createUiColors(theme);
-    const content = typeof message.content === 'string' ? message.content : '';
-    let text = colors.primary('[brainstorm] ') + colors.text(content);
+    const content = typeof message.content === "string" ? message.content : "";
+    let text = colors.primary("[brainstorm] ") + colors.text(content);
     if (expanded && message.details) {
-        text += '\n' + colors.meta(JSON.stringify(message.details, null, 2));
+        text += "\n" + colors.meta(JSON.stringify(message.details, null, 2));
     }
     return new Text(text, 0, 0);
 };
@@ -285,7 +288,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     pi.registerMessageRenderer(SESSION_KEY, brainstormMessageRenderer);
 
     let activePhase: Phase | null = null;
-    let topic: TopicState = { raw: '', display: '' };
+    let topic: TopicState = { raw: "", display: "" };
     let evidence = EMPTY_EVIDENCE();
     let groups: ToolGroups = {
         research: new Set(),
@@ -294,17 +297,17 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     };
     let widgetText: string | null = null;
     let widget: WidgetHandle | null = null;
-    let runId = '';
-    let startedAt = '';
+    let runId = "";
+    let startedAt = "";
     let artifactStore: ReturnType<typeof createBrainstormArtifactStore> | null =
         null;
     let artifacts: ArtifactCheckpoints = {};
 
     pi.registerTool({
-        name: 'brainstorm_submit_discovery',
-        label: 'Submit Brainstorm Discovery',
+        name: "brainstorm_submit_discovery",
+        label: "Submit Brainstorm Discovery",
         description:
-            'Write the structured Discovery artifact for the active brainstorming run.',
+            "Write the structured Discovery artifact for the active brainstorming run.",
         parameters: Type.Object(
             {
                 filesAccessed: Type.Array(Type.String({ minLength: 1 }), {
@@ -318,30 +321,30 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             { additionalProperties: false },
         ),
         async execute(_id, params, _signal, _update, ctx) {
-            if (activePhase !== 'discovery')
+            if (activePhase !== "discovery")
                 throw new Error(
-                    `Discovery artifact is unavailable during ${activePhase ?? 'inactive'} phase.`,
+                    `Discovery artifact is unavailable during ${activePhase ?? "inactive"} phase.`,
                 );
             const markdown = [
-                '# Discovery',
-                '',
-                '## Files Accessed',
-                '',
+                "# Discovery",
+                "",
+                "## Files Accessed",
+                "",
                 ...params.filesAccessed.map((item) => `- ${item}`),
-                '',
-                '## Key Findings',
-                '',
+                "",
+                "## Key Findings",
+                "",
                 ...params.keyFindings.map((item) => `- ${item}`),
-                '',
-                '## Gaps',
-                '',
+                "",
+                "## Gaps",
+                "",
                 ...(params.gaps.length > 0
                     ? params.gaps.map((item) => `- ${item}`)
-                    : ['- None.']),
-            ].join('\n');
+                    : ["- None."]),
+            ].join("\n");
             return submitArtifact(
-                'discovery',
-                'brainstorm_submit_discovery',
+                "discovery",
+                "brainstorm_submit_discovery",
                 markdown,
                 true,
                 undefined,
@@ -351,10 +354,10 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     });
 
     pi.registerTool({
-        name: 'brainstorm_submit_understanding',
-        label: 'Submit Brainstorm Understanding',
+        name: "brainstorm_submit_understanding",
+        label: "Submit Brainstorm Understanding",
         description:
-            'Write the structured Understanding artifact for the active brainstorming run.',
+            "Write the structured Understanding artifact for the active brainstorming run.",
         parameters: Type.Object(
             {
                 objective: Type.String({ minLength: 1 }),
@@ -371,37 +374,37 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         ),
         async execute(_id, params, _signal, _update, ctx) {
             const markdown = [
-                '# Understanding',
-                '',
-                '## Objective',
-                '',
+                "# Understanding",
+                "",
+                "## Objective",
+                "",
                 params.objective,
-                '',
-                '## Requirements',
-                '',
+                "",
+                "## Requirements",
+                "",
                 ...markdownList(params.requirements),
-                '',
-                '## Constraints',
-                '',
+                "",
+                "## Constraints",
+                "",
                 ...markdownList(params.constraints),
-                '',
-                '## Success Criteria',
-                '',
+                "",
+                "## Success Criteria",
+                "",
                 ...markdownList(params.successCriteria),
-                '',
-                '## Open Questions',
-                '',
+                "",
+                "## Open Questions",
+                "",
                 ...markdownList(params.openQuestions),
-            ].join('\n');
+            ].join("\n");
             const complete = params.openQuestions.length === 0;
             return submitArtifact(
-                'understanding',
-                'brainstorm_submit_understanding',
+                "understanding",
+                "brainstorm_submit_understanding",
                 markdown,
                 complete,
                 complete
                     ? undefined
-                    : 'Understanding incomplete: open questions remain.',
+                    : "Understanding incomplete: open questions remain.",
                 ctx,
             );
         },
@@ -418,10 +421,10 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         { additionalProperties: false },
     );
     pi.registerTool({
-        name: 'brainstorm_submit_exploring',
-        label: 'Submit Brainstorm Exploration',
+        name: "brainstorm_submit_exploring",
+        label: "Submit Brainstorm Exploration",
         description:
-            'Write the structured Exploring artifact for the active brainstorming run.',
+            "Write the structured Exploring artifact for the active brainstorming run.",
         parameters: Type.Object(
             {
                 approaches: Type.Array(ApproachSchema, {
@@ -436,37 +439,37 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         async execute(_id, params, _signal, _update, ctx) {
             const approaches = params.approaches.flatMap((approach, index) => [
                 `## Approach ${index + 1}: ${approach.title}`,
-                '',
+                "",
                 approach.summary,
-                '',
-                '### Trade-offs',
-                '',
+                "",
+                "### Trade-offs",
+                "",
                 ...markdownList(approach.tradeoffs),
-                '',
-                '### Critical Uncertainties',
-                '',
+                "",
+                "### Critical Uncertainties",
+                "",
                 ...markdownList(approach.uncertainties),
-                '',
-                '### Conditions for Failure',
-                '',
+                "",
+                "### Conditions for Failure",
+                "",
                 ...markdownList(approach.failureConditions),
-                '',
+                "",
             ]);
             const markdown = [
-                '# Exploring Approaches',
-                '',
+                "# Exploring Approaches",
+                "",
                 ...approaches,
-                '## Recommendation',
-                '',
+                "## Recommendation",
+                "",
                 params.recommendation,
-                '',
-                '## User Choice',
-                '',
+                "",
+                "## User Choice",
+                "",
                 params.userChoice,
-            ].join('\n');
+            ].join("\n");
             return submitArtifact(
-                'exploring',
-                'brainstorm_submit_exploring',
+                "exploring",
+                "brainstorm_submit_exploring",
                 markdown,
                 true,
                 undefined,
@@ -484,10 +487,10 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         { additionalProperties: false },
     );
     pi.registerTool({
-        name: 'brainstorm_submit_presenting',
-        label: 'Submit Brainstorm Presentation',
+        name: "brainstorm_submit_presenting",
+        label: "Submit Brainstorm Presentation",
         description:
-            'Write the reviewed Presenting artifact for the active brainstorming run.',
+            "Write the reviewed Presenting artifact for the active brainstorming run.",
         parameters: Type.Object(
             {
                 sections: Type.Array(DesignSectionSchema, { minItems: 1 }),
@@ -499,23 +502,23 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         async execute(_id, params, _signal, _update, ctx) {
             const sections = markdownSections(params.sections);
             const markdown = [
-                '# Presented Design',
-                '',
+                "# Presented Design",
+                "",
                 ...sections,
-                '## Decisions',
-                '',
+                "## Decisions",
+                "",
                 ...markdownList(params.decisions),
-                '',
-                `## Approval\n\n${params.approved ? 'Approved' : 'Not approved'}`,
-            ].join('\n');
+                "",
+                `## Approval\n\n${params.approved ? "Approved" : "Not approved"}`,
+            ].join("\n");
             return submitArtifact(
-                'presenting',
-                'brainstorm_submit_presenting',
+                "presenting",
+                "brainstorm_submit_presenting",
                 markdown,
                 params.approved,
                 params.approved
                     ? undefined
-                    : 'Presenting incomplete: final design approval is missing.',
+                    : "Presenting incomplete: final design approval is missing.",
                 ctx,
             );
         },
@@ -529,10 +532,10 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         { additionalProperties: false },
     );
     pi.registerTool({
-        name: 'brainstorm_submit_design',
-        label: 'Submit Brainstorm Design',
+        name: "brainstorm_submit_design",
+        label: "Submit Brainstorm Design",
         description:
-            'Write the final design artifact. Do not include an implementation plan.',
+            "Write the final design artifact. Do not include an implementation plan.",
         parameters: Type.Object(
             {
                 title: Type.String({ minLength: 1 }),
@@ -547,21 +550,21 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             const sections = markdownSections(params.sections);
             const markdown = [
                 `# ${params.title}`,
-                '',
+                "",
                 params.summary,
-                '',
+                "",
                 ...sections,
-                '## Decisions',
-                '',
+                "## Decisions",
+                "",
                 ...markdownList(params.decisions),
-                '',
-                '## Residual Risks',
-                '',
+                "",
+                "## Residual Risks",
+                "",
                 ...markdownList(params.residualRisks),
-            ].join('\n');
+            ].join("\n");
             return submitArtifact(
-                'documenting',
-                'brainstorm_submit_design',
+                "documenting",
+                "brainstorm_submit_design",
                 markdown,
                 true,
                 undefined,
@@ -571,25 +574,51 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     });
 
     pi.registerTool({
-        name: 'brainstorm_transition',
-        label: 'Transition Brainstorm Phase',
+        name: "brainstorm_transition",
+        label: "Transition Brainstorm Phase",
         description:
-            'Move one phase forward or backward, or inspect current brainstorm status. No force or phase skipping.',
+            "Request a user-approved move one phase forward or backward, or inspect current brainstorm status. No force or phase skipping.",
         parameters: Type.Object(
-            { action: StringEnum(['next', 'previous', 'status'] as const) },
+            { action: StringEnum(["next", "previous", "status"] as const) },
             { additionalProperties: false },
         ),
         async execute(_id, params, _signal, _update, ctx) {
-            if (!activePhase) throw new Error('No active brainstorming run.');
-            if (params.action === 'status') return transitionResult(false);
+            if (!activePhase) throw new Error("No active brainstorming run.");
+            if (params.action === "status") return transitionResult(false);
+            const blocker = adjacentTransitionBlocker(params.action);
+            if (blocker) throw new Error(blocker);
+            const targetPhase =
+                params.action === "next"
+                    ? nextPhase(activePhase)
+                    : previousPhase(activePhase);
+            const targetLabel = targetPhase
+                ? PHASE_LABELS[targetPhase]
+                : "Complete brainstorm";
+            const choice = await ctx.ui.select(
+                `Approve brainstorm transition: ${PHASE_LABELS[activePhase]} → ${targetLabel}?`,
+                ["Approve", "Reject", "Reject with reason"],
+            );
+            if (choice !== "Approve") {
+                const customReason =
+                    choice === "Reject with reason"
+                        ? await ctx.ui.input(
+                              "Why reject this transition? (optional)",
+                          )
+                        : undefined;
+                return rejectTransition(
+                    params.action,
+                    customReason?.trim() || DEFAULT_REJECTION_REASON,
+                    ctx,
+                );
+            }
             const outcome = applyAdjacentTransition(params.action, ctx);
             if (outcome.completed) {
                 return {
-                    content: [{ type: 'text', text: outcome.message }],
-                    details: { phase: null, completed: true },
+                    content: [{ type: "text", text: outcome.message }],
+                    details: { phase: null, completed: true, approved: true },
                 };
             }
-            return transitionResult(false);
+            return transitionResult(false, true);
         },
     });
 
@@ -606,14 +635,24 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             : (checkpoint.blocker ?? `${PHASE_LABELS[phase]} incomplete.`);
     }
 
+    function adjacentTransitionBlocker(
+        action: "next" | "previous",
+    ): string | undefined {
+        if (!activePhase) return "No active brainstorming run.";
+        if (action === "next") return artifactCompletionBlocker(activePhase);
+        return previousPhase(activePhase)
+            ? undefined
+            : "Already at first phase.";
+    }
+
     function applyAdjacentTransition(
-        action: 'next' | 'previous',
+        action: "next" | "previous",
         ctx: ExtensionContext,
     ) {
-        if (!activePhase) throw new Error('No active brainstorming run.');
-        if (action === 'next') {
-            const blocker = artifactCompletionBlocker(activePhase);
-            if (blocker) throw new Error(blocker);
+        const blocker = adjacentTransitionBlocker(action);
+        if (blocker) throw new Error(blocker);
+        if (!activePhase) throw new Error("No active brainstorming run.");
+        if (action === "next") {
             const next = nextPhase(activePhase);
             if (!next) {
                 const completedTopic = topic.raw;
@@ -628,54 +667,101 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             activePhase = next;
         } else {
             const previous = previousPhase(activePhase);
-            if (!previous) throw new Error('Already at first phase.');
+            if (!previous) throw new Error("Already at first phase.");
             activePhase = previous;
         }
         saveState(ctx);
         pi.sendMessage(
             {
-                customType: 'brainstorm-forcer-transition',
+                customType: "brainstorm-forcer-transition",
                 content: `Brainstorm phase changed to ${PHASE_LABELS[activePhase]}. Use ${expectedSubmissionTool(activePhase)} and do not work on later phases.`,
                 display: true,
             },
-            { deliverAs: 'steer' },
+            { deliverAs: "steer" },
         );
         return {
             phase: activePhase,
             completed: false,
-            message: `${action === 'next' ? 'Advanced' : 'Returned'} to ${PHASE_LABELS[activePhase]} (${PHASES.indexOf(activePhase) + 1}/${PHASES.length}).`,
+            message: `${action === "next" ? "Advanced" : "Returned"} to ${PHASE_LABELS[activePhase]} (${PHASES.indexOf(activePhase) + 1}/${PHASES.length}).`,
+        };
+    }
+
+    function rejectTransition(
+        action: "next" | "previous",
+        reason: string,
+        ctx: ExtensionContext,
+    ) {
+        if (!activePhase) throw new Error("No active brainstorming run.");
+        const rejectedPhase = activePhase;
+        const feedback =
+            reason === DEFAULT_REJECTION_REASON
+                ? reason
+                : `${reason} ${DEFAULT_REJECTION_REASON}`;
+        if (action === "next") {
+            const checkpoint = artifacts[rejectedPhase];
+            if (checkpoint)
+                artifacts[rejectedPhase] = {
+                    ...checkpoint,
+                    complete: false,
+                    blocker: feedback,
+                };
+            saveState(ctx);
+        }
+        pi.sendMessage(
+            {
+                customType: "brainstorm-forcer-transition-rejected",
+                content: `Transition rejected by the user. Stay in ${PHASE_LABELS[rejectedPhase]}. ${feedback}`,
+                display: true,
+            },
+            { deliverAs: "steer" },
+        );
+        return {
+            content: [
+                {
+                    type: "text" as const,
+                    text: `Transition rejected. ${feedback}`,
+                },
+            ],
+            details: {
+                phase: rejectedPhase,
+                completed: false,
+                approved: false,
+                rejectionReason: reason,
+                artifacts: structuredClone(artifacts),
+            },
         };
     }
 
     function notifyAdjacentTransition(
-        action: 'next' | 'previous',
+        action: "next" | "previous",
         ctx: ExtensionContext,
     ): void {
         try {
             const outcome = applyAdjacentTransition(action, ctx);
-            ctx.ui.notify(outcome.message, 'info');
+            ctx.ui.notify(outcome.message, "info");
         } catch (error) {
             ctx.ui.notify(
                 error instanceof Error ? error.message : String(error),
-                'warning',
+                "warning",
             );
         }
     }
 
-    function transitionResult(completed: boolean) {
+    function transitionResult(completed: boolean, approved?: boolean) {
         return {
             content: [
                 {
-                    type: 'text' as const,
+                    type: "text" as const,
                     text: activePhase
                         ? `Current brainstorm phase: ${PHASE_LABELS[activePhase]}.`
-                        : 'Brainstorm completed.',
+                        : "Brainstorm completed.",
                 },
             ],
             details: {
                 phase: activePhase,
                 completed,
                 artifacts: structuredClone(artifacts),
+                ...(approved === undefined ? {} : { approved }),
             },
         };
     }
@@ -690,7 +776,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     ) {
         if (activePhase !== phase)
             throw new Error(
-                `${PHASE_LABELS[phase]} artifact is unavailable during ${activePhase ?? 'inactive'} phase.`,
+                `${PHASE_LABELS[phase]} artifact is unavailable during ${activePhase ?? "inactive"} phase.`,
             );
         const artifact = getArtifactStore(ctx).submit({
             phase,
@@ -710,7 +796,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         return {
             content: [
                 {
-                    type: 'text' as const,
+                    type: "text" as const,
                     text: `${PHASE_LABELS[phase]} artifact saved: ${artifact.path} (revision ${artifact.revision}).`,
                 },
             ],
@@ -720,9 +806,9 @@ export default function brainstormForcer(pi: ExtensionAPI) {
 
     function getArtifactStore(ctx: ExtensionContext) {
         if (!runId || !activePhase)
-            throw new Error('No active brainstorming run.');
+            throw new Error("No active brainstorming run.");
         const persistedDate =
-            typeof startedAt === 'string'
+            typeof startedAt === "string"
                 ? startedAt.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
                 : undefined;
         const artifactDate = Object.values(artifacts)[0]?.path.match(
@@ -743,10 +829,10 @@ export default function brainstormForcer(pi: ExtensionAPI) {
 
     function resetState() {
         activePhase = null;
-        topic = { raw: '', display: '' };
+        topic = { raw: "", display: "" };
         evidence = EMPTY_EVIDENCE();
-        runId = '';
-        startedAt = '';
+        runId = "";
+        startedAt = "";
         artifactStore = null;
         artifacts = {};
         refreshGroups();
@@ -792,13 +878,13 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             colors.primary(
                 `${PHASE_ICONS[activePhase]} ${PHASE_LABELS[activePhase]}`,
             ),
-            colors.separator(' • '),
+            colors.separator(" • "),
             colors.meta(`p${idx}/${PHASES.length}`),
-            colors.separator(' • '),
+            colors.separator(" • "),
             colors.text(topic.display),
-            colors.separator(' • '),
+            colors.separator(" • "),
             colors.meta(`r:${research} q:${questions}`),
-        ].join('');
+        ].join("");
         widget?.update(ctx, widgetText);
     }
 
@@ -824,7 +910,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         const entries = ctx.sessionManager.getEntries();
         for (let i = entries.length - 1; i >= 0; i--) {
             const entry = entries[i];
-            if (entry.type === 'custom' && entry.customType === SESSION_KEY)
+            if (entry.type === "custom" && entry.customType === SESSION_KEY)
                 return entry.data;
         }
         return undefined;
@@ -848,12 +934,12 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             activePhase = data.phase as Phase;
             const restoredTopic = data.topic;
             topic =
-                typeof restoredTopic === 'string'
+                typeof restoredTopic === "string"
                     ? {
                           raw: restoredTopic,
                           display: summarizeTopicForUi(restoredTopic),
                       }
-                    : (restoredTopic ?? { raw: '', display: '' });
+                    : (restoredTopic ?? { raw: "", display: "" });
             evidence = data.evidence ?? EMPTY_EVIDENCE();
             runId = data.runId ?? `brainstorm-${randomUUID()}`;
             startedAt = data.startedAt ?? new Date().toISOString();
@@ -867,7 +953,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         ctx: ExtensionContext,
         immediate: boolean,
     ): void {
-        activePhase = 'discovery';
+        activePhase = "discovery";
         topic = { raw: topicText, display: summarizeTopicForUi(topicText) };
         evidence = EMPTY_EVIDENCE();
         runId = `brainstorm-${randomUUID()}`;
@@ -877,26 +963,26 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         refreshGroups();
         saveState(ctx);
         ctx.ui.notify(
-            `Brainstorm ${immediate ? 'started' : 'armed'}: Discovery (1/${PHASES.length})`,
-            'info',
+            `Brainstorm ${immediate ? "started" : "armed"}: Discovery (1/${PHASES.length})`,
+            "info",
         );
         if (immediate) {
             if (ctx.isIdle()) {
                 pi.sendUserMessage(topic.raw);
             } else {
-                pi.sendUserMessage(topic.raw, { deliverAs: 'followUp' });
+                pi.sendUserMessage(topic.raw, { deliverAs: "followUp" });
                 ctx.ui.notify(
-                    'Queued brainstorm topic as follow-up turn.',
-                    'info',
+                    "Queued brainstorm topic as follow-up turn.",
+                    "info",
                 );
             }
         }
     }
 
-    pi.registerCommand('brainstorm', {
+    pi.registerCommand("brainstorm", {
         description:
-            'Brainstorm workflow. /brainstorm <topic> starts immediately. ' +
-            '/brainstorm arm <topic> arms only. /brainstorm next | force-next | status | stop',
+            "Brainstorm workflow. /brainstorm <topic> starts immediately. " +
+            "/brainstorm arm <topic> arms only. /brainstorm next | force-next | status | stop",
         getArgumentCompletions: (prefix: string) => {
             const trimmed = prefix.trimStart().toLowerCase();
             const phaseOptions = PHASES.map((phase, index) => ({
@@ -906,44 +992,44 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             }));
             const base = [
                 {
-                    value: 'status',
-                    label: 'status',
+                    value: "status",
+                    label: "status",
                     description:
-                        'Show current phase, evidence, and restrictions',
+                        "Show current phase, evidence, and restrictions",
                 },
                 {
-                    value: 'artifacts',
-                    label: 'artifacts',
+                    value: "artifacts",
+                    label: "artifacts",
                     description:
-                        'List durable artifact revisions for the active brainstorm',
+                        "List durable artifact revisions for the active brainstorm",
                 },
                 {
-                    value: 'stop',
-                    label: 'stop',
-                    description: 'Disable brainstorming workflow',
+                    value: "stop",
+                    label: "stop",
+                    description: "Disable brainstorming workflow",
                 },
                 {
-                    value: 'next',
-                    label: 'next',
+                    value: "next",
+                    label: "next",
                     description:
-                        'Advance one phase if completion criteria are met',
+                        "Advance one phase if completion criteria are met",
                 },
                 {
-                    value: 'previous',
-                    label: 'previous',
-                    description: 'Return to previous phase',
+                    value: "previous",
+                    label: "previous",
+                    description: "Return to previous phase",
                 },
                 {
-                    value: 'arm ',
-                    label: 'arm',
+                    value: "arm ",
+                    label: "arm",
                     description:
-                        'Arm workflow only; do not send message to model',
+                        "Arm workflow only; do not send message to model",
                 },
                 {
-                    value: 'start ',
-                    label: 'start',
+                    value: "start ",
+                    label: "start",
                     description:
-                        'Arm workflow and immediately send topic to model',
+                        "Arm workflow and immediately send topic to model",
                 },
                 ...phaseOptions,
             ];
@@ -956,13 +1042,13 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         handler: async (args, ctx) => {
             const raw = args.trim();
             const [first, ...rest] = raw.split(/\s+/).filter(Boolean);
-            const tail = rest.join(' ').trim();
+            const tail = rest.join(" ").trim();
 
-            if (!raw || raw === 'status') {
+            if (!raw || raw === "status") {
                 if (!activePhase) {
                     ctx.ui.notify(
-                        'No active brainstorming session. Use /brainstorm <topic> or /brainstorm start <topic>.',
-                        'info',
+                        "No active brainstorming session. Use /brainstorm <topic> or /brainstorm start <topic>.",
+                        "info",
                     );
                     return;
                 }
@@ -973,136 +1059,136 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                         `\nRestrictions: ${phaseRestrictionSummary(activePhase)}` +
                         (blocker
                             ? `\nNext blocked: ${blocker}`
-                            : '\nNext allowed.'),
-                    blocker ? 'warning' : 'info',
+                            : "\nNext allowed."),
+                    blocker ? "warning" : "info",
                 );
                 return;
             }
 
-            if (raw === 'artifacts') {
+            if (raw === "artifacts") {
                 if (!activePhase) {
-                    ctx.ui.notify('No active brainstorming session.', 'info');
+                    ctx.ui.notify("No active brainstorming session.", "info");
                     return;
                 }
                 const manifest = getArtifactStore(ctx).getManifest();
                 const revisions = manifest.revisions.map(
                     (revision) =>
-                        `${revision.status === 'active' ? 'active' : 'stale'} — ${revision.path}`,
+                        `${revision.status === "active" ? "active" : "stale"} — ${revision.path}`,
                 );
                 ctx.ui.notify(
-                    `Brainstorm artifacts: ${manifest.root}\n${revisions.length > 0 ? revisions.join('\n') : 'No artifacts submitted yet.'}`,
-                    'info',
+                    `Brainstorm artifacts: ${manifest.root}\n${revisions.length > 0 ? revisions.join("\n") : "No artifacts submitted yet."}`,
+                    "info",
                 );
                 return;
             }
 
-            if (raw === 'stop' || raw === 'off' || raw === 'quit') {
+            if (raw === "stop" || raw === "off" || raw === "quit") {
                 resetState();
                 saveState(ctx);
-                ctx.ui.notify('Brainstorming mode off.', 'info');
+                ctx.ui.notify("Brainstorming mode off.", "info");
                 return;
             }
 
-            if (first === 'arm') {
+            if (first === "arm") {
                 if (!tail) {
-                    ctx.ui.notify('Usage: /brainstorm arm <topic>', 'error');
+                    ctx.ui.notify("Usage: /brainstorm arm <topic>", "error");
                     return;
                 }
                 startPhase(tail, ctx, false);
                 return;
             }
 
-            if (first === 'start') {
+            if (first === "start") {
                 if (!tail) {
-                    ctx.ui.notify('Usage: /brainstorm start <topic>', 'error');
+                    ctx.ui.notify("Usage: /brainstorm start <topic>", "error");
                     return;
                 }
                 startPhase(tail, ctx, true);
                 return;
             }
 
-            if (first === 'phase') {
+            if (first === "phase") {
                 const target = tail;
                 if (!target) {
                     ctx.ui.notify(
-                        'Usage: /brainstorm phase <name|number>',
-                        'error',
+                        "Usage: /brainstorm phase <name|number>",
+                        "error",
                     );
                     return;
                 }
                 const resolved = findPhase(target);
                 if (!resolved) {
-                    ctx.ui.notify(`Unknown phase "${target}".`, 'error');
+                    ctx.ui.notify(`Unknown phase "${target}".`, "error");
                     return;
                 }
                 activePhase = resolved;
                 saveState(ctx);
                 ctx.ui.notify(
                     `Jumped to ${PHASE_LABELS[resolved]} (${PHASES.indexOf(resolved) + 1}/${PHASES.length}).`,
-                    'info',
+                    "info",
                 );
                 return;
             }
 
-            if (first === 'next') {
+            if (first === "next") {
                 if (!activePhase) {
-                    ctx.ui.notify('No active brainstorming session.', 'error');
+                    ctx.ui.notify("No active brainstorming session.", "error");
                     return;
                 }
                 if (!tail) {
-                    notifyAdjacentTransition('next', ctx);
+                    notifyAdjacentTransition("next", ctx);
                     return;
                 }
-                if (tail !== '--force') {
+                if (tail !== "--force") {
                     ctx.ui.notify(
-                        'Usage: /brainstorm next [--force]. Use /brainstorm phase <name> for explicit jumps.',
-                        'error',
+                        "Usage: /brainstorm next [--force]. Use /brainstorm phase <name> for explicit jumps.",
+                        "error",
                     );
                     return;
                 }
                 const next = nextPhase(activePhase);
                 if (!next) {
-                    ctx.ui.notify('Already at final phase.', 'info');
+                    ctx.ui.notify("Already at final phase.", "info");
                     return;
                 }
                 activePhase = next;
                 saveState(ctx);
                 ctx.ui.notify(
                     `Advanced to ${PHASE_LABELS[next]} (${PHASES.indexOf(next) + 1}/${PHASES.length}) (forced).`,
-                    'warning',
+                    "warning",
                 );
                 return;
             }
 
-            if (first === 'previous') {
+            if (first === "previous") {
                 if (tail) {
                     ctx.ui.notify(
-                        'Usage: /brainstorm previous. Use /brainstorm phase <name> for explicit jumps.',
-                        'error',
+                        "Usage: /brainstorm previous. Use /brainstorm phase <name> for explicit jumps.",
+                        "error",
                     );
                     return;
                 }
-                notifyAdjacentTransition('previous', ctx);
+                notifyAdjacentTransition("previous", ctx);
                 return;
             }
 
-            if (raw === 'force-next') {
+            if (raw === "force-next") {
                 // Deprecated alias — now use /brainstorm next --force
                 if (!activePhase) {
-                    ctx.ui.notify('No active brainstorming session.', 'error');
+                    ctx.ui.notify("No active brainstorming session.", "error");
                     return;
                 }
                 const idx = PHASES.indexOf(activePhase);
                 const next = PHASES[idx + 1];
                 if (!next) {
-                    ctx.ui.notify('Already at final phase.', 'info');
+                    ctx.ui.notify("Already at final phase.", "info");
                     return;
                 }
                 activePhase = next;
                 saveState(ctx);
                 ctx.ui.notify(
                     `Force-advanced to ${PHASE_LABELS[next]} (${idx + 2}/${PHASES.length}).`,
-                    'warning',
+                    "warning",
                 );
                 return;
             }
@@ -1112,15 +1198,15 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         },
     });
 
-    pi.on('resources_discover', async () => {
+    pi.on("resources_discover", async () => {
         return { skillPaths: [`${__dirname}/skills`] };
     });
 
-    pi.on('context', async (event, ctx) => {
+    pi.on("context", async (event, ctx) => {
         const messages = event.messages.filter(
             (message) =>
-                message.role !== 'custom' ||
-                message.customType !== 'brainstorm-forcer-status',
+                message.role !== "custom" ||
+                message.customType !== "brainstorm-forcer-status",
         );
         if (!activePhase) return { messages };
         const manifest = getArtifactStore(ctx).getManifest();
@@ -1128,37 +1214,37 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             const checkpoint = artifacts[phase];
             return checkpoint
                 ? [
-                      `- ${PHASE_LABELS[phase]}: r${checkpoint.revision} ${checkpoint.complete ? 'complete' : 'incomplete'} — ${checkpoint.path}`,
+                      `- ${PHASE_LABELS[phase]}: r${checkpoint.revision} ${checkpoint.complete ? "complete" : "incomplete"} — ${checkpoint.path}`,
                   ]
                 : [];
         });
         const staleArtifacts = manifest.revisions
-            .filter((revision) => revision.status === 'stale')
+            .filter((revision) => revision.status === "stale")
             .map(
                 (revision) =>
                     `- ${PHASE_LABELS[revision.phase]} r${revision.revision}: ${revision.path}`,
             );
         const blocker = artifactCompletionBlocker(activePhase);
         const content = [
-            '[Brainstorm status — mandatory workflow context]',
+            "[Brainstorm status — mandatory workflow context]",
             `Topic: ${topic.raw}`,
             `Phase: ${PHASE_LABELS[activePhase]} (${PHASES.indexOf(activePhase) + 1}/${PHASES.length})`,
             `Required submission tool: ${expectedSubmissionTool(activePhase)}`,
             `Transition tool: brainstorm_transition (next|previous|status; no force or skipping)`,
             `Artifacts root: ${manifest.root}`,
-            `Current gate: ${blocker ?? 'ready for next transition'}`,
-            'Active artifacts:',
-            ...(activeArtifacts.length > 0 ? activeArtifacts : ['- None yet.']),
-            'Stale artifacts:',
-            ...(staleArtifacts.length > 0 ? staleArtifacts : ['- None.']),
-            'Scope: produce design artifacts only. Never create an implementation plan, choose a planning workflow, or implement code.',
-        ].join('\n');
+            `Current gate: ${blocker ?? "ready for next transition"}`,
+            "Active artifacts:",
+            ...(activeArtifacts.length > 0 ? activeArtifacts : ["- None yet."]),
+            "Stale artifacts:",
+            ...(staleArtifacts.length > 0 ? staleArtifacts : ["- None."]),
+            "Scope: produce design artifacts only. Never create an implementation plan, choose a planning workflow, or implement code.",
+        ].join("\n");
         return {
             messages: [
                 ...messages,
                 {
-                    role: 'custom' as const,
-                    customType: 'brainstorm-forcer-status',
+                    role: "custom" as const,
+                    customType: "brainstorm-forcer-status",
                     content,
                     display: false,
                     details: { phase: activePhase, runId, root: manifest.root },
@@ -1168,15 +1254,15 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         };
     });
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         widget = createWidget(pi, {
             id: WIDGET_ID,
-            label: 'Brainstorm',
+            label: "Brainstorm",
             description:
-                'Shows brainstorming phase, topic, and evidence counters.',
+                "Shows brainstorming phase, topic, and evidence counters.",
             row: 0,
             order: 8,
-            align: 'left',
+            align: "left",
             render: () => widgetText,
         });
         refreshGroups();
@@ -1184,13 +1270,13 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         updateWidget(ctx);
     });
 
-    pi.on('session_shutdown', async (_event, ctx) => {
+    pi.on("session_shutdown", async (_event, ctx) => {
         widget?.remove(ctx);
         widget = null;
         widgetText = null;
     });
 
-    pi.on('tool_call', async (event, ctx) => {
+    pi.on("tool_call", async (event, ctx) => {
         if (!activePhase) return;
         if (canUseTool(activePhase, event.toolName, groups)) return;
         const phaseLabel = PHASE_LABELS[activePhase];
@@ -1201,14 +1287,14 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             `Submit the current phase artifact, then request an adjacent transition.`,
             ``,
             `Current restriction: ${phaseRestrictionSummary(activePhase)}`,
-        ].join('\n');
+        ].join("\n");
         if (ctx.hasUI) {
-            ctx.ui.notify(`Blocked ${event.toolName}`, 'warning');
+            ctx.ui.notify(`Blocked ${event.toolName}`, "warning");
         }
         return { block: true, reason };
     });
 
-    pi.on('tool_result', async (event, ctx) => {
+    pi.on("tool_result", async (event, ctx) => {
         if (!activePhase) return;
         if (groups.research.has(event.toolName)) evidence.researchCalls += 1;
         if (groups.questioning.has(event.toolName)) evidence.questionCalls += 1;
@@ -1227,13 +1313,13 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         }
     });
 
-    pi.on('message_end', async (event) => {
+    pi.on("message_end", async (event) => {
         if (!activePhase) return;
-        if (event.message.role !== 'assistant') return;
+        if (event.message.role !== "assistant") return;
         evidence.assistantTurnsByPhase[activePhase] += 1;
     });
 
-    pi.on('before_agent_start', async (event, ctx) => {
+    pi.on("before_agent_start", async (event, ctx) => {
         if (!activePhase) return;
         const data = latestSessionData(ctx) as
             | {
@@ -1246,7 +1332,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             | undefined;
         const blockNote = data?.blockFeedback
             ? `\n\nPREVIOUS TOOL BLOCKED: Your last call to \`${data.blockFeedback.tool}\` was blocked in ${data.blockFeedback.phaseLabel}. Generic mutation and planning tools are never allowed during brainstorming. Use the current phase submission tool and brainstorm_transition instead.`
-            : '';
+            : "";
         return {
             systemPrompt: `${event.systemPrompt}\n\n${phasePrompt(activePhase, topic, evidence)}${blockNote}`,
             message: {

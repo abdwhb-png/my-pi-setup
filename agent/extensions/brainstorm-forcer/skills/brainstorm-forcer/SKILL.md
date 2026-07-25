@@ -14,9 +14,11 @@ While brainstorm is active:
 1. Work only on current phase shown in `brainstorm-forcer-status`.
 2. Use current phase submission tool to provide complete structured content directly.
 3. Call `brainstorm_transition` with `next` only after artifact submission succeeds.
-4. Use `previous` when evidence or user feedback invalidates earlier reasoning.
-5. Never start next phase before transition succeeds.
-6. Never create implementation plan, select planning workflow, create worktree, commit, or implement code.
+4. Wait for explicit user approval; never interpret a transition request as accepted before the tool returns `approved: true`.
+5. On rejection, stay in current phase, follow the returned reason, deepen the work, and submit a new artifact revision before requesting `next` again. An omitted reason means investigate gaps, validate assumptions, and go deeper.
+6. Use `previous` when evidence or user feedback invalidates earlier reasoning; it also requires user approval.
+7. Never start next phase before transition succeeds.
+8. Never create implementation plan, select planning workflow, create worktree, commit, or implement code.
 
 Generic file mutation and planning tools are intentionally blocked. Phase submission tools own artifact paths and writes.
 

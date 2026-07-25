@@ -1,18 +1,18 @@
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { createScopedWriter } from '../pi-scoped-write/core';
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { createScopedWriter } from "../pi-scoped-write/core";
 
 export const BRAINSTORM_PHASES = [
-    'discovery',
-    'understanding',
-    'exploring',
-    'presenting',
-    'documenting',
+    "discovery",
+    "understanding",
+    "exploring",
+    "presenting",
+    "documenting",
 ] as const;
 export type BrainstormPhase = (typeof BRAINSTORM_PHASES)[number];
 
-type RevisionStatus = 'active' | 'stale';
+type RevisionStatus = "active" | "stale";
 
 type ArtifactRevision = {
     phase: BrainstormPhase;
@@ -48,27 +48,27 @@ type SubmitInput = {
 };
 
 const PHASE_FILE_NAMES: Record<BrainstormPhase, string> = {
-    discovery: '01-discovery',
-    understanding: '02-understanding',
-    exploring: '03-exploring',
-    presenting: '04-presenting',
-    documenting: '05-design',
+    discovery: "01-discovery",
+    understanding: "02-understanding",
+    exploring: "03-exploring",
+    presenting: "04-presenting",
+    documenting: "05-design",
 };
 
 function slugify(value: string): string {
     const slug = value
-        .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
         .slice(0, 64)
-        .replace(/-$/g, '');
-    return slug || 'brainstorm';
+        .replace(/-$/g, "");
+    return slug || "brainstorm";
 }
 
 function sha256(content: string): string {
-    return createHash('sha256').update(content).digest('hex');
+    return createHash("sha256").update(content).digest("hex");
 }
 
 function normalizeMarkdown(markdown: string): string {
@@ -76,9 +76,9 @@ function normalizeMarkdown(markdown: string): string {
 }
 
 function expectWriteSuccess(
-    result: ReturnType<ReturnType<typeof createScopedWriter>['create']>,
+    result: ReturnType<ReturnType<typeof createScopedWriter>["create"]>,
 ): string {
-    if (result.kind !== 'success') throw new Error(result.reason);
+    if (result.kind !== "success") throw new Error(result.reason);
     return result.path;
 }
 
@@ -91,7 +91,7 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
     let absoluteManifestPath = join(options.projectRoot, manifestPath);
     if (existsSync(absoluteManifestPath)) {
         const existing = JSON.parse(
-            readFileSync(absoluteManifestPath, 'utf8'),
+            readFileSync(absoluteManifestPath, "utf8"),
         ) as BrainstormArtifactManifest;
         if (existing.runId !== options.runId) {
             relativeRoot = `${relativeRoot}-${slugify(options.runId)}`;
@@ -104,17 +104,17 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
     const writer = createScopedWriter({
         projectRoot: options.projectRoot,
         actor: {
-            agent: 'brainstorm-forcer',
-            role: 'brainstorm',
+            agent: "brainstorm-forcer",
+            role: "brainstorm",
             runId: options.runId,
         },
         policy: {
-            id: 'brainstorm-artifacts',
-            root: 'docs/brainstorms',
-            allowedExtensions: ['.md', '.json'],
-            operations: ['create', 'edit'],
+            id: "brainstorm-artifacts",
+            root: "docs/brainstorms",
+            allowedExtensions: [".md", ".json"],
+            operations: ["create", "edit"],
             maxBytes: 512_000,
-            auditNamespace: 'brainstorm',
+            auditNamespace: "brainstorm",
             allowNestedDirectories: true,
         },
     });
@@ -131,7 +131,7 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
 
     if (existsSync(absoluteManifestPath)) {
         manifest = JSON.parse(
-            readFileSync(absoluteManifestPath, 'utf8'),
+            readFileSync(absoluteManifestPath, "utf8"),
         ) as BrainstormArtifactManifest;
         if (manifest.runId !== options.runId)
             throw new Error(
@@ -147,13 +147,13 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
             );
             return;
         }
-        const previous = readFileSync(absoluteManifestPath, 'utf8');
+        const previous = readFileSync(absoluteManifestPath, "utf8");
         const result = writer.edit({
             path: manifestRelativePath,
             edits: [{ oldText: previous, newText: content }],
             tool,
         });
-        if (result.kind !== 'success') throw new Error(result.reason);
+        if (result.kind !== "success") throw new Error(result.reason);
     }
 
     return {
@@ -166,7 +166,7 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
                         .map((item) => item.revision),
                 ) + 1;
             const content = normalizeMarkdown(input.markdown);
-            const fileName = `${PHASE_FILE_NAMES[input.phase]}-r${String(revision).padStart(3, '0')}.md`;
+            const fileName = `${PHASE_FILE_NAMES[input.phase]}-r${String(revision).padStart(3, "0")}.md`;
             const scopedPath = `${relativeRoot}/${fileName}`;
             const path = expectWriteSuccess(
                 writer.create({ path: scopedPath, content, tool: input.tool }),
@@ -185,15 +185,15 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
                 },
                 revisions: [
                     ...manifest.revisions.map((item) =>
-                        item.status === 'active' &&
+                        item.status === "active" &&
                         BRAINSTORM_PHASES.indexOf(item.phase) >= phaseIndex
-                            ? { ...item, status: 'stale' as const }
+                            ? { ...item, status: "stale" as const }
                             : item,
                     ),
                     {
                         phase: input.phase,
                         revision,
-                        status: 'active',
+                        status: "active",
                         path,
                         sha256: sha256(content),
                         createdAt: timestamp,
