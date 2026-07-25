@@ -50,12 +50,23 @@ export default function (pi: ExtensionAPI) {
      * `isDangerous()` still runs on them.
      */
     let currentAllowedShellCommands: string[] = [];
+    /**
+     * Current allowed danger-group ids (from `safeBash.allowDangerous`),
+     * reloaded from settings.json. Groups whose id is in this set are
+     * skipped by `isDangerous()`. See `_shared/bash/guard.ts`.
+     */
+    let currentAllowedDangerousGroups: ReadonlySet<string> = new Set();
     let currentRewriteRules = loadBashRewrites(process.cwd()).rules;
 
     /** Reload config from settings.json and apply the mode to the active tools. */
     function reloadConfig(cwd: string): SafeBashMode {
         const config = loadSafeBashConfig(cwd);
         currentAllowedShellCommands = config.allowedShellCommands;
+        currentAllowedDangerousGroups = new Set(
+            Object.entries(config.allowDangerous)
+                .filter(([, v]) => v)
+                .map(([k]) => k),
+        );
         currentRewriteRules = loadBashRewrites(cwd).rules;
         return setMode(config.mode);
     }
@@ -75,7 +86,7 @@ export default function (pi: ExtensionAPI) {
         name: "safe_bash",
         label: "🔒Safe Bash",
         description:
-            "Execute a bash command. Provides basic guardrails against accidentally destructive operations (e.g., rm -rf /, sudo). NOT a security sandbox — determined attackers can bypass these checks.",
+            'Execute a bash command. Provides basic guardrails against accidentally destructive operations (e.g., rm -rf /, sudo). NOT a security sandbox — determined attackers can bypass these checks. User can selectively disable a danger group via settings.json `safeBash.allowDangerous` (e.g. `{ "sudo": true }`).',
         parameters: bashWithStdinSchema,
         // Custom renderCall shows 🔒 prefix so user knows safe_bash ran
         renderCall: createBashPrefixRenderer("🔒"),
@@ -106,7 +117,10 @@ export default function (pi: ExtensionAPI) {
             return component;
         },
         async execute(toolCallId, params, signal, onUpdate, ctx) {
-            const danger = isDangerous(params.command);
+            const danger = isDangerous(
+                params.command,
+                currentAllowedDangerousGroups,
+            );
             if (danger) {
                 throw new Error(danger);
             }

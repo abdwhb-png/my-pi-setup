@@ -5,74 +5,135 @@
  * other extension that wraps bash execution (e.g. the compressor).
  */
 
-const DANGEROUS_PATTERNS: RegExp[] = [
-    // ═══ rm — all invocations blocked (safe_bash replace mode; use write/edit tools) ═══
-    /\brm\b/,
+/** A named bundle of regexes representing one class of dangerous command. */
+export interface DangerGroup {
+    /** Stable id used in settings.json `safeBash.allowDangerous` (e.g. `"sudo"`). */
+    id: string;
+    /** Human-readable summary shown in error messages and docs. */
+    label: string;
+    /** One or more regexes; matching ANY of them trips the group. */
+    patterns: RegExp[];
+}
 
-    // ═══ rm on critical locations ═══
-    // Matches rm with any combination of -f/-r flags targeting '/' or '~'
-    // Also catches subpaths like /etc, /var since they start with /
-    /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|~\/?(\s|$|\b))/,
-    // Same with -r before -f
-    /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+)?(-[a-zA-Z]*f[a-zA-Z]*\s+)?(\/|~\/?(\s|$|\b))/,
-    // rm -rf /* (glob removal — catches /* where bare / is missed)
-    /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?\/\*/,
-    // rm targeting critical system directories (even with path traversal, $HOME, or quote obfuscation)
-    /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?(\$|\.\.\/|\S*\/etc|\S*\/var|\S*\/boot|\S*\/bin|\S*\/usr)/,
-    // rm with flags + argument starting with / (catches quote obfuscation like rm -rf ''/"etc")
-    /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?['"]+\//,
-
-    // ═══ Privilege escalation ═══
-    /\bsudo\b/,
-
-    // ═══ Filesystem destruction ═══
-    /\b(mkfs|mkswap|fdisk|parted|gdisk)\b/,
-    /\bdd\s+if=/,
-    />\s*\/dev\/(sh|hd|sd|nvme|vd)[a-z]/,
-
-    // ═══ Fork bomb ═══
-    /:\(\)\s*\{\s*:\|:&\s*\}\s*;:/,
-
-    // ═══ Permission abuse ═══
-    /\bchmod\s+(-[a-zA-Z]+\s+)?([0-7]{3,4})\s+\//,
-    /\bchown\s+(-[a-zA-Z]+\s+)?root/,
-
-    // ═══ Remote pipe to shell ═══
-    /\b(curl|wget)\s.*\|\s*(ba)?sh/,
-    // Indirect: curl/wget to file then execute
-    /\b(curl|wget)\s+.*(?:-o|-O|>)\s+\S+\s+(?:&&|;)\s+(?:bash|sh|zsh)\b/,
-    // base64 decode pipe shell
-    /base64\s+-d\s*\|\s*(ba)?sh/,
-    // openssl dec pipe shell
-    /\bopenssl\s+enc\s+-d\s.*\|\s*(ba)?sh/,
-
-    // ═══ Reverse shell / network tools ═══
-    /\bnc\s+-[a-zA-Z]*e\b/,
-    /\bsocat\s+.*(?:exec|system)/i,
-    /\/dev\/(tcp|udp)\//,
-
-    // ═══ Language-based execution with dangerous patterns ═══
-    /\b(python|python3|python2)\s+-c\s+.*\b(?:os\.system|subprocess\.(?:call|Popen|check_call|run))\s*\(/,
-    /\bnode\s+-[e"]\s+.*\b(?:exec(?:Sync)?|spawn(?:Sync)?)\s*\(/,
-    /\bperl\s+-e\s+.*\b(?:system|exec)/,
-    /\bruby\s+-e\s+.*\b(?:system|exec)/,
-
-    // ═══ System shutdown / halt / reboot ═══
-    /\b(?:shutdown|reboot|halt|poweroff)\b/,
-
-    // ═══ init to runlevel 0 (halt), 1 (single), 6 (reboot) ═══
-    /\binit\s+[016]/,
-
-    // ═══ Process kill critical ═══
-    /\bkill\s+-9\s+1\b/,
-
-    // ═══ Block chmod 777 on any path starting with / ═══
-    // (already partially covered above, this covers /etc /var /boot etc)
-    /\bchmod\s+(-[a-zA-Z]+\s+)?777\s+\/(?!\.)/,
-
-    // ═══ Potential cryptominer detection ═══
-    /\b(xmrig|minergate|cpuminer)\b/,
+/**
+ * Canonical danger groups. Group `id`s are the public, stable handle for
+ * selectively disabling a class of check via `safeBash.allowDangerous`.
+ * Patterns are verbatim from the previous flat `DANGEROUS_PATTERNS` array —
+ * only their container changed.
+ */
+export const DANGER_GROUPS: readonly DangerGroup[] = [
+    {
+        id: "rm",
+        label: "rm (all invocations blocked in replace mode)",
+        patterns: [
+            // bare rm — all invocations blocked in replace mode; use write/edit tools
+            /\brm\b/,
+            // rm with -f/-r targeting '/' or '~', incl. subpaths like /etc, /var
+            /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|~\/?(\s|$|\b))/,
+            // same with -r before -f
+            /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+)?(-[a-zA-Z]*f[a-zA-Z]*\s+)?(\/|~\/?(\s|$|\b))/,
+            // rm -rf /*
+            /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?\/\*/,
+            // rm targeting system dirs (path traversal, $HOME, quote obfuscation)
+            /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?(\$|\.\.\/|\S*\/etc|\S*\/var|\S*\/boot|\S*\/bin|\S*\/usr)/,
+            // rm with flags + arg starting with / (catches quote obfuscation)
+            /\brm\s+(-[a-zA-Z]*[fr][a-zA-Z]*\s+)?['"]+\//,
+        ],
+    },
+    {
+        id: "sudo",
+        label: "sudo (privilege escalation)",
+        patterns: [/\bsudo\b/],
+    },
+    {
+        id: "mkfs",
+        label: "mkfs / mkswap / fdisk / parted / gdisk",
+        patterns: [/\b(mkfs|mkswap|fdisk|parted|gdisk)\b/],
+    },
+    {
+        id: "dd",
+        label: "dd if=",
+        patterns: [/\bdd\s+if=/],
+    },
+    {
+        id: "raw-disk-write",
+        label: "write to raw disk device (/dev/sdX etc.)",
+        patterns: [/>\s*\/dev\/(sh|hd|sd|nvme|vd)[a-z]/],
+    },
+    {
+        id: "forkbomb",
+        label: "fork bomb",
+        patterns: [/:\(\)\s*\{\s*:\|:&\s*\}\s*;:/],
+    },
+    {
+        id: "chmod",
+        label: "chmod on root paths (incl. chmod 777 /)",
+        patterns: [
+            /\bchmod\s+(-[a-zA-Z]+\s+)?([0-7]{3,4})\s+\//,
+            /\bchmod\s+(-[a-zA-Z]+\s+)?777\s+\/(?!\.)/,
+        ],
+    },
+    {
+        id: "chown",
+        label: "chown to root",
+        patterns: [/\bchown\s+(-[a-zA-Z]+\s+)?root/],
+    },
+    {
+        id: "remote-shell",
+        label: "curl/wget/base64/openssl piped to shell",
+        patterns: [
+            /\b(curl|wget)\s.*\|\s*(ba)?sh/,
+            // indirect: curl/wget to file then execute
+            /\b(curl|wget)\s+.*(?:-o|-O|>)\s+\S+\s+(?:&&|;)\s+(?:bash|sh|zsh)\b/,
+            /base64\s+-d\s*\|\s*(ba)?sh/,
+            /\bopenssl\s+enc\s+-d\s.*\|\s*(ba)?sh/,
+        ],
+    },
+    {
+        id: "reverse-shell",
+        label: "reverse shell / network tools (nc, socat, /dev/tcp)",
+        patterns: [
+            /\bnc\s+-[a-zA-Z]*e\b/,
+            /\bsocat\s+.*(?:exec|system)/i,
+            /\/dev\/(tcp|udp)\//,
+        ],
+    },
+    {
+        id: "exec-injection",
+        label: "python/node/perl/ruby one-liner shell calls",
+        patterns: [
+            /\b(python|python3|python2)\s+-c\s+.*\b(?:os\.system|subprocess\.(?:call|Popen|check_call|run))\s*\(/,
+            /\bnode\s+-[e"]\s+.*\b(?:exec(?:Sync)?|spawn(?:Sync)?)\s*\(/,
+            /\bperl\s+-e\s+.*\b(?:system|exec)/,
+            /\bruby\s+-e\s+.*\b(?:system|exec)/,
+        ],
+    },
+    {
+        id: "shutdown",
+        label: "shutdown / reboot / halt / poweroff",
+        patterns: [/\b(?:shutdown|reboot|halt|poweroff)\b/],
+    },
+    {
+        id: "init",
+        label: "init to runlevel 0 (halt), 1 (single), 6 (reboot)",
+        patterns: [/\binit\s+[016]/],
+    },
+    {
+        id: "kill",
+        label: "kill -9 1 (PID 1)",
+        patterns: [/\bkill\s+-9\s+1\b/],
+    },
+    {
+        id: "cryptominer",
+        label: "cryptominer binaries (xmrig, minergate, cpuminer)",
+        patterns: [/\b(xmrig|minergate|cpuminer)\b/],
+    },
 ];
+
+/** Canonical list of all danger-group ids (for validation, docs, completions). */
+export const DANGER_GROUP_IDS: readonly string[] = DANGER_GROUPS.map(
+    (g) => g.id,
+);
 
 /**
  * Normalize a command string to reduce common obfuscation tricks.
@@ -96,12 +157,25 @@ function normalize(command: string): string {
 /**
  * Check if a command is dangerous.
  * Returns null if safe, or an error message string if blocked.
+ *
+ * @param command - Raw shell command string.
+ * @param allowedGroups - Optional set of danger-group ids (e.g. `"sudo"`,
+ *   `"rm"`) to skip entirely. Unknown ids are ignored. When a group is
+ *   allowed, NONE of its patterns run — so a command is only blocked by
+ *   the remaining groups. Empty/undefined = all groups enforced
+ *   (backward compatible).
  */
-export function isDangerous(command: string): string | null {
+export function isDangerous(
+    command: string,
+    allowedGroups: ReadonlySet<string> = new Set(),
+): string | null {
     const normalized = normalize(command);
-    for (const pattern of DANGEROUS_PATTERNS) {
-        if (pattern.test(normalized)) {
-            return `Command blocked by safe_bash: matches dangerous pattern ${pattern}`;
+    for (const group of DANGER_GROUPS) {
+        if (allowedGroups.has(group.id)) continue;
+        for (const pattern of group.patterns) {
+            if (pattern.test(normalized)) {
+                return `Command blocked by safe_bash: matches dangerous pattern ${pattern} (group: ${group.id})`;
+            }
         }
     }
     return null;

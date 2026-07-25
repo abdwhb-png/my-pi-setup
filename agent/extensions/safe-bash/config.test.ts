@@ -98,6 +98,69 @@ describe('normalizeSafeBashConfig', () => {
             allowedShellCommands: ['grep'],
         });
     });
+
+    // --- allowDangerous ---
+
+    it('accepts allowDangerous as a boolean map of true values', () => {
+        expect(
+            normalizeSafeBashConfig({
+                allowDangerous: { sudo: true, rm: true },
+            }),
+        ).toEqual({
+            allowDangerous: { sudo: true, rm: true },
+        });
+    });
+
+    it('drops allowDangerous entries whose value is not exactly true', () => {
+        expect(
+            normalizeSafeBashConfig({
+                allowDangerous: {
+                    sudo: true,
+                    rm: false,
+                    mkfs: 'yes',
+                    dd: 1,
+                    sudo2: null,
+                } as any,
+            }),
+        ).toEqual({
+            allowDangerous: { sudo: true },
+        });
+    });
+
+    it('rejects allowDangerous that is not an object', () => {
+        expect(
+            normalizeSafeBashConfig({ allowDangerous: ['sudo'] } as any),
+        ).toEqual({});
+        expect(
+            normalizeSafeBashConfig({ allowDangerous: 'sudo' } as any),
+        ).toEqual({});
+        expect(
+            normalizeSafeBashConfig({ allowDangerous: null } as any),
+        ).toEqual({});
+    });
+
+    it('drops allowDangerous when object has no true entries', () => {
+        expect(
+            normalizeSafeBashConfig({ allowDangerous: {} }),
+        ).toEqual({});
+        expect(
+            normalizeSafeBashConfig({ allowDangerous: { sudo: false } }),
+        ).toEqual({});
+    });
+
+    it('preserves mode, allowedShellCommands, and allowDangerous together', () => {
+        expect(
+            normalizeSafeBashConfig({
+                mode: 'replace',
+                allowedShellCommands: ['grep'],
+                allowDangerous: { sudo: true },
+            }),
+        ).toEqual({
+            mode: 'replace',
+            allowedShellCommands: ['grep'],
+            allowDangerous: { sudo: true },
+        });
+    });
 });
 
 describe('loadSafeBashConfig', () => {
@@ -160,5 +223,19 @@ describe('loadSafeBashConfig', () => {
         } as any);
         const config = loadSafeBashConfig(cwd, undefined, sm);
         expect(config.allowedShellCommands).toEqual(['grep', 'rg']);
+    });
+
+    it('defaults allowDangerous to empty object', () => {
+        const sm = SettingsManager.inMemory({} as any);
+        const config = loadSafeBashConfig(cwd, undefined, sm);
+        expect(config.allowDangerous).toEqual({});
+    });
+
+    it('reads allowDangerous from settings', () => {
+        const sm = SettingsManager.inMemory({
+            safeBash: { allowDangerous: { sudo: true, rm: true } },
+        } as any);
+        const config = loadSafeBashConfig(cwd, undefined, sm);
+        expect(config.allowDangerous).toEqual({ sudo: true, rm: true });
     });
 });

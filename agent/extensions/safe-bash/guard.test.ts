@@ -434,3 +434,60 @@ describe('redirectShellCommandWithPolicy - allowList bypass', () => {
         ).toBeNull();
     });
 });
+
+// --- isDangerous allowDangerous (group-level bypass) ---
+
+describe('isDangerous - allowDangerous groups', () => {
+    it('allows a command when its danger group is allowed', () => {
+        expect(isDangerous('sudo apt update', new Set(['sudo']))).toBeNull();
+    });
+
+    it('still blocks a command when its group is NOT allowed', () => {
+        expect(
+            isDangerous('sudo apt update', new Set(['rm'])),
+        ).not.toBeNull();
+    });
+
+    it('blocks when allowedGroups is empty (default behavior)', () => {
+        expect(isDangerous('sudo apt update', new Set())).not.toBeNull();
+    });
+
+    it('blocks when allowedGroups is undefined (backward compatible)', () => {
+        expect(isDangerous('sudo apt update')).not.toBeNull();
+        expect(isDangerous('sudo apt update', undefined)).not.toBeNull();
+    });
+
+    it('silently ignores unknown group ids (no throw, no bypass)', () => {
+        expect(
+            isDangerous('sudo apt update', new Set(['does-not-exist'])),
+        ).not.toBeNull();
+    });
+
+    it('allowing one group does not weaken others: sudo rm still blocked by rm', () => {
+        // sudo group allowed, but the rm group still matches `rm -rf /`
+        const msg = isDangerous('sudo rm -rf /', new Set(['sudo']));
+        expect(msg).not.toBeNull();
+        expect(msg).toContain('group: rm');
+    });
+
+    it('allowing both sudo and rm lets sudo rm through', () => {
+        expect(
+            isDangerous('sudo rm -rf /', new Set(['sudo', 'rm'])),
+        ).toBeNull();
+    });
+
+    it('block message names the matched group id', () => {
+        const msg = isDangerous('sudo apt update');
+        expect(msg).toContain('group: sudo');
+    });
+
+    it('allowing rm group covers all rm variants (bare rm + flag forms)', () => {
+        expect(
+            isDangerous('rm -rf /etc', new Set(['rm'])),
+        ).toBeNull();
+        expect(isDangerous('rm tmp/x', new Set(['rm']))).toBeNull();
+        expect(
+            isDangerous('rm -rf ~', new Set(['rm'])),
+        ).toBeNull();
+    });
+});

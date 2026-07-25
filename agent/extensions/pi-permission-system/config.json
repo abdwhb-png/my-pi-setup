@@ -23,6 +23,7 @@
             "docker info *": "allow",
             "docker ps *": "allow",
             "docker logs *": "allow",
+            "docker inspect *": "allow",
             "git *": "ask",
             "git remote -v": "allow",
             "git * remote -v": "allow",
