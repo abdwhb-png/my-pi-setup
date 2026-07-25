@@ -30,7 +30,7 @@
             "position": 2
         },
         "context-bar": {
-            "enabled": true,
+            "enabled": false,
             "row": 1,
             "align": "right",
             "position": 3
@@ -62,12 +62,11 @@
             "row": 0
         },
         "session-status-bar.model": {
-            "row": 1,
-            "position": 0
+            "row": 1
         },
         "session-status-bar.context": {
-            "row": 1,
-            "position": 1
+            "row": 0,
+            "position": 3
         },
         "session-status-bar.cost": {
             "row": 1
@@ -103,7 +102,11 @@
             "row": 1
         },
         "brainstorm-forcer": {
-            "row": 3
+            "row": 3,
+            "align": "right"
+        },
+        "pi-glm-tweaks.status": {
+            "row": 1
         },
         "auto-translate": {
             "row": 3,

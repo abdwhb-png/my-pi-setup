@@ -82,6 +82,7 @@ export function renderContext(
 ): string {
     const pct = `${Math.round(state.context.percent)}%`;
     return (
+        '🔋'+
         colors.pressure(pct, state.context.percent) +
         ' ' +
         colors.pressure(
