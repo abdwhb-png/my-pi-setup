@@ -14,16 +14,22 @@ import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type {
     ExtensionAPI,
     ExtensionContext,
     MessageRenderer,
 } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
 import { createUiColors } from "../_shared/ui-colors";
 import { createBrainstormArtifactStore } from "./artifacts";
+import {
+    ArtifactReviewView,
+    type ReviewAction,
+    type ReviewDecision,
+} from "./review";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -594,9 +600,10 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             const targetLabel = targetPhase
                 ? PHASE_LABELS[targetPhase]
                 : "Complete brainstorm";
-            const choice = await ctx.ui.select(
-                `Approve brainstorm transition: ${PHASE_LABELS[activePhase]} → ${targetLabel}?`,
-                ["Approve", "Reject", "Reject with reason"],
+            const choice = await requestTransitionDecision(
+                params.action,
+                targetLabel,
+                ctx,
             );
             if (choice !== "Approve") {
                 const customReason =
@@ -621,6 +628,81 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             return transitionResult(false, true);
         },
     });
+
+    async function requestTransitionDecision(
+        action: "next" | "previous",
+        targetLabel: string,
+        ctx: ExtensionContext,
+    ): Promise<ReviewDecision> {
+        if (!activePhase) throw new Error("No active brainstorming run.");
+        const currentPhase = activePhase;
+        const fallback = async (): Promise<ReviewDecision | undefined> => {
+            const choice = await ctx.ui.select(
+                `Approve brainstorm transition: ${PHASE_LABELS[currentPhase]} → ${targetLabel}?`,
+                ["Approve", "Reject", "Reject with reason"],
+            );
+            return choice === "Approve" ||
+                choice === "Reject" ||
+                choice === "Reject with reason"
+                ? choice
+                : undefined;
+        };
+        if (ctx.mode !== "tui") return (await fallback()) ?? "Reject";
+
+        const reviewPhase = artifacts[currentPhase]
+            ? currentPhase
+            : action === "previous"
+              ? previousPhase(currentPhase)
+              : undefined;
+        const checkpoint = reviewPhase ? artifacts[reviewPhase] : undefined;
+        if (!reviewPhase || !checkpoint) return (await fallback()) ?? "Reject";
+        const revision = String(checkpoint.revision).padStart(3, "0");
+        const decision = await openArtifactOverlay(
+            checkpoint,
+            `${PHASE_LABELS[reviewPhase]} r${revision} → ${targetLabel}`,
+            ["Approve", "Reject", "Reject with reason"],
+            "Reject",
+            ctx,
+        );
+        return decision === "Close" || !decision ? "Reject" : decision;
+    }
+
+    async function openArtifactOverlay(
+        checkpoint: ArtifactCheckpoint,
+        title: string,
+        actions: readonly ReviewAction[],
+        escapeAction: ReviewAction,
+        ctx: ExtensionContext,
+    ): Promise<ReviewAction | undefined> {
+        if (ctx.mode !== "tui") return undefined;
+        const markdown = getArtifactStore(ctx).read(checkpoint.path);
+        return ctx.ui.custom<ReviewAction>(
+            (tui, theme, _keybindings, done) =>
+                new ArtifactReviewView({
+                    title,
+                    subtitle: checkpoint.path,
+                    body: new Markdown(markdown, 0, 0, getMarkdownTheme()),
+                    actions,
+                    escapeAction,
+                    colors: {
+                        accent: (text) => theme.fg("accent", text),
+                        dim: (text) => theme.fg("dim", text),
+                        selected: (text) =>
+                            theme.fg("accent", theme.bold(text)),
+                    },
+                    requestRender: () => tui.requestRender(),
+                    done,
+                }),
+            {
+                overlay: true,
+                overlayOptions: {
+                    width: "90%",
+                    maxHeight: "80%",
+                    margin: 2,
+                },
+            },
+        );
+    }
 
     function expectedSubmissionTool(phase: Phase): string {
         return PHASE_SUBMISSION_TOOLS[phase];
@@ -1004,6 +1086,11 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                         "List durable artifact revisions for the active brainstorm",
                 },
                 {
+                    value: "review",
+                    label: "review",
+                    description: "Open the active artifact inside Pi",
+                },
+                {
                     value: "stop",
                     label: "stop",
                     description: "Disable brainstorming workflow",
@@ -1061,6 +1148,37 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                             ? `\nNext blocked: ${blocker}`
                             : "\nNext allowed."),
                     blocker ? "warning" : "info",
+                );
+                return;
+            }
+
+            if (raw === "review") {
+                if (!activePhase) {
+                    ctx.ui.notify("No active brainstorming session.", "info");
+                    return;
+                }
+                const checkpoint = artifacts[activePhase];
+                if (!checkpoint) {
+                    ctx.ui.notify(
+                        `${PHASE_LABELS[activePhase]} has no submitted artifact yet.`,
+                        "warning",
+                    );
+                    return;
+                }
+                if (ctx.mode !== "tui") {
+                    ctx.ui.notify(
+                        `Active artifact: ${checkpoint.path}`,
+                        "info",
+                    );
+                    return;
+                }
+                const revision = String(checkpoint.revision).padStart(3, "0");
+                await openArtifactOverlay(
+                    checkpoint,
+                    `${PHASE_LABELS[activePhase]} r${revision}`,
+                    ["Close"],
+                    "Close",
+                    ctx,
                 );
                 return;
             }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBrainstormArtifactStore } from "./artifacts";
@@ -41,6 +41,43 @@ describe("brainstorm artifact store", () => {
       activeRevisions: { discovery: 1 },
       revisions: [{ phase: "discovery", revision: 1, status: "active", path: result.path }],
     });
+  });
+
+  it("reads a submitted artifact through its verified run scope", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-artifacts-"));
+    temporaryDirectories.push(projectRoot);
+    const store = createBrainstormArtifactStore({
+      projectRoot,
+      runId: "brainstorm-review",
+      topic: "Review inside Pi",
+      now: () => "2026-07-24T12:00:00.000Z",
+    });
+    const result = store.submit({
+      phase: "discovery",
+      markdown: "# Discovery\n\nVisible in Pi.",
+      tool: "brainstorm_submit_discovery",
+    });
+
+    expect(store.read(result.path)).toBe("# Discovery\n\nVisible in Pi.\n");
+  });
+
+  it("refuses artifact content changed outside the store", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-artifacts-"));
+    temporaryDirectories.push(projectRoot);
+    const store = createBrainstormArtifactStore({
+      projectRoot,
+      runId: "brainstorm-tampered",
+      topic: "Tamper detection",
+      now: () => "2026-07-24T12:00:00.000Z",
+    });
+    const result = store.submit({
+      phase: "discovery",
+      markdown: "trusted",
+      tool: "brainstorm_submit_discovery",
+    });
+    await writeFile(join(projectRoot, result.path), "tampered\n");
+
+    expect(() => store.read(result.path)).toThrow("checksum mismatch");
   });
 
   it("keeps immutable revisions and marks downstream artifacts stale", async () => {

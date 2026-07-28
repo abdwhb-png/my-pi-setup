@@ -14,7 +14,7 @@ While brainstorm is active:
 1. Work only on current phase shown in `brainstorm-forcer-status`.
 2. Use current phase submission tool to provide complete structured content directly.
 3. Call `brainstorm_transition` with `next` only after artifact submission succeeds.
-4. Wait for explicit user approval; never interpret a transition request as accepted before the tool returns `approved: true`.
+4. Wait while Pi shows the exact active artifact in a scrollable review overlay. Never interpret a transition request as accepted before the tool returns `approved: true`.
 5. On rejection, stay in current phase, follow the returned reason, deepen the work, and submit a new artifact revision before requesting `next` again. An omitted reason means investigate gaps, validate assumptions, and go deeper.
 6. Use `previous` when evidence or user feedback invalidates earlier reasoning; it also requires user approval.
 7. Never start next phase before transition succeeds.

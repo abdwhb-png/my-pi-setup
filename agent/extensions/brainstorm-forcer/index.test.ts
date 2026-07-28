@@ -255,6 +255,49 @@ describe("brainstorm-forcer redesign", () => {
     }
   });
 
+  it("shows the active artifact inside Pi before approving a TUI transition", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-review-ui-"));
+    try {
+      const { pi, tools, commands } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      (ctx as any).mode = "tui";
+      const { initTheme } = await import("@earendil-works/pi-coding-agent");
+      initTheme();
+      let rendered = "";
+      (ctx.ui.custom as any).mockImplementation(async (factory: any) =>
+        await new Promise((resolve) => {
+          const component = factory(
+            { requestRender: mock(() => undefined) },
+            ctx.ui.theme,
+            {},
+            resolve,
+          );
+          rendered = component.render(100).join("\n");
+          component.handleInput("a");
+        }),
+      );
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("Visible artifact", ctx);
+      await tools.get("brainstorm_submit_discovery")!.execute(
+        "artifact",
+        { filesAccessed: ["index.ts"], keyFindings: ["Verified in overlay."], gaps: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      const result = await tools
+        .get("brainstorm_transition")!
+        .execute("next", { action: "next" }, undefined, undefined, ctx);
+      expect(rendered).toContain("Verified in overlay.");
+      expect(rendered).toContain("Discovery r001 → Understanding");
+      expect(result.details).toMatchObject({ phase: "understanding", approved: true });
+      expect(ctx.ui.select).not.toHaveBeenCalled();
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it("reports transition status without asking for approval", async () => {
     const { pi, tools, commands } = createMockAPI();
     const ctx = createMockContext();
@@ -516,6 +559,47 @@ describe("brainstorm-forcer redesign", () => {
     }
   });
 
+  it("reopens the active artifact through /brainstorm review", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-review-command-"));
+    try {
+      const { pi, commands, tools } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      (ctx as any).mode = "tui";
+      const { initTheme } = await import("@earendil-works/pi-coding-agent");
+      initTheme();
+      let rendered = "";
+      (ctx.ui.custom as any).mockImplementation(async (factory: any) =>
+        await new Promise((resolve) => {
+          const component = factory(
+            { requestRender: mock(() => undefined) },
+            ctx.ui.theme,
+            {},
+            resolve,
+          );
+          rendered = component.render(100).join("\n");
+          component.handleInput("\r");
+        }),
+      );
+      brainstormForcer(pi);
+      const command = commands.get("brainstorm")!;
+      await command.handler("Review command", ctx);
+      await tools.get("brainstorm_submit_discovery")!.execute(
+        "artifact",
+        { filesAccessed: ["index.ts"], keyFindings: ["Review me inside Pi."], gaps: [] },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      await command.handler("review", ctx);
+      expect(rendered).toContain("Review me inside Pi.");
+      expect(rendered).toContain("Discovery r001");
+      expect(rendered).toContain("[ Close ]");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it("provides argument completions like sandbox-style commands", () => {
     const { pi, commands } = createMockAPI();
     brainstormForcer(pi);
@@ -526,6 +610,7 @@ describe("brainstorm-forcer redesign", () => {
     expect(all.some((item: any) => item.value === "status")).toBe(true);
     expect(all.some((item: any) => item.value === "next")).toBe(true);
     expect(all.some((item: any) => item.value === "previous")).toBe(true);
+    expect(all.some((item: any) => item.value === "review")).toBe(true);
     expect(all.some((item: any) => item.value === "arm ")).toBe(true);
     expect(all.some((item: any) => item.value === "phase discovery")).toBe(true);
 

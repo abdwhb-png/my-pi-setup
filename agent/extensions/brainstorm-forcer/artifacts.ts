@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createScopedWriter } from "../pi-scoped-write/core";
 
 export const BRAINSTORM_PHASES = [
@@ -202,6 +202,34 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
             };
             persistManifest(input.tool);
             return { revision, path, manifestPath, sha256: sha256(content) };
+        },
+        read(path: string): string {
+            const revision = manifest.revisions.find(
+                (item) => item.path === path,
+            );
+            if (!revision) throw new Error("Unknown brainstorm artifact.");
+
+            const absoluteRoot = resolve(options.projectRoot, root);
+            const absolutePath = resolve(options.projectRoot, path);
+            const scopedPath = relative(absoluteRoot, absolutePath);
+            if (scopedPath.startsWith("..") || isAbsolute(scopedPath))
+                throw new Error(
+                    "Artifact path escapes the brainstorm run root.",
+                );
+
+            let currentPath = absoluteRoot;
+            for (const part of scopedPath.split(sep)) {
+                currentPath = join(currentPath, part);
+                if (lstatSync(currentPath).isSymbolicLink())
+                    throw new Error(
+                        "Symlinks are not allowed in artifact paths.",
+                    );
+            }
+
+            const content = readFileSync(absolutePath, "utf8");
+            if (sha256(content) !== revision.sha256)
+                throw new Error("Brainstorm artifact checksum mismatch.");
+            return content;
         },
         getManifest(): BrainstormArtifactManifest {
             return structuredClone(manifest);

@@ -18,6 +18,7 @@ Pi extension that runs brainstorming as a controlled, artifact-backed state mach
 - `/brainstorm arm <topic>` — arm without starting an LLM turn
 - `/brainstorm status` — show current phase, gate, and restrictions
 - `/brainstorm artifacts` — list durable active/stale revisions
+- `/brainstorm review` — reopen the active artifact in a scrollable Pi overlay
 - `/brainstorm next` / `/brainstorm previous` — adjacent user transition
 - `/brainstorm next --force` / `/brainstorm phase <name|number>` — explicit user overrides
 - `/brainstorm stop` — stop workflow
@@ -34,7 +35,7 @@ Pi extension that runs brainstorming as a controlled, artifact-backed state mach
 
 After submitting current phase, LLM calls `brainstorm_transition` with `next`, `previous`, or `status`.
 
-LLM-requested `next` and `previous` transitions open a blocking user approval dialog with three choices: Approve, Reject, or Reject with reason. A rejection keeps the current phase and steers feedback back to the LLM. Empty or omitted reasons use a default instruction to investigate gaps, validate assumptions, go deeper, revise the artifact, and request transition again. Rejected forward transitions require a new artifact revision before another approval request. `status` and explicit user slash commands do not prompt.
+LLM-requested `next` and `previous` transitions open a blocking Pi overlay containing the exact active Markdown artifact, its revision, and its path. Scroll with ↑/↓ or `j`/`k`, choose with ←/→, and confirm with Enter. The three choices are Approve, Reject, or Reject with reason. A rejection keeps the current phase and steers feedback back to the LLM. Empty or omitted reasons use a default instruction to investigate gaps, validate assumptions, go deeper, revise the artifact, and request transition again. Rejected forward transitions require a new artifact revision before another approval request. `status` and explicit user slash commands do not prompt.
 
 Transition gates:
 
