@@ -28,6 +28,10 @@
             "options": {
                 "singleQuote": false
             }
+        },
+        {
+            "files": ["agents/*.md"],
+            "options": { "singleQuote": false }
         }
     ],
     "ignorePatterns": [

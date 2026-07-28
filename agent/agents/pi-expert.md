@@ -6,9 +6,9 @@ fallbackModels: cpa/ocg/mimo-v2.5, cpa/ocg/go-deepseek-v4-flash
 defaultContext: fresh
 inheritProjectContext: false
 inheritSkills: false
-turnBudget: { 'maxTurns': 20, 'graceTurns': 6 }
+turnBudget: { "maxTurns": 20, "graceTurns": 6 }
 skills: pi-extensions, factual-research
-tools: '@inspect, @lens, safe_bash, @docs, @web, contact_supervisor'
+tools: "@inspect, @lens, safe_bash, @docs, @web, contact_supervisor"
 ---
 
 # Pi Expert

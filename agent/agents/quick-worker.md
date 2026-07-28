@@ -1,13 +1,13 @@
 ---
 name: quick-worker
 description: Strict bounded implementation worker for small, explicit, reversible tasks with an exact file allowlist and focused verification.
-tools: '@inspect, @lens-write, @implement'
+tools: "@inspect, @lens-write, @implement"
 thinking: medium
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 defaultContext: fresh
-turnBudget: { 'maxTurns': 20, 'graceTurns': 5 }
+turnBudget: { "maxTurns": 20, "graceTurns": 5 }
 acceptanceRole: writer
 ---
 

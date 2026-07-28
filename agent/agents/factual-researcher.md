@@ -8,8 +8,8 @@ defaultContext: fresh
 inheritProjectContext: false
 inheritSkills: false
 skills: factual-research, firecrawl, firecrawl-crawl, firecrawl-map, firecrawl-parse, firecrawl-scrape, firecrawl-search
-tools: '@inspect, safe_bash, @docs, mcp:exa, @web, intercom, contact_supervisor'
-turnBudget: { 'maxTurns': 20, 'graceTurns': 8 }
+tools: "@inspect, safe_bash, @docs, mcp:exa, @web, intercom, contact_supervisor"
+turnBudget: { "maxTurns": 20, "graceTurns": 8 }
 ---
 
 # Factual Researcher
