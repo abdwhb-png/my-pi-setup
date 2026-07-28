@@ -26,6 +26,11 @@ import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
 import { createUiColors } from "../_shared/ui-colors";
 import { createBrainstormArtifactStore } from "./artifacts";
 import {
+    createExplorationLedger,
+    isExplorationRecord,
+    type ExplorationRecord,
+} from "./exploration-ledger";
+import {
     ArtifactReviewView,
     type ReviewAction,
     type ReviewDecision,
@@ -78,6 +83,7 @@ const ALWAYS_BLOCKED_TOOLS = new Set([
 ]);
 
 const SESSION_KEY = "brainstorm-forcer";
+const LEDGER_SESSION_KEY = "brainstorm-forcer-ledger";
 const WIDGET_ID = "brainstorm-forcer";
 const DEFAULT_REJECTION_REASON =
     "Refine the current phase: investigate remaining gaps, validate assumptions, go deeper, revise its artifact, then request transition again.";
@@ -182,10 +188,23 @@ function canUseTool(
     phase: Phase,
     toolName: string,
     groups: ToolGroups,
+    input?: Record<string, unknown>,
 ): boolean {
     if (toolName === "brainstorm_transition") return true;
     if (Object.values(PHASE_SUBMISSION_TOOLS).includes(toolName))
         return toolName === PHASE_SUBMISSION_TOOLS[phase];
+    if (toolName === "subagent")
+        return (
+            phase === "exploring" &&
+            input?.agent === "reviewer" &&
+            input.context === "fresh" &&
+            typeof input.task === "string" &&
+            input.task.trim().length > 0 &&
+            input.async !== true &&
+            input.action === undefined &&
+            input.tasks === undefined &&
+            input.chain === undefined
+        );
     if (ALWAYS_BLOCKED_TOOLS.has(toolName)) return false;
     return !groups.mutation.has(toolName);
 }
@@ -197,7 +216,7 @@ function phaseRestrictionSummary(phase: Phase): string {
         case "understanding":
             return "Understanding phase. Any non-mutating tool is allowed; prefer ask_user_question to refine requirements. Mutation blocked.";
         case "exploring":
-            return "Exploring phase. Any non-mutating tool is allowed. Compare 2-3 approaches with trade-offs. Mutation blocked.";
+            return "Exploring phase. Allowed non-mutating results become EV-* records. Qualify CL-* claims, complete conditional fresh review, obtain user-approved waivers, and submit 2-3 claim-linked approaches. Mutation blocked.";
         case "presenting":
             return "Presenting phase. Any non-mutating tool is allowed. Present design sections, validate with user. Mutation blocked.";
         case "documenting":
@@ -250,7 +269,13 @@ function phasePrompt(
             return [
                 `Current topic: ${topic.raw}`,
                 `Current phase: EXPLORING`,
-                `Follow the bundled skill \`brainstorm-forcer\`: propose 2-3 approaches with trade-offs, uncertainties, and recommendation. Do not write code.`,
+                `Follow the bundled skill \`brainstorm-forcer\`. Identify each decision-relevant assumption and classify it as empirical, design-choice, or future-contingency. Do not write code.`,
+                `Verify empirical assumptions programmatically. Prefer \`ctx_batch_execute\`, then \`ctx_execute\`, \`ctx_execute_file\`, direct code/LSP/AST/test/API/official-documentation tools, and indexed retrieval last.`,
+                `Allowed Exploring tool results are captured automatically as EV-* records. Use \`brainstorm_record_claim\` to create CL-* records; never invent evidence identifiers.`,
+                `Critical claims supported by \`ctx_search\` need direct corroboration. Failed, stale, indexed-only, or reviewer evidence cannot independently verify a critical empirical claim.`,
+                `When review is required, call \`subagent\` synchronously with agent \`reviewer\` with \`context: fresh\`, then link its EV-* output through \`brainstorm_submit_review\`.`,
+                `Use \`brainstorm_request_waiver\` only for an unresolved critical claim. The user must approve the documented waiver; a waiver also requires a later fresh review.`,
+                `Submit 2-3 approaches whose \`claimIds\` reference active claims, an evidence-backed recommendation with \`recommendationClaimIds\`, and the explicit user choice.`,
                 ...phaseControl,
                 evidenceLine,
                 ...completed,
@@ -308,6 +333,8 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     let artifactStore: ReturnType<typeof createBrainstormArtifactStore> | null =
         null;
     let artifacts: ArtifactCheckpoints = {};
+    let explorationLedger: ReturnType<typeof createExplorationLedger> | null =
+        null;
 
     pi.registerTool({
         name: "brainstorm_submit_discovery",
@@ -416,12 +443,170 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         },
     });
 
+    pi.registerTool({
+        name: "brainstorm_record_claim",
+        label: "Record Brainstorm Claim",
+        description:
+            "Create an immutable qualified claim for the active Exploring phase.",
+        parameters: Type.Object(
+            {
+                assertion: Type.String({ minLength: 1 }),
+                classification: StringEnum([
+                    "empirical",
+                    "design-choice",
+                    "future-contingency",
+                ] as const),
+                critical: Type.Boolean(),
+                verdict: StringEnum([
+                    "verified",
+                    "falsified",
+                    "unresolved",
+                ] as const),
+                evidenceIds: Type.Array(Type.String({ pattern: "^EV-\\d+$" })),
+                contradictoryEvidenceIds: Type.Array(
+                    Type.String({ pattern: "^EV-\\d+$" }),
+                ),
+                impact: Type.String({ minLength: 1 }),
+                mitigation: Type.String({ minLength: 1 }),
+                supersedesClaimId: Type.Optional(
+                    Type.String({ pattern: "^CL-\\d+$" }),
+                ),
+            },
+            { additionalProperties: false },
+        ),
+        async execute(_id, params, _signal, _update, ctx) {
+            if (activePhase !== "exploring")
+                throw new Error(
+                    `Claims are unavailable during ${activePhase ?? "inactive"} phase.`,
+                );
+            explorationLedger ??= createExplorationLedger({ runId });
+            const record = explorationLedger.recordClaim(params);
+            appendExplorationRecord(record, ctx);
+            return {
+                content: [
+                    {
+                        type: "text" as const,
+                        text: `Claim recorded: ${record.id} (${record.verdict}).`,
+                    },
+                ],
+                details: { record },
+            };
+        },
+    });
+
+    pi.registerTool({
+        name: "brainstorm_submit_review",
+        label: "Submit Brainstorm Review",
+        description:
+            "Link a successful fresh reviewer result to active Exploring claims and primary evidence.",
+        parameters: Type.Object(
+            {
+                reviewerEvidenceId: Type.String({ pattern: "^EV-\\d+$" }),
+                claimIds: Type.Array(Type.String({ pattern: "^CL-\\d+$" }), {
+                    minItems: 1,
+                }),
+                primaryEvidenceIds: Type.Array(
+                    Type.String({ pattern: "^EV-\\d+$" }),
+                    { minItems: 1 },
+                ),
+                summary: Type.String({ minLength: 1 }),
+            },
+            { additionalProperties: false },
+        ),
+        async execute(_id, params, _signal, _update, ctx) {
+            if (activePhase !== "exploring")
+                throw new Error(
+                    `Reviews are unavailable during ${activePhase ?? "inactive"} phase.`,
+                );
+            explorationLedger ??= createExplorationLedger({ runId });
+            const record = explorationLedger.recordReview(params);
+            appendExplorationRecord(record, ctx);
+            return {
+                content: [
+                    {
+                        type: "text" as const,
+                        text: `Review recorded: ${record.id}.`,
+                    },
+                ],
+                details: { record },
+            };
+        },
+    });
+
+    pi.registerTool({
+        name: "brainstorm_request_waiver",
+        label: "Request Brainstorm Waiver",
+        description:
+            "Ask the user to approve a documented waiver for an unresolved critical Exploring claim.",
+        parameters: Type.Object(
+            {
+                claimId: Type.String({ pattern: "^CL-\\d+$" }),
+                reason: Type.String({ minLength: 1 }),
+                impact: Type.String({ minLength: 1 }),
+                mitigation: Type.String({ minLength: 1 }),
+                reevaluateWhen: Type.String({ minLength: 1 }),
+            },
+            { additionalProperties: false },
+        ),
+        async execute(_id, params, _signal, _update, ctx) {
+            if (activePhase !== "exploring")
+                throw new Error(
+                    `Waivers are unavailable during ${activePhase ?? "inactive"} phase.`,
+                );
+            if (!ctx.hasUI)
+                throw new Error(
+                    "Waiver approval requires interactive user input.",
+                );
+            explorationLedger ??= createExplorationLedger({ runId });
+            const claim = explorationLedger
+                .getActiveClaims()
+                .find((item) => item.id === params.claimId);
+            if (!claim || !claim.critical || claim.verdict !== "unresolved")
+                throw new Error(
+                    "Waivers apply only to active unresolved critical claims.",
+                );
+            const choice = await ctx.ui.select(
+                [
+                    `Approve waiver for ${params.claimId}?`,
+                    `Reason: ${params.reason}`,
+                    `Impact: ${params.impact}`,
+                    `Mitigation: ${params.mitigation}`,
+                    `Re-evaluate when: ${params.reevaluateWhen}`,
+                ].join("\n"),
+                ["Approve waiver", "Reject"],
+            );
+            if (choice !== "Approve waiver")
+                return {
+                    content: [
+                        {
+                            type: "text" as const,
+                            text: `Waiver rejected for ${params.claimId}.`,
+                        },
+                    ],
+                    details: { approved: false, claimId: params.claimId },
+                };
+            const record = explorationLedger.recordWaiver(params);
+            appendExplorationRecord(record, ctx);
+            return {
+                content: [
+                    {
+                        type: "text" as const,
+                        text: `Waiver approved and recorded: ${record.id}.`,
+                    },
+                ],
+                details: { approved: true, record },
+            };
+        },
+    });
+
     const ApproachSchema = Type.Object(
         {
             title: Type.String({ minLength: 1 }),
             summary: Type.String({ minLength: 1 }),
             tradeoffs: Type.Array(Type.String({ minLength: 1 })),
-            uncertainties: Type.Array(Type.String({ minLength: 1 })),
+            claimIds: Type.Array(Type.String({ pattern: "^CL-\\d+$" }), {
+                minItems: 1,
+            }),
             failureConditions: Type.Array(Type.String({ minLength: 1 })),
         },
         { additionalProperties: false },
@@ -438,47 +623,37 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                     maxItems: 3,
                 }),
                 recommendation: Type.String({ minLength: 1 }),
+                recommendationClaimIds: Type.Array(
+                    Type.String({ pattern: "^CL-\\d+$" }),
+                    { minItems: 1 },
+                ),
                 userChoice: Type.String({ minLength: 1 }),
             },
             { additionalProperties: false },
         ),
         async execute(_id, params, _signal, _update, ctx) {
-            const approaches = params.approaches.flatMap((approach, index) => [
-                `## Approach ${index + 1}: ${approach.title}`,
-                "",
-                approach.summary,
-                "",
-                "### Trade-offs",
-                "",
-                ...markdownList(approach.tradeoffs),
-                "",
-                "### Critical Uncertainties",
-                "",
-                ...markdownList(approach.uncertainties),
-                "",
-                "### Conditions for Failure",
-                "",
-                ...markdownList(approach.failureConditions),
-                "",
-            ]);
-            const markdown = [
-                "# Exploring Approaches",
-                "",
-                ...approaches,
-                "## Recommendation",
-                "",
-                params.recommendation,
-                "",
-                "## User Choice",
-                "",
-                params.userChoice,
-            ].join("\n");
+            if (activePhase !== "exploring")
+                throw new Error(
+                    `Exploring artifact is unavailable during ${activePhase ?? "inactive"} phase.`,
+                );
+            explorationLedger ??= createExplorationLedger({ runId });
+            const blockers = explorationLedger.getGateBlockers({
+                approachClaimIds: params.approaches.map(
+                    (approach) => approach.claimIds,
+                ),
+                recommendationClaimIds: params.recommendationClaimIds,
+                userChoice: params.userChoice,
+            });
+            const markdown =
+                explorationLedger.renderExplorationMarkdown(params);
             return submitArtifact(
                 "exploring",
                 "brainstorm_submit_exploring",
                 markdown,
-                true,
-                undefined,
+                blockers.length === 0,
+                blockers.length > 0
+                    ? `Exploring incomplete: ${blockers.join(" ")}`
+                    : undefined,
                 ctx,
             );
         },
@@ -917,6 +1092,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         startedAt = "";
         artifactStore = null;
         artifacts = {};
+        explorationLedger = null;
         refreshGroups();
     }
 
@@ -945,6 +1121,29 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         return null;
     }
 
+    function explorationLedgerSummary() {
+        const records = explorationLedger?.getRecords() ?? [];
+        const counts = {
+            evidence: records.filter((record) => record.kind === "evidence")
+                .length,
+            claims: records.filter((record) => record.kind === "claim").length,
+            reviews: records.filter((record) => record.kind === "review")
+                .length,
+            waivers: records.filter((record) => record.kind === "waiver")
+                .length,
+            overrides: records.filter((record) => record.kind === "override")
+                .length,
+        };
+        const openCriticalIds =
+            explorationLedger
+                ?.getActiveClaims()
+                .filter(
+                    (claim) => claim.critical && claim.verdict === "unresolved",
+                )
+                .map((claim) => claim.id) ?? [];
+        return { counts, openCriticalIds };
+    }
+
     function updateWidget(ctx: ExtensionContext): void {
         if (!ctx.hasUI) return;
         const colors = createUiColors(ctx.ui.theme);
@@ -956,6 +1155,11 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         const idx = PHASES.indexOf(activePhase) + 1;
         const research = evidence.researchCalls;
         const questions = evidence.questionCalls;
+        const ledgerSummary = explorationLedgerSummary();
+        const metrics =
+            activePhase === "exploring"
+                ? `ev:${ledgerSummary.counts.evidence} open:${ledgerSummary.openCriticalIds.length}`
+                : `r:${research} q:${questions}`;
         widgetText = [
             colors.primary(
                 `${PHASE_ICONS[activePhase]} ${PHASE_LABELS[activePhase]}`,
@@ -965,7 +1169,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             colors.separator(" • "),
             colors.text(topic.display),
             colors.separator(" • "),
-            colors.meta(`r:${research} q:${questions}`),
+            colors.meta(metrics),
         ].join("");
         widget?.update(ctx, widgetText);
     }
@@ -988,14 +1192,60 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         updateWidget(ctx);
     }
 
+    function appendExplorationRecord(
+        record: ExplorationRecord,
+        ctx: ExtensionContext,
+    ): void {
+        pi.appendEntry(LEDGER_SESSION_KEY, { runId, record });
+        const checkpoint = artifacts.exploring;
+        if (!checkpoint) {
+            updateWidget(ctx);
+            return;
+        }
+        artifacts.exploring = {
+            ...checkpoint,
+            complete: false,
+            blocker:
+                "Exploring incomplete: ledger changed after the latest Exploring artifact; submit a new revision.",
+        };
+        delete artifacts.presenting;
+        delete artifacts.documenting;
+        saveState(ctx);
+    }
+
     function latestSessionData(ctx: ExtensionContext) {
-        const entries = ctx.sessionManager.getEntries();
+        const entries = ctx.sessionManager.getBranch();
         for (let i = entries.length - 1; i >= 0; i--) {
             const entry = entries[i];
             if (entry.type === "custom" && entry.customType === SESSION_KEY)
                 return entry.data;
         }
         return undefined;
+    }
+
+    function restoredLedgerRecords(
+        ctx: ExtensionContext,
+        currentRunId: string,
+    ): ExplorationRecord[] {
+        return ctx.sessionManager.getBranch().flatMap((entry) => {
+            if (
+                entry.type !== "custom" ||
+                entry.customType !== LEDGER_SESSION_KEY
+            )
+                return [];
+            if (
+                !entry.data ||
+                typeof entry.data !== "object" ||
+                Array.isArray(entry.data)
+            )
+                return [];
+            const data = Object.fromEntries(Object.entries(entry.data));
+            return data.runId === currentRunId &&
+                isExplorationRecord(data.record) &&
+                data.record.runId === currentRunId
+                ? [data.record]
+                : [];
+        });
     }
 
     function restoreState(ctx: ExtensionContext): void {
@@ -1027,6 +1277,10 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             startedAt = data.startedAt ?? new Date().toISOString();
             artifacts = data.artifacts ?? {};
             artifactStore = null;
+            explorationLedger = createExplorationLedger({
+                runId,
+                initialRecords: restoredLedgerRecords(ctx, runId),
+            });
         }
     }
 
@@ -1042,6 +1296,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         startedAt = new Date().toISOString();
         artifactStore = null;
         artifacts = {};
+        explorationLedger = createExplorationLedger({ runId });
         refreshGroups();
         saveState(ctx);
         ctx.ui.notify(
@@ -1059,6 +1314,52 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                 );
             }
         }
+    }
+
+    async function confirmExploringOverride(
+        command: string,
+        targetPhase: Phase,
+        ctx: ExtensionContext,
+    ): Promise<boolean> {
+        const reason = (
+            await ctx.ui.input(
+                `Reason for overriding the Exploring gate before ${PHASE_LABELS[targetPhase]}?`,
+            )
+        )?.trim();
+        if (!reason) {
+            ctx.ui.notify(
+                "Exploring override cancelled: a non-empty user reason is required.",
+                "warning",
+            );
+            return false;
+        }
+        if (!activePhase) throw new Error("No active brainstorming run.");
+        const blocker = artifactCompletionBlocker("exploring");
+        const blockers = blocker
+            ? [blocker]
+            : ["User requested a force transition from Exploring."];
+        const choice = await ctx.ui.select(
+            [
+                `Approve forced transition to ${PHASE_LABELS[targetPhase]}?`,
+                `Reason: ${reason}`,
+                `Bypassed blockers: ${blockers.join(" | ")}`,
+            ].join("\n"),
+            ["Approve override", "Cancel"],
+        );
+        if (choice !== "Approve override") {
+            ctx.ui.notify("Exploring override cancelled.", "warning");
+            return false;
+        }
+        explorationLedger ??= createExplorationLedger({ runId });
+        const record = explorationLedger.recordOverride({
+            command,
+            blockers,
+            reason,
+            fromPhase: activePhase,
+            toPhase: targetPhase,
+        });
+        pi.appendEntry(LEDGER_SESSION_KEY, { runId, record });
+        return true;
     }
 
     pi.registerCommand("brainstorm", {
@@ -1140,9 +1441,15 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                     return;
                 }
                 const blocker = artifactCompletionBlocker(activePhase);
+                const ledgerSummary = explorationLedgerSummary();
+                const ledgerLine =
+                    activePhase === "exploring"
+                        ? `\nExploring ledger: EV=${ledgerSummary.counts.evidence} CL=${ledgerSummary.counts.claims} RV=${ledgerSummary.counts.reviews} WV=${ledgerSummary.counts.waivers} OV=${ledgerSummary.counts.overrides}`
+                        : "";
                 ctx.ui.notify(
                     `Brainstorm: ${topic.display} — ${PHASE_LABELS[activePhase]} (${PHASES.indexOf(activePhase) + 1}/${PHASES.length})` +
                         `\nResearch calls: ${evidence.researchCalls} | Questions: ${evidence.questionCalls}` +
+                        ledgerLine +
                         `\nRestrictions: ${phaseRestrictionSummary(activePhase)}` +
                         (blocker
                             ? `\nNext blocked: ${blocker}`
@@ -1239,6 +1546,20 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                     ctx.ui.notify(`Unknown phase "${target}".`, "error");
                     return;
                 }
+                const exploringIndex = PHASES.indexOf("exploring");
+                const crossesExploringGate =
+                    activePhase !== null &&
+                    PHASES.indexOf(activePhase) <= exploringIndex &&
+                    PHASES.indexOf(resolved) > exploringIndex;
+                if (
+                    crossesExploringGate &&
+                    !(await confirmExploringOverride(
+                        `/brainstorm phase ${resolved}`,
+                        resolved,
+                        ctx,
+                    ))
+                )
+                    return;
                 activePhase = resolved;
                 saveState(ctx);
                 ctx.ui.notify(
@@ -1269,6 +1590,15 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                     ctx.ui.notify("Already at final phase.", "info");
                     return;
                 }
+                if (
+                    activePhase === "exploring" &&
+                    !(await confirmExploringOverride(
+                        "/brainstorm next --force",
+                        next,
+                        ctx,
+                    ))
+                )
+                    return;
                 activePhase = next;
                 saveState(ctx);
                 ctx.ui.notify(
@@ -1302,6 +1632,15 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                     ctx.ui.notify("Already at final phase.", "info");
                     return;
                 }
+                if (
+                    activePhase === "exploring" &&
+                    !(await confirmExploringOverride(
+                        "/brainstorm force-next",
+                        next,
+                        ctx,
+                    ))
+                )
+                    return;
                 activePhase = next;
                 saveState(ctx);
                 ctx.ui.notify(
@@ -1343,6 +1682,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                     `- ${PHASE_LABELS[revision.phase]} r${revision.revision}: ${revision.path}`,
             );
         const blocker = artifactCompletionBlocker(activePhase);
+        const ledgerSummary = explorationLedgerSummary();
         const content = [
             "[Brainstorm status — mandatory workflow context]",
             `Topic: ${topic.raw}`,
@@ -1351,6 +1691,12 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             `Transition tool: brainstorm_transition (next|previous|status; no force or skipping)`,
             `Artifacts root: ${manifest.root}`,
             `Current gate: ${blocker ?? "ready for next transition"}`,
+            ...(activePhase === "exploring"
+                ? [
+                      `Exploring ledger: EV=${ledgerSummary.counts.evidence} CL=${ledgerSummary.counts.claims} RV=${ledgerSummary.counts.reviews} WV=${ledgerSummary.counts.waivers} OV=${ledgerSummary.counts.overrides}`,
+                      `Open critical claims: ${ledgerSummary.openCriticalIds.join(", ") || "none"}`,
+                  ]
+                : []),
             "Active artifacts:",
             ...(activeArtifacts.length > 0 ? activeArtifacts : ["- None yet."]),
             "Stale artifacts:",
@@ -1396,7 +1742,8 @@ export default function brainstormForcer(pi: ExtensionAPI) {
 
     pi.on("tool_call", async (event, ctx) => {
         if (!activePhase) return;
-        if (canUseTool(activePhase, event.toolName, groups)) return;
+        if (canUseTool(activePhase, event.toolName, groups, event.input))
+            return;
         const phaseLabel = PHASE_LABELS[activePhase];
         const reason = [
             `BLOCKED: ${event.toolName} is not allowed in the ${phaseLabel} phase.`,
@@ -1413,12 +1760,38 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     });
 
     pi.on("tool_result", async (event, ctx) => {
-        if (!activePhase) return;
+        if (!activePhase) return undefined;
         if (groups.research.has(event.toolName)) evidence.researchCalls += 1;
         if (groups.questioning.has(event.toolName)) evidence.questionCalls += 1;
+        if (
+            activePhase === "exploring" &&
+            !event.toolName.startsWith("brainstorm_") &&
+            canUseTool(activePhase, event.toolName, groups, event.input)
+        ) {
+            explorationLedger ??= createExplorationLedger({ runId });
+            const record = explorationLedger.captureEvidence({
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                input: event.input,
+                content: event.content,
+                details: event.details,
+                isError: event.isError,
+            });
+            appendExplorationRecord(record, ctx);
+            return {
+                content: [
+                    ...event.content,
+                    {
+                        type: "text" as const,
+                        text: `[brainstorm evidence] Captured as ${record.id} (${record.status}).`,
+                    },
+                ],
+            };
+        }
         // Detect blocked mutation tool — inject follow-up to LLM so it knows why
         const blocked =
-            event.isError && !canUseTool(activePhase, event.toolName, groups);
+            event.isError &&
+            !canUseTool(activePhase, event.toolName, groups, event.input);
         if (blocked && ctx.hasUI) {
             pi.appendEntry(SESSION_KEY, {
                 ...stateSnapshot(),
@@ -1429,6 +1802,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                 },
             });
         }
+        return undefined;
     });
 
     pi.on("message_end", async (event) => {

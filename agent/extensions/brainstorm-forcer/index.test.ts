@@ -35,6 +35,10 @@ function createMockAPI() {
     { name: "ask_user_question" },
     { name: "hypa_find" },
     { name: "hypa_ls" },
+    {
+      name: "subagent",
+      description: "Delegate work or create, update, and delete agent definitions.",
+    },
   ];
 
   const pi = {
@@ -78,6 +82,7 @@ function createMockContext(
     } as any,
     sessionManager: {
       getEntries: () => entries,
+      getBranch: () => entries,
     } as any,
   } as unknown as ExtensionContext;
 }
@@ -100,7 +105,11 @@ describe("brainstorm-forcer redesign", () => {
   it("registers one structured artifact submission tool per phase", () => {
     const { pi, tools } = createMockAPI();
     brainstormForcer(pi);
-    expect([...tools.keys()].filter((name) => name.startsWith("brainstorm_submit_"))).toEqual([
+    expect(
+      [...tools.keys()].filter(
+        (name) => name.startsWith("brainstorm_submit_") && name !== "brainstorm_submit_review",
+      ),
+    ).toEqual([
       "brainstorm_submit_discovery",
       "brainstorm_submit_understanding",
       "brainstorm_submit_exploring",
@@ -168,18 +177,19 @@ describe("brainstorm-forcer redesign", () => {
                 title: "Dedicated tools",
                 summary: "One schema per phase.",
                 tradeoffs: ["More tools."],
-                uncertainties: ["Model compliance."],
+                claimIds: ["CL-001"],
                 failureConditions: ["Wrong phase tool accepted."],
               },
               {
                 title: "Generic tool",
                 summary: "One loose schema.",
                 tradeoffs: ["Less validation."],
-                uncertainties: [],
+                claimIds: ["CL-002"],
                 failureConditions: ["Malformed artifact."],
               },
             ],
             recommendation: "Dedicated tools",
+            recommendationClaimIds: ["CL-001"],
             userChoice: "Dedicated tools",
           },
           "03-exploring-r001.md",
@@ -209,7 +219,28 @@ describe("brainstorm-forcer redesign", () => {
       ] as const;
 
       for (const [phase, toolName, params, expectedSuffix] of submissions) {
-        await command.handler(`phase ${phase}`, ctx);
+        if (phase === "presenting") await command.handler("next", ctx);
+        else await command.handler(`phase ${phase}`, ctx);
+        if (phase === "exploring") {
+          for (const assertion of ["Use dedicated tools.", "Keep schemas strict."]) {
+            await tools.get("brainstorm_record_claim")!.execute(
+              "claim",
+              {
+                assertion,
+                classification: "design-choice",
+                critical: false,
+                verdict: "unresolved",
+                evidenceIds: [],
+                contradictoryEvidenceIds: [],
+                impact: "Shapes the workflow API.",
+                mitigation: "Document the trade-off.",
+              },
+              undefined,
+              undefined,
+              ctx,
+            );
+          }
+        }
         const result = await tools.get(toolName)!.execute("call", params, undefined, undefined, ctx);
         expect(result.details.artifact.path).toEndWith(expectedSuffix);
       }
@@ -309,6 +340,34 @@ describe("brainstorm-forcer redesign", () => {
       .execute("status", { action: "status" }, undefined, undefined, ctx);
     expect(result.details).toMatchObject({ phase: "discovery", completed: false });
     expect(ctx.ui.select).not.toHaveBeenCalled();
+  });
+
+  it("shows compact ledger counts in /brainstorm status", async () => {
+    const { pi, handlers, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const command = commands.get("brainstorm")!;
+    await command.handler("topic", ctx);
+    await command.handler("phase exploring", ctx);
+    await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "index.ts" },
+        content: [{ type: "text", text: "result" }],
+        details: undefined,
+        isError: false,
+      },
+      ctx,
+    );
+
+    await command.handler("status", ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Exploring ledger: EV=1 CL=0 RV=0 WV=0 OV=0"),
+      "warning",
+    );
   });
 
   it("keeps the current phase and requires a revised artifact after a plain rejection", async () => {
@@ -426,6 +485,8 @@ describe("brainstorm-forcer redesign", () => {
       const ctx = createMockContext(undefined, projectRoot);
       brainstormForcer(pi);
       await commands.get("brainstorm")!.handler("Design only", ctx);
+      (ctx.ui.input as any).mockResolvedValueOnce("Completion-path test override.");
+      (ctx.ui.select as any).mockResolvedValueOnce("Approve override");
       await commands.get("brainstorm")!.handler("phase documenting", ctx);
       await tools.get("brainstorm_submit_design")!.execute(
         "design",
@@ -458,6 +519,8 @@ describe("brainstorm-forcer redesign", () => {
       brainstormForcer(pi);
       const command = commands.get("brainstorm")!;
       await command.handler("Command completion", ctx);
+      (ctx.ui.input as any).mockResolvedValueOnce("Completion-path test override.");
+      (ctx.ui.select as any).mockResolvedValueOnce("Approve override");
       await command.handler("phase documenting", ctx);
       await tools.get("brainstorm_submit_design")!.execute(
         "design",
@@ -502,6 +565,53 @@ describe("brainstorm-forcer redesign", () => {
       await commands.get("brainstorm")!.handler("stop", ctx);
       const stopped = await context({ messages: second.messages }, ctx);
       expect(stopped.messages).toHaveLength(0);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("injects compact Exploring ledger counts without raw evidence", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-ledger-context-"));
+    try {
+      const { pi, commands, handlers, tools } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("topic", ctx);
+      await commands.get("brainstorm")!.handler("phase exploring", ctx);
+      await handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "read-1",
+          toolName: "read",
+          input: { path: "index.ts" },
+          content: [{ type: "text", text: "raw-evidence-must-not-be-injected" }],
+          details: undefined,
+          isError: false,
+        },
+        ctx,
+      );
+      await tools.get("brainstorm_record_claim")!.execute(
+        "claim-1",
+        {
+          assertion: "Use session entries.",
+          classification: "design-choice",
+          critical: false,
+          verdict: "unresolved",
+          evidenceIds: [],
+          contradictoryEvidenceIds: [],
+          impact: "Avoids duplicate persistence.",
+          mitigation: "Bound records.",
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      const result = await handlers.get("context")!({ messages: [] }, ctx);
+      expect(result.messages[0].content).toContain(
+        "Exploring ledger: EV=1 CL=1 RV=0 WV=0 OV=0",
+      );
+      expect(result.messages[0].content).not.toContain("raw-evidence-must-not-be-injected");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -698,6 +808,8 @@ describe("brainstorm-forcer redesign", () => {
     brainstormForcer(pi);
     const cmd = commands.get("brainstorm")!;
     await cmd.handler("topic", ctx);
+    (ctx.ui.input as any).mockResolvedValueOnce("Tool-policy test override.");
+    (ctx.ui.select as any).mockResolvedValueOnce("Approve override");
     await cmd.handler("phase documenting", ctx);
     const toolCall = handlers.get("tool_call")!;
 
@@ -721,6 +833,37 @@ describe("brainstorm-forcer redesign", () => {
     expect(await toolCall({ toolName: "web_search" }, ctx)).toBeUndefined();
     const blocked = await toolCall({ toolName: "edit" }, ctx);
     expect(blocked.block).toBe(true);
+  });
+
+  it("allows only a synchronous fresh reviewer subagent during Exploring", async () => {
+    const { pi, handlers, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
+    const toolCall = handlers.get("tool_call")!;
+
+    expect(
+      await toolCall(
+        {
+          toolName: "subagent",
+          input: {
+            agent: "reviewer",
+            context: "fresh",
+            task: "Review CL-001 against EV-001.",
+          },
+        },
+        ctx,
+      ),
+    ).toBeUndefined();
+    for (const input of [
+      { agent: "reviewer", context: "fork", task: "Review CL-001." },
+      { agent: "worker", context: "fresh", task: "Review CL-001." },
+      { agent: "reviewer", context: "fresh", task: "Review CL-001.", async: true },
+      { action: "list" },
+    ]) {
+      expect((await toolCall({ toolName: "subagent", input }, ctx)).block).toBe(true);
+    }
   });
 
   it("/brainstorm next is blocked until discovery evidence exists", async () => {
@@ -776,6 +919,70 @@ describe("brainstorm-forcer redesign", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Advanced to Understanding (2/5) (forced)"), "warning");
   });
 
+  it("keeps Exploring active when a force override has no user reason", async () => {
+    const { pi, commands, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const command = commands.get("brainstorm")!;
+    await command.handler("topic", ctx);
+    await command.handler("phase exploring", ctx);
+
+    await command.handler("next --force", ctx);
+
+    const state = entries.filter((entry) => entry.customType === "brainstorm-forcer").at(-1);
+    expect(state?.data).toMatchObject({ phase: "exploring" });
+    expect(entries.some((entry: any) => entry.data?.record?.kind === "override")).toBe(false);
+  });
+
+  it("records a confirmed user override before force-leaving Exploring", async () => {
+    const { pi, commands, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const command = commands.get("brainstorm")!;
+    await command.handler("topic", ctx);
+    await command.handler("phase exploring", ctx);
+    (ctx.ui.input as any).mockResolvedValueOnce("Proceed with documented uncertainty.");
+    (ctx.ui.select as any).mockResolvedValueOnce("Approve override");
+
+    await command.handler("next --force", ctx);
+
+    expect(entries.some((entry: any) => entry.data?.record?.id === "OV-001")).toBe(true);
+    const state = entries.filter((entry) => entry.customType === "brainstorm-forcer").at(-1);
+    expect(state?.data).toMatchObject({ phase: "presenting" });
+  });
+
+  it("records an override for deprecated force-next when leaving Exploring", async () => {
+    const { pi, commands, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const command = commands.get("brainstorm")!;
+    await command.handler("topic", ctx);
+    await command.handler("phase exploring", ctx);
+    (ctx.ui.input as any).mockResolvedValueOnce("Proceed with explicit uncertainty.");
+    (ctx.ui.select as any).mockResolvedValueOnce("Approve override");
+
+    await command.handler("force-next", ctx);
+
+    expect(entries.some((entry: any) => entry.data?.record?.id === "OV-001")).toBe(true);
+  });
+
+  it("records an override for a forward phase jump that leaves Exploring", async () => {
+    const { pi, commands, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const command = commands.get("brainstorm")!;
+    await command.handler("topic", ctx);
+    await command.handler("phase exploring", ctx);
+    (ctx.ui.input as any).mockResolvedValueOnce("Proceed with explicit uncertainty.");
+    (ctx.ui.select as any).mockResolvedValueOnce("Approve override");
+
+    await command.handler("phase presenting", ctx);
+
+    expect(entries.some((entry: any) => entry.data?.record?.id === "OV-001")).toBe(true);
+    const state = entries.filter((entry) => entry.customType === "brainstorm-forcer").at(-1);
+    expect(state?.data).toMatchObject({ phase: "presenting" });
+  });
+
   it("/brainstorm previous returns one phase and /brainstorm phase handles explicit jumps", async () => {
     const { pi, commands } = createMockAPI();
     const ctx = createMockContext();
@@ -787,6 +994,185 @@ describe("brainstorm-forcer redesign", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Returned to Understanding"), "info");
     await cmd.handler("phase discovery", ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Jumped to Discovery"), "info");
+  });
+
+  it("blocks Exploring transition until ledger gate requirements are satisfied", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-exploring-gate-"));
+    try {
+      const { pi, handlers, commands, tools } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("topic", ctx);
+      await commands.get("brainstorm")!.handler("phase exploring", ctx);
+      await handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "read-1",
+          toolName: "read",
+          input: { path: "missing.ts" },
+          content: [{ type: "text", text: "ENOENT" }],
+          details: undefined,
+          isError: true,
+        },
+        ctx,
+      );
+      await tools.get("brainstorm_record_claim")!.execute(
+        "claim-1",
+        {
+          assertion: "The missing source changes runtime behavior.",
+          classification: "empirical",
+          critical: true,
+          verdict: "unresolved",
+          evidenceIds: ["EV-001"],
+          contradictoryEvidenceIds: [],
+          impact: "Could invalidate the recommendation.",
+          mitigation: "Re-evaluate when source is available.",
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+      await tools.get("brainstorm_record_claim")!.execute(
+        "claim-2",
+        {
+          assertion: "Use append-only session entries.",
+          classification: "design-choice",
+          critical: false,
+          verdict: "unresolved",
+          evidenceIds: [],
+          contradictoryEvidenceIds: [],
+          impact: "Avoids a second persistence layer.",
+          mitigation: "Bound records.",
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const exploring = await tools.get("brainstorm_submit_exploring")!.execute(
+        "exploring-1",
+        {
+          approaches: [
+            {
+              title: "Session ledger",
+              summary: "Use session entries.",
+              tradeoffs: ["Session grows."],
+              claimIds: ["CL-001", "CL-002"],
+              failureConditions: ["Records are unbounded."],
+            },
+            {
+              title: "Artifact ledger",
+              summary: "Use a separate file.",
+              tradeoffs: ["Extra persistence."],
+              claimIds: ["CL-002"],
+              failureConditions: ["State diverges."],
+            },
+          ],
+          recommendation: "Use session entries.",
+          recommendationClaimIds: ["CL-002"],
+          userChoice: "Session ledger",
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      await expectRejection(
+        Promise.resolve(
+          tools
+            .get("brainstorm_transition")!
+            .execute("next", { action: "next" }, undefined, undefined, ctx),
+        ),
+        "CL-001 requires a user-approved waiver",
+      );
+      const markdown = await readFile(join(projectRoot, exploring.details.artifact.path), "utf8");
+      expect(markdown).toContain("## Assumption Register");
+      expect(markdown).toContain("## Evidence Index");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("requires a new Exploring revision after ledger evidence changes", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-exploring-revision-"));
+    try {
+      const { pi, handlers, commands, tools } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler("topic", ctx);
+      await commands.get("brainstorm")!.handler("phase exploring", ctx);
+      for (const assertion of ["Use session entries.", "Keep evidence bounded."]) {
+        await tools.get("brainstorm_record_claim")!.execute(
+          "claim",
+          {
+            assertion,
+            classification: "design-choice",
+            critical: false,
+            verdict: "unresolved",
+            evidenceIds: [],
+            contradictoryEvidenceIds: [],
+            impact: "Shapes persistence.",
+            mitigation: "Document the trade-off.",
+          },
+          undefined,
+          undefined,
+          ctx,
+        );
+      }
+      const params = {
+        approaches: [
+          {
+            title: "Session ledger",
+            summary: "Use session entries.",
+            tradeoffs: ["Session grows."],
+            claimIds: ["CL-001", "CL-002"],
+            failureConditions: ["Records are unbounded."],
+          },
+          {
+            title: "Artifact ledger",
+            summary: "Use a separate file.",
+            tradeoffs: ["Extra persistence."],
+            claimIds: ["CL-001"],
+            failureConditions: ["State diverges."],
+          },
+        ],
+        recommendation: "Use session entries.",
+        recommendationClaimIds: ["CL-001"],
+        userChoice: "Session ledger",
+      };
+      const first = await tools
+        .get("brainstorm_submit_exploring")!
+        .execute("exploring-1", params, undefined, undefined, ctx);
+      expect(first.details.artifact.revision).toBe(1);
+
+      await handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "read-1",
+          toolName: "read",
+          input: { path: "README.md" },
+          content: [{ type: "text", text: "new evidence" }],
+          details: undefined,
+          isError: false,
+        },
+        ctx,
+      );
+      await expectRejection(
+        Promise.resolve(
+          tools
+            .get("brainstorm_transition")!
+            .execute("next", { action: "next" }, undefined, undefined, ctx),
+        ),
+        "ledger changed after the latest Exploring artifact",
+      );
+
+      const second = await tools
+        .get("brainstorm_submit_exploring")!
+        .execute("exploring-2", params, undefined, undefined, ctx);
+      expect(second.details.artifact.revision).toBe(2);
+      expect(second.details.artifact.path).toEndWith("03-exploring-r002.md");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it("requires resolved questions and explicit final approval in submitted artifacts", async () => {
@@ -823,6 +1209,8 @@ describe("brainstorm-forcer redesign", () => {
       );
       expect((await transition.execute("advance", { action: "next" }, undefined, undefined, ctx)).details.phase).toBe("exploring");
 
+      (ctx.ui.input as any).mockResolvedValueOnce("Presenting-gate test override.");
+      (ctx.ui.select as any).mockResolvedValueOnce("Approve override");
       await command.handler("phase presenting", ctx);
       const presentation = {
         sections: [{ title: "Architecture", content: "State machine." }],
@@ -861,6 +1249,31 @@ describe("brainstorm-forcer redesign", () => {
     expect(result.message.content).toContain("Brainstorm Discovery");
   });
 
+  it("injects the evidence-gated Exploring tool sequence", async () => {
+    const { pi, handlers, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
+
+    const result = await handlers.get("before_agent_start")!(
+      { systemPrompt: "BASE", prompt: "topic", images: undefined, systemPromptOptions: {} },
+      ctx,
+    );
+
+    for (const expected of [
+      "ctx_batch_execute",
+      "brainstorm_record_claim",
+      "brainstorm_submit_review",
+      "brainstorm_request_waiver",
+      "agent `reviewer` with `context: fresh`",
+      "direct corroboration",
+    ]) {
+      expect(result.systemPrompt).toContain(expected);
+    }
+    expect(result.message.details.restriction).toContain("EV-*");
+  });
+
   it("phase widget uses ui-colors path and updates on phase changes", async () => {
     const { pi, commands, handlers } = createMockAPI();
     const ctx = createMockContext();
@@ -873,6 +1286,7 @@ describe("brainstorm-forcer redesign", () => {
     const lastWidgetCall = (ctx.ui.setWidget as any).mock.calls.at(-1);
     expect(lastWidgetCall[0]).toBe("brainstorm-forcer");
     expect(lastWidgetCall[1][0]).toContain("Exploring");
+    expect(lastWidgetCall[1][0]).toContain("ev:0 open:0");
   });
 
   it("stop clears state and footer", async () => {
@@ -885,6 +1299,319 @@ describe("brainstorm-forcer redesign", () => {
     await cmd.handler("stop", ctx);
     expect(entries.at(-1)?.data).toMatchObject({ active: false });
     expect(ctx.ui.setWidget).toHaveBeenCalledWith("brainstorm-forcer", undefined);
+  });
+
+  it("automatically captures allowed Exploring tool results as EV records", async () => {
+    const { pi, handlers, commands, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const command = commands.get("brainstorm")!;
+    await command.handler("topic", ctx);
+    await command.handler("phase exploring", ctx);
+
+    const result = await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "/home/test/README.md", token: "must-not-persist" },
+        content: [{ type: "text", text: "raw tool output" }],
+        details: undefined,
+        isError: false,
+      },
+      ctx,
+    );
+
+    const ledgerEntry = entries.find((entry) => entry.customType === "brainstorm-forcer-ledger");
+    expect(ledgerEntry?.data).toMatchObject({
+      runId: expect.stringMatching(/^brainstorm-/),
+      record: {
+        id: "EV-001",
+        kind: "evidence",
+        toolName: "read",
+        status: "success",
+      },
+    });
+    expect(JSON.stringify(ledgerEntry)).not.toContain("must-not-persist");
+    expect(JSON.stringify(ledgerEntry)).not.toContain("raw tool output");
+    expect(result.content.at(-1).text).toContain("Captured as EV-001");
+  });
+
+  it("records a qualified Exploring claim through its dedicated tool", async () => {
+    const { pi, handlers, commands, tools, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
+    await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "index.ts" },
+        content: [{ type: "text", text: "observable result" }],
+        details: undefined,
+        isError: false,
+      },
+      ctx,
+    );
+
+    const result = await tools.get("brainstorm_record_claim")!.execute(
+      "claim-1",
+      {
+        assertion: "The transition gate is centralized.",
+        classification: "empirical",
+        critical: true,
+        verdict: "verified",
+        evidenceIds: ["EV-001"],
+        contradictoryEvidenceIds: [],
+        impact: "Controls all forward transitions.",
+        mitigation: "Keep one shared blocker.",
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(result.details.record).toMatchObject({ id: "CL-001", kind: "claim" });
+    expect(entries.at(-1)).toMatchObject({
+      customType: "brainstorm-forcer-ledger",
+      data: { record: { id: "CL-001" } },
+    });
+  });
+
+  it("records an explicit review linked to fresh reviewer evidence", async () => {
+    const { pi, handlers, commands, tools, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
+    await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "index.ts" },
+        content: [{ type: "text", text: "observable result" }],
+        details: undefined,
+        isError: false,
+      },
+      ctx,
+    );
+    await tools.get("brainstorm_record_claim")!.execute(
+      "claim-1",
+      {
+        assertion: "The transition gate is centralized.",
+        classification: "empirical",
+        critical: true,
+        verdict: "verified",
+        evidenceIds: ["EV-001"],
+        contradictoryEvidenceIds: [],
+        impact: "Controls all forward transitions.",
+        mitigation: "Keep one shared blocker.",
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "review-1",
+        toolName: "subagent",
+        input: {
+          agent: "reviewer",
+          context: "fresh",
+          task: "Review CL-001 against EV-001.",
+        },
+        content: [{ type: "text", text: "CL-001 is supported by EV-001." }],
+        details: {
+          mode: "single",
+          context: "fresh",
+          results: [{ agent: "reviewer", exitCode: 0 }],
+        },
+        isError: false,
+      },
+      ctx,
+    );
+
+    const result = await tools.get("brainstorm_submit_review")!.execute(
+      "review-submit-1",
+      {
+        reviewerEvidenceId: "EV-002",
+        claimIds: ["CL-001"],
+        primaryEvidenceIds: ["EV-001"],
+        summary: "Critical claim is supported by direct evidence.",
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(result.details.record).toMatchObject({ id: "RV-001", kind: "review" });
+    expect(entries.at(-1)).toMatchObject({
+      customType: "brainstorm-forcer-ledger",
+      data: { record: { id: "RV-001" } },
+    });
+  });
+
+  it("does not create a waiver when the user rejects its approval dialog", async () => {
+    const { pi, handlers, commands, tools, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
+    await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "missing.ts" },
+        content: [{ type: "text", text: "ENOENT" }],
+        details: undefined,
+        isError: true,
+      },
+      ctx,
+    );
+    await tools.get("brainstorm_record_claim")!.execute(
+      "claim-1",
+      {
+        assertion: "The missing file changes runtime behavior.",
+        classification: "empirical",
+        critical: true,
+        verdict: "unresolved",
+        evidenceIds: ["EV-001"],
+        contradictoryEvidenceIds: [],
+        impact: "Could invalidate the recommendation.",
+        mitigation: "Re-evaluate when the source is available.",
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+    (ctx.ui.select as any).mockResolvedValueOnce("Reject");
+
+    const result = await tools.get("brainstorm_request_waiver")!.execute(
+      "waiver-1",
+      {
+        claimId: "CL-001",
+        reason: "Primary source is temporarily unavailable.",
+        impact: "Recommendation retains uncertainty.",
+        mitigation: "Do not treat the claim as verified.",
+        reevaluateWhen: "The source becomes available.",
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(result.details).toEqual({ approved: false, claimId: "CL-001" });
+    expect(entries.some((entry: any) => entry.data?.record?.kind === "waiver")).toBe(false);
+  });
+
+  it("persists a waiver only after explicit user approval", async () => {
+    const { pi, handlers, commands, tools, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
+    await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "missing.ts" },
+        content: [{ type: "text", text: "ENOENT" }],
+        details: undefined,
+        isError: true,
+      },
+      ctx,
+    );
+    await tools.get("brainstorm_record_claim")!.execute(
+      "claim-1",
+      {
+        assertion: "The missing file changes runtime behavior.",
+        classification: "empirical",
+        critical: true,
+        verdict: "unresolved",
+        evidenceIds: ["EV-001"],
+        contradictoryEvidenceIds: [],
+        impact: "Could invalidate the recommendation.",
+        mitigation: "Re-evaluate when the source is available.",
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+    (ctx.ui.select as any).mockResolvedValueOnce("Approve waiver");
+
+    const result = await tools.get("brainstorm_request_waiver")!.execute(
+      "waiver-1",
+      {
+        claimId: "CL-001",
+        reason: "Primary source is temporarily unavailable.",
+        impact: "Recommendation retains uncertainty.",
+        mitigation: "Do not treat the claim as verified.",
+        reevaluateWhen: "The source becomes available.",
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(result.details).toMatchObject({
+      approved: true,
+      record: {
+        id: "WV-001",
+        claimId: "CL-001",
+        reevaluateWhen: "The source becomes available.",
+      },
+    });
+    expect(entries.at(-1)).toMatchObject({
+      customType: "brainstorm-forcer-ledger",
+      data: { record: { id: "WV-001", kind: "waiver" } },
+    });
+  });
+
+  it("restores the current-run ledger and continues EV identifiers", async () => {
+    const first = createMockAPI();
+    const firstContext = createMockContext();
+    brainstormForcer(first.pi);
+    await first.commands.get("brainstorm")!.handler("topic", firstContext);
+    await first.commands.get("brainstorm")!.handler("phase exploring", firstContext);
+    await first.handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "README.md" },
+        content: [{ type: "text", text: "result" }],
+        details: undefined,
+        isError: false,
+      },
+      firstContext,
+    );
+
+    const restoredEntries = first.entries.map((entry) => ({ type: "custom", ...entry }));
+    const second = createMockAPI();
+    const secondContext = createMockContext(restoredEntries);
+    brainstormForcer(second.pi);
+    await second.handlers.get("session_start")!({}, secondContext);
+    await second.handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "grep-1",
+        toolName: "grep",
+        input: { pattern: "appendEntry", path: "index.ts" },
+        content: [{ type: "text", text: "match" }],
+        details: undefined,
+        isError: false,
+      },
+      secondContext,
+    );
+
+    const latestLedger = second.entries.find((entry) => entry.customType === "brainstorm-forcer-ledger");
+    expect(latestLedger?.data).toMatchObject({ record: { id: "EV-002" } });
   });
 
   it("blocked mutation tool appends blockFeedback entry", async () => {
