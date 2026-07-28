@@ -1,5 +1,37 @@
 import { describe, expect, it } from "bun:test";
-import { createExplorationLedger } from "./exploration-ledger";
+import {
+    createExplorationLedger,
+    type ExplorationRecord,
+    type ReviewRecord,
+} from "./exploration-ledger";
+
+function reviewerChainInput(task: string) {
+    return {
+        context: "fresh",
+        async: false,
+        chain: [
+            {
+                agent: "reviewer",
+                task,
+                outputSchema: {
+                    type: "object",
+                    properties: {
+                        outcome: {
+                            enum: ["supported", "rejected", "unresolved"],
+                        },
+                        claimIds: { type: "array", items: { type: "string" } },
+                        evidenceIds: {
+                            type: "array",
+                            items: { type: "string" },
+                        },
+                    },
+                    required: ["outcome", "claimIds", "evidenceIds"],
+                    additionalProperties: false,
+                },
+            },
+        ],
+    };
+}
 
 describe("exploration ledger", () => {
     it("captures bounded evidence metadata without persisting raw tool data", () => {
@@ -63,9 +95,15 @@ describe("exploration ledger", () => {
             toolCallId: "call-3",
             toolName: "subagent",
             input: {
-                agent: "reviewer",
                 context: "fresh",
-                task: "Review CL-001 against EV-001.",
+                async: false,
+                chain: [
+                    {
+                        agent: "reviewer",
+                        task: "Review CL-001 against EV-001.",
+                        outputSchema: { type: "object" },
+                    },
+                ],
             },
             content: [
                 {
@@ -74,15 +112,43 @@ describe("exploration ledger", () => {
                 },
             ],
             details: {
-                mode: "single",
+                mode: "chain",
                 context: "fresh",
                 results: [
                     {
                         agent: "reviewer",
                         exitCode: 0,
                         sessionFile: "/tmp/reviewer.jsonl",
+                        structuredOutput: {
+                            outcome: "supported",
+                            claimIds: ["CL-001"],
+                            evidenceIds: ["EV-001"],
+                        },
                     },
                 ],
+            },
+            isError: false,
+        });
+        const userInput = ledger.captureEvidence({
+            toolCallId: "call-4",
+            toolName: "ask_user_question",
+            input: { questions: [] },
+            content: [{ type: "text", text: "User response" }],
+            details: undefined,
+            isError: false,
+        });
+        const researcher = ledger.captureEvidence({
+            toolCallId: "call-5",
+            toolName: "subagent",
+            input: {
+                agent: "researcher",
+                context: "fresh",
+                task: "Research the claim.",
+            },
+            content: [{ type: "text", text: "Research summary" }],
+            details: {
+                mode: "single",
+                results: [{ agent: "researcher", exitCode: 0 }],
             },
             isError: false,
         });
@@ -103,8 +169,86 @@ describe("exploration ledger", () => {
                 referencedEvidenceIds: ["EV-001"],
             },
         });
+        expect(userInput.sourceKind).toBe("ineligible");
+        expect(researcher.sourceKind).toBe("secondary");
         expect(JSON.stringify(reviewer)).not.toContain("Review CL-001");
         expect(JSON.stringify(reviewer)).not.toContain("supported by");
+    });
+
+    it("does not treat unknown tool output as eligible evidence", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const unknown = ledger.captureEvidence({
+            toolCallId: "call-unknown",
+            toolName: "arbitrary_lookup",
+            input: { query: "claim" },
+            content: [{ type: "text", text: "unsupported assertion" }],
+            details: undefined,
+            isError: false,
+        });
+
+        expect(unknown.sourceKind).toBe("ineligible");
+        expect(() =>
+            ledger.recordClaim({
+                assertion: "Unknown output proves the claim.",
+                classification: "empirical",
+                critical: false,
+                verdict: "verified",
+                evidenceIds: [unknown.id],
+                contradictoryEvidenceIds: [],
+                impact: "Could alter the recommendation.",
+                mitigation: "Use a direct inspection tool.",
+            }),
+        ).toThrow("successful eligible evidence");
+    });
+
+    it("requires direct source evidence alongside derived execution output", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const derived = ledger.captureEvidence({
+            toolCallId: "call-execute",
+            toolName: "ctx_execute",
+            input: {
+                language: "javascript",
+                code: 'console.log("true")',
+            },
+            content: [{ type: "text", text: "true" }],
+            details: undefined,
+            isError: false,
+        });
+
+        expect(derived.sourceKind).toBe("derived");
+        expect(() =>
+            ledger.recordClaim({
+                assertion: "The generated value proves runtime behavior.",
+                classification: "empirical",
+                critical: false,
+                verdict: "verified",
+                evidenceIds: [derived.id],
+                contradictoryEvidenceIds: [],
+                impact: "Could turn an assertion into fake proof.",
+                mitigation: "Require associated direct source evidence.",
+            }),
+        ).toThrow("associated direct evidence");
+
+        const direct = ledger.captureEvidence({
+            toolCallId: "call-read",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "observable source" }],
+            details: undefined,
+            isError: false,
+        });
+        expect(
+            ledger.recordClaim({
+                assertion: "Source plus derived result proves runtime behavior.",
+                classification: "empirical",
+                critical: true,
+                verdict: "verified",
+                evidenceIds: [direct.id, derived.id],
+                contradictoryEvidenceIds: [],
+                impact: "Links measurement to its source.",
+                mitigation: "Keep both evidence records.",
+            }).verdict,
+        ).toBe("verified");
     });
 
     it("records an empirical claim against same-run evidence", () => {
@@ -241,11 +385,7 @@ describe("exploration ledger", () => {
         const reviewer = ledger.captureEvidence({
             toolCallId: "call-2",
             toolName: "subagent",
-            input: {
-                agent: "reviewer",
-                context: "fresh",
-                task: `Review ${claim.id}.`,
-            },
+            input: reviewerChainInput(`Review ${claim.id}.`),
             content: [
                 {
                     type: "text",
@@ -255,7 +395,17 @@ describe("exploration ledger", () => {
             details: {
                 mode: "single",
                 context: "fresh",
-                results: [{ agent: "reviewer", exitCode: 0 }],
+                results: [
+                    {
+                        agent: "reviewer",
+                        exitCode: 0,
+                        structuredOutput: {
+                            outcome: "supported",
+                            claimIds: [claim.id],
+                            evidenceIds: [primary.id],
+                        },
+                    },
+                ],
             },
             isError: false,
         });
@@ -270,9 +420,144 @@ describe("exploration ledger", () => {
         expect(review).toMatchObject({
             id: "RV-001",
             reviewerEvidenceId: "EV-002",
+            outcome: "supported",
             claimIds: ["CL-001"],
             primaryEvidenceIds: ["EV-001"],
         });
+        const approach = {
+            title: "Central gate",
+            summary: "Keep one transition gate.",
+            tradeoffs: ["Centralized policy."],
+            claimIds: [claim.id],
+            failureConditions: ["Gate is bypassed."],
+        };
+        const markdown = ledger.renderExplorationMarkdown({
+            approaches: [approach, { ...approach, title: "Duplicated gate" }],
+            recommendation: "Use the central gate.",
+            recommendationClaimIds: [claim.id],
+            userChoice: "Central gate",
+            userChoiceEvidenceId: primary.id,
+        });
+        expect(markdown).toContain(`${review.id} — outcome: supported`);
+    });
+
+    it("rejects a negative structured review outcome for a verified claim", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const primary = ledger.captureEvidence({
+            toolCallId: "call-1",
+            toolName: "read",
+            input: { path: "index.ts" },
+            content: [{ type: "text", text: "observable result" }],
+            details: undefined,
+            isError: false,
+        });
+        const claim = ledger.recordClaim({
+            assertion: "The gate is enforced in one function.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [primary.id],
+            contradictoryEvidenceIds: [],
+            impact: "Controls all forward transitions.",
+            mitigation: "Keep one shared blocker.",
+        });
+        const reviewer = ledger.captureEvidence({
+            toolCallId: "call-2",
+            toolName: "subagent",
+            input: reviewerChainInput(`Review ${claim.id}.`),
+            content: [
+                {
+                    type: "text",
+                    text: `${claim.id} is rejected despite ${primary.id}.`,
+                },
+            ],
+            details: {
+                mode: "single",
+                context: "fresh",
+                results: [
+                    {
+                        agent: "reviewer",
+                        exitCode: 0,
+                        structuredOutput: {
+                            outcome: "rejected",
+                            claimIds: [claim.id],
+                            evidenceIds: [primary.id],
+                        },
+                    },
+                ],
+            },
+            isError: false,
+        });
+
+        expect(() =>
+            ledger.recordReview({
+                reviewerEvidenceId: reviewer.id,
+                claimIds: [claim.id],
+                primaryEvidenceIds: [primary.id],
+                summary: "Reviewer rejected the verified claim.",
+            }),
+        ).toThrow("outcome does not support");
+    });
+
+    it("requires structured reviewer coverage of every contradictory evidence record", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const primary = ledger.captureEvidence({
+            toolCallId: "call-primary",
+            toolName: "read",
+            input: { path: "index.ts" },
+            content: [{ type: "text", text: "direct result" }],
+            details: undefined,
+            isError: false,
+        });
+        const contradiction = ledger.captureEvidence({
+            toolCallId: "call-contradiction",
+            toolName: "web_search",
+            input: { query: "counterexample" },
+            content: [{ type: "text", text: "secondary counterexample" }],
+            details: undefined,
+            isError: false,
+        });
+        const claim = ledger.recordClaim({
+            assertion: "The gate is enforced in one function.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [primary.id, contradiction.id],
+            contradictoryEvidenceIds: [contradiction.id],
+            impact: "Controls all forward transitions.",
+            mitigation: "Review the counterexample explicitly.",
+        });
+        const reviewer = ledger.captureEvidence({
+            toolCallId: "call-review",
+            toolName: "subagent",
+            input: reviewerChainInput(`Review ${claim.id}.`),
+            content: [{ type: "text", text: "Structured review complete." }],
+            details: {
+                mode: "single",
+                context: "fresh",
+                results: [
+                    {
+                        agent: "reviewer",
+                        exitCode: 0,
+                        structuredOutput: {
+                            outcome: "supported",
+                            claimIds: [claim.id],
+                            evidenceIds: [primary.id],
+                        },
+                    },
+                ],
+            },
+            isError: false,
+        });
+
+        expect(() =>
+            ledger.recordReview({
+                reviewerEvidenceId: reviewer.id,
+                claimIds: [claim.id],
+                primaryEvidenceIds: [primary.id],
+                summary: "Counterexample was omitted.",
+            }),
+        ).toThrow("contradictory evidence");
     });
 
     it("requires a waiver and later review for unresolved critical claims", () => {
@@ -305,10 +590,29 @@ describe("exploration ledger", () => {
             impact: "Avoids a second persistence layer.",
             mitigation: "Keep records bounded.",
         });
+        const userChoiceEvidence = ledger.captureEvidence({
+            toolCallId: "call-choice",
+            toolName: "ask_user_question",
+            input: { questions: [{ question: "Which approach?" }] },
+            content: [{ type: "text", text: "Append-only session entries" }],
+            details: {
+                cancelled: false,
+                answers: [
+                    {
+                        questionIndex: 0,
+                        question: "Which approach?",
+                        kind: "option",
+                        answer: "Append-only session entries",
+                    },
+                ],
+            },
+            isError: false,
+        });
         const submission = {
             approachClaimIds: [[unresolved.id, choice.id]],
             recommendationClaimIds: [choice.id],
             userChoice: "Append-only session entries",
+            userChoiceEvidenceId: userChoiceEvidence.id,
         };
 
         expect(ledger.getGateBlockers(submission)).toContain(
@@ -329,11 +633,7 @@ describe("exploration ledger", () => {
         const reviewer = ledger.captureEvidence({
             toolCallId: "call-2",
             toolName: "subagent",
-            input: {
-                agent: "reviewer",
-                context: "fresh",
-                task: `Review ${unresolved.id}.`,
-            },
+            input: reviewerChainInput(`Review ${unresolved.id}.`),
             content: [
                 {
                     type: "text",
@@ -343,7 +643,17 @@ describe("exploration ledger", () => {
             details: {
                 mode: "single",
                 context: "fresh",
-                results: [{ agent: "reviewer", exitCode: 0 }],
+                results: [
+                    {
+                        agent: "reviewer",
+                        exitCode: 0,
+                        structuredOutput: {
+                            outcome: "unresolved",
+                            claimIds: [unresolved.id],
+                            evidenceIds: [failed.id],
+                        },
+                    },
+                ],
             },
             isError: false,
         });
@@ -355,6 +665,160 @@ describe("exploration ledger", () => {
         });
 
         expect(ledger.getGateBlockers(submission)).toEqual([]);
+    });
+
+    it("blocks Exploring without ask_user_question provenance for the user choice", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const claim = ledger.recordClaim({
+            assertion: "Choose an append-only ledger.",
+            classification: "design-choice",
+            critical: false,
+            verdict: "unresolved",
+            evidenceIds: [],
+            contradictoryEvidenceIds: [],
+            impact: "Controls persistence architecture.",
+            mitigation: "Document the trade-off.",
+        });
+
+        expect(
+            ledger.getGateBlockers({
+                approachClaimIds: [[claim.id]],
+                recommendationClaimIds: [claim.id],
+                userChoice: "Append-only ledger",
+            }),
+        ).toContain("User choice must come from ask_user_question evidence.");
+    });
+
+    it("blocks a user choice that does not match the recorded answer", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const claim = ledger.recordClaim({
+            assertion: "Choose an append-only ledger.",
+            classification: "design-choice",
+            critical: false,
+            verdict: "unresolved",
+            evidenceIds: [],
+            contradictoryEvidenceIds: [],
+            impact: "Controls persistence architecture.",
+            mitigation: "Document the trade-off.",
+        });
+        const answer = ledger.captureEvidence({
+            toolCallId: "call-choice",
+            toolName: "ask_user_question",
+            input: { questions: [{ question: "Which approach?" }] },
+            content: [{ type: "text", text: "Answer envelope" }],
+            details: {
+                cancelled: false,
+                answers: [
+                    {
+                        questionIndex: 0,
+                        question: "Which approach?",
+                        kind: "option",
+                        answer: "Approach A",
+                    },
+                ],
+            },
+            isError: false,
+        });
+
+        expect(answer.userChoiceQuestionHash).toMatch(/^[a-f0-9]{64}$/);
+        expect(answer.userResponseHashes).toEqual([
+            expect.stringMatching(/^[a-f0-9]{64}$/),
+        ]);
+        expect(JSON.stringify(answer)).not.toContain("Approach A");
+        expect(
+            ledger.getGateBlockers({
+                approachClaimIds: [[claim.id]],
+                recommendationClaimIds: [claim.id],
+                userChoice: "Approach B",
+                userChoiceEvidenceId: answer.id,
+            }),
+        ).toContain("User choice does not match the recorded answer.");
+    });
+
+    it("rejects multi-question evidence as final choice provenance", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const claim = ledger.recordClaim({
+            assertion: "Choose an append-only ledger.",
+            classification: "design-choice",
+            critical: false,
+            verdict: "unresolved",
+            evidenceIds: [],
+            contradictoryEvidenceIds: [],
+            impact: "Controls persistence architecture.",
+            mitigation: "Document the trade-off.",
+        });
+        const answer = ledger.captureEvidence({
+            toolCallId: "call-choice",
+            toolName: "ask_user_question",
+            input: {
+                questions: [
+                    { question: "Which color?" },
+                    { question: "Which approach?" },
+                ],
+            },
+            content: [{ type: "text", text: "Answer envelope" }],
+            details: {
+                cancelled: false,
+                answers: [
+                    {
+                        questionIndex: 0,
+                        question: "Which color?",
+                        kind: "option",
+                        answer: "Blue",
+                    },
+                    {
+                        questionIndex: 1,
+                        question: "Which approach?",
+                        kind: "option",
+                        answer: "Approach A",
+                    },
+                ],
+            },
+            isError: false,
+        });
+
+        expect(
+            ledger.getGateBlockers({
+                approachClaimIds: [[claim.id]],
+                recommendationClaimIds: [claim.id],
+                userChoice: "Approach A",
+                userChoiceEvidenceId: answer.id,
+            }),
+        ).toContain(
+            "User choice evidence must contain exactly one question and answer.",
+        );
+    });
+
+    it("rejects whitespace-only waiver fields at the ledger boundary", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const claim = ledger.recordClaim({
+            assertion: "Choose an append-only ledger.",
+            classification: "design-choice",
+            critical: true,
+            verdict: "unresolved",
+            evidenceIds: [],
+            contradictoryEvidenceIds: [],
+            impact: "Controls persistence architecture.",
+            mitigation: "Document the trade-off.",
+        });
+        const valid = {
+            claimId: claim.id,
+            reason: "Source unavailable.",
+            impact: "Recommendation remains uncertain.",
+            mitigation: "Re-evaluate before implementation.",
+            reevaluateWhen: "Source becomes available.",
+        };
+
+        for (const field of [
+            "reason",
+            "impact",
+            "mitigation",
+            "reevaluateWhen",
+        ] as const) {
+            expect(() =>
+                ledger.recordWaiver({ ...valid, [field]: "   " }),
+            ).toThrow("non-empty");
+        }
     });
 
     it("records confirmed user gate overrides without mutating prior records", () => {
@@ -376,6 +840,307 @@ describe("exploration ledger", () => {
             toPhase: "presenting",
         });
         expect(ledger.getRecords()).toEqual([override]);
+    });
+
+    it("does not let a restored mismatched review outcome satisfy the gate", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const primary = ledger.captureEvidence({
+            toolCallId: "call-primary",
+            toolName: "read",
+            input: { path: "index.ts" },
+            content: [{ type: "text", text: "direct result" }],
+            details: undefined,
+            isError: false,
+        });
+        const choiceEvidence = ledger.captureEvidence({
+            toolCallId: "call-choice",
+            toolName: "ask_user_question",
+            input: { questions: [{ question: "Which approach?" }] },
+            content: [{ type: "text", text: "Central gate" }],
+            details: undefined,
+            isError: false,
+        });
+        const claim = ledger.recordClaim({
+            assertion: "The gate is centralized.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [primary.id],
+            contradictoryEvidenceIds: [],
+            impact: "Controls transitions.",
+            mitigation: "Keep one gate.",
+        });
+        const mismatchedReview: ReviewRecord = {
+            id: "RV-001",
+            kind: "review",
+            runId: "brainstorm-test",
+            phase: "exploring",
+            sequence: claim.sequence + 1,
+            timestamp: "2026-07-28T12:00:00.000Z",
+            reviewerEvidenceId: "EV-999",
+            outcome: "rejected",
+            claimIds: [claim.id],
+            primaryEvidenceIds: [primary.id],
+            summary: "Restored mismatched review.",
+        };
+        const restored = createExplorationLedger({
+            runId: "brainstorm-test",
+            initialRecords: [...ledger.getRecords(), mismatchedReview],
+        });
+
+        expect(
+            restored.getGateBlockers({
+                approachClaimIds: [[claim.id]],
+                recommendationClaimIds: [claim.id],
+                userChoice: "Central gate",
+                userChoiceEvidenceId: choiceEvidence.id,
+            }),
+        ).toContain(`${claim.id} requires a fresh completed review.`);
+    });
+
+    it("rejects malformed restored IDs instead of producing NaN identifiers", () => {
+        const valid = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = valid.captureEvidence({
+            toolCallId: "call-1",
+            toolName: "read",
+            input: { path: "README.md" },
+            content: [{ type: "text", text: "result" }],
+            details: undefined,
+            isError: false,
+        });
+        const malformed = { ...evidence, id: "EV-not-a-number" };
+        const restored = createExplorationLedger({
+            runId: "brainstorm-test",
+            initialRecords: [malformed as ExplorationRecord],
+        });
+
+        const next = restored.captureEvidence({
+            toolCallId: "call-2",
+            toolName: "read",
+            input: { path: "index.ts" },
+            content: [{ type: "text", text: "result" }],
+            details: undefined,
+            isError: false,
+        });
+
+        expect(next.id).toBe("EV-001");
+        expect(restored.getRecords()).toEqual([next]);
+    });
+
+    it("fails the gate when restored records reference missing ledger records", () => {
+        const original = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = original.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const claim = original.recordClaim({
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: false,
+            verdict: "verified",
+            evidenceIds: [evidence.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+        });
+        const restored = createExplorationLedger({
+            runId: "brainstorm-test",
+            initialRecords: [
+                evidence,
+                { ...claim, evidenceIds: ["EV-999"] },
+            ] as ExplorationRecord[],
+        });
+
+        expect(
+            restored.getGateBlockers({
+                approachClaimIds: [[claim.id]],
+                recommendationClaimIds: [claim.id],
+                userChoice: "Choose A",
+            }),
+        ).toContain(
+            `Restored claim ${claim.id} references unknown evidence EV-999.`,
+        );
+    });
+
+    it("validates restored supersession, reviewer, review, and waiver links", () => {
+        const original = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = original.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const claim = original.recordClaim({
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: false,
+            verdict: "verified",
+            evidenceIds: [evidence.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+        });
+        const restored = createExplorationLedger({
+            runId: "brainstorm-test",
+            initialRecords: [
+                evidence,
+                claim,
+                {
+                    ...claim,
+                    id: "CL-002",
+                    sequence: 3,
+                    supersedesClaimId: "CL-999",
+                },
+                {
+                    ...evidence,
+                    id: "EV-002",
+                    sequence: 4,
+                    toolName: "subagent",
+                    sourceKind: "reviewer",
+                    reviewer: {
+                        agent: "reviewer",
+                        context: "fresh",
+                        exitCode: 0,
+                        outcome: "supported",
+                        referencedClaimIds: ["CL-998"],
+                        referencedEvidenceIds: ["EV-998"],
+                    },
+                },
+                {
+                    id: "RV-001",
+                    kind: "review",
+                    runId: "brainstorm-test",
+                    phase: "exploring",
+                    sequence: 5,
+                    timestamp: "2026-01-01T00:00:00.000Z",
+                    reviewerEvidenceId: "EV-999",
+                    outcome: "supported",
+                    claimIds: ["CL-997"],
+                    primaryEvidenceIds: ["EV-997"],
+                    summary: "Invalid restored links.",
+                },
+                {
+                    id: "WV-001",
+                    kind: "waiver",
+                    runId: "brainstorm-test",
+                    phase: "exploring",
+                    sequence: 6,
+                    timestamp: "2026-01-01T00:00:00.000Z",
+                    claimId: "CL-996",
+                    reason: "Reason",
+                    impact: "Impact",
+                    mitigation: "Mitigation",
+                    reevaluateWhen: "Condition",
+                },
+            ] as ExplorationRecord[],
+        });
+
+        const blockers = restored.getGateBlockers({
+            approachClaimIds: [[claim.id]],
+            recommendationClaimIds: [claim.id],
+            userChoice: "Choose A",
+        });
+        expect(blockers).toContain(
+            "Restored claim CL-002 supersedes unknown claim CL-999.",
+        );
+        expect(blockers).toContain(
+            "Restored reviewer evidence EV-002 references unknown claim CL-998.",
+        );
+        expect(blockers).toContain(
+            "Restored reviewer evidence EV-002 references unknown evidence EV-998.",
+        );
+        expect(blockers).toContain(
+            "Restored review RV-001 references unknown reviewer evidence EV-999.",
+        );
+        expect(blockers).toContain(
+            "Restored review RV-001 references unknown claim CL-997.",
+        );
+        expect(blockers).toContain(
+            "Restored review RV-001 references unknown primary evidence EV-997.",
+        );
+        expect(blockers).toContain(
+            "Restored waiver WV-001 references unknown claim CL-996.",
+        );
+    });
+
+    it("reclassifies restored evidence under the current proof policy", () => {
+        const original = createExplorationLedger({ runId: "brainstorm-test" });
+        const answer = original.captureEvidence({
+            toolCallId: "call-choice",
+            toolName: "ask_user_question",
+            input: { questions: [{ question: "Is this verified?" }] },
+            content: [{ type: "text", text: "Yes" }],
+            details: {
+                cancelled: false,
+                answers: [
+                    {
+                        questionIndex: 0,
+                        question: "Is this verified?",
+                        kind: "option",
+                        answer: "Yes",
+                    },
+                ],
+            },
+            isError: false,
+        });
+        const legacyDirect = { ...answer, sourceKind: "direct" };
+        const restored = createExplorationLedger({
+            runId: "brainstorm-test",
+            initialRecords: [legacyDirect as ExplorationRecord],
+        });
+
+        expect(() =>
+            restored.recordClaim({
+                assertion: "User confirmation proves runtime behavior.",
+                classification: "empirical",
+                critical: true,
+                verdict: "verified",
+                evidenceIds: [answer.id],
+                contradictoryEvidenceIds: [],
+                impact: "Could bypass factual verification.",
+                mitigation: "Reclassify restored evidence.",
+            }),
+        ).toThrow("successful eligible evidence");
+
+        const legacyClaim: ExplorationRecord = {
+            id: "CL-001",
+            kind: "claim",
+            runId: "brainstorm-test",
+            phase: "exploring",
+            sequence: 2,
+            timestamp: "2026-01-01T00:00:00.000Z",
+            assertion: "User confirmation proves runtime behavior.",
+            classification: "empirical",
+            critical: false,
+            verdict: "verified",
+            evidenceIds: [answer.id],
+            contradictoryEvidenceIds: [],
+            impact: "Could bypass factual verification.",
+            mitigation: "Revalidate restored claims.",
+        };
+        const restoredClaim = createExplorationLedger({
+            runId: "brainstorm-test",
+            initialRecords: [
+                legacyDirect as ExplorationRecord,
+                legacyClaim,
+            ],
+        });
+        expect(
+            restoredClaim.getGateBlockers({
+                approachClaimIds: [[legacyClaim.id]],
+                recommendationClaimIds: [legacyClaim.id],
+                userChoice: "Yes",
+                userChoiceEvidenceId: answer.id,
+            }),
+        ).toContain(
+            "Restored claim CL-001 is invalid: verified claims require successful eligible evidence.",
+        );
     });
 
     it("restores immutable records and continues each ID sequence", () => {
@@ -469,6 +1234,52 @@ describe("exploration ledger", () => {
         expect(JSON.stringify(evidence)).not.toMatch(/password|secret|apiKey/);
     });
 
+    it("hashes malformed URLs, suspicious labels, and response identifiers", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+
+        const evidence = ledger.captureEvidence({
+            toolCallId: "call-sensitive",
+            toolName: "fetch_content",
+            input: {
+                url: "not-a-url?token=sk-live-secret",
+                source: "Bearer sk-source-secret",
+                responseId: "resp_private_identifier",
+            },
+            content: [{ type: "text", text: "page" }],
+            details: undefined,
+            isError: false,
+        });
+
+        expect(evidence.sourceRefs).toHaveLength(3);
+        expect(
+            evidence.sourceRefs.every((sourceRef) =>
+                /^sha256:[a-f0-9]{12}$/.test(sourceRef),
+            ),
+        ).toBe(true);
+        expect(JSON.stringify(evidence)).not.toMatch(
+            /not-a-url|sk-live|Bearer|private_identifier/,
+        );
+    });
+
+    it("hashes opaque high-entropy source labels", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const opaque = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6";
+
+        const evidence = ledger.captureEvidence({
+            toolCallId: "call-opaque",
+            toolName: "fetch_content",
+            input: { source: opaque },
+            content: [{ type: "text", text: "page" }],
+            details: undefined,
+            isError: false,
+        });
+
+        expect(evidence.sourceRefs).toEqual([
+            expect.stringMatching(/^sha256:[a-f0-9]{12}$/),
+        ]);
+        expect(JSON.stringify(evidence)).not.toContain(opaque);
+    });
+
     it("preserves an explicit stale-source signal", () => {
         const ledger = createExplorationLedger({ runId: "brainstorm-test" });
 
@@ -535,6 +1346,7 @@ describe("exploration ledger", () => {
             recommendation: "Use the session ledger.",
             recommendationClaimIds: [empirical.id, choice.id],
             userChoice: "Session ledger",
+            userChoiceEvidenceId: evidence.id,
         });
 
         for (const heading of [
@@ -554,6 +1366,7 @@ describe("exploration ledger", () => {
         }
         expect(markdown).toContain("CL-001");
         expect(markdown).toContain("EV-001");
+        expect(markdown).toContain("Choice evidence: EV-001");
         expect(markdown).not.toContain("raw-output-must-stay-native");
     });
 

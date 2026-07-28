@@ -184,6 +184,26 @@ function buildToolGroups(pi: ExtensionAPI): ToolGroups {
     return { research, questioning, mutation };
 }
 
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value))
+        : undefined;
+}
+
+function isReviewerChainInput(input: Record<string, unknown>): boolean {
+    if (!Array.isArray(input.chain) || input.chain.length !== 1) return false;
+    const step = objectRecord(input.chain[0]);
+    return (
+        step?.agent === "reviewer" &&
+        typeof step.task === "string" &&
+        step.task.trim().length > 0 &&
+        step.outputSchema !== null &&
+        typeof step.outputSchema === "object" &&
+        !Array.isArray(step.outputSchema) &&
+        step.parallel === undefined
+    );
+}
+
 function canUseTool(
     phase: Phase,
     toolName: string,
@@ -193,18 +213,24 @@ function canUseTool(
     if (toolName === "brainstorm_transition") return true;
     if (Object.values(PHASE_SUBMISSION_TOOLS).includes(toolName))
         return toolName === PHASE_SUBMISSION_TOOLS[phase];
-    if (toolName === "subagent")
-        return (
-            phase === "exploring" &&
-            input?.agent === "reviewer" &&
-            input.context === "fresh" &&
+    if (toolName === "subagent") {
+        if (phase !== "exploring" || !input || input.context !== "fresh")
+            return false;
+        const commonAllowed =
+            input.action === undefined && input.tasks === undefined;
+        const researcherAllowed =
+            input.async !== true &&
+            input.agent === "researcher" &&
             typeof input.task === "string" &&
             input.task.trim().length > 0 &&
-            input.async !== true &&
-            input.action === undefined &&
-            input.tasks === undefined &&
-            input.chain === undefined
-        );
+            input.chain === undefined;
+        const reviewerAllowed =
+            input.async === false &&
+            input.agent === undefined &&
+            input.task === undefined &&
+            isReviewerChainInput(input);
+        return commonAllowed && (researcherAllowed || reviewerAllowed);
+    }
     if (ALWAYS_BLOCKED_TOOLS.has(toolName)) return false;
     return !groups.mutation.has(toolName);
 }
@@ -271,11 +297,11 @@ function phasePrompt(
                 `Current phase: EXPLORING`,
                 `Follow the bundled skill \`brainstorm-forcer\`. Identify each decision-relevant assumption and classify it as empirical, design-choice, or future-contingency. Do not write code.`,
                 `Verify empirical assumptions programmatically. Prefer \`ctx_batch_execute\`, then \`ctx_execute\`, \`ctx_execute_file\`, direct code/LSP/AST/test/API/official-documentation tools, and indexed retrieval last.`,
-                `Allowed Exploring tool results are captured automatically as EV-* records. Use \`brainstorm_record_claim\` to create CL-* records; never invent evidence identifiers.`,
-                `Critical claims supported by \`ctx_search\` need direct corroboration. Failed, stale, indexed-only, or reviewer evidence cannot independently verify a critical empirical claim.`,
-                `When review is required, call \`subagent\` synchronously with agent \`reviewer\` with \`context: fresh\`, then link its EV-* output through \`brainstorm_submit_review\`.`,
+                `Allowed Exploring tool results are captured automatically as EV-* records. Use \`brainstorm_record_claim\` to create CL-* records; never invent evidence identifiers. Direct proof uses a strict tool allowlist; unknown tools and user input are ineligible. A fresh \`researcher\` subagent is allowed for broad research but remains secondary evidence.`,
+                `Critical claims supported by \`ctx_search\` need direct corroboration. Failed, stale, indexed-only, secondary, or reviewer evidence cannot independently verify a critical empirical claim.`,
+                `When review is required, call \`subagent\` with explicit \`async: false\`, \`context: fresh\`, and a one-step \`chain\` for agent \`reviewer\`. Put \`outputSchema\` on that chain step, requiring structured outcome \`supported|rejected|unresolved\`, \`claimIds\`, and \`evidenceIds\`; it must cover every contradictory EV-*. Then link its EV-* output through \`brainstorm_submit_review\`.`,
                 `Use \`brainstorm_request_waiver\` only for an unresolved critical claim. The user must approve the documented waiver; a waiver also requires a later fresh review.`,
-                `Submit 2-3 approaches whose \`claimIds\` reference active claims, an evidence-backed recommendation with \`recommendationClaimIds\`, and the explicit user choice.`,
+                `Obtain the explicit user choice through a dedicated single-question \`ask_user_question\` call. Submit 2-3 approaches whose \`claimIds\` reference active claims, an evidence-backed recommendation with \`recommendationClaimIds\`, the user choice, and its \`userChoiceEvidenceId\`.`,
                 ...phaseControl,
                 evidenceLine,
                 ...completed,
@@ -628,6 +654,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                     { minItems: 1 },
                 ),
                 userChoice: Type.String({ minLength: 1 }),
+                userChoiceEvidenceId: Type.String({ pattern: "^EV-\\d+$" }),
             },
             { additionalProperties: false },
         ),
@@ -643,6 +670,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                 ),
                 recommendationClaimIds: params.recommendationClaimIds,
                 userChoice: params.userChoice,
+                userChoiceEvidenceId: params.userChoiceEvidenceId,
             });
             const markdown =
                 explorationLedger.renderExplorationMarkdown(params);

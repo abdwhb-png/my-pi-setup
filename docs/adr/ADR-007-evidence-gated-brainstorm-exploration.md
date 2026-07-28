@@ -73,9 +73,15 @@ bounded, redacted metadata:
 - a reference to native session or Context Mode content when available.
 
 Raw tool parameters and full output are not copied blindly into the artifact or
-per-turn status. Failed tool results remain auditable but cannot support a
-`verified` verdict. Evidence from a stale indexed source cannot satisfy a
-critical empirical claim.
+per-turn status. Source metadata is sanitized before persistence: malformed
+URLs, response identifiers, secret-like values, and opaque labels are replaced
+with short SHA-256 references. Failed tool results remain auditable but cannot
+support a `verified` verdict. Direct proof is limited to an explicit tool
+allowlist. Unknown tools and user input are ineligible; research subagent output
+is secondary. Source-free execution output is derived and needs associated
+successful fresh direct-source evidence. `ask_user_question` records only
+normalized response hashes, never raw answers. Evidence from a stale indexed
+source cannot satisfy a critical empirical claim.
 
 ### Explicit claim qualification
 
@@ -104,7 +110,12 @@ is present:
 
 Reviewer output is captured as evidence but is not primary proof by itself. Its
 conclusions must point to direct measurements, code, API responses, tests, or
-authoritative documentation.
+authoritative documentation. Reviewer execution uses explicit `async: false`,
+`context: "fresh"`, and a one-step subagent chain because `outputSchema` is
+supported on chain steps, not top-level single mode. Structured output has an `outcome` of `supported`,
+`rejected`, or `unresolved`, plus covered claim and evidence IDs. The outcome
+must agree with each reviewed claim verdict, and every contradictory evidence ID
+must be covered.
 
 ### Exploring completion gate
 
@@ -112,9 +123,11 @@ The normal Exploring completion path cannot advance until:
 
 - every critical empirical claim is `verified` or `falsified`;
 - every unresolved critical claim has an explicit user-approved waiver;
-- every required conditional review has completed;
+- every required conditional review has completed with a matching structured
+  outcome and full contradictory-evidence coverage;
 - the recommendation cites closed claims;
-- the user choice is explicit.
+- the explicit user choice hash matches a normalized answer hash from a
+  dedicated single-question `ask_user_question` response.
 
 A waiver records reason, impact, mitigation, and a condition for
 re-evaluation. Only the user can approve it; the LLM cannot generate and
@@ -134,10 +147,20 @@ confirmed user overrides. A corrected claim supersedes an older claim without
 mutating it. Waivers remain separate records keyed by claim so claim history also
 stays immutable.
 
-A conditional review completes only after a successful synchronous `subagent`
-call with `agent: "reviewer"` and `context: "fresh"`, followed by an explicit
-review tool that links reviewer evidence, active claims, and cited direct
-evidence. Reviewer output remains secondary evidence.
+A conditional review completes only after a successful `subagent` call with
+explicit `async: false`, `context: "fresh"`, and a one-step reviewer chain
+carrying its structured-output schema, followed by an explicit review tool that links
+reviewer evidence, active claims, and cited direct evidence. Reviewer output
+remains secondary evidence. Synchronous fresh `researcher` subagents are allowed
+for broader research, but their output cannot act as direct proof.
+
+Restoration validates each union variant, ID prefix, finite positive sequence,
+and required fields, rejects duplicate IDs/sequences, and reclassifies accepted
+evidence under current proof policy. The same qualification rules used for new
+claims then revalidate every restored verdict. A second pass validates every
+claim/evidence, reviewer, review, waiver, and supersession relation. Invalid
+verdicts and broken links remain explicit gate blockers. Legacy classifications
+never remain authoritative.
 
 The current Context Mode Pi bridge returns empty structured details for
 `ctx_search`, so the extension cannot prove freshness from metadata alone.

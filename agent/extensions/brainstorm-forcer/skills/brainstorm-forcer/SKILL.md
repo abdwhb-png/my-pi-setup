@@ -69,24 +69,31 @@ Exploring is evidence-gated:
 3. Verify empirical assumptions programmatically. Prefer `ctx_batch_execute`,
    then `ctx_execute`, `ctx_execute_file`, direct
    code/LSP/AST/test/API/official-documentation tools, and indexed retrieval
-   last.
+   last. Execution output without an identifiable source is derived and needs an
+   associated successful fresh direct-source `EV-*`.
 4. Every allowed result is captured automatically as `EV-*`. Use
    `brainstorm_record_claim` to qualify it as a `CL-*`; never invent IDs.
+   Unknown tools and user input are ineligible as factual proof. Fresh
+   `researcher` subagents are allowed for broad research but remain secondary.
 5. Critical `ctx_search` evidence needs direct corroboration. Failed, stale,
-   indexed-only, synthesized-search, or reviewer evidence cannot independently
-   verify a critical empirical claim.
+   indexed-only, synthesized-search, secondary, or reviewer evidence cannot
+   independently verify a critical empirical claim.
 6. If any claim is critical empirical, contradictory, or waived, call
-   `subagent` synchronously with `agent: "reviewer"` and `context: "fresh"`.
-   Require its output to cite relevant `CL-*` and direct `EV-*`, then call
-   `brainstorm_submit_review`.
+   `subagent` with explicit `async: false`, `context: "fresh"`, and a one-step
+   `chain` whose step uses `agent: "reviewer"`. Put `outputSchema` on that step, requiring
+   `outcome` (`supported`, `rejected`, or `unresolved`), `claimIds`, and
+   `evidenceIds`. Structured evidence IDs must cover every contradiction. Then
+   call `brainstorm_submit_review`.
 7. For an unresolved critical claim, call `brainstorm_request_waiver`. Continue
-   only if user approves reason, impact, mitigation, and re-evaluation
+   only if user approves non-empty reason, impact, mitigation, and re-evaluation
    condition; complete a later fresh review.
-8. Obtain explicit user choice.
+8. Obtain explicit user choice through a dedicated single-question
+   `ask_user_question` call and retain its `EV-*` identifier. Submit choice text
+   exactly as answered; normalized answer hash must match.
 
 Submit `brainstorm_submit_exploring` with 2–3 approaches, each approach's active
-`claimIds`, `recommendationClaimIds`, recommendation, and user choice.
-Transition only after tool reports a complete artifact.
+`claimIds`, `recommendationClaimIds`, recommendation, user choice, and
+`userChoiceEvidenceId`. Transition only after tool reports a complete artifact.
 
 ## Phase 4 — Presenting
 

@@ -149,7 +149,7 @@ describe("brainstorm-forcer redesign", () => {
   it("writes each remaining phase through its matching structured tool", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-tools-"));
     try {
-      const { pi, tools, commands } = createMockAPI();
+      const { pi, tools, commands, handlers } = createMockAPI();
       const ctx = createMockContext(undefined, projectRoot);
       brainstormForcer(pi);
       const command = commands.get("brainstorm")!;
@@ -191,6 +191,7 @@ describe("brainstorm-forcer redesign", () => {
             recommendation: "Dedicated tools",
             recommendationClaimIds: ["CL-001"],
             userChoice: "Dedicated tools",
+            userChoiceEvidenceId: "EV-001",
           },
           "03-exploring-r001.md",
         ],
@@ -222,6 +223,28 @@ describe("brainstorm-forcer redesign", () => {
         if (phase === "presenting") await command.handler("next", ctx);
         else await command.handler(`phase ${phase}`, ctx);
         if (phase === "exploring") {
+          await handlers.get("tool_result")!(
+            {
+              type: "tool_result",
+              toolCallId: "choice-1",
+              toolName: "ask_user_question",
+              input: { questions: [{ question: "Which approach?" }] },
+              content: [{ type: "text", text: "Dedicated tools" }],
+              details: {
+                cancelled: false,
+                answers: [
+                  {
+                    questionIndex: 0,
+                    question: "Which approach?",
+                    kind: "option",
+                    answer: "Dedicated tools",
+                  },
+                ],
+              },
+              isError: false,
+            },
+            ctx,
+          );
           for (const assertion of ["Use dedicated tools.", "Keep schemas strict."]) {
             await tools.get("brainstorm_record_claim")!.execute(
               "claim",
@@ -835,7 +858,29 @@ describe("brainstorm-forcer redesign", () => {
     expect(blocked.block).toBe(true);
   });
 
-  it("allows only a synchronous fresh reviewer subagent during Exploring", async () => {
+  it("allows synchronous fresh researcher subagents during Exploring", async () => {
+    const { pi, handlers, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
+
+    expect(
+      await handlers.get("tool_call")!(
+        {
+          toolName: "subagent",
+          input: {
+            agent: "researcher",
+            context: "fresh",
+            task: "Research competing approaches and cite primary sources.",
+          },
+        },
+        ctx,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("allows only a synchronous fresh one-step reviewer chain or researcher during Exploring", async () => {
     const { pi, handlers, commands } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
@@ -848,18 +893,50 @@ describe("brainstorm-forcer redesign", () => {
         {
           toolName: "subagent",
           input: {
-            agent: "reviewer",
             context: "fresh",
-            task: "Review CL-001 against EV-001.",
+            async: false,
+            chain: [
+              {
+                agent: "reviewer",
+                task: "Review CL-001 against EV-001.",
+                outputSchema: {
+                  type: "object",
+                  properties: {
+                    outcome: { enum: ["supported", "rejected", "unresolved"] },
+                    claimIds: { type: "array", items: { type: "string" } },
+                    evidenceIds: { type: "array", items: { type: "string" } },
+                  },
+                  required: ["outcome", "claimIds", "evidenceIds"],
+                  additionalProperties: false,
+                },
+              },
+            ],
           },
         },
         ctx,
       ),
     ).toBeUndefined();
     for (const input of [
-      { agent: "reviewer", context: "fork", task: "Review CL-001." },
+      {
+        agent: "reviewer",
+        context: "fresh",
+        task: "Review CL-001.",
+        outputSchema: {},
+      },
+      { agent: "reviewer", context: "fresh", task: "Review CL-001." },
+      { agent: "reviewer", context: "fork", task: "Review CL-001.", outputSchema: {} },
       { agent: "worker", context: "fresh", task: "Review CL-001." },
       { agent: "reviewer", context: "fresh", task: "Review CL-001.", async: true },
+      {
+        context: "fresh",
+        chain: [
+          {
+            agent: "reviewer",
+            task: "Review CL-001.",
+            outputSchema: {},
+          },
+        ],
+      },
       { action: "list" },
     ]) {
       expect((await toolCall({ toolName: "subagent", input }, ctx)).block).toBe(true);
@@ -1266,7 +1343,13 @@ describe("brainstorm-forcer redesign", () => {
       "brainstorm_record_claim",
       "brainstorm_submit_review",
       "brainstorm_request_waiver",
-      "agent `reviewer` with `context: fresh`",
+      "`async: false`",
+      "`context: fresh`",
+      "one-step `chain`",
+      "structured outcome",
+      "`researcher` subagent",
+      "userChoiceEvidenceId",
+      "dedicated single-question",
       "direct corroboration",
     ]) {
       expect(result.systemPrompt).toContain(expected);
@@ -1420,15 +1503,40 @@ describe("brainstorm-forcer redesign", () => {
         toolCallId: "review-1",
         toolName: "subagent",
         input: {
-          agent: "reviewer",
           context: "fresh",
-          task: "Review CL-001 against EV-001.",
+          async: false,
+          chain: [
+            {
+              agent: "reviewer",
+              task: "Review CL-001 against EV-001.",
+              outputSchema: {
+                type: "object",
+                properties: {
+                  outcome: { enum: ["supported", "rejected", "unresolved"] },
+                  claimIds: { type: "array", items: { type: "string" } },
+                  evidenceIds: { type: "array", items: { type: "string" } },
+                },
+                required: ["outcome", "claimIds", "evidenceIds"],
+                additionalProperties: false,
+              },
+            },
+          ],
         },
         content: [{ type: "text", text: "CL-001 is supported by EV-001." }],
         details: {
-          mode: "single",
+          mode: "chain",
           context: "fresh",
-          results: [{ agent: "reviewer", exitCode: 0 }],
+          results: [
+            {
+              agent: "reviewer",
+              exitCode: 0,
+              structuredOutput: {
+                outcome: "supported",
+                claimIds: ["CL-001"],
+                evidenceIds: ["EV-001"],
+              },
+            },
+          ],
         },
         isError: false,
       },
@@ -1448,7 +1556,11 @@ describe("brainstorm-forcer redesign", () => {
       ctx,
     );
 
-    expect(result.details.record).toMatchObject({ id: "RV-001", kind: "review" });
+    expect(result.details.record).toMatchObject({
+      id: "RV-001",
+      kind: "review",
+      outcome: "supported",
+    });
     expect(entries.at(-1)).toMatchObject({
       customType: "brainstorm-forcer-ledger",
       data: { record: { id: "RV-001" } },

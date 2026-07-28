@@ -22,12 +22,64 @@ export type ClaimClassification =
     | "design-choice"
     | "future-contingency";
 export type ClaimVerdict = "verified" | "falsified" | "unresolved";
+export type ReviewOutcome = "supported" | "rejected" | "unresolved";
 export type EvidenceSourceKind =
     | "direct"
     | "indexed"
     | "reviewer"
-    | "secondary";
+    | "secondary"
+    | "derived"
+    | "ineligible";
 export type EvidenceStaleness = "fresh" | "stale" | "unknown";
+
+const DIRECT_EVIDENCE_TOOLS = new Set([
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "lsp_diagnostics",
+    "lens_diagnostics",
+    "symbol_search",
+    "module_report",
+    "read_symbol",
+    "read_enclosing",
+    "ast_grep_search",
+    "ast_grep_outline",
+    "ast_grep_dump",
+    "lsp_navigation",
+    "fetch_content",
+]);
+
+const DERIVED_EVIDENCE_TOOLS = new Set(["ctx_execute", "ctx_batch_execute"]);
+
+const SECONDARY_EVIDENCE_TOOLS = new Set([
+    "web_search",
+    "source_check",
+    "context7_query-docs",
+    "deepwiki_ask_question",
+    "deepwiki_read_wiki_contents",
+    "deepwiki_read_wiki_structure",
+    "pi_session_search",
+    "pi_session_query",
+    "session_search",
+    "memory_search",
+    "get_search_content",
+]);
+
+function classifyEvidenceSource(
+    toolName: string,
+    sourceRefs: readonly string[],
+    reviewer: boolean,
+): EvidenceSourceKind {
+    if (toolName === "ctx_search") return "indexed";
+    if (reviewer) return "reviewer";
+    if (toolName === "subagent" || SECONDARY_EVIDENCE_TOOLS.has(toolName))
+        return "secondary";
+    if (DERIVED_EVIDENCE_TOOLS.has(toolName)) return "derived";
+    if (toolName === "ctx_execute_file")
+        return sourceRefs.length > 0 ? "direct" : "derived";
+    return DIRECT_EVIDENCE_TOOLS.has(toolName) ? "direct" : "ineligible";
+}
 
 export type EvidenceRecord = Readonly<{
     id: string;
@@ -44,10 +96,13 @@ export type EvidenceRecord = Readonly<{
     nativeRef: string;
     sourceKind: EvidenceSourceKind;
     staleness: EvidenceStaleness;
+    userChoiceQuestionHash?: string;
+    userResponseHashes?: readonly string[];
     reviewer?: Readonly<{
         agent: string;
         context?: "fresh" | "fork";
         exitCode?: number;
+        outcome?: ReviewOutcome;
         referencedClaimIds: readonly string[];
         referencedEvidenceIds: readonly string[];
     }>;
@@ -91,6 +146,7 @@ export type ReviewRecord = Readonly<{
     sequence: number;
     timestamp: string;
     reviewerEvidenceId: string;
+    outcome: ReviewOutcome;
     claimIds: readonly string[];
     primaryEvidenceIds: readonly string[];
     summary: string;
@@ -154,28 +210,173 @@ export type ExplorationRecord =
     | WaiverRecord
     | OverrideRecord;
 
+function isStringArray(
+    value: unknown,
+    pattern?: RegExp,
+    maxLength = 64,
+): value is string[] {
+    return (
+        Array.isArray(value) &&
+        value.length <= maxLength &&
+        value.every(
+            (item) =>
+                typeof item === "string" && (!pattern || pattern.test(item)),
+        )
+    );
+}
+
+function hasRecordBase(
+    record: Record<string, unknown>,
+    kind: ExplorationRecord["kind"],
+    prefix: "EV" | "CL" | "RV" | "WV" | "OV",
+): boolean {
+    if (
+        record.kind !== kind ||
+        typeof record.id !== "string" ||
+        !new RegExp(`^${prefix}-\\d+$`).test(record.id) ||
+        typeof record.runId !== "string" ||
+        !record.runId.trim() ||
+        record.phase !== "exploring" ||
+        !Number.isSafeInteger(record.sequence) ||
+        Number(record.sequence) <= 0 ||
+        typeof record.timestamp !== "string" ||
+        !record.timestamp.trim()
+    )
+        return false;
+    const idNumber = Number(record.id.slice(3));
+    return Number.isSafeInteger(idNumber) && idNumber > 0;
+}
+
+function isReviewerMetadata(value: unknown): boolean {
+    const reviewer = asRecord(value);
+    return (
+        reviewer !== undefined &&
+        reviewer.agent === "reviewer" &&
+        (reviewer.context === "fresh" || reviewer.context === "fork") &&
+        (reviewer.exitCode === undefined ||
+            Number.isSafeInteger(reviewer.exitCode)) &&
+        (reviewer.outcome === undefined ||
+            reviewOutcome(reviewer.outcome) !== undefined) &&
+        isStringArray(reviewer.referencedClaimIds, /^CL-\d+$/) &&
+        isStringArray(reviewer.referencedEvidenceIds, /^EV-\d+$/)
+    );
+}
+
 export function isExplorationRecord(
     value: unknown,
 ): value is ExplorationRecord {
     const record = asRecord(value);
-    return (
-        record !== undefined &&
-        typeof record.id === "string" &&
-        typeof record.runId === "string" &&
-        record.phase === "exploring" &&
-        typeof record.sequence === "number" &&
-        typeof record.timestamp === "string" &&
-        typeof record.kind === "string" &&
-        ["evidence", "claim", "review", "waiver", "override"].includes(
-            record.kind,
-        )
-    );
+    if (!record || typeof record.kind !== "string") return false;
+    switch (record.kind) {
+        case "evidence":
+            return (
+                hasRecordBase(record, "evidence", "EV") &&
+                typeof record.toolName === "string" &&
+                Boolean(record.toolName.trim()) &&
+                (record.status === "success" || record.status === "error") &&
+                isStringArray(record.sourceRefs, undefined, 8) &&
+                typeof record.inputHash === "string" &&
+                /^[a-f0-9]{64}$/.test(record.inputHash) &&
+                typeof record.outputHash === "string" &&
+                /^[a-f0-9]{64}$/.test(record.outputHash) &&
+                typeof record.nativeRef === "string" &&
+                Boolean(record.nativeRef.trim()) &&
+                [
+                    "direct",
+                    "indexed",
+                    "reviewer",
+                    "secondary",
+                    "derived",
+                    "ineligible",
+                ].includes(String(record.sourceKind)) &&
+                ["fresh", "stale", "unknown"].includes(
+                    String(record.staleness),
+                ) &&
+                ((record.userChoiceQuestionHash === undefined &&
+                    record.userResponseHashes === undefined) ||
+                    (typeof record.userChoiceQuestionHash === "string" &&
+                        /^[a-f0-9]{64}$/.test(record.userChoiceQuestionHash) &&
+                        isStringArray(
+                            record.userResponseHashes,
+                            /^[a-f0-9]{64}$/,
+                            8,
+                        ) &&
+                        record.userResponseHashes.length > 0)) &&
+                (record.reviewer === undefined ||
+                    isReviewerMetadata(record.reviewer))
+            );
+        case "claim":
+            return (
+                hasRecordBase(record, "claim", "CL") &&
+                typeof record.assertion === "string" &&
+                Boolean(record.assertion.trim()) &&
+                ["empirical", "design-choice", "future-contingency"].includes(
+                    String(record.classification),
+                ) &&
+                typeof record.critical === "boolean" &&
+                ["verified", "falsified", "unresolved"].includes(
+                    String(record.verdict),
+                ) &&
+                isStringArray(record.evidenceIds, /^EV-\d+$/) &&
+                isStringArray(record.contradictoryEvidenceIds, /^EV-\d+$/) &&
+                typeof record.impact === "string" &&
+                Boolean(record.impact.trim()) &&
+                typeof record.mitigation === "string" &&
+                Boolean(record.mitigation.trim()) &&
+                (record.supersedesClaimId === undefined ||
+                    (typeof record.supersedesClaimId === "string" &&
+                        /^CL-\d+$/.test(record.supersedesClaimId)))
+            );
+        case "review":
+            return (
+                hasRecordBase(record, "review", "RV") &&
+                typeof record.reviewerEvidenceId === "string" &&
+                /^EV-\d+$/.test(record.reviewerEvidenceId) &&
+                reviewOutcome(record.outcome) !== undefined &&
+                isStringArray(record.claimIds, /^CL-\d+$/) &&
+                record.claimIds.length > 0 &&
+                isStringArray(record.primaryEvidenceIds, /^EV-\d+$/) &&
+                record.primaryEvidenceIds.length > 0 &&
+                typeof record.summary === "string" &&
+                Boolean(record.summary.trim())
+            );
+        case "waiver":
+            return (
+                hasRecordBase(record, "waiver", "WV") &&
+                typeof record.claimId === "string" &&
+                /^CL-\d+$/.test(record.claimId) &&
+                [
+                    record.reason,
+                    record.impact,
+                    record.mitigation,
+                    record.reevaluateWhen,
+                ].every(
+                    (item) => typeof item === "string" && Boolean(item.trim()),
+                )
+            );
+        case "override":
+            return (
+                hasRecordBase(record, "override", "OV") &&
+                typeof record.command === "string" &&
+                Boolean(record.command.trim()) &&
+                isStringArray(record.blockers) &&
+                typeof record.reason === "string" &&
+                Boolean(record.reason.trim()) &&
+                typeof record.fromPhase === "string" &&
+                Boolean(record.fromPhase.trim()) &&
+                typeof record.toPhase === "string" &&
+                Boolean(record.toPhase.trim())
+            );
+        default:
+            return false;
+    }
 }
 
 export type GateSubmission = {
     approachClaimIds: string[][];
     recommendationClaimIds: string[];
     userChoice: string;
+    userChoiceEvidenceId?: string;
 };
 
 export type ExplorationApproach = {
@@ -191,6 +392,7 @@ export type RenderExplorationInput = {
     recommendation: string;
     recommendationClaimIds: string[];
     userChoice: string;
+    userChoiceEvidenceId?: string;
 };
 
 function canonicalize(value: unknown): unknown {
@@ -223,17 +425,82 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
         : undefined;
 }
 
+function reviewerChainStep(
+    input: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+    if (
+        input.async !== false ||
+        input.context !== "fresh" ||
+        !Array.isArray(input.chain) ||
+        input.chain.length !== 1
+    )
+        return undefined;
+    const step = asRecord(input.chain[0]);
+    return step?.agent === "reviewer" &&
+        typeof step.task === "string" &&
+        step.task.trim() &&
+        step.outputSchema !== null &&
+        typeof step.outputSchema === "object" &&
+        !Array.isArray(step.outputSchema)
+        ? step
+        : undefined;
+}
+
+function hashSourceRef(value: string): string {
+    return `sha256:${sha256(value).slice(0, 12)}`;
+}
+
+function containsSensitiveSource(value: string): boolean {
+    return (
+        /(?:^|[^a-z0-9])(bearer|password|passwd|secret|token|api[_-]?key|authorization)(?:[^a-z0-9]|$)/i.test(
+            value,
+        ) ||
+        /\b(?:sk|ghp|github_pat|glpat|xox[baprs])[-_][a-z0-9_-]{6,}/i.test(
+            value,
+        ) ||
+        value
+            .split(/[/:]/)
+            .some(
+                (segment) =>
+                    segment.length >= 24 &&
+                    /[a-z]/i.test(segment) &&
+                    /\d/.test(segment) &&
+                    /^[a-z0-9._-]+$/i.test(segment),
+            )
+    );
+}
+
 function sanitizeUrl(value: string): string {
     try {
         const url = new URL(value);
+        if (url.protocol !== "http:" && url.protocol !== "https:")
+            return hashSourceRef(value);
         url.username = "";
         url.password = "";
         url.search = "";
         url.hash = "";
+        if (containsSensitiveSource(url.pathname))
+            url.pathname = `/${hashSourceRef(url.pathname)}`;
         return url.toString().replace(/\/$/, "");
     } catch {
-        return value.slice(0, 256);
+        return hashSourceRef(value);
     }
+}
+
+function sanitizeSourceRef(
+    value: string,
+    kind: "path" | "url" | "label" | "identifier",
+    homeDir: string,
+): string {
+    const bounded = value.trim().slice(0, 256);
+    if (!bounded) return "";
+    if (kind === "identifier") return hashSourceRef(bounded);
+    if (kind === "url") return sanitizeUrl(bounded);
+    if (/[\r\n]/.test(bounded) || containsSensitiveSource(bounded))
+        return hashSourceRef(bounded);
+    if (kind === "label" && !/^[\p{L}\p{N} ._:/-]+$/u.test(bounded))
+        return hashSourceRef(bounded);
+    return kind === "path" ? normalizePath(bounded, homeDir) : bounded;
 }
 
 function extractSourceRefs(
@@ -249,14 +516,13 @@ function extractSourceRefs(
         "cwd",
     ]);
     const urlKeys = new Set(["url", "urls"]);
-    const labelKeys = new Set(["source", "sources", "responseId"]);
-    const add = (value: string, kind: "path" | "url" | "label") => {
-        const sanitized =
-            kind === "path"
-                ? normalizePath(value, homeDir)
-                : kind === "url"
-                  ? sanitizeUrl(value)
-                  : value.slice(0, 256);
+    const labelKeys = new Set(["source", "sources"]);
+    const identifierKeys = new Set(["responseId"]);
+    const add = (
+        value: string,
+        kind: "path" | "url" | "label" | "identifier",
+    ) => {
+        const sanitized = sanitizeSourceRef(value, kind, homeDir);
         if (sanitized && !refs.includes(sanitized) && refs.length < 8)
             refs.push(sanitized);
     };
@@ -276,7 +542,9 @@ function extractSourceRefs(
                   ? "url"
                   : labelKeys.has(key)
                     ? "label"
-                    : undefined;
+                    : identifierKeys.has(key)
+                      ? "identifier"
+                      : undefined;
             if (kind) {
                 for (const item of values) {
                     if (typeof item === "string") add(item, kind);
@@ -289,19 +557,91 @@ function extractSourceRefs(
     return refs;
 }
 
-function textContent(content: readonly unknown[]): string {
-    return content
-        .flatMap((item) => {
-            const record = asRecord(item);
-            return record && typeof record.text === "string"
-                ? [record.text]
-                : [];
-        })
-        .join("\n");
+function normalizedResponseHash(value: string): string | undefined {
+    const normalized = value
+        .normalize("NFKC")
+        .trim()
+        .replace(/\s+/g, " ")
+        .toLowerCase();
+    return normalized ? sha256(normalized) : undefined;
 }
 
-function recordIds(text: string, prefix: "CL" | "EV"): string[] {
-    return [...new Set(text.match(new RegExp(`${prefix}-\\d+`, "g")) ?? [])];
+function userChoiceProvenance(
+    input: Record<string, unknown>,
+    details: unknown,
+): { questionHash: string; responseHashes: string[] } | undefined {
+    const result = asRecord(details);
+    if (
+        !Array.isArray(input.questions) ||
+        input.questions.length !== 1 ||
+        result?.cancelled !== false ||
+        !Array.isArray(result.answers) ||
+        result.answers.length !== 1
+    )
+        return undefined;
+    const question = asRecord(input.questions[0]);
+    const answer = asRecord(result.answers[0]);
+    const questionHash =
+        question && typeof question.question === "string"
+            ? normalizedResponseHash(question.question)
+            : undefined;
+    if (
+        !questionHash ||
+        !answer ||
+        typeof answer.question !== "string" ||
+        questionHash !== normalizedResponseHash(answer.question) ||
+        answer.questionIndex !== 0
+    )
+        return undefined;
+    const hashes: string[] = [];
+    const add = (value: string) => {
+        const hash = normalizedResponseHash(value);
+        if (hash && !hashes.includes(hash) && hashes.length < 8)
+            hashes.push(hash);
+    };
+    if (typeof answer.answer === "string") add(answer.answer);
+    if (Array.isArray(answer.selected)) {
+        const selected = answer.selected.filter(
+            (value): value is string => typeof value === "string",
+        );
+        for (const value of selected) add(value);
+        if (selected.length > 0) add(selected.join(", "));
+    }
+    return hashes.length > 0
+        ? { questionHash, responseHashes: hashes }
+        : undefined;
+}
+
+function structuredIds(value: unknown, prefix: "CL" | "EV"): string[] {
+    if (!Array.isArray(value)) return [];
+    const pattern = new RegExp(`^${prefix}-\\d+$`);
+    return [
+        ...new Set(
+            value.filter(
+                (item): item is string =>
+                    typeof item === "string" && pattern.test(item),
+            ),
+        ),
+    ];
+}
+
+function reviewOutcome(value: unknown): ReviewOutcome | undefined {
+    switch (value) {
+        case "supported":
+        case "rejected":
+        case "unresolved":
+            return value;
+        default:
+            return undefined;
+    }
+}
+
+function expectedReviewOutcome(verdict: ClaimVerdict): ReviewOutcome {
+    return verdict === "verified"
+        ? "supported"
+        : verdict === "falsified"
+          ? "rejected"
+          : "unresolved";
 }
 
 function markdownBullets(items: readonly string[]): string[] {
@@ -321,6 +661,65 @@ function deriveActiveClaims(claims: readonly ClaimRecord[]): ClaimRecord[] {
     return claims.filter((claim) => !superseded.has(claim.id));
 }
 
+type ClaimQualification = Pick<
+    ClaimRecord,
+    | "classification"
+    | "critical"
+    | "verdict"
+    | "evidenceIds"
+    | "contradictoryEvidenceIds"
+>;
+
+function claimQualificationError(
+    input: ClaimQualification,
+    evidence: readonly EvidenceRecord[],
+): string | undefined {
+    if (input.classification === "empirical" && evidence.length === 0)
+        return "Empirical claims require at least one EV-* record.";
+    if (input.classification !== "empirical" && input.verdict !== "unresolved")
+        return `${input.classification} claims must remain unresolved.`;
+    if (
+        input.verdict !== "unresolved" &&
+        !evidence.some(
+            (item) =>
+                item.status === "success" &&
+                item.staleness !== "stale" &&
+                item.sourceKind !== "reviewer" &&
+                item.sourceKind !== "ineligible",
+        )
+    )
+        return `${input.verdict} claims require successful eligible evidence.`;
+    if (
+        input.verdict !== "unresolved" &&
+        evidence.some((item) => item.sourceKind === "derived") &&
+        !evidence.some(
+            (item) =>
+                item.status === "success" &&
+                item.staleness === "fresh" &&
+                item.sourceKind === "direct",
+        )
+    )
+        return "Derived execution evidence requires associated direct evidence.";
+    if (
+        input.critical &&
+        input.classification === "empirical" &&
+        input.verdict !== "unresolved" &&
+        !evidence.some(
+            (item) =>
+                item.status === "success" &&
+                item.staleness === "fresh" &&
+                item.sourceKind === "direct",
+        )
+    )
+        return "Critical empirical claims require direct corroborating evidence.";
+    const unlinkedContradiction = input.contradictoryEvidenceIds.find(
+        (id) => !input.evidenceIds.includes(id),
+    );
+    return unlinkedContradiction
+        ? `Contradictory evidence ${unlinkedContradiction} must also appear in evidenceIds.`
+        : undefined;
+}
+
 export function createExplorationLedger(options: LedgerOptions) {
     const now = options.now ?? (() => new Date().toISOString());
     const homeDir = options.homeDir ?? homedir();
@@ -335,9 +734,30 @@ export function createExplorationLedger(options: LedgerOptions) {
     const reviewRecords: ReviewRecord[] = [];
     const waiverRecords: WaiverRecord[] = [];
     const overrideRecords: OverrideRecord[] = [];
+    const restoredIds = new Set<string>();
+    const restoredSequences = new Set<number>();
 
-    for (const record of structuredClone(options.initialRecords ?? [])) {
-        if (record.runId !== options.runId) continue;
+    for (const candidate of structuredClone(options.initialRecords ?? [])) {
+        if (
+            !isExplorationRecord(candidate) ||
+            candidate.runId !== options.runId ||
+            restoredIds.has(candidate.id) ||
+            restoredSequences.has(candidate.sequence)
+        )
+            continue;
+        const record: ExplorationRecord =
+            candidate.kind === "evidence"
+                ? {
+                      ...candidate,
+                      sourceKind: classifyEvidenceSource(
+                          candidate.toolName,
+                          candidate.sourceRefs,
+                          candidate.reviewer?.agent === "reviewer",
+                      ),
+                  }
+                : candidate;
+        restoredIds.add(record.id);
+        restoredSequences.add(record.sequence);
         sequence = Math.max(sequence, record.sequence);
         const number = Number(record.id.slice(3));
         switch (record.kind) {
@@ -364,6 +784,133 @@ export function createExplorationLedger(options: LedgerOptions) {
         }
     }
 
+    const restorationBlockers: string[] = [];
+    const addRestorationBlocker = (message: string): void => {
+        if (!restorationBlockers.includes(message))
+            restorationBlockers.push(message);
+    };
+    const restoredEvidenceById = new Map(
+        evidenceRecords.map((record) => [record.id, record]),
+    );
+    const restoredClaimsById = new Map(
+        claimRecords.map((record) => [record.id, record]),
+    );
+    for (const evidence of evidenceRecords) {
+        if (!evidence.reviewer) continue;
+        for (const claimId of evidence.reviewer.referencedClaimIds) {
+            const claim = restoredClaimsById.get(claimId);
+            if (!claim)
+                addRestorationBlocker(
+                    `Restored reviewer evidence ${evidence.id} references unknown claim ${claimId}.`,
+                );
+            else if (claim.sequence >= evidence.sequence)
+                addRestorationBlocker(
+                    `Restored reviewer evidence ${evidence.id} references non-prior claim ${claimId}.`,
+                );
+        }
+        for (const evidenceId of evidence.reviewer.referencedEvidenceIds) {
+            const referenced = restoredEvidenceById.get(evidenceId);
+            if (!referenced)
+                addRestorationBlocker(
+                    `Restored reviewer evidence ${evidence.id} references unknown evidence ${evidenceId}.`,
+                );
+            else if (referenced.sequence >= evidence.sequence)
+                addRestorationBlocker(
+                    `Restored reviewer evidence ${evidence.id} references non-prior evidence ${evidenceId}.`,
+                );
+        }
+    }
+    for (const claim of claimRecords) {
+        for (const evidenceId of claim.evidenceIds) {
+            const evidence = restoredEvidenceById.get(evidenceId);
+            if (!evidence)
+                addRestorationBlocker(
+                    `Restored claim ${claim.id} references unknown evidence ${evidenceId}.`,
+                );
+            else if (evidence.sequence >= claim.sequence)
+                addRestorationBlocker(
+                    `Restored claim ${claim.id} references non-prior evidence ${evidenceId}.`,
+                );
+        }
+        for (const evidenceId of claim.contradictoryEvidenceIds) {
+            if (!claim.evidenceIds.includes(evidenceId))
+                addRestorationBlocker(
+                    `Restored claim ${claim.id} has unlinked contradictory evidence ${evidenceId}.`,
+                );
+        }
+        const restoredEvidence = claim.evidenceIds.flatMap((evidenceId) => {
+            const evidence = restoredEvidenceById.get(evidenceId);
+            return evidence ? [evidence] : [];
+        });
+        if (restoredEvidence.length === claim.evidenceIds.length) {
+            const qualificationError = claimQualificationError(
+                claim,
+                restoredEvidence,
+            );
+            if (qualificationError)
+                addRestorationBlocker(
+                    `Restored claim ${claim.id} is invalid: ${qualificationError}`,
+                );
+        }
+        if (claim.supersedesClaimId) {
+            const superseded = restoredClaimsById.get(claim.supersedesClaimId);
+            if (!superseded)
+                addRestorationBlocker(
+                    `Restored claim ${claim.id} supersedes unknown claim ${claim.supersedesClaimId}.`,
+                );
+            else if (superseded.sequence >= claim.sequence)
+                addRestorationBlocker(
+                    `Restored claim ${claim.id} supersedes non-prior claim ${claim.supersedesClaimId}.`,
+                );
+        }
+    }
+    for (const review of reviewRecords) {
+        const reviewerEvidence = restoredEvidenceById.get(
+            review.reviewerEvidenceId,
+        );
+        if (!reviewerEvidence)
+            addRestorationBlocker(
+                `Restored review ${review.id} references unknown reviewer evidence ${review.reviewerEvidenceId}.`,
+            );
+        else if (reviewerEvidence.sequence >= review.sequence)
+            addRestorationBlocker(
+                `Restored review ${review.id} references non-prior reviewer evidence ${review.reviewerEvidenceId}.`,
+            );
+        for (const claimId of review.claimIds) {
+            const claim = restoredClaimsById.get(claimId);
+            if (!claim)
+                addRestorationBlocker(
+                    `Restored review ${review.id} references unknown claim ${claimId}.`,
+                );
+            else if (claim.sequence >= review.sequence)
+                addRestorationBlocker(
+                    `Restored review ${review.id} references non-prior claim ${claimId}.`,
+                );
+        }
+        for (const evidenceId of review.primaryEvidenceIds) {
+            const evidence = restoredEvidenceById.get(evidenceId);
+            if (!evidence)
+                addRestorationBlocker(
+                    `Restored review ${review.id} references unknown primary evidence ${evidenceId}.`,
+                );
+            else if (evidence.sequence >= review.sequence)
+                addRestorationBlocker(
+                    `Restored review ${review.id} references non-prior primary evidence ${evidenceId}.`,
+                );
+        }
+    }
+    for (const waiver of waiverRecords) {
+        const claim = restoredClaimsById.get(waiver.claimId);
+        if (!claim)
+            addRestorationBlocker(
+                `Restored waiver ${waiver.id} references unknown claim ${waiver.claimId}.`,
+            );
+        else if (claim.sequence >= waiver.sequence)
+            addRestorationBlocker(
+                `Restored waiver ${waiver.id} references non-prior claim ${waiver.claimId}.`,
+            );
+    }
+
     return {
         captureEvidence(capture: EvidenceCapture) {
             evidenceCount += 1;
@@ -374,21 +921,13 @@ export function createExplorationLedger(options: LedgerOptions) {
                 : undefined;
             const isReviewer =
                 capture.toolName === "subagent" &&
-                capture.input.agent === "reviewer";
-            const sourceKind =
-                capture.toolName === "ctx_search"
-                    ? ("indexed" as const)
-                    : isReviewer
-                      ? ("reviewer" as const)
-                      : [
-                              "web_search",
-                              "pi_session_search",
-                              "pi_session_query",
-                              "memory_search",
-                          ].includes(capture.toolName)
-                        ? ("secondary" as const)
-                        : ("direct" as const);
-            const outputText = textContent(capture.content);
+                reviewerChainStep(capture.input) !== undefined;
+            const sourceKind = classifyEvidenceSource(
+                capture.toolName,
+                sourceRefs,
+                isReviewer,
+            );
+            const structuredOutput = asRecord(result?.structuredOutput);
             const reviewerContext: "fresh" | "fork" | undefined =
                 capture.input.context === "fresh" ||
                 capture.input.context === "fork"
@@ -405,10 +944,21 @@ export function createExplorationLedger(options: LedgerOptions) {
                           typeof result?.exitCode === "number"
                               ? result.exitCode
                               : undefined,
-                      referencedClaimIds: recordIds(outputText, "CL"),
-                      referencedEvidenceIds: recordIds(outputText, "EV"),
+                      outcome: reviewOutcome(structuredOutput?.outcome),
+                      referencedClaimIds: structuredIds(
+                          structuredOutput?.claimIds,
+                          "CL",
+                      ),
+                      referencedEvidenceIds: structuredIds(
+                          structuredOutput?.evidenceIds,
+                          "EV",
+                      ),
                   }
                 : undefined;
+            const choiceProvenance =
+                capture.toolName === "ask_user_question"
+                    ? userChoiceProvenance(capture.input, capture.details)
+                    : undefined;
             const evidence: EvidenceRecord = {
                 id: `EV-${String(evidenceCount).padStart(3, "0")}`,
                 kind: "evidence",
@@ -431,6 +981,12 @@ export function createExplorationLedger(options: LedgerOptions) {
                           : sourceKind === "indexed"
                             ? "unknown"
                             : "fresh",
+                ...(choiceProvenance
+                    ? {
+                          userChoiceQuestionHash: choiceProvenance.questionHash,
+                          userResponseHashes: choiceProvenance.responseHashes,
+                      }
+                    : {}),
                 ...(reviewer ? { reviewer } : {}),
             };
             evidenceRecords.push(evidence);
@@ -442,49 +998,8 @@ export function createExplorationLedger(options: LedgerOptions) {
                 if (!record) throw new Error(`Unknown evidence record: ${id}.`);
                 return record;
             });
-            if (input.classification === "empirical" && evidence.length === 0)
-                throw new Error(
-                    "Empirical claims require at least one EV-* record.",
-                );
-            if (
-                input.classification !== "empirical" &&
-                input.verdict !== "unresolved"
-            )
-                throw new Error(
-                    `${input.classification} claims must remain unresolved.`,
-                );
-            if (
-                input.verdict !== "unresolved" &&
-                !evidence.some(
-                    (item) =>
-                        item.status === "success" &&
-                        item.staleness !== "stale" &&
-                        item.sourceKind !== "reviewer",
-                )
-            )
-                throw new Error(
-                    `${input.verdict} claims require successful eligible evidence.`,
-                );
-            if (
-                input.critical &&
-                input.classification === "empirical" &&
-                input.verdict !== "unresolved" &&
-                !evidence.some(
-                    (item) =>
-                        item.status === "success" &&
-                        item.staleness === "fresh" &&
-                        item.sourceKind === "direct",
-                )
-            )
-                throw new Error(
-                    "Critical empirical claims require direct corroborating evidence.",
-                );
-            for (const id of input.contradictoryEvidenceIds) {
-                if (!input.evidenceIds.includes(id))
-                    throw new Error(
-                        `Contradictory evidence ${id} must also appear in evidenceIds.`,
-                    );
-            }
+            const qualificationError = claimQualificationError(input, evidence);
+            if (qualificationError) throw new Error(qualificationError);
             if (
                 input.supersedesClaimId &&
                 !deriveActiveClaims(claimRecords).some(
@@ -538,13 +1053,27 @@ export function createExplorationLedger(options: LedgerOptions) {
                 if (!claim) throw new Error(`Unknown active claim: ${id}.`);
                 return claim;
             });
+            const outcome = reviewerEvidence.reviewer?.outcome;
+            if (!outcome)
+                throw new Error(
+                    "Reviewer evidence requires a structured outcome.",
+                );
+            if (
+                claims.some(
+                    (claim) => expectedReviewOutcome(claim.verdict) !== outcome,
+                )
+            )
+                throw new Error(
+                    `Reviewer outcome does not support the submitted claim verdicts: ${outcome}.`,
+                );
             const primaryEvidence = input.primaryEvidenceIds.map((id) => {
                 const evidence = evidenceRecords.find((item) => item.id === id);
                 if (!evidence)
                     throw new Error(`Unknown evidence record: ${id}.`);
                 if (
                     evidence.sourceKind !== "direct" ||
-                    evidence.staleness !== "fresh"
+                    evidence.staleness !== "fresh" ||
+                    (outcome !== "unresolved" && evidence.status !== "success")
                 )
                     throw new Error(
                         `Review evidence ${id} is not direct and fresh.`,
@@ -563,6 +1092,18 @@ export function createExplorationLedger(options: LedgerOptions) {
             )
                 throw new Error(
                     "Reviewer output must reference every submitted CL-* and EV-* record.",
+                );
+            const uncoveredContradictions = claims
+                .flatMap((claim) => claim.contradictoryEvidenceIds)
+                .filter(
+                    (id) =>
+                        !reviewerEvidence.reviewer?.referencedEvidenceIds.includes(
+                            id,
+                        ),
+                );
+            if (uncoveredContradictions.length > 0)
+                throw new Error(
+                    `Reviewer output must cover every contradictory evidence record: ${uncoveredContradictions.join(", ")}.`,
                 );
             if (
                 claims.some(
@@ -586,6 +1127,7 @@ export function createExplorationLedger(options: LedgerOptions) {
                 sequence: ++sequence,
                 timestamp: now(),
                 reviewerEvidenceId: input.reviewerEvidenceId,
+                outcome,
                 claimIds: [...input.claimIds],
                 primaryEvidenceIds: [...input.primaryEvidenceIds],
                 summary: input.summary,
@@ -603,6 +1145,15 @@ export function createExplorationLedger(options: LedgerOptions) {
                 throw new Error(
                     "Waivers apply only to active unresolved critical claims.",
                 );
+            for (const [field, value] of Object.entries({
+                reason: input.reason,
+                impact: input.impact,
+                mitigation: input.mitigation,
+                reevaluateWhen: input.reevaluateWhen,
+            })) {
+                if (!value.trim())
+                    throw new Error(`Waiver ${field} must be non-empty.`);
+            }
             waiverCount += 1;
             const waiver: WaiverRecord = {
                 id: `WV-${String(waiverCount).padStart(3, "0")}`,
@@ -612,16 +1163,16 @@ export function createExplorationLedger(options: LedgerOptions) {
                 sequence: ++sequence,
                 timestamp: now(),
                 claimId: input.claimId,
-                reason: input.reason,
-                impact: input.impact,
-                mitigation: input.mitigation,
-                reevaluateWhen: input.reevaluateWhen,
+                reason: input.reason.trim(),
+                impact: input.impact.trim(),
+                mitigation: input.mitigation.trim(),
+                reevaluateWhen: input.reevaluateWhen.trim(),
             };
             waiverRecords.push(waiver);
             return structuredClone(waiver);
         },
         getGateBlockers(submission: GateSubmission): string[] {
-            const blockers: string[] = [];
+            const blockers: string[] = [...restorationBlockers];
             const activeClaims = deriveActiveClaims(claimRecords);
             const activeIds = new Set(activeClaims.map((claim) => claim.id));
             for (const claimIds of submission.approachClaimIds) {
@@ -658,6 +1209,36 @@ export function createExplorationLedger(options: LedgerOptions) {
             }
             if (!submission.userChoice.trim())
                 blockers.push("User choice must be explicit.");
+            const userChoiceEvidence = evidenceRecords.find(
+                (item) => item.id === submission.userChoiceEvidenceId,
+            );
+            if (
+                !userChoiceEvidence ||
+                userChoiceEvidence.toolName !== "ask_user_question" ||
+                userChoiceEvidence.status !== "success"
+            )
+                blockers.push(
+                    "User choice must come from ask_user_question evidence.",
+                );
+            else if (
+                !userChoiceEvidence.userChoiceQuestionHash ||
+                !userChoiceEvidence.userResponseHashes?.length
+            )
+                blockers.push(
+                    "User choice evidence must contain exactly one question and answer.",
+                );
+            else {
+                const choiceHash = normalizedResponseHash(
+                    submission.userChoice,
+                );
+                if (
+                    !choiceHash ||
+                    !userChoiceEvidence.userResponseHashes.includes(choiceHash)
+                )
+                    blockers.push(
+                        "User choice does not match the recorded answer.",
+                    );
+            }
 
             for (const claim of activeClaims) {
                 const waiver = waiverRecords.findLast(
@@ -678,12 +1259,56 @@ export function createExplorationLedger(options: LedgerOptions) {
                     claim.contradictoryEvidenceIds.length > 0 ||
                     waiver !== undefined;
                 if (!reviewRequired) continue;
-                const review = reviewRecords.find(
-                    (item) =>
+                const review = reviewRecords.find((item) => {
+                    const reviewerEvidence = evidenceRecords.find(
+                        (evidence) => evidence.id === item.reviewerEvidenceId,
+                    );
+                    const primaryEvidence = item.primaryEvidenceIds.flatMap(
+                        (id) => {
+                            const evidence = evidenceRecords.find(
+                                (candidate) => candidate.id === id,
+                            );
+                            return evidence ? [evidence] : [];
+                        },
+                    );
+                    return (
                         item.claimIds.includes(claim.id) &&
                         item.sequence > claim.sequence &&
-                        (!waiver || item.sequence > waiver.sequence),
-                );
+                        (!waiver || item.sequence > waiver.sequence) &&
+                        item.outcome === expectedReviewOutcome(claim.verdict) &&
+                        reviewerEvidence?.status === "success" &&
+                        reviewerEvidence.sourceKind === "reviewer" &&
+                        reviewerEvidence.sequence < item.sequence &&
+                        reviewerEvidence.reviewer?.agent === "reviewer" &&
+                        reviewerEvidence.reviewer.context === "fresh" &&
+                        reviewerEvidence.reviewer.exitCode === 0 &&
+                        reviewerEvidence.reviewer.outcome === item.outcome &&
+                        reviewerEvidence.reviewer.referencedClaimIds.includes(
+                            claim.id,
+                        ) &&
+                        claim.contradictoryEvidenceIds.every((id) =>
+                            reviewerEvidence.reviewer?.referencedEvidenceIds.includes(
+                                id,
+                            ),
+                        ) &&
+                        primaryEvidence.length ===
+                            item.primaryEvidenceIds.length &&
+                        primaryEvidence.every(
+                            (evidence) =>
+                                evidence.sourceKind === "direct" &&
+                                evidence.staleness === "fresh" &&
+                                (item.outcome === "unresolved" ||
+                                    evidence.status === "success") &&
+                                reviewerEvidence.reviewer?.referencedEvidenceIds.includes(
+                                    evidence.id,
+                                ),
+                        ) &&
+                        (claim.classification !== "empirical" ||
+                            primaryEvidence.some((evidence) =>
+                                claim.evidenceIds.includes(evidence.id),
+                            ))
+                    );
+                });
                 if (!review)
                     blockers.push(
                         `${claim.id} requires a fresh completed review.`,
@@ -729,7 +1354,7 @@ export function createExplorationLedger(options: LedgerOptions) {
             );
             const reviewLines = reviewRecords.map(
                 (review) =>
-                    `${review.id} — reviewer ${review.reviewerEvidenceId}; claims: ${review.claimIds.join(", ")}; primary evidence: ${review.primaryEvidenceIds.join(", ")} — ${review.summary}`,
+                    `${review.id} — outcome: ${review.outcome}; reviewer ${review.reviewerEvidenceId}; claims: ${review.claimIds.join(", ")}; primary evidence: ${review.primaryEvidenceIds.join(", ")} — ${review.summary}`,
             );
             const overrideLines = overrideRecords.map(
                 (override) =>
@@ -796,6 +1421,8 @@ export function createExplorationLedger(options: LedgerOptions) {
                 "## User Choice",
                 "",
                 input.userChoice,
+                "",
+                `Choice evidence: ${input.userChoiceEvidenceId ?? "none"}`,
             ].join("\n");
         },
         recordOverride(input: RecordOverrideInput): OverrideRecord {
