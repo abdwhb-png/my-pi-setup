@@ -72,6 +72,12 @@ const PHASE_SUBMISSION_TOOLS: Record<Phase, string> = {
     documenting: "brainstorm_submit_design",
 };
 
+const EXPLORING_WORKFLOW_TOOLS = new Set([
+    "brainstorm_record_claim",
+    "brainstorm_submit_review",
+    "brainstorm_request_waiver",
+]);
+
 const ALWAYS_BLOCKED_TOOLS = new Set([
     "write",
     "edit",
@@ -211,6 +217,8 @@ function canUseTool(
     input?: Record<string, unknown>,
 ): boolean {
     if (toolName === "brainstorm_transition") return true;
+    if (phase === "exploring" && EXPLORING_WORKFLOW_TOOLS.has(toolName))
+        return true;
     if (Object.values(PHASE_SUBMISSION_TOOLS).includes(toolName))
         return toolName === PHASE_SUBMISSION_TOOLS[phase];
     if (toolName === "subagent") {
@@ -1773,9 +1781,17 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         if (canUseTool(activePhase, event.toolName, groups, event.input))
             return;
         const phaseLabel = PHASE_LABELS[activePhase];
+        const allowedTools = [
+            "non-mutating research/question tools",
+            ...(activePhase === "exploring"
+                ? [...EXPLORING_WORKFLOW_TOOLS]
+                : []),
+            expectedSubmissionTool(activePhase),
+            "brainstorm_transition",
+        ].join(", ");
         const reason = [
             `BLOCKED: ${event.toolName} is not allowed in the ${phaseLabel} phase.`,
-            `Allowed tools: non-mutating research/question tools, ${expectedSubmissionTool(activePhase)}, and brainstorm_transition.`,
+            `Allowed tools: ${allowedTools}.`,
             `Generic mutation, shell, and planning tools remain blocked for the entire brainstorm.`,
             `Submit the current phase artifact, then request an adjacent transition.`,
             ``,

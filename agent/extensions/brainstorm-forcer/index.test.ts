@@ -32,6 +32,7 @@ function createMockAPI() {
     { name: "bash" },
     { name: "write" },
     { name: "edit" },
+    { name: "create_resource", description: "Create a generic resource." },
     { name: "ask_user_question" },
     { name: "hypa_find" },
     { name: "hypa_ls" },
@@ -49,7 +50,13 @@ function createMockAPI() {
     registerMessageRenderer: (customType: string, renderer: any) => renderers.set(customType, renderer),
     sendUserMessage: (content: unknown, options?: unknown) => sentUserMessages.push({ content, options }),
     sendMessage: (message: unknown, options?: unknown) => sentMessages.push({ message, options }),
-    getAllTools: () => toolInfo,
+    getAllTools: () => [
+      ...toolInfo,
+      ...[...tools.values()].map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+      })),
+    ],
     events: { emit: mock(() => undefined) },
   } as unknown as ExtensionAPI;
 
@@ -856,6 +863,29 @@ describe("brainstorm-forcer redesign", () => {
     expect(await toolCall({ toolName: "web_search" }, ctx)).toBeUndefined();
     const blocked = await toolCall({ toolName: "edit" }, ctx);
     expect(blocked.block).toBe(true);
+  });
+
+  it("allows phase-scoped Exploring workflow tools despite mutation-like descriptions", async () => {
+    const { pi, handlers, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const command = commands.get("brainstorm")!;
+    await command.handler("topic", ctx);
+    const toolCall = handlers.get("tool_call")!;
+
+    expect((await toolCall({ toolName: "brainstorm_record_claim" }, ctx)).block).toBe(true);
+
+    await command.handler("phase exploring", ctx);
+    for (const toolName of [
+      "brainstorm_record_claim",
+      "brainstorm_submit_review",
+      "brainstorm_request_waiver",
+    ]) {
+      expect(await toolCall({ toolName }, ctx)).toBeUndefined();
+    }
+    const blocked = await toolCall({ toolName: "create_resource" }, ctx);
+    expect(blocked.block).toBe(true);
+    expect(blocked.reason).toContain("brainstorm_record_claim");
   });
 
   it("allows synchronous fresh researcher subagents during Exploring", async () => {
