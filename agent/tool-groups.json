@@ -32,6 +32,17 @@
             "read_enclosing"
         ],
         "lens": ["lens_diagnostics", "ast_grep_dump", "@lens-inspect"],
-        "lens-write": ["@lens", "ast_grep_replace", "lens_diagnostic_mark"]
+        "lens-write": ["@lens", "ast_grep_replace", "lens_diagnostic_mark"],
+        "ctx-inspect": [
+            "mcp:ctx_index",
+            "mcp:ctx_search",
+            "mcp:ctx_fetch_and_index"
+        ],
+        "ctx-exec": [
+            "mcp:ctx_batch_execute",
+            "mcp:ctx_execute",
+            "mcp:ctx_execute_file"
+        ],
+        "ctx": ["ctx-inspect", "ctx-exec"]
     }
 }

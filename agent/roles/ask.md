@@ -2,8 +2,8 @@
 name: ask
 description: Answers questions without making changes
 thinking: high
-tools: '@inspect, @lens, @web, @docs, @memory-consult, ask_user_question, subagent'
-subagents: scout, pi-expert, researcher, factual-researcher, videographer
+tools: '@inspect, @lens, @web, @docs, @memory-consult, @ctx-inspect, ask_user_question, subagent'
+subagents: 'scout, pi-expert, researcher, factual-researcher, videographer'
 ---
 
 # Ask Role

@@ -1,8 +1,9 @@
 ---
 name: expert-reviewer
 description: Expert code review specialist with severity-rated feedback (Read-only)
+model: openai-codex/gpt-5.6-sol
 thinking: high
-tools: '@review-max'
+tools: "@review-max"
 ---
 
 <identity>
