@@ -69,6 +69,15 @@ function createMockExtensionApi(
             ) => object;
         }
     >();
+    const registeredCommands = new Map<
+        string,
+        {
+            handler?: (
+                args: string,
+                ctx: object,
+            ) => Promise<unknown> | unknown;
+        }
+    >();
     let activeTools: string[] = ['read', 'bash', 'edit', 'write'];
     let sessionName = initialSessionName;
     const pi = {
@@ -101,12 +110,23 @@ function createMockExtensionApi(
         },
         getCommands: () => commands ?? [],
         setThinkingLevel: mock(() => undefined),
-        registerCommand: mock(() => undefined),
+        registerCommand: mock(
+            (
+                name: string,
+                command: {
+                    handler?: (
+                        args: string,
+                        ctx: object,
+                    ) => Promise<unknown> | unknown;
+                },
+            ) => registeredCommands.set(name, command),
+        ),
         sendMessage: mock(() => undefined),
     } as unknown as ExtensionAPI;
     return {
         pi,
         handlers,
+        registeredCommands,
         registeredTools,
         getActiveTools: () => activeTools,
         getSessionName: () => sessionName,
@@ -421,6 +441,96 @@ describe('pi-overrides', () => {
         );
 
         expect(getSessionName()).toBeUndefined();
+    });
+
+    it('compacts a skill-expanded user message after tree navigation', async () => {
+        const { pi, handlers } = createMockExtensionApi();
+        piOverrides(pi);
+        const beforeTree = handlers.get('session_before_tree');
+        const sessionTree = handlers.get('session_tree');
+        if (!beforeTree || !sessionTree) {
+            throw new Error('tree lifecycle handlers not registered');
+        }
+        const setEditorText = mock(() => undefined);
+        const skillMessage = {
+            type: 'message',
+            message: {
+                role: 'user',
+                content:
+                    '<skill name="diagnose" location="/skills/diagnose/SKILL.md">instructions</skill>\n\nInvestigate color',
+            },
+        };
+
+        await beforeTree(
+            { preparation: { targetId: 'skill-message' } },
+            {
+                sessionManager: {
+                    getEntry: (entryId: string) =>
+                        entryId === 'skill-message' ? skillMessage : undefined,
+                },
+            },
+        );
+        await sessionTree({}, { hasUI: true, ui: { setEditorText } });
+
+        expect(setEditorText).toHaveBeenCalledWith(
+            '/skill:diagnose Investigate color',
+        );
+    });
+
+    it('forks through /cfork and restores compact skill input', async () => {
+        const { pi, registeredCommands } = createMockExtensionApi();
+        piOverrides(pi);
+        const handler = registeredCommands.get('cfork')?.handler;
+        if (!handler) throw new Error('/cfork handler not registered');
+        const skillMessage = {
+            id: 'skill-message',
+            type: 'message',
+            message: {
+                role: 'user',
+                content:
+                    '<skill name="diagnose" location="/skills/diagnose/SKILL.md">instructions</skill>\n\nInvestigate color',
+            },
+        };
+        const replacementSetEditorText = mock((_text: string) => undefined);
+        const fork = mock(
+            async (
+                _entryId: string,
+                options: {
+                    withSession?: (ctx: {
+                        ui: { setEditorText: (text: string) => void };
+                    }) => Promise<void>;
+                } = {},
+            ) => {
+                await options.withSession?.({
+                    ui: { setEditorText: replacementSetEditorText },
+                });
+                return { cancelled: false };
+            },
+        );
+        const select = mock(async () => '1. Investigate color');
+        const setEditorText = mock((_text: string) => undefined);
+
+        await handler('', {
+            fork,
+            hasUI: true,
+            sessionManager: { getEntries: () => [skillMessage] },
+            ui: { select, setEditorText },
+        });
+
+        expect(select).toHaveBeenCalledWith('Fork from user message', [
+            '1. Investigate color',
+        ]);
+        expect(fork).toHaveBeenCalledWith(
+            'skill-message',
+            expect.objectContaining({ withSession: expect.any(Function) }),
+        );
+        expect(replacementSetEditorText).toHaveBeenCalledWith(
+            '/skill:diagnose Investigate color',
+        );
+        expect(setEditorText).not.toHaveBeenCalled();
+        expect(skillMessage.message.content).toBe(
+            '<skill name="diagnose" location="/skills/diagnose/SKILL.md">instructions</skill>\n\nInvestigate color',
+        );
     });
 
     it('does not name a resumed session from a later skill message', async () => {

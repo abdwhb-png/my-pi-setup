@@ -317,12 +317,40 @@ const READ_DISAMBIGUATION = {
 
 // ─── Extension entry point ────────────────────────────────────────────────────
 
+function userMessageText(entry: SessionEntry | undefined): string | undefined {
+    if (entry?.type !== "message" || entry.message.role !== "user") {
+        return undefined;
+    }
+
+    const { content } = entry.message;
+    return typeof content === "string"
+        ? content
+        : content
+              .flatMap((block) => (block.type === "text" ? [block.text] : []))
+              .join(" ");
+}
+
 function registerCompactSessionNames(
     pi: ExtensionAPI,
     transformSkillInput: (text: string) => string | undefined,
 ): (entries: readonly SessionEntry[]) => void {
     let firstUserInputSeen = false;
     let firstUserMessageSeen = false;
+    let pendingTreeEditorText: string | undefined;
+
+    pi.on("session_before_tree", (event, ctx) => {
+        pendingTreeEditorText = compactSkillSessionName(
+            userMessageText(
+                ctx.sessionManager.getEntry(event.preparation.targetId),
+            ) ?? "",
+        );
+    });
+
+    pi.on("session_tree", (_event, ctx) => {
+        const editorText = pendingTreeEditorText;
+        pendingTreeEditorText = undefined;
+        if (editorText && ctx.hasUI) ctx.ui.setEditorText(editorText);
+    });
 
     pi.on("message_end", (event) => {
         if (event.message.role !== "user" || firstUserMessageSeen) return;
@@ -407,6 +435,53 @@ export default function piOverrides(pi: ExtensionAPI): void {
                 },
                 { triggerTurn: false },
             );
+        },
+    });
+    pi.registerCommand("cfork", {
+        description: "Fork from a user message with compacted skill input",
+        handler: async (_args, ctx) => {
+            if (!ctx.hasUI) return;
+
+            const candidates = ctx.sessionManager
+                .getEntries()
+                .flatMap((entry, index) => {
+                    const text = userMessageText(entry);
+                    if (!text) return [];
+
+                    const compactText = compactSkillSessionName(text);
+                    const preview =
+                        compactText?.replace(/^\/skill:[^\s]+\s*/, "") ||
+                        compactText ||
+                        text;
+                    return [
+                        {
+                            entryId: entry.id,
+                            compactText,
+                            label: `${index + 1}. ${preview}`,
+                        },
+                    ];
+                });
+            if (candidates.length === 0) {
+                ctx.ui.notify("No user messages to fork from", "warning");
+                return;
+            }
+
+            const label = await ctx.ui.select(
+                "Fork from user message",
+                candidates.map((candidate) => candidate.label),
+            );
+            const candidate = candidates.find(
+                (option) => option.label === label,
+            );
+            if (!candidate) return;
+
+            await ctx.fork(candidate.entryId, {
+                withSession: async (replacementCtx) => {
+                    if (candidate.compactText) {
+                        replacementCtx.ui.setEditorText(candidate.compactText);
+                    }
+                },
+            });
         },
     });
     const restoreCompactSessionNameState = registerCompactSessionNames(

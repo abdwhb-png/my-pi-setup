@@ -227,11 +227,12 @@ export default function slowMode(pi: ExtensionAPI) {
 
             pi.appendEntry("slow-mode", { enabled });
 
+
             if (enabled) {
                 const tools = reviewedTools(toolConfig);
                 const list = tools.length > 0 ? ` [${tools.join(", ")}]` : "";
                 ctx.ui.notify(
-                    `Slow mode enabled${list} — changes require approval`,
+                    `■Slow mode enabled${list} — changes require approval`,
                     "info",
                 );
             } else {
