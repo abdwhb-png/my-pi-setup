@@ -23,7 +23,7 @@ import type {
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
-import { createUiColors } from "../_shared/ui-colors";
+import { createUiColors } from "../_shared/ui/ui-colors";
 import { createBrainstormArtifactStore } from "./artifacts";
 import {
     createExplorationLedger,
@@ -895,12 +895,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                     body: new Markdown(markdown, 0, 0, getMarkdownTheme()),
                     actions,
                     escapeAction,
-                    colors: {
-                        accent: (text) => theme.fg("accent", text),
-                        dim: (text) => theme.fg("dim", text),
-                        selected: (text) =>
-                            theme.fg("accent", theme.bold(text)),
-                    },
+                    theme,
                     requestRender: () => tui.requestRender(),
                     done,
                 }),

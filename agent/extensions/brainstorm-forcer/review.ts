@@ -1,19 +1,11 @@
-import {
-    matchesKey,
-    truncateToWidth,
-    type Component,
-} from "@earendil-works/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { matchesKey, type Component } from "@earendil-works/pi-tui";
+import { BoxRenderer } from "../_shared/ui/framed-box";
 
 export type ReviewDecision = "Approve" | "Reject" | "Reject with reason";
 export type ReviewAction = ReviewDecision | "Close";
 
 type BodyRenderer = Pick<Component, "render" | "invalidate">;
-
-type ReviewColors = {
-    accent(text: string): string;
-    dim(text: string): string;
-    selected(text: string): string;
-};
 
 type ArtifactReviewOptions = {
     title: string;
@@ -22,7 +14,7 @@ type ArtifactReviewOptions = {
     viewportRows?: number;
     actions?: readonly ReviewAction[];
     escapeAction?: ReviewAction;
-    colors: ReviewColors;
+    theme: Theme;
     requestRender(): void;
     done(decision: ReviewAction): void;
 };
@@ -48,49 +40,27 @@ export class ArtifactReviewView implements Component {
     }
 
     render(width: number): string[] {
-        const contentWidth = Math.max(20, width);
-        const bodyLines = this.options.body.render(contentWidth);
-        const maxOffset = Math.max(0, bodyLines.length - this.viewportRows);
-        this.scrollOffset = Math.min(this.scrollOffset, maxOffset);
-        const visible = bodyLines.slice(
-            this.scrollOffset,
-            this.scrollOffset + this.viewportRows,
-        );
-        while (visible.length < this.viewportRows) visible.push("");
+        const { theme } = this.options;
+        const box = new BoxRenderer(theme, width, {
+            viewportHeight: this.viewportRows,
+        });
+        box.setTitle(this.options.title);
+        box.setFixedHeader([theme.fg("dim", this.options.subtitle)]);
+        const bodyLines = this.options.body.render(box.getContentWidth());
+        box.setContent(bodyLines);
+        box.scrollTo(this.scrollOffset);
 
-        const rangeStart = bodyLines.length === 0 ? 0 : this.scrollOffset + 1;
-        const rangeEnd = Math.min(
-            bodyLines.length,
-            this.scrollOffset + this.viewportRows,
-        );
         const actions = this.actions
             .map((action, index) =>
                 index === this.selectedAction
-                    ? this.options.colors.selected(`[ ${action} ]`)
-                    : this.options.colors.dim(`  ${action}  `),
+                    ? theme.fg("accent", theme.bold(`[ ${action} ]`))
+                    : theme.fg("dim", `  ${action}  `),
             )
             .join("  ");
+        const help = `↑/↓ scroll · ←/→ action · Enter select · Esc ${this.escapeAction.toLowerCase()}`;
+        box.setFooter(`${actions}  ${theme.fg("dim", help)}`);
 
-        return [
-            truncateToWidth(
-                this.options.colors.accent(this.options.title),
-                contentWidth,
-            ),
-            truncateToWidth(
-                this.options.colors.dim(this.options.subtitle),
-                contentWidth,
-            ),
-            this.options.colors.dim("─".repeat(contentWidth)),
-            ...visible,
-            this.options.colors.dim(
-                `${rangeStart}-${rangeEnd}/${bodyLines.length}`,
-            ),
-            this.options.colors.dim("─".repeat(contentWidth)),
-            truncateToWidth(actions, contentWidth),
-            this.options.colors.dim(
-                `↑/↓ scroll · ←/→ action · Enter select · Esc ${this.escapeAction.toLowerCase()}`,
-            ),
-        ];
+        return box.render();
     }
 
     handleInput(data: string): void {

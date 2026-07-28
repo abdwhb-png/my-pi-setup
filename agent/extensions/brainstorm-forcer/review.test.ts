@@ -8,11 +8,14 @@ function createBody(lines: string[]) {
   };
 }
 
-const colors = {
-  accent: (text: string) => `<accent>${text}</accent>`,
-  dim: (text: string) => `<dim>${text}</dim>`,
-  selected: (text: string) => `<selected>${text}</selected>`,
-};
+const theme = {
+  fg: (_color: string, text: string) => text,
+  bg: (_color: string, text: string) => text,
+  bold: (text: string) => text,
+  italic: (text: string) => text,
+  inverse: (text: string) => text,
+  underline: (text: string) => text,
+} as any;
 
 describe("ArtifactReviewView", () => {
   it("renders a scrollable artifact preview with transition actions", () => {
@@ -24,7 +27,7 @@ describe("ArtifactReviewView", () => {
       subtitle: "docs/brainstorms/run/01-discovery-r002.md",
       body,
       viewportRows: 3,
-      colors,
+      theme,
       requestRender,
       done,
     });
@@ -32,7 +35,8 @@ describe("ArtifactReviewView", () => {
     const initial = view.render(80).join("\n");
     expect(initial).toContain("Discovery r002 → Understanding");
     expect(initial).toContain("artifact line 1");
-    expect(initial).toContain("1-3/8");
+    // BoxRenderer emits scroll info as [offset/max↑↓] in the footer
+    expect(initial).toContain("[0/5↑↓]");
     expect(initial).toContain("[ Approve ]");
 
     view.handleInput("j");
@@ -48,7 +52,7 @@ describe("ArtifactReviewView", () => {
         subtitle: "artifact.md",
         body: createBody(["content"]),
         viewportRows: 3,
-        colors,
+        theme,
         requestRender: () => undefined,
         done: (decision) => decisions.push(decision),
       });

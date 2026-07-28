@@ -77,6 +77,7 @@ function createMockContext(
       theme: {
         fg: (_c: string, t: string) => t,
         bold: (t: string) => t,
+        italic: (t: string) => t,
         bg: (_c: string, t: string) => t,
       } as any,
       notify: mock(() => undefined),
