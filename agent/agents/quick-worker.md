@@ -7,7 +7,7 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 defaultContext: fresh
-turnBudget: {"maxTurns":16,"graceTurns":4}
+turnBudget: { 'maxTurns': 20, 'graceTurns': 5 }
 acceptanceRole: writer
 ---
 

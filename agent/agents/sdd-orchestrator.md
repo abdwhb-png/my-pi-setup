@@ -3,7 +3,7 @@ name: sdd-orchestrator
 description: Legacy-only recovery executor for one explicitly authorized queued SDD run
 model: openai-codex/gpt-5.6-sol
 thinking: high
-tools: @inspect, @lens, @implement, subagent, intercom
+tools: '@inspect, @lens, @implement, subagent, intercom'
 systemPromptMode: replace
 defaultContext: fresh
 ---

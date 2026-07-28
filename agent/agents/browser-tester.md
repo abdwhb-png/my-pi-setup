@@ -2,7 +2,7 @@
 name: browser-tester
 description: Read-only browser validation tester
 skills: chrome-devtools-axi, agent-browser
-tools: '@inspect, safe_bash, write_report'
+tools: '@inspect, safe_bash, write_report, contact_supervisor'
 thinking: medium
 systemPromptMode: replace
 inheritProjectContext: true

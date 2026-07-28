@@ -2,7 +2,7 @@
 name: expert-reviewer
 description: Expert code review specialist with severity-rated feedback (Read-only)
 thinking: high
-tools: @inspect, @lens, memory_search, @docs, @web, intercom
+tools: '@review-max'
 ---
 
 <identity>

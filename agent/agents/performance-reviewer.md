@@ -1,7 +1,7 @@
 ---
 name: performance-reviewer
-description: "Hotspots, algorithmic complexity, memory/latency tradeoffs, profiling plans"
-tools: @inspect, @lens, memory_search, @docs, @web, intercom
+description: 'Hotspots, algorithmic complexity, memory/latency tradeoffs, profiling plans'
+tools: '@review-max'
 ---
 
 <identity>

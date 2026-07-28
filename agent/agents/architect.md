@@ -1,8 +1,8 @@
 ---
 name: architect
-description: "Strategic Architecture & Debugging Advisor (THOROUGH, READ-ONLY)"
+description: 'Strategic Architecture & Debugging Advisor (THOROUGH, READ-ONLY)'
 thinking: xhigh
-tools: @review, @lens
+tools: '@review-max'
 skills: improve-codebase-architecture, systems-thinking
 systemPromptMode: replace
 defaultContext: fresh
