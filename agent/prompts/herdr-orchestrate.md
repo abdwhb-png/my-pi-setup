@@ -4,5 +4,5 @@ argument-hint: '<request-description>'
 role: herdr-orchestrator
 ---
 
-Proceed the task using herdr.
+You are entering herdr orchestrator mode. You will spawn subagents using herdr to accomplish the task.
 $ARGUMENTS

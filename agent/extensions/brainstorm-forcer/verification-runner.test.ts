@@ -100,7 +100,10 @@ describe("verification-runner RPC client", () => {
                     replyPrefix: SUBAGENT_RPC_REPLY_EVENT_PREFIX,
                     asyncComplete: SUBAGENT_ASYNC_COMPLETE_EVENT,
                 },
-                session: { sessionId: "owner-session" },
+                session: {
+                    sessionId: "owner-session",
+                    sessionFile: "/tmp/owner-session.jsonl",
+                },
             }),
         });
         const client = createVerificationRpcClient(bridge.events);
@@ -108,6 +111,7 @@ describe("verification-runner RPC client", () => {
         expect(await client.ping(500)).toEqual({
             methods: ["ping", "status", "spawn"],
             sessionId: "owner-session",
+            sessionFile: "/tmp/owner-session.jsonl",
             asyncCompleteEvent: SUBAGENT_ASYNC_COMPLETE_EVENT,
         });
         expect(bridge.listenerCount()).toBe(0);
@@ -178,6 +182,25 @@ describe("verification-runner RPC client", () => {
             text: "Run: async-run-123\nState: running",
             details: { mode: "single", results: [] },
         });
+        client.dispose();
+    });
+
+    it("stops an exact RPC run for stale-launch cleanup", async () => {
+        const bridge = createMockBridge({
+            stop: (request) => {
+                expect(request.params).toEqual({ runId: "async-run-123" });
+                return {
+                    runId: "async-run-123",
+                    asyncDir: "/tmp/run",
+                    previousState: "running",
+                    state: "stopping",
+                    message: "Stop requested.",
+                };
+            },
+        });
+        const client = createVerificationRpcClient(bridge.events);
+
+        await expect(client.stop("async-run-123", 500)).resolves.toBeUndefined();
         client.dispose();
     });
 
@@ -287,6 +310,7 @@ const pendingRun: PendingVerificationRun = {
         "owned-run",
     ),
     ownerSessionId: "owner-session",
+    ownerSessionFile: "/tmp/owner-session.jsonl",
     brainstormRunId: "brainstorm-1",
     claimIds: ["CL-001"],
     startedAt: "2026-07-29T12:00:00.000Z",
@@ -330,7 +354,7 @@ function validCompletion() {
     };
     return {
         runId: "owned-run",
-        sessionId: "owner-session",
+        sessionId: "/tmp/owner-session.jsonl",
         success: true,
         state: "complete",
         exitCode: 0,
@@ -340,7 +364,6 @@ function validCompletion() {
                 context: "fresh",
                 status: "completed",
                 success: true,
-                exitCode: 0,
                 structuredOutput: verifier,
             },
             {
@@ -348,7 +371,6 @@ function validCompletion() {
                 context: "fresh",
                 status: "completed",
                 success: true,
-                exitCode: 0,
                 structuredOutput: architect,
             },
         ],
@@ -370,6 +392,55 @@ function validCompletion() {
 }
 
 describe("verification-runner pending and terminal validation", () => {
+    it("requires both the parent UUID and canonical parent session file", () => {
+        const { ownerSessionFile: _ownerSessionFile, ...legacy } = pendingRun;
+
+        expect(isPendingVerificationRun(pendingRun)).toBe(true);
+        expect(isPendingVerificationRun(legacy)).toBe(false);
+        expect(
+            isPendingVerificationRun({
+                ...pendingRun,
+                ownerSessionFile: "owner-session.jsonl",
+            }),
+        ).toBe(false);
+    });
+
+    it("restores only bounded owned recovery metadata", () => {
+        expect(
+            isPendingVerificationRun({
+                ...pendingRun,
+                recovery: {
+                    waitUsed: true,
+                    steerAttempted: true,
+                    steering: {
+                        requestId: "request-1",
+                        state: "pending",
+                        targetIndexes: [0],
+                    },
+                },
+            }),
+        ).toBe(true);
+        expect(
+            isPendingVerificationRun({
+                ...pendingRun,
+                recovery: { steerAttempted: true },
+            }),
+        ).toBe(false);
+        expect(
+            isPendingVerificationRun({
+                ...pendingRun,
+                recovery: {
+                    steerAttempted: true,
+                    steering: {
+                        requestId: "request-1",
+                        state: "pending",
+                        targetIndexes: [99],
+                    },
+                },
+            }),
+        ).toBe(false);
+    });
+
     it("restores only complete persisted ownership and scope metadata", () => {
         expect(isPendingVerificationRun(pendingRun)).toBe(true);
         expect(
@@ -436,7 +507,7 @@ describe("verification-runner pending and terminal validation", () => {
         ).toBe(false);
     });
 
-    it("accepts an owned terminal event only when every result and named output matches", () => {
+    it("accepts a real natural completion without child exitCode fields", () => {
         expect(
             parseOwnedTerminalCompletion(validCompletion(), pendingRun),
         ).toEqual({
@@ -464,6 +535,7 @@ describe("verification-runner pending and terminal validation", () => {
             runId: "parallel-owned-run",
             asyncDir: "/tmp/parallel-owned-run",
             ownerSessionId: "owner-session",
+            ownerSessionFile: "/tmp/owner-session.jsonl",
             brainstormRunId: "brainstorm-1",
             claimIds: ["CL-001", "CL-002"],
             startedAt: "2026-07-29T12:00:00.000Z",
@@ -525,7 +597,7 @@ describe("verification-runner pending and terminal validation", () => {
             parseOwnedTerminalCompletion(
                 {
                     runId: "parallel-owned-run",
-                    sessionId: "owner-session",
+                    sessionId: "/tmp/owner-session.jsonl",
                     success: true,
                     state: "complete",
                     exitCode: 0,
@@ -535,7 +607,6 @@ describe("verification-runner pending and terminal validation", () => {
                             context: "fresh",
                             status: "completed",
                             success: true,
-                            exitCode: 0,
                             structuredOutput: local,
                         },
                         {
@@ -543,7 +614,6 @@ describe("verification-runner pending and terminal validation", () => {
                             context: "fresh",
                             status: "completed",
                             success: true,
-                            exitCode: 0,
                             structuredOutput: external,
                         },
                         {
@@ -551,7 +621,6 @@ describe("verification-runner pending and terminal validation", () => {
                             context: "fresh",
                             status: "completed",
                             success: true,
-                            exitCode: 0,
                             structuredOutput: architect,
                         },
                     ],
@@ -587,7 +656,24 @@ describe("verification-runner pending and terminal validation", () => {
         ).toEqual({ kind: "unrelated" });
     });
 
-    it("rejects malformed agent, group output, and owner-session correlation", () => {
+    it("treats missing or foreign owner session files as unrelated", () => {
+        const { sessionId: _sessionId, ...missingOwner } = validCompletion();
+
+        expect(
+            parseOwnedTerminalCompletion(missingOwner, pendingRun),
+        ).toEqual({ kind: "unrelated" });
+        expect(
+            parseOwnedTerminalCompletion(
+                {
+                    ...validCompletion(),
+                    sessionId: "/tmp/foreign-session.jsonl",
+                },
+                pendingRun,
+            ),
+        ).toEqual({ kind: "unrelated" });
+    });
+
+    it("rejects malformed agent and group output", () => {
         const wrongAgent = validCompletion();
         wrongAgent.results[0]!.agent = "worker";
         expect(
@@ -598,13 +684,6 @@ describe("verification-runner pending and terminal validation", () => {
         wrongOutput.outputs["verify_local_code_supported"]!.stepIndex = 1;
         expect(
             parseOwnedTerminalCompletion(wrongOutput, pendingRun),
-        ).toMatchObject({ kind: "failure", failureKind: "malformed" });
-
-        expect(
-            parseOwnedTerminalCompletion(
-                { ...validCompletion(), sessionId: "other-session" },
-                pendingRun,
-            ),
         ).toMatchObject({ kind: "failure", failureKind: "malformed" });
     });
 
@@ -655,7 +734,7 @@ describe("verification-runner pending and terminal validation", () => {
                 JSON.stringify({
                     lifecycleArtifactVersion: 3,
                     runId: pending.runId,
-                    sessionId: pending.ownerSessionId,
+                    sessionId: pending.ownerSessionFile,
                     mode: "chain",
                     state: "running",
                     startedAt: Date.now(),
@@ -676,7 +755,7 @@ describe("verification-runner pending and terminal validation", () => {
                 JSON.stringify({
                     lifecycleArtifactVersion: 3,
                     runId: pending.runId,
-                    sessionId: pending.ownerSessionId,
+                    sessionId: pending.ownerSessionFile,
                     mode: "chain",
                     state: "complete",
                     startedAt: Date.now(),
@@ -686,7 +765,7 @@ describe("verification-runner pending and terminal validation", () => {
                         context: result.context,
                         outputName: pending.expectedSteps[index]!.outputName,
                         status: "completed",
-                        exitCode: result.exitCode,
+                        exitCode: 0,
                         structuredOutput: result.structuredOutput,
                     })),
                     outputs: completion.outputs,
@@ -727,7 +806,7 @@ describe("verification-runner pending and terminal validation", () => {
                     JSON.stringify({
                         lifecycleArtifactVersion: 3,
                         runId: pending.runId,
-                        sessionId: pending.ownerSessionId,
+                        sessionId: pending.ownerSessionFile,
                         mode: "chain",
                         state: "running",
                         steps: completion.results.map((result, index) => ({
@@ -822,7 +901,7 @@ describe("verification-runner pending and terminal validation", () => {
                 const status = JSON.stringify({
                     lifecycleArtifactVersion: 3,
                     runId: pending.runId,
-                    sessionId: pending.ownerSessionId,
+                    sessionId: pending.ownerSessionFile,
                     mode: "chain",
                     state: "running",
                     steps: completion.results.map((result, stepIndex) => ({

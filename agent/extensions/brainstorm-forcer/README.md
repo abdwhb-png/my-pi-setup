@@ -123,12 +123,19 @@ verification. Scoped `status`, `steer`, `resume`, `interrupt`, and `stop`
 controls use the public `subagent` tool described below, not the extension's RPC
 client.
 
-Pending ownership and exact expected agent/group/claim/evidence scope persist
-in Pi session state. On reload, the extension calls RPC status without parsing
-its prose, then validates the package-owned lifecycle artifact under the
-pi-subagents temporary hierarchy. Running work stays pending; an owned terminal
-artifact is processed exactly once. Unrelated or duplicate terminal events are
-ignored.
+Pending ownership persists both public parent identities: the Pi session UUID
+for capability/preflight and the absolute parent session-file path used by
+pi-subagents for asynchronous ownership. RPC ping must match both before spawn.
+On reload, the extension calls RPC status without parsing its prose, then
+validates the package-owned lifecycle-v3 artifact under the pi-subagents
+temporary hierarchy. Running work stays pending; an owned terminal artifact is
+processed exactly once. Legacy UUID-only pending state is quarantined.
+Unrelated or duplicate terminal events are ignored.
+
+The live event is correlated by exact run ID and owner session file; trusted
+`status.json` supplies canonical terminal state, per-step exit status, and
+structured outputs. Real child results need no fabricated `exitCode`. An exact
+owned stop is audited as failed with its package reason, not malformed.
 
 Only exact structured output with matching run/session ownership, exit status,
 agent, named output, claim IDs, and evidence IDs is accepted. Successful
@@ -158,11 +165,17 @@ run targets, fleet/transcript views, and execution fields such as `agent`,
 `task`, `tasks`, `chain`, `parallel`, or `async` are rejected. No control can
 run without pending owned verification.
 
-When a child reports `needs attention`, the parent may inspect the owned run,
-steer or resume the exact expected child, or interrupt/stop the run. These
-lifecycle controls do not create another run. Results from permitted
-`subagent` controls and `subagent_wait` are orchestration state and are excluded
-before `EV-*` capture.
+`needs_attention` is nonterminal and latched. `subagent_wait.timeoutMs` is an
+upper bound, so another wait may return immediately once attention is active.
+The model gets at most one owned wait and one owned steer. A typed pending/routed
+steer result is persisted branch-locally; afterward only exact owned `status`
+is available. Repeat wait/steer, resume, interrupt, stop, and autonomous
+replacement launch are blocked until exact terminal completion, quarantine, or
+explicit manual intervention. Status prose is never parsed, and attention never
+proves model/provider failure or selects a fallback agent.
+
+Results from permitted `subagent` controls and `subagent_wait` are orchestration
+state and are excluded before `EV-*` capture.
 
 `ask_user_question` is blocked only while owned verification is pending.
 Terminal processing must first record the applicable `RV-*` audit and clear the
@@ -188,18 +201,36 @@ Legacy restored evidence with reviewer terminology and review records with
 policy. Restoration does not mutate those records; all new execution and audit
 paths use verifier terminology.
 
+## Semantic Exploring status
+
+`/brainstorm status`, injected context, transition status details, and the
+widget derive one semantic snapshot from ledger eligibility. It reports active
+versus historical claims, review totals by audit status, missing successful
+reviews, pending ownership, final-choice eligibility, and the next action.
+Malformed/failed/timeout RV records remain visible but never look successful.
+A cancelled question is recorded append-only as transport success when Pi says
+the call succeeded, while its semantic label remains cancelled and
+final-choice-ineligible.
+
+Preflight confirms agent discovery and launch-contract feasibility. Without a
+host model-registry snapshot it is not a provider-health check, and a user-stop
+with zero child turns is not evidence that the effective model is broken.
+
 ## Final Exploring order
 
 The normal sequence is:
 
 1. capture direct evidence as `EV-*`;
 2. record every active `CL-*`;
-3. if verification needs attention, use only scoped control of the exact owned
-   run;
-4. process terminal completion into verifier `EV-*` and `RV-*` records;
-5. ask one dedicated `ask_user_question` question for the final choice;
-6. call `brainstorm_submit_exploring`;
-7. transition to Presenting.
+3. if verification needs attention, perform at most one wait, inspect status,
+   and optionally issue one exact owned steer;
+4. after pending steer, do not wait, stop, or relaunch autonomously; await the
+   same run or request explicit manual intervention;
+5. process terminal completion into verifier `EV-*` and `RV-*` records;
+6. confirm semantic status shows no missing successful reviews;
+7. ask one dedicated `ask_user_question` question for the final choice;
+8. call `brainstorm_submit_exploring`;
+9. transition to Presenting.
 
 The choice evidence sequence must be later than every active claim and every
 required successful review, including a post-waiver review. Existing

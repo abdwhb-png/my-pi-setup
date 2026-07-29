@@ -72,20 +72,22 @@ Follow this order:
    the closed route, optional architect scope, fresh read-only async execution,
    and EV/RV audit. Do not use `subagent` to create a run, choose an agent, or
    construct a verification chain.
-7. Wait while verification is pending. Follow the injected
-   `brainstorm-forcer-status`; `/brainstorm status` and FleetView provide
-   user-facing progress. If the exact owned run needs attention, `subagent` may
-   only control it with:
-   - `status`: `action`, exact `id`;
-   - `steer` or `resume`: `action`, exact `id`, non-empty `message`, and
-     optional `index`;
-   - `interrupt` or `stop`: `action`, exact `id`.
+7. Wait while verification is pending. `subagent_wait.timeoutMs` is only an
+   upper bound: nonterminal, latched `needs_attention` may return immediately.
+   Follow the semantic injected status and `/brainstorm status` rather than raw
+   EV/CL/RV counts.
 
-   An `index`, when supplied, must be a non-negative integer within the
-   expected-step range. Never use `runId`, `dir`, another run, unknown actions,
-   fleet/transcript fields, or spawn/execution fields. No such control is
-   allowed without pending verification. Control results and `subagent_wait`
-   are lifecycle state, not `EV-*` evidence.
+   Use at most one exact owned `subagent_wait`, then inspect exact owned
+   `status`. If needed, issue at most one `steer` with exact `id`, non-empty
+   `message`, and optional in-range `index`. When its typed result is pending or
+   routed, do not wait again, steer again, resume, interrupt, stop, or relaunch.
+   Only status remains available while the same run awaits exact terminal
+   completion. If none arrives, request explicit manual intervention.
+
+   Never parse status prose, infer that the model/provider is broken, select a
+   fallback agent, use `runId`/`dir`, target another run, request fleet or
+   transcript views, or supply spawn/execution fields. Control results and
+   `subagent_wait` are lifecycle state, not `EV-*` evidence.
 8. Do not call `ask_user_question` while verification is pending. First process
    terminal completion into the required `RV-*` audit; only then ask the final
    choice. Exact structured success also creates secondary `EV-*`. Prose,
@@ -94,9 +96,10 @@ Follow this order:
 9. For an unresolved critical claim, use `brainstorm_request_waiver`. User
    approval is mandatory, and a later successful verification is still
    required.
-10. After all active claims and required successful `RV-*` records, ask exactly
+10. After semantic status reports no missing successful reviews, ask exactly
    one dedicated `ask_user_question` question for the final choice. Preserve
-   the exact answer and its `EV-*` identifier.
+   the exact answer and its `EV-*` identifier. A cancelled question may be
+   transport-successful but is explicitly final-choice-ineligible.
 11. After the gate is ready, call `brainstorm_submit_exploring` with two or
     three approaches, active `claimIds`, `recommendationClaimIds`,
     recommendation, `userChoice`, and `userChoiceEvidenceId`.

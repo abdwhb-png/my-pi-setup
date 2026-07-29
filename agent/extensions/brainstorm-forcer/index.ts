@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
@@ -285,6 +285,11 @@ function canUseTool(
             verificationControlDecision(input, pendingVerification ?? null)
                 .allowed
         );
+    if (toolName === "subagent_wait")
+        return (
+            phase === "exploring" &&
+            verificationWaitDecision(input, pendingVerification ?? null).allowed
+        );
     if (ALWAYS_BLOCKED_TOOLS.has(toolName)) return false;
     return !groups.mutation.has(toolName);
 }
@@ -323,6 +328,14 @@ function verificationControlDecision(
             reason: `BLOCKED: subagent control must target exactly owned verification run ${pendingVerification.runId} via id.`,
         };
     if (
+        controlAction !== "status" &&
+        pendingVerification.recovery?.steerAttempted
+    )
+        return {
+            allowed: false,
+            reason: `BLOCKED: Verification run ${pendingVerification.runId} already used its single steer recovery. Only exact owned status is available; await terminal completion or request manual intervention.`,
+        };
+    if (
         (controlAction === "steer" || controlAction === "resume") &&
         (typeof input.message !== "string" || !input.message.trim())
     )
@@ -346,6 +359,41 @@ function verificationControlDecision(
     return { allowed: true };
 }
 
+function verificationWaitDecision(
+    input: Record<string, unknown> | undefined,
+    pendingVerification: PendingVerificationRun | null,
+): { allowed: true } | { allowed: false; reason: string } {
+    if (!pendingVerification)
+        return {
+            allowed: false,
+            reason: "BLOCKED: No owned verification run is pending. Use brainstorm_run_verification to create verification work.",
+        };
+    const unknownFields = Object.keys(input ?? {})
+        .filter((field) => field !== "id" && field !== "timeoutMs")
+        .toSorted();
+    if (unknownFields.length > 0)
+        return {
+            allowed: false,
+            reason: `BLOCKED: subagent_wait does not allow field(s): ${unknownFields.join(", ")}.`,
+        };
+    if (input?.id !== pendingVerification.runId)
+        return {
+            allowed: false,
+            reason: `BLOCKED: subagent_wait must target exactly owned verification run ${pendingVerification.runId} via id.`,
+        };
+    if (pendingVerification.recovery?.waitUsed)
+        return {
+            allowed: false,
+            reason: `BLOCKED: Verification run ${pendingVerification.runId} already used its single wait. needs_attention is nonterminal and latched; inspect exact status or use the single steer recovery.`,
+        };
+    if (pendingVerification.recovery?.steerAttempted)
+        return {
+            allowed: false,
+            reason: `BLOCKED: Verification run ${pendingVerification.runId} already used its single steer recovery. Another wait would return the latched attention state immediately.`,
+        };
+    return { allowed: true };
+}
+
 function pendingVerificationToolBlockReason(
     phase: Phase,
     toolName: string,
@@ -360,6 +408,10 @@ function pendingVerificationToolBlockReason(
             input,
             pendingVerification,
         );
+        return decision.allowed ? undefined : decision.reason;
+    }
+    if (toolName === "subagent_wait") {
+        const decision = verificationWaitDecision(input, pendingVerification);
         return decision.allowed ? undefined : decision.reason;
     }
     return undefined;
@@ -849,6 +901,7 @@ export default function brainstormForcer(
             },
             { additionalProperties: false },
         ),
+        executionMode: "sequential",
         async execute(_id, params, _signal, _update, ctx) {
             if (activePhase !== "exploring")
                 throw new Error(
@@ -1375,6 +1428,13 @@ export default function brainstormForcer(
                 completed,
                 artifacts: structuredClone(artifacts),
                 pendingVerification: structuredClone(pendingVerification),
+                ...(activePhase === "exploring"
+                    ? {
+                          exploringStatus: structuredClone(
+                              explorationStatusSnapshot(),
+                          ),
+                      }
+                    : {}),
                 ...(approved === undefined ? {} : { approved }),
             },
         };
@@ -1576,10 +1636,28 @@ export default function brainstormForcer(
         ctx: ExtensionContext,
     ): Promise<PendingVerificationRun> {
         const sessionId = ctx.sessionManager.getSessionId();
-        if (!sessionId)
+        const sessionFile = ctx.sessionManager.getSessionFile();
+        const branchLeafId = ctx.sessionManager.getLeafId();
+        const brainstormRunId = runId;
+        if (!sessionId || !sessionFile || !isAbsolute(sessionFile))
             throw new Error(
                 "Verification requires an active persisted Pi session.",
             );
+        const ownsLaunch = () =>
+            activeContext === ctx &&
+            activePhase === "exploring" &&
+            runId === brainstormRunId &&
+            ctx.sessionManager.getSessionId() === sessionId &&
+            ctx.sessionManager.getSessionFile() === sessionFile &&
+            ctx.sessionManager.getLeafId() === branchLeafId &&
+            pendingVerification === null;
+        const assertLaunchOwnership = () => {
+            if (!ownsLaunch())
+                throw new Error(
+                    "Verification launch ownership changed before persistence.",
+                );
+        };
+        assertLaunchOwnership();
         const capabilityCeiling =
             resolveCurrentSubagentCapabilityCeiling(sessionId);
         if (!capabilityCeiling)
@@ -1595,6 +1673,7 @@ export default function brainstormForcer(
             ctx.cwd,
             expectedAgents,
         );
+        assertLaunchOwnership();
         const returnedAgents = preflight.map((result) => result.agent);
         if (
             returnedAgents.length !== expectedAgents.length ||
@@ -1612,7 +1691,8 @@ export default function brainstormForcer(
                 `Verifier preflight failed: ${failed.map((result) => `${result.agent}: ${result.message ?? "unavailable"}`).join("; ")}.`,
             );
         const ping = await rpcClient.ping(rpcTimeoutMs);
-        if (ping.sessionId !== sessionId)
+        assertLaunchOwnership();
+        if (ping.sessionId !== sessionId || ping.sessionFile !== sessionFile)
             throw new Error(
                 "Subagent RPC bridge session does not match the active session.",
             );
@@ -1621,11 +1701,20 @@ export default function brainstormForcer(
         earlyCompletionEvents.length = 0;
         try {
             const receipt = await rpcClient.spawn(payload, rpcTimeoutMs);
+            if (!ownsLaunch()) {
+                try {
+                    await rpcClient.stop(receipt.runId, rpcTimeoutMs);
+                } catch {
+                    // Best-effort cleanup; stale launch ownership still fails closed.
+                }
+                assertLaunchOwnership();
+            }
             const pending: PendingVerificationRun = {
                 runId: receipt.runId,
                 asyncDir: receipt.asyncDir,
                 ownerSessionId: sessionId,
-                brainstormRunId: runId,
+                ownerSessionFile: sessionFile,
+                brainstormRunId,
                 claimIds: [...claimIds],
                 startedAt: new Date().toISOString(),
                 expectedSteps,
@@ -1900,8 +1989,10 @@ export default function brainstormForcer(
         const pending = pendingVerification;
         const ctx = activeContext;
         if (!pending || !ctx) return;
-        const terminal = parseOwnedTerminalCompletion(raw, pending);
-        if (terminal.kind === "unrelated") return;
+        const completionEvent = parseOwnedTerminalCompletion(raw, pending);
+        if (completionEvent.kind === "unrelated") return;
+        const terminal = readOwnedTerminalStatusArtifact(pending);
+        if (terminal.kind === "pending") return;
         await processOwnedTerminal(pending, terminal, ctx);
     }
 
@@ -1946,27 +2037,50 @@ export default function brainstormForcer(
         return null;
     }
 
-    function explorationLedgerSummary() {
-        const records = explorationLedger?.getRecords() ?? [];
-        const counts = {
-            evidence: records.filter((record) => record.kind === "evidence")
-                .length,
-            claims: records.filter((record) => record.kind === "claim").length,
-            reviews: records.filter((record) => record.kind === "review")
-                .length,
-            waivers: records.filter((record) => record.kind === "waiver")
-                .length,
-            overrides: records.filter((record) => record.kind === "override")
-                .length,
-        };
-        const openCriticalIds =
-            explorationLedger
-                ?.getActiveClaims()
-                .filter(
-                    (claim) => claim.critical && claim.verdict === "unresolved",
-                )
-                .map((claim) => claim.id) ?? [];
-        return { counts, openCriticalIds };
+    function explorationStatusSnapshot() {
+        const ledger = explorationLedger?.getStatusSnapshot();
+        if (!ledger) return null;
+        const questionTool = pendingVerification
+            ? "blockedPending"
+            : "available";
+        const nextAction = pendingVerification
+            ? pendingVerification.recovery?.steerAttempted
+                ? "manualIntervention"
+                : "waitVerification"
+            : ledger.waiverRequiredClaimIds.length > 0
+              ? "requestWaiver"
+              : ledger.missingSuccessfulReviewClaimIds.length > 0 ||
+                  ledger.architectureBlockedClaimIds.length > 0
+                ? "runVerification"
+                : ledger.finalChoice === "recorded"
+                  ? "submitExploring"
+                  : "askDedicatedChoice";
+        return {
+            ...ledger,
+            pendingRunId: pendingVerification?.runId ?? null,
+            questionTool,
+            nextAction,
+        } as const;
+    }
+
+    function explorationStatusLines(): string[] {
+        const status = explorationStatusSnapshot();
+        if (!status) return [];
+        return [
+            `Exploring ledger: EV=${status.evidenceTotal} | claims=${status.claims.active} active/${status.claims.historical} historical | reviews=${status.reviews.success} successful/${status.reviews.total} total (failed=${status.reviews.failed} malformed=${status.reviews.malformed} timeout=${status.reviews.timeout})`,
+            `Active unresolved critical claims: ${status.unresolvedCriticalClaimIds.join(", ") || "none"}`,
+            `Required successful reviews missing: ${status.missingSuccessfulReviewClaimIds.join(", ") || "none"}`,
+            `Required waivers missing: ${status.waiverRequiredClaimIds.join(", ") || "none"}`,
+            `Verification: ${status.pendingRunId ? `pending ${status.pendingRunId}` : "none pending"}`,
+            `Question tool: ${status.questionTool}`,
+            `Final choice: ${status.finalChoice}`,
+            `Next action: ${status.nextAction}`,
+            ...(status.nextAction === "manualIntervention"
+                ? [
+                      "Recovery: steering delivery is still unconfirmed; autonomous wait, stop, and relaunch are blocked. Await exact terminal completion or request explicit manual intervention.",
+                  ]
+                : []),
+        ];
     }
 
     function updateWidget(ctx: ExtensionContext): void {
@@ -1980,10 +2094,10 @@ export default function brainstormForcer(
         const idx = PHASES.indexOf(activePhase) + 1;
         const research = evidence.researchCalls;
         const questions = evidence.questionCalls;
-        const ledgerSummary = explorationLedgerSummary();
+        const exploringStatus = explorationStatusSnapshot();
         const metrics =
-            activePhase === "exploring"
-                ? `ev:${ledgerSummary.counts.evidence} open:${ledgerSummary.openCriticalIds.length}${pendingVerification ? " verify:pending" : ""}`
+            activePhase === "exploring" && exploringStatus
+                ? `ev:${exploringStatus.evidenceTotal} review:${exploringStatus.satisfiedReviewClaimIds.length}/${exploringStatus.requiredReviewClaimIds.length} action:${exploringStatus.nextAction}`
                 : `r:${research} q:${questions}`;
         widgetText = [
             colors.primary(
@@ -2142,9 +2256,31 @@ export default function brainstormForcer(
                 isPendingVerificationRun(restoredPending) &&
                 restoredPending.brainstormRunId === runId &&
                 restoredPending.ownerSessionId ===
-                    ctx.sessionManager.getSessionId()
+                    ctx.sessionManager.getSessionId() &&
+                restoredPending.ownerSessionFile ===
+                    ctx.sessionManager.getSessionFile()
                     ? restoredPending
                     : null;
+            if (
+                restoredPending !== undefined &&
+                restoredPending !== null &&
+                !pendingVerification
+            ) {
+                const restoredRunId =
+                    typeof restoredPending === "object" &&
+                    !Array.isArray(restoredPending) &&
+                    typeof (restoredPending as { runId?: unknown }).runId ===
+                        "string"
+                        ? (restoredPending as { runId: string }).runId
+                        : "unknown";
+                saveState(ctx);
+                ctx.ui.notify(
+                    boundedVerificationWarning(
+                        `Restored verification ${boundedSingleLine(restoredRunId, 96)} quarantined: ownership metadata does not exactly match the active session UUID and session file. Pending cleared without ledger audit.`,
+                    ),
+                    "warning",
+                );
+            }
             if (pendingVerification) {
                 const missing =
                     missingPendingVerificationReferences(pendingVerification);
@@ -2190,10 +2326,19 @@ export default function brainstormForcer(
         try {
             const ping = await rpcClient.ping(rpcTimeoutMs);
             if (!stillOwnsPending()) return;
-            if (ping.sessionId !== pending.ownerSessionId)
-                throw new Error(
-                    "Subagent RPC bridge session does not own the restored verification run.",
+            if (
+                ping.sessionId !== pending.ownerSessionId ||
+                ping.sessionFile !== pending.ownerSessionFile
+            ) {
+                saveState(ctx);
+                ctx.ui.notify(
+                    boundedVerificationWarning(
+                        `Restored verification ${boundedSingleLine(pending.runId, 96)} remains pending: subagent RPC bridge ownership does not exactly match its session UUID and session file.`,
+                    ),
+                    "warning",
                 );
+                return;
+            }
             await rpcClient.status(pending.runId, rpcTimeoutMs);
             if (!stillOwnsPending()) return;
             terminal = readOwnedTerminalStatusArtifact(pending);
@@ -2377,19 +2522,14 @@ export default function brainstormForcer(
                     return;
                 }
                 const blocker = artifactCompletionBlocker(activePhase);
-                const ledgerSummary = explorationLedgerSummary();
-                const ledgerLine =
+                const ledgerLines =
                     activePhase === "exploring"
-                        ? `\nExploring ledger: EV=${ledgerSummary.counts.evidence} CL=${ledgerSummary.counts.claims} RV=${ledgerSummary.counts.reviews} WV=${ledgerSummary.counts.waivers} OV=${ledgerSummary.counts.overrides}`
+                        ? `\n${explorationStatusLines().join("\n")}`
                         : "";
-                const verificationLine = pendingVerification
-                    ? `\nVerification pending: ${pendingVerification.runId} (${pendingVerification.claimIds.join(", ")})`
-                    : "";
                 ctx.ui.notify(
                     `Brainstorm: ${topic.display} — ${PHASE_LABELS[activePhase]} (${PHASES.indexOf(activePhase) + 1}/${PHASES.length})` +
                         `\nResearch calls: ${evidence.researchCalls} | Questions: ${evidence.questionCalls}` +
-                        ledgerLine +
-                        verificationLine +
+                        ledgerLines +
                         `\nRestrictions: ${phaseRestrictionSummary(activePhase)}` +
                         (blocker
                             ? `\nNext blocked: ${blocker}`
@@ -2622,7 +2762,6 @@ export default function brainstormForcer(
                     `- ${PHASE_LABELS[revision.phase]} r${revision.revision}: ${revision.path}`,
             );
         const blocker = artifactCompletionBlocker(activePhase);
-        const ledgerSummary = explorationLedgerSummary();
         const content = [
             "[Brainstorm status — mandatory workflow context]",
             `Topic: ${topic.raw}`,
@@ -2633,9 +2772,7 @@ export default function brainstormForcer(
             `Current gate: ${blocker ?? "ready for next transition"}`,
             ...(activePhase === "exploring"
                 ? [
-                      `Exploring ledger: EV=${ledgerSummary.counts.evidence} CL=${ledgerSummary.counts.claims} RV=${ledgerSummary.counts.reviews} WV=${ledgerSummary.counts.waivers} OV=${ledgerSummary.counts.overrides}`,
-                      `Open critical claims: ${ledgerSummary.openCriticalIds.join(", ") || "none"}`,
-                      `Verification: ${pendingVerification ? `pending ${pendingVerification.runId} for ${pendingVerification.claimIds.join(", ")}` : "none pending"}`,
+                      ...explorationStatusLines(),
                       ...(pendingVerification
                           ? [
                                 `Owned verification controls: subagent status, steer, resume, interrupt, or stop with id=${pendingVerification.runId}; ask_user_question waits for terminal RV-* processing.`,
@@ -2747,6 +2884,102 @@ export default function brainstormForcer(
         if (groups.questioning.has(event.toolName)) evidence.questionCalls += 1;
         if (
             activePhase === "exploring" &&
+            pendingVerification &&
+            event.toolName === "subagent_wait" &&
+            event.input.id === pendingVerification.runId
+        ) {
+            const ownedPending = pendingVerification;
+            pendingVerification = {
+                ...ownedPending,
+                recovery: {
+                    ...ownedPending.recovery,
+                    waitUsed: true,
+                },
+            };
+            saveState(ctx);
+            updateWidget(ctx);
+            return undefined;
+        }
+        if (
+            activePhase === "exploring" &&
+            pendingVerification &&
+            event.toolName === "subagent" &&
+            !event.isError &&
+            event.input.action === "steer" &&
+            event.input.id === pendingVerification.runId
+        ) {
+            const ownedPending = pendingVerification;
+            const details =
+                typeof event.details === "object" &&
+                event.details !== null &&
+                !Array.isArray(event.details)
+                    ? event.details
+                    : undefined;
+            const rawSteering =
+                details &&
+                "mode" in details &&
+                details.mode === "management" &&
+                "steering" in details &&
+                typeof details.steering === "object" &&
+                details.steering !== null &&
+                !Array.isArray(details.steering)
+                    ? details.steering
+                    : undefined;
+            const targets =
+                rawSteering &&
+                "targets" in rawSteering &&
+                Array.isArray(rawSteering.targets)
+                    ? rawSteering.targets
+                    : undefined;
+            const targetIndexes = targets?.flatMap((target) => {
+                if (
+                    typeof target !== "object" ||
+                    target === null ||
+                    Array.isArray(target) ||
+                    !("index" in target) ||
+                    !("state" in target) ||
+                    !Number.isSafeInteger(target.index) ||
+                    Number(target.index) < 0 ||
+                    Number(target.index) >= ownedPending.expectedSteps.length ||
+                    target.state !== "routed"
+                )
+                    return [];
+                return [Number(target.index)];
+            });
+            const steering =
+                rawSteering &&
+                "requestId" in rawSteering &&
+                typeof rawSteering.requestId === "string" &&
+                rawSteering.requestId.trim() &&
+                "sourceRunId" in rawSteering &&
+                rawSteering.sourceRunId === ownedPending.runId &&
+                "state" in rawSteering &&
+                rawSteering.state === "pending" &&
+                targetIndexes &&
+                targetIndexes.length === targets?.length &&
+                targetIndexes.length > 0 &&
+                new Set(targetIndexes).size === targetIndexes.length
+                    ? {
+                          requestId: rawSteering.requestId,
+                          state: "pending" as const,
+                          targetIndexes,
+                      }
+                    : undefined;
+            if (!steering) return undefined;
+            pendingVerification = {
+                ...ownedPending,
+                recovery: {
+                    ...ownedPending.recovery,
+                    steerAttempted: true,
+                    steering,
+                },
+            };
+            saveState(ctx);
+            updateWidget(ctx);
+            return undefined;
+        }
+        if (
+            activePhase === "exploring" &&
             !event.toolName.startsWith("brainstorm_") &&
             !EXPLORING_ORCHESTRATION_TOOLS.has(event.toolName) &&
             canUseTool(
@@ -2767,12 +3000,22 @@ export default function brainstormForcer(
                 isError: event.isError,
             });
             appendExplorationRecord(record, ctx);
+            const cancelledQuestion =
+                event.toolName === "ask_user_question" &&
+                !event.isError &&
+                typeof event.details === "object" &&
+                event.details !== null &&
+                "cancelled" in event.details &&
+                event.details.cancelled === true;
+            const evidenceStatus = cancelledQuestion
+                ? `transport=${record.status}; semantic=cancelled; final-choice=ineligible`
+                : record.status;
             return {
                 content: [
                     ...event.content,
                     {
                         type: "text" as const,
-                        text: `[brainstorm evidence] Captured as ${record.id} (${record.status}).`,
+                        text: `[brainstorm evidence] Captured as ${record.id} (${evidenceStatus}).`,
                     },
                 ],
             };

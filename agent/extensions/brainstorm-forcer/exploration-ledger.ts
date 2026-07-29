@@ -103,6 +103,7 @@ export type EvidenceRecord = Readonly<{
     staleness: EvidenceStaleness;
     userChoiceQuestionHash?: string;
     userResponseHashes?: readonly string[];
+    userChoiceCancelled?: true;
     reviewer?: Readonly<{
         agent: string;
         context?: "fresh" | "fork";
@@ -470,6 +471,10 @@ export function isExplorationRecord(
                             8,
                         ) &&
                         record.userResponseHashes.length > 0)) &&
+                (record.userChoiceCancelled === undefined ||
+                    (record.userChoiceCancelled === true &&
+                        record.userChoiceQuestionHash === undefined &&
+                        record.userResponseHashes === undefined)) &&
                 (record.reviewer === undefined ||
                     isReviewerMetadata(record.reviewer)) &&
                 (record.verifier === undefined ||
@@ -572,6 +577,31 @@ export type GateSubmission = {
     userChoice: string;
     userChoiceEvidenceId?: string;
 };
+
+export type ExplorationStatusSnapshot = Readonly<{
+    evidenceTotal: number;
+    claims: Readonly<{ historical: number; active: number }>;
+    reviews: Readonly<{
+        total: number;
+        success: number;
+        failed: number;
+        malformed: number;
+        timeout: number;
+    }>;
+    unresolvedCriticalClaimIds: readonly string[];
+    requiredReviewClaimIds: readonly string[];
+    satisfiedReviewClaimIds: readonly string[];
+    missingSuccessfulReviewClaimIds: readonly string[];
+    architectureBlockedClaimIds: readonly string[];
+    waiverRequiredClaimIds: readonly string[];
+    finalChoice:
+        | "blockedByReviews"
+        | "blockedByWaivers"
+        | "required"
+        | "recorded"
+        | "stale"
+        | "cancelled";
+}>;
 
 export type ExplorationApproach = {
     title: string;
@@ -1277,7 +1307,10 @@ export function createExplorationLedger(options: LedgerOptions) {
                           userChoiceQuestionHash: choiceProvenance.questionHash,
                           userResponseHashes: choiceProvenance.responseHashes,
                       }
-                    : {}),
+                    : capture.toolName === "ask_user_question" &&
+                        details?.cancelled === true
+                      ? { userChoiceCancelled: true as const }
+                      : {}),
                 ...(reviewer ? { reviewer } : {}),
             };
             evidenceRecords.push(evidence);
@@ -2205,6 +2238,179 @@ export function createExplorationLedger(options: LedgerOptions) {
             };
             overrideRecords.push(override);
             return structuredClone(override);
+        },
+        getStatusSnapshot(): ExplorationStatusSnapshot {
+            const activeClaims = deriveActiveClaims(claimRecords);
+            const activeClaimIds = activeClaims.map((claim) => claim.id);
+            const requiredReviewClaimIds = activeClaims
+                .filter((claim) => {
+                    const waiver = waiverRecords.findLast(
+                        (item) => item.claimId === claim.id,
+                    );
+                    return (
+                        (claim.critical &&
+                            claim.classification === "empirical") ||
+                        claim.contradictoryEvidenceIds.length > 0 ||
+                        claim.architectureImpact === true ||
+                        waiver !== undefined
+                    );
+                })
+                .map((claim) => claim.id);
+            const blockers = this.getGateBlockers({
+                approachClaimIds:
+                    activeClaimIds.length > 0 ? [activeClaimIds] : [],
+                recommendationClaimIds: activeClaimIds,
+                userChoice: "",
+            });
+            const architectureBlockedClaimIds = requiredReviewClaimIds.filter(
+                (claimId) =>
+                    blockers.includes(
+                        `${claimId} is blocked by architecture verification.`,
+                    ),
+            );
+            const missingSuccessfulReviewClaimIds =
+                requiredReviewClaimIds.filter((claimId) =>
+                    blockers.includes(
+                        `${claimId} requires a fresh completed review.`,
+                    ),
+                );
+            const waiverRequiredClaimIds = activeClaims
+                .filter((claim) =>
+                    blockers.includes(
+                        `${claim.id} requires a user-approved waiver.`,
+                    ),
+                )
+                .map((claim) => claim.id);
+            const blockedReviewIds = new Set([
+                ...architectureBlockedClaimIds,
+                ...missingSuccessfulReviewClaimIds,
+            ]);
+            const satisfiedReviewClaimIds = requiredReviewClaimIds.filter(
+                (claimId) => !blockedReviewIds.has(claimId),
+            );
+            const legacyReviewIsEligible = (
+                review: LegacyReviewRecord,
+            ): boolean => {
+                const reviewerEvidence = evidenceRecords.find(
+                    (evidence) => evidence.id === review.reviewerEvidenceId,
+                );
+                const primaryEvidence = review.primaryEvidenceIds.flatMap(
+                    (id) => {
+                        const evidence = evidenceRecords.find(
+                            (candidate) => candidate.id === id,
+                        );
+                        return evidence ? [evidence] : [];
+                    },
+                );
+                return (
+                    review.claimIds.every((claimId) =>
+                        claimRecords.some(
+                            (claim) =>
+                                claim.id === claimId &&
+                                claim.sequence < review.sequence,
+                        ),
+                    ) &&
+                    reviewerEvidence?.status === "success" &&
+                    reviewerEvidence.sequence < review.sequence &&
+                    reviewerEvidence.sourceKind === "reviewer" &&
+                    reviewerEvidence.reviewer?.agent === "reviewer" &&
+                    reviewerEvidence.reviewer.context === "fresh" &&
+                    reviewerEvidence.reviewer.exitCode === 0 &&
+                    reviewerEvidence.reviewer.outcome === review.outcome &&
+                    review.claimIds.every((claimId) =>
+                        reviewerEvidence.reviewer?.referencedClaimIds.includes(
+                            claimId,
+                        ),
+                    ) &&
+                    primaryEvidence.length ===
+                        review.primaryEvidenceIds.length &&
+                    primaryEvidence.every(
+                        (evidence) =>
+                            evidence.sequence < review.sequence &&
+                            evidence.sourceKind === "direct" &&
+                            evidence.staleness === "fresh" &&
+                            (review.outcome === "unresolved" ||
+                                evidence.status === "success") &&
+                            reviewerEvidence.reviewer?.referencedEvidenceIds.includes(
+                                evidence.id,
+                            ),
+                    )
+                );
+            };
+            const reviewCounts = {
+                total: reviewRecords.length,
+                success: 0,
+                failed: 0,
+                malformed: 0,
+                timeout: 0,
+            };
+            for (const review of reviewRecords) {
+                if (isLegacyReview(review))
+                    reviewCounts[
+                        legacyReviewIsEligible(review) ? "success" : "malformed"
+                    ] += 1;
+                else reviewCounts[review.audit.status] += 1;
+            }
+            const latestQuestionEvidence = evidenceRecords.findLast(
+                (evidence) => evidence.toolName === "ask_user_question",
+            );
+            const latestSuccessfulReviewSequence = reviewRecords
+                .filter(
+                    (review) =>
+                        review.claimIds.some((claimId) =>
+                            satisfiedReviewClaimIds.includes(claimId),
+                        ) &&
+                        (isLegacyReview(review)
+                            ? legacyReviewIsEligible(review)
+                            : review.audit.status === "success"),
+                )
+                .reduce(
+                    (latest, review) => Math.max(latest, review.sequence),
+                    0,
+                );
+            const latestRequiredSequence = Math.max(
+                0,
+                ...activeClaims.map((claim) => claim.sequence),
+                latestSuccessfulReviewSequence,
+            );
+            const finalChoice =
+                waiverRequiredClaimIds.length > 0
+                    ? "blockedByWaivers"
+                    : blockedReviewIds.size > 0
+                      ? "blockedByReviews"
+                      : !latestQuestionEvidence
+                        ? "required"
+                        : latestQuestionEvidence.status === "success" &&
+                            latestQuestionEvidence.userChoiceCancelled === true
+                          ? "cancelled"
+                          : latestQuestionEvidence.status !== "success" ||
+                              !latestQuestionEvidence.userResponseHashes?.length
+                            ? "required"
+                            : latestQuestionEvidence.sequence <=
+                                latestRequiredSequence
+                              ? "stale"
+                              : "recorded";
+
+            return structuredClone({
+                evidenceTotal: evidenceRecords.length,
+                claims: {
+                    historical: claimRecords.length,
+                    active: activeClaims.length,
+                },
+                reviews: reviewCounts,
+                unresolvedCriticalClaimIds: activeClaims
+                    .filter(
+                        (claim) =>
+                            claim.critical && claim.verdict === "unresolved",
+                    )
+                    .map((claim) => claim.id),
+                requiredReviewClaimIds,
+                satisfiedReviewClaimIds,
+                missingSuccessfulReviewClaimIds,
+                architectureBlockedClaimIds,
+                waiverRequiredClaimIds,
+                finalChoice,
+            });
         },
         getRecords(): ExplorationRecord[] {
             return structuredClone(

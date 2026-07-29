@@ -106,6 +106,7 @@ function createMockContext(
   sessionEntries?: Array<{ type: string; customType?: string; data?: unknown }>,
   cwd = process.cwd(),
   sessionId = "test-session-id",
+  sessionFile = join(tmpdir(), `${sessionId}.jsonl`),
 ) {
   const entries = sessionEntries ?? [];
   return {
@@ -132,18 +133,29 @@ function createMockContext(
       getEntries: () => entries,
       getBranch: () => entries,
       getSessionId: () => sessionId,
-      getSessionFile: () => null,
+      getSessionFile: () => sessionFile,
+      getLeafId: () => "mock-leaf",
     } as any,
   } as unknown as ExtensionContext;
 }
 
 function createSessionManagerContext(sessionManager: SessionManager) {
+  const sessionFile =
+    sessionManager.getSessionFile() ??
+    join(tmpdir(), `${sessionManager.getSessionId()}.jsonl`);
   const ctx = createMockContext(
     undefined,
     sessionManager.getCwd(),
     sessionManager.getSessionId(),
+    sessionFile,
   ) as ExtensionContext & { sessionManager: SessionManager };
-  ctx.sessionManager = sessionManager;
+  ctx.sessionManager = new Proxy(sessionManager, {
+    get(target, property) {
+      if (property === "getSessionFile") return () => sessionFile;
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
   return ctx;
 }
 
@@ -161,6 +173,7 @@ function installVerificationRpcBridge(
   sessionId: string,
   runId: string,
   asyncDir: string,
+  sessionFile = join(tmpdir(), `${sessionId}.jsonl`),
 ) {
   const requests: Array<Record<string, unknown>> = [];
   events.on("subagents:rpc:v1:request", (raw) => {
@@ -176,7 +189,7 @@ function installVerificationRpcBridge(
               replyPrefix: "subagents:rpc:v1:reply:",
               asyncComplete: "subagent:async-complete",
             },
-            session: { sessionId },
+            session: { sessionId, sessionFile },
           }
         : method === "spawn"
           ? {
@@ -206,8 +219,9 @@ function installControllableVerificationRpcBridge(
   sessionId: string,
   runId: string,
   asyncDir: string,
+  sessionFile = join(tmpdir(), `${sessionId}.jsonl`),
 ) {
-  type Method = "ping" | "spawn" | "status";
+  type Method = "ping" | "spawn" | "status" | "stop";
   const requests: Array<Record<string, unknown>> = [];
   const deferred = new Set<Method>();
   const waiting = new Map<Method, Record<string, unknown>>();
@@ -222,11 +236,19 @@ function installControllableVerificationRpcBridge(
               replyPrefix: "subagents:rpc:v1:reply:",
               asyncComplete: "subagent:async-complete",
             },
-            session: { sessionId },
+            session: { sessionId, sessionFile },
           }
         : method === "spawn"
           ? { text: "spawned", details: { runId, asyncDir } }
-          : {
+          : method === "stop"
+            ? {
+                runId,
+                asyncDir,
+                previousState: "running",
+                state: "stopping",
+                message: "Stop requested.",
+              }
+            : {
               text: "Run is still active.",
               details: { mode: "single", results: [] },
             };
@@ -276,20 +298,50 @@ function installControllableVerificationRpcBridge(
   };
 }
 
-function emitSuccessfulLocalCodeVerification(
+async function emitSuccessfulLocalCodeVerification(
   events: ReturnType<typeof createMockAPI>["events"],
   runId: string,
-  sessionId: string,
-) {
+  sessionFile: string,
+  asyncDir: string,
+): Promise<void> {
   const structuredOutput = {
     outcome: "supported",
     claimIds: ["CL-001"],
     evidenceIds: ["EV-001"],
     summary: "Critical claim is supported by direct evidence.",
   };
+  const outputs = {
+    "verify_local_code_supported": {
+      text: JSON.stringify(structuredOutput),
+      structured: structuredOutput,
+      agent: "scout",
+      stepIndex: 0,
+    },
+  };
+  await writeFile(
+    join(asyncDir, "status.json"),
+    JSON.stringify({
+      lifecycleArtifactVersion: 3,
+      runId,
+      sessionId: sessionFile,
+      mode: "chain",
+      state: "complete",
+      steps: [
+        {
+          agent: "scout",
+          context: "fresh",
+          outputName: "verify_local_code_supported",
+          status: "complete",
+          exitCode: 0,
+          structuredOutput,
+        },
+      ],
+      outputs,
+    }),
+  );
   events.emit("subagent:async-complete", {
     runId,
-    sessionId,
+    sessionId: sessionFile,
     success: true,
     state: "complete",
     exitCode: 0,
@@ -299,22 +351,14 @@ function emitSuccessfulLocalCodeVerification(
         context: "fresh",
         status: "completed",
         success: true,
-        exitCode: 0,
         structuredOutput,
       },
     ],
-    outputs: {
-      "verify_local_code_supported": {
-        text: JSON.stringify(structuredOutput),
-        structured: structuredOutput,
-        agent: "scout",
-        stepIndex: 0,
-      },
-    },
+    outputs,
   });
 }
 
-async function enterPendingLocalCodeVerification(
+async function enterLocalCodeClaim(
   api: ReturnType<typeof createMockAPI>,
   ctx: ExtensionContext,
 ) {
@@ -350,6 +394,13 @@ async function enterPendingLocalCodeVerification(
     undefined,
     ctx,
   );
+}
+
+async function enterPendingLocalCodeVerification(
+  api: ReturnType<typeof createMockAPI>,
+  ctx: ExtensionContext,
+) {
+  await enterLocalCodeClaim(api, ctx);
   await api.tools.get("brainstorm_run_verification")!.execute(
     "verification-1",
     { claimIds: ["CL-001"] },
@@ -367,7 +418,7 @@ describe("brainstorm-forcer redesign", () => {
   });
 
   it("registers command, hooks, and renderer", () => {
-    const { pi, commands, handlers, renderers } = createMockAPI();
+    const { pi, tools, commands, handlers, renderers } = createMockAPI();
     brainstormForcer(pi);
     expect(commands.has("brainstorm")).toBe(true);
     expect(handlers.has("resources_discover")).toBe(true);
@@ -378,6 +429,102 @@ describe("brainstorm-forcer redesign", () => {
     expect(handlers.has("before_agent_start")).toBe(true);
     expect(handlers.has("context")).toBe(true);
     expect(renderers.has("brainstorm-forcer")).toBe(true);
+    expect(tools.get("brainstorm_run_verification")!.executionMode).toBe(
+      "sequential",
+    );
+  });
+
+  it("abandons verification launch when branch ownership changes during preflight", async () => {
+    const fixture = await createVerificationAsyncDirFixture("launch-race-run");
+    try {
+      const api = createMockAPI();
+      const ctx = createMockContext();
+      let leafId = "branch-a";
+      (ctx.sessionManager as any).getLeafId = () => leafId;
+      const requests = installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "launch-race-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) => {
+          leafId = "branch-b";
+          return agents.map((agent) => ({ agent, ok: true }));
+        },
+      });
+      await enterLocalCodeClaim(api, ctx);
+
+      await expect(
+        api.tools.get("brainstorm_run_verification")!.execute(
+          "verification-race",
+          { claimIds: ["CL-001"] },
+          undefined,
+          undefined,
+          ctx,
+        ),
+      ).rejects.toThrow("launch ownership changed");
+      expect(
+        requests.some((request) => request.method === "spawn"),
+      ).toBe(false);
+      expect(
+        (
+          api.entries
+            .filter((entry) => entry.customType === "brainstorm-forcer")
+            .at(-1)?.data as any
+        )?.pendingVerification,
+      ).toBeNull();
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stops a spawned run when branch ownership changes before persistence", async () => {
+    const fixture = await createVerificationAsyncDirFixture("spawn-race-run");
+    try {
+      const api = createMockAPI();
+      const ctx = createMockContext();
+      let leafId = "branch-a";
+      (ctx.sessionManager as any).getLeafId = () => leafId;
+      const bridge = installControllableVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "spawn-race-run",
+        fixture.asyncDir,
+      );
+      bridge.defer("spawn");
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterLocalCodeClaim(api, ctx);
+
+      const launch = api.tools.get("brainstorm_run_verification")!.execute(
+        "verification-spawn-race",
+        { claimIds: ["CL-001"] },
+        undefined,
+        undefined,
+        ctx,
+      );
+      while (!bridge.requests.some((request) => request.method === "spawn"))
+        await Bun.sleep(0);
+      leafId = "branch-b";
+      bridge.release("spawn");
+
+      await expect(launch).rejects.toThrow("launch ownership changed");
+      expect(
+        bridge.requests.some((request) => request.method === "stop"),
+      ).toBe(true);
+      expect(
+        (
+          api.entries
+            .filter((entry) => entry.customType === "brainstorm-forcer")
+            .at(-1)?.data as any
+        )?.pendingVerification,
+      ).toBeNull();
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
   });
 
   it("requires verificationDomain and architectureImpact on brainstorm_record_claim", () => {
@@ -683,6 +830,28 @@ describe("brainstorm-forcer redesign", () => {
     expect(ctx.ui.select).not.toHaveBeenCalled();
   });
 
+  it("returns semantic Exploring status in transition details", async () => {
+    const { pi, tools, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("Status details", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
+
+    const result = await tools
+      .get("brainstorm_transition")!
+      .execute("status", { action: "status" }, undefined, undefined, ctx);
+
+    expect(result.details.exploringStatus).toMatchObject({
+      claims: { historical: 0, active: 0 },
+      reviews: { total: 0, success: 0, malformed: 0 },
+      missingSuccessfulReviewClaimIds: [],
+      pendingRunId: null,
+      questionTool: "available",
+      finalChoice: "required",
+      nextAction: "askDedicatedChoice",
+    });
+  });
+
   it("shows compact ledger counts in /brainstorm status", async () => {
     const { pi, handlers, commands } = createMockAPI();
     const ctx = createMockContext();
@@ -706,7 +875,17 @@ describe("brainstorm-forcer redesign", () => {
     await command.handler("status", ctx);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("Exploring ledger: EV=1 CL=0 RV=0 WV=0 OV=0"),
+      expect.stringContaining(
+        "Exploring ledger: EV=1 | claims=0 active/0 historical | reviews=0 successful/0 total",
+      ),
+      "warning",
+    );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Required successful reviews missing: none"),
+      "warning",
+    );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Final choice: required"),
       "warning",
     );
   });
@@ -952,7 +1131,7 @@ describe("brainstorm-forcer redesign", () => {
 
       const result = await handlers.get("context")!({ messages: [] }, ctx);
       expect(result.messages[0].content).toContain(
-        "Exploring ledger: EV=1 CL=1 RV=0 WV=0 OV=0",
+        "Exploring ledger: EV=1 | claims=1 active/1 historical | reviews=0 successful/0 total",
       );
       expect(result.messages[0].content).not.toContain("raw-evidence-must-not-be-injected");
     } finally {
@@ -1335,10 +1514,11 @@ describe("brainstorm-forcer redesign", () => {
         "must target exactly owned verification run owned-verification-run",
       );
 
-      emitSuccessfulLocalCodeVerification(
+      await emitSuccessfulLocalCodeVerification(
         api.events,
         "owned-verification-run",
-        "test-session-id",
+        join(tmpdir(), "test-session-id.jsonl"),
+        fixture.asyncDir,
       );
       await Bun.sleep(0);
       expect(
@@ -1638,8 +1818,207 @@ describe("brainstorm-forcer redesign", () => {
       ).toEqual(ledgerEntriesBefore);
       await api.commands.get("brainstorm")!.handler("status", ctx);
       expect(ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining("Exploring ledger: EV=1 CL=1 RV=0"),
+        expect.stringContaining(
+          "Exploring ledger: EV=1 | claims=1 active/1 historical | reviews=0 successful/0 total",
+        ),
         "warning",
+      );
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds attention recovery to one wait and one pending steer", async () => {
+    const fixture = await createVerificationAsyncDirFixture("bounded-recovery-run");
+    try {
+      const api = createMockAPI();
+      const ctx = createMockContext();
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "bounded-recovery-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+      const toolCall = api.handlers.get("tool_call")!;
+      const toolResult = api.handlers.get("tool_result")!;
+
+      expect(
+        await toolCall(
+          { toolName: "subagent_wait", input: { id: "bounded-recovery-run" } },
+          ctx,
+        ),
+      ).toBeUndefined();
+      await toolResult(
+        {
+          type: "tool_result",
+          toolCallId: "wait-once",
+          toolName: "subagent_wait",
+          input: { id: "bounded-recovery-run" },
+          content: [{ type: "text", text: "attention required" }],
+          details: { mode: "management", results: [] },
+          isError: false,
+        },
+        ctx,
+      );
+      expect(
+        await toolCall(
+          { toolName: "subagent_wait", input: { id: "bounded-recovery-run" } },
+          ctx,
+        ),
+      ).toMatchObject({ block: true });
+
+      expect(
+        await toolCall(
+          {
+            toolName: "subagent",
+            input: {
+              action: "steer",
+              id: "bounded-recovery-run",
+              index: 0,
+              message: "Return the bounded verdict.",
+            },
+          },
+          ctx,
+        ),
+      ).toBeUndefined();
+      await toolResult(
+        {
+          type: "tool_result",
+          toolCallId: "steer-foreign",
+          toolName: "subagent",
+          input: {
+            action: "steer",
+            id: "bounded-recovery-run",
+            index: 0,
+            message: "Return the bounded verdict.",
+          },
+          content: [{ type: "text", text: "Foreign steering" }],
+          details: {
+            mode: "management",
+            results: [],
+            steering: {
+              requestId: "foreign-request",
+              state: "pending",
+              sourceRunId: "foreign-run",
+              targets: [{ index: 0, state: "routed" }],
+            },
+          },
+          isError: false,
+        },
+        ctx,
+      );
+      await toolResult(
+        {
+          type: "tool_result",
+          toolCallId: "steer-error",
+          toolName: "subagent",
+          input: {
+            action: "steer",
+            id: "bounded-recovery-run",
+            index: 0,
+            message: "Return the bounded verdict.",
+          },
+          content: [{ type: "text", text: "Steering failed" }],
+          details: {
+            mode: "management",
+            results: [],
+            steering: {
+              requestId: "error-request",
+              state: "pending",
+              sourceRunId: "bounded-recovery-run",
+              targets: [{ index: 0, state: "routed" }],
+            },
+          },
+          isError: true,
+        },
+        ctx,
+      );
+      expect(
+        await toolCall(
+          {
+            toolName: "subagent",
+            input: {
+              action: "steer",
+              id: "bounded-recovery-run",
+              index: 0,
+              message: "Return the bounded verdict.",
+            },
+          },
+          ctx,
+        ),
+      ).toBeUndefined();
+
+      await toolResult(
+        {
+          type: "tool_result",
+          toolCallId: "steer-once",
+          toolName: "subagent",
+          input: {
+            action: "steer",
+            id: "bounded-recovery-run",
+            index: 0,
+            message: "Return the bounded verdict.",
+          },
+          content: [{ type: "text", text: "Steering pending" }],
+          details: {
+            mode: "management",
+            results: [],
+            steering: {
+              requestId: "request-1",
+              state: "pending",
+              sourceRunId: "bounded-recovery-run",
+              targets: [{ index: 0, state: "routed" }],
+            },
+          },
+          isError: false,
+        },
+        ctx,
+      );
+
+      expect(
+        await toolCall(
+          {
+            toolName: "subagent",
+            input: { action: "status", id: "bounded-recovery-run" },
+          },
+          ctx,
+        ),
+      ).toBeUndefined();
+      for (const input of [
+        {
+          action: "steer",
+          id: "bounded-recovery-run",
+          index: 0,
+          message: "Try again.",
+        },
+        {
+          action: "resume",
+          id: "bounded-recovery-run",
+          index: 0,
+          message: "Resume.",
+        },
+        { action: "interrupt", id: "bounded-recovery-run" },
+        { action: "stop", id: "bounded-recovery-run" },
+      ]) {
+        expect(
+          await toolCall({ toolName: "subagent", input }, ctx),
+        ).toMatchObject({ block: true });
+      }
+      expect(
+        await toolCall(
+          { toolName: "subagent_wait", input: { id: "bounded-recovery-run" } },
+          ctx,
+        ),
+      ).toMatchObject({ block: true });
+
+      const context = await api.handlers.get("context")!({ messages: [] }, ctx);
+      expect(context.messages[0].content).toContain(
+        "Next action: manualIntervention",
       );
     } finally {
       await rm(fixture.scopeDir, { recursive: true, force: true });
@@ -2113,7 +2492,9 @@ describe("brainstorm-forcer redesign", () => {
     const lastWidgetCall = (ctx.ui.setWidget as any).mock.calls.at(-1);
     expect(lastWidgetCall[0]).toBe("brainstorm-forcer");
     expect(lastWidgetCall[1][0]).toContain("Exploring");
-    expect(lastWidgetCall[1][0]).toContain("ev:0 open:0");
+    expect(lastWidgetCall[1][0]).toContain(
+      "ev:0 review:0/0 action:askDedicatedChoice",
+    );
   });
 
   it("stop clears state and footer", async () => {
@@ -2162,6 +2543,67 @@ describe("brainstorm-forcer redesign", () => {
     expect(JSON.stringify(ledgerEntry)).not.toContain("must-not-persist");
     expect(JSON.stringify(ledgerEntry)).not.toContain("raw tool output");
     expect(result.content.at(-1).text).toContain("Captured as EV-001");
+  });
+
+  it("labels a cancelled choice as semantically ineligible", async () => {
+    const { pi, tools, handlers, commands, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const command = commands.get("brainstorm")!;
+    await command.handler("topic", ctx);
+    await command.handler("phase exploring", ctx);
+
+    const result = await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "choice-cancelled",
+        toolName: "ask_user_question",
+        input: { questions: [{ question: "Which approach?" }] },
+        content: [{ type: "text", text: "User declined to answer questions" }],
+        details: { answers: [], cancelled: true },
+        isError: false,
+      },
+      ctx,
+    );
+
+    expect(entries.find((entry) => entry.customType === "brainstorm-forcer-ledger")?.data).toMatchObject({
+      record: {
+        id: "EV-001",
+        status: "success",
+        sourceKind: "ineligible",
+        userChoiceCancelled: true,
+      },
+    });
+    expect(result.content.at(-1).text).toContain(
+      "transport=success; semantic=cancelled; final-choice=ineligible",
+    );
+    expect(
+      (
+        await tools
+          .get("brainstorm_transition")!
+          .execute("status", { action: "status" }, undefined, undefined, ctx)
+      ).details.exploringStatus.finalChoice,
+    ).toBe("cancelled");
+
+    await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "choice-error",
+        toolName: "ask_user_question",
+        input: { questions: [{ question: "Which approach?" }] },
+        content: [{ type: "text", text: "Question failed" }],
+        details: { answers: [], cancelled: true },
+        isError: true,
+      },
+      ctx,
+    );
+    expect(
+      (
+        await tools
+          .get("brainstorm_transition")!
+          .execute("status", { action: "status" }, undefined, undefined, ctx)
+      ).details.exploringStatus.finalChoice,
+    ).toBe("required");
   });
 
   it("records a qualified Exploring claim through its dedicated tool", async () => {
@@ -2282,11 +2724,21 @@ describe("brainstorm-forcer redesign", () => {
     });
     expect(JSON.stringify(spawn.params)).not.toContain('"agent":"architect"');
     expect(selectedPreflightAgents).toEqual(["scout"]);
+    expect(entries.at(-1)).toMatchObject({
+      customType: "brainstorm-forcer",
+      data: {
+        pendingVerification: {
+          ownerSessionId: "test-session-id",
+          ownerSessionFile: join(tmpdir(), "test-session-id.jsonl"),
+        },
+      },
+    });
 
-    emitSuccessfulLocalCodeVerification(
+    await emitSuccessfulLocalCodeVerification(
       events,
       "owned-verification-run",
-      "test-session-id",
+      join(tmpdir(), "test-session-id.jsonl"),
+      fixture.asyncDir,
     );
     await Bun.sleep(0);
 
@@ -2315,7 +2767,7 @@ describe("brainstorm-forcer redesign", () => {
     ).length;
     events.emit("subagent:async-complete", {
       runId: "owned-verification-run",
-      sessionId: "test-session-id",
+      sessionId: join(tmpdir(), "test-session-id.jsonl"),
     });
     await Bun.sleep(0);
     expect(
@@ -2350,6 +2802,390 @@ describe("brainstorm-forcer redesign", () => {
       ctx,
     );
     expect(selectedPreflightAgents).toEqual(["scout", "architect"]);
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a foreign RPC session file before spawning verification", async () => {
+    const fixture = await createVerificationAsyncDirFixture(
+      "foreign-owner-run",
+    );
+    const api = createMockAPI();
+    const ctx = createMockContext();
+    try {
+      const requests = installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "foreign-owner-run",
+        fixture.asyncDir,
+        join(tmpdir(), "foreign-session.jsonl"),
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+
+      await expectRejection(
+        enterPendingLocalCodeVerification(api, ctx),
+        "RPC bridge session",
+      );
+      expect(requests.some((request) => request.method === "spawn")).toBe(
+        false,
+      );
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the owned lifecycle-v3 artifact for natural completion details", async () => {
+    const runId = "artifact-owned-run";
+    const fixture = await createVerificationAsyncDirFixture(runId);
+    const api = createMockAPI();
+    const ctx = createMockContext();
+    const sessionFile = ctx.sessionManager.getSessionFile()!;
+    try {
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        runId,
+        fixture.asyncDir,
+        sessionFile,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+      const structuredOutput = {
+        outcome: "supported",
+        claimIds: ["CL-001"],
+        evidenceIds: ["EV-001"],
+        summary: "Trusted lifecycle output.",
+      };
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify({
+          lifecycleArtifactVersion: 3,
+          runId,
+          sessionId: sessionFile,
+          mode: "chain",
+          state: "complete",
+          steps: [
+            {
+              agent: "scout",
+              context: "fresh",
+              outputName: "verify_local_code_supported",
+              status: "complete",
+              exitCode: 0,
+              structuredOutput,
+            },
+          ],
+          outputs: {
+            "verify_local_code_supported": {
+              agent: "scout",
+              stepIndex: 0,
+              structured: structuredOutput,
+            },
+          },
+        }),
+      );
+
+      api.events.emit("subagent:async-complete", {
+        runId,
+        sessionId: sessionFile,
+        success: true,
+        state: "complete",
+        exitCode: 0,
+        results: [],
+        outputs: {},
+      });
+      await Bun.sleep(0);
+
+      expect(
+        api.entries
+          .filter(
+            (entry) => entry.customType === "brainstorm-forcer-ledger",
+          )
+          .map((entry) => (entry.data as any).record)
+          .find((record) => record.id === "RV-001"),
+      ).toMatchObject({ audit: { status: "success" } });
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("records an owned stopped lifecycle artifact as failed, not malformed", async () => {
+    const runId = "owned-stopped-run";
+    const fixture = await createVerificationAsyncDirFixture(runId);
+    const api = createMockAPI();
+    const ctx = createMockContext();
+    const sessionFile = ctx.sessionManager.getSessionFile()!;
+    try {
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        runId,
+        fixture.asyncDir,
+        sessionFile,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify({
+          lifecycleArtifactVersion: 3,
+          runId,
+          sessionId: sessionFile,
+          mode: "chain",
+          state: "stopped",
+          stopped: true,
+          error: "Subagent stopped by user.",
+          steps: [
+            {
+              agent: "scout",
+              context: "fresh",
+              outputName: "verify_local_code_supported",
+              status: "stopped",
+              exitCode: 1,
+              stopped: true,
+              error: "Subagent stopped by user.",
+            },
+          ],
+          outputs: {
+            "verify_local_code_supported": {
+              text: "Subagent stopped by user.",
+              agent: "scout",
+              stepIndex: 0,
+            },
+          },
+        }),
+      );
+
+      api.events.emit("subagent:async-complete", {
+        runId,
+        sessionId: sessionFile,
+        success: false,
+        state: "stopped",
+        stopped: true,
+        error: "Subagent stopped by user.",
+        exitCode: 1,
+        results: [
+          {
+            agent: "scout",
+            context: "fresh",
+            status: "stopped",
+            success: false,
+            stopped: true,
+            error: "Subagent stopped by user.",
+          },
+        ],
+      });
+      await Bun.sleep(0);
+
+      const terminalRecords = api.entries
+        .filter(
+          (entry) => entry.customType === "brainstorm-forcer-ledger",
+        )
+        .map((entry) => (entry.data as any).record);
+      expect(
+        terminalRecords.find((record) => record.id === "RV-001"),
+      ).toMatchObject({
+        audit: {
+          status: "failed",
+          reason: "Subagent stopped by user.",
+        },
+      });
+      expect(
+        terminalRecords.some(
+          (record) => record.kind === "evidence" && record.verifier,
+        ),
+      ).toBe(false);
+      expect(api.entries.at(-1)).toMatchObject({
+        customType: "brainstorm-forcer",
+        data: { pendingVerification: null },
+      });
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores missing or foreign live owners and preserves pending", async () => {
+    const runId = "foreign-live-owner-run";
+    const fixture = await createVerificationAsyncDirFixture(runId);
+    const api = createMockAPI();
+    const ctx = createMockContext();
+    try {
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        runId,
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+
+      api.events.emit("subagent:async-complete", {
+        runId,
+        success: false,
+        state: "failed",
+        exitCode: 1,
+      });
+      api.events.emit("subagent:async-complete", {
+        runId,
+        sessionId: join(tmpdir(), "foreign-session.jsonl"),
+        success: false,
+        state: "failed",
+        exitCode: 1,
+      });
+      await Bun.sleep(0);
+
+      expect(
+        api.entries.some(
+          (entry) => (entry.data as any)?.record?.id === "RV-001",
+        ),
+      ).toBe(false);
+      expect(api.entries.at(-1)).toMatchObject({
+        customType: "brainstorm-forcer",
+        data: { pendingVerification: { runId } },
+      });
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("quarantines a legacy UUID-only pending snapshot on restore", async () => {
+    const runId = "legacy-owner-run";
+    const fixture = await createVerificationAsyncDirFixture(runId);
+    try {
+      const first = createMockAPI();
+      const firstContext = createMockContext();
+      installVerificationRpcBridge(
+        first.events,
+        "test-session-id",
+        runId,
+        fixture.asyncDir,
+      );
+      brainstormForcer(first.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(first, firstContext);
+
+      const legacyEntries = structuredClone(
+        first.entries.map((entry) => ({ type: "custom", ...entry })),
+      );
+      const legacySnapshot = legacyEntries.findLast(
+        (entry) => entry.customType === "brainstorm-forcer",
+      )!.data as any;
+      delete legacySnapshot.pendingVerification.ownerSessionFile;
+
+      const restored = createMockAPI();
+      const restoredContext = createMockContext(legacyEntries);
+      brainstormForcer(restored.pi, { rpcTimeoutMs: 20 });
+      await restored.handlers.get("session_start")!(
+        { type: "session_start" },
+        restoredContext,
+      );
+
+      expect(restored.entries.at(-1)).toMatchObject({
+        customType: "brainstorm-forcer",
+        data: { pendingVerification: null },
+      });
+      expect(restoredContext.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("ownership metadata"),
+        "warning",
+      );
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves restored pending when the RPC bridge has a foreign session file", async () => {
+    const runId = "foreign-restored-owner-run";
+    const fixture = await createVerificationAsyncDirFixture(runId);
+    const sessionFile = join(tmpdir(), "test-session-id.jsonl");
+    try {
+      const first = createMockAPI();
+      const firstContext = createMockContext();
+      installVerificationRpcBridge(
+        first.events,
+        "test-session-id",
+        runId,
+        fixture.asyncDir,
+        sessionFile,
+      );
+      brainstormForcer(first.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(first, firstContext);
+      const structuredOutput = {
+        outcome: "supported",
+        claimIds: ["CL-001"],
+        evidenceIds: ["EV-001"],
+        summary: "Trusted lifecycle output.",
+      };
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify({
+          lifecycleArtifactVersion: 3,
+          runId,
+          sessionId: sessionFile,
+          mode: "chain",
+          state: "complete",
+          steps: [
+            {
+              agent: "scout",
+              context: "fresh",
+              outputName: "verify_local_code_supported",
+              status: "complete",
+              exitCode: 0,
+              structuredOutput,
+            },
+          ],
+          outputs: {
+            "verify_local_code_supported": {
+              agent: "scout",
+              stepIndex: 0,
+              structured: structuredOutput,
+            },
+          },
+        }),
+      );
+
+      const restored = createMockAPI();
+      const restoredContext = createMockContext(
+        first.entries.map((entry) => ({ type: "custom", ...entry })),
+      );
+      installVerificationRpcBridge(
+        restored.events,
+        "test-session-id",
+        runId,
+        fixture.asyncDir,
+        join(tmpdir(), "foreign-session.jsonl"),
+      );
+      brainstormForcer(restored.pi);
+      await restored.handlers.get("session_start")!(
+        { type: "session_start" },
+        restoredContext,
+      );
+
+      expect(
+        restored.entries.some(
+          (entry) => (entry.data as any)?.record?.id === "RV-001",
+        ),
+      ).toBe(false);
+      expect(restored.entries.at(-1)).toMatchObject({
+        customType: "brainstorm-forcer",
+        data: { pendingVerification: { runId } },
+      });
     } finally {
       await rm(fixture.scopeDir, { recursive: true, force: true });
     }
@@ -2496,10 +3332,11 @@ describe("brainstorm-forcer redesign", () => {
       expect(pendingSubmission.details).toMatchObject({ blocked: true });
       expect(await readdir(projectRoot)).toEqual([]);
 
-      emitSuccessfulLocalCodeVerification(
+      await emitSuccessfulLocalCodeVerification(
         events,
         "p1-verification-run",
-        "p1-verification-session",
+        join(tmpdir(), "p1-verification-session.jsonl"),
+        fixture.asyncDir,
       );
       await Bun.sleep(0);
       expect(
@@ -2712,9 +3549,29 @@ describe("brainstorm-forcer redesign", () => {
       ctx,
     );
 
+    await writeFile(
+      join(fixture.asyncDir, "status.json"),
+      JSON.stringify({
+        lifecycleArtifactVersion: 3,
+        runId: "owned-verification-run",
+        sessionId: join(tmpdir(), "test-session-id.jsonl"),
+        mode: "chain",
+        state: "complete",
+        steps: [
+          {
+            agent: "scout",
+            context: "fresh",
+            outputName: "verify_local_code_supported",
+            status: "complete",
+            exitCode: 0,
+          },
+        ],
+        outputs: {},
+      }),
+    );
     events.emit("subagent:async-complete", {
       runId: "owned-verification-run",
-      sessionId: "test-session-id",
+      sessionId: join(tmpdir(), "test-session-id.jsonl"),
       success: true,
       state: "complete",
       exitCode: 0,
@@ -2761,6 +3618,27 @@ describe("brainstorm-forcer redesign", () => {
       });
       await enterPendingLocalCodeVerification(api, ctx);
 
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify({
+          lifecycleArtifactVersion: 3,
+          runId: "audit-boundary-run",
+          sessionId: join(tmpdir(), "test-session-id.jsonl"),
+          mode: "chain",
+          state: "failed",
+          error: "   ",
+          steps: [
+            {
+              agent: "scout",
+              context: "fresh",
+              outputName: "verify_local_code_supported",
+              status: "failed",
+              exitCode: 1,
+            },
+          ],
+          outputs: {},
+        }),
+      );
       let unhandled: unknown;
       const captureUnhandled = (reason: unknown) => {
         unhandled = reason;
@@ -2768,7 +3646,7 @@ describe("brainstorm-forcer redesign", () => {
       process.once("unhandledRejection", captureUnhandled);
       api.events.emit("subagent:async-complete", {
         runId: "audit-boundary-run",
-        sessionId: "test-session-id",
+        sessionId: join(tmpdir(), "test-session-id.jsonl"),
         success: false,
         state: "failed",
         exitCode: 1,
@@ -2871,10 +3749,11 @@ describe("brainstorm-forcer redesign", () => {
       };
       process.once("unhandledRejection", captureUnhandled);
 
-      emitSuccessfulLocalCodeVerification(
+      await emitSuccessfulLocalCodeVerification(
         api.events,
         "stderr-boundary-run",
-        "test-session-id",
+        join(tmpdir(), "test-session-id.jsonl"),
+        fixture.asyncDir,
       );
       await Bun.sleep(10);
     } finally {
@@ -2889,6 +3768,10 @@ describe("brainstorm-forcer redesign", () => {
     const restoredRunId = "restored-verification-run";
     const fixture = await createVerificationAsyncDirFixture(restoredRunId);
     const { asyncDir } = fixture;
+    const sessionFile = join(
+      tmpdir(),
+      "reload-verification-session.jsonl",
+    );
     try {
     const first = createMockAPI();
     const firstContext = createMockContext(
@@ -2953,7 +3836,7 @@ describe("brainstorm-forcer redesign", () => {
       JSON.stringify({
         lifecycleArtifactVersion: 3,
         runId: restoredRunId,
-        sessionId: "reload-verification-session",
+        sessionId: sessionFile,
         mode: "chain",
         state: "running",
         startedAt: Date.now(),
@@ -2997,12 +3880,15 @@ describe("brainstorm-forcer redesign", () => {
       secondContext,
     );
     expect(statusContext.messages[0].content).toContain(
-      "Verification: pending restored-verification-run for CL-001",
+      "Verification: pending restored-verification-run",
+    );
+    expect(statusContext.messages[0].content).toContain(
+      "Required successful reviews missing: CL-001",
     );
     expect(
       (secondContext.ui.setWidget as any).mock.calls
         .at(-1)[1][0],
-    ).toContain("verify:pending");
+    ).toContain("action:waitVerification");
 
     const structuredOutput = {
       outcome: "supported",
@@ -3012,7 +3898,7 @@ describe("brainstorm-forcer redesign", () => {
     };
     const terminalEvent = {
       runId: restoredRunId,
-      sessionId: "reload-verification-session",
+      sessionId: sessionFile,
       success: true,
       state: "complete",
       exitCode: 0,
@@ -3022,7 +3908,6 @@ describe("brainstorm-forcer redesign", () => {
           context: "fresh",
           status: "completed",
           success: true,
-          exitCode: 0,
           structuredOutput,
         },
       ],
@@ -3040,7 +3925,7 @@ describe("brainstorm-forcer redesign", () => {
       JSON.stringify({
         lifecycleArtifactVersion: 3,
         runId: restoredRunId,
-        sessionId: "reload-verification-session",
+        sessionId: sessionFile,
         mode: "chain",
         state: "complete",
         startedAt: Date.now() - 100,
@@ -3181,6 +4066,7 @@ describe("brainstorm-forcer redesign", () => {
     const sessionManager = SessionManager.inMemory(process.cwd());
     const api = createMockAPI(sessionManager);
     const ctx = createSessionManagerContext(sessionManager);
+    const sessionFile = ctx.sessionManager.getSessionFile()!;
     const runId = "branch-a-verification-run";
     const fixture = await createVerificationAsyncDirFixture(runId);
     try {
@@ -3322,7 +4208,7 @@ describe("brainstorm-forcer redesign", () => {
       ).length;
       api.events.emit("subagent:async-complete", {
         runId,
-        sessionId: sessionManager.getSessionId(),
+        sessionId: sessionFile,
         success: false,
         state: "failed",
         exitCode: 1,
@@ -3343,24 +4229,25 @@ describe("brainstorm-forcer redesign", () => {
         ctx,
       );
       const branchBPendingLeafId = sessionManager.getLeafId()!;
+      const runningStatus = {
+        lifecycleArtifactVersion: 3,
+        runId,
+        sessionId: sessionFile,
+        mode: "chain",
+        state: "running",
+        startedAt: Date.now(),
+        steps: [
+          {
+            agent: "scout",
+            context: "fresh",
+            outputName: "verify_local_code_supported",
+            status: "running",
+          },
+        ],
+      };
       await writeFile(
         join(fixture.asyncDir, "status.json"),
-        JSON.stringify({
-          lifecycleArtifactVersion: 3,
-          runId,
-          sessionId: sessionManager.getSessionId(),
-          mode: "chain",
-          state: "running",
-          startedAt: Date.now(),
-          steps: [
-            {
-              agent: "scout",
-              context: "fresh",
-              outputName: "verify_local_code_supported",
-              status: "running",
-            },
-          ],
-        }),
+        JSON.stringify(runningStatus),
       );
       sessionManager.branch(branchALeafId);
       await api.handlers.get("session_tree")!(
@@ -3397,9 +4284,33 @@ describe("brainstorm-forcer redesign", () => {
         evidenceIds: ["EV-001"],
         summary: "Both branch-A claims remain supported.",
       };
+      const outputs = {
+        "verify_local_code_supported": {
+          text: JSON.stringify(structuredOutput),
+          structured: structuredOutput,
+          agent: "scout",
+          stepIndex: 0,
+        },
+      };
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify({
+          ...runningStatus,
+          state: "complete",
+          steps: [
+            {
+              ...runningStatus.steps[0],
+              status: "complete",
+              exitCode: 0,
+              structuredOutput,
+            },
+          ],
+          outputs,
+        }),
+      );
       api.events.emit("subagent:async-complete", {
         runId,
-        sessionId: sessionManager.getSessionId(),
+        sessionId: sessionFile,
         success: true,
         state: "complete",
         exitCode: 0,
@@ -3409,19 +4320,15 @@ describe("brainstorm-forcer redesign", () => {
             context: "fresh",
             status: "completed",
             success: true,
-            exitCode: 0,
             structuredOutput,
           },
         ],
-        outputs: {
-          "verify_local_code_supported": {
-            text: JSON.stringify(structuredOutput),
-            structured: structuredOutput,
-            agent: "scout",
-            stepIndex: 0,
-          },
-        },
+        outputs,
       });
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify(runningStatus),
+      );
       sessionManager.branch(branchBPendingLeafId);
       await api.handlers.get("session_tree")!(
         {
@@ -3527,6 +4434,7 @@ describe("brainstorm-forcer redesign", () => {
     try {
       const first = createMockAPI(sessionManager);
       const firstContext = createSessionManagerContext(sessionManager);
+      const sessionFile = firstContext.sessionManager.getSessionFile()!;
       installVerificationRpcBridge(
         first.events,
         sessionManager.getSessionId(),
@@ -3562,7 +4470,7 @@ describe("brainstorm-forcer redesign", () => {
         JSON.stringify({
           lifecycleArtifactVersion: 3,
           runId: "superseded-claim-run",
-          sessionId: sessionManager.getSessionId(),
+          sessionId: sessionFile,
           mode: "chain",
           state: "running",
           startedAt: Date.now(),
@@ -3596,9 +4504,30 @@ describe("brainstorm-forcer redesign", () => {
         ),
       ).toBe(false);
 
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify({
+          lifecycleArtifactVersion: 3,
+          runId: "superseded-claim-run",
+          sessionId: sessionFile,
+          mode: "chain",
+          state: "failed",
+          error: "Verifier process exited before producing output.",
+          steps: [
+            {
+              agent: "scout",
+              context: "fresh",
+              outputName: "verify_local_code_supported",
+              status: "failed",
+              exitCode: 1,
+            },
+          ],
+          outputs: {},
+        }),
+      );
       restored.events.emit("subagent:async-complete", {
         runId: "superseded-claim-run",
-        sessionId: sessionManager.getSessionId(),
+        sessionId: sessionFile,
         success: false,
         state: "failed",
         exitCode: 1,
@@ -3663,6 +4592,13 @@ describe("brainstorm-forcer redesign", () => {
       undefined,
       ctx,
     );
+    expect(
+      (
+        await tools
+          .get("brainstorm_transition")!
+          .execute("status", { action: "status" }, undefined, undefined, ctx)
+      ).details.exploringStatus.nextAction,
+    ).toBe("requestWaiver");
     (ctx.ui.select as any).mockResolvedValueOnce("Reject");
 
     const result = await tools.get("brainstorm_request_waiver")!.execute(

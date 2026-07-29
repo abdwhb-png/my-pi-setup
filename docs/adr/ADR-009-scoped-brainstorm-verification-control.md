@@ -74,6 +74,25 @@ Reject the call with a precise reason when:
 The hook evaluates the public `tool_call` event's `input`; it does not infer
 intent from prose or a package-internal type.
 
+### Bound needs-attention recovery
+
+`needs_attention` is a nonterminal, latched activity signal. A
+`subagent_wait.timeoutMs` value is an upper bound, not a minimum sleep: once
+attention is latched, another wait may return immediately. The model may use at
+most one owned wait and one owned steer per pending verification run.
+
+The extension captures only the public typed steer result. When it reports an
+exact owned `pending` request with routed targets, branch-local recovery state
+is persisted. From that point, only exact owned `status` remains available to
+the model. Repeated wait/steer, resume, interrupt, stop, and replacement launch
+are blocked. Status prose is never parsed to infer steering delivery. The same
+owned run remains pending until exact terminal processing, branch quarantine,
+or explicit manual intervention.
+
+This prevents the autonomous loop `attention → steer → immediate wait → stop →
+relaunch`. It does not infer model/provider failure, substitute another agent,
+or change ADR-008's deterministic routing.
+
 ### Gate the final question on terminal processing
 
 Block `ask_user_question` only while owned verification is pending. The block
@@ -81,6 +100,21 @@ reason identifies the pending run and requires terminal processing to record
 the applicable `RV-*` audit. Once terminal processing clears
 `pendingVerification`, `ask_user_question` is allowed again under the normal
 Exploring policy.
+
+### Use canonical parent-session ownership
+
+Pi exposes a parent session UUID and parent session-file path as distinct public
+identities. Persist both. The UUID remains the capability/preflight identity;
+the absolute session-file path is the asynchronous ownership identity used by
+pi-subagents 0.37.2.
+
+RPC ping must match both active values before spawn. Live completion correlation
+requires exact run ID plus exact owner session file. The trusted lifecycle-v3
+`status.json` artifact is canonical for terminal state, step exit codes, and
+structured outputs; live child results are not required to fabricate an
+`exitCode`. An exact owned `stopped` artifact is audited as `failed` with the
+package reason, not as malformed. Legacy UUID-only pending snapshots are
+quarantined rather than guessed or migrated.
 
 ### Restore verification ownership per active branch
 
@@ -117,6 +151,21 @@ failure-audit boundary. Terminal processing runs after that boundary: once
 completion EV/RV records and cleared pending state are committed, a later UI
 error cannot reinterpret the same run as a failed verification.
 
+### Expose semantic gate status
+
+Every model/UI status surface derives one non-persisted snapshot from the
+ledger's existing eligibility rules. It distinguishes historical versus active
+claims, review audits by status, missing successful reviews, pending ownership,
+question-tool availability, final-choice eligibility, and the next action.
+Raw `RV=N`, `open critical claims: none`, or `none pending` are never presented
+as proof that required review succeeded.
+
+Cancelled `ask_user_question` calls remain append-only technical-success
+records when Pi reports a successful tool transport, but are labelled
+`semantic=cancelled` and final-choice-ineligible. Generic question availability
+remains pending-only because Exploring also uses questions for clarification and
+waivers; final-choice eligibility remains enforced by the ledger chronology.
+
 ### Keep lifecycle state out of the evidence ledger
 
 Before evidence capture, exclude all permitted `subagent` control results and
@@ -127,12 +176,17 @@ scope validation.
 
 The integrated recovery order is:
 
-1. owned verification reports `needs attention`;
-2. the parent uses only scoped status/steer/resume/interrupt/stop control;
-3. terminal completion is ownership-validated;
-4. verifier `EV-*` and `RV-*` records are appended;
-5. the final dedicated `ask_user_question` result is captured with provenance;
-6. `brainstorm_submit_exploring` succeeds and the workflow may enter
+1. owned verification reports nonterminal `needs_attention`;
+2. the parent performs at most one wait, inspects exact status, and may issue
+   one exact owned steer;
+3. after a pending steer, autonomous wait/stop/relaunch is blocked while the
+   same run awaits terminal completion or manual intervention;
+4. terminal completion is ownership-validated against the parent session file
+   and trusted lifecycle artifact;
+5. verifier `EV-*` and successful or failure `RV-*` records are appended;
+6. semantic status names any still-missing successful review;
+7. the final dedicated `ask_user_question` result is captured with provenance;
+8. `brainstorm_submit_exploring` succeeds and the workflow may enter
    Presenting.
 
 ## Alternatives Considered

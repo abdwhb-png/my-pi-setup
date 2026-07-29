@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -18,9 +23,219 @@ const RPC_REPLY_PREFIX = "subagents:rpc:v1:reply:";
 const VERIFICATION_COMPLETE_EVENT = "subagent:async-complete";
 const HARNESS_RUNTIME_ENV = "BRAINSTORM_FORCER_HARNESS_RUNTIME";
 
+async function createBoundRuntime(
+  codingAgent: typeof import("@earendil-works/pi-coding-agent"),
+  model: any,
+  cwd: string,
+  sessionManager: SessionManager,
+  extensionFactories: Array<(pi: ExtensionAPI) => void>,
+  additionalExtensionPaths: string[] = [],
+) {
+  const settingsManager = codingAgent.SettingsManager.inMemory();
+  const loader = new codingAgent.DefaultResourceLoader({
+    cwd,
+    agentDir: cwd,
+    settingsManager,
+    extensionFactories,
+    additionalExtensionPaths,
+  });
+  await loader.reload();
+  const result = await codingAgent.createAgentSession({
+    cwd,
+    agentDir: cwd,
+    model,
+    sessionManager,
+    settingsManager,
+    resourceLoader: loader,
+  });
+  expect(result.extensionsResult.errors).toHaveLength(0);
+  const errors: unknown[] = [];
+  await result.session.bindExtensions({
+    onError: (error) => errors.push(error),
+  });
+  return { session: result.session, errors };
+}
+
+async function waitForRuntime(
+  predicate: () => boolean,
+  message: string,
+  timeoutMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await Bun.sleep(20);
+  }
+}
+
+function persistRuntimeSession(
+  sessionManager: SessionManager,
+  model: any,
+): void {
+  sessionManager.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "Runtime session fixture." }],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  });
+}
+
+async function executeRuntimeTool(
+  session: any,
+  name: string,
+  toolCallId: string,
+  input: Record<string, unknown>,
+) {
+  const tool = session.agent.state.tools.find(
+    (candidate: { name: string }) => candidate.name === name,
+  );
+  if (!tool) throw new Error(`Runtime tool not found: ${name}.`);
+  return tool.execute(
+    toolCallId,
+    input,
+    new AbortController().signal,
+    undefined,
+  );
+}
+
+async function launchRuntimeVerification(session: any, cwd: string) {
+  await session.prompt("/brainstorm arm Runtime package contract");
+  await session.prompt("/brainstorm phase exploring");
+  await writeFile(
+    join(cwd, "evidence.txt"),
+    "The transition gate is centralized.",
+  );
+  const readResult = await executeRuntimeTool(
+    session,
+    "read",
+    "runtime-contract-read",
+    { path: "evidence.txt" },
+  );
+  await session.extensionRunner.emitToolResult({
+    type: "tool_result",
+    toolCallId: "runtime-contract-read",
+    toolName: "read",
+    input: { path: "evidence.txt" },
+    content: readResult.content,
+    details: readResult.details,
+    isError: false,
+  });
+  await executeRuntimeTool(
+    session,
+    "brainstorm_record_claim",
+    "runtime-contract-claim",
+    {
+      assertion: "The transition gate is centralized.",
+      classification: "empirical",
+      critical: true,
+      verdict: "verified",
+      evidenceIds: ["EV-001"],
+      contradictoryEvidenceIds: [],
+      impact: "Controls all forward transitions.",
+      verificationDomain: "local-code",
+      architectureImpact: false,
+      mitigation: "Keep one shared blocker.",
+    },
+  );
+  return executeRuntimeTool(
+    session,
+    "brainstorm_run_verification",
+    "runtime-contract-verification",
+    { claimIds: ["CL-001"] },
+  );
+}
+
+async function installStructuredMockPi(
+  harness: typeof import("@marcfargas/pi-test-harness"),
+  root: string,
+  structuredOutput: unknown,
+  delay = 0,
+) {
+  const mockPi = harness.createMockPi();
+  mockPi.install();
+  mockPi.onCall({ output: "Structured output captured.", delay });
+  const scriptPath = join(root, "structured-mock-pi.mjs");
+  const launcherPath = join(
+    root,
+    process.platform === "win32" ? "structured-mock-pi.cmd" : "structured-mock-pi",
+  );
+  await writeFile(
+    scriptPath,
+    [
+      'import { spawn } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      'const capture = process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;',
+      'const value = process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT;',
+      'if (capture && value) writeFileSync(capture, value);',
+      'const child = spawn(process.env.BRAINSTORM_MOCK_PI_BINARY, process.argv.slice(2), { env: process.env, stdio: "inherit" });',
+      'child.on("exit", (code) => process.exit(code ?? 1));',
+    ].join("\n"),
+  );
+  if (process.platform === "win32") {
+    await writeFile(
+      launcherPath,
+      `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`,
+    );
+  } else {
+    await writeFile(
+      launcherPath,
+      `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}" "$@"\n`,
+    );
+    await chmod(launcherPath, 0o755);
+  }
+
+  const previous = {
+    binary: process.env.PI_SUBAGENT_PI_BINARY,
+    mockBinary: process.env.BRAINSTORM_MOCK_PI_BINARY,
+    structuredOutput: process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT,
+  };
+  process.env.PI_SUBAGENT_PI_BINARY = launcherPath;
+  process.env.BRAINSTORM_MOCK_PI_BINARY = join(
+    mockPi.dir,
+    process.platform === "win32" ? "pi.cmd" : "pi",
+  );
+  process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT =
+    JSON.stringify(structuredOutput);
+
+  return {
+    mockPi,
+    cleanup() {
+      if (previous.binary === undefined)
+        delete process.env.PI_SUBAGENT_PI_BINARY;
+      else process.env.PI_SUBAGENT_PI_BINARY = previous.binary;
+      if (previous.mockBinary === undefined)
+        delete process.env.BRAINSTORM_MOCK_PI_BINARY;
+      else process.env.BRAINSTORM_MOCK_PI_BINARY = previous.mockBinary;
+      if (previous.structuredOutput === undefined)
+        delete process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT;
+      else
+        process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT =
+          previous.structuredOutput;
+      mockPi.uninstall();
+    },
+  };
+}
+
 function installRuntimeFixtures(
   pi: ExtensionAPI,
-  getOwnerSessionId: () => string,
+  getOwnerSession: () => { sessionId: string; sessionFile: string },
   runId: string,
   asyncDir: string,
 ): void {
@@ -72,7 +287,7 @@ function installRuntimeFixtures(
               replyPrefix: RPC_REPLY_PREFIX,
               asyncComplete: VERIFICATION_COMPLETE_EVENT,
             },
-            session: { sessionId: getOwnerSessionId() },
+            session: getOwnerSession(),
           }
         : request.method === "spawn"
           ? {
@@ -124,14 +339,15 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
       const asyncDir = join(scopeDir, "async-subagent-runs", runId);
       await mkdir(asyncDir, { recursive: true });
 
-      let ownerSessionId = "";
+      let ownerSession = { sessionId: "", sessionFile: "" };
       let session: Awaited<ReturnType<typeof harness.createTestSession>> | undefined;
       const previousApiKey = process.env.OPENAI_API_KEY;
       process.env.OPENAI_API_KEY = "test-key";
       try {
         session = await harness.createTestSession({
           extensionFactories: [
-            (pi: ExtensionAPI) => installRuntimeFixtures(pi, () => ownerSessionId, runId, asyncDir),
+            (pi: ExtensionAPI) =>
+              installRuntimeFixtures(pi, () => ownerSession, runId, asyncDir),
             (pi: ExtensionAPI) =>
               brainstormForcer(pi, {
                 preflight: async (_sessionId, _cwd, agents) =>
@@ -147,9 +363,17 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
           propagateErrors: false,
         });
         installHarnessStreamCompatibility(session);
-        ownerSessionId =
-          session.session.extensionRunner.createCommandContext().sessionManager.getSessionId() ??
-          "";
+        const sessionManager =
+          session.session.extensionRunner.createCommandContext().sessionManager;
+        const sessionFile = join(session.cwd, "runtime-session.jsonl");
+        Object.defineProperty(sessionManager, "getSessionFile", {
+          configurable: true,
+          value: () => sessionFile,
+        });
+        ownerSession = {
+          sessionId: sessionManager.getSessionId() ?? "",
+          sessionFile,
+        };
         await writeFile(join(session.cwd, "evidence.txt"), "The transition gate is centralized.");
         await session.session.prompt("/brainstorm arm Runtime policy");
         await session.session.prompt("/brainstorm phase exploring");
@@ -266,63 +490,22 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
       ]);
       const model = getModel("openai", "gpt-4o");
       const initialManager = codingAgent.SessionManager.create(cwd, sessionDir);
-      initialManager.appendMessage({
-        role: "assistant",
-        content: [{ type: "text", text: "Runtime restart fixture." }],
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            total: 0,
-          },
-        },
-        stopReason: "stop",
-        timestamp: Date.now(),
-      });
-      const createRuntime = async (
-        sessionManager: ReturnType<typeof codingAgent.SessionManager.open>,
-        extensionFactories: Array<(pi: ExtensionAPI) => void>,
-      ) => {
-        const settingsManager = codingAgent.SettingsManager.inMemory();
-        const loader = new codingAgent.DefaultResourceLoader({
-          cwd,
-          agentDir: cwd,
-          settingsManager,
-          extensionFactories,
-        });
-        await loader.reload();
-        const result = await codingAgent.createAgentSession({
-          cwd,
-          agentDir: cwd,
-          model,
-          sessionManager,
-          settingsManager,
-          resourceLoader: loader,
-        });
-        expect(result.extensionsResult.errors).toHaveLength(0);
-        const errors: unknown[] = [];
-        await result.session.bindExtensions({
-          onError: (error) => errors.push(error),
-        });
-        return { session: result.session, errors };
-      };
-
+      persistRuntimeSession(initialManager, model);
       const ownerSessionId = initialManager.getSessionId();
-      const first = await createRuntime(initialManager, [
+      const ownerSessionFile = initialManager.getSessionFile()!;
+      const first = await createBoundRuntime(
+        codingAgent,
+        model,
+        cwd,
+        initialManager,
+        [
         (pi) =>
           installRuntimeFixtures(
             pi,
-            () => ownerSessionId,
+            () => ({
+              sessionId: ownerSessionId,
+              sessionFile: ownerSessionFile,
+            }),
             runId,
             asyncDir,
           ),
@@ -331,7 +514,8 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
             preflight: async (_sessionId, _cwd, agents) =>
               agents.map((agent) => ({ agent, ok: true })),
           }),
-      ]);
+        ],
+      );
       try {
         await first.session.prompt("/brainstorm arm Runtime JSONL restart");
         await first.session.prompt("/brainstorm phase exploring");
@@ -429,9 +613,13 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
                 ),
             ),
         ).toBe(false);
-        const second = await createRuntime(reopened, [
-          (pi) => brainstormForcer(pi, { rpcTimeoutMs: 20 }),
-        ]);
+        const second = await createBoundRuntime(
+          codingAgent,
+          model,
+          cwd,
+          reopened,
+          [(pi) => brainstormForcer(pi, { rpcTimeoutMs: 20 })],
+        );
         try {
           expect(second.errors).toHaveLength(0);
           expect(reopened.getBranch().at(-1)).toMatchObject({
@@ -483,6 +671,294 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         await rm(root, { recursive: true, force: true });
       }
     });
+
+    it("accepts real package completion and audits an exact public stop as failed", async () => {
+      const harnessPackage = ["@marcfargas", "pi-test-harness"].join("/");
+      const [
+        { default: brainstormForcer },
+        codingAgent,
+        { getModel },
+        harness,
+      ] = await Promise.all([
+        import("./index"),
+        import("@earendil-works/pi-coding-agent"),
+        import("@earendil-works/pi-ai/compat"),
+        import(harnessPackage),
+      ]);
+      const root = await mkdtemp(
+        join(await realpath(tmpdir()), "brainstorm-package-runtime-"),
+      );
+      const cwd = join(root, "project");
+      const sessionDir = join(root, "sessions");
+      await Promise.all([
+        mkdir(cwd, { recursive: true }),
+        mkdir(sessionDir, { recursive: true }),
+      ]);
+      const model = getModel("openai", "gpt-4o");
+      const sessionManager = codingAgent.SessionManager.create(cwd, sessionDir);
+      persistRuntimeSession(sessionManager, model);
+      const structuredOutput = {
+        outcome: "supported",
+        claimIds: ["CL-001"],
+        evidenceIds: ["EV-001"],
+        summary: "The exact package contract supports the claim.",
+      };
+      const child = await installStructuredMockPi(
+        harness,
+        root,
+        structuredOutput,
+      );
+      const completions: unknown[] = [];
+      const runtime = await createBoundRuntime(
+        codingAgent,
+        model,
+        cwd,
+        sessionManager,
+        [
+          (pi) => {
+            pi.events.on(VERIFICATION_COMPLETE_EVENT, (event) => {
+              completions.push(event);
+            });
+          },
+          (pi) =>
+            brainstormForcer(pi, {
+              preflight: async (_sessionId, _cwd, agents) =>
+                agents.map((agent) => ({ agent, ok: true })),
+            }),
+        ],
+        [fileURLToPath(import.meta.resolve("pi-subagents"))],
+      );
+      const asyncDirs: string[] = [];
+      const resultPaths: string[] = [];
+      try {
+        const launch = await launchRuntimeVerification(runtime.session, cwd);
+        expect(launch.details).toMatchObject({ status: "pending" });
+        const naturalRunId = (launch.details as { runId: string }).runId;
+        const pending = (
+          sessionManager
+            .getBranch()
+            .findLast(
+              (entry) =>
+                entry.type === "custom" &&
+                entry.customType === "brainstorm-forcer",
+            ) as any
+        ).data.pendingVerification;
+        asyncDirs.push(pending.asyncDir);
+        expect(pending).toMatchObject({
+          runId: naturalRunId,
+          ownerSessionId: sessionManager.getSessionId(),
+          ownerSessionFile: sessionManager.getSessionFile(),
+        });
+        const naturalResultPath = join(
+          dirname(dirname(pending.asyncDir)),
+          "async-subagent-results",
+          `${naturalRunId}.json`,
+        );
+        resultPaths.push(naturalResultPath);
+        await waitForRuntime(
+          () => existsSync(naturalResultPath),
+          "Natural pi-subagents result artifact was not written.",
+        );
+        // Bun's nested harness can miss the native fs.watch edge. Replaying the
+        // public reload lifecycle primes the installed package's real watcher.
+        await runtime.session.extensionRunner.emit({
+          type: "session_start",
+          reason: "reload",
+        });
+
+        try {
+          await waitForRuntime(
+            () =>
+              completions.length >= 1 &&
+              sessionManager
+                .getEntries()
+                .some(
+                  (entry) =>
+                    entry.type === "custom" &&
+                    entry.customType === "brainstorm-forcer-ledger" &&
+                    (entry.data as any).record?.kind === "review" &&
+                    (entry.data as any).record?.audit?.verificationRunId ===
+                      naturalRunId,
+                ),
+            "Natural pi-subagents completion was not audited.",
+          );
+        } catch (error) {
+          const [status, result] = await Promise.all([
+            readFile(join(pending.asyncDir, "status.json"), "utf8").catch(
+              (readError) => String(readError),
+            ),
+            readFile(naturalResultPath, "utf8").catch((readError) =>
+              String(readError),
+            ),
+          ]);
+          throw new Error(
+            [
+              error instanceof Error ? error.message : String(error),
+              `mock calls: ${child.mockPi.callCount()}`,
+              `completions: ${JSON.stringify(completions)}`,
+              `runtime errors: ${runtime.errors.map(String).join(" | ")}`,
+              `status: ${status}`,
+              `result: ${result}`,
+            ].join("\n"),
+          );
+        }
+        const naturalCompletion = completions.find(
+          (event: any) => event?.runId === naturalRunId,
+        ) as any;
+        expect(naturalCompletion).toMatchObject({
+          runId: naturalRunId,
+          sessionId: sessionManager.getSessionFile(),
+          state: "complete",
+          exitCode: 0,
+        });
+        expect(
+          Object.hasOwn(naturalCompletion.results[0], "exitCode"),
+        ).toBe(false);
+        const naturalReview = sessionManager
+          .getEntries()
+          .find(
+            (entry) =>
+              entry.type === "custom" &&
+              entry.customType === "brainstorm-forcer-ledger" &&
+              (entry.data as any).record?.kind === "review" &&
+              (entry.data as any).record?.audit?.verificationRunId ===
+                naturalRunId,
+          ) as any;
+        expect(naturalReview.data.record.audit).toMatchObject({
+          status: "success",
+          verificationRunId: naturalRunId,
+        });
+
+        child.mockPi.reset();
+        child.mockPi.onCall({ output: "Stopped before completion.", delay: 10_000 });
+        await executeRuntimeTool(
+          runtime.session,
+          "brainstorm_record_claim",
+          "runtime-contract-second-claim",
+          {
+            assertion: "The stop path preserves ownership.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: ["EV-001"],
+            contradictoryEvidenceIds: [],
+            impact: "Controls stop audit classification.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+            mitigation: "Require exact owner correlation.",
+          },
+        );
+        const stoppedLaunch = await executeRuntimeTool(
+          runtime.session,
+          "brainstorm_run_verification",
+          "runtime-contract-stopped-verification",
+          { claimIds: ["CL-002"] },
+        );
+        const stoppedRunId = (stoppedLaunch.details as { runId: string }).runId;
+        const stoppedPending = (
+          sessionManager
+            .getBranch()
+            .findLast(
+              (entry) =>
+                entry.type === "custom" &&
+                entry.customType === "brainstorm-forcer",
+            ) as any
+        ).data.pendingVerification;
+        asyncDirs.push(stoppedPending.asyncDir);
+        const stoppedResultPath = join(
+          dirname(dirname(stoppedPending.asyncDir)),
+          "async-subagent-results",
+          `${stoppedRunId}.json`,
+        );
+        resultPaths.push(stoppedResultPath);
+        await waitForRuntime(
+          () => child.mockPi.callCount() === 1,
+          "Stopped pi-subagents child did not start.",
+        );
+        const stop = await executeRuntimeTool(
+          runtime.session,
+          "subagent",
+          "runtime-contract-stop",
+          { action: "stop", id: stoppedRunId },
+        );
+        expect(stop.isError).not.toBe(true);
+        await waitForRuntime(
+          () => existsSync(stoppedResultPath),
+          "Stopped pi-subagents result artifact was not written.",
+        );
+        await runtime.session.extensionRunner.emit({
+          type: "session_start",
+          reason: "reload",
+        });
+        await waitForRuntime(
+          () =>
+            completions.some(
+              (event: any) =>
+                event?.runId === stoppedRunId && event?.state === "stopped",
+            ) &&
+            sessionManager
+              .getEntries()
+              .some(
+                (entry) =>
+                  entry.type === "custom" &&
+                  entry.customType === "brainstorm-forcer-ledger" &&
+                  (entry.data as any).record?.kind === "review" &&
+                  (entry.data as any).record?.audit?.verificationRunId ===
+                    stoppedRunId,
+              ),
+          "Stopped pi-subagents completion was not audited.",
+        );
+        const stoppedCompletion = completions.find(
+          (event: any) => event?.runId === stoppedRunId,
+        ) as any;
+        expect(stoppedCompletion).toMatchObject({
+          sessionId: sessionManager.getSessionFile(),
+          state: "stopped",
+        });
+        expect(
+          Object.hasOwn(stoppedCompletion.results[0], "exitCode"),
+        ).toBe(false);
+        const stoppedReview = sessionManager
+          .getEntries()
+          .find(
+            (entry) =>
+              entry.type === "custom" &&
+              entry.customType === "brainstorm-forcer-ledger" &&
+              (entry.data as any).record?.kind === "review" &&
+              (entry.data as any).record?.audit?.verificationRunId ===
+                stoppedRunId,
+          ) as any;
+        expect(stoppedReview.data.record.audit).toMatchObject({
+          status: "failed",
+          verificationRunId: stoppedRunId,
+          reason: "Subagent stopped by user.",
+        });
+        expect(
+          sessionManager
+            .getBranch()
+            .findLast(
+              (entry) =>
+                entry.type === "custom" &&
+                entry.customType === "brainstorm-forcer",
+            ),
+        ).toMatchObject({
+          data: { pendingVerification: null },
+        });
+        expect(runtime.errors).toHaveLength(0);
+      } finally {
+        runtime.session.dispose();
+        child.cleanup();
+        await Promise.all(
+          [
+            ...asyncDirs.map((asyncDir) =>
+              rm(asyncDir, { recursive: true, force: true }),
+            ),
+            ...resultPaths.map((resultPath) => rm(resultPath, { force: true })),
+          ],
+        );
+        await rm(root, { recursive: true, force: true });
+      }
+    }, 30_000);
   });
 } else {
   describe("brainstorm-forcer runtime policy", () => {
@@ -517,8 +993,8 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
       if (exitCode !== 0)
         throw new Error(`Nested pi-test-harness runtime failed (${exitCode}).\n${output}`);
 
-      expect(output).toContain("2 pass");
+      expect(output).toContain("3 pass");
       expect(output).toContain("0 fail");
-    });
+    }, 35_000);
   });
 }

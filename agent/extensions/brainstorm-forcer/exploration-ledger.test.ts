@@ -376,6 +376,10 @@ describe("exploration ledger", () => {
         });
 
         expect(ledger.getActiveClaims()).toEqual([replacement]);
+        expect(ledger.getStatusSnapshot()).toMatchObject({
+            claims: { historical: 2, active: 1 },
+            requiredReviewClaimIds: [],
+        });
         expect(original).not.toHaveProperty("supersededBy");
     });
 
@@ -645,6 +649,10 @@ describe("exploration ledger", () => {
         expect(ledger.getGateBlockers(submission)).toContain(
             `${unresolved.id} requires a user-approved waiver.`,
         );
+        expect(ledger.getStatusSnapshot()).toMatchObject({
+            waiverRequiredClaimIds: [unresolved.id],
+            finalChoice: "blockedByWaivers",
+        });
 
         ledger.recordWaiver({
             claimId: unresolved.id,
@@ -656,6 +664,11 @@ describe("exploration ledger", () => {
         expect(ledger.getGateBlockers(submission)).toContain(
             `${unresolved.id} requires a fresh completed review.`,
         );
+        expect(ledger.getStatusSnapshot()).toMatchObject({
+            waiverRequiredClaimIds: [],
+            missingSuccessfulReviewClaimIds: [unresolved.id],
+            finalChoice: "blockedByReviews",
+        });
 
         const reviewer = ledger.captureEvidence({
             toolCallId: "call-2",
@@ -863,9 +876,16 @@ describe("exploration ledger", () => {
         expect(ledger.getGateBlockers(submission(beforeReview.id))).toContain(
             "User choice evidence must follow required review RV-001.",
         );
+        expect(ledger.getStatusSnapshot()).toMatchObject({
+            requiredReviewClaimIds: [claim.id],
+            satisfiedReviewClaimIds: [claim.id],
+            missingSuccessfulReviewClaimIds: [],
+            finalChoice: "stale",
+        });
 
         const afterReview = captureChoice("choice-after-review");
         expect(ledger.getGateBlockers(submission(afterReview.id))).toEqual([]);
+        expect(ledger.getStatusSnapshot().finalChoice).toBe("recorded");
 
         ledger.recordVerificationCompletion({
             verificationRunId: "async-newer",
@@ -883,9 +903,14 @@ describe("exploration ledger", () => {
         expect(ledger.getGateBlockers(submission(afterReview.id))).toContain(
             "User choice evidence must follow required review RV-002.",
         );
+        expect(ledger.getStatusSnapshot().finalChoice).toBe("stale");
 
         const finalChoice = captureChoice("choice-after-latest-review");
         expect(ledger.getGateBlockers(submission(finalChoice.id))).toEqual([]);
+        expect(ledger.getStatusSnapshot()).toMatchObject({
+            reviews: { total: 2, success: 2 },
+            finalChoice: "recorded",
+        });
     });
 
     it("rejects multi-question evidence as final choice provenance", () => {
@@ -2106,6 +2131,160 @@ describe("exploration ledger", () => {
                 }),
             ).toContain(`${claim.id} requires a fresh completed review.`);
         }
+    });
+
+    it("reports malformed reviews as missing successful review work", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-status" });
+        const direct = ledger.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const claim = ledger.recordClaim({
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [direct.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+        });
+        ledger.recordVerificationFailure({
+            verificationRunId: "async-malformed",
+            failureKind: "malformed",
+            reason: "Owner mismatch.",
+            groups: [
+                {
+                    agent: "scout",
+                    outputName: "verify_local_code_supported",
+                    claimIds: [claim.id],
+                    evidenceIds: [direct.id],
+                },
+            ],
+        });
+
+        expect(ledger.getStatusSnapshot()).toEqual({
+            evidenceTotal: 1,
+            claims: { historical: 1, active: 1 },
+            reviews: {
+                total: 1,
+                success: 0,
+                failed: 0,
+                malformed: 1,
+                timeout: 0,
+            },
+            unresolvedCriticalClaimIds: [],
+            requiredReviewClaimIds: [claim.id],
+            satisfiedReviewClaimIds: [],
+            missingSuccessfulReviewClaimIds: [claim.id],
+            architectureBlockedClaimIds: [],
+            waiverRequiredClaimIds: [],
+            finalChoice: "blockedByReviews",
+        });
+    });
+
+    it("does not count an invalid restored legacy review as successful", () => {
+        const original = createExplorationLedger({ runId: "brainstorm-legacy" });
+        const primary = original.captureEvidence({
+            toolCallId: "call-primary",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const claim = original.recordClaim({
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [primary.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+        });
+        const reviewer = original.captureEvidence({
+            toolCallId: "call-reviewer",
+            toolName: "subagent",
+            input: reviewerChainInput("Review the runtime claim."),
+            content: [{ type: "text", text: "review envelope" }],
+            details: {
+                results: [
+                    {
+                        agent: "reviewer",
+                        context: "fresh",
+                        exitCode: 0,
+                        structuredOutput: {
+                            outcome: "supported",
+                            claimIds: [claim.id],
+                            evidenceIds: [primary.id],
+                        },
+                    },
+                ],
+            },
+            isError: false,
+        });
+        original.recordReview({
+            reviewerEvidenceId: reviewer.id,
+            claimIds: [claim.id],
+            primaryEvidenceIds: [primary.id],
+            summary: "Legacy review supports the claim.",
+        });
+        const corrupted = original.getRecords().map((record) =>
+            record.kind === "review" && "reviewerEvidenceId" in record
+                ? { ...record, reviewerEvidenceId: "EV-999" }
+                : record,
+        ) as ExplorationRecord[];
+
+        const restored = createExplorationLedger({
+            runId: "brainstorm-legacy",
+            initialRecords: corrupted,
+        });
+
+        expect(restored.getStatusSnapshot().reviews).toEqual({
+            total: 1,
+            success: 0,
+            failed: 0,
+            malformed: 1,
+            timeout: 0,
+        });
+        expect(
+            restored.getStatusSnapshot().missingSuccessfulReviewClaimIds,
+        ).toEqual([claim.id]);
+
+        const validRecords = original.getRecords();
+        const reviewSequence = validRecords.find(
+            (record) => record.kind === "review",
+        )!.sequence;
+        const nonPriorReviewer = validRecords.map((record) =>
+            record.kind === "evidence" && record.id === reviewer.id
+                ? { ...record, sequence: reviewSequence + 1 }
+                : record,
+        ) as ExplorationRecord[];
+        const restoredNonPrior = createExplorationLedger({
+            runId: "brainstorm-legacy",
+            initialRecords: nonPriorReviewer,
+        });
+        expect(restoredNonPrior.getStatusSnapshot().reviews).toMatchObject({
+            total: 1,
+            success: 0,
+            malformed: 1,
+        });
+        expect(restoredNonPrior.getGateBlockers({
+            approachClaimIds: [[claim.id]],
+            recommendationClaimIds: [claim.id],
+            userChoice: "Choose A",
+        })).toContain(
+            `Restored review RV-001 references non-prior reviewer evidence ${reviewer.id}.`,
+        );
     });
 
     it("audits a pending run even when its selected claim was superseded before completion", () => {

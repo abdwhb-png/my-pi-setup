@@ -23,7 +23,7 @@ export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
 export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 
-type RpcMethod = "ping" | "spawn" | "status";
+type RpcMethod = "ping" | "spawn" | "status" | "stop";
 
 export interface EventBusLike {
     on(event: string, handler: (data: unknown) => void): (() => void) | void;
@@ -54,14 +54,26 @@ export type PendingVerificationStep = Readonly<
       })
 >;
 
+export type PendingVerificationRecovery = Readonly<{
+    waitUsed?: boolean;
+    steerAttempted?: boolean;
+    steering?: Readonly<{
+        requestId: string;
+        state: "pending";
+        targetIndexes: readonly number[];
+    }>;
+}>;
+
 export type PendingVerificationRun = Readonly<{
     runId: string;
     asyncDir: string;
     ownerSessionId: string;
+    ownerSessionFile: string;
     brainstormRunId: string;
     claimIds: readonly string[];
     startedAt: string;
     expectedSteps: readonly PendingVerificationStep[];
+    recovery?: PendingVerificationRecovery;
 }>;
 
 export type OwnedTerminalCompletion =
@@ -164,6 +176,8 @@ export function isPendingVerificationRun(
         !hasTrustedAsyncDirShape(pending.asyncDir, pending.runId) ||
         typeof pending.ownerSessionId !== "string" ||
         !pending.ownerSessionId.trim() ||
+        typeof pending.ownerSessionFile !== "string" ||
+        !isAbsolute(pending.ownerSessionFile) ||
         typeof pending.brainstormRunId !== "string" ||
         !pending.brainstormRunId.trim() ||
         typeof pending.startedAt !== "string" ||
@@ -176,8 +190,46 @@ export function isPendingVerificationRun(
     )
         return false;
 
+    const expectedStepCount = pending.expectedSteps.length;
+    const recovery = record(pending.recovery);
+    if (pending.recovery !== undefined) {
+        if (
+            !recovery ||
+            (recovery.waitUsed !== undefined &&
+                typeof recovery.waitUsed !== "boolean") ||
+            (recovery.steerAttempted !== undefined &&
+                typeof recovery.steerAttempted !== "boolean")
+        )
+            return false;
+        if (
+            (recovery.steerAttempted === true) !==
+            (recovery.steering !== undefined)
+        )
+            return false;
+        if (recovery.steering !== undefined) {
+            const steering = record(recovery.steering);
+            if (
+                !steering ||
+                typeof steering.requestId !== "string" ||
+                !steering.requestId.trim() ||
+                steering.state !== "pending" ||
+                !Array.isArray(steering.targetIndexes) ||
+                steering.targetIndexes.length === 0 ||
+                !steering.targetIndexes.every(
+                    (index) =>
+                        Number.isSafeInteger(index) &&
+                        Number(index) >= 0 &&
+                        Number(index) < expectedStepCount,
+                ) ||
+                new Set(steering.targetIndexes).size !==
+                    steering.targetIndexes.length
+            )
+                return false;
+        }
+    }
+
     const outputNames = new Set<string>();
-    const pendingClaimIds = pending.claimIds as readonly string[];
+    const pendingClaimIds = pending.claimIds;
     let architectCount = 0;
     for (const [stepPosition, rawStep] of pending.expectedSteps.entries()) {
         const step = record(rawStep);
@@ -238,11 +290,8 @@ export function parseOwnedTerminalCompletion(
     const completion = record(value);
     if (!completion || completion.runId !== pending.runId)
         return { kind: "unrelated" };
-    if (completion.sessionId !== pending.ownerSessionId)
-        return terminalFailure(
-            "malformed",
-            "Completion owner session does not match the pending run.",
-        );
+    if (completion.sessionId !== pending.ownerSessionFile)
+        return { kind: "unrelated" };
     if (completion.timedOut === true)
         return terminalFailure(
             "timeout",
@@ -298,7 +347,6 @@ export function parseOwnedTerminalCompletion(
             result.context !== "fresh" ||
             result.status !== "completed" ||
             result.success !== true ||
-            result.exitCode !== 0 ||
             result.structuredOutput === undefined
         )
             return terminalFailure(
@@ -372,7 +420,7 @@ export function readOwnedTerminalStatusArtifact(
             !status ||
             status.lifecycleArtifactVersion !== 3 ||
             status.runId !== pending.runId ||
-            status.sessionId !== pending.ownerSessionId ||
+            status.sessionId !== pending.ownerSessionFile ||
             status.mode !== "chain" ||
             !Array.isArray(status.steps) ||
             status.steps.length !== pending.expectedSteps.length
@@ -603,6 +651,9 @@ export function createVerificationRpcClient(events: EventBusLike) {
                 ...(typeof session?.sessionId === "string"
                     ? { sessionId: session.sessionId }
                     : {}),
+                ...(typeof session?.sessionFile === "string"
+                    ? { sessionFile: session.sessionFile }
+                    : {}),
                 asyncCompleteEvent: completionEvent,
             };
         },
@@ -626,6 +677,17 @@ export function createVerificationRpcClient(events: EventBusLike) {
                 runId,
                 asyncDir,
             };
+        },
+        async stop(runId: string, timeoutMs: number) {
+            const data = record(
+                await call("stop", { runId: text(runId, "runId") }, timeoutMs),
+            );
+            if (
+                data?.runId !== runId ||
+                data.state !== "stopping" ||
+                typeof data.message !== "string"
+            )
+                throw new Error("Malformed subagent RPC stop response.");
         },
         async status(runId: string, timeoutMs: number) {
             const data = record(
