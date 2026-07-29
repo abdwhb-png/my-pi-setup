@@ -12,7 +12,7 @@ import {
   renderPrefix,
   type StatusBarState,
 } from "./status-segments";
-import type { UiColorsCreation } from "./ui-colors";
+import type { UiColorsCreation } from "./ui/ui-colors";
 
 /**
  * Identity color stub: every method returns its first string arg unchanged.

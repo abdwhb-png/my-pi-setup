@@ -6,11 +6,11 @@
  * - Uses shared box rendering for consistent header/footer styling
  */
 
-import type { Theme } from '@earendil-works/pi-coding-agent';
-import { type Component } from '@earendil-works/pi-tui';
-import { BoxRenderer } from '../_shared/box';
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
+import { BoxRenderer } from "../_shared/ui/framed-box";
 
-export const icon = '👥';
+export const icon = "👥";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -31,28 +31,28 @@ export class SubagentsOverviewView implements Component {
             done: () => void;
         },
     ) {
-        this.contentLines = config.content.split('\n');
+        this.contentLines = config.content.split("\n");
         this.state = { scrollOffset: 0 };
     }
 
     handleInput(data: string): void {
-        if (data === '\x1b' || data === 'q' || data === 'Q') {
+        if (data === "\x1b" || data === "q" || data === "Q") {
             this.config.done();
             return;
         }
 
         const isUp =
-            data === 'ArrowUp' ||
-            data === '\x1b[A' ||
-            data === '\x1bOA' ||
-            data === 'k';
+            data === "ArrowUp" ||
+            data === "\x1b[A" ||
+            data === "\x1bOA" ||
+            data === "k";
         const isDown =
-            data === 'ArrowDown' ||
-            data === '\x1b[B' ||
-            data === '\x1bOB' ||
-            data === 'j';
-        const isPageUp = data === 'PageUp' || data === '\x1b[5~';
-        const isPageDown = data === 'PageDown' || data === '\x1b[6~';
+            data === "ArrowDown" ||
+            data === "\x1b[B" ||
+            data === "\x1bOB" ||
+            data === "j";
+        const isPageUp = data === "PageUp" || data === "\x1b[5~";
+        const isPageDown = data === "PageDown" || data === "\x1b[6~";
 
         if (isUp) {
             this.state = {
@@ -115,28 +115,28 @@ export class AgentDetailView implements Component {
             done: () => void;
         },
     ) {
-        this.contentLines = config.content.split('\n');
+        this.contentLines = config.content.split("\n");
         this.state = { scrollOffset: 0 };
     }
 
     handleInput(data: string): void {
-        if (data === '\x1b' || data === 'q' || data === 'Q') {
+        if (data === "\x1b" || data === "q" || data === "Q") {
             this.config.done();
             return;
         }
 
         const isUp =
-            data === 'ArrowUp' ||
-            data === '\x1b[A' ||
-            data === '\x1bOA' ||
-            data === 'k';
+            data === "ArrowUp" ||
+            data === "\x1b[A" ||
+            data === "\x1bOA" ||
+            data === "k";
         const isDown =
-            data === 'ArrowDown' ||
-            data === '\x1b[B' ||
-            data === '\x1bOB' ||
-            data === 'j';
-        const isPageUp = data === 'PageUp' || data === '\x1b[5~';
-        const isPageDown = data === 'PageDown' || data === '\x1b[6~';
+            data === "ArrowDown" ||
+            data === "\x1b[B" ||
+            data === "\x1bOB" ||
+            data === "j";
+        const isPageUp = data === "PageUp" || data === "\x1b[5~";
+        const isPageDown = data === "PageDown" || data === "\x1b[6~";
 
         if (isUp) {
             this.state = {

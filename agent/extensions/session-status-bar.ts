@@ -12,21 +12,21 @@
  * Config: ~/.pi/agent/session-status-bar.json
  */
 
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { AssistantMessage } from '@earendil-works/pi-ai';
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import type {
     SessionEntry,
     SessionMessageEntry,
-} from '@earendil-works/pi-coding-agent';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
-import { visibleWidth } from '@earendil-works/pi-tui';
-import { createWidget, getSessionUsageMetrics } from './_shared/fancy-footer';
-import { getBranch } from './_shared/git-helper';
+} from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { createWidget, getSessionUsageMetrics } from "./_shared/fancy-footer";
+import { getBranch } from "./_shared/git-helper";
 import {
     type StatusBarState,
     type StatusBarColors,
@@ -37,10 +37,10 @@ import {
     renderContext,
     renderCost,
     renderModel,
-} from './_shared/status-segments';
-import { createUiColors } from './_shared/ui-colors';
+} from "./_shared/status-segments";
+import { createUiColors } from "./_shared/ui/ui-colors";
 
-const WIDGET_ID = 'session-status-bar';
+const WIDGET_ID = "session-status-bar";
 const DEFAULT_REFRESH_MS = 3000;
 const MAX_BRANCH_WIDTH = 18;
 
@@ -66,7 +66,7 @@ const DEFAULT_CONFIG: StatusBarConfig = {
     refreshMs: DEFAULT_REFRESH_MS,
 };
 
-type FooterAlign = 'left' | 'right';
+type FooterAlign = "left" | "right";
 
 type SegmentDef = {
     id: string;
@@ -80,48 +80,48 @@ type SegmentDef = {
 const SEGMENTS: readonly SegmentDef[] = [
     {
         id: `${WIDGET_ID}.cwd`,
-        label: 'Cwd',
-        align: 'left',
+        label: "Cwd",
+        align: "left",
         order: 0,
         show: (c) => c.showCwd,
         render: renderCwd,
     },
     {
         id: `${WIDGET_ID}.branch`,
-        label: 'Branch',
-        align: 'left',
+        label: "Branch",
+        align: "left",
         order: 1,
         show: (c) => c.showBranch,
         render: renderBranch,
     },
     {
         id: `${WIDGET_ID}.session`,
-        label: 'Session',
-        align: 'left',
+        label: "Session",
+        align: "left",
         order: 2,
         show: (c) => c.showSessionName,
         render: renderSessionName,
     },
     {
         id: `${WIDGET_ID}.context`,
-        label: 'Context',
-        align: 'right',
+        label: "Context",
+        align: "right",
         order: 0,
         show: (c) => c.showContext,
         render: renderContext,
     },
     {
         id: `${WIDGET_ID}.cost`,
-        label: 'Cost',
-        align: 'right',
+        label: "Cost",
+        align: "right",
         order: 1,
         show: (c) => c.showCost,
         render: renderCost,
     },
     {
         id: `${WIDGET_ID}.model`,
-        label: 'Model',
-        align: 'right',
+        label: "Model",
+        align: "right",
         order: 2,
         show: (c) => c.showModel,
         render: renderModel,
@@ -129,7 +129,7 @@ const SEGMENTS: readonly SegmentDef[] = [
 ];
 
 function getConfigPath(): string {
-    return join(getAgentDir(), 'session-status-bar.json');
+    return join(getAgentDir(), "session-status-bar.json");
 }
 
 function loadConfig(): StatusBarConfig {
@@ -137,7 +137,7 @@ function loadConfig(): StatusBarConfig {
     if (!existsSync(path)) return { ...DEFAULT_CONFIG };
     try {
         const raw = JSON.parse(
-            readFileSync(path, 'utf-8'),
+            readFileSync(path, "utf-8"),
         ) as Partial<StatusBarConfig>;
         return { ...DEFAULT_CONFIG, ...raw };
     } catch {
@@ -146,7 +146,7 @@ function loadConfig(): StatusBarConfig {
 }
 
 function isSessionMessageEntry(e: SessionEntry): e is SessionMessageEntry {
-    return e.type === 'message';
+    return e.type === "message";
 }
 
 function buildState(
@@ -158,7 +158,7 @@ function buildState(
         .getBranch()
         .filter(isSessionMessageEntry)
         .map((e) => e.message as AssistantMessage)
-        .filter((m) => m.role === 'assistant' && m.stopReason !== 'aborted');
+        .filter((m) => m.role === "assistant" && m.stopReason !== "aborted");
 
     const lastMessage = messages[messages.length - 1];
     const totalUsd = messages.reduce(
@@ -177,18 +177,18 @@ function buildState(
         contextWindow > 0 ? (contextTokens / contextWindow) * 100 : 0;
 
     const cwd = ctx.cwd;
-    const home = process.env.HOME || '';
+    const home = process.env.HOME || "";
     const shortCwd =
-        home && cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
+        home && cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
 
     const branch = config.showBranch ? branchName : null;
-    const shortBranch = branch ? shortenMiddle(branch, MAX_BRANCH_WIDTH) : '';
+    const shortBranch = branch ? shortenMiddle(branch, MAX_BRANCH_WIDTH) : "";
 
     return {
         workspace: { shortCwd, shortBranch },
         context: { tokens: contextTokens, window: contextWindow, percent },
         model: {
-            id: ctx.model?.id || 'no-model',
+            id: ctx.model?.id || "no-model",
             provider: ctx.model?.provider,
         },
         session: { name: ctx.sessionManager.getSessionName() },
@@ -214,20 +214,20 @@ function tryBuildStateFromBridge(
             contextWindow > 0 ? (contextTokens / contextWindow) * 100 : 0;
 
         const cwd = ctx.cwd;
-        const home = process.env.HOME || '';
+        const home = process.env.HOME || "";
         const shortCwd =
-            home && cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
+            home && cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
 
         const branch = config.showBranch ? branchName : null;
         const shortBranch = branch
             ? shortenMiddle(branch, MAX_BRANCH_WIDTH)
-            : '';
+            : "";
 
         return {
             workspace: { shortCwd, shortBranch },
             context: { tokens: contextTokens, window: contextWindow, percent },
             model: {
-                id: ctx.model?.id || 'no-model',
+                id: ctx.model?.id || "no-model",
                 provider: ctx.model?.provider,
             },
             session: { name: ctx.sessionManager.getSessionName() },
@@ -255,12 +255,12 @@ function buildFallbackLine(
         )
             .map((s) => s.render(state, width, colors))
             .filter((t) => visibleWidth(t) > 0);
-        return parts.join(' ');
+        return parts.join(" ");
     };
-    const left = renderGroup('left');
-    const right = renderGroup('right');
+    const left = renderGroup("left");
+    const right = renderGroup("right");
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
-    return `${left}${' '.repeat(gap)}${right}`;
+    return `${left}${" ".repeat(gap)}${right}`;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -277,10 +277,10 @@ export default function (pi: ExtensionAPI) {
             row: 0,
             order: seg.order,
             align: seg.align,
-            placement: 'belowEditor',
+            placement: "belowEditor",
             // Gated by config: empty render collapses the widget (footer drops it).
             render: (ctx, availableWidth) => {
-                if (!latestState || !seg.show(config)) return '';
+                if (!latestState || !seg.show(config)) return "";
                 const colors = createUiColors(ctx.theme);
                 return seg.render(
                     latestState,
@@ -311,26 +311,26 @@ export default function (pi: ExtensionAPI) {
             const colors = createUiColors(latestCtx.ui.theme);
             const fallbackText = latestState
                 ? buildFallbackLine(latestState, width, config, colors)
-                : colors.warning('Session Status Bar disabled in config');
+                : colors.warning("Session Status Bar disabled in config");
             for (const w of widgets) w.update(latestCtx, fallbackText);
         } catch {
             // leave previous render in place
         }
     }
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         latestCtx = ctx;
         await updateWidget();
         if (refreshTimer) clearInterval(refreshTimer);
         refreshTimer = setInterval(updateWidget, config.refreshMs);
     });
 
-    pi.on('agent_end', async (_event, ctx) => {
+    pi.on("agent_end", async (_event, ctx) => {
         latestCtx = ctx;
         await updateWidget();
     });
 
-    pi.on('session_shutdown', async (_event, ctx) => {
+    pi.on("session_shutdown", async (_event, ctx) => {
         if (refreshTimer) {
             clearInterval(refreshTimer);
             refreshTimer = null;

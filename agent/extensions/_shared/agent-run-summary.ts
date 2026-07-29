@@ -35,7 +35,6 @@ export function onAgentSettled(
     pi: ExtensionAPI,
     handler: AgentSettledHandler,
 ): void {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const settledApi = pi as unknown as {
         on(event: 'agent_settled', handler: AgentSettledHandler): void;
     };

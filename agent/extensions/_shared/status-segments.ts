@@ -4,8 +4,8 @@
  * No pi runtime imports — only types — so this module is unit-testable
  * without jiti mocks. The extension wires these into fancy-footer widgets.
  */
-import { visibleWidth } from '@earendil-works/pi-tui';
-import type { UiColorsCreation } from './ui-colors';
+import { visibleWidth } from "@earendil-works/pi-tui";
+import type { UiColorsCreation } from "./ui/ui-colors";
 
 export interface StatusBarState {
     workspace: { shortCwd: string; shortBranch: string };
@@ -18,9 +18,9 @@ export interface StatusBarState {
 export type StatusBarColors = UiColorsCreation;
 
 export function shortenMiddle(text: string, maxWidth: number): string {
-    if (maxWidth <= 0) return '';
+    if (maxWidth <= 0) return "";
     if (visibleWidth(text) <= maxWidth) return text;
-    if (maxWidth <= 3) return '.'.repeat(maxWidth);
+    if (maxWidth <= 3) return ".".repeat(maxWidth);
     const keep = maxWidth - 1;
     const left = Math.ceil(keep / 2);
     const right = Math.floor(keep / 2);
@@ -38,7 +38,7 @@ export function formatUsdCompact(
     value: number,
     colors: StatusBarColors,
 ): string {
-    const symbol = colors.primary('$');
+    const symbol = colors.primary("$");
     if (!Number.isFinite(value) || value <= 0) return `${symbol} 0.00`;
     if (value < 0.01) return `<${symbol} 0.01`;
     return `${symbol} ${value.toFixed(2)}`;
@@ -59,7 +59,7 @@ export function renderBranch(
 ): string {
     return state.workspace.shortBranch
         ? colors.primary(state.workspace.shortBranch)
-        : '';
+        : "";
 }
 
 export const renderPrefix = "📋session->";
@@ -70,7 +70,7 @@ export function renderSessionName(
     colors: StatusBarColors,
 ): string {
     const name = state.session.name;
-    if (!name) return '';
+    if (!name) return "";
     const maxName = Math.min(20, Math.max(8, availableWidth - 1));
     return colors.meta(`${renderPrefix}${shortenMiddle(name, maxName)}`);
 }
@@ -82,14 +82,14 @@ export function renderContext(
 ): string {
     const pct = `${Math.round(state.context.percent)}%`;
     return (
-        '🔋'+
+        "🔋" +
         colors.pressure(pct, state.context.percent) +
-        ' ' +
+        " " +
         colors.pressure(
             formatTokenCount(state.context.tokens),
             state.context.percent,
         ) +
-        colors.separator('/') +
+        colors.separator("/") +
         colors.primary(formatTokenCount(state.context.window))
     );
 }
@@ -109,6 +109,6 @@ export function renderModel(
 ): string {
     const provider = state.model.provider
         ? state.model.provider
-        : 'no-provider';
+        : "no-provider";
     return colors.subtle(`(${provider}) `) + colors.model(state.model.id);
 }

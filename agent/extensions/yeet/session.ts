@@ -1,12 +1,11 @@
-import type { Theme } from '@earendil-works/pi-coding-agent';
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
     Editor,
     truncateToWidth,
     type Component,
     type EditorTheme,
     type TUI,
-} from '@earendil-works/pi-tui';
-import { renderBoxHeader, renderBoxFooter } from '../_shared/box';
+} from "@earendil-works/pi-tui";
 import {
     isEnter,
     isEscape,
@@ -14,13 +13,14 @@ import {
     isCtrlR,
     isArrowUp,
     isArrowDown,
-} from '../_shared/commit-keys';
-import { renderCwd } from './cwd-display';
+} from "../_shared/commit-keys";
+import { renderBoxHeader, renderBoxFooter } from "../_shared/ui/framed-box";
+import { renderCwd } from "./cwd-display";
 import type {
     CommitPlanParams,
     CommitPlanResult,
     CommitPlanSessionState,
-} from './types';
+} from "./types";
 
 function rejectResult(
     params: CommitPlanParams,
@@ -32,11 +32,11 @@ function rejectResult(
         cancelled,
         ...(cancelled
             ? {}
-            : { rejection_reason: rejectionReason?.trim() ?? '' }),
+            : { rejection_reason: rejectionReason?.trim() ?? "" }),
         plan_summary: params.plan_summary,
         cwd: params.cwd,
         files: [],
-        commit_message: '',
+        commit_message: "",
     };
 }
 
@@ -50,13 +50,13 @@ export function handleCommitPlanInput(
     if (isTab(key)) {
         return {
             ...state,
-            focus: focus === 'message' ? 'files' : 'message',
+            focus: focus === "message" ? "files" : "message",
         };
     }
 
     // --- File list navigation ---
-    if (focus === 'files') {
-        if (key === ' ') {
+    if (focus === "files") {
+        if (key === " ") {
             const newFiles = [...files];
             if (fileCursorIndex >= 0 && fileCursorIndex < newFiles.length) {
                 newFiles[fileCursorIndex] = {
@@ -68,8 +68,8 @@ export function handleCommitPlanInput(
         }
 
         // Handle both test strings ("ArrowUp") and actual terminal escape sequences
-        const isUp = key === 'ArrowUp' || isArrowUp(key);
-        const isDown = key === 'ArrowDown' || isArrowDown(key);
+        const isUp = key === "ArrowUp" || isArrowUp(key);
+        const isDown = key === "ArrowDown" || isArrowDown(key);
 
         if (isUp) {
             return {
@@ -112,18 +112,18 @@ export class CommitPlanSession implements Component {
                 path,
                 selected: true,
             })),
-            focus: 'message',
+            focus: "message",
             fileCursorIndex: 0,
         };
 
         const editorTheme: EditorTheme = {
-            borderColor: (text) => config.theme.fg('border', text),
+            borderColor: (text) => config.theme.fg("border", text),
             selectList: {
-                selectedPrefix: (text) => config.theme.fg('accent', text),
-                selectedText: (text) => config.theme.fg('accent', text),
-                description: (text) => config.theme.fg('muted', text),
-                scrollInfo: (text) => config.theme.fg('muted', text),
-                noMatch: (text) => config.theme.fg('warning', text),
+                selectedPrefix: (text) => config.theme.fg("accent", text),
+                selectedText: (text) => config.theme.fg("accent", text),
+                description: (text) => config.theme.fg("muted", text),
+                scrollInfo: (text) => config.theme.fg("muted", text),
+                noMatch: (text) => config.theme.fg("warning", text),
             },
         };
 
@@ -182,7 +182,7 @@ export class CommitPlanSession implements Component {
             return;
         }
 
-        if (this.state.focus === 'message') {
+        if (this.state.focus === "message") {
             this.editorComponent.handleInput(data);
             return;
         }
@@ -211,13 +211,13 @@ export class CommitPlanSession implements Component {
 
         if (this.rejecting) {
             const lines = [
-                renderBoxHeader(theme, innerWidth, ' 📦 Reject Commit Plan '),
+                renderBoxHeader(theme, innerWidth, " 📦 Reject Commit Plan "),
                 ...renderCwd(theme, innerWidth, this.config.params.cwd),
-                theme.fg('border', '│') +
-                    ' ' +
+                theme.fg("border", "│") +
+                    " " +
                     theme.fg(
-                        'accent',
-                        theme.bold(' ✏️ Reason for rejection (optional):'),
+                        "accent",
+                        theme.bold(" ✏️ Reason for rejection (optional):"),
                     ),
             ];
 
@@ -225,21 +225,21 @@ export class CommitPlanSession implements Component {
             for (const line of this.rejectionReasonEditor.render(
                 innerWidth - 3,
             )) {
-                lines.push(theme.fg('border', '│') + '   ' + line);
+                lines.push(theme.fg("border", "│") + "   " + line);
             }
             lines.push(
-                theme.fg('border', '│') +
-                    '   ' +
+                theme.fg("border", "│") +
+                    "   " +
                     theme.fg(
-                        'muted',
-                        'Leave empty to request a different plan.',
+                        "muted",
+                        "Leave empty to request a different plan.",
                     ),
             );
             lines.push(
                 renderBoxFooter(
                     theme,
                     innerWidth,
-                    '[Enter] Reject [Shift+Enter] Line [Esc] Back',
+                    "[Enter] Reject [Shift+Enter] Line [Esc] Back",
                 ),
             );
             return lines;
@@ -249,27 +249,27 @@ export class CommitPlanSession implements Component {
         const lines: string[] = [];
 
         lines.push(
-            renderBoxHeader(theme, innerWidth, ' 📦 Commit Plan Review '),
+            renderBoxHeader(theme, innerWidth, " 📦 Commit Plan Review "),
         );
         lines.push(...renderCwd(theme, innerWidth, this.config.params.cwd));
 
-        const isMessageFocused = focus === 'message';
+        const isMessageFocused = focus === "message";
         this.editorComponent.focused = isMessageFocused;
         const msgLabel = isMessageFocused
-            ? ' ✏️ Edit Message:'
-            : ' Commit Message:';
+            ? " ✏️ Edit Message:"
+            : " Commit Message:";
         lines.push(
-            theme.fg('border', '│') +
-                ' ' +
-                theme.fg('accent', theme.bold(msgLabel)),
+            theme.fg("border", "│") +
+                " " +
+                theme.fg("accent", theme.bold(msgLabel)),
         );
 
         const editorLines = this.editorComponent.render(innerWidth - 3);
         for (const line of editorLines) {
-            lines.push(theme.fg('border', '│') + '   ' + line);
+            lines.push(theme.fg("border", "│") + "   " + line);
         }
 
-        lines.push(theme.fg('border', '├' + '─'.repeat(innerWidth) + '┤'));
+        lines.push(theme.fg("border", "├" + "─".repeat(innerWidth) + "┤"));
 
         const terminalRows = Math.max(1, this.config.tui.terminal.rows);
         const fileViewportHeight = Math.max(1, terminalRows - lines.length - 2);
@@ -295,53 +295,53 @@ export class CommitPlanSession implements Component {
         const rangeLabel =
             files.length > fileViewportHeight
                 ? ` ${this.fileViewportStart + 1}-${fileViewportEnd} of ${files.length}`
-                : '';
+                : "";
         const filesLabel =
-            focus === 'files'
+            focus === "files"
                 ? ` 📁 Select Files:${rangeLabel}`
                 : ` Files:${rangeLabel}`;
         lines.push(
-            theme.fg('border', '│') +
-                ' ' +
-                theme.fg('accent', theme.bold(filesLabel)),
+            theme.fg("border", "│") +
+                " " +
+                theme.fg("accent", theme.bold(filesLabel)),
         );
 
         if (files.length === 0) {
             lines.push(
-                theme.fg('border', '│') +
-                    '   ' +
-                    theme.fg('muted', '(no files)'),
+                theme.fg("border", "│") +
+                    "   " +
+                    theme.fg("muted", "(no files)"),
             );
         } else {
             for (let i = this.fileViewportStart; i < fileViewportEnd; i++) {
                 const f = files[i];
-                const isFocused = focus === 'files' && i === fileCursorIndex;
+                const isFocused = focus === "files" && i === fileCursorIndex;
                 const checkbox = f.selected
-                    ? theme.fg('success', '[x]')
-                    : theme.fg('muted', '[ ]');
+                    ? theme.fg("success", "[x]")
+                    : theme.fg("muted", "[ ]");
 
-                let pathText = ' ' + f.path;
+                let pathText = " " + f.path;
                 if (isFocused) {
-                    pathText = theme.bg('selectedBg', theme.bold(pathText));
+                    pathText = theme.bg("selectedBg", theme.bold(pathText));
                 } else {
-                    pathText = theme.fg('text', pathText);
+                    pathText = theme.fg("text", pathText);
                 }
 
                 const maxPathWidth = innerWidth - 6;
                 const truncatedPath = truncateToWidth(pathText, maxPathWidth);
                 lines.push(
-                    theme.fg('border', '│') +
-                        '   ' +
+                    theme.fg("border", "│") +
+                        "   " +
                         checkbox +
-                        ' ' +
+                        " " +
                         truncatedPath,
                 );
             }
         }
 
         const footerText = isMessageFocused
-            ? '[Tab] Files [Enter] Accept [Shift+Enter] Line [Ctrl+R] Reject [Esc] Cancel'
-            : '[Tab]Message [↑↓]Move [Space]Toggle [Enter]Accept [Ctrl+R]Rej [Esc]Cancel';
+            ? "[Tab] Files [Enter] Accept [Shift+Enter] Line [Ctrl+R] Reject [Esc] Cancel"
+            : "[Tab]Message [↑↓]Move [Space]Toggle [Enter]Accept [Ctrl+R]Rej [Esc]Cancel";
 
         lines.push(renderBoxFooter(theme, innerWidth, footerText));
 

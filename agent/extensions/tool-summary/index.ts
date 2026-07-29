@@ -11,22 +11,22 @@
  * When tools[] has entries, only those tools are displayed.
  */
 
-import type { ToolResultMessage } from '@earendil-works/pi-ai';
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ToolResultEvent,
-} from '@earendil-works/pi-coding-agent';
-import { TOOL_SUMMARY_EVENT } from '../_shared/agent-run-summary.ts';
-import { createUiColors } from '../_shared/ui-colors.ts';
-import { ToolFilter, handleToolSummaryCommand } from './commands.ts';
-import { loadToolSummaryConfig } from './config.ts';
-import { countToolUsage, formatSummary } from './summary.ts';
+} from "@earendil-works/pi-coding-agent";
+import { TOOL_SUMMARY_EVENT } from "../_shared/agent-run-summary.ts";
+import { createUiColors } from "../_shared/ui/ui-colors.ts";
+import { ToolFilter, handleToolSummaryCommand } from "./commands.ts";
+import { loadToolSummaryConfig } from "./config.ts";
+import { countToolUsage, formatSummary } from "./summary.ts";
 
-const ICON = '🔧';
+const ICON = "🔧";
 
 /** Check for RPC mode — skip TUI-only extension. */
 function isRPCMode(): boolean {
-    return process.argv.includes('--mode') && process.argv.includes('rpc');
+    return process.argv.includes("--mode") && process.argv.includes("rpc");
 }
 
 export default function (pi: ExtensionAPI) {
@@ -35,7 +35,7 @@ export default function (pi: ExtensionAPI) {
     const filter = new ToolFilter();
     let toolResults: ToolResultMessage[] = [];
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         const config = loadToolSummaryConfig(ctx.cwd);
         filter.reset();
         if (config.tools.length > 0) {
@@ -43,13 +43,13 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    pi.on('agent_start', async () => {
+    pi.on("agent_start", async () => {
         toolResults = [];
     });
 
-    pi.on('tool_result', async (event: ToolResultEvent) => {
+    pi.on("tool_result", async (event: ToolResultEvent) => {
         toolResults.push({
-            role: 'toolResult',
+            role: "toolResult",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             content: event.content,
@@ -59,7 +59,7 @@ export default function (pi: ExtensionAPI) {
         });
     });
 
-    pi.on('agent_end', async (_event, ctx) => {
+    pi.on("agent_end", async (_event, ctx) => {
         if (!ctx.hasUI) return;
 
         const colors = createUiColors(ctx.ui.theme);
@@ -69,15 +69,15 @@ export default function (pi: ExtensionAPI) {
 
         if (summary) {
             pi.events.emit(TOOL_SUMMARY_EVENT, {
-                prefix: 'TOOLS',
+                prefix: "TOOLS",
                 text: `${colors.primary(ICON)} ${summary}`,
             });
         }
     });
 
-    pi.registerCommand('tool-summary', {
+    pi.registerCommand("tool-summary", {
         description:
-            'Manage tool summary filter. Subcommands: list, add <tools...>, remove <tools...>, reset',
+            "Manage tool summary filter. Subcommands: list, add <tools...>, remove <tools...>, reset",
         handler: async (args, ctx) => {
             const colors = createUiColors(ctx.ui.theme);
             await handleToolSummaryCommand(args, ctx, filter, colors);

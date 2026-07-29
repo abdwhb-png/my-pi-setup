@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { createUiColors } from '../_shared/ui-colors.ts';
+import { createUiColors } from '../_shared/ui/ui-colors.ts';
 import {
     ToolFilter,
     formatFilterState,

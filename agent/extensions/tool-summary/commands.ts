@@ -11,8 +11,8 @@
 import type {
     ExtensionContext,
     ExtensionCommandContext,
-} from '@earendil-works/pi-coding-agent';
-import type { UiColorsCreation } from '../_shared/ui-colors.ts';
+} from "@earendil-works/pi-coding-agent";
+import type { UiColorsCreation } from "../_shared/ui/ui-colors.ts";
 
 /** Runtime mutable filter state (session-only). */
 export class ToolFilter {
@@ -60,9 +60,9 @@ export function formatFilterState(
 ): string {
     const tools = filter.getFilter();
     if (tools === null || tools.length === 0) {
-        return colors.success('All tools');
+        return colors.success("All tools");
     }
-    return colors.primary(tools.join(', '));
+    return colors.primary(tools.join(", "));
 }
 
 /**
@@ -80,58 +80,58 @@ export async function handleToolSummaryCommand(
     colors: UiColorsCreation,
 ): Promise<void> {
     const parts = args.trim().split(/\s+/);
-    const subcommand = parts[0]?.toLowerCase() ?? '';
+    const subcommand = parts[0]?.toLowerCase() ?? "";
     const rest = parts.slice(1);
 
     switch (subcommand) {
-        case 'list':
-        case '': {
+        case "list":
+        case "": {
             const current = formatFilterState(filter, colors);
-            ctx.ui.notify(`Tool summary filter: ${current}`, 'info');
+            ctx.ui.notify(`Tool summary filter: ${current}`, "info");
             break;
         }
-        case 'add': {
+        case "add": {
             if (rest.length === 0) {
                 ctx.ui.notify(
-                    'Usage: /tool-summary add <tool names...>',
-                    'error',
+                    "Usage: /tool-summary add <tool names...>",
+                    "error",
                 );
                 return;
             }
             filter.add(...rest);
             ctx.ui.notify(
                 `Tool summary filter: ${formatFilterState(filter, colors)}`,
-                'info',
+                "info",
             );
             break;
         }
-        case 'remove': {
+        case "remove": {
             if (rest.length === 0) {
                 ctx.ui.notify(
-                    'Usage: /tool-summary remove <tool names...>',
-                    'error',
+                    "Usage: /tool-summary remove <tool names...>",
+                    "error",
                 );
                 return;
             }
             filter.remove(...rest);
             ctx.ui.notify(
                 `Tool summary filter: ${formatFilterState(filter, colors)}`,
-                'info',
+                "info",
             );
             break;
         }
-        case 'reset': {
+        case "reset": {
             filter.reset();
             ctx.ui.notify(
-                'Tool summary filter reset - showing all tools',
-                'info',
+                "Tool summary filter reset - showing all tools",
+                "info",
             );
             break;
         }
         default: {
             ctx.ui.notify(
                 `Unknown subcommand: ${subcommand}. Use list, add, remove, or reset.`,
-                'error',
+                "error",
             );
         }
     }

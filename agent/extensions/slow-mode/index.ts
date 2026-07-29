@@ -28,7 +28,7 @@ import {
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { isDangerous } from "../_shared/bash/guard";
 import { createWidget } from "../_shared/fancy-footer.ts";
-import { createUiColors } from "../_shared/ui-colors.ts";
+import { createUiColors } from "../_shared/ui/ui-colors.ts";
 import {
     resolvePath,
     generateUnifiedDiff,
@@ -226,7 +226,6 @@ export default function slowMode(pi: ExtensionAPI) {
             w.update(ctx, buildWidgetText(enabled, toolConfig));
 
             pi.appendEntry("slow-mode", { enabled });
-
 
             if (enabled) {
                 const tools = reviewedTools(toolConfig);

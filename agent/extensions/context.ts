@@ -8,17 +8,17 @@
  * - current context window usage + session totals (tokens/cost)
  */
 
-import { existsSync } from 'node:fs';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
+import { existsSync } from "node:fs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type {
     ExtensionAPI,
     ExtensionCommandContext,
     ExtensionContext,
     ToolResultEvent,
-} from '@earendil-works/pi-coding-agent';
-import { DynamicBorder } from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
     Container,
     Key,
@@ -26,11 +26,11 @@ import {
     matchesKey,
     type Component,
     type TUI,
-} from '@earendil-works/pi-tui';
-import { createUiColors } from './_shared/ui-colors.ts';
+} from "@earendil-works/pi-tui";
+import { createUiColors } from "./_shared/ui/ui-colors.ts";
 
 function formatUsd(cost: number): string {
-    if (!Number.isFinite(cost) || cost <= 0) return '$0.00';
+    if (!Number.isFinite(cost) || cost <= 0) return "$0.00";
     if (cost >= 1) return `$${cost.toFixed(2)}`;
     if (cost >= 0.1) return `$${cost.toFixed(3)}`;
     return `$${cost.toFixed(4)}`;
@@ -44,16 +44,16 @@ function estimateTokens(text: string): number {
 function normalizeReadPath(inputPath: string, cwd: string): string {
     // Similar to pi's resolveToCwd/resolveReadPath, but simplified.
     let p = inputPath;
-    if (p.startsWith('@')) p = p.slice(1);
-    if (p === '~') p = os.homedir();
-    else if (p.startsWith('~/')) p = path.join(os.homedir(), p.slice(2));
+    if (p.startsWith("@")) p = p.slice(1);
+    if (p === "~") p = os.homedir();
+    else if (p.startsWith("~/")) p = path.join(os.homedir(), p.slice(2));
     if (!path.isAbsolute(p)) p = path.resolve(cwd, p);
     return path.resolve(p);
 }
 
 function getAgentDir(): string {
     // Mirrors pi's behavior reasonably well.
-    const envCandidates = ['PI_CODING_AGENT_DIR', 'TAU_CODING_AGENT_DIR'];
+    const envCandidates = ["PI_CODING_AGENT_DIR", "TAU_CODING_AGENT_DIR"];
     let envDir: string | undefined;
     for (const k of envCandidates) {
         if (process.env[k]) {
@@ -63,7 +63,7 @@ function getAgentDir(): string {
     }
     if (!envDir) {
         for (const [k, v] of Object.entries(process.env)) {
-            if (k.endsWith('_CODING_AGENT_DIR') && v) {
+            if (k.endsWith("_CODING_AGENT_DIR") && v) {
                 envDir = v;
                 break;
             }
@@ -71,12 +71,12 @@ function getAgentDir(): string {
     }
 
     if (envDir) {
-        if (envDir === '~') return os.homedir();
-        if (envDir.startsWith('~/'))
+        if (envDir === "~") return os.homedir();
+        if (envDir.startsWith("~/"))
             return path.join(os.homedir(), envDir.slice(2));
         return envDir;
     }
-    return path.join(os.homedir(), '.pi', 'agent');
+    return path.join(os.homedir(), ".pi", "agent");
 }
 
 async function readFileIfExists(
@@ -87,7 +87,7 @@ async function readFileIfExists(
         const buf = await fs.readFile(filePath);
         return {
             path: filePath,
-            content: buf.toString('utf8'),
+            content: buf.toString("utf8"),
             bytes: buf.byteLength,
         };
     } catch {
@@ -103,7 +103,7 @@ async function loadProjectContextFiles(
 
     const loadFromDir = async (dir: string) => {
         const results = await Promise.all(
-            ['AGENTS.md', 'CLAUDE.md'].map((name) =>
+            ["AGENTS.md", "CLAUDE.md"].map((name) =>
                 readFileIfExists(path.join(dir, name)),
             ),
         );
@@ -128,7 +128,7 @@ async function loadProjectContextFiles(
     let current = path.resolve(cwd);
     while (true) {
         stack.push(current);
-        const parent = path.resolve(current, '..');
+        const parent = path.resolve(current, "..");
         if (parent === current) break;
         current = parent;
     }
@@ -139,7 +139,7 @@ async function loadProjectContextFiles(
 }
 
 function normalizeSkillName(name: string): string {
-    return name.startsWith('skill:') ? name.slice('skill:'.length) : name;
+    return name.startsWith("skill:") ? name.slice("skill:".length) : name;
 }
 
 type SkillIndexEntry = {
@@ -153,27 +153,27 @@ export function getSkillPathFromCommand(cmd: {
     source?: string;
     sourceInfo?: { path?: string };
 }): string {
-    if (cmd.source !== 'skill') return '';
-    return cmd.sourceInfo?.path ?? '';
+    if (cmd.source !== "skill") return "";
+    return cmd.sourceInfo?.path ?? "";
 }
 
 function buildSkillIndex(pi: ExtensionAPI, cwd: string): SkillIndexEntry[] {
     return pi
         .getCommands()
-        .filter((c) => c.source === 'skill')
+        .filter((c) => c.source === "skill")
         .map((c) => {
             const p = getSkillPathFromCommand(c);
-            const fullPath = p ? normalizeReadPath(p, cwd) : '';
+            const fullPath = p ? normalizeReadPath(p, cwd) : "";
             return {
                 name: normalizeSkillName(c.name),
                 skillFilePath: fullPath,
-                skillDir: fullPath ? path.dirname(fullPath) : '',
+                skillDir: fullPath ? path.dirname(fullPath) : "",
             };
         })
         .filter((x) => x.name && x.skillDir);
 }
 
-const SKILL_LOADED_ENTRY = 'context:skill_loaded';
+const SKILL_LOADED_ENTRY = "context:skill_loaded";
 
 type SkillLoadedEntryData = {
     name: string;
@@ -183,7 +183,7 @@ type SkillLoadedEntryData = {
 function getLoadedSkillsFromSession(ctx: ExtensionContext): Set<string> {
     const out = new Set<string>();
     for (const e of ctx.sessionManager.getEntries()) {
-        if ((e as any)?.type !== 'custom') continue;
+        if ((e as any)?.type !== "custom") continue;
         if ((e as any)?.customType !== SKILL_LOADED_ENTRY) continue;
         const data = (e as any)?.data as SkillLoadedEntryData | undefined;
         if (data?.name) out.add(data.name);
@@ -194,14 +194,14 @@ function getLoadedSkillsFromSession(ctx: ExtensionContext): Set<string> {
 function extractCostTotal(usage: any): number {
     if (!usage) return 0;
     const c = usage?.cost;
-    if (typeof c === 'number') return Number.isFinite(c) ? c : 0;
-    if (typeof c === 'string') {
+    if (typeof c === "number") return Number.isFinite(c) ? c : 0;
+    if (typeof c === "string") {
         const n = Number(c);
         return Number.isFinite(n) ? n : 0;
     }
     const t = c?.total;
-    if (typeof t === 'number') return Number.isFinite(t) ? t : 0;
-    if (typeof t === 'string') {
+    if (typeof t === "number") return Number.isFinite(t) ? t : 0;
+    if (typeof t === "string") {
         const n = Number(t);
         return Number.isFinite(n) ? n : 0;
     }
@@ -223,9 +223,9 @@ function sumSessionUsage(ctx: ExtensionCommandContext): {
     let totalCost = 0;
 
     for (const entry of ctx.sessionManager.getEntries()) {
-        if ((entry as any)?.type !== 'message') continue;
+        if ((entry as any)?.type !== "message") continue;
         const msg = (entry as any)?.message;
-        if (!msg || msg.role !== 'assistant') continue;
+        if (!msg || msg.role !== "assistant") continue;
         const usage = msg.usage;
         if (!usage) continue;
         input += Number(usage.inputTokens ?? 0) || 0;
@@ -248,8 +248,8 @@ function sumSessionUsage(ctx: ExtensionCommandContext): {
 function shortenPath(p: string, cwd: string): string {
     const rp = path.resolve(p);
     const rc = path.resolve(cwd);
-    if (rp === rc) return '.';
-    if (rp.startsWith(rc + path.sep)) return './' + rp.slice(rc.length + 1);
+    if (rp === rc) return ".";
+    if (rp.startsWith(rc + path.sep)) return "./" + rp.slice(rc.length + 1);
     return rp;
 }
 
@@ -260,7 +260,7 @@ function renderUsageBar(
     width: number,
 ): string {
     const w = Math.max(10, width);
-    if (total <= 0) return '';
+    if (total <= 0) return "";
 
     const toCols = (n: number) => Math.round((n / total) * w);
     let sys = toCols(parts.system);
@@ -273,7 +273,7 @@ function renderUsageBar(
     while (sys + tools + con + rem > w && rem > 0) rem--;
 
     const colors = createUiColors(theme);
-    const block = '█';
+    const block = "█";
     const sysStr = colors.primary(block.repeat(sys));
     const toolsStr = colors.warning(block.repeat(tools));
     const conStr = colors.success(block.repeat(con));
@@ -282,7 +282,7 @@ function renderUsageBar(
 }
 
 function joinComma(items: string[]): string {
-    return items.join(', ');
+    return items.join(", ");
 }
 
 function joinCommaStyled(
@@ -294,11 +294,11 @@ function joinCommaStyled(
 }
 
 export function calculateExtensionFiles(commands: any[]): string[] {
-    const extensionCmds = commands.filter((c) => c.source === 'extension');
+    const extensionCmds = commands.filter((c) => c.source === "extension");
 
     const extensionsByPath = new Map<string, string[]>();
     for (const c of extensionCmds) {
-        const p = c.sourceInfo?.path ?? '<unknown>';
+        const p = c.sourceInfo?.path ?? "<unknown>";
         const arr = extensionsByPath.get(p) ?? [];
         arr.push(c.name);
         extensionsByPath.set(p, arr);
@@ -310,7 +310,7 @@ export function calculateExtensionFiles(commands: any[]): string[] {
     // unique among all paths. Walk up directory by directory until unique.
     return paths
         .map((p) => {
-            if (p === '<unknown>') return p;
+            if (p === "<unknown>") return p;
             const bn = path.basename(p);
             let suffix = bn;
             let cursor = path.dirname(p);
@@ -319,7 +319,7 @@ export function calculateExtensionFiles(commands: any[]): string[] {
             while (true) {
                 const collisions = paths.filter(
                     (other) =>
-                        other !== '<unknown>' &&
+                        other !== "<unknown>" &&
                         other !== p &&
                         other.endsWith(`/${suffix}`),
                 );
@@ -379,18 +379,18 @@ class ContextView implements Component {
         this.container.addChild(new DynamicBorder((s) => colors.primary(s)));
         this.container.addChild(
             new Text(
-                colors.primary(theme.bold('Context')) +
-                    colors.subtle('  (Esc/q/Enter to close)'),
+                colors.primary(theme.bold("Context")) +
+                    colors.subtle("  (Esc/q/Enter to close)"),
                 1,
                 0,
             ),
         );
-        this.container.addChild(new Text('', 1, 0));
+        this.container.addChild(new Text("", 1, 0));
 
-        this.body = new Text('', 1, 0);
+        this.body = new Text("", 1, 0);
         this.container.addChild(this.body);
 
-        this.container.addChild(new Text('', 1, 0));
+        this.container.addChild(new Text("", 1, 0));
         this.container.addChild(new DynamicBorder((s) => colors.primary(s)));
     }
 
@@ -404,11 +404,11 @@ class ContextView implements Component {
 
         // Window + bar
         if (!this.data.usage) {
-            lines.push(muted('Window: ') + dim('(unknown)'));
+            lines.push(muted("Window: ") + dim("(unknown)"));
         } else {
             const u = this.data.usage;
             lines.push(
-                muted('Window: ') +
+                muted("Window: ") +
                     text(
                         `~${u.effectiveTokens.toLocaleString()} / ${u.contextWindow.toLocaleString()}`,
                     ) +
@@ -441,50 +441,50 @@ class ContextView implements Component {
                     u.contextWindow,
                     barWidth,
                 ) +
-                ' ' +
-                dim('sys') +
-                colors.primary('█') +
-                ' ' +
-                dim('tools') +
-                colors.warning('█') +
-                ' ' +
-                dim('convo') +
-                colors.success('█') +
-                ' ' +
-                dim('free') +
-                colors.subtle('█');
+                " " +
+                dim("sys") +
+                colors.primary("█") +
+                " " +
+                dim("tools") +
+                colors.warning("█") +
+                " " +
+                dim("convo") +
+                colors.success("█") +
+                " " +
+                dim("free") +
+                colors.subtle("█");
             lines.push(bar);
         }
 
-        lines.push('');
+        lines.push("");
 
-        lines.push('');
+        lines.push("");
 
         // Model info
         if (this.data.model) {
             const m = this.data.model;
             lines.push(
-                muted('Model: ') +
+                muted("Model: ") +
                     text(m.id) +
-                    muted(' · ') +
+                    muted(" · ") +
                     text(m.provider) +
-                    muted(' · thinking: ') +
+                    muted(" · thinking: ") +
                     text(m.thinkingLevel),
             );
         } else {
-            lines.push(muted('Model: ') + dim('(unknown)'));
+            lines.push(muted("Model: ") + dim("(unknown)"));
         }
 
         // System prompt + tools totals (approx)
         if (this.data.usage) {
             const u = this.data.usage;
             lines.push(
-                muted('System: ') +
+                muted("System: ") +
                     text(`~${u.systemPromptTokens.toLocaleString()} tok`) +
                     muted(` (AGENTS ~${u.agentTokens.toLocaleString()})`),
             );
             lines.push(
-                muted('Tools: ') +
+                muted("Tools: ") +
                     text(`~${u.toolsTokens.toLocaleString()} tok`) +
                     muted(` (${u.activeTools} active)`),
             );
@@ -495,16 +495,16 @@ class ContextView implements Component {
                 text(
                     this.data.agentFiles.length
                         ? joinComma(this.data.agentFiles)
-                        : '(none)',
+                        : "(none)",
                 ),
         );
-        lines.push('');
+        lines.push("");
         lines.push(
             muted(`Extensions (${this.data.extensions.length}): `) +
                 text(
                     this.data.extensions.length
                         ? joinComma(this.data.extensions)
-                        : '(none)',
+                        : "(none)",
                 ),
         );
 
@@ -514,7 +514,7 @@ class ContextView implements Component {
                 text(
                     this.data.tools.length
                         ? joinComma(this.data.tools)
-                        : '(none)',
+                        : "(none)",
                 ),
         );
 
@@ -526,32 +526,32 @@ class ContextView implements Component {
                       loaded.has(name)
                           ? colors.text(name)
                           : colors.subtle(name),
-                  colors.subtle(', '),
+                  colors.subtle(", "),
               )
-            : '(none)';
+            : "(none)";
         lines.push(
             muted(`Skills (${this.data.skills.length}): `) + skillsRendered,
         );
-        lines.push('');
+        lines.push("");
         lines.push(
-            muted('Session: ') +
+            muted("Session: ") +
                 text(
                     `${this.data.session.totalTokens.toLocaleString()} tokens`,
                 ) +
-                muted(' · ') +
+                muted(" · ") +
                 text(formatUsd(this.data.session.totalCost)),
         );
 
-        this.body.setText(lines.join('\n'));
+        this.body.setText(lines.join("\n"));
         this.cachedWidth = width;
     }
 
     handleInput(data: string): void {
         if (
             matchesKey(data, Key.escape) ||
-            matchesKey(data, Key.ctrl('c')) ||
-            data.toLowerCase() === 'q' ||
-            data === '\r'
+            matchesKey(data, Key.ctrl("c")) ||
+            data.toLowerCase() === "q" ||
+            data === "\r"
         ) {
             this.onDone();
             return;
@@ -601,13 +601,13 @@ export default function contextExtension(pi: ExtensionAPI) {
         return best?.name ?? null;
     };
 
-    pi.on('tool_result', (event: ToolResultEvent, ctx: ExtensionContext) => {
+    pi.on("tool_result", (event: ToolResultEvent, ctx: ExtensionContext) => {
         // Only count successful reads.
-        if ((event as any).toolName !== 'read') return;
+        if ((event as any).toolName !== "read") return;
         if ((event as any).isError) return;
 
         const input = (event as any).input as { path?: unknown } | undefined;
-        const p = typeof input?.path === 'string' ? input.path : '';
+        const p = typeof input?.path === "string" ? input.path : "";
         if (!p) return;
 
         ensureCaches(ctx);
@@ -624,13 +624,13 @@ export default function contextExtension(pi: ExtensionAPI) {
         }
     });
 
-    pi.registerCommand('context', {
-        description: 'Show loaded context overview',
+    pi.registerCommand("context", {
+        description: "Show loaded context overview",
         handler: async (_args, ctx: ExtensionCommandContext) => {
             const commands = pi.getCommands();
             const extensionFiles = calculateExtensionFiles(commands);
 
-            const skillCmds = commands.filter((c) => c.source === 'skill');
+            const skillCmds = commands.filter((c) => c.source === "skill");
 
             const skills = skillCmds
                 .map((c) => normalizeSkillName(c.name))
@@ -662,7 +662,7 @@ export default function contextExtension(pi: ExtensionAPI) {
             let toolsTokens = 0;
             for (const name of activeToolNames) {
                 const info = toolInfoByName.get(name);
-                const blob = `${name}\n${info?.description ?? ''}`;
+                const blob = `${name}\n${info?.description ?? ""}`;
                 toolsTokens += estimateTokens(blob);
             }
             toolsTokens = Math.round(toolsTokens * TOOL_FUDGE);
@@ -677,13 +677,13 @@ export default function contextExtension(pi: ExtensionAPI) {
 
             const makePlainText = () => {
                 const lines: string[] = [];
-                lines.push('Context');
+                lines.push("Context");
                 if (usage) {
                     lines.push(
                         `Window: ~${effectiveTokens.toLocaleString()} / ${ctxWindow.toLocaleString()} (${percent.toFixed(1)}% used, ~${remainingTokens.toLocaleString()} left)`,
                     );
                 } else {
-                    lines.push('Window: (unknown)');
+                    lines.push("Window: (unknown)");
                 }
                 lines.push(
                     `System: ~${systemPromptTokens.toLocaleString()} tok (AGENTS ~${agentTokens.toLocaleString()})`,
@@ -692,24 +692,24 @@ export default function contextExtension(pi: ExtensionAPI) {
                     `Tools: ~${toolsTokens.toLocaleString()} tok (${activeToolNames.length} active)`,
                 );
                 lines.push(
-                    `AGENTS: ${agentFilePaths.length ? joinComma(agentFilePaths) : '(none)'}`,
+                    `AGENTS: ${agentFilePaths.length ? joinComma(agentFilePaths) : "(none)"}`,
                 );
                 lines.push(
-                    `Extensions (${extensionFiles.length}): ${extensionFiles.length ? joinComma(extensionFiles) : '(none)'}`,
+                    `Extensions (${extensionFiles.length}): ${extensionFiles.length ? joinComma(extensionFiles) : "(none)"}`,
                 );
                 lines.push(
-                    `Skills (${skills.length}): ${skills.length ? joinComma(skills) : '(none)'}`,
+                    `Skills (${skills.length}): ${skills.length ? joinComma(skills) : "(none)"}`,
                 );
                 lines.push(
                     `Session: ${sessionUsage.totalTokens.toLocaleString()} tokens · ${formatUsd(sessionUsage.totalCost)}`,
                 );
-                return lines.join('\n');
+                return lines.join("\n");
             };
 
             if (!ctx.hasUI) {
                 pi.sendMessage(
                     {
-                        customType: 'context',
+                        customType: "context",
                         content: makePlainText(),
                         display: true,
                     },

@@ -13,29 +13,29 @@
  * streamSimple handles all streaming. No custom streamSimple needed.
  */
 
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
-import { createUiColors } from '../../_shared/ui-colors.ts';
-import { loadAiProvidersConfig } from '../config.ts';
-import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
-import type { CatalogDiffCounts } from './catalog-diff.ts';
-import { reportCatalogDiff } from './catalog-diff.ts';
-import { createCpaCatalogGuard } from './cpa-catalog-guard.ts';
-import { buildCpaModels } from './cpa-models.ts';
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { createUiColors } from "../../_shared/ui/ui-colors.ts";
+import { loadAiProvidersConfig } from "../config.ts";
+import { STATIC_FALLBACK_MODELS } from "../constants/cpa-static-models";
+import type { CatalogDiffCounts } from "./catalog-diff.ts";
+import { reportCatalogDiff } from "./catalog-diff.ts";
+import { createCpaCatalogGuard } from "./cpa-catalog-guard.ts";
+import { buildCpaModels } from "./cpa-models.ts";
 
 // ── Constants ──
 
-const PROVIDER_NAME = 'cpa';
-const PROVIDER_DISPLAY = 'CLIProxyAPI (local)';
-const PROVIDER_BASE_URL = 'http://localhost:8317/v1';
-const PROVIDER_API = 'openai-completions' as const;
+const PROVIDER_NAME = "cpa";
+const PROVIDER_DISPLAY = "CLIProxyAPI (local)";
+const PROVIDER_BASE_URL = "http://localhost:8317/v1";
+const PROVIDER_API = "openai-completions" as const;
 
 // ── Lifecycle event context shape ──
 
-type LifecycleCtx = Parameters<Parameters<ExtensionAPI['on']>[1]>[1];
+type LifecycleCtx = Parameters<Parameters<ExtensionAPI["on"]>[1]>[1];
 
 /**
  * Plain console.warn sink used at startup. Counts are emitted as a single
@@ -81,8 +81,8 @@ function themedDriftSink(
             );
         }
         ctx.ui.notify(
-            `${colors.model('[cpa]')} ${parts.join(colors.separator(' · '))}`,
-            'info',
+            `${colors.model("[cpa]")} ${parts.join(colors.separator(" · "))}`,
+            "info",
         );
     };
 }
@@ -95,26 +95,26 @@ function themedDriftSink(
  */
 export function getCliproxyApiKey(): string {
     if (process.env.CLIPROXY_API_KEY) {
-        return process.env.CLIPROXY_API_KEY.replace(/^["']|["']$/g, '');
+        return process.env.CLIPROXY_API_KEY.replace(/^["']|["']$/g, "");
     }
-    const envPath = join(getAgentDir(), '.env');
+    const envPath = join(getAgentDir(), ".env");
     if (existsSync(envPath)) {
         try {
-            const content = readFileSync(envPath, 'utf-8');
+            const content = readFileSync(envPath, "utf-8");
             for (const line of content.split(/\r?\n/)) {
                 const trimmed = line.trim();
-                if (trimmed.startsWith('CLIPROXY_API_KEY=')) {
+                if (trimmed.startsWith("CLIPROXY_API_KEY=")) {
                     const value = trimmed
-                        .slice('CLIPROXY_API_KEY='.length)
+                        .slice("CLIPROXY_API_KEY=".length)
                         .trim();
-                    return value.replace(/^["']|["']$/g, '');
+                    return value.replace(/^["']|["']$/g, "");
                 }
             }
         } catch {
             // ignore
         }
     }
-    return '';
+    return "";
 }
 
 // ── Provider config helpers ──
@@ -182,7 +182,7 @@ export function registerCpaProvider(
         if (lastNotifiedStaleModelId === modelId) return;
         lastNotifiedStaleModelId = modelId;
         const message = `Le modèle CPA actif ${modelId} n’existe plus. Utilise /model pour choisir un modèle valide.`;
-        if (ctx.hasUI) ctx.ui.notify(message, 'warning');
+        if (ctx.hasUI) ctx.ui.notify(message, "warning");
         else console.warn(`[cpa] ${message}`);
     }
 
@@ -190,8 +190,8 @@ export function registerCpaProvider(
         if (unverifiedWarningShown) return;
         unverifiedWarningShown = true;
         const message =
-            'Catalogue CPA indisponible. Le dernier état vérifié est conservé.';
-        if (ctx.hasUI) ctx.ui.notify(message, 'warning');
+            "Catalogue CPA indisponible. Le dernier état vérifié est conservé.";
+        if (ctx.hasUI) ctx.ui.notify(message, "warning");
         else console.warn(`[cpa] ${message}`);
     }
 
@@ -203,7 +203,7 @@ export function registerCpaProvider(
 
     // Phase 2: On session_start, fetch dynamic models and re-register.
     // Startup phase: drift goes to console.warn (logs, no TUI intrusion).
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         try {
             await refreshCatalog(ctx, true, consoleDriftSink);
         } catch {
@@ -211,13 +211,13 @@ export function registerCpaProvider(
         }
     });
 
-    pi.on('model_select', async (event, ctx) => {
+    pi.on("model_select", async (event, ctx) => {
         if (event.model.provider !== PROVIDER_NAME) return;
         try {
             const result = await refreshCatalog(ctx, true);
-            if (result.state === 'stale')
+            if (result.state === "stale")
                 notifyStaleModelOnce(ctx, result.modelId);
-            if (result.state === 'valid') {
+            if (result.state === "valid") {
                 lastNotifiedStaleModelId = undefined;
                 unverifiedWarningShown = false;
             }
@@ -226,49 +226,49 @@ export function registerCpaProvider(
         }
     });
 
-    pi.on('input', async (_event, ctx) => {
+    pi.on("input", async (_event, ctx) => {
         if (ctx.model?.provider !== PROVIDER_NAME)
-            return { action: 'continue' };
+            return { action: "continue" };
         const result = await refreshCatalog(ctx);
-        if (result.state === 'unverified') {
+        if (result.state === "unverified") {
             notifyUnverifiedOnce(ctx);
-            return { action: 'continue' };
+            return { action: "continue" };
         }
-        if (result.state === 'valid') {
+        if (result.state === "valid") {
             unverifiedWarningShown = false;
-            return { action: 'continue' };
+            return { action: "continue" };
         }
 
         notifyStaleModelOnce(ctx, result.modelId);
-        return { action: 'handled' };
+        return { action: "handled" };
     });
 
-    pi.on('session_before_compact', async (_event, ctx) => {
+    pi.on("session_before_compact", async (_event, ctx) => {
         if (ctx.model?.provider !== PROVIDER_NAME) return undefined;
         const result = await refreshCatalog(ctx);
-        if (result.state !== 'stale') return undefined;
+        if (result.state !== "stale") return undefined;
 
         notifyStaleModelOnce(ctx, result.modelId);
         return { cancel: true };
     });
 
-    pi.registerCommand('cpa-refresh', {
-        description: 'Refresh CPA models and validate the active model',
+    pi.registerCommand("cpa-refresh", {
+        description: "Refresh CPA models and validate the active model",
         handler: async (_args, ctx) => {
             const result = await refreshCatalog(ctx, true);
-            if (result.state === 'stale') {
+            if (result.state === "stale") {
                 notifyStaleModelOnce(ctx, result.modelId);
                 return;
             }
 
             const message =
-                result.state === 'valid'
-                    ? 'Catalogue CPA actualisé. Le modèle actif est valide.'
-                    : 'Catalogue CPA indisponible. Le dernier état vérifié est conservé.';
+                result.state === "valid"
+                    ? "Catalogue CPA actualisé. Le modèle actif est valide."
+                    : "Catalogue CPA indisponible. Le dernier état vérifié est conservé.";
             if (ctx.hasUI)
                 ctx.ui.notify(
                     message,
-                    result.state === 'valid' ? 'info' : 'warning',
+                    result.state === "valid" ? "info" : "warning",
                 );
             else console.warn(`[cpa] ${message}`);
         },

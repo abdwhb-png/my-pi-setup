@@ -2,9 +2,9 @@
  * Core logic for tool-summary: counting and formatting tool usage.
  */
 
-import type { ToolResultMessage } from '@earendil-works/pi-ai';
-import type { UiColorsCreation } from '../_shared/ui-colors.ts';
-import type { ToolCounts } from './types.ts';
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import type { UiColorsCreation } from "../_shared/ui/ui-colors.ts";
+import type { ToolCounts } from "./types.ts";
 
 /**
  * Count tool usage from turn-end tool results.
@@ -39,7 +39,7 @@ export function formatSummary(
 ): string {
     const toolNames = Object.keys(counts.total);
 
-    if (toolNames.length === 0) return '';
+    if (toolNames.length === 0) return "";
 
     // Determine which tools to show
     const showAll = filteredTools.length === 0;
@@ -47,7 +47,7 @@ export function formatSummary(
         ? toolNames
         : toolNames.filter((t) => filteredTools.includes(t));
 
-    if (visibleTools.length === 0) return '';
+    if (visibleTools.length === 0) return "";
 
     const parts = visibleTools.map((name) => {
         const totalCount = counts.total[name] ?? 0;
@@ -56,11 +56,11 @@ export function formatSummary(
 
         const mutedCount = colors.muted(`(${totalCount})`);
         const countStr = hasErrors
-            ? name + colors.danger('✗') + mutedCount
+            ? name + colors.danger("✗") + mutedCount
             : name + mutedCount;
 
         return countStr;
     });
 
-    return parts.join(' ');
+    return parts.join(" ");
 }

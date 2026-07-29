@@ -1,9 +1,9 @@
-import type { Theme } from '@earendil-works/pi-coding-agent';
-import { type Component } from '@earendil-works/pi-tui';
-import { renderBoxHeader, renderBoxFooter } from '../_shared/box';
-import { isEnter, isEscape } from '../_shared/commit-keys';
-import { renderCwd } from './cwd-display';
-import type { CommitPlanParams, CommitPlanResult } from './types';
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { type Component } from "@earendil-works/pi-tui";
+import { isEnter, isEscape } from "../_shared/commit-keys";
+import { renderBoxHeader, renderBoxFooter } from "../_shared/ui/framed-box";
+import { renderCwd } from "./cwd-display";
+import type { CommitPlanParams, CommitPlanResult } from "./types";
 
 /**
  * A minimal confirmation dialog that shows the commit plan and waits for
@@ -40,7 +40,7 @@ export class CommitConfirmDialog implements Component {
                 plan_summary: this.config.params.plan_summary,
                 cwd: this.config.params.cwd,
                 files: [],
-                commit_message: '',
+                commit_message: "",
             });
             return;
         }
@@ -55,59 +55,59 @@ export class CommitConfirmDialog implements Component {
         const lines: string[] = [];
         const innerWidth = Math.max(40, width - 4);
 
-        lines.push(renderBoxHeader(theme, innerWidth, ' 📦 Confirm Commit '));
+        lines.push(renderBoxHeader(theme, innerWidth, " 📦 Confirm Commit "));
         lines.push(...renderCwd(theme, innerWidth, params.cwd));
 
         // Summary
         lines.push(
-            theme.fg('border', '│') +
-                ' ' +
-                theme.fg('accent', theme.bold(' Summary:')),
+            theme.fg("border", "│") +
+                " " +
+                theme.fg("accent", theme.bold(" Summary:")),
         );
         lines.push(
-            theme.fg('border', '│') +
-                '   ' +
-                theme.fg('text', params.plan_summary),
+            theme.fg("border", "│") +
+                "   " +
+                theme.fg("text", params.plan_summary),
         );
 
         // Files
-        lines.push(theme.fg('border', '│'));
+        lines.push(theme.fg("border", "│"));
         lines.push(
-            theme.fg('border', '│') +
-                ' ' +
-                theme.fg('accent', theme.bold(' Files:')),
+            theme.fg("border", "│") +
+                " " +
+                theme.fg("accent", theme.bold(" Files:")),
         );
         for (const file of params.files) {
             const maxPathWidth = innerWidth - 8;
             const display =
                 file.length > maxPathWidth
-                    ? '…' + file.slice(-(maxPathWidth - 1))
+                    ? "…" + file.slice(-(maxPathWidth - 1))
                     : file;
             lines.push(
-                theme.fg('border', '│') +
-                    '   ' +
-                    theme.fg('success', '[x]') +
-                    ' ' +
-                    theme.fg('text', display),
+                theme.fg("border", "│") +
+                    "   " +
+                    theme.fg("success", "[x]") +
+                    " " +
+                    theme.fg("text", display),
             );
         }
 
         // Message
-        lines.push(theme.fg('border', '│'));
+        lines.push(theme.fg("border", "│"));
         lines.push(
-            theme.fg('border', '│') +
-                ' ' +
-                theme.fg('accent', theme.bold(' Message:')),
+            theme.fg("border", "│") +
+                " " +
+                theme.fg("accent", theme.bold(" Message:")),
         );
-        const msgLines = params.commit_message.split('\n');
+        const msgLines = params.commit_message.split("\n");
         for (const msgLine of msgLines) {
             const maxMsgWidth = innerWidth - 4;
             const truncated =
                 msgLine.length > maxMsgWidth
-                    ? msgLine.slice(0, maxMsgWidth - 1) + '…'
+                    ? msgLine.slice(0, maxMsgWidth - 1) + "…"
                     : msgLine;
             lines.push(
-                theme.fg('border', '│') + '   ' + theme.fg('text', truncated),
+                theme.fg("border", "│") + "   " + theme.fg("text", truncated),
             );
         }
 
@@ -115,7 +115,7 @@ export class CommitConfirmDialog implements Component {
             renderBoxFooter(
                 theme,
                 innerWidth,
-                ' [Enter] Confirm  [Esc] Cancel ',
+                " [Enter] Confirm  [Esc] Cancel ",
             ),
         );
 

@@ -1,14 +1,14 @@
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     type AgentRunSummaryPayload,
     isAgentRunSummaryPayload,
     onAgentSettled,
     TOOL_SUMMARY_EVENT,
     TPS_SUMMARY_EVENT,
-} from '../_shared/agent-run-summary.ts';
-import { createUiColors } from '../_shared/ui-colors.ts';
+} from "../_shared/agent-run-summary.ts";
+import { createUiColors } from "../_shared/ui/ui-colors.ts";
 
-const SEPARATOR = '  ·  ';
+const SEPARATOR = "  ·  ";
 
 export default function (pi: ExtensionAPI) {
     let tpsSummary: AgentRunSummaryPayload | null = null;
@@ -26,7 +26,7 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    pi.on('agent_start', async () => {
+    pi.on("agent_start", async () => {
         tpsSummary = null;
         toolSummary = null;
     });
@@ -46,7 +46,7 @@ export default function (pi: ExtensionAPI) {
             )
             .join(SEPARATOR);
         if (summary) {
-            ctx.ui.notify(summary, 'info');
+            ctx.ui.notify(summary, "info");
         }
     });
 }

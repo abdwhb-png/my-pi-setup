@@ -64,7 +64,7 @@ import { createBashPrefixRenderer } from "../_shared/bash/prefix-renderer";
 import { applyFirstRewrite, loadBashRewrites } from "../_shared/bash/rewrites";
 import { appendCompressionFooter } from "../_shared/compression-render";
 import { createWidget } from "../_shared/fancy-footer";
-import { createUiColors, type UiColorsCreation } from "../_shared/ui-colors";
+import { createUiColors, type UiColorsCreation } from "../_shared/ui/ui-colors";
 
 /** Footer widget state for the sandbox indicator. */
 export type SandboxFooterState = "on" | "restricted" | "off" | "error";

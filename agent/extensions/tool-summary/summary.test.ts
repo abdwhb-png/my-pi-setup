@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { ToolResultMessage } from '@earendil-works/pi-ai';
 import type { Theme } from '@earendil-works/pi-coding-agent';
-import { createUiColors } from '../_shared/ui-colors.ts';
+import { createUiColors } from '../_shared/ui/ui-colors.ts';
 import { countToolUsage, formatSummary } from './summary.ts';
 
 function makeTheme(): Theme {

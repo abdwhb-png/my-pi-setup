@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { renderBoxHeader, renderBoxFooter, renderBoxSides, BoxRenderer } from "./box";
+import { renderBoxHeader, renderBoxFooter, renderBoxSides, BoxRenderer } from "./framed-box";
 
 function createMockTheme() {
   return {

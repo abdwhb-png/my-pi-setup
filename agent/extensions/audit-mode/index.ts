@@ -15,23 +15,26 @@ import {
     SettingsManager,
     type ExtensionAPI,
     type Theme,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     normalizeAuditSettings,
     mergeAuditSettings,
     formatPolicySummary,
     type AuditSettings,
-} from '../_shared/audit-mode/audit-policy.ts';
-import type { AuditProfileName } from '../_shared/audit-mode/audit-policy.ts';
+} from "../_shared/audit-mode/audit-policy.ts";
+import type { AuditProfileName } from "../_shared/audit-mode/audit-policy.ts";
 import {
     initAuditState,
     setActiveProfile,
     resetActiveProfile,
     getActiveProfile,
     getActivePolicy,
-} from '../_shared/audit-mode/audit-state.ts';
-import { createWidget } from '../_shared/fancy-footer.ts';
-import { createUiColors, type UiColorsCreation } from '../_shared/ui-colors.ts';
+} from "../_shared/audit-mode/audit-state.ts";
+import { createWidget } from "../_shared/fancy-footer.ts";
+import {
+    createUiColors,
+    type UiColorsCreation,
+} from "../_shared/ui/ui-colors.ts";
 
 // ─── Config loading ───────────────────────────────────────────────────────────
 
@@ -40,7 +43,7 @@ type SettingsRecord = Record<string, object | null | undefined>;
 function isAuditSettings(
     value: object | null | undefined,
 ): value is AuditSettings {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function loadMergedSettings(cwd: string): {
@@ -80,26 +83,26 @@ function renderStatus(hasProjectOverride: boolean): string {
     const policy = getActivePolicy();
 
     const overrideLabel = hasProjectOverride
-        ? 'project config: YES (project overrides global)'
-        : 'project config: NO (using global / defaults)';
+        ? "project config: YES (project overrides global)"
+        : "project config: NO (using global / defaults)";
 
     const flags = formatPolicySummary(policy);
 
     return [
         `Audit Mode — profile: ${profile}`,
-        '',
-        'Resolved flags:',
+        "",
+        "Resolved flags:",
         ...flags.map((f) => `  ${f}`),
-        '',
+        "",
         overrideLabel,
-        '',
-        'Usage: /audit-mode [on|off|advanced|status]',
-    ].join('\n');
+        "",
+        "Usage: /audit-mode [on|off|advanced|status]",
+    ].join("\n");
 }
 
 // ─── Completions ─────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = ['on', 'off', 'advanced', 'status'] as const;
+const SUBCOMMANDS = ["on", "off", "advanced", "status"] as const;
 
 function getArgumentCompletions(prefix: string) {
     const trimmed = prefix.trimStart().toLowerCase();
@@ -114,8 +117,8 @@ function getArgumentCompletions(prefix: string) {
 // ─── Footer widget render ────────────────────────────────────────────────────
 
 /** Magnifier glyph — matches the metaphor of reviewing changes. */
-const AUDIT_ICON = '🔍';
-const WIDGET_ID = 'audit-mode';
+const AUDIT_ICON = "🔍";
+const WIDGET_ID = "audit-mode";
 
 /**
  * Pure render for the audit-mode footer widget.
@@ -129,11 +132,11 @@ export function renderAuditWidget(
     theme: Theme,
     profile: AuditProfileName,
 ): string | null {
-    if (profile === 'standard') return null;
+    if (profile === "standard") return null;
     const colors: UiColorsCreation = createUiColors(theme);
     const label = colors.subtle(`${AUDIT_ICON}audit:`);
     const value =
-        profile === 'audit' ? colors.warning(profile) : colors.primary(profile);
+        profile === "audit" ? colors.warning(profile) : colors.primary(profile);
     return `${label} ${value}`;
 }
 
@@ -145,66 +148,66 @@ export default function activate(pi: ExtensionAPI) {
 
     const w = createWidget(pi, {
         id: WIDGET_ID,
-        label: 'Audit Mode',
-        description: 'Shows the active audit-mode profile (audit or advanced).',
+        label: "Audit Mode",
+        description: "Shows the active audit-mode profile (audit or advanced).",
         row: 1,
         order: 14,
-        align: 'right',
+        align: "right",
         grow: false,
         styled: true,
         render: (ctx) => renderAuditWidget(ctx.theme, getActiveProfile()),
     });
 
-    pi.on('session_start', (_event, ctx) => {
+    pi.on("session_start", (_event, ctx) => {
         const { settings, hasProjectOverride } = loadMergedSettings(ctx.cwd);
         sessionHasProjectOverride = hasProjectOverride;
         initAuditState(settings);
         w.update(ctx);
     });
 
-    pi.registerCommand('audit-mode', {
+    pi.registerCommand("audit-mode", {
         description:
-            'Toggle audit mode or show status (/audit-mode on|off|advanced|status)',
+            "Toggle audit mode or show status (/audit-mode on|off|advanced|status)",
         getArgumentCompletions,
         handler: async (args, ctx) => {
             const arg = args.trim().toLowerCase();
 
-            if (arg === 'on') {
-                setActiveProfile('audit');
+            if (arg === "on") {
+                setActiveProfile("audit");
                 w.update(ctx);
-                ctx.ui.notify('Audit mode activated (audit profile)', 'info');
+                ctx.ui.notify("Audit mode activated (audit profile)", "info");
                 return;
             }
 
-            if (arg === 'advanced') {
-                setActiveProfile('advanced');
+            if (arg === "advanced") {
+                setActiveProfile("advanced");
                 w.update(ctx);
                 ctx.ui.notify(
-                    'Audit mode activated (advanced profile — compression relaxed)',
-                    'info',
+                    "Audit mode activated (advanced profile — compression relaxed)",
+                    "info",
                 );
                 return;
             }
 
-            if (arg === 'off') {
-                resetActiveProfile('standard');
+            if (arg === "off") {
+                resetActiveProfile("standard");
                 w.update(ctx);
                 ctx.ui.notify(
-                    'Audit mode off — reset to standard profile',
-                    'info',
+                    "Audit mode off — reset to standard profile",
+                    "info",
                 );
                 return;
             }
 
-            if (arg === 'status' || arg === '') {
+            if (arg === "status" || arg === "") {
                 const status = renderStatus(sessionHasProjectOverride);
-                ctx.ui.notify(status, 'info');
+                ctx.ui.notify(status, "info");
                 return;
             }
 
             ctx.ui.notify(
                 `Unknown argument: "${arg}"\nUsage: /audit-mode [on|off|advanced|status]`,
-                'error',
+                "error",
             );
         },
     });
