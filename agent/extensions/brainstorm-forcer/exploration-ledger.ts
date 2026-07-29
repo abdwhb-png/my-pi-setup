@@ -22,6 +22,11 @@ export type ClaimClassification =
     | "design-choice"
     | "future-contingency";
 export type ClaimVerdict = "verified" | "falsified" | "unresolved";
+export type VerificationDomain =
+    | "pi"
+    | "local-code"
+    | "external"
+    | "performance";
 export type ReviewOutcome = "supported" | "rejected" | "unresolved";
 export type EvidenceSourceKind =
     | "direct"
@@ -106,6 +111,18 @@ export type EvidenceRecord = Readonly<{
         referencedClaimIds: readonly string[];
         referencedEvidenceIds: readonly string[];
     }>;
+    verifier?: Readonly<{
+        role: "verifier" | "architect";
+        agent: string;
+        context: "fresh";
+        exitCode: 0;
+        verificationRunId: string;
+        outputName: string;
+        outcome?: ReviewOutcome;
+        architecturalStatus?: "clear" | "watch" | "block";
+        referencedClaimIds: readonly string[];
+        referencedEvidenceIds: readonly string[];
+    }>;
 }>;
 
 export type ClaimRecord = Readonly<{
@@ -124,6 +141,8 @@ export type ClaimRecord = Readonly<{
     impact: string;
     mitigation: string;
     supersedesClaimId?: string;
+    verificationDomain?: VerificationDomain;
+    architectureImpact?: boolean;
 }>;
 
 export type RecordClaimInput = {
@@ -135,10 +154,12 @@ export type RecordClaimInput = {
     contradictoryEvidenceIds: string[];
     impact: string;
     mitigation: string;
+    verificationDomain: VerificationDomain;
+    architectureImpact: boolean;
     supersedesClaimId?: string;
 };
 
-export type ReviewRecord = Readonly<{
+export type LegacyReviewRecord = Readonly<{
     id: string;
     kind: "review";
     runId: string;
@@ -152,11 +173,77 @@ export type ReviewRecord = Readonly<{
     summary: string;
 }>;
 
+export type VerificationAudit = Readonly<{
+    status: "success" | "failed" | "malformed" | "timeout";
+    verificationRunId: string;
+    agent: string;
+    outputName: string;
+    reason?: string;
+    architect?: Readonly<{
+        evidenceId: string;
+        status: "clear" | "watch" | "block";
+        claimIds: readonly string[];
+        evidenceIds: readonly string[];
+        risks: readonly string[];
+        summary: string;
+    }>;
+}>;
+
+export type VerifierReviewRecord = Readonly<{
+    id: string;
+    kind: "review";
+    runId: string;
+    phase: "exploring";
+    sequence: number;
+    timestamp: string;
+    verifierEvidenceId?: string;
+    outcome?: ReviewOutcome;
+    claimIds: readonly string[];
+    primaryEvidenceIds: readonly string[];
+    summary: string;
+    audit: VerificationAudit;
+}>;
+
+export type ReviewRecord = LegacyReviewRecord | VerifierReviewRecord;
+
 export type RecordReviewInput = {
     reviewerEvidenceId: string;
     claimIds: string[];
     primaryEvidenceIds: string[];
     summary: string;
+};
+
+export type RecordVerificationCompletionInput = {
+    verificationRunId: string;
+    verifiers: Array<{
+        agent: string;
+        outputName: string;
+        outcome: ReviewOutcome;
+        claimIds: string[];
+        evidenceIds: string[];
+        summary: string;
+    }>;
+    architect?: {
+        agent: "architect";
+        outputName: string;
+        status: "clear" | "watch" | "block";
+        claimIds: string[];
+        evidenceIds: string[];
+        risks: string[];
+        summary: string;
+    };
+};
+
+export type RecordVerificationFailureInput = {
+    verificationRunId: string;
+    failureKind: "failed" | "malformed" | "timeout";
+    reason: string;
+    groups: Array<{
+        agent: string;
+        outputName: string;
+        claimIds: string[];
+        evidenceIds: string[];
+    }>;
 };
 
 export type WaiverRecord = Readonly<{
@@ -262,6 +349,87 @@ function isReviewerMetadata(value: unknown): boolean {
     );
 }
 
+const VERIFIER_AGENTS = new Set([
+    "pi-expert",
+    "scout",
+    "factual-researcher",
+    "performance-reviewer",
+]);
+
+function isVerifierMetadata(value: unknown): boolean {
+    const verifier = asRecord(value);
+    if (
+        !verifier ||
+        (verifier.role !== "verifier" && verifier.role !== "architect") ||
+        typeof verifier.agent !== "string" ||
+        verifier.context !== "fresh" ||
+        verifier.exitCode !== 0 ||
+        typeof verifier.verificationRunId !== "string" ||
+        !verifier.verificationRunId.trim() ||
+        typeof verifier.outputName !== "string" ||
+        !verifier.outputName.trim() ||
+        !isStringArray(verifier.referencedClaimIds, /^CL-\d+$/) ||
+        verifier.referencedClaimIds.length === 0 ||
+        !isStringArray(verifier.referencedEvidenceIds, /^EV-\d+$/)
+    )
+        return false;
+    return verifier.role === "architect"
+        ? verifier.agent === "architect" &&
+              ["clear", "watch", "block"].includes(
+                  String(verifier.architecturalStatus),
+              ) &&
+              verifier.outcome === undefined
+        : VERIFIER_AGENTS.has(verifier.agent) &&
+              reviewOutcome(verifier.outcome) !== undefined &&
+              verifier.architecturalStatus === undefined;
+}
+
+function isVerificationAudit(value: unknown): boolean {
+    const audit = asRecord(value);
+    if (
+        !audit ||
+        !["success", "failed", "malformed", "timeout"].includes(
+            String(audit.status),
+        ) ||
+        typeof audit.verificationRunId !== "string" ||
+        !audit.verificationRunId.trim() ||
+        typeof audit.agent !== "string" ||
+        !VERIFIER_AGENTS.has(audit.agent) ||
+        typeof audit.outputName !== "string" ||
+        !audit.outputName.trim() ||
+        (audit.reason !== undefined &&
+            (typeof audit.reason !== "string" || !audit.reason.trim()))
+    )
+        return false;
+    const architect = asRecord(audit.architect);
+    if (audit.architect !== undefined) {
+        if (
+            !architect ||
+            typeof architect.evidenceId !== "string" ||
+            !/^EV-\d+$/.test(architect.evidenceId) ||
+            !["clear", "watch", "block"].includes(String(architect.status)) ||
+            !isStringArray(architect.claimIds, /^CL-\d+$/) ||
+            architect.claimIds.length === 0 ||
+            new Set(architect.claimIds).size !== architect.claimIds.length ||
+            architect.claimIds.length > 64 ||
+            !isStringArray(architect.evidenceIds, /^EV-\d+$/) ||
+            new Set(architect.evidenceIds).size !==
+                architect.evidenceIds.length ||
+            architect.evidenceIds.length > 128 ||
+            !isStringArray(architect.risks) ||
+            architect.risks.length > 32 ||
+            !architect.risks.every((risk) => risk.length <= 1_000) ||
+            typeof architect.summary !== "string" ||
+            !architect.summary.trim() ||
+            architect.summary.length > 2_000
+        )
+            return false;
+    }
+    return audit.status === "success"
+        ? audit.reason === undefined
+        : typeof audit.reason === "string" && architect === undefined;
+}
+
 export function isExplorationRecord(
     value: unknown,
 ): value is ExplorationRecord {
@@ -303,7 +471,13 @@ export function isExplorationRecord(
                         ) &&
                         record.userResponseHashes.length > 0)) &&
                 (record.reviewer === undefined ||
-                    isReviewerMetadata(record.reviewer))
+                    isReviewerMetadata(record.reviewer)) &&
+                (record.verifier === undefined ||
+                    isVerifierMetadata(record.verifier)) &&
+                !(
+                    record.reviewer !== undefined &&
+                    record.verifier !== undefined
+                )
             );
         case "claim":
             return (
@@ -325,21 +499,41 @@ export function isExplorationRecord(
                 Boolean(record.mitigation.trim()) &&
                 (record.supersedesClaimId === undefined ||
                     (typeof record.supersedesClaimId === "string" &&
-                        /^CL-\d+$/.test(record.supersedesClaimId)))
+                        /^CL-\d+$/.test(record.supersedesClaimId))) &&
+                (record.verificationDomain === undefined ||
+                    claimVerificationDomain(record.verificationDomain) !==
+                        undefined) &&
+                (record.architectureImpact === undefined ||
+                    typeof record.architectureImpact === "boolean")
             );
         case "review":
-            return (
-                hasRecordBase(record, "review", "RV") &&
-                typeof record.reviewerEvidenceId === "string" &&
-                /^EV-\d+$/.test(record.reviewerEvidenceId) &&
-                reviewOutcome(record.outcome) !== undefined &&
-                isStringArray(record.claimIds, /^CL-\d+$/) &&
-                record.claimIds.length > 0 &&
-                isStringArray(record.primaryEvidenceIds, /^EV-\d+$/) &&
-                record.primaryEvidenceIds.length > 0 &&
-                typeof record.summary === "string" &&
-                Boolean(record.summary.trim())
-            );
+            if (
+                !hasRecordBase(record, "review", "RV") ||
+                !isStringArray(record.claimIds, /^CL-\d+$/) ||
+                record.claimIds.length === 0 ||
+                !isStringArray(record.primaryEvidenceIds, /^EV-\d+$/) ||
+                typeof record.summary !== "string" ||
+                !record.summary.trim()
+            )
+                return false;
+            if (record.audit === undefined)
+                return (
+                    typeof record.reviewerEvidenceId === "string" &&
+                    /^EV-\d+$/.test(record.reviewerEvidenceId) &&
+                    reviewOutcome(record.outcome) !== undefined &&
+                    record.primaryEvidenceIds.length > 0
+                );
+            if (
+                record.reviewerEvidenceId !== undefined ||
+                !isVerificationAudit(record.audit)
+            )
+                return false;
+            return asRecord(record.audit)?.status === "success"
+                ? typeof record.verifierEvidenceId === "string" &&
+                      /^EV-\d+$/.test(record.verifierEvidenceId) &&
+                      reviewOutcome(record.outcome) !== undefined
+                : record.verifierEvidenceId === undefined &&
+                      record.outcome === undefined;
         case "waiver":
             return (
                 hasRecordBase(record, "waiver", "WV") &&
@@ -625,6 +819,20 @@ function structuredIds(value: unknown, prefix: "CL" | "EV"): string[] {
     ];
 }
 
+function claimVerificationDomain(
+    value: unknown,
+): VerificationDomain | undefined {
+    switch (value) {
+        case "pi":
+        case "local-code":
+        case "external":
+        case "performance":
+            return value;
+        default:
+            return undefined;
+    }
+}
+
 function reviewOutcome(value: unknown): ReviewOutcome | undefined {
     switch (value) {
         case "supported":
@@ -642,6 +850,33 @@ function expectedReviewOutcome(verdict: ClaimVerdict): ReviewOutcome {
         : verdict === "falsified"
           ? "rejected"
           : "unresolved";
+}
+
+function isLegacyReview(review: ReviewRecord): review is LegacyReviewRecord {
+    return "reviewerEvidenceId" in review;
+}
+
+function isVerifierReview(
+    review: ReviewRecord,
+): review is VerifierReviewRecord {
+    return "audit" in review;
+}
+
+function sameIds(
+    actual: readonly string[],
+    expected: readonly string[],
+): boolean {
+    return (
+        actual.length === expected.length &&
+        new Set(actual).size === actual.length &&
+        actual.every((id) => expected.includes(id))
+    );
+}
+
+function boundedText(value: string, field: string, maxLength = 2_000): string {
+    const normalized = value.trim().slice(0, maxLength);
+    if (!normalized) throw new Error(`${field} must be non-empty.`);
+    return normalized;
 }
 
 function markdownBullets(items: readonly string[]): string[] {
@@ -749,11 +984,13 @@ export function createExplorationLedger(options: LedgerOptions) {
             candidate.kind === "evidence"
                 ? {
                       ...candidate,
-                      sourceKind: classifyEvidenceSource(
-                          candidate.toolName,
-                          candidate.sourceRefs,
-                          candidate.reviewer?.agent === "reviewer",
-                      ),
+                      sourceKind: candidate.verifier
+                          ? "secondary"
+                          : classifyEvidenceSource(
+                                candidate.toolName,
+                                candidate.sourceRefs,
+                                candidate.reviewer?.agent === "reviewer",
+                            ),
                   }
                 : candidate;
         restoredIds.add(record.id);
@@ -796,27 +1033,29 @@ export function createExplorationLedger(options: LedgerOptions) {
         claimRecords.map((record) => [record.id, record]),
     );
     for (const evidence of evidenceRecords) {
-        if (!evidence.reviewer) continue;
-        for (const claimId of evidence.reviewer.referencedClaimIds) {
+        const auditMetadata = evidence.reviewer ?? evidence.verifier;
+        if (!auditMetadata) continue;
+        const terminology = evidence.reviewer ? "reviewer" : "verifier";
+        for (const claimId of auditMetadata.referencedClaimIds) {
             const claim = restoredClaimsById.get(claimId);
             if (!claim)
                 addRestorationBlocker(
-                    `Restored reviewer evidence ${evidence.id} references unknown claim ${claimId}.`,
+                    `Restored ${terminology} evidence ${evidence.id} references unknown claim ${claimId}.`,
                 );
             else if (claim.sequence >= evidence.sequence)
                 addRestorationBlocker(
-                    `Restored reviewer evidence ${evidence.id} references non-prior claim ${claimId}.`,
+                    `Restored ${terminology} evidence ${evidence.id} references non-prior claim ${claimId}.`,
                 );
         }
-        for (const evidenceId of evidence.reviewer.referencedEvidenceIds) {
+        for (const evidenceId of auditMetadata.referencedEvidenceIds) {
             const referenced = restoredEvidenceById.get(evidenceId);
             if (!referenced)
                 addRestorationBlocker(
-                    `Restored reviewer evidence ${evidence.id} references unknown evidence ${evidenceId}.`,
+                    `Restored ${terminology} evidence ${evidence.id} references unknown evidence ${evidenceId}.`,
                 );
             else if (referenced.sequence >= evidence.sequence)
                 addRestorationBlocker(
-                    `Restored reviewer evidence ${evidence.id} references non-prior evidence ${evidenceId}.`,
+                    `Restored ${terminology} evidence ${evidence.id} references non-prior evidence ${evidenceId}.`,
                 );
         }
     }
@@ -864,18 +1103,70 @@ export function createExplorationLedger(options: LedgerOptions) {
                 );
         }
     }
+    for (const claim of deriveActiveClaims(claimRecords)) {
+        if (
+            claim.verificationDomain === undefined ||
+            claim.architectureImpact === undefined
+        )
+            addRestorationBlocker(
+                `Restored claim ${claim.id} lacks routing metadata and must be superseded before verification.`,
+            );
+    }
     for (const review of reviewRecords) {
-        const reviewerEvidence = restoredEvidenceById.get(
-            review.reviewerEvidenceId,
-        );
-        if (!reviewerEvidence)
-            addRestorationBlocker(
-                `Restored review ${review.id} references unknown reviewer evidence ${review.reviewerEvidenceId}.`,
+        const auditEvidenceId = isLegacyReview(review)
+            ? review.reviewerEvidenceId
+            : review.verifierEvidenceId;
+        if (auditEvidenceId) {
+            const auditEvidence = restoredEvidenceById.get(auditEvidenceId);
+            const terminology = isLegacyReview(review)
+                ? "reviewer"
+                : "verifier";
+            if (!auditEvidence)
+                addRestorationBlocker(
+                    `Restored review ${review.id} references unknown ${terminology} evidence ${auditEvidenceId}.`,
+                );
+            else if (auditEvidence.sequence >= review.sequence)
+                addRestorationBlocker(
+                    `Restored review ${review.id} references non-prior ${terminology} evidence ${auditEvidenceId}.`,
+                );
+        }
+        if (isVerifierReview(review) && review.audit.architect) {
+            const architectEvidence = restoredEvidenceById.get(
+                review.audit.architect.evidenceId,
             );
-        else if (reviewerEvidence.sequence >= review.sequence)
-            addRestorationBlocker(
-                `Restored review ${review.id} references non-prior reviewer evidence ${review.reviewerEvidenceId}.`,
-            );
+            if (!architectEvidence)
+                addRestorationBlocker(
+                    `Restored review ${review.id} references unknown architect evidence ${review.audit.architect.evidenceId}.`,
+                );
+            else if (architectEvidence.sequence >= review.sequence)
+                addRestorationBlocker(
+                    `Restored review ${review.id} references non-prior architect evidence ${review.audit.architect.evidenceId}.`,
+                );
+            else if (
+                architectEvidence.verifier?.role !== "architect" ||
+                architectEvidence.verifier.verificationRunId !==
+                    review.audit.verificationRunId ||
+                architectEvidence.verifier.architecturalStatus !==
+                    review.audit.architect.status ||
+                !sameIds(
+                    architectEvidence.verifier.referencedClaimIds,
+                    review.audit.architect.claimIds,
+                ) ||
+                !sameIds(
+                    architectEvidence.verifier.referencedEvidenceIds,
+                    review.audit.architect.evidenceIds,
+                ) ||
+                !review.audit.architect.claimIds.every((claimId) =>
+                    review.claimIds.includes(claimId),
+                ) ||
+                !review.audit.architect.evidenceIds.every((evidenceId) =>
+                    review.primaryEvidenceIds.includes(evidenceId),
+                )
+            )
+                addRestorationBlocker(
+                    `Restored review ${review.id} has inconsistent architect audit scope.`,
+                );
+        }
         for (const claimId of review.claimIds) {
             const claim = restoredClaimsById.get(claimId);
             if (!claim)
@@ -1025,12 +1316,388 @@ export function createExplorationLedger(options: LedgerOptions) {
                 contradictoryEvidenceIds: [...input.contradictoryEvidenceIds],
                 impact: input.impact,
                 mitigation: input.mitigation,
+                verificationDomain: input.verificationDomain,
+                architectureImpact: input.architectureImpact,
                 ...(input.supersedesClaimId
                     ? { supersedesClaimId: input.supersedesClaimId }
                     : {}),
             };
             claimRecords.push(claim);
             return structuredClone(claim);
+        },
+        recordVerificationCompletion(input: RecordVerificationCompletionInput) {
+            const verificationRunId = boundedText(
+                input.verificationRunId,
+                "Verification run id",
+                256,
+            );
+            if (input.verifiers.length === 0)
+                throw new Error(
+                    "Verification completion requires at least one verifier group.",
+                );
+            const activeClaims = deriveActiveClaims(claimRecords);
+            const outputNames = new Set<string>();
+            const coveredClaims = new Set<string>();
+            const validatedVerifiers = input.verifiers.map((verifier) => {
+                if (!VERIFIER_AGENTS.has(verifier.agent))
+                    throw new Error(
+                        `Unsupported verifier agent: ${verifier.agent}.`,
+                    );
+                const outputName = boundedText(
+                    verifier.outputName,
+                    "Verifier output name",
+                    128,
+                );
+                if (outputNames.has(outputName))
+                    throw new Error(
+                        `Duplicate verification output name: ${outputName}.`,
+                    );
+                outputNames.add(outputName);
+                if (
+                    verifier.claimIds.length === 0 ||
+                    new Set(verifier.claimIds).size !== verifier.claimIds.length
+                )
+                    throw new Error(
+                        "Verifier claim ids must be non-empty and unique.",
+                    );
+                const claims = verifier.claimIds.map((claimId) => {
+                    const claim = activeClaims.find(
+                        (candidate) => candidate.id === claimId,
+                    );
+                    if (!claim)
+                        throw new Error(`Unknown active claim: ${claimId}.`);
+                    if (coveredClaims.has(claimId))
+                        throw new Error(
+                            `Claim ${claimId} appears in multiple verifier groups.`,
+                        );
+                    coveredClaims.add(claimId);
+                    return claim;
+                });
+                if (
+                    claims.some(
+                        (claim) =>
+                            expectedReviewOutcome(claim.verdict) !==
+                            verifier.outcome,
+                    )
+                )
+                    throw new Error(
+                        `Verifier outcome does not support the submitted claim verdicts: ${verifier.outcome}.`,
+                    );
+                const expectedEvidenceIds = [
+                    ...new Set(claims.flatMap((claim) => claim.evidenceIds)),
+                ];
+                if (!sameIds(verifier.evidenceIds, expectedEvidenceIds))
+                    throw new Error(
+                        `Verifier evidence scope does not match claims ${verifier.claimIds.join(", ")}.`,
+                    );
+                const primaryEvidence = verifier.evidenceIds.map(
+                    (evidenceId) => {
+                        const evidence = evidenceRecords.find(
+                            (candidate) => candidate.id === evidenceId,
+                        );
+                        if (!evidence)
+                            throw new Error(
+                                `Unknown evidence record: ${evidenceId}.`,
+                            );
+                        return evidence;
+                    },
+                );
+                if (
+                    claims.some(
+                        (claim) =>
+                            claim.classification === "empirical" &&
+                            claim.verdict !== "unresolved" &&
+                            !primaryEvidence.some(
+                                (evidence) =>
+                                    claim.evidenceIds.includes(evidence.id) &&
+                                    evidence.status === "success" &&
+                                    evidence.sourceKind === "direct" &&
+                                    evidence.staleness === "fresh",
+                            ),
+                    )
+                )
+                    throw new Error(
+                        "Verifier output cannot replace required direct fresh evidence.",
+                    );
+                return {
+                    ...verifier,
+                    outputName,
+                    summary: boundedText(verifier.summary, "Verifier summary"),
+                    claims,
+                    primaryEvidence,
+                };
+            });
+
+            const architectureClaims = validatedVerifiers
+                .flatMap((verifier) => verifier.claims)
+                .filter((claim) => claim.architectureImpact);
+            const expectedArchitectClaimIds = architectureClaims.map(
+                (claim) => claim.id,
+            );
+            const expectedArchitectEvidenceIds = [
+                ...new Set(
+                    architectureClaims.flatMap((claim) => claim.evidenceIds),
+                ),
+            ];
+            let validatedArchitect:
+                | (RecordVerificationCompletionInput["architect"] & {
+                      outputName: string;
+                      summary: string;
+                      risks: string[];
+                  })
+                | undefined;
+            if (expectedArchitectClaimIds.length > 0) {
+                if (!input.architect)
+                    throw new Error(
+                        "Architecture-impacting claims require architect output.",
+                    );
+                if (
+                    input.architect.agent !== "architect" ||
+                    !sameIds(
+                        input.architect.claimIds,
+                        expectedArchitectClaimIds,
+                    ) ||
+                    !sameIds(
+                        input.architect.evidenceIds,
+                        expectedArchitectEvidenceIds,
+                    )
+                )
+                    throw new Error(
+                        "Architect output scope does not match architecture-impacting claims.",
+                    );
+                if (
+                    input.architect.risks.length > 32 ||
+                    !input.architect.risks.every(
+                        (risk) =>
+                            typeof risk === "string" && risk.trim().length > 0,
+                    )
+                )
+                    throw new Error(
+                        "Architect risks must be bounded non-empty strings.",
+                    );
+                validatedArchitect = {
+                    ...input.architect,
+                    outputName: boundedText(
+                        input.architect.outputName,
+                        "Architect output name",
+                        128,
+                    ),
+                    summary: boundedText(
+                        input.architect.summary,
+                        "Architect summary",
+                    ),
+                    risks: input.architect.risks.map((risk) =>
+                        boundedText(risk, "Architect risk", 1_000),
+                    ),
+                };
+            } else if (input.architect) {
+                throw new Error(
+                    "Architect output is not allowed without architecture-impacting claims.",
+                );
+            }
+
+            const appendVerifierEvidence = (input: {
+                role: "verifier" | "architect";
+                agent: string;
+                outputName: string;
+                claimIds: string[];
+                evidenceIds: string[];
+                outcome?: ReviewOutcome;
+                architecturalStatus?: "clear" | "watch" | "block";
+                structuredOutput: unknown;
+            }): EvidenceRecord => {
+                evidenceCount += 1;
+                const sourceRefs = [
+                    ...new Set(
+                        input.evidenceIds.flatMap(
+                            (evidenceId) =>
+                                evidenceRecords.find(
+                                    (record) => record.id === evidenceId,
+                                )?.sourceRefs ?? [],
+                        ),
+                    ),
+                ].slice(0, 8);
+                const evidence: EvidenceRecord = {
+                    id: `EV-${String(evidenceCount).padStart(3, "0")}`,
+                    kind: "evidence",
+                    runId: options.runId,
+                    phase: "exploring",
+                    sequence: ++sequence,
+                    toolName: "brainstorm_run_verification",
+                    status: "success",
+                    timestamp: now(),
+                    sourceRefs,
+                    inputHash: sha256({
+                        verificationRunId,
+                        outputName: input.outputName,
+                    }),
+                    outputHash: sha256(input.structuredOutput),
+                    nativeRef: `subagent:async:${verificationRunId}:${input.outputName}`,
+                    sourceKind: "secondary",
+                    staleness: "fresh",
+                    verifier: {
+                        role: input.role,
+                        agent: input.agent,
+                        context: "fresh",
+                        exitCode: 0,
+                        verificationRunId,
+                        outputName: input.outputName,
+                        ...(input.outcome ? { outcome: input.outcome } : {}),
+                        ...(input.architecturalStatus
+                            ? {
+                                  architecturalStatus:
+                                      input.architecturalStatus,
+                              }
+                            : {}),
+                        referencedClaimIds: [...input.claimIds],
+                        referencedEvidenceIds: [...input.evidenceIds],
+                    },
+                };
+                evidenceRecords.push(evidence);
+                return evidence;
+            };
+
+            const architectEvidence = validatedArchitect
+                ? appendVerifierEvidence({
+                      role: "architect",
+                      agent: validatedArchitect.agent,
+                      outputName: validatedArchitect.outputName,
+                      claimIds: validatedArchitect.claimIds,
+                      evidenceIds: validatedArchitect.evidenceIds,
+                      architecturalStatus: validatedArchitect.status,
+                      structuredOutput: validatedArchitect,
+                  })
+                : undefined;
+            const verifierEvidence: EvidenceRecord[] = [];
+            const reviews: VerifierReviewRecord[] = [];
+            for (const verifier of validatedVerifiers) {
+                const evidence = appendVerifierEvidence({
+                    role: "verifier",
+                    agent: verifier.agent,
+                    outputName: verifier.outputName,
+                    claimIds: verifier.claimIds,
+                    evidenceIds: verifier.evidenceIds,
+                    outcome: verifier.outcome,
+                    structuredOutput: verifier,
+                });
+                verifierEvidence.push(evidence);
+                reviewCount += 1;
+                const review: VerifierReviewRecord = {
+                    id: `RV-${String(reviewCount).padStart(3, "0")}`,
+                    kind: "review",
+                    runId: options.runId,
+                    phase: "exploring",
+                    sequence: ++sequence,
+                    timestamp: now(),
+                    verifierEvidenceId: evidence.id,
+                    outcome: verifier.outcome,
+                    claimIds: [...verifier.claimIds],
+                    primaryEvidenceIds: [...verifier.evidenceIds],
+                    summary: verifier.summary,
+                    audit: {
+                        status: "success",
+                        verificationRunId,
+                        agent: verifier.agent,
+                        outputName: verifier.outputName,
+                        ...(validatedArchitect && architectEvidence
+                            ? {
+                                  architect: {
+                                      evidenceId: architectEvidence.id,
+                                      status: validatedArchitect.status,
+                                      claimIds: [
+                                          ...validatedArchitect.claimIds,
+                                      ],
+                                      evidenceIds: [
+                                          ...validatedArchitect.evidenceIds,
+                                      ],
+                                      risks: [...validatedArchitect.risks],
+                                      summary: validatedArchitect.summary,
+                                  },
+                              }
+                            : {}),
+                    },
+                };
+                reviewRecords.push(review);
+                reviews.push(review);
+            }
+            return structuredClone({
+                architectEvidence,
+                verifierEvidence,
+                reviews,
+            });
+        },
+        recordVerificationFailure(input: RecordVerificationFailureInput) {
+            const verificationRunId = boundedText(
+                input.verificationRunId,
+                "Verification run id",
+                256,
+            );
+            const reason = boundedText(
+                input.reason,
+                "Verification failure reason",
+            );
+            if (input.groups.length === 0)
+                throw new Error(
+                    "Verification failure requires at least one expected group.",
+                );
+            const reviews = input.groups.map((group) => {
+                if (!VERIFIER_AGENTS.has(group.agent))
+                    throw new Error(
+                        `Unsupported verifier agent: ${group.agent}.`,
+                    );
+                const outputName = boundedText(
+                    group.outputName,
+                    "Verifier output name",
+                    128,
+                );
+                if (
+                    group.claimIds.length === 0 ||
+                    new Set(group.claimIds).size !== group.claimIds.length
+                )
+                    throw new Error(
+                        "Verifier claim ids must be non-empty and unique.",
+                    );
+                for (const claimId of group.claimIds) {
+                    if (
+                        !claimRecords.some(
+                            (candidate) => candidate.id === claimId,
+                        )
+                    )
+                        throw new Error(`Unknown claim: ${claimId}.`);
+                }
+                for (const evidenceId of group.evidenceIds) {
+                    if (
+                        !evidenceRecords.some(
+                            (candidate) => candidate.id === evidenceId,
+                        )
+                    )
+                        throw new Error(
+                            `Unknown evidence record: ${evidenceId}.`,
+                        );
+                }
+                reviewCount += 1;
+                const review: VerifierReviewRecord = {
+                    id: `RV-${String(reviewCount).padStart(3, "0")}`,
+                    kind: "review",
+                    runId: options.runId,
+                    phase: "exploring",
+                    sequence: ++sequence,
+                    timestamp: now(),
+                    claimIds: [...group.claimIds],
+                    primaryEvidenceIds: [...group.evidenceIds],
+                    summary: reason,
+                    audit: {
+                        status: input.failureKind,
+                        verificationRunId,
+                        agent: group.agent,
+                        outputName,
+                        reason,
+                    },
+                };
+                reviewRecords.push(review);
+                return review;
+            });
+            return structuredClone(reviews);
         },
         recordReview(input: RecordReviewInput): ReviewRecord {
             const reviewerEvidence = evidenceRecords.find(
@@ -1212,6 +1879,7 @@ export function createExplorationLedger(options: LedgerOptions) {
             const userChoiceEvidence = evidenceRecords.find(
                 (item) => item.id === submission.userChoiceEvidenceId,
             );
+            let sequencedUserChoiceEvidence: EvidenceRecord | undefined;
             if (
                 !userChoiceEvidence ||
                 userChoiceEvidence.toolName !== "ask_user_question" ||
@@ -1238,7 +1906,18 @@ export function createExplorationLedger(options: LedgerOptions) {
                     blockers.push(
                         "User choice does not match the recorded answer.",
                     );
+                else sequencedUserChoiceEvidence = userChoiceEvidence;
             }
+            if (
+                sequencedUserChoiceEvidence &&
+                activeClaims.some(
+                    (claim) =>
+                        claim.sequence >= sequencedUserChoiceEvidence.sequence,
+                )
+            )
+                blockers.push(
+                    "User choice evidence must follow every active claim.",
+                );
 
             for (const claim of activeClaims) {
                 const waiver = waiverRecords.findLast(
@@ -1257,61 +1936,139 @@ export function createExplorationLedger(options: LedgerOptions) {
                 const reviewRequired =
                     (claim.critical && claim.classification === "empirical") ||
                     claim.contradictoryEvidenceIds.length > 0 ||
+                    claim.architectureImpact === true ||
                     waiver !== undefined;
                 if (!reviewRequired) continue;
-                const review = reviewRecords.find((item) => {
-                    const reviewerEvidence = evidenceRecords.find(
-                        (evidence) => evidence.id === item.reviewerEvidenceId,
-                    );
-                    const primaryEvidence = item.primaryEvidenceIds.flatMap(
-                        (id) => {
-                            const evidence = evidenceRecords.find(
-                                (candidate) => candidate.id === id,
+                const review = reviewRecords
+                    .filter((item) => {
+                        if (!item.claimIds.includes(claim.id)) return false;
+                        if (
+                            item.sequence <= claim.sequence ||
+                            (waiver && item.sequence <= waiver.sequence) ||
+                            item.outcome !==
+                                expectedReviewOutcome(claim.verdict)
+                        )
+                            return false;
+                        if (
+                            isVerifierReview(item) &&
+                            item.audit.architect?.status === "block" &&
+                            item.audit.architect.claimIds.includes(claim.id)
+                        )
+                            return false;
+                        const evidenceId = isLegacyReview(item)
+                            ? item.reviewerEvidenceId
+                            : item.verifierEvidenceId;
+                        const reviewerEvidence = evidenceRecords.find(
+                            (evidence) => evidence.id === evidenceId,
+                        );
+                        const primaryEvidence = item.primaryEvidenceIds.flatMap(
+                            (id) => {
+                                const evidence = evidenceRecords.find(
+                                    (candidate) => candidate.id === id,
+                                );
+                                return evidence ? [evidence] : [];
+                            },
+                        );
+                        if (
+                            reviewerEvidence?.status !== "success" ||
+                            reviewerEvidence.sequence >= item.sequence ||
+                            primaryEvidence.length !==
+                                item.primaryEvidenceIds.length ||
+                            !primaryEvidence.every(
+                                (evidence) =>
+                                    evidence.sourceKind === "direct" &&
+                                    evidence.staleness === "fresh" &&
+                                    (item.outcome === "unresolved" ||
+                                        evidence.status === "success"),
+                            ) ||
+                            (claim.classification === "empirical" &&
+                                !primaryEvidence.some((evidence) =>
+                                    claim.evidenceIds.includes(evidence.id),
+                                ))
+                        )
+                            return false;
+                        if (isLegacyReview(item))
+                            return (
+                                reviewerEvidence.sourceKind === "reviewer" &&
+                                reviewerEvidence.reviewer?.agent ===
+                                    "reviewer" &&
+                                reviewerEvidence.reviewer.context === "fresh" &&
+                                reviewerEvidence.reviewer.exitCode === 0 &&
+                                reviewerEvidence.reviewer.outcome ===
+                                    item.outcome &&
+                                reviewerEvidence.reviewer.referencedClaimIds.includes(
+                                    claim.id,
+                                ) &&
+                                claim.contradictoryEvidenceIds.every((id) =>
+                                    reviewerEvidence.reviewer?.referencedEvidenceIds.includes(
+                                        id,
+                                    ),
+                                ) &&
+                                primaryEvidence.every((evidence) =>
+                                    reviewerEvidence.reviewer?.referencedEvidenceIds.includes(
+                                        evidence.id,
+                                    ),
+                                )
                             );
-                            return evidence ? [evidence] : [];
-                        },
-                    );
-                    return (
-                        item.claimIds.includes(claim.id) &&
-                        item.sequence > claim.sequence &&
-                        (!waiver || item.sequence > waiver.sequence) &&
-                        item.outcome === expectedReviewOutcome(claim.verdict) &&
-                        reviewerEvidence?.status === "success" &&
-                        reviewerEvidence.sourceKind === "reviewer" &&
-                        reviewerEvidence.sequence < item.sequence &&
-                        reviewerEvidence.reviewer?.agent === "reviewer" &&
-                        reviewerEvidence.reviewer.context === "fresh" &&
-                        reviewerEvidence.reviewer.exitCode === 0 &&
-                        reviewerEvidence.reviewer.outcome === item.outcome &&
-                        reviewerEvidence.reviewer.referencedClaimIds.includes(
-                            claim.id,
-                        ) &&
-                        claim.contradictoryEvidenceIds.every((id) =>
-                            reviewerEvidence.reviewer?.referencedEvidenceIds.includes(
-                                id,
-                            ),
-                        ) &&
-                        primaryEvidence.length ===
-                            item.primaryEvidenceIds.length &&
-                        primaryEvidence.every(
-                            (evidence) =>
-                                evidence.sourceKind === "direct" &&
-                                evidence.staleness === "fresh" &&
-                                (item.outcome === "unresolved" ||
-                                    evidence.status === "success") &&
-                                reviewerEvidence.reviewer?.referencedEvidenceIds.includes(
+                        return (
+                            item.audit.status === "success" &&
+                            reviewerEvidence.sourceKind === "secondary" &&
+                            reviewerEvidence.verifier?.role === "verifier" &&
+                            reviewerEvidence.verifier.context === "fresh" &&
+                            reviewerEvidence.verifier.exitCode === 0 &&
+                            reviewerEvidence.verifier.verificationRunId ===
+                                item.audit.verificationRunId &&
+                            reviewerEvidence.verifier.agent ===
+                                item.audit.agent &&
+                            reviewerEvidence.verifier.outputName ===
+                                item.audit.outputName &&
+                            reviewerEvidence.verifier.outcome ===
+                                item.outcome &&
+                            reviewerEvidence.verifier.referencedClaimIds.includes(
+                                claim.id,
+                            ) &&
+                            claim.contradictoryEvidenceIds.every((id) =>
+                                reviewerEvidence.verifier?.referencedEvidenceIds.includes(
+                                    id,
+                                ),
+                            ) &&
+                            primaryEvidence.every((evidence) =>
+                                reviewerEvidence.verifier?.referencedEvidenceIds.includes(
                                     evidence.id,
                                 ),
-                        ) &&
-                        (claim.classification !== "empirical" ||
-                            primaryEvidence.some((evidence) =>
-                                claim.evidenceIds.includes(evidence.id),
-                            ))
+                            )
+                        );
+                    })
+                    .reduce<ReviewRecord | undefined>(
+                        (latest, item) =>
+                            !latest || item.sequence > latest.sequence
+                                ? item
+                                : latest,
+                        undefined,
                     );
-                });
-                if (!review)
+                const architectureBlock = reviewRecords.find(
+                    (item) =>
+                        isVerifierReview(item) &&
+                        item.claimIds.includes(claim.id) &&
+                        item.sequence > claim.sequence &&
+                        item.audit.status === "success" &&
+                        item.audit.architect?.status === "block" &&
+                        item.audit.architect.claimIds.includes(claim.id),
+                );
+                if (architectureBlock)
+                    blockers.push(
+                        `${claim.id} is blocked by architecture verification.`,
+                    );
+                else if (!review)
                     blockers.push(
                         `${claim.id} requires a fresh completed review.`,
+                    );
+                else if (
+                    sequencedUserChoiceEvidence &&
+                    sequencedUserChoiceEvidence.sequence <= review.sequence
+                )
+                    blockers.push(
+                        `User choice evidence must follow required review ${review.id}.`,
                     );
             }
             return [...new Set(blockers)];
@@ -1352,10 +2109,16 @@ export function createExplorationLedger(options: LedgerOptions) {
                     "",
                 ],
             );
-            const reviewLines = reviewRecords.map(
-                (review) =>
-                    `${review.id} — outcome: ${review.outcome}; reviewer ${review.reviewerEvidenceId}; claims: ${review.claimIds.join(", ")}; primary evidence: ${review.primaryEvidenceIds.join(", ")} — ${review.summary}`,
-            );
+            const reviewLines = reviewRecords.map((review) => {
+                const audit = isLegacyReview(review)
+                    ? `legacy reviewer ${review.reviewerEvidenceId}`
+                    : `${review.audit.status} verifier ${review.verifierEvidenceId ?? "none"} (${review.audit.agent})`;
+                const architect =
+                    !isLegacyReview(review) && review.audit.architect
+                        ? `; architect ${review.audit.architect.status} claims: ${review.audit.architect.claimIds.join(", ")}; evidence: ${review.audit.architect.evidenceIds.join(", ") || "none"}; risks: ${review.audit.architect.risks.join(" | ") || "none"}; summary: ${review.audit.architect.summary}`
+                        : "";
+                return `${review.id} — outcome: ${review.outcome ?? "none"}; ${audit}${architect}; claims: ${review.claimIds.join(", ")}; primary evidence: ${review.primaryEvidenceIds.join(", ")} — ${review.summary}`;
+            });
             const overrideLines = overrideRecords.map(
                 (override) =>
                     `${override.id} — ${override.command} — ${override.fromPhase} → ${override.toPhase} — reason: ${override.reason}; blockers: ${override.blockers.join(" | ") || "none"}`,

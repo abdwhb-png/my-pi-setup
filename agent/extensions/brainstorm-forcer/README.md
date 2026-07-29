@@ -1,113 +1,218 @@
 # brainstorm-forcer
 
-Pi extension that runs brainstorming as a controlled, artifact-backed state machine.
+Pi extension that runs brainstorming as a controlled, artifact-backed state
+machine. It produces design artifacts only; planning and implementation remain
+separate user decisions.
 
 ## Workflow
 
-`/brainstorm <topic>` starts immediately in Discovery. While active:
+`/brainstorm <topic>` starts in Discovery. While active:
 
 - one compact status message is injected before each LLM call;
 - only adjacent LLM transitions are accepted;
-- every phase requires a structured Markdown artifact;
-- generic mutation, shell, and planning tools remain blocked;
-- Exploring recommendations are gated by immutable evidence and claims;
-- completion stops after final design and never starts planning or implementation.
+- every phase requires a complete structured Markdown artifact;
+- generic mutation, shell, planning, and generic `subagent` execution are
+  blocked; Exploring permits only scoped lifecycle control of its exact owned
+  pending verification run;
+- Exploring recommendations are gated by append-only evidence, claims,
+  verification audits, waivers, and final user-choice provenance;
+- completion stops after the final design.
+
+Phase submission tools:
+
+1. Discovery — `brainstorm_submit_discovery`
+2. Understanding — `brainstorm_submit_understanding`
+3. Exploring — evidence tools, `brainstorm_record_claim`,
+   `brainstorm_run_verification`, `brainstorm_request_waiver`, and
+   `brainstorm_submit_exploring`
+4. Presenting — `brainstorm_submit_presenting`
+5. Documenting — `brainstorm_submit_design`
+
+After a successful phase submission, call `brainstorm_transition` with `next`,
+`previous`, or `status`. An LLM-requested transition opens the exact active
+artifact for user approval. Rejection keeps the current phase active and
+requires a revised complete artifact before another forward transition.
 
 ## Commands
 
 - `/brainstorm <topic>` or `/brainstorm start <topic>` — start immediately
 - `/brainstorm arm <topic>` — arm without starting an LLM turn
-- `/brainstorm status` — show current phase, gate, restrictions, and compact
-  ledger counts
-- `/brainstorm artifacts` — list durable active/stale revisions
-- `/brainstorm review` — reopen the active artifact in a scrollable Pi overlay
+- `/brainstorm status` — show phase, gate, restrictions, ledger counts, and
+  pending verification
+- `/brainstorm artifacts` — list durable active and stale revisions
+- `/brainstorm review` — open the active artifact in Pi
 - `/brainstorm next` / `/brainstorm previous` — adjacent user transition
 - `/brainstorm next --force` / `/brainstorm force-next` / forward
-  `/brainstorm phase <name|number>` — explicit user overrides
-- `/brainstorm stop` — stop workflow
+  `/brainstorm phase <name|number>` — explicit user override
+- `/brainstorm stop` — stop the workflow
 
 Leaving or skipping Exploring through a force command requires a non-empty user
 reason and confirmation. Approval creates an immutable `OV-*` record containing
-the bypassed blockers. LLM tool `brainstorm_transition` cannot force or skip.
-
-## Phase tools
-
-1. Discovery → `brainstorm_submit_discovery`
-2. Understanding → `brainstorm_submit_understanding`
-3. Exploring → evidence tools plus `brainstorm_submit_exploring`
-4. Presenting → `brainstorm_submit_presenting`
-5. Documenting → `brainstorm_submit_design`
-
-Exploring tools:
-
-- `brainstorm_record_claim` — qualify an assumption as `empirical`,
-  `design-choice`, or `future-contingency`;
-- `brainstorm_submit_review` — link successful fresh reviewer evidence to active
-  claims and cited primary evidence;
-- `brainstorm_request_waiver` — request blocking user approval for an unresolved
-  critical claim;
-- `brainstorm_submit_exploring` — render and submit the ledger-backed Exploring
-  artifact.
-
-After submitting the current phase, the LLM calls `brainstorm_transition` with
-`next`, `previous`, or `status`.
-
-LLM-requested `next` and `previous` transitions open a blocking Pi overlay
-containing the exact active Markdown artifact, revision, and path. Approve,
-Reject, or Reject with reason. Rejection keeps the phase active and requires a
-revised artifact before another forward transition.
+the bypassed blockers. `brainstorm_transition` cannot force or skip.
 
 ## Evidence-gated Exploring
 
-Every allowed non-workflow `tool_result` during Exploring is captured
-automatically as an append-only `EV-*` session record. Stored metadata is
-bounded and redacted: tool/status, timestamp, safe source references, canonical
-input/output hashes, source kind/staleness, and native tool-call reference.
-Malformed URLs, response identifiers, secret-like values, and opaque labels are
-stored only as short SHA-256 references. Raw parameters, output, and reviewer
-transcript remain in native session/Context Mode storage.
+Every allowed non-workflow `tool_result` during Exploring is captured as an
+append-only `EV-*` session record. Stored metadata is bounded and redacted:
+tool/status, timestamp, sanitized source references, canonical input/output
+hashes, source kind/staleness, and a native tool-call reference. Raw parameters
+and output remain in native session or Context Mode storage.
 
-Ledger records:
+Ledger identifiers remain append-only:
 
-- `EV-*` — observed tool result;
+- `EV-*` — observed tool result, including successful secondary verifier output;
 - `CL-*` — qualified claim and evidence links;
-- `RV-*` — explicit fresh reviewer linkage;
-- `WV-*` — user-approved waiver with reason, impact, mitigation, and
-  re-evaluation condition;
+- `RV-*` — verifier or legacy review audit;
+- `WV-*` — user-approved waiver;
 - `OV-*` — confirmed user force override.
 
-Critical empirical claims need successful evidence from a strict direct-tool
-allowlist. Unknown tools and `ask_user_question` are ineligible as factual proof.
-Fresh researcher subagents are allowed for broad research, but their output is
-secondary. Source-free `ctx_execute` and `ctx_batch_execute` output is derived;
-it can support a claim only beside successful fresh direct-source evidence.
-`ctx_search` evidence has no structured staleness metadata in current Context
-Mode bridge, so it cannot close a critical claim without direct corroboration.
-Failed, stale, synthesized-search, indexed-only, secondary, derived-only, or
-reviewer evidence cannot independently verify a critical empirical claim.
+`brainstorm_record_claim` requires both:
 
-Conditional review is required for a critical empirical claim, contradictory
-evidence, or a waiver. Reviewer runs as a fresh one-step `subagent` chain with
-explicit `async: false`; `outputSchema` belongs on its reviewer step because
-top-level single mode does not support it. Schema requires `outcome`, `claimIds`,
-and `evidenceIds`.
-Outcome must match claim verdict, and structured evidence coverage must include
-every contradiction, before `brainstorm_submit_review` can create `RV-*`.
+- `verificationDomain`: `pi`, `local-code`, `external`, or `performance`;
+- `architectureImpact`: whether the selected claim needs the architect advisory.
 
-Exploring completion requires:
+Critical empirical claims still require successful fresh direct evidence from
+the strict direct-tool allowlist. Failed, stale, indexed-only, derived-only, or
+secondary evidence cannot independently prove them. Verifier output is
+secondary evidence and never replaces direct evidence.
 
-- every approach references active `CL-*` assumptions;
-- critical unresolved claims have user-approved waivers;
-- required fresh reviews postdate the claims and waivers they cover;
-- empirical recommendation claims are closed;
-- the explicit user choice matches a normalized answer hash stored by a
-  dedicated single-question `ask_user_question` response.
+Verification is required for critical empirical claims, contradictory evidence,
+architecture-impacting claims, and claims with an approved waiver. A waiver for
+an unresolved critical claim does not remove the later verification
+requirement.
 
-New evidence, claim, review, or waiver invalidates the latest Exploring
-checkpoint. Resubmission creates the next immutable Exploring revision and marks
-prior/downstream revisions stale through the existing artifact store.
+## Dedicated asynchronous verification
 
-## Artifacts
+Call the single model-facing workflow tool:
+
+```text
+brainstorm_run_verification({ claimIds: ["CL-001", "CL-002"] })
+```
+
+It accepts active claim IDs only. Agent, chain, architect, context, and
+execution controls are deliberately not parameters. One workflow tool keeps
+routing, capability policy, ownership correlation, and audit emission in
+deterministic code; one tool per agent would expose those controls to the LLM
+and let policy drift between routes.
+
+The closed routing table is:
+
+| Claim domain  | Verifier               |
+| ------------- | ---------------------- |
+| `pi`          | `pi-expert`            |
+| `local-code`  | `scout`                |
+| `external`    | `factual-researcher`   |
+| `performance` | `performance-reviewer` |
+
+`expert-reviewer` and the generic `reviewer` are intentionally excluded from
+new brainstorming verification routes. Arbitrary agents, `worker`, and
+`oracle` are also rejected.
+
+Before each spawn, the extension derives the stable unique agent sequence from
+the selected deterministic chain. Public preflight checks only those routed
+agents, plus `architect` only when the chain contains it, under the active
+read-only capability ceiling. Missing unused agents therefore cannot block an
+unrelated route.
+
+The extension uses pi-subagents 0.37.2 RPC v1 for `ping`, async `spawn`, and
+`status`-based reload reconciliation. Children run with fresh context, a fixed
+read-only tool-name allowlist, and no nested `subagent` capability. The
+top-level async run appears in pi-subagents FleetView and status surfaces.
+Brainstorm context, `/brainstorm status`, and the widget also show owned pending
+verification. Scoped `status`, `steer`, `resume`, `interrupt`, and `stop`
+controls use the public `subagent` tool described below, not the extension's RPC
+client.
+
+Pending ownership and exact expected agent/group/claim/evidence scope persist
+in Pi session state. On reload, the extension calls RPC status without parsing
+its prose, then validates the package-owned lifecycle artifact under the
+pi-subagents temporary hierarchy. Running work stays pending; an owned terminal
+artifact is processed exactly once. Unrelated or duplicate terminal events are
+ignored.
+
+Only exact structured output with matching run/session ownership, exit status,
+agent, named output, claim IDs, and evidence IDs is accepted. Successful
+structured verifier output automatically creates a secondary `EV-*` and an
+`RV-*`; no prose is parsed and no separate review-submission tool exists.
+Failed, malformed, or timed-out runs create failure `RV-*` audit records but
+cannot close the gate.
+
+### Scoped needs-attention control
+
+`brainstorm_run_verification` remains the only run-creation surface. During
+Exploring, `subagent` remains blocked except while
+`pendingVerification.runId` owns a run. That temporary exception permits only:
+
+| Action      | Exact accepted fields                        |
+| ----------- | -------------------------------------------- |
+| `status`    | `action`, `id`                               |
+| `steer`     | `action`, `id`, non-empty `message`, `index` |
+| `resume`    | `action`, `id`, non-empty `message`, `index` |
+| `interrupt` | `action`, `id`                               |
+| `stop`      | `action`, `id`                               |
+
+`id` must equal the pending owned run ID. `index` is optional for `steer` and
+`resume`; when present it must be a non-negative integer inside the persisted
+expected-step range. Unknown actions, extra fields, `runId`, `dir`, alternate
+run targets, fleet/transcript views, and execution fields such as `agent`,
+`task`, `tasks`, `chain`, `parallel`, or `async` are rejected. No control can
+run without pending owned verification.
+
+When a child reports `needs attention`, the parent may inspect the owned run,
+steer or resume the exact expected child, or interrupt/stop the run. These
+lifecycle controls do not create another run. Results from permitted
+`subagent` controls and `subagent_wait` are orchestration state and are excluded
+before `EV-*` capture.
+
+`ask_user_question` is blocked only while owned verification is pending.
+Terminal processing must first record the applicable `RV-*` audit and clear the
+pending run; the final-choice question is then allowed again.
+
+### Architect advisory
+
+The `architect` step is added only when at least one selected claim has
+`architectureImpact: true`. Its persisted and validated scope is exactly those
+architecture-impacting claim and evidence IDs:
+
+- `CLEAR` (`clear`) — no architecture blocker;
+- `WATCH` (`watch`) — audit the risks without adding an architecture blocker;
+- `BLOCK` (`block`) — keep only the scoped architecture-impacting claims
+  blocked.
+
+The architect is advisory. It does not verify ordinary claims, replace routed
+verifiers, or turn secondary output into direct evidence. A noncritical
+architecture-impacting claim still requires successful verification.
+
+Legacy restored evidence with reviewer terminology and review records with
+`reviewerEvidenceId` remain eligible when they satisfy the existing proof
+policy. Restoration does not mutate those records; all new execution and audit
+paths use verifier terminology.
+
+## Final Exploring order
+
+The normal sequence is:
+
+1. capture direct evidence as `EV-*`;
+2. record every active `CL-*`;
+3. if verification needs attention, use only scoped control of the exact owned
+   run;
+4. process terminal completion into verifier `EV-*` and `RV-*` records;
+5. ask one dedicated `ask_user_question` question for the final choice;
+6. call `brainstorm_submit_exploring`;
+7. transition to Presenting.
+
+The choice evidence sequence must be later than every active claim and every
+required successful review, including a post-waiver review. Existing
+single-question provenance and normalized answer-hash checks also apply. A
+choice made before pending, failed, missing, or later verification is blocked.
+
+`brainstorm_submit_exploring` computes a bounded deterministic blocker list
+before rendering or writing. A blocked call creates no file, artifact revision,
+manifest mutation, or downstream staleness. Once blockers are empty, one call
+writes exactly one complete Exploring revision; only that complete revision can
+advance to Presenting.
+
+## Artifacts and persistence
 
 Each run writes under `docs/brainstorms/YYYY-MM-DD-<topic>/`:
 
@@ -120,42 +225,26 @@ Each run writes under `docs/brainstorms/YYYY-MM-DD-<topic>/`:
 manifest.json
 ```
 
-Exploring artifact is generated from ledger and contains Assumption Register,
-Evidence Index, verified/falsified findings, design choices, residual
-unknowns/waivers, approach comparison, evidence-backed recommendation, review
-outcomes, overrides, and user-choice evidence provenance.
+The Exploring artifact is rendered from the ledger and includes the assumption
+register, evidence index, findings, design choices, unknowns/waivers,
+approaches, recommendation, verification audits, overrides, and final
+user-choice provenance.
 
-Writes reuse `pi-scoped-write`: project confinement, traversal/symlink
-rejection, atomic writes, size limits, hashes, and audit trail. LLM never
-supplies artifact paths.
-
-## Persistence and status
-
-Workflow snapshots and append-only ledger records use Pi session entries and
-restore from active branch on reload. Restoration validates every record variant,
-ID prefix, finite sequence, and required field, rejects duplicates, reclassifies
-evidence under current proof policy, requalifies every restored claim verdict,
-then validates every cross-record link in a second pass. Any invalid verdict or
-broken relation remains a gate blocker. Old runs remain in
-session history but are filtered by `runId`.
-
-Exactly one transient `brainstorm-forcer-status` message is present per LLM
-call. It includes phase, gate, artifact revisions, `EV/CL/RV/WV/OV` counts, and
-open critical claim IDs—never raw evidence.
+Writes reuse `pi-scoped-write` for project confinement, traversal/symlink
+rejection, atomic writes, size limits, hashes, and audit trail. The LLM never
+supplies artifact paths. Session restoration validates record variants, IDs,
+sequences, relations, and current proof policy; broken or malformed restored
+state remains a gate blocker.
 
 ## Bundled skill
 
-`skills/brainstorm-forcer/SKILL.md` is registered through `resources_discover`.
+`skills/brainstorm-forcer/SKILL.md` is registered through
+`resources_discover`.
 
 ## Tests
 
 From `~/.pi/agent`:
 
 ```bash
-bun test \
-  extensions/brainstorm-forcer/index.test.ts \
-  extensions/brainstorm-forcer/artifacts.test.ts \
-  extensions/brainstorm-forcer/review.test.ts \
-  extensions/brainstorm-forcer/exploration-ledger.test.ts \
-  --isolate
+bun test --isolate extensions/brainstorm-forcer
 ```

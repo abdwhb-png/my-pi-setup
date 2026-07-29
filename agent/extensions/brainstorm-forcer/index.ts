@@ -21,6 +21,11 @@ import type {
     MessageRenderer,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text } from "@earendil-works/pi-tui";
+import {
+    registerSubagentCapabilityCeiling,
+    resolveCurrentSubagentCapabilityCeiling,
+    type SubagentCapabilityCeilingHandle,
+} from "pi-subagents/capability-ceiling";
 import { Type } from "typebox";
 import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
 import { createUiColors } from "../_shared/ui/ui-colors";
@@ -35,6 +40,28 @@ import {
     type ReviewAction,
     type ReviewDecision,
 } from "./review";
+import {
+    ARCHITECT_AGENT,
+    buildVerificationChain,
+    buildVerifierCapabilityCeiling,
+    groupVerificationClaims,
+    verifyArchitectCompletion,
+    verifyVerifierCompletion,
+    VERIFIER_AGENT_ALLOWLIST,
+    type EvidenceDescriptor,
+    type VerificationClaim,
+    type VerificationGroup,
+    type VerificationOutcome,
+} from "./verification";
+import {
+    createVerificationRpcClient,
+    isPendingVerificationRun,
+    parseOwnedTerminalCompletion,
+    readOwnedTerminalStatusArtifact,
+    type OwnedTerminalCompletion,
+    type PendingVerificationRun,
+    type PendingVerificationStep,
+} from "./verification-runner";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -74,9 +101,11 @@ const PHASE_SUBMISSION_TOOLS: Record<Phase, string> = {
 
 const EXPLORING_WORKFLOW_TOOLS = new Set([
     "brainstorm_record_claim",
-    "brainstorm_submit_review",
+    "brainstorm_run_verification",
     "brainstorm_request_waiver",
 ]);
+
+const EXPLORING_ORCHESTRATION_TOOLS = new Set(["subagent", "subagent_wait"]);
 
 const ALWAYS_BLOCKED_TOOLS = new Set([
     "write",
@@ -103,6 +132,28 @@ function summarizeTopicForUi(raw: string): string {
     const singleLine = raw.replace(/\s+/g, " ").trim();
     if (singleLine.length <= 64) return singleLine;
     return `${singleLine.slice(0, 61).trimEnd()}…`;
+}
+
+function boundedSingleLine(value: string, maxLength: number): string {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized.length <= maxLength
+        ? normalized
+        : `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function boundedVerificationWarning(message: string): string {
+    return boundedSingleLine(message, 700);
+}
+
+function summarizeIds(ids: readonly string[]): string {
+    const displayed = ids
+        .slice(0, 8)
+        .map((id) => boundedSingleLine(id, 64) || "<empty>");
+    const summary =
+        ids.length <= 8
+            ? displayed.join(", ")
+            : `${displayed.join(", ")} (+${ids.length - 8} more)`;
+    return boundedSingleLine(summary, 600);
 }
 
 function markdownList(items: readonly string[]): string[] {
@@ -141,6 +192,26 @@ type ArtifactCheckpoint = {
 };
 
 type ArtifactCheckpoints = Partial<Record<Phase, ArtifactCheckpoint>>;
+
+const VERIFICATION_CONTROL_ACTIONS = [
+    "status",
+    "steer",
+    "resume",
+    "interrupt",
+    "stop",
+] as const;
+type VerificationControlAction = (typeof VERIFICATION_CONTROL_ACTIONS)[number];
+
+const VERIFICATION_CONTROL_FIELDS: Record<
+    VerificationControlAction,
+    ReadonlySet<string>
+> = {
+    status: new Set(["action", "id"]),
+    steer: new Set(["action", "id", "message", "index"]),
+    resume: new Set(["action", "id", "message", "index"]),
+    interrupt: new Set(["action", "id"]),
+    stop: new Set(["action", "id"]),
+};
 
 const EMPTY_EVIDENCE = (): Evidence => ({
     researchCalls: 0,
@@ -190,57 +261,108 @@ function buildToolGroups(pi: ExtensionAPI): ToolGroups {
     return { research, questioning, mutation };
 }
 
-function objectRecord(value: unknown): Record<string, unknown> | undefined {
-    return value && typeof value === "object" && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value))
-        : undefined;
-}
-
-function isReviewerChainInput(input: Record<string, unknown>): boolean {
-    if (!Array.isArray(input.chain) || input.chain.length !== 1) return false;
-    const step = objectRecord(input.chain[0]);
-    return (
-        step?.agent === "reviewer" &&
-        typeof step.task === "string" &&
-        step.task.trim().length > 0 &&
-        step.outputSchema !== null &&
-        typeof step.outputSchema === "object" &&
-        !Array.isArray(step.outputSchema) &&
-        step.parallel === undefined
-    );
-}
-
 function canUseTool(
     phase: Phase,
     toolName: string,
     groups: ToolGroups,
     input?: Record<string, unknown>,
+    pendingVerification?: PendingVerificationRun | null,
 ): boolean {
     if (toolName === "brainstorm_transition") return true;
     if (phase === "exploring" && EXPLORING_WORKFLOW_TOOLS.has(toolName))
         return true;
     if (Object.values(PHASE_SUBMISSION_TOOLS).includes(toolName))
         return toolName === PHASE_SUBMISSION_TOOLS[phase];
-    if (toolName === "subagent") {
-        if (phase !== "exploring" || !input || input.context !== "fresh")
-            return false;
-        const commonAllowed =
-            input.action === undefined && input.tasks === undefined;
-        const researcherAllowed =
-            input.async !== true &&
-            input.agent === "researcher" &&
-            typeof input.task === "string" &&
-            input.task.trim().length > 0 &&
-            input.chain === undefined;
-        const reviewerAllowed =
-            input.async === false &&
-            input.agent === undefined &&
-            input.task === undefined &&
-            isReviewerChainInput(input);
-        return commonAllowed && (researcherAllowed || reviewerAllowed);
-    }
+    if (
+        phase === "exploring" &&
+        pendingVerification &&
+        toolName === "ask_user_question"
+    )
+        return false;
+    if (toolName === "subagent")
+        return (
+            phase === "exploring" &&
+            verificationControlDecision(input, pendingVerification ?? null)
+                .allowed
+        );
     if (ALWAYS_BLOCKED_TOOLS.has(toolName)) return false;
     return !groups.mutation.has(toolName);
+}
+
+function verificationControlDecision(
+    input: Record<string, unknown> | undefined,
+    pendingVerification: PendingVerificationRun | null,
+): { allowed: true } | { allowed: false; reason: string } {
+    if (!pendingVerification)
+        return {
+            allowed: false,
+            reason: "BLOCKED: No owned verification run is pending. Use brainstorm_run_verification to create verification work.",
+        };
+    const action = input?.action;
+    const controlAction = VERIFICATION_CONTROL_ACTIONS.find(
+        (candidate) => candidate === action,
+    );
+    if (!controlAction)
+        return {
+            allowed: false,
+            reason: `BLOCKED: Unsupported verification control action ${JSON.stringify(action)}. Allowed actions: ${VERIFICATION_CONTROL_ACTIONS.join(", ")}.`,
+        };
+    const unknownFields = Object.keys(input ?? {})
+        .filter(
+            (field) => !VERIFICATION_CONTROL_FIELDS[controlAction].has(field),
+        )
+        .toSorted();
+    if (unknownFields.length > 0)
+        return {
+            allowed: false,
+            reason: `BLOCKED: Verification control action ${controlAction} does not allow field(s): ${unknownFields.join(", ")}.`,
+        };
+    if (input?.id !== pendingVerification.runId)
+        return {
+            allowed: false,
+            reason: `BLOCKED: subagent control must target exactly owned verification run ${pendingVerification.runId} via id.`,
+        };
+    if (
+        (controlAction === "steer" || controlAction === "resume") &&
+        (typeof input.message !== "string" || !input.message.trim())
+    )
+        return {
+            allowed: false,
+            reason: `BLOCKED: Verification control action ${controlAction} requires a non-empty message.`,
+        };
+    const index = input.index;
+    if (index !== undefined) {
+        if (
+            typeof index !== "number" ||
+            !Number.isInteger(index) ||
+            index < 0 ||
+            index >= pendingVerification.expectedSteps.length
+        )
+            return {
+                allowed: false,
+                reason: `BLOCKED: Verification control index must be an integer from 0 through ${pendingVerification.expectedSteps.length - 1}.`,
+            };
+    }
+    return { allowed: true };
+}
+
+function pendingVerificationToolBlockReason(
+    phase: Phase,
+    toolName: string,
+    input: Record<string, unknown> | undefined,
+    pendingVerification: PendingVerificationRun | null,
+): string | undefined {
+    if (phase !== "exploring") return undefined;
+    if (toolName === "ask_user_question" && pendingVerification)
+        return `BLOCKED: ask_user_question is blocked while verification run ${pendingVerification.runId} is pending. Wait for terminal processing to record RV-* before asking the user.`;
+    if (toolName === "subagent") {
+        const decision = verificationControlDecision(
+            input,
+            pendingVerification,
+        );
+        return decision.allowed ? undefined : decision.reason;
+    }
+    return undefined;
 }
 
 function phaseRestrictionSummary(phase: Phase): string {
@@ -250,7 +372,7 @@ function phaseRestrictionSummary(phase: Phase): string {
         case "understanding":
             return "Understanding phase. Any non-mutating tool is allowed; prefer ask_user_question to refine requirements. Mutation blocked.";
         case "exploring":
-            return "Exploring phase. Allowed non-mutating results become EV-* records. Qualify CL-* claims, complete conditional fresh review, obtain user-approved waivers, and submit 2-3 claim-linked approaches. Mutation blocked.";
+            return "Exploring phase. Allowed non-mutating results become EV-* records. Qualify CL-* claims, run dedicated async verification, obtain user-approved waivers, and submit 2-3 claim-linked approaches. No new subagent run is allowed outside brainstorm_run_verification; while its owned run is pending, only status, steer, resume, interrupt, or stop control is allowed. Mutation is blocked.";
         case "presenting":
             return "Presenting phase. Any non-mutating tool is allowed. Present design sections, validate with user. Mutation blocked.";
         case "documenting":
@@ -304,11 +426,12 @@ function phasePrompt(
                 `Current topic: ${topic.raw}`,
                 `Current phase: EXPLORING`,
                 `Follow the bundled skill \`brainstorm-forcer\`. Identify each decision-relevant assumption and classify it as empirical, design-choice, or future-contingency. Do not write code.`,
-                `Verify empirical assumptions programmatically. Prefer \`ctx_batch_execute\`, then \`ctx_execute\`, \`ctx_execute_file\`, direct code/LSP/AST/test/API/official-documentation tools, and indexed retrieval last.`,
-                `Allowed Exploring tool results are captured automatically as EV-* records. Use \`brainstorm_record_claim\` to create CL-* records; never invent evidence identifiers. Direct proof uses a strict tool allowlist; unknown tools and user input are ineligible. A fresh \`researcher\` subagent is allowed for broad research but remains secondary evidence.`,
-                `Critical claims supported by \`ctx_search\` need direct corroboration. Failed, stale, indexed-only, secondary, or reviewer evidence cannot independently verify a critical empirical claim.`,
-                `When review is required, call \`subagent\` with explicit \`async: false\`, \`context: fresh\`, and a one-step \`chain\` for agent \`reviewer\`. Put \`outputSchema\` on that chain step, requiring structured outcome \`supported|rejected|unresolved\`, \`claimIds\`, and \`evidenceIds\`; it must cover every contradictory EV-*. Then link its EV-* output through \`brainstorm_submit_review\`.`,
-                `Use \`brainstorm_request_waiver\` only for an unresolved critical claim. The user must approve the documented waiver; a waiver also requires a later fresh review.`,
+                `Verify empirical assumptions with direct read/code/LSP/AST/test/API/official-documentation tools. Indexed or secondary retrieval does not replace direct evidence.`,
+                `Allowed Exploring tool results are captured automatically as EV-* records. Use \`brainstorm_record_claim\` to create CL-* records with verificationDomain and architectureImpact; never invent evidence identifiers. Direct proof uses a strict tool allowlist; unknown tools and user input are ineligible.`,
+                `Critical claims supported by \`ctx_search\` need direct corroboration. Failed, stale, indexed-only, secondary, or verifier evidence cannot independently verify a critical empirical claim.`,
+                `Call \`brainstorm_run_verification\` with only the selected claimIds. It starts dedicated async verification through pi-subagents RPC v1, routes each domain deterministically, and adds an architect advisory only for architecture-impacting claims. No new subagent run may be created through \`subagent\`. While the owned verification run is pending, \`subagent\` may only status, steer, resume, interrupt, or stop that exact run; lifecycle control results and \`subagent_wait\` never become EV-* records.`,
+                `\`ask_user_question\` remains blocked until terminal verification processing records the required RV-* audit.`,
+                `Use \`brainstorm_request_waiver\` only for an unresolved critical claim. The user must approve the documented waiver; a waiver also requires later successful verification.`,
                 `Obtain the explicit user choice through a dedicated single-question \`ask_user_question\` call. Submit 2-3 approaches whose \`claimIds\` reference active claims, an evidence-backed recommendation with \`recommendationClaimIds\`, the user choice, and its \`userChoiceEvidenceId\`.`,
                 ...phaseControl,
                 evidenceLine,
@@ -349,7 +472,116 @@ const brainstormMessageRenderer: MessageRenderer = (
     return new Text(text, 0, 0);
 };
 
-export default function brainstormForcer(pi: ExtensionAPI) {
+/**
+ * Manages the read-only verifier capability ceiling for the active brainstorm
+ * session. Source is stable ("brainstorm-forcer") so reload re-registration is
+ * idempotent. Registers by exact session ID; disposes only this extension's
+ * handle. Fail closed if session ID is unavailable.
+ */
+export function createCapabilityCeilingManager() {
+    let handle: SubagentCapabilityCeilingHandle | null = null;
+    return {
+        register(sessionId: string): void {
+            if (!sessionId || !sessionId.trim())
+                throw new Error(
+                    "Cannot register verifier ceiling without a session ID.",
+                );
+            if (handle) handle.dispose();
+            handle = registerSubagentCapabilityCeiling({
+                sessionId,
+                source: "brainstorm-forcer",
+                ceiling: buildVerifierCapabilityCeiling(),
+            });
+        },
+        dispose(): void {
+            if (handle) {
+                handle.dispose();
+                handle = null;
+            }
+        },
+    };
+}
+
+/**
+ * Preflight foundation: verifies each allowlisted routed verifier agent is
+ * discoverable and launchable under the effective capability ceiling without
+ * spawning. Uses public pi-subagents/preflight via dynamic import (the module
+ * is heavy — agent discovery, model resolution). Slice B calls this before
+ * every spawn.
+ */
+export async function preflightVerifierAgents(
+    sessionId: string,
+    cwd: string,
+    agents: readonly string[],
+): Promise<
+    ReadonlyArray<{
+        agent: string;
+        ok: boolean;
+        message?: string;
+    }>
+> {
+    const allowedAgents = new Set([
+        ...VERIFIER_AGENT_ALLOWLIST,
+        ARCHITECT_AGENT,
+    ]);
+    if (agents.some((agent) => !allowedAgents.has(agent)))
+        throw new Error("A selected verifier preflight agent is not allowed.");
+    if (agents.length === 0 || new Set(agents).size !== agents.length)
+        throw new Error(
+            "Verifier preflight agents must be a non-empty unique sequence.",
+        );
+    const { resolveSubagentLaunchContract } =
+        await import("pi-subagents/preflight");
+    const capabilityCeiling =
+        resolveCurrentSubagentCapabilityCeiling(sessionId);
+    if (!capabilityCeiling)
+        return agents.map((agent) => ({
+            agent,
+            ok: false,
+            message: "Verifier capability ceiling is not active.",
+        }));
+    const results = await Promise.all(
+        agents.map(async (agent) => {
+            try {
+                const result = await resolveSubagentLaunchContract({
+                    agent,
+                    cwd,
+                    context: "fresh",
+                    capabilityCeiling,
+                });
+                return {
+                    agent,
+                    ok: result.ok,
+                    message: result.ok ? undefined : result.message,
+                };
+            } catch (error) {
+                return {
+                    agent,
+                    ok: false,
+                    message:
+                        error instanceof Error ? error.message : String(error),
+                };
+            }
+        }),
+    );
+    return results;
+}
+
+type PreflightResult = Awaited<ReturnType<typeof preflightVerifierAgents>>;
+
+export type BrainstormForcerDependencies = Readonly<{
+    preflight?: (
+        sessionId: string,
+        cwd: string,
+        agents: readonly string[],
+    ) => Promise<PreflightResult>;
+    rpcTimeoutMs?: number;
+}>;
+
+export default function brainstormForcer(
+    pi: ExtensionAPI,
+    dependencies: BrainstormForcerDependencies = {},
+) {
     pi.registerMessageRenderer(SESSION_KEY, brainstormMessageRenderer);
 
     let activePhase: Phase | null = null;
@@ -369,6 +601,74 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     let artifacts: ArtifactCheckpoints = {};
     let explorationLedger: ReturnType<typeof createExplorationLedger> | null =
         null;
+    let pendingVerification: PendingVerificationRun | null = null;
+    let activeContext: ExtensionContext | null = null;
+    let launchInProgress = false;
+    const earlyCompletionEvents: unknown[] = [];
+    const processingRunIds = new Set<string>();
+    const ceilingManager = createCapabilityCeilingManager();
+    const rpcClient = createVerificationRpcClient(pi.events);
+    const rpcTimeoutMs = dependencies.rpcTimeoutMs ?? 5_000;
+    const runPreflight = dependencies.preflight ?? preflightVerifierAgents;
+    const unsubscribeCompletion = rpcClient.onAsyncComplete((data) => {
+        const dispatchedPending = pendingVerification;
+        const dispatchedContext = activeContext;
+        void handleAsyncCompletion(data).catch((error) => {
+            try {
+                const pendingRunId = boundedSingleLine(
+                    dispatchedPending?.runId ?? "",
+                    96,
+                );
+                const reason = boundedSingleLine(
+                    error instanceof Error ? error.message : String(error),
+                    500,
+                );
+                const stillOwnsActivePending =
+                    dispatchedPending !== null &&
+                    pendingVerification === dispatchedPending &&
+                    activeContext === dispatchedContext;
+                if (stillOwnsActivePending && dispatchedContext) {
+                    pendingVerification = null;
+                    saveState(dispatchedContext);
+                    dispatchedContext.ui.notify(
+                        boundedVerificationWarning(
+                            `Verification completion${pendingRunId ? ` ${pendingRunId}` : ""} contained: ${reason || "unknown async error"}. Pending cleared.`,
+                        ),
+                        "warning",
+                    );
+                } else if (dispatchedContext) {
+                    dispatchedContext.ui.notify(
+                        boundedVerificationWarning(
+                            `Verification completion${pendingRunId ? ` ${pendingRunId}` : ""} contained after branch state changed: ${reason || "unknown async error"}. Active pending preserved.`,
+                        ),
+                        "warning",
+                    );
+                } else {
+                    process.stderr.write(
+                        `${boundedVerificationWarning(
+                            `brainstorm-forcer verification completion contained: ${reason || "unknown async error"}`,
+                        )}\n`,
+                    );
+                }
+            } catch (boundaryError) {
+                const boundaryReason = boundedSingleLine(
+                    boundaryError instanceof Error
+                        ? boundaryError.message
+                        : String(boundaryError),
+                    500,
+                );
+                try {
+                    process.stderr.write(
+                        `${boundedVerificationWarning(
+                            `brainstorm-forcer verification error boundary failed: ${boundaryReason || "unknown boundary error"}`,
+                        )}\n`,
+                    );
+                } catch {
+                    return;
+                }
+            }
+        });
+    });
 
     pi.registerTool({
         name: "brainstorm_submit_discovery",
@@ -502,6 +802,13 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                 ),
                 impact: Type.String({ minLength: 1 }),
                 mitigation: Type.String({ minLength: 1 }),
+                verificationDomain: StringEnum([
+                    "pi",
+                    "local-code",
+                    "external",
+                    "performance",
+                ] as const),
+                architectureImpact: Type.Boolean(),
                 supersedesClaimId: Type.Optional(
                     Type.String({ pattern: "^CL-\\d+$" }),
                 ),
@@ -529,40 +836,38 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     });
 
     pi.registerTool({
-        name: "brainstorm_submit_review",
-        label: "Submit Brainstorm Review",
+        name: "brainstorm_run_verification",
+        label: "Run Brainstorm Verification",
         description:
-            "Link a successful fresh reviewer result to active Exploring claims and primary evidence.",
+            "Start one dedicated read-only async verification run for selected active claims.",
         parameters: Type.Object(
             {
-                reviewerEvidenceId: Type.String({ pattern: "^EV-\\d+$" }),
                 claimIds: Type.Array(Type.String({ pattern: "^CL-\\d+$" }), {
                     minItems: 1,
+                    uniqueItems: true,
                 }),
-                primaryEvidenceIds: Type.Array(
-                    Type.String({ pattern: "^EV-\\d+$" }),
-                    { minItems: 1 },
-                ),
-                summary: Type.String({ minLength: 1 }),
             },
             { additionalProperties: false },
         ),
         async execute(_id, params, _signal, _update, ctx) {
             if (activePhase !== "exploring")
                 throw new Error(
-                    `Reviews are unavailable during ${activePhase ?? "inactive"} phase.`,
+                    `Verification is unavailable during ${activePhase ?? "inactive"} phase.`,
                 );
-            explorationLedger ??= createExplorationLedger({ runId });
-            const record = explorationLedger.recordReview(params);
-            appendExplorationRecord(record, ctx);
+            activeContext = ctx;
+            const pending = await launchVerification(params.claimIds, ctx);
             return {
                 content: [
                     {
                         type: "text" as const,
-                        text: `Review recorded: ${record.id}.`,
+                        text: `Verification started: ${pending.runId} for ${pending.claimIds.join(", ")}.`,
                     },
                 ],
-                details: { record },
+                details: {
+                    status: "pending",
+                    runId: pending.runId,
+                    claimIds: pending.claimIds,
+                },
             };
         },
     });
@@ -680,16 +985,34 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                 userChoice: params.userChoice,
                 userChoiceEvidenceId: params.userChoiceEvidenceId,
             });
+            if (blockers.length > 0) {
+                const boundedBlockers = blockers.slice(0, 32);
+                return {
+                    content: [
+                        {
+                            type: "text" as const,
+                            text: [
+                                "Exploring submission blocked:",
+                                ...boundedBlockers.map(
+                                    (blocker) => `- ${blocker}`,
+                                ),
+                            ].join("\n"),
+                        },
+                    ],
+                    details: {
+                        blocked: true as const,
+                        blockers: boundedBlockers,
+                    },
+                };
+            }
             const markdown =
                 explorationLedger.renderExplorationMarkdown(params);
             return submitArtifact(
                 "exploring",
                 "brainstorm_submit_exploring",
                 markdown,
-                blockers.length === 0,
-                blockers.length > 0
-                    ? `Exploring incomplete: ${blockers.join(" ")}`
-                    : undefined,
+                true,
+                undefined,
                 ctx,
             );
         },
@@ -915,6 +1238,8 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     }
 
     function artifactCompletionBlocker(phase: Phase): string | undefined {
+        if (phase === "exploring" && pendingVerification)
+            return `Exploring incomplete: verification run ${pendingVerification.runId} is pending.`;
         const checkpoint = artifacts[phase];
         if (!checkpoint)
             return `${PHASE_LABELS[phase]} incomplete: ${expectedSubmissionTool(phase)} has not submitted an artifact.`;
@@ -1049,6 +1374,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                 phase: activePhase,
                 completed,
                 artifacts: structuredClone(artifacts),
+                pendingVerification: structuredClone(pendingVerification),
                 ...(approved === undefined ? {} : { approved }),
             },
         };
@@ -1115,6 +1441,470 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         groups = buildToolGroups(pi);
     }
 
+    function expectedOutcomeForVerdict(
+        verdict: "verified" | "falsified" | "unresolved",
+    ): VerificationOutcome {
+        return verdict === "verified"
+            ? "supported"
+            : verdict === "falsified"
+              ? "rejected"
+              : "unresolved";
+    }
+
+    function buildVerificationSelection(claimIds: readonly string[]) {
+        if (pendingVerification)
+            throw new Error(
+                `Verification run ${pendingVerification.runId} is already pending.`,
+            );
+        explorationLedger ??= createExplorationLedger({ runId });
+        const activeClaims = explorationLedger.getActiveClaims();
+        const records = explorationLedger.getRecords();
+        const evidenceById = new Map(
+            records.flatMap((record) =>
+                record.kind === "evidence"
+                    ? [[record.id, record] as const]
+                    : [],
+            ),
+        );
+        const claims = claimIds.map((claimId): VerificationClaim => {
+            const claim = activeClaims.find(
+                (candidate) => candidate.id === claimId,
+            );
+            if (!claim) throw new Error(`Unknown active claim: ${claimId}.`);
+            if (
+                claim.verificationDomain === undefined ||
+                claim.architectureImpact === undefined
+            )
+                throw new Error(
+                    `Claim ${claim.id} lacks required verification routing metadata.`,
+                );
+            const evidence: EvidenceDescriptor[] = claim.evidenceIds.map(
+                (evidenceId) => {
+                    const record = evidenceById.get(evidenceId);
+                    if (!record)
+                        throw new Error(
+                            `Claim ${claim.id} references unknown evidence ${evidenceId}.`,
+                        );
+                    return {
+                        id: record.id,
+                        sourceRefs: [...record.sourceRefs],
+                    };
+                },
+            );
+            return {
+                id: claim.id,
+                assertion: claim.assertion,
+                domain: claim.verificationDomain,
+                expectedOutcome: expectedOutcomeForVerdict(claim.verdict),
+                evidence,
+            };
+        });
+        const groups = groupVerificationClaims(claims);
+        const architectureClaims = activeClaims.filter(
+            (claim) =>
+                claimIds.includes(claim.id) &&
+                claim.architectureImpact === true,
+        );
+        const architectureScope = {
+            claimIds: architectureClaims.map((claim) => claim.id),
+            evidenceIds: [
+                ...new Set(
+                    architectureClaims.flatMap((claim) => claim.evidenceIds),
+                ),
+            ].toSorted(),
+        };
+        const payload = buildVerificationChain({
+            runId,
+            claims,
+            architectureImpact: architectureClaims.length > 0,
+            ...(architectureClaims.length > 0 ? { architectureScope } : {}),
+        });
+        const firstStep = payload.chain[0];
+        if (
+            !firstStep ||
+            !("parallel" in firstStep) ||
+            firstStep.parallel.length !== groups.length
+        )
+            throw new Error(
+                "Deterministic verification chain does not match its groups.",
+            );
+        const expectedSteps: PendingVerificationStep[] = groups.map(
+            (group, index) => {
+                const step = firstStep.parallel[index];
+                if (!step || step.agent !== group.agent)
+                    throw new Error(
+                        "Deterministic verifier agent does not match its group.",
+                    );
+                return {
+                    role: "verifier",
+                    outputName: step.as,
+                    agent: group.agent,
+                    domain: group.domain,
+                    outcome: group.outcome,
+                    claimIds: [...group.claimIds],
+                    evidenceIds: [...group.evidenceIds],
+                    resultIndex: index,
+                    chainStepIndex: 0,
+                };
+            },
+        );
+        if (architectureClaims.length > 0) {
+            const architectStep = payload.chain.at(-1);
+            if (
+                !architectStep ||
+                "parallel" in architectStep ||
+                architectStep.agent !== ARCHITECT_AGENT
+            )
+                throw new Error(
+                    "Deterministic verification chain lacks its architect step.",
+                );
+            expectedSteps.push({
+                role: "architect",
+                outputName: architectStep.as,
+                agent: ARCHITECT_AGENT,
+                claimIds: architectureScope.claimIds,
+                evidenceIds: architectureScope.evidenceIds,
+                resultIndex: groups.length,
+                chainStepIndex: 1,
+            });
+        }
+        return { payload, expectedSteps };
+    }
+
+    async function launchVerification(
+        claimIds: readonly string[],
+        ctx: ExtensionContext,
+    ): Promise<PendingVerificationRun> {
+        const sessionId = ctx.sessionManager.getSessionId();
+        if (!sessionId)
+            throw new Error(
+                "Verification requires an active persisted Pi session.",
+            );
+        const capabilityCeiling =
+            resolveCurrentSubagentCapabilityCeiling(sessionId);
+        if (!capabilityCeiling)
+            throw new Error(
+                "Verifier capability ceiling is not active for this session.",
+            );
+        const { payload, expectedSteps } = buildVerificationSelection(claimIds);
+        const expectedAgents = [
+            ...new Set(expectedSteps.map((step) => step.agent)),
+        ];
+        const preflight = await runPreflight(
+            sessionId,
+            ctx.cwd,
+            expectedAgents,
+        );
+        const returnedAgents = preflight.map((result) => result.agent);
+        if (
+            returnedAgents.length !== expectedAgents.length ||
+            new Set(returnedAgents).size !== returnedAgents.length ||
+            returnedAgents.some(
+                (agent, index) => agent !== expectedAgents[index],
+            )
+        )
+            throw new Error(
+                "Verifier preflight did not return the exact selected agent sequence.",
+            );
+        const failed = preflight.filter((result) => !result.ok);
+        if (failed.length > 0)
+            throw new Error(
+                `Verifier preflight failed: ${failed.map((result) => `${result.agent}: ${result.message ?? "unavailable"}`).join("; ")}.`,
+            );
+        const ping = await rpcClient.ping(rpcTimeoutMs);
+        if (ping.sessionId !== sessionId)
+            throw new Error(
+                "Subagent RPC bridge session does not match the active session.",
+            );
+
+        launchInProgress = true;
+        earlyCompletionEvents.length = 0;
+        try {
+            const receipt = await rpcClient.spawn(payload, rpcTimeoutMs);
+            const pending: PendingVerificationRun = {
+                runId: receipt.runId,
+                asyncDir: receipt.asyncDir,
+                ownerSessionId: sessionId,
+                brainstormRunId: runId,
+                claimIds: [...claimIds],
+                startedAt: new Date().toISOString(),
+                expectedSteps,
+            };
+            if (!isPendingVerificationRun(pending))
+                throw new Error(
+                    "Subagent spawn returned invalid verification ownership metadata.",
+                );
+            pendingVerification = pending;
+            saveState(ctx);
+            const early = earlyCompletionEvents.splice(0);
+            for (const completion of early)
+                await handleAsyncCompletion(completion);
+            return pending;
+        } finally {
+            launchInProgress = false;
+            earlyCompletionEvents.length = 0;
+        }
+    }
+
+    function pendingVerifierGroups(
+        pending: PendingVerificationRun,
+    ): Array<Extract<PendingVerificationStep, { role: "verifier" }>> {
+        return pending.expectedSteps.filter(
+            (
+                step,
+            ): step is Extract<PendingVerificationStep, { role: "verifier" }> =>
+                step.role === "verifier",
+        );
+    }
+
+    function auditVerificationFailure(
+        pending: PendingVerificationRun,
+        failureKind: "failed" | "malformed" | "timeout",
+        reason: string,
+        ctx: ExtensionContext,
+    ): void {
+        let auditRecorded = false;
+        let auditPersisted = false;
+        try {
+            explorationLedger ??= createExplorationLedger({ runId });
+            const records = explorationLedger.recordVerificationFailure({
+                verificationRunId: pending.runId,
+                failureKind,
+                reason,
+                groups: pendingVerifierGroups(pending).map((step) => ({
+                    agent: step.agent,
+                    outputName: step.outputName,
+                    claimIds: [...step.claimIds],
+                    evidenceIds: [...step.evidenceIds],
+                })),
+            });
+            auditRecorded = true;
+            for (const record of records) appendExplorationRecord(record, ctx);
+            auditPersisted = true;
+            pendingVerification = null;
+            saveState(ctx);
+            ctx.ui.notify(
+                boundedVerificationWarning(
+                    `Verification ${boundedSingleLine(pending.runId, 96)} ${failureKind}: ${boundedSingleLine(reason, 500) || "unknown verification failure"}`,
+                ),
+                "warning",
+            );
+        } catch (error) {
+            const auditError = boundedSingleLine(
+                error instanceof Error ? error.message : String(error),
+                500,
+            );
+            pendingVerification = null;
+            let persistenceError = "";
+            try {
+                saveState(ctx);
+            } catch (saveError) {
+                persistenceError = boundedSingleLine(
+                    saveError instanceof Error
+                        ? saveError.message
+                        : String(saveError),
+                    200,
+                );
+            }
+            const auditStatus = !auditRecorded
+                ? "audit skipped"
+                : auditPersisted
+                  ? "audit completed; follow-up contained"
+                  : "audit persistence incomplete";
+            const warning = boundedVerificationWarning(
+                `Verification ${boundedSingleLine(pending.runId, 96)} ${failureKind}; ${auditStatus}: ${auditError || "unknown audit error"}${persistenceError ? `; state persistence failed: ${persistenceError}` : ""}. Pending cleared.`,
+            );
+            try {
+                ctx.ui.notify(warning, "warning");
+            } catch {
+                try {
+                    process.stderr.write(`brainstorm-forcer: ${warning}\n`);
+                } catch {
+                    return;
+                }
+            }
+        }
+    }
+
+    function verificationGroupFromPending(
+        step: Extract<PendingVerificationStep, { role: "verifier" }>,
+    ): VerificationGroup {
+        const activeClaims = explorationLedger?.getActiveClaims() ?? [];
+        const records = explorationLedger?.getRecords() ?? [];
+        return {
+            domain: step.domain,
+            outcome: step.outcome,
+            agent: step.agent,
+            claimIds: [...step.claimIds],
+            assertions: step.claimIds.map(
+                (claimId) =>
+                    activeClaims.find((claim) => claim.id === claimId)
+                        ?.assertion ?? "",
+            ),
+            evidence: step.evidenceIds.map((evidenceId) => {
+                const evidence = records.find(
+                    (record) =>
+                        record.kind === "evidence" && record.id === evidenceId,
+                );
+                return {
+                    id: evidenceId,
+                    sourceRefs:
+                        evidence?.kind === "evidence"
+                            ? [...evidence.sourceRefs]
+                            : [],
+                };
+            }),
+            evidenceIds: [...step.evidenceIds],
+        };
+    }
+
+    async function processOwnedTerminal(
+        pending: PendingVerificationRun,
+        terminal: Exclude<OwnedTerminalCompletion, { kind: "unrelated" }>,
+        ctx: ExtensionContext,
+    ): Promise<void> {
+        if (processingRunIds.has(pending.runId)) return;
+        processingRunIds.add(pending.runId);
+        try {
+            if (terminal.kind === "failure") {
+                auditVerificationFailure(
+                    pending,
+                    terminal.failureKind,
+                    terminal.reason,
+                    ctx,
+                );
+                return;
+            }
+            const verifierOutputs: Array<{
+                agent: string;
+                outputName: string;
+                outcome: VerificationOutcome;
+                claimIds: string[];
+                evidenceIds: string[];
+                summary: string;
+            }> = [];
+            let architectOutput:
+                | {
+                      agent: "architect";
+                      outputName: string;
+                      status: "clear" | "watch" | "block";
+                      claimIds: string[];
+                      evidenceIds: string[];
+                      risks: string[];
+                      summary: string;
+                  }
+                | undefined;
+            for (const step of pending.expectedSteps) {
+                const output = terminal.structuredOutputs[step.outputName];
+                if (step.role === "verifier") {
+                    const validated = verifyVerifierCompletion(
+                        verificationGroupFromPending(step),
+                        output,
+                    );
+                    if (!validated.ok) {
+                        auditVerificationFailure(
+                            pending,
+                            "malformed",
+                            validated.blockers.join(" "),
+                            ctx,
+                        );
+                        return;
+                    }
+                    const structured = output as {
+                        outcome: VerificationOutcome;
+                        claimIds: string[];
+                        evidenceIds: string[];
+                        summary: string;
+                    };
+                    verifierOutputs.push({
+                        agent: step.agent,
+                        outputName: step.outputName,
+                        outcome: structured.outcome,
+                        claimIds: [...structured.claimIds],
+                        evidenceIds: [...structured.evidenceIds],
+                        summary: structured.summary,
+                    });
+                    continue;
+                }
+                const validated = verifyArchitectCompletion(output, {
+                    claimIds: step.claimIds,
+                    evidenceIds: step.evidenceIds,
+                });
+                if (!validated.ok) {
+                    auditVerificationFailure(
+                        pending,
+                        "malformed",
+                        validated.blockers.join(" "),
+                        ctx,
+                    );
+                    return;
+                }
+                const structured = output as {
+                    status: "clear" | "watch" | "block";
+                    claimIds: string[];
+                    evidenceIds: string[];
+                    risks: string[];
+                    summary: string;
+                };
+                architectOutput = {
+                    agent: "architect",
+                    outputName: step.outputName,
+                    status: structured.status,
+                    claimIds: [...structured.claimIds],
+                    evidenceIds: [...structured.evidenceIds],
+                    risks: [...structured.risks],
+                    summary: structured.summary,
+                };
+            }
+
+            explorationLedger ??= createExplorationLedger({ runId });
+            let completion;
+            try {
+                completion = explorationLedger.recordVerificationCompletion({
+                    verificationRunId: pending.runId,
+                    verifiers: verifierOutputs,
+                    ...(architectOutput ? { architect: architectOutput } : {}),
+                });
+            } catch (error) {
+                auditVerificationFailure(
+                    pending,
+                    "malformed",
+                    error instanceof Error ? error.message : String(error),
+                    ctx,
+                );
+                return;
+            }
+            if (completion.architectEvidence)
+                appendExplorationRecord(completion.architectEvidence, ctx);
+            for (const record of completion.verifierEvidence)
+                appendExplorationRecord(record, ctx);
+            for (const record of completion.reviews)
+                appendExplorationRecord(record, ctx);
+            pendingVerification = null;
+            saveState(ctx);
+            ctx.ui.notify(
+                `Verification ${pending.runId} completed and audited.`,
+                architectOutput?.status === "block" ? "warning" : "info",
+            );
+        } finally {
+            processingRunIds.delete(pending.runId);
+        }
+    }
+
+    async function handleAsyncCompletion(raw: unknown): Promise<void> {
+        if (launchInProgress && !pendingVerification) {
+            if (earlyCompletionEvents.length < 8)
+                earlyCompletionEvents.push(raw);
+            return;
+        }
+        const pending = pendingVerification;
+        const ctx = activeContext;
+        if (!pending || !ctx) return;
+        const terminal = parseOwnedTerminalCompletion(raw, pending);
+        if (terminal.kind === "unrelated") return;
+        await processOwnedTerminal(pending, terminal, ctx);
+    }
+
     function resetState() {
         activePhase = null;
         topic = { raw: "", display: "" };
@@ -1124,6 +1914,10 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         artifactStore = null;
         artifacts = {};
         explorationLedger = null;
+        pendingVerification = null;
+        processingRunIds.clear();
+        earlyCompletionEvents.length = 0;
+        ceilingManager.dispose();
         refreshGroups();
     }
 
@@ -1189,7 +1983,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         const ledgerSummary = explorationLedgerSummary();
         const metrics =
             activePhase === "exploring"
-                ? `ev:${ledgerSummary.counts.evidence} open:${ledgerSummary.openCriticalIds.length}`
+                ? `ev:${ledgerSummary.counts.evidence} open:${ledgerSummary.openCriticalIds.length}${pendingVerification ? " verify:pending" : ""}`
                 : `r:${research} q:${questions}`;
         widgetText = [
             colors.primary(
@@ -1215,6 +2009,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             runId,
             startedAt,
             artifacts,
+            pendingVerification,
         };
     }
 
@@ -1279,6 +2074,35 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         });
     }
 
+    function missingPendingVerificationReferences(
+        pending: PendingVerificationRun,
+    ): { claimIds: string[]; evidenceIds: string[] } {
+        const records = explorationLedger?.getRecords() ?? [];
+        const claimIds = new Set(
+            records
+                .filter((record) => record.kind === "claim")
+                .map((record) => record.id),
+        );
+        const evidenceIds = new Set(
+            records
+                .filter((record) => record.kind === "evidence")
+                .map((record) => record.id),
+        );
+        return {
+            claimIds: [
+                ...new Set([
+                    ...pending.claimIds,
+                    ...pending.expectedSteps.flatMap((step) => step.claimIds),
+                ]),
+            ].filter((id) => !claimIds.has(id)),
+            evidenceIds: [
+                ...new Set(
+                    pending.expectedSteps.flatMap((step) => step.evidenceIds),
+                ),
+            ].filter((id) => !evidenceIds.has(id)),
+        };
+    }
+
     function restoreState(ctx: ExtensionContext): void {
         resetState();
         const data = latestSessionData(ctx) as
@@ -1290,6 +2114,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                   runId?: string;
                   startedAt?: string;
                   artifacts?: ArtifactCheckpoints;
+                  pendingVerification?: unknown;
               }
             | undefined;
         if (!data || data.active === false) return;
@@ -1312,7 +2137,85 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                 runId,
                 initialRecords: restoredLedgerRecords(ctx, runId),
             });
+            const restoredPending = data.pendingVerification;
+            pendingVerification =
+                isPendingVerificationRun(restoredPending) &&
+                restoredPending.brainstormRunId === runId &&
+                restoredPending.ownerSessionId ===
+                    ctx.sessionManager.getSessionId()
+                    ? restoredPending
+                    : null;
+            if (pendingVerification) {
+                const missing =
+                    missingPendingVerificationReferences(pendingVerification);
+                if (
+                    missing.claimIds.length > 0 ||
+                    missing.evidenceIds.length > 0
+                ) {
+                    const pendingRunId = pendingVerification.runId;
+                    const reasons = [
+                        ...(missing.claimIds.length > 0
+                            ? [
+                                  `${summarizeIds(missing.claimIds)} ${missing.claimIds.length === 1 ? "is" : "are"} absent from the active branch claim history`,
+                              ]
+                            : []),
+                        ...(missing.evidenceIds.length > 0
+                            ? [
+                                  `${summarizeIds(missing.evidenceIds)} ${missing.evidenceIds.length === 1 ? "is" : "are"} absent from the active branch evidence history`,
+                              ]
+                            : []),
+                    ];
+                    pendingVerification = null;
+                    saveState(ctx);
+                    ctx.ui.notify(
+                        boundedVerificationWarning(
+                            `Restored verification ${boundedSingleLine(pendingRunId, 96)} quarantined: ${reasons.join("; ")}. Pending cleared without ledger audit.`,
+                        ),
+                        "warning",
+                    );
+                }
+            }
+            ceilingManager.register(ctx.sessionManager.getSessionId() ?? "");
         }
+    }
+
+    async function reconcilePendingVerification(
+        ctx: ExtensionContext,
+    ): Promise<void> {
+        const pending = pendingVerification;
+        if (!pending) return;
+        const stillOwnsPending = () =>
+            pendingVerification === pending && activeContext === ctx;
+        let terminal: ReturnType<typeof readOwnedTerminalStatusArtifact>;
+        try {
+            const ping = await rpcClient.ping(rpcTimeoutMs);
+            if (!stillOwnsPending()) return;
+            if (ping.sessionId !== pending.ownerSessionId)
+                throw new Error(
+                    "Subagent RPC bridge session does not own the restored verification run.",
+                );
+            await rpcClient.status(pending.runId, rpcTimeoutMs);
+            if (!stillOwnsPending()) return;
+            terminal = readOwnedTerminalStatusArtifact(pending);
+        } catch (error) {
+            if (!stillOwnsPending()) return;
+            const reason =
+                error instanceof Error ? error.message : String(error);
+            auditVerificationFailure(
+                pending,
+                reason.includes("timed out") ? "timeout" : "failed",
+                reason,
+                ctx,
+            );
+            return;
+        }
+        if (!stillOwnsPending()) return;
+        if (terminal.kind === "pending") {
+            saveState(ctx);
+            return;
+        }
+        if (!stillOwnsPending()) return;
+        await processOwnedTerminal(pending, terminal, ctx);
     }
 
     function startPhase(
@@ -1320,6 +2223,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         ctx: ExtensionContext,
         immediate: boolean,
     ): void {
+        activeContext = ctx;
         activePhase = "discovery";
         topic = { raw: topicText, display: summarizeTopicForUi(topicText) };
         evidence = EMPTY_EVIDENCE();
@@ -1328,6 +2232,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         artifactStore = null;
         artifacts = {};
         explorationLedger = createExplorationLedger({ runId });
+        ceilingManager.register(ctx.sessionManager.getSessionId() ?? "");
         refreshGroups();
         saveState(ctx);
         ctx.ui.notify(
@@ -1477,10 +2382,14 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                     activePhase === "exploring"
                         ? `\nExploring ledger: EV=${ledgerSummary.counts.evidence} CL=${ledgerSummary.counts.claims} RV=${ledgerSummary.counts.reviews} WV=${ledgerSummary.counts.waivers} OV=${ledgerSummary.counts.overrides}`
                         : "";
+                const verificationLine = pendingVerification
+                    ? `\nVerification pending: ${pendingVerification.runId} (${pendingVerification.claimIds.join(", ")})`
+                    : "";
                 ctx.ui.notify(
                     `Brainstorm: ${topic.display} — ${PHASE_LABELS[activePhase]} (${PHASES.indexOf(activePhase) + 1}/${PHASES.length})` +
                         `\nResearch calls: ${evidence.researchCalls} | Questions: ${evidence.questionCalls}` +
                         ledgerLine +
+                        verificationLine +
                         `\nRestrictions: ${phaseRestrictionSummary(activePhase)}` +
                         (blocker
                             ? `\nNext blocked: ${blocker}`
@@ -1726,6 +2635,12 @@ export default function brainstormForcer(pi: ExtensionAPI) {
                 ? [
                       `Exploring ledger: EV=${ledgerSummary.counts.evidence} CL=${ledgerSummary.counts.claims} RV=${ledgerSummary.counts.reviews} WV=${ledgerSummary.counts.waivers} OV=${ledgerSummary.counts.overrides}`,
                       `Open critical claims: ${ledgerSummary.openCriticalIds.join(", ") || "none"}`,
+                      `Verification: ${pendingVerification ? `pending ${pendingVerification.runId} for ${pendingVerification.claimIds.join(", ")}` : "none pending"}`,
+                      ...(pendingVerification
+                          ? [
+                                `Owned verification controls: subagent status, steer, resume, interrupt, or stop with id=${pendingVerification.runId}; ask_user_question waits for terminal RV-* processing.`,
+                            ]
+                          : []),
                   ]
                 : []),
             "Active artifacts:",
@@ -1750,6 +2665,7 @@ export default function brainstormForcer(pi: ExtensionAPI) {
     });
 
     pi.on("session_start", async (_event, ctx) => {
+        activeContext = ctx;
         widget = createWidget(pi, {
             id: WIDGET_ID,
             label: "Brainstorm",
@@ -1763,17 +2679,37 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         refreshGroups();
         restoreState(ctx);
         updateWidget(ctx);
+        await reconcilePendingVerification(ctx);
+    });
+
+    pi.on("session_tree", async (_event, ctx) => {
+        activeContext = ctx;
+        restoreState(ctx);
+        updateWidget(ctx);
+        await reconcilePendingVerification(ctx);
     });
 
     pi.on("session_shutdown", async (_event, ctx) => {
         widget?.remove(ctx);
         widget = null;
         widgetText = null;
+        ceilingManager.dispose();
+        unsubscribeCompletion();
+        rpcClient.dispose();
+        activeContext = null;
     });
 
     pi.on("tool_call", async (event, ctx) => {
         if (!activePhase) return;
-        if (canUseTool(activePhase, event.toolName, groups, event.input))
+        if (
+            canUseTool(
+                activePhase,
+                event.toolName,
+                groups,
+                event.input,
+                pendingVerification,
+            )
+        )
             return;
         const phaseLabel = PHASE_LABELS[activePhase];
         const allowedTools = [
@@ -1784,14 +2720,21 @@ export default function brainstormForcer(pi: ExtensionAPI) {
             expectedSubmissionTool(activePhase),
             "brainstorm_transition",
         ].join(", ");
-        const reason = [
-            `BLOCKED: ${event.toolName} is not allowed in the ${phaseLabel} phase.`,
-            `Allowed tools: ${allowedTools}.`,
-            `Generic mutation, shell, and planning tools remain blocked for the entire brainstorm.`,
-            `Submit the current phase artifact, then request an adjacent transition.`,
-            ``,
-            `Current restriction: ${phaseRestrictionSummary(activePhase)}`,
-        ].join("\n");
+        const reason =
+            pendingVerificationToolBlockReason(
+                activePhase,
+                event.toolName,
+                event.input,
+                pendingVerification,
+            ) ??
+            [
+                `BLOCKED: ${event.toolName} is not allowed in the ${phaseLabel} phase.`,
+                `Allowed tools: ${allowedTools}.`,
+                `Generic mutation, shell, and planning tools remain blocked for the entire brainstorm.`,
+                `Submit the current phase artifact, then request an adjacent transition.`,
+                ``,
+                `Current restriction: ${phaseRestrictionSummary(activePhase)}`,
+            ].join("\n");
         if (ctx.hasUI) {
             ctx.ui.notify(`Blocked ${event.toolName}`, "warning");
         }
@@ -1805,7 +2748,14 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         if (
             activePhase === "exploring" &&
             !event.toolName.startsWith("brainstorm_") &&
-            canUseTool(activePhase, event.toolName, groups, event.input)
+            !EXPLORING_ORCHESTRATION_TOOLS.has(event.toolName) &&
+            canUseTool(
+                activePhase,
+                event.toolName,
+                groups,
+                event.input,
+                pendingVerification,
+            )
         ) {
             explorationLedger ??= createExplorationLedger({ runId });
             const record = explorationLedger.captureEvidence({
@@ -1830,7 +2780,13 @@ export default function brainstormForcer(pi: ExtensionAPI) {
         // Detect blocked mutation tool — inject follow-up to LLM so it knows why
         const blocked =
             event.isError &&
-            !canUseTool(activePhase, event.toolName, groups, event.input);
+            !canUseTool(
+                activePhase,
+                event.toolName,
+                groups,
+                event.input,
+                pendingVerification,
+            );
         if (blocked && ctx.hasUI) {
             pi.appendEntry(SESSION_KEY, {
                 ...stateSnapshot(),

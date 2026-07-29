@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
     createExplorationLedger,
+    isExplorationRecord,
     type ExplorationRecord,
     type ReviewRecord,
 } from "./exploration-ledger";
@@ -196,6 +197,8 @@ describe("exploration ledger", () => {
                 evidenceIds: [unknown.id],
                 contradictoryEvidenceIds: [],
                 impact: "Could alter the recommendation.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
                 mitigation: "Use a direct inspection tool.",
             }),
         ).toThrow("successful eligible evidence");
@@ -225,6 +228,8 @@ describe("exploration ledger", () => {
                 evidenceIds: [derived.id],
                 contradictoryEvidenceIds: [],
                 impact: "Could turn an assertion into fake proof.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
                 mitigation: "Require associated direct source evidence.",
             }),
         ).toThrow("associated direct evidence");
@@ -246,6 +251,8 @@ describe("exploration ledger", () => {
                 evidenceIds: [direct.id, derived.id],
                 contradictoryEvidenceIds: [],
                 impact: "Links measurement to its source.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
                 mitigation: "Keep both evidence records.",
             }).verdict,
         ).toBe("verified");
@@ -270,6 +277,8 @@ describe("exploration ledger", () => {
             evidenceIds: [evidence.id],
             contradictoryEvidenceIds: [],
             impact: "Determines reload safety.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Block transition if restoration fails.",
         });
 
@@ -304,6 +313,8 @@ describe("exploration ledger", () => {
                 evidenceIds: [indexed.id],
                 contradictoryEvidenceIds: [],
                 impact: "Could change the recommendation.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
                 mitigation: "Inspect the primary source.",
             }),
         ).toThrow("direct corroborating evidence");
@@ -329,6 +340,8 @@ describe("exploration ledger", () => {
                 evidenceIds: [failed.id],
                 contradictoryEvidenceIds: [],
                 impact: "Would change implementation scope.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
                 mitigation: "Retry direct inspection.",
             }),
         ).toThrow("successful eligible evidence");
@@ -344,6 +357,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Adds operational cost.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Prefer session entries.",
         });
         const replacement = ledger.recordClaim({
@@ -354,6 +369,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Keeps state branch-local.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Bound stored metadata.",
             supersedesClaimId: original.id,
         });
@@ -380,6 +397,8 @@ describe("exploration ledger", () => {
             evidenceIds: [primary.id],
             contradictoryEvidenceIds: [],
             impact: "Controls all forward transitions.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Keep one shared blocker.",
         });
         const reviewer = ledger.captureEvidence({
@@ -459,6 +478,8 @@ describe("exploration ledger", () => {
             evidenceIds: [primary.id],
             contradictoryEvidenceIds: [],
             impact: "Controls all forward transitions.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Keep one shared blocker.",
         });
         const reviewer = ledger.captureEvidence({
@@ -525,6 +546,8 @@ describe("exploration ledger", () => {
             evidenceIds: [primary.id, contradiction.id],
             contradictoryEvidenceIds: [contradiction.id],
             impact: "Controls all forward transitions.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Review the counterexample explicitly.",
         });
         const reviewer = ledger.captureEvidence({
@@ -578,6 +601,8 @@ describe("exploration ledger", () => {
             evidenceIds: [failed.id],
             contradictoryEvidenceIds: [],
             impact: "Could invalidate the recommendation.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Re-evaluate when the file is available.",
         });
         const choice = ledger.recordClaim({
@@ -588,6 +613,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Avoids a second persistence layer.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Keep records bounded.",
         });
         const userChoiceEvidence = ledger.captureEvidence({
@@ -664,7 +691,33 @@ describe("exploration ledger", () => {
             summary: "Waiver is bounded and must be revisited.",
         });
 
-        expect(ledger.getGateBlockers(submission)).toEqual([]);
+        expect(ledger.getGateBlockers(submission)).toContain(
+            "User choice evidence must follow required review RV-001.",
+        );
+        const finalChoiceEvidence = ledger.captureEvidence({
+            toolCallId: "call-final-choice",
+            toolName: "ask_user_question",
+            input: { questions: [{ question: "Which approach?" }] },
+            content: [{ type: "text", text: "Append-only session entries" }],
+            details: {
+                cancelled: false,
+                answers: [
+                    {
+                        questionIndex: 0,
+                        question: "Which approach?",
+                        kind: "option",
+                        answer: "Append-only session entries",
+                    },
+                ],
+            },
+            isError: false,
+        });
+        expect(
+            ledger.getGateBlockers({
+                ...submission,
+                userChoiceEvidenceId: finalChoiceEvidence.id,
+            }),
+        ).toEqual([]);
     });
 
     it("blocks Exploring without ask_user_question provenance for the user choice", () => {
@@ -677,6 +730,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Controls persistence architecture.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Document the trade-off.",
         });
 
@@ -699,6 +754,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Controls persistence architecture.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Document the trade-off.",
         });
         const answer = ledger.captureEvidence({
@@ -735,6 +792,102 @@ describe("exploration ledger", () => {
         ).toContain("User choice does not match the recorded answer.");
     });
 
+    it("requires user choice evidence after active claims and required reviews", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const direct = ledger.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "index.ts" },
+            content: [{ type: "text", text: "direct result" }],
+            details: undefined,
+            isError: false,
+        });
+        const captureChoice = (toolCallId: string) =>
+            ledger.captureEvidence({
+                toolCallId,
+                toolName: "ask_user_question",
+                input: { questions: [{ question: "Which approach?" }] },
+                content: [{ type: "text", text: "Answer envelope" }],
+                details: {
+                    cancelled: false,
+                    answers: [
+                        {
+                            questionIndex: 0,
+                            question: "Which approach?",
+                            kind: "option",
+                            answer: "Choose A",
+                        },
+                    ],
+                },
+                isError: false,
+            });
+        const beforeClaim = captureChoice("choice-before-claim");
+        const claim = ledger.recordClaim({
+            assertion: "The transition gate is centralized.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [direct.id],
+            contradictoryEvidenceIds: [],
+            impact: "Controls phase transitions.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+            mitigation: "Keep one transition gate.",
+        });
+        const submission = (userChoiceEvidenceId: string) => ({
+            approachClaimIds: [[claim.id]],
+            recommendationClaimIds: [claim.id],
+            userChoice: "Choose A",
+            userChoiceEvidenceId,
+        });
+
+        expect(ledger.getGateBlockers(submission(beforeClaim.id))).toContain(
+            "User choice evidence must follow every active claim.",
+        );
+
+        const beforeReview = captureChoice("choice-before-review");
+        ledger.recordVerificationCompletion({
+            verificationRunId: "async-owned",
+            verifiers: [
+                {
+                    agent: "scout",
+                    outputName: "verify_local_code_supported",
+                    outcome: "supported",
+                    claimIds: [claim.id],
+                    evidenceIds: [direct.id],
+                    summary: "The direct source supports the claim.",
+                },
+            ],
+        });
+
+        expect(ledger.getGateBlockers(submission(beforeReview.id))).toContain(
+            "User choice evidence must follow required review RV-001.",
+        );
+
+        const afterReview = captureChoice("choice-after-review");
+        expect(ledger.getGateBlockers(submission(afterReview.id))).toEqual([]);
+
+        ledger.recordVerificationCompletion({
+            verificationRunId: "async-newer",
+            verifiers: [
+                {
+                    agent: "scout",
+                    outputName: "verify_local_code_supported",
+                    outcome: "supported",
+                    claimIds: [claim.id],
+                    evidenceIds: [direct.id],
+                    summary: "A newer required review also supports the claim.",
+                },
+            ],
+        });
+        expect(ledger.getGateBlockers(submission(afterReview.id))).toContain(
+            "User choice evidence must follow required review RV-002.",
+        );
+
+        const finalChoice = captureChoice("choice-after-latest-review");
+        expect(ledger.getGateBlockers(submission(finalChoice.id))).toEqual([]);
+    });
+
     it("rejects multi-question evidence as final choice provenance", () => {
         const ledger = createExplorationLedger({ runId: "brainstorm-test" });
         const claim = ledger.recordClaim({
@@ -745,6 +898,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Controls persistence architecture.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Document the trade-off.",
         });
         const answer = ledger.captureEvidence({
@@ -799,6 +954,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Controls persistence architecture.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Document the trade-off.",
         });
         const valid = {
@@ -868,6 +1025,8 @@ describe("exploration ledger", () => {
             evidenceIds: [primary.id],
             contradictoryEvidenceIds: [],
             impact: "Controls transitions.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Keep one gate.",
         });
         const mismatchedReview: ReviewRecord = {
@@ -945,6 +1104,8 @@ describe("exploration ledger", () => {
             evidenceIds: [evidence.id],
             contradictoryEvidenceIds: [],
             impact: "Determines recommendation.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Keep source evidence.",
         });
         const restored = createExplorationLedger({
@@ -984,6 +1145,8 @@ describe("exploration ledger", () => {
             evidenceIds: [evidence.id],
             contradictoryEvidenceIds: [],
             impact: "Determines recommendation.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Keep source evidence.",
         });
         const restored = createExplorationLedger({
@@ -1104,6 +1267,8 @@ describe("exploration ledger", () => {
                 evidenceIds: [answer.id],
                 contradictoryEvidenceIds: [],
                 impact: "Could bypass factual verification.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
                 mitigation: "Reclassify restored evidence.",
             }),
         ).toThrow("successful eligible evidence");
@@ -1161,6 +1326,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Avoids duplicate persistence.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Bound records.",
         });
 
@@ -1184,6 +1351,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Simplifies restoration.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Keep record kinds explicit.",
         });
 
@@ -1204,6 +1373,8 @@ describe("exploration ledger", () => {
                 evidenceIds: [],
                 contradictoryEvidenceIds: [],
                 impact: "Sets persistence architecture.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
                 mitigation: "Document the trade-off.",
             }),
         ).toThrow("design-choice claims must remain unresolved");
@@ -1313,6 +1484,8 @@ describe("exploration ledger", () => {
             evidenceIds: [evidence.id],
             contradictoryEvidenceIds: [],
             impact: "Supports append-only persistence.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Keep a reload test.",
         });
         const choice = ledger.recordClaim({
@@ -1323,6 +1496,8 @@ describe("exploration ledger", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Keeps persistence small.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Keep record kinds explicit.",
         });
 
@@ -1412,6 +1587,8 @@ describe("exploration ledger", () => {
                 evidenceIds: [evidence.id],
                 contradictoryEvidenceIds: ["EV-999"],
                 impact: "Requires review.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
                 mitigation: "Acquire another direct result.",
             }),
         ).toThrow("Contradictory evidence EV-999");
@@ -1429,6 +1606,8 @@ describe("exploration ledger", () => {
                 evidenceIds: [],
                 contradictoryEvidenceIds: [],
                 impact: "Changes the trade-off.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
                 mitigation: "Keep immutable history.",
                 supersedesClaimId: "CL-999",
             }),
@@ -1447,5 +1626,544 @@ describe("exploration ledger", () => {
         });
 
         expect(evidence.sourceKind).toBe("secondary");
+    });
+
+    it("persists verificationDomain and architectureImpact on new claims", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = ledger.captureEvidence({
+            toolCallId: "call-1",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+
+        const claim = ledger.recordClaim({
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: false,
+            verdict: "verified",
+            evidenceIds: [evidence.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+        });
+
+        expect(claim.verificationDomain).toBe("local-code");
+        expect(claim.architectureImpact).toBe(false);
+        expect(ledger.getActiveClaims()[0]).toMatchObject({
+            verificationDomain: "local-code",
+            architectureImpact: false,
+        });
+    });
+
+    it("blocks the gate for legacy claims missing routing metadata until superseded", () => {
+        const original = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = original.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const legacyClaim: ExplorationRecord = {
+            id: "CL-001",
+            kind: "claim",
+            runId: "brainstorm-test",
+            phase: "exploring",
+            sequence: 2,
+            timestamp: "2026-01-01T00:00:00.000Z",
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: false,
+            verdict: "verified",
+            evidenceIds: [evidence.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+        };
+        const restored = createExplorationLedger({
+            runId: "brainstorm-test",
+            initialRecords: [evidence, legacyClaim],
+        });
+
+        expect(
+            restored.getGateBlockers({
+                approachClaimIds: [["CL-001"]],
+                recommendationClaimIds: ["CL-001"],
+                userChoice: "Choose A",
+            }),
+        ).toContain(
+            "Restored claim CL-001 lacks routing metadata and must be superseded before verification.",
+        );
+
+        const superseded = createExplorationLedger({
+            runId: "brainstorm-test",
+            initialRecords: [
+                evidence,
+                legacyClaim,
+                {
+                    ...legacyClaim,
+                    id: "CL-002",
+                    sequence: 3,
+                    timestamp: "2026-01-02T00:00:00.000Z",
+                    supersedesClaimId: "CL-001",
+                    verificationDomain: "local-code",
+                    architectureImpact: false,
+                },
+            ],
+        });
+        expect(
+            superseded.getGateBlockers({
+                approachClaimIds: [["CL-002"]],
+                recommendationClaimIds: ["CL-002"],
+                userChoice: "Choose A",
+            }),
+        ).not.toContain(
+            "Restored claim CL-001 lacks routing metadata and must be superseded before verification.",
+        );
+    });
+
+    it("drops restored claims with malformed routing metadata (fail closed)", () => {
+        const original = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = original.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const base = {
+            id: "CL-001",
+            kind: "claim",
+            runId: "brainstorm-test",
+            phase: "exploring",
+            sequence: 2,
+            timestamp: "2026-01-01T00:00:00.000Z",
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: false,
+            verdict: "verified",
+            evidenceIds: [evidence.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+        } as const;
+        const malformedDomain = {
+            ...base,
+            verificationDomain: "bogus",
+            architectureImpact: false,
+        };
+        const malformedImpact = {
+            ...base,
+            verificationDomain: "local-code",
+            architectureImpact: "yes",
+        };
+
+        for (const malformed of [malformedDomain, malformedImpact]) {
+            const restored = createExplorationLedger({
+                runId: "brainstorm-test",
+                initialRecords: [evidence, malformed as ExplorationRecord],
+            });
+            expect(
+                restored.getActiveClaims().map((claim) => claim.id),
+            ).toEqual([]);
+        }
+    });
+
+    it("appends secondary verifier evidence and an RV audit from structured output", () => {
+        const ledger = createExplorationLedger({
+            runId: "brainstorm-test",
+            now: () => "2026-07-29T12:00:00.000Z",
+            homeDir: "/home/test",
+        });
+        const direct = ledger.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "/home/test/runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const claim = ledger.recordClaim({
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [direct.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+        });
+
+        const completion = ledger.recordVerificationCompletion({
+            verificationRunId: "async-owned",
+            verifiers: [
+                {
+                    agent: "scout",
+                    outputName: "verify_local_code_supported",
+                    outcome: "supported",
+                    claimIds: [claim.id],
+                    evidenceIds: [direct.id],
+                    summary: "The direct source supports the claim.",
+                },
+            ],
+        });
+
+        expect(completion).toMatchObject({
+            architectEvidence: undefined,
+            verifierEvidence: [
+                {
+                    id: "EV-002",
+                    sourceKind: "secondary",
+                    sourceRefs: ["~/runtime.ts"],
+                    verifier: {
+                        role: "verifier",
+                        agent: "scout",
+                        context: "fresh",
+                        exitCode: 0,
+                        verificationRunId: "async-owned",
+                        outputName: "verify_local_code_supported",
+                        outcome: "supported",
+                        referencedClaimIds: [claim.id],
+                        referencedEvidenceIds: [direct.id],
+                    },
+                },
+            ],
+            reviews: [
+                {
+                    id: "RV-001",
+                    verifierEvidenceId: "EV-002",
+                    outcome: "supported",
+                    claimIds: [claim.id],
+                    primaryEvidenceIds: [direct.id],
+                    audit: {
+                        status: "success",
+                        verificationRunId: "async-owned",
+                        agent: "scout",
+                        outputName: "verify_local_code_supported",
+                    },
+                },
+            ],
+        });
+        expect(
+            ledger.getGateBlockers({
+                approachClaimIds: [[claim.id]],
+                recommendationClaimIds: [claim.id],
+                userChoice: "Choose A",
+            }),
+        ).not.toContain(`${claim.id} requires a fresh completed review.`);
+    });
+
+    it("stores architect clear/watch/block data in RV audit and keeps block gated", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const direct = ledger.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const claim = ledger.recordClaim({
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [direct.id],
+            contradictoryEvidenceIds: [],
+            impact: "Changes the extension boundary.",
+            mitigation: "Keep the boundary explicit.",
+            verificationDomain: "local-code",
+            architectureImpact: true,
+        });
+
+        const completion = ledger.recordVerificationCompletion({
+            verificationRunId: "async-architecture",
+            architect: {
+                agent: "architect",
+                outputName: "architecture_review",
+                status: "block",
+                claimIds: [claim.id],
+                evidenceIds: [direct.id],
+                risks: ["The boundary is cyclic."],
+                summary: "Resolve the cycle before proceeding.",
+            },
+            verifiers: [
+                {
+                    agent: "scout",
+                    outputName: "verify_local_code_supported",
+                    outcome: "supported",
+                    claimIds: [claim.id],
+                    evidenceIds: [direct.id],
+                    summary: "The source supports the claim.",
+                },
+            ],
+        });
+
+        expect(completion.architectEvidence).toMatchObject({
+            id: "EV-002",
+            sourceKind: "secondary",
+            verifier: {
+                role: "architect",
+                agent: "architect",
+                architecturalStatus: "block",
+            },
+        });
+        expect(completion.reviews[0]).toMatchObject({
+            id: "RV-001",
+            verifierEvidenceId: "EV-003",
+            audit: {
+                architect: {
+                    evidenceId: "EV-002",
+                    status: "block",
+                    claimIds: [claim.id],
+                    evidenceIds: [direct.id],
+                    risks: ["The boundary is cyclic."],
+                    summary: "Resolve the cycle before proceeding.",
+                },
+            },
+        });
+        const architectAudit = completion.reviews[0].audit.architect!;
+        const malformedRestoredReview = {
+            ...completion.reviews[0],
+            audit: {
+                ...completion.reviews[0].audit,
+                architect: {
+                    evidenceId: architectAudit.evidenceId,
+                    status: architectAudit.status,
+                    evidenceIds: architectAudit.evidenceIds,
+                    risks: architectAudit.risks,
+                    summary: architectAudit.summary,
+                },
+            },
+        };
+        expect(isExplorationRecord(malformedRestoredReview)).toBe(false);
+        expect(
+            ledger.renderExplorationMarkdown({
+                approaches: [],
+                recommendation: "Keep the boundary explicit.",
+                recommendationClaimIds: [claim.id],
+                userChoice: "Choose A",
+            }),
+        ).toContain(
+            `architect block claims: ${claim.id}; evidence: ${direct.id}`,
+        );
+        expect(
+            ledger.getGateBlockers({
+                approachClaimIds: [[claim.id]],
+                recommendationClaimIds: [claim.id],
+                userChoice: "Choose A",
+            }),
+        ).toContain(`${claim.id} is blocked by architecture verification.`);
+    });
+
+    it("scopes architect block to architecture-impacting claims in a mixed verifier group", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-mixed" });
+        const direct = ledger.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const architectureClaim = ledger.recordClaim({
+            assertion: "The dependency boundary is safe.",
+            classification: "empirical",
+            critical: false,
+            verdict: "verified",
+            evidenceIds: [direct.id],
+            contradictoryEvidenceIds: [],
+            impact: "Changes the dependency graph.",
+            mitigation: "Keep the graph acyclic.",
+            verificationDomain: "local-code",
+            architectureImpact: true,
+        });
+        const ordinaryClaim = ledger.recordClaim({
+            assertion: "The helper returns the expected value.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [direct.id],
+            contradictoryEvidenceIds: [],
+            impact: "Controls the local result.",
+            mitigation: "Keep the regression test.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+        });
+
+        const completion = ledger.recordVerificationCompletion({
+            verificationRunId: "async-mixed",
+            architect: {
+                agent: "architect",
+                outputName: "architecture_review",
+                status: "block",
+                claimIds: [architectureClaim.id],
+                evidenceIds: [direct.id],
+                risks: ["The dependency graph contains a cycle."],
+                summary: "Remove the cycle before proceeding.",
+            },
+            verifiers: [
+                {
+                    agent: "scout",
+                    outputName: "verify_local_code_supported",
+                    outcome: "supported",
+                    claimIds: [architectureClaim.id, ordinaryClaim.id],
+                    evidenceIds: [direct.id],
+                    summary: "Both claims match the direct source.",
+                },
+            ],
+        });
+
+        expect(completion.reviews[0].audit.architect).toMatchObject({
+            claimIds: [architectureClaim.id],
+            evidenceIds: [direct.id],
+        });
+        const blockers = ledger.getGateBlockers({
+            approachClaimIds: [[architectureClaim.id, ordinaryClaim.id]],
+            recommendationClaimIds: [architectureClaim.id, ordinaryClaim.id],
+            userChoice: "Choose A",
+        });
+        expect(blockers).toContain(
+            `${architectureClaim.id} is blocked by architecture verification.`,
+        );
+        expect(blockers).not.toContain(
+            `${ordinaryClaim.id} is blocked by architecture verification.`,
+        );
+        expect(blockers).not.toContain(
+            `${ordinaryClaim.id} requires a fresh completed review.`,
+        );
+    });
+
+    it("audits failed, malformed, and timed-out runs as RV records that cannot close the gate", () => {
+        for (const failureKind of [
+            "failed",
+            "malformed",
+            "timeout",
+        ] as const) {
+            const ledger = createExplorationLedger({
+                runId: `brainstorm-${failureKind}`,
+            });
+            const direct = ledger.captureEvidence({
+                toolCallId: "call-source",
+                toolName: "read",
+                input: { path: "runtime.ts" },
+                content: [{ type: "text", text: "source" }],
+                details: undefined,
+                isError: false,
+            });
+            const claim = ledger.recordClaim({
+                assertion: "Runtime source exists.",
+                classification: "empirical",
+                critical: true,
+                verdict: "verified",
+                evidenceIds: [direct.id],
+                contradictoryEvidenceIds: [],
+                impact: "Determines recommendation.",
+                mitigation: "Keep source evidence.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
+            });
+
+            const reviews = ledger.recordVerificationFailure({
+                verificationRunId: `async-${failureKind}`,
+                failureKind,
+                reason: `Terminal ${failureKind}.`,
+                groups: [
+                    {
+                        agent: "scout",
+                        outputName: "verify_local_code_supported",
+                        claimIds: [claim.id],
+                        evidenceIds: [direct.id],
+                    },
+                ],
+            });
+
+            expect(reviews[0]).toMatchObject({
+                id: "RV-001",
+                claimIds: [claim.id],
+                primaryEvidenceIds: [direct.id],
+                audit: {
+                    status: failureKind,
+                    verificationRunId: `async-${failureKind}`,
+                    reason: `Terminal ${failureKind}.`,
+                },
+            });
+            expect(reviews[0]).not.toHaveProperty("verifierEvidenceId");
+            expect(
+                ledger.getGateBlockers({
+                    approachClaimIds: [[claim.id]],
+                    recommendationClaimIds: [claim.id],
+                    userChoice: "Choose A",
+                }),
+            ).toContain(`${claim.id} requires a fresh completed review.`);
+        }
+    });
+
+    it("audits a pending run even when its selected claim was superseded before completion", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const direct = ledger.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const original = ledger.recordClaim({
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [direct.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+        });
+        ledger.recordClaim({
+            assertion: "Runtime source exists with a narrower scope.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: [direct.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+            supersedesClaimId: original.id,
+        });
+
+        expect(
+            ledger.recordVerificationFailure({
+                verificationRunId: "async-stale-scope",
+                failureKind: "malformed",
+                reason: "Claim scope changed while verification was pending.",
+                groups: [
+                    {
+                        agent: "scout",
+                        outputName: "verify_local_code_supported",
+                        claimIds: [original.id],
+                        evidenceIds: [direct.id],
+                    },
+                ],
+            }),
+        ).toMatchObject([
+            {
+                id: "RV-001",
+                claimIds: [original.id],
+                audit: { status: "malformed" },
+            },
+        ]);
     });
 });

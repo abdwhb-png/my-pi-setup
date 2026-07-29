@@ -1,10 +1,29 @@
 import { describe, expect, it, mock } from "bun:test";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  SessionManager,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Value } from "typebox/value";
+import { resolveSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
 
-const { default: brainstormForcer } = await import("./index");
+const {
+  default: brainstormForcer,
+  createCapabilityCeilingManager,
+  preflightVerifierAgents,
+} =
+  await import("./index");
 
 async function expectRejection(promise: Promise<unknown>, message: string): Promise<void> {
   let actual = "";
@@ -16,7 +35,7 @@ async function expectRejection(promise: Promise<unknown>, message: string): Prom
   expect(actual).toContain(message);
 }
 
-function createMockAPI() {
+function createMockAPI(sessionManager?: SessionManager) {
   const commands = new Map<string, { description: string; handler: (args: string, ctx: any) => Promise<void> }>();
   const tools = new Map<string, any>();
   const handlers = new Map<string, (...args: any[]) => any>();
@@ -24,6 +43,23 @@ function createMockAPI() {
   const renderers = new Map<string, any>();
   const sentUserMessages: Array<{ content: unknown; options?: unknown }> = [];
   const sentMessages: Array<{ message: unknown; options?: unknown }> = [];
+  const eventListeners = new Map<string, Set<(data: unknown) => void>>();
+  const events = {
+    on(event: string, handler: (data: unknown) => void) {
+      if (event.startsWith("pi-fancy-footer:"))
+        throw new Error("Fancy footer is not installed in this mock.");
+      const listeners = eventListeners.get(event) ?? new Set();
+      listeners.add(handler);
+      eventListeners.set(event, listeners);
+      return () => {
+        listeners.delete(handler);
+        if (listeners.size === 0) eventListeners.delete(event);
+      };
+    },
+    emit(event: string, data: unknown) {
+      for (const handler of [...(eventListeners.get(event) ?? [])]) handler(data);
+    },
+  };
   const toolInfo = [
     { name: "read" },
     { name: "grep" },
@@ -46,7 +82,10 @@ function createMockAPI() {
     registerCommand: (name: string, cmd: any) => commands.set(name, cmd),
     registerTool: (tool: any) => tools.set(tool.name, tool),
     on: (event: string, handler: any) => handlers.set(event, handler),
-    appendEntry: (customType: string, data?: unknown) => entries.push({ customType, data }),
+    appendEntry: (customType: string, data?: unknown) => {
+      entries.push({ customType, data });
+      sessionManager?.appendCustomEntry(customType, data);
+    },
     registerMessageRenderer: (customType: string, renderer: any) => renderers.set(customType, renderer),
     sendUserMessage: (content: unknown, options?: unknown) => sentUserMessages.push({ content, options }),
     sendMessage: (message: unknown, options?: unknown) => sentMessages.push({ message, options }),
@@ -57,15 +96,16 @@ function createMockAPI() {
         description: tool.description,
       })),
     ],
-    events: { emit: mock(() => undefined) },
+    events,
   } as unknown as ExtensionAPI;
 
-  return { pi, commands, tools, handlers, entries, renderers, sentUserMessages, sentMessages };
+  return { pi, commands, tools, handlers, entries, renderers, sentUserMessages, sentMessages, events };
 }
 
 function createMockContext(
   sessionEntries?: Array<{ type: string; customType?: string; data?: unknown }>,
   cwd = process.cwd(),
+  sessionId = "test-session-id",
 ) {
   const entries = sessionEntries ?? [];
   return {
@@ -91,11 +131,241 @@ function createMockContext(
     sessionManager: {
       getEntries: () => entries,
       getBranch: () => entries,
+      getSessionId: () => sessionId,
+      getSessionFile: () => null,
     } as any,
   } as unknown as ExtensionContext;
 }
 
+function createSessionManagerContext(sessionManager: SessionManager) {
+  const ctx = createMockContext(
+    undefined,
+    sessionManager.getCwd(),
+    sessionManager.getSessionId(),
+  ) as ExtensionContext & { sessionManager: SessionManager };
+  ctx.sessionManager = sessionManager;
+  return ctx;
+}
+
+async function createVerificationAsyncDirFixture(runId: string) {
+  const scopeDir = await mkdtemp(
+    join(await realpath(tmpdir()), "pi-subagents-test-"),
+  );
+  const asyncDir = join(scopeDir, "async-subagent-runs", runId);
+  await mkdir(asyncDir, { recursive: true });
+  return { asyncDir, scopeDir };
+}
+
+function installVerificationRpcBridge(
+  events: ReturnType<typeof createMockAPI>["events"],
+  sessionId: string,
+  runId: string,
+  asyncDir: string,
+) {
+  const requests: Array<Record<string, unknown>> = [];
+  events.on("subagents:rpc:v1:request", (raw) => {
+    const request = raw as Record<string, unknown>;
+    requests.push(request);
+    const method = request.method as string;
+    const data =
+      method === "ping"
+        ? {
+            version: 1,
+            methods: ["ping", "spawn", "status"],
+            events: {
+              replyPrefix: "subagents:rpc:v1:reply:",
+              asyncComplete: "subagent:async-complete",
+            },
+            session: { sessionId },
+          }
+        : method === "spawn"
+          ? {
+              text: "spawned",
+              details: {
+                runId,
+                asyncDir,
+              },
+            }
+          : {
+              text: "Run is still active.",
+              details: { mode: "single", results: [] },
+            };
+    events.emit(`subagents:rpc:v1:reply:${String(request.requestId)}`, {
+      version: 1,
+      requestId: request.requestId,
+      method,
+      success: true,
+      data,
+    });
+  });
+  return requests;
+}
+
+function installControllableVerificationRpcBridge(
+  events: ReturnType<typeof createMockAPI>["events"],
+  sessionId: string,
+  runId: string,
+  asyncDir: string,
+) {
+  type Method = "ping" | "spawn" | "status";
+  const requests: Array<Record<string, unknown>> = [];
+  const deferred = new Set<Method>();
+  const waiting = new Map<Method, Record<string, unknown>>();
+  const reply = (request: Record<string, unknown>) => {
+    const method = request.method as Method;
+    const data =
+      method === "ping"
+        ? {
+            version: 1,
+            methods: ["ping", "spawn", "status"],
+            events: {
+              replyPrefix: "subagents:rpc:v1:reply:",
+              asyncComplete: "subagent:async-complete",
+            },
+            session: { sessionId },
+          }
+        : method === "spawn"
+          ? { text: "spawned", details: { runId, asyncDir } }
+          : {
+              text: "Run is still active.",
+              details: { mode: "single", results: [] },
+            };
+    events.emit(`subagents:rpc:v1:reply:${String(request.requestId)}`, {
+      version: 1,
+      requestId: request.requestId,
+      method,
+      success: true,
+      data,
+    });
+  };
+  events.on("subagents:rpc:v1:request", (raw) => {
+    const request = raw as Record<string, unknown>;
+    const method = request.method as Method;
+    requests.push(request);
+    if (deferred.has(method)) waiting.set(method, request);
+    else reply(request);
+  });
+  return {
+    requests,
+    defer(method: Method) {
+      deferred.add(method);
+    },
+    release(method: Method) {
+      const request = waiting.get(method);
+      if (!request) throw new Error(`No deferred ${method} request.`);
+      waiting.delete(method);
+      deferred.delete(method);
+      reply(request);
+    },
+    reject(method: Method) {
+      const request = waiting.get(method);
+      if (!request) throw new Error(`No deferred ${method} request.`);
+      waiting.delete(method);
+      deferred.delete(method);
+      events.emit(`subagents:rpc:v1:reply:${String(request.requestId)}`, {
+        version: 1,
+        requestId: request.requestId,
+        method,
+        success: false,
+        error: {
+          code: "execution_failed",
+          message: `${method} failed after navigation`,
+        },
+      });
+    },
+  };
+}
+
+function emitSuccessfulLocalCodeVerification(
+  events: ReturnType<typeof createMockAPI>["events"],
+  runId: string,
+  sessionId: string,
+) {
+  const structuredOutput = {
+    outcome: "supported",
+    claimIds: ["CL-001"],
+    evidenceIds: ["EV-001"],
+    summary: "Critical claim is supported by direct evidence.",
+  };
+  events.emit("subagent:async-complete", {
+    runId,
+    sessionId,
+    success: true,
+    state: "complete",
+    exitCode: 0,
+    results: [
+      {
+        agent: "scout",
+        context: "fresh",
+        status: "completed",
+        success: true,
+        exitCode: 0,
+        structuredOutput,
+      },
+    ],
+    outputs: {
+      "verify_local_code_supported": {
+        text: JSON.stringify(structuredOutput),
+        structured: structuredOutput,
+        agent: "scout",
+        stepIndex: 0,
+      },
+    },
+  });
+}
+
+async function enterPendingLocalCodeVerification(
+  api: ReturnType<typeof createMockAPI>,
+  ctx: ExtensionContext,
+) {
+  await api.commands.get("brainstorm")!.handler("topic", ctx);
+  await api.commands.get("brainstorm")!.handler("phase exploring", ctx);
+  await api.handlers.get("tool_result")!(
+    {
+      type: "tool_result",
+      toolCallId: "read-1",
+      toolName: "read",
+      input: { path: "index.ts" },
+      content: [{ type: "text", text: "observable result" }],
+      details: undefined,
+      isError: false,
+    },
+    ctx,
+  );
+  await api.tools.get("brainstorm_record_claim")!.execute(
+    "claim-1",
+    {
+      assertion: "The transition gate is centralized.",
+      classification: "empirical",
+      critical: true,
+      verdict: "verified",
+      evidenceIds: ["EV-001"],
+      contradictoryEvidenceIds: [],
+      impact: "Controls all forward transitions.",
+      verificationDomain: "local-code",
+      architectureImpact: false,
+      mitigation: "Keep one shared blocker.",
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
+  await api.tools.get("brainstorm_run_verification")!.execute(
+    "verification-1",
+    { claimIds: ["CL-001"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+}
+
 describe("brainstorm-forcer redesign", () => {
+  it("rejects preflight agent names outside the verifier allowlist", async () => {
+    await expect(
+      preflightVerifierAgents("test-session", process.cwd(), ["worker"]),
+    ).rejects.toThrow(/not allowed/i);
+  });
+
   it("registers command, hooks, and renderer", () => {
     const { pi, commands, handlers, renderers } = createMockAPI();
     brainstormForcer(pi);
@@ -110,12 +380,50 @@ describe("brainstorm-forcer redesign", () => {
     expect(renderers.has("brainstorm-forcer")).toBe(true);
   });
 
+  it("requires verificationDomain and architectureImpact on brainstorm_record_claim", () => {
+    const { pi, tools } = createMockAPI();
+    brainstormForcer(pi);
+    const schema = tools.get("brainstorm_record_claim")!.parameters;
+    const base = {
+      assertion: "x",
+      classification: "empirical",
+      critical: false,
+      verdict: "verified",
+      evidenceIds: [],
+      contradictoryEvidenceIds: [],
+      impact: "i",
+      mitigation: "m",
+    };
+    expect(Value.Check(schema, base)).toBe(false);
+    expect(
+      Value.Check(schema, {
+        ...base,
+        verificationDomain: "local-code",
+        architectureImpact: false,
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(schema, { ...base, verificationDomain: "bogus", architectureImpact: false }),
+    ).toBe(false);
+
+    const verificationSchema = tools.get("brainstorm_run_verification")!.parameters;
+    expect(Value.Check(verificationSchema, { claimIds: ["CL-001"] })).toBe(true);
+    expect(
+      Value.Check(verificationSchema, {
+        claimIds: ["CL-001"],
+        agent: "worker",
+        domain: "local-code",
+        architect: true,
+      }),
+    ).toBe(false);
+  });
+
   it("registers one structured artifact submission tool per phase", () => {
     const { pi, tools } = createMockAPI();
     brainstormForcer(pi);
     expect(
       [...tools.keys()].filter(
-        (name) => name.startsWith("brainstorm_submit_") && name !== "brainstorm_submit_review",
+        (name) => name.startsWith("brainstorm_submit_"),
       ),
     ).toEqual([
       "brainstorm_submit_discovery",
@@ -231,6 +539,26 @@ describe("brainstorm-forcer redesign", () => {
         if (phase === "presenting") await command.handler("next", ctx);
         else await command.handler(`phase ${phase}`, ctx);
         if (phase === "exploring") {
+          for (const assertion of ["Use dedicated tools.", "Keep schemas strict."]) {
+            await tools.get("brainstorm_record_claim")!.execute(
+              "claim",
+              {
+                assertion,
+                classification: "design-choice",
+                critical: false,
+                verdict: "unresolved",
+                evidenceIds: [],
+                contradictoryEvidenceIds: [],
+                impact: "Shapes the workflow API.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
+                mitigation: "Document the trade-off.",
+              },
+              undefined,
+              undefined,
+              ctx,
+            );
+          }
           await handlers.get("tool_result")!(
             {
               type: "tool_result",
@@ -253,24 +581,6 @@ describe("brainstorm-forcer redesign", () => {
             },
             ctx,
           );
-          for (const assertion of ["Use dedicated tools.", "Keep schemas strict."]) {
-            await tools.get("brainstorm_record_claim")!.execute(
-              "claim",
-              {
-                assertion,
-                classification: "design-choice",
-                critical: false,
-                verdict: "unresolved",
-                evidenceIds: [],
-                contradictoryEvidenceIds: [],
-                impact: "Shapes the workflow API.",
-                mitigation: "Document the trade-off.",
-              },
-              undefined,
-              undefined,
-              ctx,
-            );
-          }
         }
         const result = await tools.get(toolName)!.execute("call", params, undefined, undefined, ctx);
         expect(result.details.artifact.path).toEndWith(expectedSuffix);
@@ -631,6 +941,8 @@ describe("brainstorm-forcer redesign", () => {
           evidenceIds: [],
           contradictoryEvidenceIds: [],
           impact: "Avoids duplicate persistence.",
+          verificationDomain: "local-code",
+          architectureImpact: false,
           mitigation: "Bound records.",
         },
         undefined,
@@ -879,7 +1191,7 @@ describe("brainstorm-forcer redesign", () => {
     await command.handler("phase exploring", ctx);
     for (const toolName of [
       "brainstorm_record_claim",
-      "brainstorm_submit_review",
+      "brainstorm_run_verification",
       "brainstorm_request_waiver",
     ]) {
       expect(await toolCall({ toolName }, ctx)).toBeUndefined();
@@ -889,15 +1201,14 @@ describe("brainstorm-forcer redesign", () => {
     expect(blocked.reason).toContain("brainstorm_record_claim");
   });
 
-  it("allows synchronous fresh researcher subagents during Exploring", async () => {
+  it("blocks direct generic subagent execution during Exploring", async () => {
     const { pi, handlers, commands } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
     await commands.get("brainstorm")!.handler("topic", ctx);
     await commands.get("brainstorm")!.handler("phase exploring", ctx);
 
-    expect(
-      await handlers.get("tool_call")!(
+    const result = await handlers.get("tool_call")!(
         {
           toolName: "subagent",
           input: {
@@ -907,11 +1218,11 @@ describe("brainstorm-forcer redesign", () => {
           },
         },
         ctx,
-      ),
-    ).toBeUndefined();
+      );
+    expect(result.block).toBe(true);
   });
 
-  it("allows only a synchronous fresh one-step reviewer chain or researcher during Exploring", async () => {
+  it("blocks every direct subagent shape during Exploring", async () => {
     const { pi, handlers, commands } = createMockAPI();
     const ctx = createMockContext();
     brainstormForcer(pi);
@@ -920,7 +1231,8 @@ describe("brainstorm-forcer redesign", () => {
     const toolCall = handlers.get("tool_call")!;
 
     expect(
-      await toolCall(
+      (
+        await toolCall(
         {
           toolName: "subagent",
           input: {
@@ -945,8 +1257,9 @@ describe("brainstorm-forcer redesign", () => {
           },
         },
         ctx,
-      ),
-    ).toBeUndefined();
+        )
+      ).block,
+    ).toBe(true);
     for (const input of [
       {
         agent: "reviewer",
@@ -971,6 +1284,365 @@ describe("brainstorm-forcer redesign", () => {
       { action: "list" },
     ]) {
       expect((await toolCall({ toolName: "subagent", input }, ctx)).block).toBe(true);
+    }
+  });
+
+  it("blocks questions only while verification is pending and allows owned status until terminal completion", async () => {
+    const fixture = await createVerificationAsyncDirFixture("owned-verification-run");
+    try {
+      const api = createMockAPI();
+      const ctx = createMockContext();
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "owned-verification-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+
+      const question = await api.handlers.get("tool_call")!(
+        { toolName: "ask_user_question", input: {} },
+        ctx,
+      );
+      expect(question).toMatchObject({ block: true });
+      expect(question.reason).toContain(
+        "ask_user_question is blocked while verification run owned-verification-run is pending",
+      );
+
+      expect(
+        await api.handlers.get("tool_call")!(
+          {
+            toolName: "subagent",
+            input: { action: "status", id: "owned-verification-run" },
+          },
+          ctx,
+        ),
+      ).toBeUndefined();
+
+      const foreign = await api.handlers.get("tool_call")!(
+        {
+          toolName: "subagent",
+          input: { action: "status", id: "foreign-run" },
+        },
+        ctx,
+      );
+      expect(foreign).toMatchObject({ block: true });
+      expect(foreign.reason).toContain(
+        "must target exactly owned verification run owned-verification-run",
+      );
+
+      emitSuccessfulLocalCodeVerification(
+        api.events,
+        "owned-verification-run",
+        "test-session-id",
+      );
+      await Bun.sleep(0);
+      expect(
+        await api.handlers.get("tool_call")!(
+          { toolName: "ask_user_question", input: {} },
+          ctx,
+        ),
+      ).toBeUndefined();
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("enforces action-specific fields and bounded child indexes for owned verification controls", async () => {
+    const fixture = await createVerificationAsyncDirFixture("owned-verification-run");
+    try {
+      const api = createMockAPI();
+      const ctx = createMockContext();
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "owned-verification-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await api.commands.get("brainstorm")!.handler("topic", ctx);
+      await api.commands.get("brainstorm")!.handler("phase exploring", ctx);
+      const toolCall = api.handlers.get("tool_call")!;
+      const withoutPending = await toolCall(
+        {
+          toolName: "subagent",
+          input: { action: "status", id: "owned-verification-run" },
+        },
+        ctx,
+      );
+      expect(withoutPending.reason).toContain(
+        "No owned verification run is pending",
+      );
+
+      await enterPendingLocalCodeVerification(api, ctx);
+      const spawnWithoutAction = await toolCall(
+        {
+          toolName: "subagent",
+          input: {
+            agent: "scout",
+            task: "Start unrelated generic execution.",
+          },
+        },
+        ctx,
+      );
+      expect(spawnWithoutAction.block).toBe(true);
+      expect(spawnWithoutAction.reason).toContain(
+        "Unsupported verification control action undefined",
+      );
+
+      for (const input of [
+        { action: "status", id: "owned-verification-run" },
+        {
+          action: "steer",
+          id: "owned-verification-run",
+          message: "Continue with the cited evidence.",
+          index: 0,
+        },
+        {
+          action: "resume",
+          id: "owned-verification-run",
+          message: "Resume the verification.",
+          index: 0,
+        },
+        { action: "interrupt", id: "owned-verification-run" },
+        { action: "stop", id: "owned-verification-run" },
+      ]) {
+        expect(
+          await toolCall({ toolName: "subagent", input }, ctx),
+        ).toBeUndefined();
+      }
+
+      const unknownAction = await toolCall(
+        {
+          toolName: "subagent",
+          input: { action: "list", id: "owned-verification-run" },
+        },
+        ctx,
+      );
+      expect(unknownAction.reason).toContain(
+        "Unsupported verification control action",
+      );
+
+      const alternateTarget = await toolCall(
+        {
+          toolName: "subagent",
+          input: { action: "status", runId: "owned-verification-run" },
+        },
+        ctx,
+      );
+      expect(alternateTarget.reason).toContain(
+        "does not allow field(s): runId",
+      );
+
+      const directoryTarget = await toolCall(
+        {
+          toolName: "subagent",
+          input: {
+            action: "status",
+            id: "owned-verification-run",
+            dir: fixture.asyncDir,
+          },
+        },
+        ctx,
+      );
+      expect(directoryTarget.reason).toContain("does not allow field(s): dir");
+
+      for (const input of [
+        {
+          action: "steer",
+          id: "owned-verification-run",
+          message: "Continue.",
+          index: -1,
+        },
+        {
+          action: "steer",
+          id: "owned-verification-run",
+          message: "Continue.",
+          index: 0.5,
+        },
+        {
+          action: "steer",
+          id: "owned-verification-run",
+          message: "Continue.",
+          index: 1,
+        },
+        {
+          action: "resume",
+          id: "owned-verification-run",
+          message: "Resume.",
+          index: -1,
+        },
+        {
+          action: "resume",
+          id: "owned-verification-run",
+          message: "Resume.",
+          index: 0.5,
+        },
+        {
+          action: "resume",
+          id: "owned-verification-run",
+          message: "Resume.",
+          index: 1,
+        },
+        {
+          action: "status",
+          id: "owned-verification-run",
+          agent: "scout",
+        },
+        {
+          action: "status",
+          id: "owned-verification-run",
+          task: "Run another verifier.",
+        },
+        { action: "status", id: "owned-verification-run", tasks: [] },
+        { action: "status", id: "owned-verification-run", chain: [] },
+        { action: "status", id: "owned-verification-run", parallel: [] },
+        { action: "status", id: "owned-verification-run", async: true },
+        {
+          action: "status",
+          id: "owned-verification-run",
+          context: "fresh",
+        },
+        {
+          action: "status",
+          id: "owned-verification-run",
+          outputSchema: {},
+        },
+        {
+          action: "status",
+          id: "owned-verification-run",
+          view: "transcript",
+        },
+        { action: "status", id: "owned-verification-run", lines: 80 },
+        {
+          action: "resume",
+          id: "owned-verification-run",
+          message: "Resume.",
+          output: "verification.md",
+        },
+      ]) {
+        expect((await toolCall({ toolName: "subagent", input }, ctx)).block).toBe(
+          true,
+        );
+      }
+
+      for (const input of [
+        {
+          action: "status",
+          id: "owned-verification-run",
+          view: "transcript",
+          index: -1,
+        },
+        {
+          action: "status",
+          id: "owned-verification-run",
+          view: "transcript",
+          index: 1,
+        },
+        { action: "status", id: "owned-verification-run", index: 0 },
+        { action: "stop", id: "owned-verification-run", index: 0 },
+        { action: "interrupt", id: "owned-verification-run", index: 0 },
+      ]) {
+        const invalidIndex = await toolCall(
+          { toolName: "subagent", input },
+          ctx,
+        );
+        expect(invalidIndex.block).toBe(true);
+        expect(invalidIndex.reason).toContain("index");
+      }
+
+      for (const input of [
+        {
+          action: "status",
+          id: "owned-verification-run",
+          view: "fleet",
+        },
+        {
+          action: "steer",
+          id: "owned-verification-run",
+          message: "   ",
+        },
+        {
+          action: "resume",
+          id: "owned-verification-run",
+          message: "",
+        },
+      ]) {
+        expect((await toolCall({ toolName: "subagent", input }, ctx)).block).toBe(
+          true,
+        );
+      }
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes owned subagent controls and subagent_wait from Exploring evidence", async () => {
+    const fixture = await createVerificationAsyncDirFixture("owned-verification-run");
+    try {
+      const api = createMockAPI();
+      const ctx = createMockContext();
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "owned-verification-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+      const ledgerEntriesBefore = api.entries.filter(
+        (entry) => entry.customType === "brainstorm-forcer-ledger",
+      );
+
+      const controlResult = await api.handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "status-owned",
+          toolName: "subagent",
+          input: { action: "status", id: "owned-verification-run" },
+          content: [{ type: "text", text: "needs attention" }],
+          details: { mode: "management", results: [] },
+          isError: false,
+        },
+        ctx,
+      );
+      const waitResult = await api.handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "wait-owned",
+          toolName: "subagent_wait",
+          input: { id: "owned-verification-run" },
+          content: [{ type: "text", text: "still running" }],
+          details: { completed: [], active: ["owned-verification-run"] },
+          isError: false,
+        },
+        ctx,
+      );
+
+      expect(controlResult).toBeUndefined();
+      expect(waitResult).toBeUndefined();
+      expect(
+        api.entries.filter(
+          (entry) => entry.customType === "brainstorm-forcer-ledger",
+        ),
+      ).toEqual(ledgerEntriesBefore);
+      await api.commands.get("brainstorm")!.handler("status", ctx);
+      expect(ctx.ui.notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("Exploring ledger: EV=1 CL=1 RV=0"),
+        "warning",
+      );
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
     }
   });
 
@@ -1104,7 +1776,7 @@ describe("brainstorm-forcer redesign", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Jumped to Discovery"), "info");
   });
 
-  it("blocks Exploring transition until ledger gate requirements are satisfied", async () => {
+  it("blocks Exploring submission without creating an artifact revision", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-exploring-gate-"));
     try {
       const { pi, handlers, commands, tools } = createMockAPI();
@@ -1134,6 +1806,8 @@ describe("brainstorm-forcer redesign", () => {
           evidenceIds: ["EV-001"],
           contradictoryEvidenceIds: [],
           impact: "Could invalidate the recommendation.",
+          verificationDomain: "local-code",
+          architectureImpact: false,
           mitigation: "Re-evaluate when source is available.",
         },
         undefined,
@@ -1150,12 +1824,15 @@ describe("brainstorm-forcer redesign", () => {
           evidenceIds: [],
           contradictoryEvidenceIds: [],
           impact: "Avoids a second persistence layer.",
+          verificationDomain: "local-code",
+          architectureImpact: false,
           mitigation: "Bound records.",
         },
         undefined,
         undefined,
         ctx,
       );
+      const filesBeforeSubmission = await readdir(projectRoot);
       const exploring = await tools.get("brainstorm_submit_exploring")!.execute(
         "exploring-1",
         {
@@ -1178,23 +1855,35 @@ describe("brainstorm-forcer redesign", () => {
           recommendation: "Use session entries.",
           recommendationClaimIds: ["CL-002"],
           userChoice: "Session ledger",
+          userChoiceEvidenceId: "EV-999",
         },
         undefined,
         undefined,
         ctx,
       );
 
+      expect(exploring.details).toEqual({
+        blocked: true,
+        blockers: [
+          "User choice must come from ask_user_question evidence.",
+          "CL-001 requires a user-approved waiver.",
+        ],
+      });
+      expect(exploring.content[0].text).toContain(
+        "User choice must come from ask_user_question evidence.",
+      );
+      expect(exploring.content[0].text).toContain(
+        "CL-001 requires a user-approved waiver.",
+      );
+      expect(await readdir(projectRoot)).toEqual(filesBeforeSubmission);
       await expectRejection(
         Promise.resolve(
           tools
             .get("brainstorm_transition")!
             .execute("next", { action: "next" }, undefined, undefined, ctx),
         ),
-        "CL-001 requires a user-approved waiver",
+        "has not submitted an artifact",
       );
-      const markdown = await readFile(join(projectRoot, exploring.details.artifact.path), "utf8");
-      expect(markdown).toContain("## Assumption Register");
-      expect(markdown).toContain("## Evidence Index");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -1219,6 +1908,8 @@ describe("brainstorm-forcer redesign", () => {
             evidenceIds: [],
             contradictoryEvidenceIds: [],
             impact: "Shapes persistence.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
             mitigation: "Document the trade-off.",
           },
           undefined,
@@ -1226,6 +1917,28 @@ describe("brainstorm-forcer redesign", () => {
           ctx,
         );
       }
+      await handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "choice-1",
+          toolName: "ask_user_question",
+          input: { questions: [{ question: "Which approach?" }] },
+          content: [{ type: "text", text: "Session ledger" }],
+          details: {
+            cancelled: false,
+            answers: [
+              {
+                questionIndex: 0,
+                question: "Which approach?",
+                kind: "option",
+                answer: "Session ledger",
+              },
+            ],
+          },
+          isError: false,
+        },
+        ctx,
+      );
       const params = {
         approaches: [
           {
@@ -1246,6 +1959,7 @@ describe("brainstorm-forcer redesign", () => {
         recommendation: "Use session entries.",
         recommendationClaimIds: ["CL-001"],
         userChoice: "Session ledger",
+        userChoiceEvidenceId: "EV-001",
       };
       const first = await tools
         .get("brainstorm_submit_exploring")!
@@ -1370,18 +2084,17 @@ describe("brainstorm-forcer redesign", () => {
     );
 
     for (const expected of [
-      "ctx_batch_execute",
       "brainstorm_record_claim",
-      "brainstorm_submit_review",
+      "brainstorm_run_verification",
       "brainstorm_request_waiver",
-      "`async: false`",
-      "`context: fresh`",
-      "one-step `chain`",
-      "structured outcome",
-      "`researcher` subagent",
+      "dedicated async verification",
+      "pi-subagents RPC v1",
       "userChoiceEvidenceId",
       "dedicated single-question",
       "direct corroboration",
+      "No new subagent run",
+      "status, steer, resume, interrupt, or stop",
+      "`ask_user_question` remains blocked until terminal verification processing",
     ]) {
       expect(result.systemPrompt).toContain(expected);
     }
@@ -1480,6 +2193,8 @@ describe("brainstorm-forcer redesign", () => {
         evidenceIds: ["EV-001"],
         contradictoryEvidenceIds: [],
         impact: "Controls all forward transitions.",
+        verificationDomain: "local-code",
+        architectureImpact: false,
         mitigation: "Keep one shared blocker.",
       },
       undefined,
@@ -1494,10 +2209,26 @@ describe("brainstorm-forcer redesign", () => {
     });
   });
 
-  it("records an explicit review linked to fresh reviewer evidence", async () => {
-    const { pi, handlers, commands, tools, entries } = createMockAPI();
+  it("spawns one owned async verification and appends EV/RV only from exact structured completion", async () => {
+    const fixture = await createVerificationAsyncDirFixture(
+      "owned-verification-run",
+    );
+    try {
+    const { pi, handlers, commands, tools, entries, events } = createMockAPI();
     const ctx = createMockContext();
-    brainstormForcer(pi);
+    const rpcRequests = installVerificationRpcBridge(
+      events,
+      "test-session-id",
+      "owned-verification-run",
+      fixture.asyncDir,
+    );
+    let selectedPreflightAgents: readonly string[] | undefined;
+    brainstormForcer(pi, {
+      preflight: async (_sessionId, _cwd, agents) => {
+        selectedPreflightAgents = agents;
+        return agents.map((agent) => ({ agent, ok: true }));
+      },
+    });
     await commands.get("brainstorm")!.handler("topic", ctx);
     await commands.get("brainstorm")!.handler("phase exploring", ctx);
     await handlers.get("tool_result")!(
@@ -1522,80 +2253,1378 @@ describe("brainstorm-forcer redesign", () => {
         evidenceIds: ["EV-001"],
         contradictoryEvidenceIds: [],
         impact: "Controls all forward transitions.",
+        verificationDomain: "local-code",
+        architectureImpact: false,
         mitigation: "Keep one shared blocker.",
       },
       undefined,
       undefined,
       ctx,
     );
+
+    const launch = await tools.get("brainstorm_run_verification")!.execute(
+      "verification-1",
+      { claimIds: ["CL-001"] },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(launch.details).toMatchObject({
+      runId: "owned-verification-run",
+      status: "pending",
+      claimIds: ["CL-001"],
+    });
+    const spawn = rpcRequests.find((request) => request.method === "spawn")!;
+    expect(spawn.params).toMatchObject({
+      async: true,
+      context: "fresh",
+      clarify: false,
+    });
+    expect(JSON.stringify(spawn.params)).not.toContain('"agent":"architect"');
+    expect(selectedPreflightAgents).toEqual(["scout"]);
+
+    emitSuccessfulLocalCodeVerification(
+      events,
+      "owned-verification-run",
+      "test-session-id",
+    );
+    await Bun.sleep(0);
+
+    const verificationRecords = entries
+      .filter((entry) => entry.customType === "brainstorm-forcer-ledger")
+      .map((entry) => (entry.data as any).record)
+      .filter((record) => record.id === "EV-002" || record.id === "RV-001");
+    expect(verificationRecords).toMatchObject([
+      {
+        id: "EV-002",
+        sourceKind: "secondary",
+        verifier: { agent: "scout", role: "verifier" },
+      },
+      {
+        id: "RV-001",
+        verifierEvidenceId: "EV-002",
+        audit: { status: "success" },
+      },
+    ]);
+    expect(entries.some((entry) => JSON.stringify(entry).includes("VR-"))).toBe(
+      false,
+    );
+
+    const terminalLedgerCount = entries.filter(
+      (entry) => entry.customType === "brainstorm-forcer-ledger",
+    ).length;
+    events.emit("subagent:async-complete", {
+      runId: "owned-verification-run",
+      sessionId: "test-session-id",
+    });
+    await Bun.sleep(0);
+    expect(
+      entries.filter(
+        (entry) => entry.customType === "brainstorm-forcer-ledger",
+      ),
+    ).toHaveLength(terminalLedgerCount);
+
+    await tools.get("brainstorm_record_claim")!.execute(
+      "claim-architecture",
+      {
+        assertion: "The verifier boundary is acyclic.",
+        classification: "empirical",
+        critical: false,
+        verdict: "verified",
+        evidenceIds: ["EV-001"],
+        contradictoryEvidenceIds: [],
+        impact: "Controls the dependency graph.",
+        verificationDomain: "local-code",
+        architectureImpact: true,
+        mitigation: "Keep the boundary acyclic.",
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await tools.get("brainstorm_run_verification")!.execute(
+      "verification-architecture",
+      { claimIds: ["CL-002"] },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(selectedPreflightAgents).toEqual(["scout", "architect"]);
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("covers needs-attention→control→EV/RV→question→artifact→Presenting through registered extension seams", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-p1-"));
+    const fixture = await createVerificationAsyncDirFixture(
+      "p1-verification-run",
+    );
+    try {
+      const { pi, handlers, commands, tools, entries, events } = createMockAPI();
+      const ctx = createMockContext(
+        undefined,
+        projectRoot,
+        "p1-verification-session",
+      );
+      installVerificationRpcBridge(
+        events,
+        "p1-verification-session",
+        "p1-verification-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await commands.get("brainstorm")!.handler("P1 workflow", ctx);
+      await commands.get("brainstorm")!.handler("phase exploring", ctx);
+      await handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "read-p1",
+          toolName: "read",
+          input: { path: "index.ts" },
+          content: [{ type: "text", text: "observable result" }],
+          details: undefined,
+          isError: false,
+        },
+        ctx,
+      );
+      await tools.get("brainstorm_record_claim")!.execute(
+        "claim-p1",
+        {
+          assertion: "The transition gate is centralized.",
+          classification: "empirical",
+          critical: true,
+          verdict: "verified",
+          evidenceIds: ["EV-001"],
+          contradictoryEvidenceIds: [],
+          impact: "Controls all forward transitions.",
+          verificationDomain: "local-code",
+          architectureImpact: false,
+          mitigation: "Keep one shared blocker.",
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+      await tools.get("brainstorm_run_verification")!.execute(
+        "verify-p1",
+        { claimIds: ["CL-001"] },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const blockedQuestion = await handlers.get("tool_call")!(
+        { toolName: "ask_user_question", input: {} },
+        ctx,
+      );
+      expect(blockedQuestion.reason).toContain(
+        "blocked while verification run p1-verification-run is pending",
+      );
+      for (const input of [
+        { action: "status", id: "p1-verification-run" },
+        {
+          action: "steer",
+          id: "p1-verification-run",
+          message: "Address the needs-attention blocker.",
+          index: 0,
+        },
+      ]) {
+        expect(
+          await handlers.get("tool_call")!(
+            { toolName: "subagent", input },
+            ctx,
+          ),
+        ).toBeUndefined();
+        expect(
+          await handlers.get("tool_result")!(
+            {
+              type: "tool_result",
+              toolCallId: `control-${input.action}`,
+              toolName: "subagent",
+              input,
+              content: [
+                {
+                  type: "text",
+                  text:
+                    input.action === "status"
+                      ? "Run needs attention."
+                      : "Steering delivered.",
+                },
+              ],
+              details: { mode: "management", results: [] },
+              isError: false,
+            },
+            ctx,
+          ),
+        ).toBeUndefined();
+      }
+      expect(
+        entries
+          .filter(
+            (entry) => entry.customType === "brainstorm-forcer-ledger",
+          )
+          .map((entry) => (entry.data as any).record.id),
+      ).toEqual(["EV-001", "CL-001"]);
+      const submission = {
+        approaches: [
+          {
+            title: "Central gate",
+            summary: "Keep one transition gate.",
+            tradeoffs: ["The gate owns phase policy."],
+            claimIds: ["CL-001"],
+            failureConditions: ["A transition bypasses the gate."],
+          },
+          {
+            title: "Distributed gates",
+            summary: "Let each phase own a transition gate.",
+            tradeoffs: ["Policy can diverge."],
+            claimIds: ["CL-001"],
+            failureConditions: ["Phase gates disagree."],
+          },
+        ],
+        recommendation: "Use the central gate.",
+        recommendationClaimIds: ["CL-001"],
+        userChoice: "Central gate",
+        userChoiceEvidenceId: "EV-999",
+      };
+      const pendingSubmission = await tools
+        .get("brainstorm_submit_exploring")!
+        .execute("submit-pending", submission, undefined, undefined, ctx);
+      expect(pendingSubmission.details).toMatchObject({ blocked: true });
+      expect(await readdir(projectRoot)).toEqual([]);
+
+      emitSuccessfulLocalCodeVerification(
+        events,
+        "p1-verification-run",
+        "p1-verification-session",
+      );
+      await Bun.sleep(0);
+      expect(
+        entries
+          .filter(
+            (entry) => entry.customType === "brainstorm-forcer-ledger",
+          )
+          .map((entry) => (entry.data as any).record.id),
+      ).toEqual(["EV-001", "CL-001", "EV-002", "RV-001"]);
+      expect(
+        await handlers.get("tool_call")!(
+          { toolName: "ask_user_question", input: {} },
+          ctx,
+        ),
+      ).toBeUndefined();
+      await handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "choice-p1",
+          toolName: "ask_user_question",
+          input: { questions: [{ question: "Which approach?" }] },
+          content: [{ type: "text", text: "Central gate" }],
+          details: {
+            cancelled: false,
+            answers: [
+              {
+                questionIndex: 0,
+                question: "Which approach?",
+                kind: "option",
+                answer: "Central gate",
+              },
+            ],
+          },
+          isError: false,
+        },
+        ctx,
+      );
+
+      const exploring = await tools
+        .get("brainstorm_submit_exploring")!
+        .execute(
+          "submit-complete",
+          { ...submission, userChoiceEvidenceId: "EV-003" },
+          undefined,
+          undefined,
+          ctx,
+        );
+      expect(exploring.details.artifact).toMatchObject({ revision: 1 });
+      expect(exploring.details.artifact.path).toEndWith(
+        "03-exploring-r001.md",
+      );
+      const manifest = JSON.parse(
+        await readFile(
+          join(projectRoot, exploring.details.artifact.manifestPath),
+          "utf8",
+        ),
+      ) as {
+        activeRevisions: { exploring?: number };
+        revisions: Array<{
+          phase: string;
+          revision: number;
+          status: string;
+        }>;
+      };
+      expect(manifest.activeRevisions.exploring).toBe(1);
+      const exploringRevisions = manifest.revisions.filter(
+        (revision) => revision.phase === "exploring",
+      );
+      expect(exploringRevisions).toHaveLength(1);
+      expect(exploringRevisions[0]).toMatchObject({
+        revision: 1,
+        status: "active",
+      });
+
+      const transition = await tools
+        .get("brainstorm_transition")!
+        .execute("next-p1", { action: "next" }, undefined, undefined, ctx);
+      expect(transition.details).toMatchObject({
+        phase: "presenting",
+        approved: true,
+      });
+      await tools.get("brainstorm_submit_presenting")!.execute(
+        "present-p1",
+        {
+          sections: [
+            {
+              title: "Architecture",
+              content: "Use one transition gate.",
+            },
+          ],
+          decisions: ["Keep the gate centralized."],
+          approved: true,
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const manifestPath = join(
+        projectRoot,
+        exploring.details.artifact.manifestPath,
+      );
+      const manifestBeforeBlockedResubmission = await readFile(
+        manifestPath,
+        "utf8",
+      );
+      await tools
+        .get("brainstorm_transition")!
+        .execute("previous-p1", { action: "previous" }, undefined, undefined, ctx);
+      const blockedResubmission = await tools
+        .get("brainstorm_submit_exploring")!
+        .execute(
+          "blocked-resubmit-p1",
+          {
+            ...submission,
+            userChoice: "Distributed gates",
+            userChoiceEvidenceId: "EV-003",
+          },
+          undefined,
+          undefined,
+          ctx,
+        );
+      expect(blockedResubmission.details).toMatchObject({ blocked: true });
+      expect(await readFile(manifestPath, "utf8")).toBe(
+        manifestBeforeBlockedResubmission,
+      );
+      const returnedToPresenting = await tools
+        .get("brainstorm_transition")!
+        .execute(
+          "return-presenting-p1",
+          { action: "next" },
+          undefined,
+          undefined,
+          ctx,
+        );
+      expect(returnedToPresenting.details).toMatchObject({
+        phase: "presenting",
+      });
+      const advancedToDocumenting = await tools
+        .get("brainstorm_transition")!
+        .execute(
+          "next-documenting-p1",
+          { action: "next" },
+          undefined,
+          undefined,
+          ctx,
+        );
+      expect(advancedToDocumenting.details).toMatchObject({
+        phase: "documenting",
+      });
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("audits malformed owned completion without accepting its outcome", async () => {
+    const fixture = await createVerificationAsyncDirFixture(
+      "owned-verification-run",
+    );
+    try {
+    const { pi, handlers, commands, tools, entries, events } = createMockAPI();
+    const ctx = createMockContext();
+    installVerificationRpcBridge(
+      events,
+      "test-session-id",
+      "owned-verification-run",
+      fixture.asyncDir,
+    );
+    brainstormForcer(pi, {
+      preflight: async (_sessionId, _cwd, agents) =>
+        agents.map((agent) => ({ agent, ok: true })),
+    });
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
     await handlers.get("tool_result")!(
       {
         type: "tool_result",
-        toolCallId: "review-1",
-        toolName: "subagent",
-        input: {
-          context: "fresh",
-          async: false,
-          chain: [
-            {
-              agent: "reviewer",
-              task: "Review CL-001 against EV-001.",
-              outputSchema: {
-                type: "object",
-                properties: {
-                  outcome: { enum: ["supported", "rejected", "unresolved"] },
-                  claimIds: { type: "array", items: { type: "string" } },
-                  evidenceIds: { type: "array", items: { type: "string" } },
-                },
-                required: ["outcome", "claimIds", "evidenceIds"],
-                additionalProperties: false,
-              },
-            },
-          ],
-        },
-        content: [{ type: "text", text: "CL-001 is supported by EV-001." }],
-        details: {
-          mode: "chain",
-          context: "fresh",
-          results: [
-            {
-              agent: "reviewer",
-              exitCode: 0,
-              structuredOutput: {
-                outcome: "supported",
-                claimIds: ["CL-001"],
-                evidenceIds: ["EV-001"],
-              },
-            },
-          ],
-        },
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "index.ts" },
+        content: [{ type: "text", text: "observable result" }],
+        details: undefined,
         isError: false,
       },
       ctx,
     );
-
-    const result = await tools.get("brainstorm_submit_review")!.execute(
-      "review-submit-1",
+    await tools.get("brainstorm_record_claim")!.execute(
+      "claim-1",
       {
-        reviewerEvidenceId: "EV-002",
-        claimIds: ["CL-001"],
-        primaryEvidenceIds: ["EV-001"],
-        summary: "Critical claim is supported by direct evidence.",
+        assertion: "The transition gate is centralized.",
+        classification: "empirical",
+        critical: true,
+        verdict: "verified",
+        evidenceIds: ["EV-001"],
+        contradictoryEvidenceIds: [],
+        impact: "Controls all forward transitions.",
+        verificationDomain: "local-code",
+        architectureImpact: false,
+        mitigation: "Keep one shared blocker.",
       },
       undefined,
       undefined,
       ctx,
     );
+    await tools.get("brainstorm_run_verification")!.execute(
+      "verification-1",
+      { claimIds: ["CL-001"] },
+      undefined,
+      undefined,
+      ctx,
+    );
 
-    expect(result.details.record).toMatchObject({
-      id: "RV-001",
-      kind: "review",
+    events.emit("subagent:async-complete", {
+      runId: "owned-verification-run",
+      sessionId: "test-session-id",
+      success: true,
+      state: "complete",
+      exitCode: 0,
+      results: [],
+      outputs: {},
+    });
+    await Bun.sleep(0);
+
+    const terminalRecords = entries
+      .filter((entry) => entry.customType === "brainstorm-forcer-ledger")
+      .map((entry) => (entry.data as any).record);
+    expect(terminalRecords).toContainEqual(
+      expect.objectContaining({
+        id: "RV-001",
+        audit: expect.objectContaining({ status: "malformed" }),
+      }),
+    );
+    expect(
+      terminalRecords.some(
+        (record) => record.kind === "evidence" && record.verifier,
+      ),
+    ).toBe(false);
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("contains auditVerificationFailure errors at the async completion boundary", async () => {
+    const fixture = await createVerificationAsyncDirFixture(
+      "audit-boundary-run",
+    );
+    const api = createMockAPI();
+    const ctx = createMockContext();
+    try {
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "audit-boundary-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+
+      let unhandled: unknown;
+      const captureUnhandled = (reason: unknown) => {
+        unhandled = reason;
+      };
+      process.once("unhandledRejection", captureUnhandled);
+      api.events.emit("subagent:async-complete", {
+        runId: "audit-boundary-run",
+        sessionId: "test-session-id",
+        success: false,
+        state: "failed",
+        exitCode: 1,
+        error: "   ",
+      });
+      await Bun.sleep(10);
+      process.off("unhandledRejection", captureUnhandled);
+
+      expect(unhandled).toBeUndefined();
+      expect(api.entries.at(-1)).toMatchObject({
+        customType: "brainstorm-forcer",
+        data: { pendingVerification: null },
+      });
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("audit skipped"),
+        "warning",
+      );
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("contains audit notification failures during session_start reconciliation", async () => {
+    const fixture = await createVerificationAsyncDirFixture(
+      "eventbus-audit-boundary-run",
+    );
+    try {
+      const first = createMockAPI();
+      const firstContext = createMockContext(
+        undefined,
+        process.cwd(),
+        "eventbus-audit-session",
+      );
+      installVerificationRpcBridge(
+        first.events,
+        "eventbus-audit-session",
+        "eventbus-audit-boundary-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(first.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(first, firstContext);
+
+      const restored = createMockAPI();
+      const restoredContext = createMockContext(
+        first.entries.map((entry) => ({ type: "custom", ...entry })),
+        process.cwd(),
+        "eventbus-audit-session",
+      );
+      (restoredContext.ui.notify as any).mockImplementation(() => {
+        throw new Error("notification renderer failed");
+      });
+      brainstormForcer(restored.pi, { rpcTimeoutMs: 1 });
+
+      await expect(
+        restored.handlers.get("session_start")!(
+          { type: "session_start" },
+          restoredContext,
+        ),
+      ).resolves.toBeUndefined();
+      expect(restored.entries.at(-1)).toMatchObject({
+        customType: "brainstorm-forcer",
+        data: { pendingVerification: null },
+      });
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("contains stderr failures at the final async completion boundary", async () => {
+    const fixture = await createVerificationAsyncDirFixture(
+      "stderr-boundary-run",
+    );
+    const api = createMockAPI();
+    const ctx = createMockContext();
+    const originalStderrWrite = process.stderr.write;
+    let unhandled: unknown;
+    const captureUnhandled = (reason: unknown) => {
+      unhandled = reason;
+    };
+    try {
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "stderr-boundary-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+      (ctx.ui.notify as any).mockImplementation(() => {
+        throw new Error("x".repeat(2_000));
+      });
+      (process.stderr as any).write = () => {
+        throw new Error("stderr failed");
+      };
+      process.once("unhandledRejection", captureUnhandled);
+
+      emitSuccessfulLocalCodeVerification(
+        api.events,
+        "stderr-boundary-run",
+        "test-session-id",
+      );
+      await Bun.sleep(10);
+    } finally {
+      process.off("unhandledRejection", captureUnhandled);
+      (process.stderr as any).write = originalStderrWrite;
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+    expect(unhandled).toBeUndefined();
+  });
+
+  it("keeps one completion audit when post-commit notification fails during reconciliation", async () => {
+    const restoredRunId = "restored-verification-run";
+    const fixture = await createVerificationAsyncDirFixture(restoredRunId);
+    const { asyncDir } = fixture;
+    try {
+    const first = createMockAPI();
+    const firstContext = createMockContext(
+      undefined,
+      process.cwd(),
+      "reload-verification-session",
+    );
+    installVerificationRpcBridge(
+      first.events,
+      "reload-verification-session",
+      restoredRunId,
+      asyncDir,
+    );
+    brainstormForcer(first.pi, {
+      preflight: async (_sessionId, _cwd, agents) =>
+        agents.map((agent) => ({ agent, ok: true })),
+    });
+    await first.commands.get("brainstorm")!.handler("topic", firstContext);
+    await first.commands.get("brainstorm")!.handler(
+      "phase exploring",
+      firstContext,
+    );
+    await first.handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "index.ts" },
+        content: [{ type: "text", text: "observable result" }],
+        details: undefined,
+        isError: false,
+      },
+      firstContext,
+    );
+    await first.tools.get("brainstorm_record_claim")!.execute(
+      "claim-1",
+      {
+        assertion: "The transition gate is centralized.",
+        classification: "empirical",
+        critical: true,
+        verdict: "verified",
+        evidenceIds: ["EV-001"],
+        contradictoryEvidenceIds: [],
+        impact: "Controls all forward transitions.",
+        verificationDomain: "local-code",
+        architectureImpact: false,
+        mitigation: "Keep one shared blocker.",
+      },
+      undefined,
+      undefined,
+      firstContext,
+    );
+    await first.tools.get("brainstorm_run_verification")!.execute(
+      "verification-1",
+      { claimIds: ["CL-001"] },
+      undefined,
+      undefined,
+      firstContext,
+    );
+    await writeFile(
+      join(asyncDir, "status.json"),
+      JSON.stringify({
+        lifecycleArtifactVersion: 3,
+        runId: restoredRunId,
+        sessionId: "reload-verification-session",
+        mode: "chain",
+        state: "running",
+        startedAt: Date.now(),
+        steps: [
+          {
+            agent: "scout",
+            context: "fresh",
+            outputName: "verify_local_code_supported",
+            status: "running",
+          },
+        ],
+      }),
+    );
+
+    const restoredEntries = first.entries.map((entry) => ({
+      type: "custom",
+      ...entry,
+    }));
+    expect(JSON.stringify(restoredEntries)).toContain(`"asyncDir":"${asyncDir}"`);
+    const second = createMockAPI();
+    const secondContext = createMockContext(
+      restoredEntries,
+      process.cwd(),
+      "reload-verification-session",
+    );
+    const requests = installVerificationRpcBridge(
+      second.events,
+      "reload-verification-session",
+      "unused",
+      asyncDir,
+    );
+    brainstormForcer(second.pi, {
+      preflight: async (_sessionId, _cwd, agents) =>
+        agents.map((agent) => ({ agent, ok: true })),
+    });
+    await second.handlers.get("session_start")!({}, secondContext);
+
+    expect(requests.some((request) => request.method === "status")).toBe(true);
+    const statusContext = await second.handlers.get("context")!(
+      { messages: [] },
+      secondContext,
+    );
+    expect(statusContext.messages[0].content).toContain(
+      "Verification: pending restored-verification-run for CL-001",
+    );
+    expect(
+      (secondContext.ui.setWidget as any).mock.calls
+        .at(-1)[1][0],
+    ).toContain("verify:pending");
+
+    const structuredOutput = {
       outcome: "supported",
+      claimIds: ["CL-001"],
+      evidenceIds: ["EV-001"],
+      summary: "Critical claim is supported by direct evidence.",
+    };
+    const terminalEvent = {
+      runId: restoredRunId,
+      sessionId: "reload-verification-session",
+      success: true,
+      state: "complete",
+      exitCode: 0,
+      results: [
+        {
+          agent: "scout",
+          context: "fresh",
+          status: "completed",
+          success: true,
+          exitCode: 0,
+          structuredOutput,
+        },
+      ],
+      outputs: {
+        "verify_local_code_supported": {
+          text: JSON.stringify(structuredOutput),
+          structured: structuredOutput,
+          agent: "scout",
+          stepIndex: 0,
+        },
+      },
+    };
+    await writeFile(
+      join(asyncDir, "status.json"),
+      JSON.stringify({
+        lifecycleArtifactVersion: 3,
+        runId: restoredRunId,
+        sessionId: "reload-verification-session",
+        mode: "chain",
+        state: "complete",
+        startedAt: Date.now() - 100,
+        endedAt: Date.now(),
+        steps: [
+          {
+            agent: "scout",
+            context: "fresh",
+            outputName: "verify_local_code_supported",
+            status: "completed",
+            exitCode: 0,
+            structuredOutput,
+          },
+        ],
+        outputs: terminalEvent.outputs,
+      }),
+    );
+    (secondContext.ui.notify as any).mockImplementation((message: string) => {
+      if (message.includes("completed and audited"))
+        throw new Error("post-commit notification failed");
     });
-    expect(entries.at(-1)).toMatchObject({
-      customType: "brainstorm-forcer-ledger",
-      data: { record: { id: "RV-001" } },
-    });
+    await expect(
+      second.handlers.get("session_start")!({}, secondContext),
+    ).rejects.toThrow("post-commit notification failed");
+
+    expect(
+      second.entries
+        .filter((entry) => entry.customType === "brainstorm-forcer-ledger")
+        .map((entry) => (entry.data as any).record.id),
+    ).toEqual(["EV-002", "RV-001"]);
+    expect(
+      (second.entries.at(-1)!.data as any).pendingVerification,
+    ).toBeNull();
+    const terminalLedgerCount = second.entries.filter(
+      (entry) => entry.customType === "brainstorm-forcer-ledger",
+    ).length;
+    second.events.emit("subagent:async-complete", terminalEvent);
+    await Bun.sleep(0);
+    expect(
+      second.entries.filter(
+        (entry) => entry.customType === "brainstorm-forcer-ledger",
+      ),
+    ).toHaveLength(terminalLedgerCount);
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  for (const scenario of [
+    { name: "ping", pauseAt: "ping", reject: false },
+    { name: "status", pauseAt: "status", reject: false },
+    { name: "rejected ping", pauseAt: "ping", reject: true },
+  ] as const) it(`abandons reconciliation when navigation changes ownership during ${scenario.name}`, async () => {
+    const sessionManager = SessionManager.inMemory(process.cwd());
+    const api = createMockAPI(sessionManager);
+    const branchAContext = createSessionManagerContext(sessionManager);
+    const branchBContext = createSessionManagerContext(sessionManager);
+    const fixture = await createVerificationAsyncDirFixture(
+      "ping-race-verification-run",
+    );
+    try {
+      const bridge = installControllableVerificationRpcBridge(
+        api.events,
+        sessionManager.getSessionId(),
+        "ping-race-verification-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, branchAContext);
+      const branchALeafId = sessionManager.getLeafId()!;
+      const branchPointId = sessionManager
+        .getBranch()
+        .find(
+          (entry) =>
+            entry.type === "custom" &&
+            entry.customType === "brainstorm-forcer-ledger" &&
+            (entry.data as any).record?.id === "CL-001",
+        )!.id;
+
+      sessionManager.branch(branchPointId);
+      const branchBLeafId = sessionManager.appendCustomEntry(
+        "branch-marker",
+        {},
+      );
+      sessionManager.branch(branchALeafId);
+      bridge.defer(scenario.pauseAt);
+      const reconciling = api.handlers.get("session_tree")!(
+        {
+          type: "session_tree",
+          newLeafId: branchALeafId,
+          oldLeafId: branchBLeafId,
+        },
+        branchAContext,
+      );
+      await Bun.sleep(0);
+
+      sessionManager.branch(branchBLeafId);
+      await api.handlers.get("session_tree")!(
+        {
+          type: "session_tree",
+          newLeafId: branchBLeafId,
+          oldLeafId: branchALeafId,
+        },
+        branchBContext,
+      );
+      if (scenario.reject) bridge.reject(scenario.pauseAt);
+      else bridge.release(scenario.pauseAt);
+      await reconciling;
+
+      expect(
+        bridge.requests.filter((request) => request.method === "status"),
+      ).toHaveLength(scenario.pauseAt === "ping" ? 0 : 1);
+      expect(
+        sessionManager
+          .getBranch()
+          .some(
+            (entry) =>
+              entry.type === "custom" &&
+              entry.customType === "brainstorm-forcer" &&
+              (entry.data as any).pendingVerification?.runId ===
+                "ping-race-verification-run",
+          ),
+      ).toBe(false);
+      expect(
+        api.entries.some(
+          (entry) => (entry.data as any)?.record?.kind === "review",
+        ),
+      ).toBe(false);
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("quarantines branch-A pending CL-004/CL-005 when session_tree selects a sibling branch without those records", async () => {
+    const sessionManager = SessionManager.inMemory(process.cwd());
+    const api = createMockAPI(sessionManager);
+    const ctx = createSessionManagerContext(sessionManager);
+    const runId = "branch-a-verification-run";
+    const fixture = await createVerificationAsyncDirFixture(runId);
+    try {
+      installVerificationRpcBridge(
+        api.events,
+        sessionManager.getSessionId(),
+        runId,
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+        rpcTimeoutMs: 20,
+      });
+      await api.commands.get("brainstorm")!.handler("topic", ctx);
+      await api.commands.get("brainstorm")!.handler("phase exploring", ctx);
+      await api.handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "read-1",
+          toolName: "read",
+          input: { path: "index.ts" },
+          content: [{ type: "text", text: "observable result" }],
+          details: undefined,
+          isError: false,
+        },
+        ctx,
+      );
+      for (let index = 1; index <= 5; index += 1) {
+        await api.tools.get("brainstorm_record_claim")!.execute(
+          `claim-${index}`,
+          {
+            assertion: `Branch claim ${index}.`,
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: ["EV-001"],
+            contradictoryEvidenceIds: [],
+            impact: `Controls branch behavior ${index}.`,
+            verificationDomain: "local-code",
+            architectureImpact: false,
+            mitigation: "Keep branch state isolated.",
+          },
+          undefined,
+          undefined,
+          ctx,
+        );
+        if (index === 3)
+          expect(
+            sessionManager.getBranch().at(-1),
+          ).toMatchObject({ type: "custom", customType: "brainstorm-forcer-ledger" });
+      }
+      const branchPointId = sessionManager.getBranch().at(-3)!.id;
+      expect(
+        sessionManager
+          .getBranch(branchPointId)
+          .flatMap((entry) =>
+            entry.type === "custom" &&
+            entry.customType === "brainstorm-forcer-ledger"
+              ? [(entry.data as any).record.id]
+              : [],
+          ),
+      ).toEqual(["EV-001", "CL-001", "CL-002", "CL-003"]);
+
+      await api.tools.get("brainstorm_run_verification")!.execute(
+        "verification-1",
+        { claimIds: ["CL-004", "CL-005"] },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const branchALeafId = sessionManager.getLeafId()!;
+      const staleSnapshot = structuredClone(
+        (
+          sessionManager
+            .getBranch()
+            .findLast(
+              (entry) =>
+                entry.type === "custom" &&
+                entry.customType === "brainstorm-forcer",
+            ) as any
+        ).data,
+      );
+
+      sessionManager.branch(branchPointId);
+      sessionManager.appendCustomEntry("brainstorm-forcer", staleSnapshot);
+      const branchBLeafId = sessionManager.getLeafId()!;
+      expect(
+        sessionManager
+          .getBranch()
+          .some(
+            (entry) =>
+              entry.type === "custom" &&
+              entry.customType === "brainstorm-forcer-ledger" &&
+              ["CL-004", "CL-005"].includes((entry.data as any).record?.id),
+          ),
+      ).toBe(false);
+      expect(
+        sessionManager
+          .getEntries()
+          .some(
+            (entry) =>
+              entry.type === "custom" &&
+              entry.customType === "brainstorm-forcer-ledger" &&
+              ["CL-004", "CL-005"].includes((entry.data as any).record?.id),
+          ),
+      ).toBe(true);
+
+      await expect(
+        api.handlers.get("session_tree")!(
+          {
+            type: "session_tree",
+            newLeafId: branchBLeafId,
+            oldLeafId: branchALeafId,
+          },
+          ctx,
+        ),
+      ).resolves.toBeUndefined();
+
+      const persisted = sessionManager.getBranch().at(-1);
+      expect(persisted).toMatchObject({
+        type: "custom",
+        customType: "brainstorm-forcer",
+        data: { pendingVerification: null },
+      });
+      expect(
+        api.entries.some(
+          (entry) => (entry.data as any)?.record?.kind === "review",
+        ),
+      ).toBe(false);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "CL-004, CL-005 are absent from the active branch",
+        ),
+        "warning",
+      );
+      const ledgerCountAfterQuarantine = api.entries.filter(
+        (entry) => entry.customType === "brainstorm-forcer-ledger",
+      ).length;
+      api.events.emit("subagent:async-complete", {
+        runId,
+        sessionId: sessionManager.getSessionId(),
+        success: false,
+        state: "failed",
+        exitCode: 1,
+        error: "Late completion from branch A.",
+      });
+      await Bun.sleep(0);
+      expect(
+        api.entries.filter(
+          (entry) => entry.customType === "brainstorm-forcer-ledger",
+        ),
+      ).toHaveLength(ledgerCountAfterQuarantine);
+
+      await api.tools.get("brainstorm_run_verification")!.execute(
+        "verification-branch-b",
+        { claimIds: ["CL-001"] },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const branchBPendingLeafId = sessionManager.getLeafId()!;
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify({
+          lifecycleArtifactVersion: 3,
+          runId,
+          sessionId: sessionManager.getSessionId(),
+          mode: "chain",
+          state: "running",
+          startedAt: Date.now(),
+          steps: [
+            {
+              agent: "scout",
+              context: "fresh",
+              outputName: "verify_local_code_supported",
+              status: "running",
+            },
+          ],
+        }),
+      );
+      sessionManager.branch(branchALeafId);
+      await api.handlers.get("session_tree")!(
+        {
+          type: "session_tree",
+          newLeafId: branchALeafId,
+          oldLeafId: branchBLeafId,
+        },
+        ctx,
+      );
+      expect(sessionManager.getBranch().at(-1)).toMatchObject({
+        type: "custom",
+        customType: "brainstorm-forcer",
+        data: {
+          pendingVerification: {
+            runId,
+            claimIds: ["CL-004", "CL-005"],
+          },
+        },
+      });
+      expect(
+        (ctx.ui.notify as any).mock.calls.filter(
+          ([message]: [string]) => message.includes("quarantined"),
+        ),
+      ).toHaveLength(1);
+
+      (ctx.ui.notify as any).mockImplementation((message: string) => {
+        if (message.includes(`Verification ${runId} completed and audited.`))
+          throw new Error("notification renderer failed");
+      });
+      const structuredOutput = {
+        outcome: "supported",
+        claimIds: ["CL-004", "CL-005"],
+        evidenceIds: ["EV-001"],
+        summary: "Both branch-A claims remain supported.",
+      };
+      api.events.emit("subagent:async-complete", {
+        runId,
+        sessionId: sessionManager.getSessionId(),
+        success: true,
+        state: "complete",
+        exitCode: 0,
+        results: [
+          {
+            agent: "scout",
+            context: "fresh",
+            status: "completed",
+            success: true,
+            exitCode: 0,
+            structuredOutput,
+          },
+        ],
+        outputs: {
+          "verify_local_code_supported": {
+            text: JSON.stringify(structuredOutput),
+            structured: structuredOutput,
+            agent: "scout",
+            stepIndex: 0,
+          },
+        },
+      });
+      sessionManager.branch(branchBPendingLeafId);
+      await api.handlers.get("session_tree")!(
+        {
+          type: "session_tree",
+          newLeafId: branchBPendingLeafId,
+          oldLeafId: branchALeafId,
+        },
+        ctx,
+      );
+      await Bun.sleep(10);
+      expect(sessionManager.getBranch().at(-1)).toMatchObject({
+        type: "custom",
+        customType: "brainstorm-forcer",
+        data: {
+          pendingVerification: {
+            runId,
+            claimIds: ["CL-001"],
+          },
+        },
+      });
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("Active pending preserved"),
+        "warning",
+      );
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restarts a corrupted session by clearing a pending run whose evidence is absent", async () => {
+    const sessionManager = SessionManager.inMemory(process.cwd());
+    const fixture = await createVerificationAsyncDirFixture(
+      "missing-evidence-run",
+    );
+    try {
+      const first = createMockAPI(sessionManager);
+      const firstContext = createSessionManagerContext(sessionManager);
+      installVerificationRpcBridge(
+        first.events,
+        sessionManager.getSessionId(),
+        "missing-evidence-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(first.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(first, firstContext);
+      const missingEvidenceId = `EV-${"9".repeat(1_200)}`;
+      const pendingSnapshot = structuredClone(
+        (
+          sessionManager
+            .getBranch()
+            .findLast(
+              (entry) =>
+                entry.type === "custom" &&
+                entry.customType === "brainstorm-forcer",
+            ) as any
+        ).data,
+      );
+      pendingSnapshot.pendingVerification.expectedSteps[0].evidenceIds = [
+        missingEvidenceId,
+      ];
+      sessionManager.appendCustomEntry("brainstorm-forcer", pendingSnapshot);
+
+      const restored = createMockAPI(sessionManager);
+      const restoredContext = createSessionManagerContext(sessionManager);
+      brainstormForcer(restored.pi, { rpcTimeoutMs: 20 });
+      await expect(
+        restored.handlers.get("session_start")!(
+          { type: "session_start" },
+          restoredContext,
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(restored.entries.at(-1)).toMatchObject({
+        customType: "brainstorm-forcer",
+        data: { pendingVerification: null },
+      });
+      expect(
+        restored.entries.some(
+          (entry) => (entry.data as any)?.record?.kind === "review",
+        ),
+      ).toBe(false);
+      const warning = (restoredContext.ui.notify as any).mock.calls.find(
+        ([message]: [string]) => message.includes("quarantined"),
+      );
+      expect(warning?.[0]).toContain(
+        "is absent from the active branch evidence history",
+      );
+      expect(warning?.[0].length).toBeLessThanOrEqual(700);
+      expect(warning?.[1]).toBe("warning");
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores and audits a pending claim that remains in branch history after supersession", async () => {
+    const sessionManager = SessionManager.inMemory(process.cwd());
+    const fixture = await createVerificationAsyncDirFixture(
+      "superseded-claim-run",
+    );
+    try {
+      const first = createMockAPI(sessionManager);
+      const firstContext = createSessionManagerContext(sessionManager);
+      installVerificationRpcBridge(
+        first.events,
+        sessionManager.getSessionId(),
+        "superseded-claim-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(first.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(first, firstContext);
+      await first.tools.get("brainstorm_record_claim")!.execute(
+        "claim-2",
+        {
+          assertion: "The superseding claim refines the original.",
+          classification: "empirical",
+          critical: true,
+          verdict: "verified",
+          evidenceIds: ["EV-001"],
+          contradictoryEvidenceIds: [],
+          impact: "The original remains immutable history.",
+          verificationDomain: "local-code",
+          architectureImpact: false,
+          mitigation: "Audit the pending run against historical records.",
+          supersedesClaimId: "CL-001",
+        },
+        undefined,
+        undefined,
+        firstContext,
+      );
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify({
+          lifecycleArtifactVersion: 3,
+          runId: "superseded-claim-run",
+          sessionId: sessionManager.getSessionId(),
+          mode: "chain",
+          state: "running",
+          startedAt: Date.now(),
+          steps: [
+            {
+              agent: "scout",
+              context: "fresh",
+              outputName: "verify_local_code_supported",
+              status: "running",
+            },
+          ],
+        }),
+      );
+
+      const restored = createMockAPI(sessionManager);
+      const restoredContext = createSessionManagerContext(sessionManager);
+      installVerificationRpcBridge(
+        restored.events,
+        sessionManager.getSessionId(),
+        "superseded-claim-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(restored.pi);
+      await restored.handlers.get("session_start")!(
+        { type: "session_start" },
+        restoredContext,
+      );
+      expect(
+        (restoredContext.ui.notify as any).mock.calls.some(
+          ([message]: [string]) => message.includes("quarantined"),
+        ),
+      ).toBe(false);
+
+      restored.events.emit("subagent:async-complete", {
+        runId: "superseded-claim-run",
+        sessionId: sessionManager.getSessionId(),
+        success: false,
+        state: "failed",
+        exitCode: 1,
+        error: "Verifier process exited before producing output.",
+      });
+      await Bun.sleep(0);
+
+      expect(
+        restored.entries
+          .filter(
+            (entry) => entry.customType === "brainstorm-forcer-ledger",
+          )
+          .map((entry) => (entry.data as any).record),
+      ).toContainEqual(
+        expect.objectContaining({
+          kind: "review",
+          claimIds: ["CL-001"],
+          audit: expect.objectContaining({
+            status: "failed",
+            verificationRunId: "superseded-claim-run",
+          }),
+        }),
+      );
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
   });
 
   it("does not create a waiver when the user rejects its approval dialog", async () => {
@@ -1626,6 +3655,8 @@ describe("brainstorm-forcer redesign", () => {
         evidenceIds: ["EV-001"],
         contradictoryEvidenceIds: [],
         impact: "Could invalidate the recommendation.",
+        verificationDomain: "local-code",
+        architectureImpact: false,
         mitigation: "Re-evaluate when the source is available.",
       },
       undefined,
@@ -1680,6 +3711,8 @@ describe("brainstorm-forcer redesign", () => {
         evidenceIds: ["EV-001"],
         contradictoryEvidenceIds: [],
         impact: "Could invalidate the recommendation.",
+        verificationDomain: "local-code",
+        architectureImpact: false,
         mitigation: "Re-evaluate when the source is available.",
       },
       undefined,
@@ -1773,5 +3806,35 @@ describe("brainstorm-forcer redesign", () => {
     expect(feedbackEntry).toBeTruthy();
     expect((feedbackEntry!.data as any).blockFeedback.tool).toBe("write");
     expect((feedbackEntry!.data as any).blockFeedback.phase).toBe("discovery");
+  });
+
+  it("registers verifier capability ceiling on brainstorm start and disposes on shutdown", async () => {
+    const { pi, commands, handlers } = createMockAPI();
+    const ctx = createMockContext(undefined, process.cwd(), "ceiling-lifecycle-session");
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+
+    const ceiling = resolveSubagentCapabilityCeiling("ceiling-lifecycle-session");
+    expect(ceiling).toBeDefined();
+    expect(ceiling!.denyExtensions).toBe(false);
+    expect(ceiling!.sources).toContain("brainstorm-forcer");
+
+    await handlers.get("session_shutdown")!({}, ctx);
+    expect(
+      resolveSubagentCapabilityCeiling("ceiling-lifecycle-session"),
+    ).toBeUndefined();
+  });
+
+  it("createCapabilityCeilingManager registers, updates, and disposes by session ID", () => {
+    const manager = createCapabilityCeilingManager();
+    manager.register("lifecycle-test-session");
+    let ceiling = resolveSubagentCapabilityCeiling("lifecycle-test-session");
+    expect(ceiling).toBeDefined();
+    expect(ceiling!.denyExtensions).toBe(false);
+
+    manager.dispose();
+    expect(
+      resolveSubagentCapabilityCeiling("lifecycle-test-session"),
+    ).toBeUndefined();
   });
 });
