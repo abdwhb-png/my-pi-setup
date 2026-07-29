@@ -1,7 +1,6 @@
 - "pi" always stand for pi agent harness, not Rasberry Pi or something else.
 - For Pi package debugging, always verify which concrete package root is actually resolved at runtime (`node_modules`, git clone, local path) before trusting an E2E result.
 - Never patch the global Bun installation to fix Pi package issues; prefer harness-level solutions such as Pi extensions, wrappers, explicit finalizers, and repo-managed symlinks.
-- Hypa usage policy: use normal built-in tools (`read`, `grep`, `bash`, `safe_bash`, `ls`, `find`) by default; the local Edgee compressor service trims their `tool_result` output automatically. Use `hypa_*` only when you specifically want Hypa behavior (rewrite policy, context-aware reads/search, or MCP proxy features). Never route `hypa_*` outputs back through the Edgee compressor.
 
 <user_preferences>
 

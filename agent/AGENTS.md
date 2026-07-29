@@ -12,7 +12,6 @@
 - When you write an ADR or a documentation, always lookup for already present file so you can name the file you want to add correctly.
 - Use the `factual-research` skill for factual research or delegate to researcher subagent when necessary.
 - Use `safe_bash` instead of `bash` for any bash commands. `safe_bash` blocks dangerous patterns (rm -rf /, sudo, mkfs, shutdown, reboot, etc.) and is available as an installed extension.
-- **Hypa vs Edgee roles** Use the local Edgee compressor as the default automatic input-compression layer for large text-heavy built-in tool results (`read`, `grep`, `bash`, `safe_bash`, `ls`, `find`). Keep Hypa installed for shell rewrite policy and explicit `hypa_*` tools. Do not assume `hypa_*` should replace the default tools globally, and do not double-compress `hypa_*` outputs through Edgee.
 
 </general-constraints>
 

@@ -220,3 +220,7 @@ OR_API_KEY=sk-or-v1-...
 - **Models must be explicitly declared**: no auto-discovery from upstream
 - **`/v1/models` auth required**: needs `api-keys` configured
 - **`payload.override` avec wildcard `*` casse Antigravity ET Codex**: Le translator reçoit le champ `messages` (OpenAI) injecté par l'override et le passe tel quel à l'API upstream qui le rejette. Antigravity → 400 INVALID_ARGUMENT (Google protobuf), Codex → "Unsupported parameter: messages". **Solution**: toujours filtrer par `protocol: "openai"` uniquement — jamais `*` sans filtre, jamais `codex` ou `antigravity` avec `messages.*`.
+
+## Herdr Pi launches
+
+- For every Pi session launched through Herdr, use `pi --yolo` and launch the session without `ask_user_question`. These are separate requirements: `--yolo` auto-approves permissions but does not itself remove the tool; its absence must be enforced by the separate launch instruction or tool-registration policy.

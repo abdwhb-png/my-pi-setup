@@ -4,5 +4,5 @@ argument-hint: '<request-description>'
 role: herdr-orchestrator
 ---
 
-Orchestrate using herdr.
+Proceed the task using herdr.
 $ARGUMENTS

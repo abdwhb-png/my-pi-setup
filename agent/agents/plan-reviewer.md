@@ -1,8 +1,8 @@
 ---
 name: plan-reviewer
-description: 'Plan reviewer. Verifies a work plan is executable: references exist, tasks are startable, QA scenarios are concrete. Issues OKAY, ITERATE, or REJECT. (READ-ONLY)'
-tools: '@review-max'
-thinking: high
+description: "Plan reviewer. Verifies a work plan is executable: references exist, tasks are startable, QA scenarios are concrete. Issues OKAY, ITERATE, or REJECT. (READ-ONLY)"
+tools: "@review-max"
+thinking: xhigh
 completionGuard: false
 ---
 

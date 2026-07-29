@@ -101,16 +101,19 @@
         "factory-credits": {
             "row": 1
         },
-        "brainstorm-forcer": {
-            "row": 3,
-            "align": "right"
-        },
         "pi-glm-tweaks.status": {
             "row": 1
         },
-        "auto-translate": {
-            "row": 3,
+        "brainstorm-forcer": {
+            "row": 2,
+            "placement": "aboveEditor",
             "align": "left"
+        },
+        "auto-translate": {
+            "row": 2,
+            "position": 0,
+            "align": "left",
+            "placement": "aboveEditor"
         },
         "codex-fast-mode": {
             "enabled": false
