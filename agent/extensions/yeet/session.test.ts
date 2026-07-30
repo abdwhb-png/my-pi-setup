@@ -157,6 +157,19 @@ describe('CommitPlanSession', () => {
             ).toBe(true);
         });
 
+        it('closes every review row at the same frame width', () => {
+            const output = session.render(80);
+
+            expect(output.every((line) => visibleWidth(line) === 76)).toBe(
+                true,
+            );
+            expect(
+                output
+                    .slice(1, -1)
+                    .every((line) => line.endsWith('│') || line.endsWith('┤')),
+            ).toBe(true);
+        });
+
         it('includes the commit message', () => {
             const _output = session.render(80);
             expect(
@@ -219,11 +232,11 @@ describe('CommitPlanSession', () => {
                 output.some((line) => line.includes('feat: preserve the')),
             ).toBe(true);
             expect(
-                output.some((line) => line.includes('without horizontal')),
+                output.some((line) => line.includes('without')),
             ).toBe(true);
-            expect(output.some((line) => line.includes('scrolling'))).toBe(
-                true,
-            );
+            expect(
+                output.some((line) => line.includes('horizontal scrolling')),
+            ).toBe(true);
             expect(output.every((line) => visibleWidth(line) <= 56)).toBe(true);
         });
 

@@ -109,15 +109,12 @@ export class UsageReportWidget implements Component {
             activeTab === "long"
                 ? theme.fg("accent", theme.bold(" [2] Long (30d, 90d) "))
                 : theme.fg("muted", " [2] Long (30d, 90d) ");
-        const tabLine = `  ${tab1}  ${tab2}`;
-        const innerWidth = box.getInnerWidth();
+        const tabLine = `${tab1}  ${tab2}`;
         box.setFixedHeader([
-            theme.fg("border", box.borderChar("vertical")) + " " + tabLine,
+            tabLine,
             theme.fg(
                 "border",
-                box.borderChar("separator") +
-                    "─".repeat(innerWidth) +
-                    box.borderChar("separatorRight"),
+                box.borderChar("horizontal").repeat(box.getContentWidth()),
             ),
         ]);
 

@@ -1,7 +1,11 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component } from "@earendil-works/pi-tui";
 import { isEnter, isEscape } from "../_shared/commit-keys";
-import { renderBoxHeader, renderBoxFooter } from "../_shared/ui/framed-box";
+import {
+    renderBoxContentLines,
+    renderBoxFooter,
+    renderBoxHeader,
+} from "../_shared/ui/framed-box";
 import { renderCwd } from "./cwd-display";
 import type { CommitPlanParams, CommitPlanResult } from "./types";
 
@@ -60,54 +64,59 @@ export class CommitConfirmDialog implements Component {
 
         // Summary
         lines.push(
-            theme.fg("border", "│") +
-                " " +
+            ...renderBoxContentLines(
+                theme,
+                innerWidth,
                 theme.fg("accent", theme.bold(" Summary:")),
+            ),
         );
         lines.push(
-            theme.fg("border", "│") +
-                "   " +
-                theme.fg("text", params.plan_summary),
+            ...renderBoxContentLines(
+                theme,
+                innerWidth,
+                "  " + theme.fg("text", params.plan_summary),
+            ),
         );
 
         // Files
-        lines.push(theme.fg("border", "│"));
+        lines.push(...renderBoxContentLines(theme, innerWidth, ""));
         lines.push(
-            theme.fg("border", "│") +
-                " " +
+            ...renderBoxContentLines(
+                theme,
+                innerWidth,
                 theme.fg("accent", theme.bold(" Files:")),
+            ),
         );
         for (const file of params.files) {
-            const maxPathWidth = innerWidth - 8;
-            const display =
-                file.length > maxPathWidth
-                    ? "…" + file.slice(-(maxPathWidth - 1))
-                    : file;
             lines.push(
-                theme.fg("border", "│") +
-                    "   " +
-                    theme.fg("success", "[x]") +
-                    " " +
-                    theme.fg("text", display),
+                ...renderBoxContentLines(
+                    theme,
+                    innerWidth,
+                    "  " +
+                        theme.fg("success", "[x]") +
+                        " " +
+                        theme.fg("text", file),
+                ),
             );
         }
 
         // Message
-        lines.push(theme.fg("border", "│"));
+        lines.push(...renderBoxContentLines(theme, innerWidth, ""));
         lines.push(
-            theme.fg("border", "│") +
-                " " +
+            ...renderBoxContentLines(
+                theme,
+                innerWidth,
                 theme.fg("accent", theme.bold(" Message:")),
+            ),
         );
         const msgLines = params.commit_message.split("\n");
         for (const msgLine of msgLines) {
-            const maxMsgWidth = innerWidth - 4;
-            const truncated =
-                msgLine.length > maxMsgWidth
-                    ? msgLine.slice(0, maxMsgWidth - 1) + "…"
-                    : msgLine;
             lines.push(
-                theme.fg("border", "│") + "   " + theme.fg("text", truncated),
+                ...renderBoxContentLines(
+                    theme,
+                    innerWidth,
+                    "  " + theme.fg("text", msgLine),
+                ),
             );
         }
 

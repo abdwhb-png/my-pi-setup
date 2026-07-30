@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'bun:test';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { CommitConfirmDialog } from './confirm';
 import type { CommitPlanParams, CommitPlanResult } from './types';
 
@@ -35,6 +36,25 @@ describe('CommitConfirmDialog', () => {
         });
         const output = dialog.render(80);
         expect(output.length).toBeGreaterThan(0);
+    });
+
+    it('closes every confirmation row at the same frame width', () => {
+        const dialog = new CommitConfirmDialog({
+            theme: makeTheme() as any,
+            params: makeParams({
+                plan_summary: `Summary ${'with a long detail '.repeat(8)}`,
+            }),
+            done: () => {},
+        });
+
+        const output = dialog.render(80);
+
+        expect(output.every((line) => visibleWidth(line) === 76)).toBe(true);
+        expect(
+            output
+                .slice(1, -1)
+                .every((line) => line.endsWith('│')),
+        ).toBe(true);
     });
 
     it('render() includes the summary, files, and commit message', () => {

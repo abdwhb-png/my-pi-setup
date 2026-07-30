@@ -14,7 +14,12 @@ import {
     isArrowUp,
     isArrowDown,
 } from "../_shared/commit-keys";
-import { renderBoxHeader, renderBoxFooter } from "../_shared/ui/framed-box";
+import {
+    renderBoxContentLines,
+    renderBoxFooter,
+    renderBoxHeader,
+    renderBoxSeparator,
+} from "../_shared/ui/framed-box";
 import { renderCwd } from "./cwd-display";
 import type {
     CommitPlanParams,
@@ -213,27 +218,34 @@ export class CommitPlanSession implements Component {
             const lines = [
                 renderBoxHeader(theme, innerWidth, " 📦 Reject Commit Plan "),
                 ...renderCwd(theme, innerWidth, this.config.params.cwd),
-                theme.fg("border", "│") +
-                    " " +
+                ...renderBoxContentLines(
+                    theme,
+                    innerWidth,
                     theme.fg(
                         "accent",
                         theme.bold(" ✏️ Reason for rejection (optional):"),
                     ),
+                ),
             ];
 
             this.rejectionReasonEditor.focused = true;
             for (const line of this.rejectionReasonEditor.render(
-                innerWidth - 3,
+                innerWidth - 6,
             )) {
-                lines.push(theme.fg("border", "│") + "   " + line);
+                lines.push(
+                    ...renderBoxContentLines(theme, innerWidth, "  " + line),
+                );
             }
             lines.push(
-                theme.fg("border", "│") +
-                    "   " +
-                    theme.fg(
-                        "muted",
-                        "Leave empty to request a different plan.",
-                    ),
+                ...renderBoxContentLines(
+                    theme,
+                    innerWidth,
+                    "  " +
+                        theme.fg(
+                            "muted",
+                            "Leave empty to request a different plan.",
+                        ),
+                ),
             );
             lines.push(
                 renderBoxFooter(
@@ -259,17 +271,21 @@ export class CommitPlanSession implements Component {
             ? " ✏️ Edit Message:"
             : " Commit Message:";
         lines.push(
-            theme.fg("border", "│") +
-                " " +
+            ...renderBoxContentLines(
+                theme,
+                innerWidth,
                 theme.fg("accent", theme.bold(msgLabel)),
+            ),
         );
 
-        const editorLines = this.editorComponent.render(innerWidth - 3);
+        const editorLines = this.editorComponent.render(innerWidth - 6);
         for (const line of editorLines) {
-            lines.push(theme.fg("border", "│") + "   " + line);
+            lines.push(
+                ...renderBoxContentLines(theme, innerWidth, "  " + line),
+            );
         }
 
-        lines.push(theme.fg("border", "├" + "─".repeat(innerWidth) + "┤"));
+        lines.push(renderBoxSeparator(theme, innerWidth));
 
         const terminalRows = Math.max(1, this.config.tui.terminal.rows);
         const fileViewportHeight = Math.max(1, terminalRows - lines.length - 2);
@@ -301,16 +317,20 @@ export class CommitPlanSession implements Component {
                 ? ` 📁 Select Files:${rangeLabel}`
                 : ` Files:${rangeLabel}`;
         lines.push(
-            theme.fg("border", "│") +
-                " " +
+            ...renderBoxContentLines(
+                theme,
+                innerWidth,
                 theme.fg("accent", theme.bold(filesLabel)),
+            ),
         );
 
         if (files.length === 0) {
             lines.push(
-                theme.fg("border", "│") +
-                    "   " +
-                    theme.fg("muted", "(no files)"),
+                ...renderBoxContentLines(
+                    theme,
+                    innerWidth,
+                    "  " + theme.fg("muted", "(no files)"),
+                ),
             );
         } else {
             for (let i = this.fileViewportStart; i < fileViewportEnd; i++) {
@@ -327,21 +347,21 @@ export class CommitPlanSession implements Component {
                     pathText = theme.fg("text", pathText);
                 }
 
-                const maxPathWidth = innerWidth - 6;
+                const maxPathWidth = innerWidth - 10;
                 const truncatedPath = truncateToWidth(pathText, maxPathWidth);
                 lines.push(
-                    theme.fg("border", "│") +
-                        "   " +
-                        checkbox +
-                        " " +
-                        truncatedPath,
+                    ...renderBoxContentLines(
+                        theme,
+                        innerWidth,
+                        "  " + checkbox + " " + truncatedPath,
+                    ),
                 );
             }
         }
 
         const footerText = isMessageFocused
-            ? "[Tab] Files [Enter] Accept [Shift+Enter] Line [Ctrl+R] Reject [Esc] Cancel"
-            : "[Tab]Message [↑↓]Move [Space]Toggle [Enter]Accept [Ctrl+R]Rej [Esc]Cancel";
+            ? "[Tab] Files [Enter] Accept [S-Enter] Line [Ctrl+R] Reject [Esc] Cancel"
+            : "[Tab] Msg [↑↓] Move [Space] Toggle [Enter] Accept [Ctrl+R] Reject [Esc]";
 
         lines.push(renderBoxFooter(theme, innerWidth, footerText));
 

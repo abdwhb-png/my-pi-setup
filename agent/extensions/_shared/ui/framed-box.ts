@@ -1,4 +1,4 @@
-import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
 export interface BoxOptions {
@@ -76,12 +76,12 @@ export function renderBoxHeader(
   const { titlePosition, borderStyle } = { ...defaultOptions, ...options };
   const b = borders[borderStyle || "rounded"];
 
-  // Ensure text fits within the box (leave 2 chars for corners)
-  const maxTextWidth = Math.max(0, innerWidth - 2);
+  // Reserve corners plus one space on either side of the title text.
+  const maxTextWidth = Math.max(0, innerWidth - 4);
   const safeText = truncateToWidth(text, maxTextWidth);
   const textWidth = visibleWidth(safeText);
 
-  const pad = Math.max(0, innerWidth - textWidth - 2);
+  const pad = Math.max(0, innerWidth - textWidth - 4);
   let padLeft = 0;
   let padRight = 0;
 
@@ -89,11 +89,11 @@ export function renderBoxHeader(
     padLeft = Math.floor(pad / 2);
     padRight = pad - padLeft;
   } else if (titlePosition === "left") {
-    padLeft = 1;
-    padRight = pad - 1;
+    padLeft = Math.min(1, pad);
+    padRight = pad - padLeft;
   } else {
-    padLeft = pad - 1;
-    padRight = 1;
+    padRight = Math.min(1, pad);
+    padLeft = pad - padRight;
   }
 
   // Ensure padding is never negative
@@ -127,11 +127,11 @@ export function renderBoxFooter(
   const { titlePosition, borderStyle } = { ...defaultOptions, ...options };
   const b = borders[borderStyle || "rounded"];
 
-  const maxTextWidth = Math.max(0, innerWidth - 2);
+  const maxTextWidth = Math.max(0, innerWidth - 4);
   const safeText = truncateToWidth(text, maxTextWidth);
   const textWidth = visibleWidth(safeText);
 
-  const pad = Math.max(0, innerWidth - textWidth - 2);
+  const pad = Math.max(0, innerWidth - textWidth - 4);
   let padLeft = 0;
   let padRight = 0;
 
@@ -139,11 +139,11 @@ export function renderBoxFooter(
     padLeft = Math.floor(pad / 2);
     padRight = pad - padLeft;
   } else if (titlePosition === "left") {
-    padLeft = 1;
-    padRight = pad - 1;
+    padLeft = Math.min(1, pad);
+    padRight = pad - padLeft;
   } else {
-    padLeft = pad - 1;
-    padRight = 1;
+    padRight = Math.min(1, pad);
+    padLeft = pad - padRight;
   }
 
   padLeft = Math.max(0, padLeft);
@@ -155,6 +155,45 @@ export function renderBoxFooter(
   const styledText = theme.fg("muted", theme.italic(` ${safeText} `));
 
   return theme.fg("border", leftLine) + styledText + theme.fg("border", rightLine);
+}
+
+/**
+ * Render wrapped content rows enclosed by the box's vertical borders.
+ */
+export function renderBoxContentLines(
+  theme: Theme,
+  innerWidth: number,
+  text: string,
+  options: BoxOptions = defaultOptions,
+): string[] {
+  const { borderStyle } = { ...defaultOptions, ...options };
+  const b = borders[borderStyle || "rounded"];
+  const contentWidth = Math.max(1, innerWidth - 4);
+
+  return wrapTextWithAnsi(text, contentWidth).map((line) => {
+    const padding = Math.max(1, innerWidth - visibleWidth(line) - 3);
+    return (
+      theme.fg("border", b.vertical) +
+      " " +
+      line +
+      " ".repeat(padding) +
+      theme.fg("border", b.vertical)
+    );
+  });
+}
+
+/** Render a full-width separator between box content sections. */
+export function renderBoxSeparator(
+  theme: Theme,
+  innerWidth: number,
+  options: BoxOptions = defaultOptions,
+): string {
+  const { borderStyle } = { ...defaultOptions, ...options };
+  const b = borders[borderStyle || "rounded"];
+  return theme.fg(
+    "border",
+    b.separator + b.horizontal.repeat(Math.max(0, innerWidth - 2)) + b.separatorRight,
+  );
 }
 
 /**
@@ -237,6 +276,12 @@ export class BoxRenderer {
     return this.getInnerWidth() - 4; // │ + 2 spaces padding on each side
   };
 
+  private wrapLines(lines: string[]): string[] {
+    return lines.flatMap((line) =>
+      wrapTextWithAnsi(line, Math.max(1, this.getContentWidth())),
+    );
+  }
+
   /** Access a border character (e.g. 'vertical', 'separator') for custom lines */
   borderChar = (key: keyof typeof borders.rounded): string => {
     return borders[this.opts.borderStyle][key];
@@ -244,7 +289,7 @@ export class BoxRenderer {
 
   /** Returns scroll indicator string, e.g. " [3/10↑↓] ", or "" if no scrolling */
   getScrollInfo = (): string => {
-    const maxScroll = Math.max(0, this.contentLines.length - this.opts.viewportHeight);
+    const maxScroll = Math.max(0, this.wrapLines(this.contentLines).length - this.opts.viewportHeight);
     if (maxScroll === 0) return "";
     const effective = Math.max(0, Math.min(this.scrollOffset, maxScroll));
     return ` [${effective}/${maxScroll}↑↓] `;
@@ -269,7 +314,7 @@ export class BoxRenderer {
     }
 
     // ── Fixed header (non-scrollable, e.g. tabs) ──
-    for (const line of this.fixedHeaderLines) {
+    for (const line of this.wrapLines(this.fixedHeaderLines)) {
       const vw = visibleWidth(line);
       const padding = Math.max(0, innerWidth - vw - 4);
       lines.push(
@@ -278,14 +323,15 @@ export class BoxRenderer {
     }
 
     // ── Scrollable content viewport ──
-    const maxScroll = Math.max(0, this.contentLines.length - viewportH);
+    const wrappedContentLines = this.wrapLines(this.contentLines);
+    const maxScroll = Math.max(0, wrappedContentLines.length - viewportH);
     const effectiveScroll = Math.max(0, Math.min(this.scrollOffset, maxScroll));
     // Clamp to avoid stale state
     if (this.scrollOffset !== effectiveScroll) {
       this.scrollOffset = effectiveScroll;
     }
 
-    const visibleLines = this.contentLines.slice(
+    const visibleLines = wrappedContentLines.slice(
       effectiveScroll,
       effectiveScroll + viewportH,
     );

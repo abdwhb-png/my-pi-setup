@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { renderBoxHeader, renderBoxFooter, renderBoxSides, BoxRenderer } from "./framed-box";
 
 function createMockTheme() {
@@ -15,6 +16,12 @@ function createMockTheme() {
 const theme = createMockTheme() as any;
 
 describe("renderBoxHeader", () => {
+  it("keeps the decorative title padding inside the requested width", () => {
+    const result = renderBoxHeader(theme, 40, "Test");
+
+    expect(visibleWidth(result)).toBe(40);
+  });
+
   it("renders a centered header with rounded borders by default", () => {
     const result = renderBoxHeader(theme, 40, "Test");
     expect(result).toContain("Test");
@@ -85,6 +92,12 @@ describe("renderBoxHeader", () => {
 });
 
 describe("renderBoxFooter", () => {
+  it("keeps the decorative footer padding inside the requested width", () => {
+    const result = renderBoxFooter(theme, 40, "Footer");
+
+    expect(visibleWidth(result)).toBe(40);
+  });
+
   it("renders a centered footer with rounded borders by default", () => {
     const result = renderBoxFooter(theme, 40, "Footer");
     expect(result).toContain("Footer");
@@ -141,6 +154,45 @@ describe("renderBoxSides", () => {
 // ── BoxRenderer ──────────────────────────────────────
 
 describe("BoxRenderer", () => {
+  it("wraps long fixed-header rows inside the box borders", () => {
+    const box = new BoxRenderer(theme, 80, { viewportHeight: 1 });
+    const subtitle = `docs/${"very-long-path-segment-".repeat(5)}artifact.md`;
+    box.setFixedHeader([subtitle]);
+    box.setContent(["body"]);
+
+    const result = box.render();
+    const fixedHeaderRows = result.slice(1, -1);
+
+    expect(fixedHeaderRows).toHaveLength(2);
+    expect(fixedHeaderRows[0]).toContain("docs/");
+    expect(fixedHeaderRows[1]).toContain("artifact.md");
+    expect(fixedHeaderRows.every((line) => visibleWidth(line) === box.getInnerWidth())).toBe(true);
+  });
+
+  it("scrolls wrapped content by visual rows", () => {
+    const box = new BoxRenderer(theme, 80, { viewportHeight: 2 });
+    box.setContent([
+      `start ${"x".repeat(65)} middle ${"y".repeat(65)} end`,
+    ]);
+    box.setFooter("Close");
+
+    expect(box.getScrollInfo()).toContain("[0/1↑↓]");
+    expect(box.render().join("\n")).not.toContain("end");
+
+    box.scrollDown();
+    expect(box.render().join("\n")).toContain("end");
+  });
+
+  it("keeps ANSI, emoji, and long words within the frame width", () => {
+    const box = new BoxRenderer(theme, 80, { viewportHeight: 2 });
+    box.setTitle("📦 Wide title");
+    box.setFixedHeader([`\u001b[38;5;39m${"🧬".repeat(40)}\u001b[0m`]);
+    box.setContent([`\u001b[31m${"unbroken-content-".repeat(10)}\u001b[0m`]);
+    box.setFooter("A deliberately long footer that must remain on one bounded line");
+
+    expect(box.render().every((line) => visibleWidth(line) === box.getInnerWidth())).toBe(true);
+  });
+
   it("renders header, content, and footer wrapped in borders", () => {
     const box = new BoxRenderer(theme, 80);
     box.setTitle("My Box");
