@@ -589,6 +589,7 @@ export type ExplorationStatusSnapshot = Readonly<{
         timeout: number;
     }>;
     unresolvedCriticalClaimIds: readonly string[];
+    routingMetadataRequiredClaimIds: readonly string[];
     requiredReviewClaimIds: readonly string[];
     satisfiedReviewClaimIds: readonly string[];
     missingSuccessfulReviewClaimIds: readonly string[];
@@ -2242,6 +2243,13 @@ export function createExplorationLedger(options: LedgerOptions) {
         getStatusSnapshot(): ExplorationStatusSnapshot {
             const activeClaims = deriveActiveClaims(claimRecords);
             const activeClaimIds = activeClaims.map((claim) => claim.id);
+            const routingMetadataRequiredClaimIds = activeClaims
+                .filter(
+                    (claim) =>
+                        claim.verificationDomain === undefined ||
+                        claim.architectureImpact === undefined,
+                )
+                .map((claim) => claim.id);
             const requiredReviewClaimIds = activeClaims
                 .filter((claim) => {
                     const waiver = waiverRecords.findLast(
@@ -2404,6 +2412,7 @@ export function createExplorationLedger(options: LedgerOptions) {
                             claim.critical && claim.verdict === "unresolved",
                     )
                     .map((claim) => claim.id),
+                routingMetadataRequiredClaimIds,
                 requiredReviewClaimIds,
                 satisfiedReviewClaimIds,
                 missingSuccessfulReviewClaimIds,

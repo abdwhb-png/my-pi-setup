@@ -1725,6 +1725,9 @@ describe("exploration ledger", () => {
         ).toContain(
             "Restored claim CL-001 lacks routing metadata and must be superseded before verification.",
         );
+        expect(
+            restored.getStatusSnapshot().routingMetadataRequiredClaimIds,
+        ).toEqual(["CL-001"]);
 
         const superseded = createExplorationLedger({
             runId: "brainstorm-test",
@@ -1751,6 +1754,9 @@ describe("exploration ledger", () => {
         ).not.toContain(
             "Restored claim CL-001 lacks routing metadata and must be superseded before verification.",
         );
+        expect(
+            superseded.getStatusSnapshot().routingMetadataRequiredClaimIds,
+        ).toEqual([]);
     });
 
     it("drops restored claims with malformed routing metadata (fail closed)", () => {
@@ -2180,6 +2186,7 @@ describe("exploration ledger", () => {
                 timeout: 0,
             },
             unresolvedCriticalClaimIds: [],
+            routingMetadataRequiredClaimIds: [],
             requiredReviewClaimIds: [claim.id],
             satisfiedReviewClaimIds: [],
             missingSuccessfulReviewClaimIds: [claim.id],

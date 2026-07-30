@@ -1419,7 +1419,12 @@ export default function brainstormForcer(
                 {
                     type: "text" as const,
                     text: activePhase
-                        ? `Current brainstorm phase: ${PHASE_LABELS[activePhase]}.`
+                        ? [
+                              `Current brainstorm phase: ${PHASE_LABELS[activePhase]}.`,
+                              ...(activePhase === "exploring"
+                                  ? explorationStatusLines()
+                                  : []),
+                          ].join("\n")
                         : "Brainstorm completed.",
                 },
             ],
@@ -1536,7 +1541,7 @@ export default function brainstormForcer(
                 claim.architectureImpact === undefined
             )
                 throw new Error(
-                    `Claim ${claim.id} lacks required verification routing metadata.`,
+                    `Claim ${claim.id} lacks required verification routing metadata. Use brainstorm_record_claim with supersedesClaimId, verificationDomain, and architectureImpact before verification.`,
                 );
             const evidence: EvidenceDescriptor[] = claim.evidenceIds.map(
                 (evidenceId) => {
@@ -2047,14 +2052,16 @@ export default function brainstormForcer(
             ? pendingVerification.recovery?.steerAttempted
                 ? "manualIntervention"
                 : "waitVerification"
-            : ledger.waiverRequiredClaimIds.length > 0
-              ? "requestWaiver"
-              : ledger.missingSuccessfulReviewClaimIds.length > 0 ||
-                  ledger.architectureBlockedClaimIds.length > 0
-                ? "runVerification"
-                : ledger.finalChoice === "recorded"
-                  ? "submitExploring"
-                  : "askDedicatedChoice";
+            : ledger.routingMetadataRequiredClaimIds.length > 0
+              ? "supersedeClaims"
+              : ledger.waiverRequiredClaimIds.length > 0
+                ? "requestWaiver"
+                : ledger.missingSuccessfulReviewClaimIds.length > 0 ||
+                    ledger.architectureBlockedClaimIds.length > 0
+                  ? "runVerification"
+                  : ledger.finalChoice === "recorded"
+                    ? "submitExploring"
+                    : "askDedicatedChoice";
         return {
             ...ledger,
             pendingRunId: pendingVerification?.runId ?? null,
@@ -2069,17 +2076,22 @@ export default function brainstormForcer(
         return [
             `Exploring ledger: EV=${status.evidenceTotal} | claims=${status.claims.active} active/${status.claims.historical} historical | reviews=${status.reviews.success} successful/${status.reviews.total} total (failed=${status.reviews.failed} malformed=${status.reviews.malformed} timeout=${status.reviews.timeout})`,
             `Active unresolved critical claims: ${status.unresolvedCriticalClaimIds.join(", ") || "none"}`,
+            `Routing metadata supersession required: ${status.routingMetadataRequiredClaimIds.join(", ") || "none"}`,
             `Required successful reviews missing: ${status.missingSuccessfulReviewClaimIds.join(", ") || "none"}`,
             `Required waivers missing: ${status.waiverRequiredClaimIds.join(", ") || "none"}`,
             `Verification: ${status.pendingRunId ? `pending ${status.pendingRunId}` : "none pending"}`,
             `Question tool: ${status.questionTool}`,
             `Final choice: ${status.finalChoice}`,
             `Next action: ${status.nextAction}`,
-            ...(status.nextAction === "manualIntervention"
+            ...(status.nextAction === "supersedeClaims"
                 ? [
-                      "Recovery: steering delivery is still unconfirmed; autonomous wait, stop, and relaunch are blocked. Await exact terminal completion or request explicit manual intervention.",
+                      "Recovery: call brainstorm_record_claim with supersedesClaimId for each listed claim, including verificationDomain and architectureImpact, before brainstorm_run_verification.",
                   ]
-                : []),
+                : status.nextAction === "manualIntervention"
+                  ? [
+                        "Recovery: steering delivery is still unconfirmed; autonomous wait, stop, and relaunch are blocked. Await exact terminal completion or request explicit manual intervention.",
+                    ]
+                  : []),
         ];
     }
 

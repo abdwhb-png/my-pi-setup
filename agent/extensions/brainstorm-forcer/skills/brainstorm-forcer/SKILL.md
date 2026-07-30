@@ -61,7 +61,12 @@ Follow this order:
 5. Keep direct evidence authoritative. Indexed, derived, stale, failed, or
    secondary verifier output cannot independently prove a critical empirical
    claim.
-6. When verification is required, call only:
+6. If semantic status reports `nextAction: supersedeClaims`, do not start
+   verification. Re-record each listed claim through `brainstorm_record_claim`
+   with `supersedesClaimId`, `verificationDomain`, and `architectureImpact`.
+   Preserve its valid direct evidence references. Never infer missing routing
+   metadata or bypass the gate with generic tools.
+7. When verification is required, call only:
 
    ```text
    brainstorm_run_verification({ claimIds: ["CL-001", "..."] })
@@ -72,7 +77,7 @@ Follow this order:
    the closed route, optional architect scope, fresh read-only async execution,
    and EV/RV audit. Do not use `subagent` to create a run, choose an agent, or
    construct a verification chain.
-7. Wait while verification is pending. `subagent_wait.timeoutMs` is only an
+8. Wait while verification is pending. `subagent_wait.timeoutMs` is only an
    upper bound: nonterminal, latched `needs_attention` may return immediately.
    Follow the semantic injected status and `/brainstorm status` rather than raw
    EV/CL/RV counts.
@@ -88,19 +93,19 @@ Follow this order:
    fallback agent, use `runId`/`dir`, target another run, request fleet or
    transcript views, or supply spawn/execution fields. Control results and
    `subagent_wait` are lifecycle state, not `EV-*` evidence.
-8. Do not call `ask_user_question` while verification is pending. First process
+9. Do not call `ask_user_question` while verification is pending. First process
    terminal completion into the required `RV-*` audit; only then ask the final
    choice. Exact structured success also creates secondary `EV-*`. Prose,
    failure, malformed output, timeout, or architect `block` remains audited and
    blocked.
-9. For an unresolved critical claim, use `brainstorm_request_waiver`. User
+10. For an unresolved critical claim, use `brainstorm_request_waiver`. User
    approval is mandatory, and a later successful verification is still
    required.
-10. After semantic status reports no missing successful reviews, ask exactly
+11. After semantic status reports no missing successful reviews, ask exactly
    one dedicated `ask_user_question` question for the final choice. Preserve
    the exact answer and its `EV-*` identifier. A cancelled question may be
    transport-successful but is explicitly final-choice-ineligible.
-11. After the gate is ready, call `brainstorm_submit_exploring` with two or
+12. After the gate is ready, call `brainstorm_submit_exploring` with two or
     three approaches, active `claimIds`, `recommendationClaimIds`,
     recommendation, `userChoice`, and `userChoiceEvidenceId`.
 

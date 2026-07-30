@@ -852,6 +852,281 @@ describe("brainstorm-forcer redesign", () => {
     });
   });
 
+  it("requires legacy claims to be superseded before verification after branch restore", async () => {
+    const runId = "brainstorm-legacy-branch";
+    const entries = [
+      {
+        type: "custom",
+        customType: "brainstorm-forcer-ledger",
+        data: {
+          runId,
+          record: {
+            id: "EV-001",
+            kind: "evidence",
+            runId,
+            phase: "exploring",
+            sequence: 1,
+            timestamp: "2026-01-01T00:00:00.000Z",
+            toolCallId: "read-legacy",
+            toolName: "read",
+            status: "success",
+            inputHash: "a".repeat(64),
+            responseHash: "b".repeat(64),
+            sourceKind: "direct",
+            staleness: "fresh",
+          },
+        },
+      },
+      {
+        type: "custom",
+        customType: "brainstorm-forcer-ledger",
+        data: {
+          runId,
+          record: {
+            id: "CL-001",
+            kind: "claim",
+            runId,
+            phase: "exploring",
+            sequence: 2,
+            timestamp: "2026-01-01T00:00:01.000Z",
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: true,
+            verdict: "verified",
+            evidenceIds: ["EV-001"],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+          },
+        },
+      },
+      {
+        type: "custom",
+        customType: "brainstorm-forcer",
+        data: {
+          active: true,
+          phase: "exploring",
+          topic: { raw: "Legacy branch", display: "Legacy branch" },
+          runId,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          artifacts: {},
+        },
+      },
+    ];
+    const { pi, tools, handlers } = createMockAPI();
+    const ctx = createMockContext(entries);
+    brainstormForcer(pi);
+    await handlers.get("session_start")!({ type: "session_start" }, ctx);
+
+    const result = await tools
+      .get("brainstorm_transition")!
+      .execute("status", { action: "status" }, undefined, undefined, ctx);
+
+    expect(result.details.exploringStatus).toMatchObject({
+      routingMetadataRequiredClaimIds: ["CL-001"],
+      missingSuccessfulReviewClaimIds: ["CL-001"],
+      nextAction: "supersedeClaims",
+    });
+    expect(result.content[0].text).toContain(
+      "Routing metadata supersession required: CL-001",
+    );
+    expect(result.content[0].text).toContain(
+      "brainstorm_record_claim with supersedesClaimId",
+    );
+    await expectRejection(
+      Promise.resolve(
+        tools
+          .get("brainstorm_run_verification")!
+          .execute(
+            "verify-legacy",
+            { claimIds: ["CL-001"] },
+            undefined,
+            undefined,
+            ctx,
+          ),
+      ),
+      "Use brainstorm_record_claim with supersedesClaimId",
+    );
+  });
+
+  it("recovers a persisted legacy branch through supersession before verification", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-legacy-tree-"));
+    const sessionDir = join(projectRoot, "sessions");
+    await mkdir(sessionDir, { recursive: true });
+    const sessionManager = SessionManager.create(projectRoot, sessionDir);
+    sessionManager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "Persist legacy tree fixture." }],
+      api: "openai-completions",
+      provider: "openai",
+      model: "gpt-4o",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0,
+        },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    });
+    const api = createMockAPI(sessionManager);
+    const ctx = createSessionManagerContext(sessionManager);
+    const verificationFixture = await createVerificationAsyncDirFixture(
+      "legacy-branch-verification-run",
+    );
+    const rpcRequests = installVerificationRpcBridge(
+      api.events,
+      sessionManager.getSessionId(),
+      "legacy-branch-verification-run",
+      verificationFixture.asyncDir,
+      ctx.sessionManager.getSessionFile()!,
+    );
+    try {
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await api.commands.get("brainstorm")!.handler("Legacy tree", ctx);
+      await api.commands.get("brainstorm")!.handler("phase exploring", ctx);
+      await api.handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "read-legacy",
+          toolName: "read",
+          input: { path: "runtime.ts" },
+          content: [{ type: "text", text: "source" }],
+          details: undefined,
+          isError: false,
+        },
+        ctx,
+      );
+      const evidenceRecord = (
+        sessionManager
+          .getBranch()
+          .find(
+            (entry) =>
+              entry.type === "custom" &&
+              entry.customType === "brainstorm-forcer-ledger" &&
+              (entry.data as any).record?.id === "EV-001",
+          ) as any
+      ).data.record;
+      const runId = evidenceRecord.runId as string;
+      const legacyClaim = {
+        id: "CL-001",
+        kind: "claim",
+        runId,
+        phase: "exploring",
+        sequence: 2,
+        timestamp: "2026-01-01T00:00:01.000Z",
+        assertion: "Runtime source exists.",
+        classification: "empirical",
+        critical: true,
+        verdict: "verified",
+        evidenceIds: ["EV-001"],
+        contradictoryEvidenceIds: [],
+        impact: "Determines recommendation.",
+        mitigation: "Keep source evidence.",
+      };
+      const legacyLeafId = sessionManager.appendCustomEntry(
+        "brainstorm-forcer-ledger",
+        { runId, record: legacyClaim },
+      );
+      const modernLeafId = sessionManager.appendCustomEntry(
+        "brainstorm-forcer-ledger",
+        {
+          runId,
+          record: {
+            ...legacyClaim,
+            id: "CL-002",
+            sequence: 3,
+            timestamp: "2026-01-01T00:00:02.000Z",
+            supersedesClaimId: "CL-001",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+          },
+        },
+      );
+
+      sessionManager.branch(legacyLeafId);
+      await api.handlers.get("session_tree")!(
+        {
+          type: "session_tree",
+          oldLeafId: modernLeafId,
+          newLeafId: legacyLeafId,
+        },
+        ctx,
+      );
+      const restored = await api.tools
+        .get("brainstorm_transition")!
+        .execute("status", { action: "status" }, undefined, undefined, ctx);
+      expect(restored.details.exploringStatus).toMatchObject({
+        routingMetadataRequiredClaimIds: ["CL-001"],
+        nextAction: "supersedeClaims",
+        pendingRunId: null,
+      });
+
+      await api.tools.get("brainstorm_record_claim")!.execute(
+        "supersede-legacy",
+        {
+          assertion: "Runtime source exists.",
+          classification: "empirical",
+          critical: true,
+          verdict: "verified",
+          evidenceIds: ["EV-001"],
+          contradictoryEvidenceIds: [],
+          impact: "Determines recommendation.",
+          mitigation: "Keep source evidence.",
+          verificationDomain: "local-code",
+          architectureImpact: false,
+          supersedesClaimId: "CL-001",
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const recovered = await api.tools
+        .get("brainstorm_transition")!
+        .execute("status", { action: "status" }, undefined, undefined, ctx);
+      expect(recovered.details.exploringStatus).toMatchObject({
+        routingMetadataRequiredClaimIds: [],
+        missingSuccessfulReviewClaimIds: ["CL-002"],
+        nextAction: "runVerification",
+        pendingRunId: null,
+      });
+      const launched = await api.tools
+        .get("brainstorm_run_verification")!
+        .execute(
+          "verify-superseding-claim",
+          { claimIds: ["CL-002"] },
+          undefined,
+          undefined,
+          ctx,
+        );
+      expect(launched.details).toMatchObject({
+        runId: "legacy-branch-verification-run",
+        status: "pending",
+        claimIds: ["CL-002"],
+      });
+      expect(
+        rpcRequests.find((request) => request.method === "spawn")?.params,
+      ).toMatchObject({ async: true, context: "fresh", clarify: false });
+      expect(await readFile(sessionManager.getSessionFile()!, "utf8")).toContain(
+        '"supersedesClaimId":"CL-001"',
+      );
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      await rm(verificationFixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
   it("shows compact ledger counts in /brainstorm status", async () => {
     const { pi, handlers, commands } = createMockAPI();
     const ctx = createMockContext();

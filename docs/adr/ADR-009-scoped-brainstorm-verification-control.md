@@ -160,6 +160,14 @@ question-tool availability, final-choice eligibility, and the next action.
 Raw `RV=N`, `open critical claims: none`, or `none pending` are never presented
 as proof that required review succeeded.
 
+When branch restoration exposes an active legacy claim without
+`verificationDomain` or `architectureImpact`, the snapshot lists it in
+`routingMetadataRequiredClaimIds` and selects `supersedeClaims` before review or
+verification actions. Status names the exact claims and requires
+`brainstorm_record_claim` with `supersedesClaimId` plus complete routing
+metadata. Restoration remains fail-closed: it never infers or mutates missing
+metadata, and the generic Exploring allowlist is not widened.
+
 Cancelled `ask_user_question` calls remain append-only technical-success
 records when Pi reports a successful tool transport, but are labelled
 `semantic=cancelled` and final-choice-ineligible. Generic question availability

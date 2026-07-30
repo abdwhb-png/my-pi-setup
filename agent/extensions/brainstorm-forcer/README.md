@@ -207,7 +207,12 @@ paths use verifier terminology.
 widget derive one semantic snapshot from ledger eligibility. It reports active
 versus historical claims, review totals by audit status, missing successful
 reviews, pending ownership, final-choice eligibility, and the next action.
-Malformed/failed/timeout RV records remain visible but never look successful.
+A restored active claim without routing metadata is listed under
+`routingMetadataRequiredClaimIds`; status selects `supersedeClaims` before
+verification and names the exact claims to replace with `supersedesClaimId`,
+`verificationDomain`, and `architectureImpact`. Metadata is never inferred or
+migrated automatically. Malformed/failed/timeout RV records remain visible but
+never look successful.
 A cancelled question is recorded append-only as transport success when Pi says
 the call succeeded, while its semantic label remains cancelled and
 final-choice-ineligible.
