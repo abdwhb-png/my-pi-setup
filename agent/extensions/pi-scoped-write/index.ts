@@ -1,12 +1,12 @@
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { Type } from "@earendil-works/pi-ai";
 import {
     type ExtensionAPI,
     type ExtensionContext,
     withFileMutationQueue,
-} from '@earendil-works/pi-coding-agent';
-import { getActiveRole } from '../_shared/pi-roles.ts';
+} from "@earendil-works/pi-coding-agent";
+import { getActiveRole } from "../_shared/pi-roles.ts";
 import {
     createArtifactRootRegistry,
     createScopedWriter,
@@ -14,8 +14,9 @@ import {
     type ArtifactRunRoot,
     type ArtifactRootRegistry,
     type ScopedWriter,
-} from './core.ts';
-import { registerPlanTools } from './plan-tools.ts';
+} from "./core.ts";
+import { commonDebugRoot, registerDebugTools } from "./debug-tools.ts";
+import { registerPlanTools } from "./plan-tools.ts";
 
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const REPORT_MAX_BYTES = 1_048_576;
@@ -32,21 +33,21 @@ function safeSegment(value: string | undefined, fallback: string): string {
 }
 
 export function createReportWriter(input: ReportWriterInput): ScopedWriter {
-    const role = safeSegment(input.role, 'unassigned');
-    const sessionId = safeSegment(input.sessionId, 'unassigned-session');
+    const role = safeSegment(input.role, "unassigned");
+    const sessionId = safeSegment(input.sessionId, "unassigned-session");
     return createScopedWriter({
         projectRoot: input.cwd,
         policy: {
-            id: 'report-v1',
-            root: join('.pi', 'artifacts', 'reports', role, sessionId),
-            allowedExtensions: ['.md', '.json'],
-            operations: ['create', 'edit'],
+            id: "report-v1",
+            root: join(".pi", "artifacts", "reports", role, sessionId),
+            allowedExtensions: [".md", ".json"],
+            operations: ["create", "edit"],
             maxBytes: REPORT_MAX_BYTES,
-            auditNamespace: 'reports',
+            auditNamespace: "reports",
             allowNestedDirectories: true,
         },
         actor: {
-            agent: safeSegment(input.agent, 'unknown-agent'),
+            agent: safeSegment(input.agent, "unknown-agent"),
             role,
             runId: sessionId,
         },
@@ -56,14 +57,14 @@ export function createReportWriter(input: ReportWriterInput): ScopedWriter {
 export function createCommonArtifactRoots(): ArtifactRootRegistry {
     const registry = createArtifactRootRegistry();
     registry.register({
-        id: 'common-reports',
+        id: "common-reports",
         resolve(projectRoot, runId) {
             if (!SAFE_SEGMENT.test(runId)) return [];
             const reportsRoot = join(
                 projectRoot,
-                '.pi',
-                'artifacts',
-                'reports',
+                ".pi",
+                "artifacts",
+                "reports",
             );
             if (!existsSync(reportsRoot)) return [];
             return readdirSync(reportsRoot, { withFileTypes: true })
@@ -79,6 +80,8 @@ export function createCommonArtifactRoots(): ArtifactRootRegistry {
 }
 
 const sharedRoots = createCommonArtifactRoots();
+// Also expose throwaway debug probes for per-run purge (diagnose Phase 6).
+sharedRoots.register(commonDebugRoot);
 
 export function sharedArtifactRootRegistry(): ArtifactRootRegistry {
     return sharedRoots;
@@ -91,7 +94,7 @@ export function registerArtifactRunRoot(root: ArtifactRunRoot): void {
 function currentRole(ctx: ExtensionContext): string | undefined {
     const activeRole = getActiveRole(ctx.sessionManager.getEntries())?.name;
     if (activeRole) return activeRole;
-    return process.env.PI_SUBAGENT_CHILD === '1'
+    return process.env.PI_SUBAGENT_CHILD === "1"
         ? process.env.PI_SUBAGENT_CHILD_AGENT
         : undefined;
 }
@@ -102,12 +105,12 @@ function reportQueuePath(
 ): string {
     return join(
         ctx.cwd,
-        '.pi',
-        'artifacts',
-        'reports',
-        safeSegment(role, 'unassigned'),
-        safeSegment(ctx.sessionManager.getSessionId(), 'unassigned-session'),
-        '.mutation-queue',
+        ".pi",
+        "artifacts",
+        "reports",
+        safeSegment(role, "unassigned"),
+        safeSegment(ctx.sessionManager.getSessionId(), "unassigned-session"),
+        ".mutation-queue",
     );
 }
 
@@ -118,29 +121,29 @@ function toolFailure(result: { kind: string; reason?: string }): never {
 const writeReportSchema = Type.Object({
     path: Type.String({
         description:
-            'Relative .md or .json path below this role/session report root.',
+            "Relative .md or .json path below this role/session report root.",
     }),
-    content: Type.String({ description: 'Complete report content.' }),
+    content: Type.String({ description: "Complete report content." }),
 });
 
 const editReportSchema = Type.Object({
     path: Type.String({
         description:
-            'Relative .md or .json path below this role/session report root.',
+            "Relative .md or .json path below this role/session report root.",
     }),
     edits: Type.Array(
         Type.Object({
             oldText: Type.String({
-                description: 'Exact, unique text to replace.',
+                description: "Exact, unique text to replace.",
             }),
-            newText: Type.String({ description: 'Replacement text.' }),
+            newText: Type.String({ description: "Replacement text." }),
         }),
     ),
 });
 
 const purgeArtifactsSchema = Type.Object({
     runId: Type.String({
-        description: 'Exact session/run identifier to purge.',
+        description: "Exact session/run identifier to purge.",
     }),
 });
 
@@ -148,12 +151,13 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
     const roots = sharedArtifactRootRegistry();
 
     registerPlanTools(pi);
+    registerDebugTools(pi);
 
     pi.registerTool({
-        name: 'write_report',
-        label: 'Write Report',
+        name: "write_report",
+        label: "Write Report",
         description:
-            'Create a Markdown or JSON report inside the active role and session artefact root.',
+            "Create a Markdown or JSON report inside the active role and session artefact root.",
         parameters: writeReportSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
             const role = currentRole(ctx);
@@ -161,7 +165,7 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
                 cwd: ctx.cwd,
                 role,
                 sessionId: ctx.sessionManager.getSessionId(),
-                agent: role ?? 'unassigned',
+                agent: role ?? "unassigned",
             });
             const result = await withFileMutationQueue(
                 reportQueuePath(ctx, role),
@@ -169,13 +173,13 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
                     writer.create({
                         path: params.path,
                         content: params.content,
-                        tool: 'write_report',
+                        tool: "write_report",
                     }),
             );
-            if (result.kind !== 'success') toolFailure(result);
+            if (result.kind !== "success") toolFailure(result);
             return {
                 content: [
-                    { type: 'text', text: `Report written: ${result.path}` },
+                    { type: "text", text: `Report written: ${result.path}` },
                 ],
                 details: result,
             };
@@ -183,10 +187,10 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
     });
 
     pi.registerTool({
-        name: 'edit_report',
-        label: 'Edit Report',
+        name: "edit_report",
+        label: "Edit Report",
         description:
-            'Edit a Markdown or JSON report inside the active role and session artefact root using exact replacement.',
+            "Edit a Markdown or JSON report inside the active role and session artefact root using exact replacement.",
         parameters: editReportSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
             const role = currentRole(ctx);
@@ -194,7 +198,7 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
                 cwd: ctx.cwd,
                 role,
                 sessionId: ctx.sessionManager.getSessionId(),
-                agent: role ?? 'unassigned',
+                agent: role ?? "unassigned",
             });
             const result = await withFileMutationQueue(
                 reportQueuePath(ctx, role),
@@ -202,13 +206,13 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
                     writer.edit({
                         path: params.path,
                         edits: params.edits,
-                        tool: 'edit_report',
+                        tool: "edit_report",
                     }),
             );
-            if (result.kind !== 'success') toolFailure(result);
+            if (result.kind !== "success") toolFailure(result);
             return {
                 content: [
-                    { type: 'text', text: `Report edited: ${result.path}` },
+                    { type: "text", text: `Report edited: ${result.path}` },
                 ],
                 details: result,
             };
@@ -216,43 +220,43 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
     });
 
     pi.registerTool({
-        name: 'artifacts_purge',
-        label: 'Purge Artefacts',
+        name: "artifacts_purge",
+        label: "Purge Artefacts",
         description:
-            'Purge the explicitly registered artefacts of one confirmed run.',
+            "Purge the explicitly registered artefacts of one confirmed run.",
         parameters: purgeArtifactsSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
             if (!ctx.hasUI) {
                 throw new Error(
-                    'Artifact purge requires an interactive confirmation.',
+                    "Artifact purge requires an interactive confirmation.",
                 );
             }
             const targets = roots.resolve(ctx.cwd, params.runId);
             const choice = await ctx.ui.select(
-                `Purge artefacts for '${params.runId}'?\n${targets.join('\n') || '(no artefacts found)'}`,
-                ['Purge', 'Cancel'],
+                `Purge artefacts for '${params.runId}'?\n${targets.join("\n") || "(no artefacts found)"}`,
+                ["Purge", "Cancel"],
             );
-            if (choice !== 'Purge') {
-                throw new Error('Artifact purge was cancelled.');
+            if (choice !== "Purge") {
+                throw new Error("Artifact purge was cancelled.");
             }
             const role = currentRole(ctx);
             const result = purgeArtifacts({
                 projectRoot: ctx.cwd,
                 runId: params.runId,
                 actor: {
-                    agent: role ?? 'unassigned',
-                    role: safeSegment(role, 'unassigned'),
+                    agent: role ?? "unassigned",
+                    role: safeSegment(role, "unassigned"),
                     runId: params.runId,
                 },
-                tool: 'artifacts_purge',
+                tool: "artifacts_purge",
                 registry: roots,
                 confirmed: true,
             });
-            if (result.kind !== 'success') toolFailure(result);
+            if (result.kind !== "success") toolFailure(result);
             return {
                 content: [
                     {
-                        type: 'text',
+                        type: "text",
                         text: `Purged ${result.removedPaths.length} artefact(s).`,
                     },
                 ],

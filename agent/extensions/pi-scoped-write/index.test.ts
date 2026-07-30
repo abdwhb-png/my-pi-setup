@@ -29,6 +29,8 @@ test('the scoped-write extension owns all five scoped tools and attributes write
     expect([...registered.keys()]).toEqual([
         'write_plan',
         'edit_plan',
+        'write_debug_probe',
+        'edit_debug_probe',
         'write_report',
         'edit_report',
         'artifacts_purge',
