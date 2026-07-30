@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from "node:crypto";
 import {
     existsSync,
     mkdirSync,
@@ -6,10 +6,10 @@ import {
     renameSync,
     unlinkSync,
     writeFileSync,
-} from 'node:fs';
-import { join, resolve } from 'node:path';
-import { AssessmentSchema, type Assessment } from './assessment.ts';
-import { parseAssessmentResponse } from './prompts.ts';
+} from "node:fs";
+import { join, resolve } from "node:path";
+import { AssessmentSchema, type Assessment } from "./assessment.ts";
+import { parseAssessmentResponse } from "./prompts.ts";
 
 const ASSESSMENT_CACHE_VERSION = 1 as const;
 
@@ -26,21 +26,37 @@ interface AssessmentCacheEntry {
     assessment: Assessment;
 }
 
+export interface AssessmentProgressHooks {
+    onStarted?: (event: { requestId: string }) => void;
+    onUpdate?: (update: AssessmentProgressUpdate) => void;
+}
+
+export interface AssessmentProgressUpdate {
+    requestId: string;
+    currentTool?: string;
+    currentToolArgs?: string;
+    recentOutput?: string;
+    model?: string;
+    toolCount?: number;
+    durationMs?: number;
+    tokens?: number;
+}
+
 export function assessmentCacheKey(input: AssessmentCacheKeyInput): string {
-    return createHash('sha256')
+    return createHash("sha256")
         .update(
             JSON.stringify({
                 version: ASSESSMENT_CACHE_VERSION,
-                planDigest: createHash('sha256')
+                planDigest: createHash("sha256")
                     .update(input.planContent)
-                    .digest('hex'),
+                    .digest("hex"),
                 assessorAgent: input.assessorAgent,
                 assessorModel: input.assessorModel ?? null,
                 assessorContract: input.assessorContract ?? null,
                 schema: AssessmentSchema,
             }),
         )
-        .digest('hex');
+        .digest("hex");
 }
 
 export class AssessmentCache {
@@ -48,16 +64,22 @@ export class AssessmentCache {
     private readonly inFlight = new Map<string, Promise<Assessment>>();
 
     constructor(agentDir: string) {
-        this.root = resolve(agentDir, '.sdd', 'assessments');
+        this.root = resolve(agentDir, ".sdd", "assessments");
     }
 
     async resolve(
         key: string,
         expectedTaskIds: readonly string[],
         load: () => Promise<Assessment>,
+        hooks?: AssessmentProgressHooks,
     ): Promise<Assessment> {
         const cached = this.read(key, expectedTaskIds);
-        if (cached) return cached;
+        if (cached) {
+            // Cache hit: report a single 'cached' blip so the caller can surface
+            // instant completion instead of leaving the spinner on its previous stage.
+            hooks?.onUpdate?.({ requestId: "cached", currentTool: "cached" });
+            return cached;
+        }
         const active = this.inFlight.get(key);
         if (active) return active;
         const pending = load()
@@ -80,16 +102,16 @@ export class AssessmentCache {
     ): Assessment | undefined {
         try {
             const entry: unknown = JSON.parse(
-                readFileSync(this.path(key), 'utf8'),
+                readFileSync(this.path(key), "utf8"),
             );
             if (
                 !entry ||
-                typeof entry !== 'object' ||
-                !('version' in entry) ||
+                typeof entry !== "object" ||
+                !("version" in entry) ||
                 entry.version !== ASSESSMENT_CACHE_VERSION ||
-                !('key' in entry) ||
+                !("key" in entry) ||
                 entry.key !== key ||
-                !('assessment' in entry)
+                !("assessment" in entry)
             ) {
                 return undefined;
             }

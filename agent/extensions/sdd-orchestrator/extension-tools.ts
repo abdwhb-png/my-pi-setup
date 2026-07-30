@@ -1,19 +1,25 @@
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { StringEnum } from '@earendil-works/pi-ai';
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { StringEnum } from "@earendil-works/pi-ai";
 import type {
+    AgentToolUpdateCallback,
     ExtensionAPI,
     ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
-import { Type } from 'typebox';
+} from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import {
     resolveRuntimePath,
     toPortableHomePath,
-} from '../_shared/home-path.ts';
-import { AssessmentCache, assessmentCacheKey } from './assessment-cache.ts';
-import { loadSddConfig, type SddConfig } from './config.ts';
-import type { DelegationClient } from './delegation-client.ts';
+} from "../_shared/home-path.ts";
+import {
+    AssessmentCache,
+    assessmentCacheKey,
+    type AssessmentProgressHooks,
+    type AssessmentProgressUpdate,
+} from "./assessment-cache.ts";
+import { loadSddConfig, type SddConfig } from "./config.ts";
+import type { DelegationClient } from "./delegation-client.ts";
 import {
     applyApproval,
     approvalDecisionDigest,
@@ -21,39 +27,45 @@ import {
     type ApprovedManifest,
     type DraftManifest,
     type ManifestDecision,
-} from './manifest.ts';
-import { parseSddPlan } from './plan-parser.ts';
-import { buildAssessmentRequest, parseAssessmentResponse } from './prompts.ts';
+} from "./manifest.ts";
+import { parseSddPlan } from "./plan-parser.ts";
+import { buildAssessmentRequest, parseAssessmentResponse } from "./prompts.ts";
+import {
+    profileSeverity,
+    taskStateGlyph,
+    verdictColor,
+} from "./review-render.ts";
 import {
     estimateQualitativeDuration,
     type ManifestReviewOutcome,
     openManifestReview,
-} from './review-ui.ts';
+} from "./review-ui.ts";
 import {
     RECOVERY_STAGES,
     type DirectEvidence,
     type RecoveryAttestation,
     type RunSnapshot,
     type TaskSnapshot,
-} from './state-machine.ts';
-import type { SddStore } from './store.ts';
-import { PROFILES, type Profile } from './types.ts';
-import type { SddWorkflow } from './workflow.ts';
+    type TaskState,
+} from "./state-machine.ts";
+import type { SddStore } from "./store.ts";
+import { PROFILES, type Profile } from "./types.ts";
+import type { SddWorkflow } from "./workflow.ts";
 
 type ExtensionStore = Pick<
     SddStore,
-    | 'create'
-    | 'load'
-    | 'list'
-    | 'loadManifest'
-    | 'createManifest'
-    | 'approveManifest'
-    | 'listManifests'
+    | "create"
+    | "load"
+    | "list"
+    | "loadManifest"
+    | "createManifest"
+    | "approveManifest"
+    | "listManifests"
 >;
-type ExtensionDelegation = Pick<DelegationClient, 'run' | 'dispose'>;
+type ExtensionDelegation = Pick<DelegationClient, "run" | "dispose">;
 type ExtensionWorkflow = Pick<
     SddWorkflow,
-    'run' | 'cancel' | 'completeDirect' | 'reconcile'
+    "run" | "cancel" | "completeDirect" | "reconcile"
 >;
 
 export interface SddRuntime {
@@ -71,7 +83,7 @@ export interface SddRuntime {
 
 export interface LegacyQueuedRun {
     readonly runId: string;
-    readonly status: 'legacy_queued';
+    readonly status: "legacy_queued";
     readonly planPath: string;
     readonly planTitle?: string;
     readonly queuedAt?: string;
@@ -120,7 +132,7 @@ const RunSchema = Type.Object(
 );
 const RecoveryAttestationSchema = Type.Object(
     {
-        action: Type.Literal('attest'),
+        action: Type.Literal("attest"),
         confirmation: Type.Literal(true),
         authorizedBy: Type.String({ minLength: 1 }),
         requestId: Type.String({ minLength: 1 }),
@@ -143,31 +155,31 @@ const DirectCompleteSchema = Type.Object(
 );
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readLegacyRun(path: string): LegacyQueuedRun | null {
     let value: unknown;
     try {
-        value = JSON.parse(readFileSync(path, 'utf8'));
+        value = JSON.parse(readFileSync(path, "utf8"));
     } catch {
         return null;
     }
     if (
         !isRecord(value) ||
-        typeof value.runId !== 'string' ||
+        typeof value.runId !== "string" ||
         !value.runId ||
-        typeof value.planPath !== 'string' ||
+        typeof value.planPath !== "string" ||
         !value.planPath ||
         (value.planTitle !== undefined &&
-            typeof value.planTitle !== 'string') ||
-        (value.queuedAt !== undefined && typeof value.queuedAt !== 'string')
+            typeof value.planTitle !== "string") ||
+        (value.queuedAt !== undefined && typeof value.queuedAt !== "string")
     ) {
         return null;
     }
     return {
         runId: value.runId,
-        status: 'legacy_queued',
+        status: "legacy_queued",
         planPath: value.planPath,
         ...(value.planTitle === undefined
             ? {}
@@ -177,16 +189,16 @@ function readLegacyRun(path: string): LegacyQueuedRun | null {
 }
 
 export function collectRunStatuses(
-    store: Pick<SddStore, 'list'>,
+    store: Pick<SddStore, "list">,
     agentDir: string,
 ): ObservableRun[] {
     const snapshots = store.list();
     const known = new Set(snapshots.map((snapshot) => snapshot.runId));
-    const queueDir = join(agentDir, '.sdd', 'queue');
+    const queueDir = join(agentDir, ".sdd", "queue");
     if (!existsSync(queueDir)) return snapshots;
     const legacy: LegacyQueuedRun[] = [];
     for (const name of readdirSync(queueDir)
-        .filter((entry) => entry.endsWith('.json'))
+        .filter((entry) => entry.endsWith(".json"))
         .toSorted()) {
         const entry = readLegacyRun(join(queueDir, name));
         if (!entry || known.has(entry.runId)) continue;
@@ -197,7 +209,7 @@ export function collectRunStatuses(
 }
 
 function textResult(text: string, details: unknown) {
-    return { content: [{ type: 'text' as const, text }], details };
+    return { content: [{ type: "text" as const, text }], details };
 }
 
 function requireDraft(
@@ -206,7 +218,7 @@ function requireDraft(
 ): DraftManifest {
     const manifest = store.loadManifest(manifestId);
     if (!manifest) throw new Error(`Manifest not found: ${manifestId}.`);
-    if (manifest.state !== 'awaiting_approval') {
+    if (manifest.state !== "awaiting_approval") {
         throw new Error(`Manifest ${manifestId} is already approved.`);
     }
     return manifest;
@@ -220,9 +232,9 @@ function requireSnapshot(store: ExtensionStore, runId: string): RunSnapshot {
 
 function isTerminalSnapshot(snapshot: RunSnapshot): boolean {
     return (
-        snapshot.state === 'completed' ||
-        snapshot.state === 'failed' ||
-        snapshot.state === 'cancelled'
+        snapshot.state === "completed" ||
+        snapshot.state === "failed" ||
+        snapshot.state === "cancelled"
     );
 }
 
@@ -235,21 +247,21 @@ function hasActiveDelegation(snapshot: RunSnapshot): boolean {
 }
 
 function isDurablyResumableTask(task: TaskSnapshot): boolean {
-    if (task.state === 'pending') return true;
+    if (task.state === "pending") return true;
     if (
-        task.state !== 'reviewing' &&
-        task.state !== 'fixing' &&
-        task.state !== 'verified'
+        task.state !== "reviewing" &&
+        task.state !== "fixing" &&
+        task.state !== "verified"
     ) {
         return false;
     }
-    if (task.state === 'verified' && task.directEvidence) return true;
+    if (task.state === "verified" && task.directEvidence) return true;
     return (task.appliedResponseRequestIds?.length ?? 0) > 0;
 }
 
 export function shouldContinueAfterReconcile(snapshot: RunSnapshot): boolean {
     return (
-        snapshot.state === 'running' &&
+        snapshot.state === "running" &&
         snapshot.cancellation === undefined &&
         !hasActiveDelegation(snapshot) &&
         Object.values(snapshot.tasks).every(isDurablyResumableTask)
@@ -265,8 +277,8 @@ function hasApprovalEntry(
             ?.getEntries?.()
             .some(
                 (entry) =>
-                    entry.type === 'custom' &&
-                    entry.customType === 'sdd:manifest-approved' &&
+                    entry.type === "custom" &&
+                    entry.customType === "sdd:manifest-approved" &&
                     isRecord(entry.data) &&
                     entry.data.approvalDigest === approvalDigest,
             ) ?? false
@@ -286,7 +298,7 @@ function ensureApprovalEntry(
         recordedApprovalEntries.add(manifest.approvalDigest);
         return;
     }
-    pi.appendEntry('sdd:manifest-approved', {
+    pi.appendEntry("sdd:manifest-approved", {
         manifestId: manifest.manifestId,
         runId: manifest.manifestId,
         approvalDigest: manifest.approvalDigest,
@@ -301,13 +313,13 @@ function initialSnapshot(
     return {
         runId,
         revision: 0,
-        state: 'approved',
+        state: "approved",
         tasks: Object.fromEntries(
             manifest.tasks.map((task) => [
                 task.id,
                 {
                     id: task.id,
-                    state: 'pending' as const,
+                    state: "pending" as const,
                     launches: 0,
                     maxLaunches: task.budgets.maxLaunches,
                 },
@@ -339,10 +351,10 @@ function assessorContract(
 ): string | undefined {
     if (!/^[A-Za-z0-9._-]+$/.test(agent)) return undefined;
     for (const path of [
-        join(cwd, '.pi', 'agents', `${agent}.md`),
-        join(runtime.agentDir, 'agents', `${agent}.md`),
+        join(cwd, ".pi", "agents", `${agent}.md`),
+        join(runtime.agentDir, "agents", `${agent}.md`),
     ]) {
-        if (existsSync(path)) return readFileSync(path, 'utf8');
+        if (existsSync(path)) return readFileSync(path, "utf8");
     }
     return undefined;
 }
@@ -358,9 +370,13 @@ async function assess(
     planPath: string,
     planContent: string,
     config: SddConfig,
+    onProgress?: (
+        ctx: ExtensionContext,
+        update: AssessmentProgressUpdate,
+    ) => void,
 ) {
     const plan = parseSddPlan(planContent);
-    const digest = createHash('sha256').update(planContent).digest('hex');
+    const digest = createHash("sha256").update(planContent).digest("hex");
     const logicalJobId = `sdd:${digest}:assessment`;
     const expectedTaskIds = plan.tasks.map((task) => task.id);
     const key = assessmentCacheKey({
@@ -377,8 +393,8 @@ async function assess(
         key,
         expectedTaskIds,
         async () => {
-            let originalOutput = '';
-            let validationError = '';
+            let originalOutput = "";
+            let validationError = "";
             for (
                 let attempt = 0;
                 attempt <= config.structuredOutputRetries;
@@ -401,17 +417,33 @@ async function assess(
                               },
                           }),
                 });
+                // Per-attempt progress hooks: re-bind for each requestId so the
+                // status line reflects the current attempt number.
+                const progressHooks: AssessmentProgressHooks = {
+                    onStarted: (event) =>
+                        onProgress?.(ctx, {
+                            requestId: event.requestId,
+                            currentTool: "starting",
+                        }),
+                    onUpdate: (update) =>
+                        onProgress?.(ctx, {
+                            ...update,
+                            currentTool: update.currentTool,
+                        }),
+                };
                 // oxlint-disable-next-line no-await-in-loop -- a repair uses the previous validation failure and must remain sequential.
                 const response = await runtime.delegation.run(request, {
                     signal,
                     deadlineMs: config.timeoutsMs.assessor,
+                    onStarted: progressHooks.onStarted,
+                    onUpdate: progressHooks.onUpdate,
                 });
                 if (
-                    response.status !== 'completed' ||
+                    response.status !== "completed" ||
                     response.output === undefined
                 ) {
                     throw new Error(
-                        `Assessment delegation failed: ${response.status}${response.error ? `: ${response.error}` : ''}.`,
+                        `Assessment delegation failed: ${response.status}${response.error ? `: ${response.error}` : ""}.`,
                     );
                 }
                 try {
@@ -426,8 +458,13 @@ async function assess(
                     if (attempt === config.structuredOutputRetries) throw error;
                 }
             }
-            throw new Error('Assessment retry ceiling exhausted.');
+            throw new Error("Assessment retry ceiling exhausted.");
         },
+        onProgress
+            ? {
+                  onUpdate: (update) => onProgress(ctx, update),
+              }
+            : undefined,
     );
     return { plan, assessment };
 }
@@ -443,7 +480,7 @@ async function approveDraft(
 ) {
     let approved: ApprovedManifest;
     let snapshot: RunSnapshot;
-    if (manifest.state === 'approved') {
+    if (manifest.state === "approved") {
         if (
             approvalDecisionDigest(manifest.decision) !==
             approvalDecisionDigest(decision)
@@ -457,7 +494,7 @@ async function approveDraft(
     } else {
         const currentPlanContent = readFileSync(
             resolveRuntimePath(manifest.planPath, ctx.cwd),
-            'utf8',
+            "utf8",
         );
         const candidate = applyApproval(manifest, decision, currentPlanContent);
         const persisted = runtime.store.approveManifest(
@@ -474,17 +511,60 @@ async function approveDraft(
         snapshot = await runtime.workflow.run(runId, ctx, signal);
     }
     const direct = approved.tasks.some(
-        (task) => task.effectiveProfile === 'direct',
+        (task) => task.effectiveProfile === "direct",
     );
     return textResult(
         [
             `SDD run ${runId} started.`,
             direct
                 ? `Direct tasks require sdd_direct_complete({ runId: "${runId}", ... }).`
-                : 'The approved workflow has started.',
-        ].join('\n'),
+                : "The approved workflow has started.",
+        ].join("\n"),
         { snapshot, manifest: approved },
     );
+}
+
+function formatAssessStatusLine(
+    attempt: number,
+    update: AssessmentProgressUpdate,
+): string {
+    const tool = update.currentTool ?? "working";
+    const elapsed =
+        update.durationMs !== undefined
+            ? ` · ${(update.durationMs / 1000).toFixed(1)}s`
+            : "";
+    return `assessing · attempt ${attempt} · ${tool}${elapsed}`;
+}
+
+function extractAttemptNumber(requestId: string): number {
+    const match = requestId.match(/:(\d+)$/);
+    return match ? Number(match[1]) : 1;
+}
+
+function partialLine(text: string): {
+    content: Array<{ type: "text"; text: string }>;
+    details: undefined;
+} {
+    return { content: [{ type: "text", text }], details: undefined };
+}
+
+function renderDraftSummary(draft: DraftManifest): string {
+    const lines: string[] = [
+        `SDD manifest prepared: ${draft.planTitle}`,
+        `  source: ${draft.sourceDigest.slice(0, 12)}  assessment: ${draft.assessmentDigest.slice(0, 12)}`,
+        `  globalProfile: ${draft.globalProfile}  parallel: ${draft.parallelismEnabled}  integration: ${draft.finalIntegrationReview}`,
+        `  maximumLaunches: ${draft.maximumLaunches}  tasks: ${draft.tasks.length}`,
+        "Tasks:",
+    ];
+    for (const task of draft.tasks) {
+        lines.push(
+            `  - ${task.id}: ${task.title} [${task.recommendedProfile}] parallel=${task.parallelEligible ? "yes" : "no"} deps=${task.dependencies.join(",") || "none"}`,
+        );
+    }
+    lines.push(
+        `Approve with sdd_approve({ manifestId: "${draft.manifestId}", ... }).`,
+    );
+    return lines.join("\n");
 }
 
 async function prepare(
@@ -495,63 +575,87 @@ async function prepare(
     globalProfile: Profile,
     recordedApprovalEntries: Set<string>,
     signal?: AbortSignal,
+    onUpdate?: AgentToolUpdateCallback,
 ) {
     const planPath = resolveRuntimePath(planPathInput, ctx.cwd);
-    const planContent = readFileSync(planPath, 'utf8');
-    const config = runtimeConfig(runtime, ctx.cwd);
-    const { plan, assessment } = await assess(
-        runtime,
-        ctx,
-        signal,
-        planPath,
-        planContent,
-        config,
-    );
-    const draft = compileManifest({
-        planPath: toPortableHomePath(planPath),
-        planContent,
-        parsedPlan: plan,
-        assessment,
-        globalProfile,
-        parallelismEnabled: true,
-        config,
-    });
-    runtime.store.createManifest(draft);
-    if (ctx.mode === 'tui') {
-        const outcome = await (runtime.openReview ?? openManifestReview)(
+    const isTui = ctx.mode === "tui";
+    const emitStage = (stage: string) => {
+        if (isTui) ctx.ui.setWorkingMessage(stage);
+        else onUpdate?.(partialLine(stage));
+    };
+    const emitAssessUpdate = (update: AssessmentProgressUpdate) => {
+        const attempt = extractAttemptNumber(update.requestId);
+        if (isTui)
+            ctx.ui.setStatus(
+                "sdd-prepare",
+                formatAssessStatusLine(attempt, update),
+            );
+        else onUpdate?.(partialLine(formatAssessStatusLine(attempt, update)));
+    };
+    const clearProgress = () => {
+        if (!isTui) return;
+        ctx.ui.setStatus("sdd-prepare", undefined);
+        ctx.ui.setWorkingMessage();
+    };
+
+    try {
+        emitStage("reading plan");
+        const planContent = readFileSync(planPath, "utf8");
+        const config = runtimeConfig(runtime, ctx.cwd);
+        emitStage("assessing (attempt 1)");
+        const { plan, assessment } = await assess(
+            runtime,
             ctx,
-            draft,
+            signal,
+            planPath,
+            planContent,
+            config,
+            (_ctx, update) => emitAssessUpdate(update),
         );
-        if (outcome.type === 'approve') {
-            return approveDraft(
-                pi,
-                runtime,
+        emitStage("parsing assessment");
+        const draft = compileManifest({
+            planPath: toPortableHomePath(planPath),
+            planContent,
+            parsedPlan: plan,
+            assessment,
+            globalProfile,
+            parallelismEnabled: true,
+            config,
+        });
+        emitStage("compiling manifest");
+        runtime.store.createManifest(draft);
+        if (isTui) {
+            emitStage("opening review");
+            const outcome = await (runtime.openReview ?? openManifestReview)(
                 ctx,
                 draft,
-                outcome.decision,
-                recordedApprovalEntries,
-                signal,
+            );
+            if (outcome.type === "approve") {
+                return approveDraft(
+                    pi,
+                    runtime,
+                    ctx,
+                    draft,
+                    outcome.decision,
+                    recordedApprovalEntries,
+                    signal,
+                );
+            }
+            return textResult(
+                outcome.type === "return_to_planning"
+                    ? "Manifest returned to planning."
+                    : "Manifest review cancelled.",
+                { manifest: draft, outcome },
             );
         }
-        return textResult(
-            outcome.type === 'return_to_planning'
-                ? 'Manifest returned to planning.'
-                : 'Manifest review cancelled.',
-            { manifest: draft, outcome },
-        );
+        return textResult(renderDraftSummary(draft), { manifest: draft });
+    } finally {
+        clearProgress();
     }
-    return textResult(
-        [
-            JSON.stringify(draft, null, 2),
-            '',
-            `Approve with sdd_approve({ manifestId: "${draft.manifestId}", ... }).`,
-        ].join('\n'),
-        { manifest: draft },
-    );
 }
 
 function renderObservable(entry: ObservableRun): string {
-    return 'status' in entry
+    return "status" in entry
         ? `${entry.runId}: legacy_queued (${entry.planPath})`
         : `${entry.runId}: ${entry.state}`;
 }
@@ -584,7 +688,7 @@ function observeRun(
             ? Math.max(0, observedAtMs - approvedAtMs)
             : undefined;
     const estimateLimitsMs = {
-        'manual-only': 0,
+        "manual-only": 0,
         short: 15 * 60_000,
         moderate: 60 * 60_000,
         extended: 3 * 60 * 60_000,
@@ -606,15 +710,15 @@ function observeRun(
         activeRequests.push({
             taskId: planned?.taskId ?? `manifest:${manifest.manifestId}`,
             requestId: snapshot.integrationReview.activeRequestId,
-            stage: planned?.stage ?? 'integration',
+            stage: planned?.stage ?? "integration",
             plannedAt: planned?.plannedAt ?? manifest.decision.approvedAt,
         });
     }
     const blockedOutput = Object.values(snapshot.tasks)
-        .filter((task) => task.terminalReason === 'worker_blocked')
+        .filter((task) => task.terminalReason === "worker_blocked")
         .flatMap((task) => Object.values(task.terminalResponses ?? {}))
         .findLast((response) =>
-            /^BLOCKED:\s+\S/.test(response.output?.trimStart() ?? ''),
+            /^BLOCKED:\s+\S/.test(response.output?.trimStart() ?? ""),
         )?.output;
     return {
         manifest,
@@ -624,10 +728,10 @@ function observeRun(
         qualitativeEstimate,
         estimateDrift:
             elapsedMs === undefined
-                ? 'unknown'
+                ? "unknown"
                 : elapsedMs > estimateLimitsMs[qualitativeEstimate]
-                  ? 'overdue'
-                  : 'on_track',
+                  ? "overdue"
+                  : "on_track",
         selectedProfiles: manifest.tasks.map((task) => ({
             taskId: task.id,
             profile: task.effectiveProfile,
@@ -643,7 +747,7 @@ function observeRun(
             ).filter(
                 (delegation) =>
                     delegation.taskId === task.id &&
-                    delegation.stage === 'correction',
+                    delegation.stage === "correction",
             ).length;
             return {
                 taskId: task.id,
@@ -694,19 +798,51 @@ function observeRun(
     };
 }
 
-function renderRunObservation(
+type ObservationTheme = ExtensionContext["ui"]["theme"] | undefined;
+
+const RUN_STATE_GLYPH: Record<
+    RunSnapshot["state"],
+    {
+        glyph: string;
+        color: "muted" | "accent" | "success" | "warning" | "error";
+    }
+> = {
+    draft: { glyph: "◦", color: "muted" },
+    assessed: { glyph: "●", color: "accent" },
+    awaiting_approval: { glyph: "■", color: "warning" },
+    approved: { glyph: "●", color: "accent" },
+    running: { glyph: "●", color: "accent" },
+    needs_input: { glyph: "■", color: "warning" },
+    failed: { glyph: "✗", color: "error" },
+    cancelled: { glyph: "✗", color: "error" },
+    completed: { glyph: "✓", color: "success" },
+};
+
+function runStateGlyph(
+    theme: ObservationTheme,
+    state: RunSnapshot["state"],
+): string {
+    const { glyph, color } = RUN_STATE_GLYPH[state];
+    return theme ? theme.fg(color, glyph) : glyph;
+}
+
+export function renderRunObservation(
     observation: ReturnType<typeof observeRun>,
+    theme?: ObservationTheme,
 ): string {
     const lines = [
-        `${observation.snapshot.runId}: ${observation.snapshot.state}`,
+        `${runStateGlyph(theme, observation.snapshot.state)} ${observation.snapshot.runId}: ${observation.snapshot.state}`,
         `estimate: ${observation.qualitativeEstimate} (${observation.estimateDrift})`,
-        'tasks:',
+        "tasks:",
         ...observation.selectedProfiles.map((task) => {
             const taskSnapshot = observation.snapshot.tasks[task.taskId];
+            const state: TaskState = taskSnapshot?.state ?? "pending";
+            const glyph = taskStateGlyph(theme, state);
+            const prof = profileSeverity(theme, task.profile);
             const terminalReason = taskSnapshot?.terminalReason
                 ? `, reason ${taskSnapshot.terminalReason}`
-                : '';
-            return `- ${task.taskId}: ${taskSnapshot?.state ?? 'missing'} [${task.profile}], launches ${taskSnapshot?.launches ?? 0}/${taskSnapshot?.maxLaunches ?? 0}${terminalReason}`;
+                : "";
+            return `- ${glyph} ${task.taskId}: ${state} [${prof}], launches ${taskSnapshot?.launches ?? 0}/${taskSnapshot?.maxLaunches ?? 0}${terminalReason}`;
         }),
         `active requests: ${
             observation.activeRequests.length
@@ -715,31 +851,33 @@ function renderRunObservation(
                           (request) =>
                               `${request.taskId}/${request.stage} (${request.requestId})`,
                       )
-                      .join(', ')
-                : 'none'
+                      .join(", ")
+                : "none"
         }`,
-        'reviewers:',
+        "reviewers:",
         ...(observation.reviewerVerdicts.length
             ? observation.reviewerVerdicts.map(
                   (review) =>
-                      `- ${review.taskId}/${review.stage}: ${review.verdict}, findings ${review.findings.length}, evidence ${review.evidence.length}`,
+                      `- ${review.taskId}/${review.stage}: ${verdictColor(theme, review.verdict, review.verdict)}, findings ${review.findings.length}, evidence ${review.evidence.length}`,
               )
-            : ['- none']),
-        'acceptance:',
+            : ["- none"]),
+        "acceptance:",
         ...(observation.acceptanceEvidence.length
             ? observation.acceptanceEvidence.map(
                   (evidence) =>
-                      `- ${evidence.taskId}: ${evidence.status}, acceptance ${evidence.acceptance?.status ?? 'not_reported'}, child ${evidence.childRunId ?? 'not_reported'}`,
+                      `- ${evidence.taskId}: ${evidence.status}, acceptance ${evidence.acceptance?.status ?? "not_reported"}, child ${evidence.childRunId ?? "not_reported"}`,
               )
-            : ['- none']),
+            : ["- none"]),
     ];
     if (observation.blockedDecision) {
-        lines.push(`blocked: ${observation.blockedDecision}`);
+        lines.push(
+            `blocked: ${theme ? theme.fg("error", observation.blockedDecision) : observation.blockedDecision}`,
+        );
     }
     if (observation.blockedOutput) {
         lines.push(`blocked output: ${observation.blockedOutput}`);
     }
-    return lines.join('\n');
+    return lines.join("\n");
 }
 
 export function registerSddExtension(
@@ -748,12 +886,12 @@ export function registerSddExtension(
 ): void {
     const recordedApprovalEntries = new Set<string>();
     pi.registerTool({
-        name: 'sdd_prepare',
-        label: 'Prepare SDD Manifest',
+        name: "sdd_prepare",
+        label: "Prepare SDD Manifest",
         description:
-            'Compile, assess, store, and review a deterministic SDD manifest.',
+            "Compile, assess, store, and review a deterministic SDD manifest.",
         parameters: PrepareSchema,
-        execute: async (_id, params, signal, _update, ctx) =>
+        execute: async (_id, params, signal, update, ctx) =>
             prepare(
                 pi,
                 runtime,
@@ -762,24 +900,26 @@ export function registerSddExtension(
                 params.globalProfile,
                 recordedApprovalEntries,
                 signal,
+                update,
             ),
     });
 
     pi.registerTool({
-        name: 'sdd_submit',
-        label: 'Submit SDD Plan (Deprecated)',
+        name: "sdd_submit",
+        label: "Submit SDD Plan (Deprecated)",
         description:
-            'Compatibility alias for sdd_prepare with the Standard profile.',
+            "Compatibility alias for sdd_prepare with the Standard profile.",
         parameters: SubmitSchema,
-        async execute(_id, params, signal, _update, ctx) {
+        async execute(_id, params, signal, update, ctx) {
             const result = await prepare(
                 pi,
                 runtime,
                 ctx,
                 params.planPath,
-                'standard',
+                "standard",
                 recordedApprovalEntries,
                 signal,
+                update,
             );
             result.content[0].text = `Deprecated: use sdd_prepare.\n${result.content[0].text}`;
             return result;
@@ -787,9 +927,9 @@ export function registerSddExtension(
     });
 
     pi.registerTool({
-        name: 'sdd_approve',
-        label: 'Approve SDD Manifest',
-        description: 'Apply one typed approval and start the stored manifest.',
+        name: "sdd_approve",
+        label: "Approve SDD Manifest",
+        description: "Apply one typed approval and start the stored manifest.",
         parameters: ApproveSchema,
         execute: async (_id, params, signal, _update, ctx) => {
             const manifest = runtime.store.loadManifest(params.manifestId);
@@ -825,12 +965,12 @@ export function registerSddExtension(
     });
 
     pi.registerTool({
-        name: 'sdd_status',
-        label: 'SDD Status',
+        name: "sdd_status",
+        label: "SDD Status",
         description:
-            'Read durable SDD status, including untouched legacy queued runs.',
+            "Read durable SDD status, including untouched legacy queued runs.",
         parameters: StatusSchema,
-        async execute(_id, params) {
+        async execute(_id, params, _signal, _onUpdate, ctx) {
             const entries = collectRunStatuses(runtime.store, runtime.agentDir);
             if (params.runId) {
                 const entry = entries.find(
@@ -838,16 +978,19 @@ export function registerSddExtension(
                 );
                 if (!entry) throw new Error(`Run not found: ${params.runId}.`);
                 const manifest =
-                    'status' in entry
+                    "status" in entry
                         ? null
                         : runtime.store.loadManifest(entry.runId);
                 const observation =
-                    !('status' in entry) && manifest?.state === 'approved'
+                    !("status" in entry) && manifest?.state === "approved"
                         ? observeRun(manifest, entry, now(runtime))
                         : undefined;
                 return textResult(
                     observation
-                        ? renderRunObservation(observation)
+                        ? renderRunObservation(
+                              observation,
+                              ctx.mode === "tui" ? ctx.ui.theme : undefined,
+                          )
                         : renderObservable(entry),
                     {
                         snapshot: entry,
@@ -856,14 +999,14 @@ export function registerSddExtension(
                 );
             }
             const runs = entries.flatMap((entry) => {
-                if ('status' in entry) return [];
+                if ("status" in entry) return [];
                 const manifest = runtime.store.loadManifest(entry.runId);
-                return manifest?.state === 'approved'
+                return manifest?.state === "approved"
                     ? [observeRun(manifest, entry, now(runtime))]
                     : [];
             });
             return textResult(
-                entries.map(renderObservable).join('\n') || 'No SDD runs.',
+                entries.map(renderObservable).join("\n") || "No SDD runs.",
                 {
                     snapshots: entries,
                     runs,
@@ -873,30 +1016,36 @@ export function registerSddExtension(
     });
 
     pi.registerTool({
-        name: 'sdd_result',
-        label: 'SDD Result',
-        description: 'Return the durable snapshot for an SDD run.',
+        name: "sdd_result",
+        label: "SDD Result",
+        description: "Return the durable snapshot for an SDD run.",
         parameters: RunSchema,
-        async execute(_id, params) {
+        async execute(_id, params, _signal, _onUpdate, ctx) {
             const snapshot = requireSnapshot(runtime.store, params.runId);
             const manifest = runtime.store.loadManifest(params.runId);
-            if (!manifest || manifest.state !== 'approved') {
+            if (!manifest || manifest.state !== "approved") {
                 throw new Error(
                     `Approved manifest not found: ${params.runId}.`,
                 );
             }
             const observation = observeRun(manifest, snapshot, now(runtime));
-            return textResult(renderRunObservation(observation), {
-                snapshot,
-                observation,
-            });
+            return textResult(
+                renderRunObservation(
+                    observation,
+                    ctx.mode === "tui" ? ctx.ui.theme : undefined,
+                ),
+                {
+                    snapshot,
+                    observation,
+                },
+            );
         },
     });
 
     pi.registerTool({
-        name: 'sdd_cancel',
-        label: 'Cancel SDD Run',
-        description: 'Persist and request cancellation for an SDD run.',
+        name: "sdd_cancel",
+        label: "Cancel SDD Run",
+        description: "Persist and request cancellation for an SDD run.",
         parameters: RunSchema,
         async execute(_id, params) {
             requireSnapshot(runtime.store, params.runId);
@@ -908,14 +1057,14 @@ export function registerSddExtension(
     });
 
     pi.registerTool({
-        name: 'sdd_direct_complete',
-        label: 'Complete Direct SDD Task',
+        name: "sdd_direct_complete",
+        label: "Complete Direct SDD Task",
         description:
-            'Record exact Direct-task evidence or explicitly attest uncertain work, then continue the run.',
+            "Record exact Direct-task evidence or explicitly attest uncertain work, then continue the run.",
         parameters: DirectCompleteSchema,
         async execute(_id, params, signal, _onUpdate, ctx) {
             const manifest = runtime.store.loadManifest(params.runId);
-            if (!manifest || manifest.state !== 'approved') {
+            if (!manifest || manifest.state !== "approved") {
                 throw new Error(
                     `Approved manifest not found: ${params.runId}.`,
                 );
@@ -933,7 +1082,7 @@ export function registerSddExtension(
                 evidence,
                 readFileSync(
                     resolveRuntimePath(manifest.planPath, ctx.cwd),
-                    'utf8',
+                    "utf8",
                 ),
                 params.recovery as RecoveryAttestation | undefined,
             );
@@ -951,21 +1100,21 @@ export function registerSddExtension(
         },
     });
 
-    pi.registerCommand('sdd-review', {
-        description: 'Review a stored SDD manifest in one native overlay.',
+    pi.registerCommand("sdd-review", {
+        description: "Review a stored SDD manifest in one native overlay.",
         async handler(args, ctx) {
             const manifestId = args.trim();
             if (!manifestId)
-                throw new Error('sdd-review requires a manifest ID.');
-            if (ctx.mode !== 'tui') {
-                throw new Error('sdd-review requires TUI mode.');
+                throw new Error("sdd-review requires a manifest ID.");
+            if (ctx.mode !== "tui") {
+                throw new Error("sdd-review requires TUI mode.");
             }
             const draft = requireDraft(runtime.store, manifestId);
             const outcome = await (runtime.openReview ?? openManifestReview)(
                 ctx,
                 draft,
             );
-            if (outcome.type === 'approve') {
+            if (outcome.type === "approve") {
                 const result = await approveDraft(
                     pi,
                     runtime,
@@ -974,34 +1123,34 @@ export function registerSddExtension(
                     outcome.decision,
                     recordedApprovalEntries,
                 );
-                ctx.ui.notify(result.content[0].text, 'info');
+                ctx.ui.notify(result.content[0].text, "info");
             } else {
                 ctx.ui.notify(
-                    outcome.type === 'return_to_planning'
-                        ? 'Manifest returned to planning.'
-                        : 'Manifest review cancelled.',
-                    'info',
+                    outcome.type === "return_to_planning"
+                        ? "Manifest returned to planning."
+                        : "Manifest review cancelled.",
+                    "info",
                 );
             }
         },
     });
 
-    pi.on('session_start', async (event, ctx) => {
+    pi.on("session_start", async (event, ctx) => {
         // Delegated Pi children share the controller's agent directory but must
         // not passively reconcile runs that are still owned by that controller.
-        if (process.env.PI_SUBAGENT_CHILD === '1') return;
+        if (process.env.PI_SUBAGENT_CHILD === "1") return;
         if (
-            event.reason !== 'startup' &&
-            event.reason !== 'reload' &&
-            event.reason !== 'resume'
+            event.reason !== "startup" &&
+            event.reason !== "reload" &&
+            event.reason !== "resume"
         ) {
             return;
         }
         for (const snapshot of runtime.store.list()) {
             if (
-                snapshot.state === 'completed' ||
-                snapshot.state === 'failed' ||
-                snapshot.state === 'cancelled'
+                snapshot.state === "completed" ||
+                snapshot.state === "failed" ||
+                snapshot.state === "cancelled"
             ) {
                 continue;
             }
@@ -1013,7 +1162,7 @@ export function registerSddExtension(
         }
     });
 
-    pi.on('session_shutdown', () => {
+    pi.on("session_shutdown", () => {
         runtime.delegation.dispose();
     });
 }

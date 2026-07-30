@@ -3,6 +3,7 @@ import type { DraftManifest } from './manifest.ts';
 import {
     createReviewController,
     openManifestReview,
+    ManifestReviewComponent,
 } from './review-ui.ts';
 
 function draft(): DraftManifest {
@@ -210,6 +211,21 @@ test('review controller can request an optional final integration review', () =>
     ).toBe(true);
 });
 
+function fakeTheme() {
+    return {
+        fg: (color: string, text: string) => `[${color}|${text}]`,
+        bold: (text: string) => text,
+        bg: (_color: string, text: string) => text,
+        italic: (text: string) => text,
+        underline: (text: string) => text,
+        inverse: (text: string) => text,
+        strikethrough: (text: string) => text,
+    } as never;
+}
+
+const tuiStub = { requestRender() {} } as never;
+const kbStub = { matches: () => false } as never;
+
 test('review UI module imports and calls one native custom overlay', async () => {
     let calls = 0;
     let rendered: string[] = [];
@@ -219,12 +235,7 @@ test('review UI module imports and calls one native custom overlay', async () =>
             custom: async (factory: Function) => {
                 calls++;
                 expect(typeof factory).toBe('function');
-                const component = factory(
-                    { requestRender() {} },
-                    {},
-                    { matches: () => false },
-                    () => {},
-                );
+                const component = factory(tuiStub, fakeTheme(), kbStub, () => {});
                 rendered = component.render(120);
                 return { type: 'cancel' as const };
             },
@@ -235,8 +246,68 @@ test('review UI module imports and calls one native custom overlay', async () =>
         type: 'cancel',
     });
     expect(calls).toBe(1);
-    expect(rendered).toContain('Estimated qualitative duration: extended');
-    expect(rendered).toContain('Validation launches: qa=0, browser=0, total=0 (of profile budget 7)');
+    expect(rendered.join('\n')).toContain('duration: extended');
+    expect(rendered.join('\n')).toContain('Validation launches: qa=0, browser=0, total=0 (of profile budget 7)');
+});
+
+test('review overlay renders three themed panes with box drawing at wide width', async () => {
+    let rendered: string[] = [];
+    const ctx = {
+        mode: 'tui',
+        ui: {
+            custom: async (factory: Function) => {
+                const component = factory(tuiStub, fakeTheme(), kbStub, () => {});
+                rendered = component.render(120);
+                return { type: 'cancel' as const };
+            },
+        },
+    };
+
+    await openManifestReview(ctx as never, draft());
+    const joined = rendered.join('\n');
+    expect(joined).toContain('│');
+    expect(joined).toContain('[accent|›]');
+    expect(joined).toContain('task-1');
+});
+
+test('review overlay falls back to a single message below 36 columns', async () => {
+    let rendered: string[] = [];
+    const ctx = {
+        mode: 'tui',
+        ui: {
+            custom: async (factory: Function) => {
+                const component = factory(tuiStub, fakeTheme(), kbStub, () => {});
+                rendered = component.render(30);
+                return { type: 'cancel' as const };
+            },
+        },
+    };
+
+    await openManifestReview(ctx as never, draft());
+    expect(rendered).toHaveLength(1);
+    expect(rendered[0]).toContain('36 columns');
+});
+
+test('review overlay approve with validation errors keeps the overlay open', () => {
+    const source = draft();
+    const controller = createReviewController(source);
+    // Critical downgrade (effective light) without confirmation → validate() fails.
+    controller.setTaskOverride('task-1', 'light');
+    let result: unknown = null;
+    const done = (r: unknown) => {
+        result = r;
+    };
+    const component = new ManifestReviewComponent(
+        { requestRender() {} } as never,
+        fakeTheme(),
+        { matches: () => false } as never,
+        source,
+        controller,
+        done as never,
+    );
+    component.render(120);
+    component.handleInput('a');
+    expect(result).toBe(null);
 });
 
 test('review overlay shows task QA validation and browser aggregate preview', async () => {
@@ -245,12 +316,7 @@ test('review overlay shows task QA validation and browser aggregate preview', as
         mode: 'tui',
         ui: {
             custom: async (factory: Function) => {
-                const component = factory(
-                    { requestRender() {} },
-                    {},
-                    { matches: () => false },
-                    () => {},
-                );
+                const component = factory(tuiStub, fakeTheme(), kbStub, () => {});
                 rendered = component.render(120);
                 return { type: 'cancel' as const };
             },
@@ -260,6 +326,6 @@ test('review overlay shows task QA validation and browser aggregate preview', as
     await expect(openManifestReview(ctx as never, draftWithValidation())).resolves.toEqual(
         { type: 'cancel' },
     );
-    expect(rendered).toContain('Validation launches: qa=1, browser=1, total=2 (of profile budget 2)');
+    expect(rendered.join('\n')).toContain('Validation launches: qa=1, browser=1, total=2 (of profile budget 2)');
     expect(rendered.join('\n')).toContain('validation=QA launch (1)');
 });

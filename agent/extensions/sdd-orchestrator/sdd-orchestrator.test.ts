@@ -1506,6 +1506,149 @@ test('legacy submit delegates to prepare with Standard and never writes queue st
     expect(existsSync(join(agentDir, '.sdd', 'queue'))).toBe(false);
 });
 
+function runtimeWithProgress(
+    store: SddStore,
+    response: SubagentDelegationResponse,
+): SddRuntime & {
+    delegationRunOptions: Array<Record<string, unknown> | undefined>;
+} {
+    const delegationRunOptions: Array<Record<string, unknown> | undefined> = [];
+    return {
+        agentDir,
+        store,
+        config: () => config,
+        now: () => '2026-07-21T12:00:00.000Z',
+        delegationRunOptions,
+        delegation: {
+            async run(request: any, options?: any) {
+                delegationRunOptions.push(options);
+                if (options?.onUpdate) {
+                    options.onUpdate({
+                        version: 1,
+                        requestId: request.requestId,
+                        currentTool: 'grep',
+                        durationMs: 1200,
+                    });
+                }
+                return { ...response, requestId: request.requestId };
+            },
+            dispose() {},
+        },
+        workflow: {
+            async run(runId: string) {
+                return store.load(runId)!;
+            },
+            cancel(runId: string) {
+                return store.load(runId)!;
+            },
+            completeDirect(runId: string) {
+                return store.load(runId)!;
+            },
+            reconcile(runId: string) {
+                return store.load(runId)!;
+            },
+        },
+        openReview: async () => ({ type: 'cancel' }),
+    };
+}
+
+function contextTui(
+    statusCalls: string[],
+    workingCalls: string[],
+): ExtensionContext {
+    return {
+        cwd,
+        mode: 'tui',
+        ui: {
+            custom: mock(),
+            setStatus: (key: string, text: string | undefined) => {
+                statusCalls.push(`${key}=${text ?? '<cleared>'}`);
+            },
+            setWorkingMessage: (message?: string) => {
+                workingCalls.push(message ?? '<default>');
+            },
+        },
+    } as unknown as ExtensionContext;
+}
+
+test('prepare threads assessor progress into setStatus and setWorkingMessage during assess', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    const rt = runtimeWithProgress(store, {
+        version: 1,
+        requestId: 'ignored',
+        status: 'completed',
+        output: assessment,
+    });
+    registerSddExtension(pi.api as never, rt);
+
+    const statusCalls: string[] = [];
+    const workingCalls: string[] = [];
+    const ctx = contextTui(statusCalls, workingCalls);
+
+    await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    }, ctx);
+
+    // Delegation received onUpdate/onStarted options (threaded through cache).
+    expect(rt.delegationRunOptions).toHaveLength(1);
+    expect(rt.delegationRunOptions[0]).toHaveProperty('onUpdate');
+    expect(rt.delegationRunOptions[0]).toHaveProperty('onStarted');
+
+    // Spinner message transitions through assess stages.
+    expect(workingCalls).toEqual(
+        expect.arrayContaining([
+            'reading plan',
+            'assessing (attempt 1)',
+            'parsing assessment',
+            'compiling manifest',
+        ]),
+    );
+
+    // setStatus got the themed assessor line with currentTool from onUpdate.
+    expect(statusCalls.some((call) => call.startsWith('sdd-prepare='))).toBe(
+        true,
+    );
+    expect(
+        statusCalls.some((call) => call.includes('grep') && call.includes('attempt 1')),
+    ).toBe(true);
+
+    // finally clears the status and restores the default spinner.
+    expect(statusCalls.at(-1)).toBe('sdd-prepare=<cleared>');
+    expect(workingCalls.at(-1)).toBe('<default>');
+});
+
+test('prepare non-TUI emits themed partials via onUpdate instead of setStatus', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    const rt = runtimeWithProgress(store, {
+        version: 1,
+        requestId: 'ignored',
+        status: 'completed',
+        output: assessment,
+    });
+    registerSddExtension(pi.api as never, rt);
+
+    const updates: unknown[] = [];
+    const onUpdate = (partial: any) => updates.push(partial);
+    const result = (pi.tools.get('sdd_prepare') as any).execute(
+        'call-1',
+        { planPath: 'plan.md', globalProfile: 'standard' },
+        undefined,
+        onUpdate,
+        context(),
+    );
+    await result;
+
+    expect(updates.length).toBeGreaterThan(0);
+    expect(updates.some((u: any) => /assess/i.test(u.content?.[0]?.text ?? ''))).toBe(
+        true,
+    );
+});
+
 test('package metadata describes the deterministic public-delegation extension', () => {
     const metadata = JSON.parse(
         readFileSync(join(import.meta.dir, 'package.json'), 'utf8'),
