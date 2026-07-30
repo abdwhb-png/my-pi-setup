@@ -43,6 +43,9 @@
             "mcp:ctx_execute",
             "mcp:ctx_execute_file"
         ],
-        "ctx": ["ctx-inspect", "ctx-exec"]
+        "ctx": [
+            "@ctx-inspect",
+            "@ctx-exec"
+        ]
     }
 }

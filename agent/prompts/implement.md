@@ -1,7 +1,6 @@
 ---
 description: Proceed to implementation
 role: pi-agent
-thinking: medium
 ---
 
 Proceed to implementation.

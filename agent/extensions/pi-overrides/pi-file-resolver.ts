@@ -215,9 +215,7 @@ export function enrichAutocompleteWithCache(
         // against base provider items (which use relative paths)
         // and produce @relative/path instead of @/absolute/path.
         const displayPath =
-            cwd && file.startsWith(cwd + "/")
-                ? relative(cwd, file)
-                : file;
+            cwd && file.startsWith(cwd + "/") ? relative(cwd, file) : file;
 
         // Skip if this relative path already exists in base items
         if (existingPaths.has(displayPath)) continue;
