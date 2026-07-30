@@ -795,14 +795,18 @@ describe("exploration ledger", () => {
             expect.stringMatching(/^[a-f0-9]{64}$/),
         ]);
         expect(JSON.stringify(answer)).not.toContain("Approach A");
-        expect(
-            ledger.getGateBlockers({
-                approachClaimIds: [[claim.id]],
-                recommendationClaimIds: [claim.id],
-                userChoice: "Approach B",
-                userChoiceEvidenceId: answer.id,
-            }),
-        ).toContain("User choice does not match the recorded answer.");
+        const blockers = ledger.getGateBlockers({
+            approachClaimIds: [[claim.id]],
+            recommendationClaimIds: [claim.id],
+            userChoice: "Approach B",
+            userChoiceEvidenceId: answer.id,
+        });
+        const mismatch = blockers.find((blocker) =>
+            blocker.startsWith("User choice does not match"),
+        );
+        expect(mismatch).toBeDefined();
+        expect(mismatch).toContain("Stored hash:");
+        expect(mismatch).toContain(answer.userResponseHashes![0]);
     });
 
     it("requires user choice evidence after active claims and required reviews", () => {
@@ -1756,6 +1760,74 @@ describe("exploration ledger", () => {
         );
         expect(
             superseded.getStatusSnapshot().routingMetadataRequiredClaimIds,
+        ).toEqual([]);
+    });
+
+    it("removes routing metadata blocker from gate after runtime supersession via recordClaim", () => {
+        const original = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = original.captureEvidence({
+            toolCallId: "call-source",
+            toolName: "read",
+            input: { path: "runtime.ts" },
+            content: [{ type: "text", text: "source" }],
+            details: undefined,
+            isError: false,
+        });
+        const legacyClaim: ExplorationRecord = {
+            id: "CL-001",
+            kind: "claim",
+            runId: "brainstorm-test",
+            phase: "exploring",
+            sequence: 2,
+            timestamp: "2026-01-01T00:00:00.000Z",
+            assertion: "Runtime source exists.",
+            classification: "empirical",
+            critical: false,
+            verdict: "verified",
+            evidenceIds: [evidence.id],
+            contradictoryEvidenceIds: [],
+            impact: "Determines recommendation.",
+            mitigation: "Keep source evidence.",
+        };
+        const ledger = createExplorationLedger({
+            runId: "brainstorm-test",
+            initialRecords: [evidence, legacyClaim],
+        });
+        expect(
+            ledger.getGateBlockers({
+                approachClaimIds: [["CL-001"]],
+                recommendationClaimIds: ["CL-001"],
+                userChoice: "Choose A",
+            }),
+        ).toContain(
+            "Restored claim CL-001 lacks routing metadata and must be superseded before verification.",
+        );
+
+        ledger.recordClaim({
+            assertion: "Superseding claim with full metadata.",
+            classification: "design-choice",
+            critical: false,
+            verdict: "unresolved",
+            evidenceIds: [evidence.id],
+            contradictoryEvidenceIds: [],
+            impact: "Replaces legacy claim.",
+            mitigation: "None.",
+            verificationDomain: "local-code",
+            architectureImpact: false,
+            supersedesClaimId: "CL-001",
+        });
+
+        expect(
+            ledger.getGateBlockers({
+                approachClaimIds: [["CL-002"]],
+                recommendationClaimIds: ["CL-002"],
+                userChoice: "Choose A",
+            }),
+        ).not.toContain(
+            "Restored claim CL-001 lacks routing metadata and must be superseded before verification.",
+        );
+        expect(
+            ledger.getStatusSnapshot().routingMetadataRequiredClaimIds,
         ).toEqual([]);
     });
 

@@ -1165,15 +1165,6 @@ export function createExplorationLedger(options: LedgerOptions) {
                 );
         }
     }
-    for (const claim of deriveActiveClaims(claimRecords)) {
-        if (
-            claim.verificationDomain === undefined ||
-            claim.architectureImpact === undefined
-        )
-            addRestorationBlocker(
-                `Restored claim ${claim.id} lacks routing metadata and must be superseded before verification.`,
-            );
-    }
     for (const review of reviewRecords) {
         const auditEvidenceId = isLegacyReview(review)
             ? review.reviewerEvidenceId
@@ -1967,6 +1958,15 @@ export function createExplorationLedger(options: LedgerOptions) {
             const blockers: string[] = [...restorationBlockers];
             const activeClaims = deriveActiveClaims(claimRecords);
             const activeIds = new Set(activeClaims.map((claim) => claim.id));
+            for (const claim of activeClaims) {
+                if (
+                    claim.verificationDomain === undefined ||
+                    claim.architectureImpact === undefined
+                )
+                    blockers.push(
+                        `Restored claim ${claim.id} lacks routing metadata and must be superseded before verification.`,
+                    );
+            }
             for (const claimIds of submission.approachClaimIds) {
                 if (claimIds.length === 0)
                     blockers.push(
@@ -2029,7 +2029,13 @@ export function createExplorationLedger(options: LedgerOptions) {
                     !userChoiceEvidence.userResponseHashes.includes(choiceHash)
                 )
                     blockers.push(
-                        "User choice does not match the recorded answer.",
+                        [
+                            "User choice does not match the recorded answer.",
+                            `  Choice submitted: "${submission.userChoice}"`,
+                            `  Stored hash: ${userChoiceEvidence.userResponseHashes[0]}`,
+                            `  Expected: the exact selected option label text, or one of its comma-separated combinations.`,
+                            `  Inspect evidence ${submission.userChoiceEvidenceId} (${userChoiceEvidence.nativeRef}) for the original question and answer.`,
+                        ].join("\n"),
                     );
                 else sequencedUserChoiceEvidence = userChoiceEvidence;
             }
