@@ -139,9 +139,18 @@ function buildProviderConfig(models: ProviderModelConfig[]) {
  */
 export function registerCpaProvider(
     pi: ExtensionAPI,
-    options?: { buildModels?: typeof buildCpaModels },
+    options?: {
+        buildModels?: typeof buildCpaModels;
+        isSubagentChild?: () => boolean;
+        exitProcess?: (code: number) => void;
+    },
 ): void {
     const buildModels = options?.buildModels ?? buildCpaModels;
+    const isSubagentChild =
+        options?.isSubagentChild ??
+        (() => Boolean(process.env.PI_SUBAGENT_CHILD_AGENT));
+    const exitProcess =
+        options?.exitProcess ?? ((code: number) => process.exit(code));
     const cpaConfig = loadAiProvidersConfig().cpa;
     const catalogGuard = createCpaCatalogGuard({
         refreshTtlMs: cpaConfig?.refreshTtlMs ?? 30_000,
@@ -240,6 +249,16 @@ export function registerCpaProvider(
         }
 
         notifyStaleModelOnce(ctx, result.modelId);
+        if (!ctx.hasUI) {
+            if (isSubagentChild()) {
+                console.error(
+                    `[cpa] Model ${result.modelId} not found; terminating subagent child so model fallback can continue.`,
+                );
+                exitProcess(1);
+            } else {
+                ctx.shutdown();
+            }
+        }
         return { action: "handled" };
     });
 

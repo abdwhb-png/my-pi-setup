@@ -284,6 +284,80 @@ describe('registerCpaProvider', () => {
         );
     });
 
+    test('shuts down stale CPA input in standalone headless mode', async () => {
+        const { pi, registeredHandlers } = createMockExtensionAPI();
+        const mockBuild = mock(() =>
+            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+        );
+        registerCpaProvider(pi, { buildModels: mockBuild });
+        const handler = registeredHandlers.find(
+            (entry) => entry.event === 'input',
+        )!;
+        const warn = mock(() => {});
+        const shutdown = mock(() => {});
+        const originalWarn = console.warn;
+        console.warn = warn;
+        try {
+            const result = await handler.handler(
+                { text: 'continue' },
+                {
+                    model: { provider: 'cpa', id: 'ocg/missing-model' },
+                    modelRegistry: { find: () => undefined },
+                    hasUI: false,
+                    shutdown,
+                },
+            );
+
+            expect(result).toEqual({ action: 'handled' });
+            expect(shutdown).toHaveBeenCalledTimes(1);
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining('ocg/missing-model'),
+            );
+        } finally {
+            console.warn = originalWarn;
+        }
+    });
+
+    test('terminates a stale CPA subagent child so outer fallback can run', async () => {
+        const { pi, registeredHandlers } = createMockExtensionAPI();
+        const mockBuild = mock(() =>
+            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+        );
+        const exitProcess = mock(() => {});
+        registerCpaProvider(pi, {
+            buildModels: mockBuild,
+            isSubagentChild: () => true,
+            exitProcess,
+        });
+        const handler = registeredHandlers.find(
+            (entry) => entry.event === 'input',
+        )!;
+        const shutdown = mock(() => {});
+        const error = mock(() => {});
+        const originalError = console.error;
+        console.error = error;
+        try {
+            const result = await handler.handler(
+                { text: 'continue' },
+                {
+                    model: { provider: 'cpa', id: 'ocg/missing-model' },
+                    modelRegistry: { find: () => undefined },
+                    hasUI: false,
+                    shutdown,
+                },
+            );
+
+            expect(result).toEqual({ action: 'handled' });
+            expect(exitProcess).toHaveBeenCalledWith(1);
+            expect(shutdown).not.toHaveBeenCalled();
+            expect(error).toHaveBeenCalledWith(
+                expect.stringContaining('Model ocg/missing-model not found'),
+            );
+        } finally {
+            console.error = originalError;
+        }
+    });
+
     test('does not repeat the stale warning for the same model state', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
         const mockBuild = mock(() =>
