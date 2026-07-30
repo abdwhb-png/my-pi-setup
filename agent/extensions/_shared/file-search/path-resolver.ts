@@ -6,10 +6,10 @@
  * pi-file-resolver realtimeFdSearch) to know WHERE to run fd.
  */
 
-import { statSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
-import { loadFileResolverConfig } from '../../pi-overrides/config';
-import { expandHomePath } from '../home-path.ts';
+import { statSync } from "node:fs";
+import { basename, dirname } from "node:path";
+import { loadFileResolverConfig } from "../../pi-overrides/config";
+import { expandHomePath } from "../home-path.ts";
 
 /** Config cache per CWD to avoid re-loading on every keystroke. */
 const configCache = new Map<
@@ -67,12 +67,12 @@ export function getSearchDirectories(
     searchPath = expandHomePath(searchPath);
 
     // Absolute path
-    if (searchPath.startsWith('/')) {
-        const isTrailing = prefix.endsWith('/') || searchPath.endsWith('/');
+    if (searchPath.startsWith("/")) {
+        const isTrailing = prefix.endsWith("/") || searchPath.endsWith("/");
         const dir = isTrailing ? searchPath : dirname(searchPath);
-        const query = isTrailing ? '' : basename(searchPath);
+        const query = isTrailing ? "" : basename(searchPath);
 
-        if (dir === '/') return { dirs: [], query, matchingRoots: [] };
+        if (dir === "/") return { dirs: [], query, matchingRoots: [] };
 
         try {
             const s = statSync(dir);
@@ -85,11 +85,14 @@ export function getSearchDirectories(
     }
 
     const config = getConfig(options.cwd);
-    const dirs = [options.cwd, ...config.additionalDirectories];
+    const dirs = [
+        options.cwd,
+        ...config.additionalDirectories.map((d) => expandHomePath(d)),
+    ];
 
     const q = prefix.toLowerCase();
     const matchingRoots = dirs.filter((d) => {
-        const base = d.split('/').pop() ?? '';
+        const base = d.split("/").pop() ?? "";
         return q && base.toLowerCase().includes(q);
     });
 

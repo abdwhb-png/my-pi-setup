@@ -1,15 +1,16 @@
-import { spawn } from 'node:child_process';
-import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve, dirname, basename } from 'node:path';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { fuzzyFilter } from '@earendil-works/pi-tui';
+import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve, dirname, basename } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { fuzzyFilter } from "@earendil-works/pi-tui";
+import { expandHomePath } from "../_shared/home-path.ts";
 import {
     type FileResolverConfig,
     loadFileResolverConfig,
     getFileResolverConfig,
     setFileResolverConfig,
-} from './config.ts';
+} from "./config.ts";
 
 // ---------------------------------------------------------------------------
 // Public interface — exported for testing
@@ -25,7 +26,7 @@ export interface ParsedAtValue {
  * Parse an @-prefixed autocomplete value into its components.
  */
 export function parseAtValue(value: string): ParsedAtValue {
-    let raw = value.startsWith('@') ? value.slice(1) : value;
+    let raw = value.startsWith("@") ? value.slice(1) : value;
     let isQuoted = false;
 
     if (raw.startsWith('"') && raw.endsWith('"')) {
@@ -33,7 +34,7 @@ export function parseAtValue(value: string): ParsedAtValue {
         raw = raw.slice(1, -1);
     }
 
-    const isDirectory = raw.endsWith('/');
+    const isDirectory = raw.endsWith("/");
     return { path: raw, isQuoted, isDirectory };
 }
 
@@ -41,7 +42,7 @@ export function parseAtValue(value: string): ParsedAtValue {
  * Rebuild an @-prefixed autocomplete value from an absolute path and parsed metadata.
  */
 export function rebuildAtValue(path: string, parsed: ParsedAtValue): string {
-    const needsSlash = parsed.isDirectory && !path.endsWith('/');
+    const needsSlash = parsed.isDirectory && !path.endsWith("/");
     const display = needsSlash ? `${path}/` : path;
     if (parsed.isQuoted) return `@"${display}"`;
     return `@${display}`;
@@ -59,8 +60,8 @@ export function findUnresolvedAtRefs(
     let match: RegExpExecArray | null;
     while ((match = regex.exec(text)) !== null) {
         const name = match[1];
-        if (name.startsWith('/') || name.startsWith('~/')) continue;
-        if (name.includes('/')) continue;
+        if (name.startsWith("/") || name.startsWith("~/")) continue;
+        if (name.includes("/")) continue;
         refs.push({ raw: match[0].trim(), name });
     }
     return refs;
@@ -74,7 +75,7 @@ export function transformAtValue(value: string, cwd: string): string {
     const parsed = parseAtValue(value);
     const { path } = parsed;
 
-    if (path.startsWith('/') || path.startsWith('~')) {
+    if (path.startsWith("/") || path.startsWith("~")) {
         return rebuildAtValue(path, parsed);
     }
 
@@ -127,7 +128,7 @@ export function fuzzyMatchBasename(files: string[], query: string): string[] {
     const scored: Array<{ file: string; distance: number }> = [];
 
     for (const file of files) {
-        const basename = file.split('/').pop() ?? '';
+        const basename = file.split("/").pop() ?? "";
         const distance = levenshteinDistance(basename, query);
         if (distance <= threshold) {
             scored.push({ file, distance });
@@ -160,22 +161,22 @@ export function enrichAutocompleteWithCache(
     config: FileResolverConfig,
     options?: { forceExternal?: boolean; cwd?: string },
 ): Array<{ value: string; label: string; description?: string }> {
-    if (!prefix.startsWith('@')) return items;
+    if (!prefix.startsWith("@")) return items;
     if (!options?.forceExternal && config.fd.respectGitignore) return items;
     if (!cache.ready) return items;
 
     const parsed = parseAtValue(prefix);
     if (!parsed.path) return items;
 
-    const query = parsed.path.replace(/\/+$/, '');
-    const isBareName = !query.includes('/');
+    const query = parsed.path.replace(/\/+$/, "");
+    const isBareName = !query.includes("/");
 
     let extraFiles: string[];
     if (isBareName) {
         const lowerQuery = query.toLowerCase();
         // Exact basename match first
         const exact = cache.files.filter((f) => {
-            const base = f.split('/').pop() ?? '';
+            const base = f.split("/").pop() ?? "";
             return base.toLowerCase() === lowerQuery;
         });
         // Use exact if found, else fuzzy basename fallback
@@ -185,7 +186,7 @@ export function enrichAutocompleteWithCache(
                 : fuzzyFilter(
                       cache.files,
                       query,
-                      (f) => f.split('/').pop() ?? '',
+                      (f) => f.split("/").pop() ?? "",
                   );
     } else {
         extraFiles = fuzzyFilter(cache.files, query, (f) => f);
@@ -210,7 +211,7 @@ export function enrichAutocompleteWithCache(
         if (seen.has(file) || existingPaths.has(file)) continue;
         seen.add(file);
 
-        const basename = file.split('/').pop() ?? '';
+        const basename = file.split("/").pop() ?? "";
         result.push({
             value: `@${file}`,
             label: basename,
@@ -260,15 +261,15 @@ export async function realtimeFdSearch(
     const walker = _walker ?? walkDirFd;
     // Expand ~/ if needed
     let searchPath = absolutePath;
-    if (searchPath.startsWith('~')) {
+    if (searchPath.startsWith("~")) {
         searchPath = join(
             HOME,
-            searchPath.slice(searchPath[1] === '/' ? 2 : 1),
+            searchPath.slice(searchPath[1] === "/" ? 2 : 1),
         );
     }
 
-    const dir = searchPath.endsWith('/') ? searchPath : dirname(searchPath);
-    const query = searchPath.endsWith('/') ? '' : basename(searchPath);
+    const dir = searchPath.endsWith("/") ? searchPath : dirname(searchPath);
+    const query = searchPath.endsWith("/") ? "" : basename(searchPath);
 
     let files: string[];
     try {
@@ -282,15 +283,67 @@ export async function realtimeFdSearch(
 
     // Fuzzy filter by basename when query is present
     let matched = files;
-    if (query && query !== '.' && query !== '/') {
-        matched = fuzzyFilter(files, query, (f) => f.split('/').pop() ?? '');
+    if (query && query !== "." && query !== "/") {
+        matched = fuzzyFilter(files, query, (f) => f.split("/").pop() ?? "");
     }
 
     return matched.slice(0, maxResults).map((f) => ({
         value: `@${f}`,
-        label: f.split('/').pop() ?? f,
+        label: f.split("/").pop() ?? f,
         description: f,
     }));
+}
+
+/**
+ * Real-time fd search for bare @name queries (no slashes).
+ * Runs fd with the config flags (including --no-ignore-vcs when
+ * respectGitignore is false) and passes the bare name as search
+ * pattern so fd-level filtering finds gitignored files.
+ */
+export async function realtimeBareNameSearch(
+    query: string,
+    cwd: string,
+    signal: AbortSignal,
+    config: FileResolverConfig,
+): Promise<Array<{ value: string; label: string; description?: string }>> {
+    if (!query || signal.aborted) return [];
+
+    const args = [...buildFdArgs(cwd, 50, config), query];
+
+    return new Promise((resolve) => {
+        const child = spawn(FD_PATH, args, {
+            stdio: ["ignore", "pipe", "pipe"],
+            signal,
+        });
+
+        let stdout = "";
+        child.stdout?.on("data", (chunk: Buffer) => {
+            stdout += chunk.toString();
+        });
+
+        child.on("error", () => resolve([]));
+        child.on("close", (code) => {
+            if (signal.aborted || code !== 0 || !stdout) {
+                resolve([]);
+                return;
+            }
+
+            const lines = stdout.trim().split("\n").filter(Boolean);
+            const matches = fuzzyFilter(
+                lines,
+                query,
+                (line) => line.split("/").pop() ?? "",
+            );
+
+            resolve(
+                matches.slice(0, 20).map((f) => ({
+                    value: `@${join(cwd, f)}`,
+                    label: f.split("/").pop() ?? f,
+                    description: join(cwd, f),
+                })),
+            );
+        });
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -298,11 +351,11 @@ export async function realtimeFdSearch(
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const AGENT_DIR = join(HOME, '.pi', 'agent');
-const FD_PATH = join(AGENT_DIR, 'bin', 'fd');
-const EXTENSIONS_DIR = join(AGENT_DIR, 'extensions');
-const PI_PROMPTS_DIR = join(HOME, '.pi', 'pi-prompts');
-const PI_DOCS_DIR = join(HOME, '.pi', 'docs');
+const AGENT_DIR = join(HOME, ".pi", "agent");
+const FD_PATH = join(AGENT_DIR, "bin", "fd");
+const EXTENSIONS_DIR = join(AGENT_DIR, "extensions");
+const PI_PROMPTS_DIR = join(HOME, ".pi", "pi-prompts");
+const PI_DOCS_DIR = join(HOME, ".pi", "docs");
 
 /**
  * Get the list of search roots for background indexing.
@@ -318,11 +371,11 @@ export function getSearchRoots(
         EXTENSIONS_DIR,
         PI_PROMPTS_DIR,
         PI_DOCS_DIR,
-        ...(additionalDirectories ?? []),
+        ...(additionalDirectories ?? []).map((d) => expandHomePath(d)),
     ];
     const seen = new Set<string>();
     return roots.filter((r) => {
-        const key = r.replace(/\/+$/, '');
+        const key = r.replace(/\/+$/, "");
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -345,27 +398,27 @@ function buildFdArgs(
     config: FileResolverConfig,
 ): string[] {
     const args: string[] = [
-        '--base-directory',
+        "--base-directory",
         baseDir,
-        '--max-results',
+        "--max-results",
         String(maxResults),
     ];
 
     // --type flags
     for (const t of config.fd.types) {
-        args.push('--type', t);
+        args.push("--type", t);
     }
 
-    if (config.fd.followSymlinks) args.push('--follow');
-    if (config.fd.includeHidden) args.push('--hidden');
-    if (!config.fd.respectGitignore) args.push('--no-ignore-vcs');
+    if (config.fd.followSymlinks) args.push("--follow");
+    if (config.fd.includeHidden) args.push("--hidden");
+    if (!config.fd.respectGitignore) args.push("--no-ignore-vcs");
 
     // --exclude patterns (each generates 3 levels: dir, dir/*, dir/**)
     for (const pattern of config.fd.excludePatterns) {
         if (!pattern) continue;
-        args.push('--exclude', pattern);
-        args.push('--exclude', `${pattern}/*`);
-        args.push('--exclude', `${pattern}/**`);
+        args.push("--exclude", pattern);
+        args.push("--exclude", `${pattern}/*`);
+        args.push("--exclude", `${pattern}/**`);
     }
 
     return args;
@@ -381,33 +434,33 @@ async function walkDirFd(
         const args = buildFdArgs(baseDir, maxResults, config);
 
         const child = spawn(FD_PATH, args, {
-            stdio: ['ignore', 'pipe', 'pipe'],
+            stdio: ["ignore", "pipe", "pipe"],
             signal,
         });
 
-        let stdout = '';
+        let stdout = "";
         const finish = (results: string[]) => {
             resolve(results);
         };
 
-        child.stdout?.on('data', (chunk: Buffer) => {
+        child.stdout?.on("data", (chunk: Buffer) => {
             stdout += chunk.toString();
         });
 
-        child.on('error', () => finish([]));
-        child.on('close', (code) => {
+        child.on("error", () => finish([]));
+        child.on("close", (code) => {
             if (signal.aborted || code !== 0 || !stdout) {
                 finish([]);
                 return;
             }
-            const lines = stdout.trim().split('\n').filter(Boolean);
+            const lines = stdout.trim().split("\n").filter(Boolean);
             const results: string[] = [];
             for (const line of lines) {
-                const normalized = line.replace(/\/$/, '');
+                const normalized = line.replace(/\/$/, "");
                 if (
-                    normalized === '.git' ||
-                    normalized.startsWith('.git/') ||
-                    normalized.includes('/.git/')
+                    normalized === ".git" ||
+                    normalized.startsWith(".git/") ||
+                    normalized.includes("/.git/")
                 ) {
                     continue;
                 }
@@ -432,7 +485,7 @@ function buildIndexBackground(
         // Index both files and directories so directory names are searchable
         const indexConfig = {
             ...config,
-            fd: { ...config.fd, types: ['f', 'd'] as Array<'f' | 'd'> },
+            fd: { ...config.fd, types: ["f", "d"] as Array<"f" | "d"> },
         };
         // Index root dirs first so they appear before their children
         // (e.g. @pi-integrations → /home/.../pi-integrations, @.pi → cwd)
@@ -446,8 +499,31 @@ function buildIndexBackground(
                     indexConfig,
                 );
                 allFiles.push(...entries);
+
+                // Early ready: unlock autocomplete as soon as the first root
+                // returns files (~26ms for CWD), so enrichAutocompleteWithCache
+                // and before_agent_start resolution work immediately.
+                // Remaining roots continue in background and update cache.files
+                // after completion.
+                if (!cache.ready && entries.length > 0) {
+                    cache.files = [
+                        ...new Set(
+                            allFiles.map((p) => {
+                                try {
+                                    return realpathSync(p);
+                                } catch {
+                                    return p;
+                                }
+                            }),
+                        ),
+                    ];
+                    cache.ready = true;
+                }
             } catch {}
         }
+        // Final update with all roots — same dedup logic, safe no-op if
+        // early ready already set (cache.files reference is replaced with
+        // the fuller set; JS is single-threaded so reads see consistent state).
         cache.files = [
             ...new Set(
                 allFiles.map((p) => {
@@ -459,7 +535,9 @@ function buildIndexBackground(
                 }),
             ),
         ];
-        cache.ready = true;
+        if (!cache.ready) {
+            cache.ready = true;
+        }
         cache.running = false;
     })().catch(() => {
         cache.running = false;
@@ -474,7 +552,7 @@ function buildIndexBackground(
 let autocompleteRegistered = false;
 
 /** Current CWD, refreshed each session_start. Used by autocomplete wrapper. */
-let sessionCwd = '';
+let sessionCwd = "";
 
 /** Per-session file cache. Replaced on session_start, cleared on session_shutdown. */
 let currentCache: FileCache = { files: [], ready: false, running: false };
@@ -493,7 +571,7 @@ let realtimeFdController: AbortController | null = null;
 export default function (pi: ExtensionAPI): void {
     // --- Part A: Autocomplete wrapper (registered ONCE) -----------------------
 
-    pi.on('session_start', (_event, ctx) => {
+    pi.on("session_start", (_event, ctx) => {
         // Refresh CWD every session so /new ~/other-project/ uses right CWD
         sessionCwd = ctx.cwd;
         setFileResolverConfig(loadFileResolverConfig(ctx.cwd));
@@ -511,18 +589,18 @@ export default function (pi: ExtensionAPI): void {
                     );
 
                     // Extract @ prefix from text, even if pi-tui returned null
-                    const currentLine = lines[cursorLine] ?? '';
+                    const currentLine = lines[cursorLine] ?? "";
                     const textBeforeCursor = currentLine.slice(0, cursorCol);
                     const atMatch = textBeforeCursor.match(/@(\S*)$/);
                     const prefix =
                         result?.prefix ?? (atMatch ? atMatch[0] : undefined);
 
-                    if (!prefix || !prefix.startsWith('@')) return result;
+                    if (!prefix || !prefix.startsWith("@")) return result;
 
                     const parsed = parseAtValue(prefix);
                     const isExternalPath =
-                        parsed.path.startsWith('/') ||
-                        parsed.path.startsWith('~/');
+                        parsed.path.startsWith("/") ||
+                        parsed.path.startsWith("~/");
 
                     // Inject cache-only files when git-ignore is disabled
                     // Force external bypass for absolute/~/ paths outside CWD
@@ -535,15 +613,41 @@ export default function (pi: ExtensionAPI): void {
                     );
 
                     if (enrichedItems.length === 0) {
-                        // Real-time fd fallback for absolute paths outside cache
                         const config = getFileResolverConfig();
-                        if (isExternalPath && config.enableRealtimeFallback) {
-                            if (realtimeFdController) {
-                                realtimeFdController.abort();
-                            }
-                            realtimeFdController = new AbortController();
+                        if (!config.enableRealtimeFallback) return null;
+
+                        if (realtimeFdController) {
+                            realtimeFdController.abort();
+                        }
+                        realtimeFdController = new AbortController();
+
+                        if (isExternalPath) {
+                            // @/absolute/path or @~/path: realtime on the
+                            // specific parent directory, then fuzzy-filter.
                             const realtimeItems = await realtimeFdSearch(
                                 parsed.path,
+                                realtimeFdController.signal,
+                                config,
+                            );
+                            if (realtimeItems.length > 0) {
+                                return {
+                                    prefix,
+                                    items: realtimeItems.map((item) => ({
+                                        ...item,
+                                        value: transformAtValue(
+                                            item.value,
+                                            sessionCwd,
+                                        ),
+                                    })),
+                                };
+                            }
+                        } else if (parsed.path && !parsed.path.includes("/")) {
+                            // @barename: fd with --no-ignore-vcs + query.
+                            // Catches gitignored files when cache is still
+                            // building.
+                            const realtimeItems = await realtimeBareNameSearch(
+                                parsed.path,
+                                sessionCwd,
                                 realtimeFdController.signal,
                                 config,
                             );
@@ -572,7 +676,7 @@ export default function (pi: ExtensionAPI): void {
                     };
                 },
                 applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
-                    const transformedItem = prefix.startsWith('@')
+                    const transformedItem = prefix.startsWith("@")
                         ? {
                               ...item,
                               value: transformAtValue(item.value, sessionCwd),
@@ -612,7 +716,7 @@ export default function (pi: ExtensionAPI): void {
     });
 
     // Clear cache on session end
-    pi.on('session_shutdown', async () => {
+    pi.on("session_shutdown", async () => {
         if (indexAbortController) {
             indexAbortController.abort();
             indexAbortController = null;
@@ -627,7 +731,7 @@ export default function (pi: ExtensionAPI): void {
 
     // --- Part B: Preprocessor (top-level, fires once per turn) ---------------
 
-    pi.on('before_agent_start', async (event) => {
+    pi.on("before_agent_start", async (event) => {
         // Ensure background indexing has started
         buildIndexBackground(
             currentCache,
@@ -647,7 +751,7 @@ export default function (pi: ExtensionAPI): void {
         for (const ref of refs) {
             // Try exact sequential fuzzy match first (current behaviour)
             let matches = fuzzyFilter(currentCache.files, ref.name, (p) => {
-                const base = p.split('/').pop() ?? '';
+                const base = p.split("/").pop() ?? "";
                 return base;
             });
 
@@ -666,8 +770,8 @@ export default function (pi: ExtensionAPI): void {
 
         return {
             message: {
-                customType: 'file-resolver',
-                content: `Resolved: ${resolutions.join('; ')}`,
+                customType: "file-resolver",
+                content: `Resolved: ${resolutions.join("; ")}`,
                 display: false,
             },
         };

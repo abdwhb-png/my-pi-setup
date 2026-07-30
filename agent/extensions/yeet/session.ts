@@ -268,7 +268,7 @@ export class CommitPlanSession implements Component {
         const isMessageFocused = focus === "message";
         this.editorComponent.focused = isMessageFocused;
         const msgLabel = isMessageFocused
-            ? " ✏️ Edit Message:"
+            ? " ✏︎ Edit Message:"
             : " Commit Message:";
         lines.push(
             ...renderBoxContentLines(

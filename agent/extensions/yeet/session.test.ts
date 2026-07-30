@@ -170,6 +170,15 @@ describe('CommitPlanSession', () => {
             ).toBe(true);
         });
 
+        it('uses a single-column edit marker in the message label', () => {
+            const label = session
+                .render(80)
+                .find((line) => line.includes('Edit Message:'));
+
+            expect(label).toContain('✏︎ Edit Message:');
+            expect(visibleWidth(label!)).toBe(76);
+        });
+
         it('includes the commit message', () => {
             const _output = session.render(80);
             expect(
