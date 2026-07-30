@@ -194,7 +194,18 @@ architecture-impacting claim and evidence IDs:
 
 The architect is advisory. It does not verify ordinary claims, replace routed
 verifiers, or turn secondary output into direct evidence. A noncritical
-architecture-impacting claim still requires successful verification.
+architecture-impacting claim still requires successful verification. Every
+strict `outputSchema` step sets `acceptance: false`, so pi-subagents does not
+append a competing prose acceptance contract. The architect task receives exact
+evidence source references and must finish through `structured_output`.
+
+If every routed verifier step completed with a trusted, exactly correlated
+structured output but only the architect step failed, terminal processing keeps
+the verifier success: it appends the verifier `EV-*` and successful `RV-*`,
+records bounded `advisoryFailure` metadata on that audit, creates no architect
+evidence, clears pending state, and warns the user. An advisory execution
+failure therefore cannot force the same verifier work to run again. A valid
+architect `block` remains blocking for its exact architecture claim scope.
 
 Legacy restored evidence with reviewer terminology and review records with
 `reviewerEvidenceId` remain eligible when they satisfy the existing proof

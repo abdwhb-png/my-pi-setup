@@ -785,6 +785,107 @@ describe("verification-runner pending and terminal validation", () => {
         }
     });
 
+    it("preserves trusted completed verifier outputs when only the architect step fails", () => {
+        const root = mkdtempSync(
+            join(realpathSync(tmpdir()), "pi-subagents-test-"),
+        );
+        const asyncDir = join(
+            root,
+            "async-subagent-runs",
+            pendingRun.runId,
+        );
+        const pending = { ...pendingRun, asyncDir };
+        const completion = validCompletion();
+        mkdirSync(asyncDir, { recursive: true });
+        try {
+            writeFileSync(
+                join(asyncDir, "status.json"),
+                JSON.stringify({
+                    lifecycleArtifactVersion: 3,
+                    runId: pending.runId,
+                    sessionId: pending.ownerSessionFile,
+                    mode: "chain",
+                    state: "failed",
+                    error: "Step failed: architect",
+                    startedAt: Date.now() - 100,
+                    endedAt: Date.now(),
+                    steps: [
+                        {
+                            agent: completion.results[0]!.agent,
+                            context: "fresh",
+                            outputName:
+                                pending.expectedSteps[0]!.outputName,
+                            status: "complete",
+                            exitCode: 0,
+                            structuredOutput:
+                                completion.results[0]!.structuredOutput,
+                        },
+                        {
+                            agent: "architect",
+                            context: "fresh",
+                            outputName: "architect_advisory",
+                            status: "failed",
+                            exitCode: 1,
+                            error: "Missing structured_output call",
+                        },
+                    ],
+                    outputs: {
+                        verify_local_code_supported:
+                            completion.outputs.verify_local_code_supported,
+                        architect_advisory: {
+                            text: "",
+                            agent: "architect",
+                            stepIndex: 1,
+                        },
+                    },
+                }),
+            );
+
+            expect(readOwnedTerminalStatusArtifact(pending)).toMatchObject({
+                kind: "failure",
+                failureKind: "failed",
+                reason: "Step failed: architect",
+                failedAdvisoryOutputName: "architect_advisory",
+                completedStructuredOutputs: {
+                    verify_local_code_supported:
+                        completion.results[0]!.structuredOutput,
+                },
+            });
+
+            writeFileSync(
+                join(asyncDir, "status.json"),
+                JSON.stringify({
+                    lifecycleArtifactVersion: 3,
+                    runId: pending.runId,
+                    sessionId: pending.ownerSessionFile,
+                    mode: "chain",
+                    state: "failed",
+                    error: "Inconsistent top-level failure.",
+                    steps: completion.results.map((result, index) => ({
+                        agent: result.agent,
+                        context: result.context,
+                        outputName: pending.expectedSteps[index]!.outputName,
+                        status: "complete",
+                        exitCode: 0,
+                        structuredOutput: result.structuredOutput,
+                    })),
+                    outputs: completion.outputs,
+                }),
+            );
+            const architectBlockWithTopLevelFailure =
+                readOwnedTerminalStatusArtifact(pending);
+            expect(architectBlockWithTopLevelFailure).toMatchObject({
+                kind: "failure",
+                failureKind: "failed",
+            });
+            expect(architectBlockWithTopLevelFailure).not.toHaveProperty(
+                "failedAdvisoryOutputName",
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("rejects lifecycle artifacts outside the package temp hierarchy", () => {
         const outsideRoot = mkdtempSync(
             join(process.cwd(), ".brainstorm-status-"),

@@ -182,6 +182,19 @@ terminal verifier output remains the only verification lifecycle output that
 can create verifier `EV-*` and `RV-*` records through ADR-008's ownership and
 scope validation.
 
+Strict chain steps use one terminal contract: `outputSchema` with
+`acceptance: false`. This prevents pi-subagents' auto-inferred acceptance report
+from competing with `structured_output`. Architect tasks receive the exact
+source references already bound to their claim scope.
+
+Architect execution is advisory, not an atomic prerequisite for verifier
+credit. When the trusted lifecycle-v3 artifact shows every verifier step
+completed with exact structured output and only the architect step failed,
+terminal processing appends the verifier `EV-*` and successful `RV-*` with
+bounded `advisoryFailure` metadata. It appends no architect evidence, clears the
+pending run, and warns. This avoids repeating verified work while preserving the
+rule that an actual architect `block` blocks only its exact claim scope.
+
 The integrated recovery order is:
 
 1. owned verification reports nonterminal `needs_attention`;
@@ -191,7 +204,8 @@ The integrated recovery order is:
    same run awaits terminal completion or manual intervention;
 4. terminal completion is ownership-validated against the parent session file
    and trusted lifecycle artifact;
-5. verifier `EV-*` and successful or failure `RV-*` records are appended;
+5. verifier `EV-*` and successful or failure `RV-*` records are appended; an
+   architect-only failure cannot downgrade trusted verifier completion;
 6. semantic status names any still-missing successful review;
 7. the final dedicated `ask_user_question` result is captured with provenance;
 8. `brainstorm_submit_exploring` succeeds and the workflow may enter

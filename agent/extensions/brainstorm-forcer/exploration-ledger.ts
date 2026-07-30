@@ -188,6 +188,11 @@ export type VerificationAudit = Readonly<{
         risks: readonly string[];
         summary: string;
     }>;
+    advisoryFailure?: Readonly<{
+        claimIds: readonly string[];
+        evidenceIds: readonly string[];
+        reason: string;
+    }>;
 }>;
 
 export type VerifierReviewRecord = Readonly<{
@@ -232,6 +237,11 @@ export type RecordVerificationCompletionInput = {
         evidenceIds: string[];
         risks: string[];
         summary: string;
+    };
+    advisoryFailure?: {
+        claimIds: string[];
+        evidenceIds: string[];
+        reason: string;
     };
 };
 
@@ -403,6 +413,7 @@ function isVerificationAudit(value: unknown): boolean {
     )
         return false;
     const architect = asRecord(audit.architect);
+    const advisoryFailure = asRecord(audit.advisoryFailure);
     if (audit.architect !== undefined) {
         if (
             !architect ||
@@ -426,9 +437,29 @@ function isVerificationAudit(value: unknown): boolean {
         )
             return false;
     }
+    if (audit.advisoryFailure !== undefined) {
+        if (
+            !advisoryFailure ||
+            !isStringArray(advisoryFailure.claimIds, /^CL-\d+$/) ||
+            advisoryFailure.claimIds.length === 0 ||
+            new Set(advisoryFailure.claimIds).size !==
+                advisoryFailure.claimIds.length ||
+            advisoryFailure.claimIds.length > 64 ||
+            !isStringArray(advisoryFailure.evidenceIds, /^EV-\d+$/) ||
+            new Set(advisoryFailure.evidenceIds).size !==
+                advisoryFailure.evidenceIds.length ||
+            advisoryFailure.evidenceIds.length > 128 ||
+            typeof advisoryFailure.reason !== "string" ||
+            !advisoryFailure.reason.trim() ||
+            advisoryFailure.reason.length > 2_000
+        )
+            return false;
+    }
     return audit.status === "success"
-        ? audit.reason === undefined
-        : typeof audit.reason === "string" && architect === undefined;
+        ? audit.reason === undefined && !(architect && advisoryFailure)
+        : typeof audit.reason === "string" &&
+              architect === undefined &&
+              advisoryFailure === undefined;
 }
 
 export function isExplorationRecord(
@@ -1198,6 +1229,19 @@ export function createExplorationLedger(options: LedgerOptions) {
                     `Restored review ${review.id} has inconsistent architect audit scope.`,
                 );
         }
+        if (
+            isVerifierReview(review) &&
+            review.audit.advisoryFailure &&
+            (!review.audit.advisoryFailure.claimIds.every((claimId) =>
+                review.claimIds.includes(claimId),
+            ) ||
+                !review.audit.advisoryFailure.evidenceIds.every((evidenceId) =>
+                    review.primaryEvidenceIds.includes(evidenceId),
+                ))
+        )
+            addRestorationBlocker(
+                `Restored review ${review.id} has inconsistent architect advisory failure scope.`,
+            );
         for (const claimId of review.claimIds) {
             const claim = restoredClaimsById.get(claimId);
             if (!claim)
@@ -1480,53 +1524,82 @@ export function createExplorationLedger(options: LedgerOptions) {
                       risks: string[];
                   })
                 | undefined;
+            let validatedAdvisoryFailure:
+                | (RecordVerificationCompletionInput["advisoryFailure"] & {
+                      reason: string;
+                  })
+                | undefined;
             if (expectedArchitectClaimIds.length > 0) {
-                if (!input.architect)
+                if (Boolean(input.architect) === Boolean(input.advisoryFailure))
                     throw new Error(
-                        "Architecture-impacting claims require architect output.",
+                        "Architecture-impacting claims require exactly one architect output or advisory failure.",
                     );
-                if (
-                    input.architect.agent !== "architect" ||
-                    !sameIds(
-                        input.architect.claimIds,
-                        expectedArchitectClaimIds,
-                    ) ||
-                    !sameIds(
-                        input.architect.evidenceIds,
-                        expectedArchitectEvidenceIds,
+                if (input.architect) {
+                    if (
+                        input.architect.agent !== "architect" ||
+                        !sameIds(
+                            input.architect.claimIds,
+                            expectedArchitectClaimIds,
+                        ) ||
+                        !sameIds(
+                            input.architect.evidenceIds,
+                            expectedArchitectEvidenceIds,
+                        )
                     )
-                )
-                    throw new Error(
-                        "Architect output scope does not match architecture-impacting claims.",
-                    );
-                if (
-                    input.architect.risks.length > 32 ||
-                    !input.architect.risks.every(
-                        (risk) =>
-                            typeof risk === "string" && risk.trim().length > 0,
+                        throw new Error(
+                            "Architect output scope does not match architecture-impacting claims.",
+                        );
+                    if (
+                        input.architect.risks.length > 32 ||
+                        !input.architect.risks.every(
+                            (risk) =>
+                                typeof risk === "string" &&
+                                risk.trim().length > 0,
+                        )
                     )
-                )
-                    throw new Error(
-                        "Architect risks must be bounded non-empty strings.",
-                    );
-                validatedArchitect = {
-                    ...input.architect,
-                    outputName: boundedText(
-                        input.architect.outputName,
-                        "Architect output name",
-                        128,
-                    ),
-                    summary: boundedText(
-                        input.architect.summary,
-                        "Architect summary",
-                    ),
-                    risks: input.architect.risks.map((risk) =>
-                        boundedText(risk, "Architect risk", 1_000),
-                    ),
-                };
-            } else if (input.architect) {
+                        throw new Error(
+                            "Architect risks must be bounded non-empty strings.",
+                        );
+                    validatedArchitect = {
+                        ...input.architect,
+                        outputName: boundedText(
+                            input.architect.outputName,
+                            "Architect output name",
+                            128,
+                        ),
+                        summary: boundedText(
+                            input.architect.summary,
+                            "Architect summary",
+                        ),
+                        risks: input.architect.risks.map((risk) =>
+                            boundedText(risk, "Architect risk", 1_000),
+                        ),
+                    };
+                } else {
+                    if (
+                        !sameIds(
+                            input.advisoryFailure!.claimIds,
+                            expectedArchitectClaimIds,
+                        ) ||
+                        !sameIds(
+                            input.advisoryFailure!.evidenceIds,
+                            expectedArchitectEvidenceIds,
+                        )
+                    )
+                        throw new Error(
+                            "Architect advisory failure scope does not match architecture-impacting claims.",
+                        );
+                    validatedAdvisoryFailure = {
+                        ...input.advisoryFailure!,
+                        reason: boundedText(
+                            input.advisoryFailure!.reason,
+                            "Architect advisory failure reason",
+                        ),
+                    };
+                }
+            } else if (input.architect || input.advisoryFailure) {
                 throw new Error(
-                    "Architect output is not allowed without architecture-impacting claims.",
+                    "Architect output or advisory failure is not allowed without architecture-impacting claims.",
                 );
             }
 
@@ -1615,6 +1688,19 @@ export function createExplorationLedger(options: LedgerOptions) {
                     structuredOutput: verifier,
                 });
                 verifierEvidence.push(evidence);
+                const scopedAdvisoryFailure = validatedAdvisoryFailure
+                    ? {
+                          claimIds: validatedAdvisoryFailure.claimIds.filter(
+                              (claimId) => verifier.claimIds.includes(claimId),
+                          ),
+                          evidenceIds:
+                              validatedAdvisoryFailure.evidenceIds.filter(
+                                  (evidenceId) =>
+                                      verifier.evidenceIds.includes(evidenceId),
+                              ),
+                          reason: validatedAdvisoryFailure.reason,
+                      }
+                    : undefined;
                 reviewCount += 1;
                 const review: VerifierReviewRecord = {
                     id: `RV-${String(reviewCount).padStart(3, "0")}`,
@@ -1647,6 +1733,11 @@ export function createExplorationLedger(options: LedgerOptions) {
                                       risks: [...validatedArchitect.risks],
                                       summary: validatedArchitect.summary,
                                   },
+                              }
+                            : {}),
+                        ...(scopedAdvisoryFailure?.claimIds.length
+                            ? {
+                                  advisoryFailure: scopedAdvisoryFailure,
                               }
                             : {}),
                     },

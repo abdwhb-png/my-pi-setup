@@ -3874,6 +3874,157 @@ describe("brainstorm-forcer redesign", () => {
     }
   });
 
+  it("credits completed verifier output when only the advisory architect step fails", async () => {
+    const fixture = await createVerificationAsyncDirFixture(
+      "architect-advisory-failure-run",
+    );
+    const api = createMockAPI();
+    const ctx = createMockContext();
+    try {
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "architect-advisory-failure-run",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await api.commands.get("brainstorm")!.handler("topic", ctx);
+      await api.commands.get("brainstorm")!.handler("phase exploring", ctx);
+      await api.handlers.get("tool_result")!(
+        {
+          type: "tool_result",
+          toolCallId: "read-1",
+          toolName: "read",
+          input: { path: "index.ts" },
+          content: [{ type: "text", text: "observable result" }],
+          details: undefined,
+          isError: false,
+        },
+        ctx,
+      );
+      await api.tools.get("brainstorm_record_claim")!.execute(
+        "claim-1",
+        {
+          assertion: "The transition gate is centralized.",
+          classification: "empirical",
+          critical: true,
+          verdict: "verified",
+          evidenceIds: ["EV-001"],
+          contradictoryEvidenceIds: [],
+          impact: "Controls all forward transitions.",
+          verificationDomain: "local-code",
+          architectureImpact: true,
+          mitigation: "Keep one shared blocker.",
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+      await api.tools.get("brainstorm_run_verification")!.execute(
+        "verification-1",
+        { claimIds: ["CL-001"] },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const verifierOutput = {
+        outcome: "supported",
+        claimIds: ["CL-001"],
+        evidenceIds: ["EV-001"],
+        summary: "Verifier supports the claim.",
+      };
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify({
+          lifecycleArtifactVersion: 3,
+          runId: "architect-advisory-failure-run",
+          sessionId: join(tmpdir(), "test-session-id.jsonl"),
+          mode: "chain",
+          state: "failed",
+          error: "Step failed: architect",
+          steps: [
+            {
+              agent: "scout",
+              context: "fresh",
+              outputName: "verify_local_code_supported",
+              status: "complete",
+              exitCode: 0,
+              structuredOutput: verifierOutput,
+            },
+            {
+              agent: "architect",
+              context: "fresh",
+              outputName: "architect_advisory",
+              status: "failed",
+              exitCode: 1,
+              error: "Missing structured_output call",
+            },
+          ],
+          outputs: {
+            verify_local_code_supported: {
+              text: JSON.stringify(verifierOutput),
+              structured: verifierOutput,
+              agent: "scout",
+              stepIndex: 0,
+            },
+            architect_advisory: {
+              text: "",
+              agent: "architect",
+              stepIndex: 1,
+            },
+          },
+        }),
+      );
+      api.events.emit("subagent:async-complete", {
+        runId: "architect-advisory-failure-run",
+        sessionId: join(tmpdir(), "test-session-id.jsonl"),
+        success: false,
+        state: "failed",
+        exitCode: 1,
+        error: "Step failed: architect",
+      });
+      await Bun.sleep(0);
+
+      const records = api.entries
+        .filter((entry) => entry.customType === "brainstorm-forcer-ledger")
+        .map((entry) => (entry.data as any).record);
+      expect(records).toContainEqual(
+        expect.objectContaining({
+          id: "EV-002",
+          kind: "evidence",
+          verifier: expect.objectContaining({ role: "verifier" }),
+        }),
+      );
+      expect(records).toContainEqual(
+        expect.objectContaining({
+          id: "RV-001",
+          audit: expect.objectContaining({
+            status: "success",
+            advisoryFailure: expect.objectContaining({
+              reason: "Step failed: architect",
+              claimIds: ["CL-001"],
+              evidenceIds: ["EV-001"],
+            }),
+          }),
+        }),
+      );
+      const status = await api.tools
+        .get("brainstorm_transition")!
+        .execute("status", { action: "status" }, undefined, undefined, ctx);
+      expect(status.details.exploringStatus).toMatchObject({
+        reviews: { success: 1, failed: 0 },
+        missingSuccessfulReviewClaimIds: [],
+        pendingRunId: null,
+        nextAction: "askDedicatedChoice",
+      });
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
   it("contains auditVerificationFailure errors at the async completion boundary", async () => {
     const fixture = await createVerificationAsyncDirFixture(
       "audit-boundary-run",

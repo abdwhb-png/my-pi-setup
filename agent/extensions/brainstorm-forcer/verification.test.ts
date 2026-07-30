@@ -204,25 +204,22 @@ describe("verification chain payload — installed schema contract", () => {
         expect(Value.Check(ChainItem, withContext)).toBe(false);
     });
 
-    it("rejects a step that sets acceptance:false explicitly", () => {
-        // Package docs: omit acceptance for reviewer/read-only calls.
-        const withAcceptance = {
-            agent: "scout",
-            task: "x",
-            outputSchema: { type: "object" },
-            as: "v",
-            acceptance: false,
-        };
-        // acceptance:false IS schema-valid, but policy forbids it — the builder
-        // must not emit it. Confirm schema still accepts it, then verify the
-        // builder omits the key entirely.
-        expect(Value.Check(ChainItem, withAcceptance)).toBe(true);
+    it("disables auto-inferred acceptance when outputSchema is the terminal contract", () => {
         const { chain } = buildVerificationChain({
             runId: "run-1",
             claims: [claim("CL-001", "local-code", "supported")],
+            architectureImpact: true,
         });
-        const serialized = JSON.stringify(chain);
-        expect(serialized).not.toContain('"acceptance"');
+        const steps = chain.flatMap((step) =>
+            "parallel" in step ? step.parallel : [step],
+        );
+
+        expect(steps).not.toHaveLength(0);
+        for (const step of steps) {
+            expect(Value.Check(ChainItem, step)).toBe(true);
+            expect(step).toHaveProperty("outputSchema");
+            expect(step).toHaveProperty("acceptance", false);
+        }
     });
 
     it("omits output and outputMode from every generated step", () => {
@@ -285,7 +282,7 @@ describe("verification chain payload — installed schema contract", () => {
         const architect = chain[1] as Record<string, unknown>;
         expect(architect.agent).toBe(ARCHITECT_AGENT);
         expect(architect).not.toHaveProperty("context");
-        expect(architect).not.toHaveProperty("acceptance");
+        expect(architect).toHaveProperty("acceptance", false);
         expect(architect.outputSchema).toBe(ARCHITECT_OUTPUT_SCHEMA);
         expect(typeof architect.task).toBe("string");
         expect(String(architect.task)).toContain("{outputs.");
@@ -320,6 +317,9 @@ describe("verification chain payload — installed schema contract", () => {
         );
         expect(String(architect.task)).toContain(
             "Exact architecture evidenceIds: EV-002.",
+        );
+        expect(String(architect.task)).toContain(
+            "EV-002: architecture.md",
         );
     });
 

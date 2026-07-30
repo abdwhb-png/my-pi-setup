@@ -1861,6 +1861,78 @@ export default function brainstormForcer(
         processingRunIds.add(pending.runId);
         try {
             if (terminal.kind === "failure") {
+                const verifierSteps = pendingVerifierGroups(pending);
+                const architectStep = pending.expectedSteps.find(
+                    (step) => step.role === "architect",
+                );
+                const completedOutputs = terminal.completedStructuredOutputs;
+                if (
+                    terminal.failureKind === "failed" &&
+                    architectStep &&
+                    terminal.failedAdvisoryOutputName ===
+                        architectStep.outputName &&
+                    completedOutputs &&
+                    verifierSteps.every(
+                        (step) =>
+                            completedOutputs[step.outputName] !== undefined,
+                    )
+                ) {
+                    const verifierOutputs = verifierSteps.map((step) => ({
+                        step,
+                        output: completedOutputs[step.outputName],
+                        validation: verifyVerifierCompletion(
+                            verificationGroupFromPending(step),
+                            completedOutputs[step.outputName],
+                        ),
+                    }));
+                    if (verifierOutputs.every((item) => item.validation.ok)) {
+                        explorationLedger ??= createExplorationLedger({
+                            runId,
+                        });
+                        const completion =
+                            explorationLedger.recordVerificationCompletion({
+                                verificationRunId: pending.runId,
+                                verifiers: verifierOutputs.map(
+                                    ({ step, output }) => {
+                                        const structured = output as {
+                                            outcome: VerificationOutcome;
+                                            claimIds: string[];
+                                            evidenceIds: string[];
+                                            summary: string;
+                                        };
+                                        return {
+                                            agent: step.agent,
+                                            outputName: step.outputName,
+                                            outcome: structured.outcome,
+                                            claimIds: [...structured.claimIds],
+                                            evidenceIds: [
+                                                ...structured.evidenceIds,
+                                            ],
+                                            summary: structured.summary,
+                                        };
+                                    },
+                                ),
+                                advisoryFailure: {
+                                    claimIds: [...architectStep.claimIds],
+                                    evidenceIds: [...architectStep.evidenceIds],
+                                    reason: terminal.reason,
+                                },
+                            });
+                        for (const record of completion.verifierEvidence)
+                            appendExplorationRecord(record, ctx);
+                        for (const record of completion.reviews)
+                            appendExplorationRecord(record, ctx);
+                        pendingVerification = null;
+                        saveState(ctx);
+                        ctx.ui.notify(
+                            boundedVerificationWarning(
+                                `Verification ${pending.runId} completed; verifier outputs were audited successfully, while the architect advisory failed: ${terminal.reason}`,
+                            ),
+                            "warning",
+                        );
+                        return;
+                    }
+                }
                 auditVerificationFailure(
                     pending,
                     terminal.failureKind,

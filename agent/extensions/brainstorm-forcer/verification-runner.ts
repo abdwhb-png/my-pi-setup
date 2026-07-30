@@ -86,6 +86,8 @@ export type OwnedTerminalCompletion =
           kind: "failure";
           failureKind: "failed" | "malformed" | "timeout";
           reason: string;
+          completedStructuredOutputs?: Readonly<Record<string, unknown>>;
+          failedAdvisoryOutputName?: string;
       };
 
 type PendingCall = {
@@ -453,6 +455,49 @@ export function readOwnedTerminalStatusArtifact(
         )
             return malformed("lifecycle state is unsupported.");
 
+        const completedStructuredOutputs: Record<string, unknown> = {};
+        const namedOutputs = record(status.outputs);
+        for (const [index, expected] of pending.expectedSteps.entries()) {
+            if (expected.role !== "verifier") continue;
+            const step = steps[index];
+            const output = namedOutputs
+                ? record(namedOutputs[expected.outputName])
+                : undefined;
+            if (
+                step?.exitCode === 0 &&
+                (step.status === "complete" || step.status === "completed") &&
+                step.structuredOutput !== undefined &&
+                output?.agent === expected.agent &&
+                output.stepIndex === expected.chainStepIndex &&
+                output.structured !== undefined &&
+                stableJson(output.structured) ===
+                    stableJson(step.structuredOutput)
+            )
+                completedStructuredOutputs[expected.outputName] =
+                    step.structuredOutput;
+        }
+
+        const architectEntries = pending.expectedSteps.flatMap(
+            (expected, index) =>
+                expected.role === "architect"
+                    ? [{ expected, step: steps[index] }]
+                    : [],
+        );
+        const failedAdvisoryOutputName =
+            status.state === "failed" &&
+            architectEntries.length === 1 &&
+            Object.keys(completedStructuredOutputs).length ===
+                pending.expectedSteps.filter((step) => step.role === "verifier")
+                    .length &&
+            architectEntries[0].step?.status === "failed" &&
+            typeof architectEntries[0].step?.exitCode === "number" &&
+            architectEntries[0].step.exitCode !== 0 &&
+            architectEntries[0].step?.structuredOutput === undefined &&
+            record(namedOutputs?.[architectEntries[0].expected.outputName])
+                ?.structured === undefined
+                ? architectEntries[0].expected.outputName
+                : undefined;
+
         const completion = parseOwnedTerminalCompletion(
             {
                 runId: status.runId,
@@ -482,8 +527,17 @@ export function readOwnedTerminalStatusArtifact(
             },
             pending,
         );
-        return completion.kind === "unrelated"
-            ? malformed("terminal ownership does not match.")
+        if (completion.kind === "unrelated")
+            return malformed("terminal ownership does not match.");
+        return completion.kind === "failure" &&
+            Object.keys(completedStructuredOutputs).length > 0
+            ? {
+                  ...completion,
+                  completedStructuredOutputs,
+                  ...(failedAdvisoryOutputName
+                      ? { failedAdvisoryOutputName }
+                      : {}),
+              }
             : completion;
     } catch (error) {
         return malformed(

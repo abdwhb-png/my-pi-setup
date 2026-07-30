@@ -95,9 +95,12 @@ Follow this order:
    `subagent_wait` are lifecycle state, not `EV-*` evidence.
 9. Do not call `ask_user_question` while verification is pending. First process
    terminal completion into the required `RV-*` audit; only then ask the final
-   choice. Exact structured success also creates secondary `EV-*`. Prose,
-   failure, malformed output, timeout, or architect `block` remains audited and
-   blocked.
+   choice. Exact structured verifier success also creates secondary `EV-*`.
+   Verifier failure, malformed output, timeout, or architect `block` remains
+   audited and blocked. If all verifier outputs succeed but only the advisory
+   architect step fails, the verifier `EV-*`/`RV-*` remains successful,
+   `advisoryFailure` is audited without architect evidence, and the same
+   verifier work must not be relaunched.
 10. For an unresolved critical claim, use `brainstorm_request_waiver`. User
    approval is mandatory, and a later successful verification is still
    required.

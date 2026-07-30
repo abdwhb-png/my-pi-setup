@@ -232,14 +232,17 @@ export interface VerificationGroup {
 
 /**
  * A verifier chain step. Only fields the installed `ParallelTaskSchema`
- * accepts: NO `context`, NO `acceptance`, NO `output`/`outputMode`. T3 wraps
- * the whole chain with top-level `{ context: "fresh", async: true }`.
+ * accepts: NO `context`, NO `output`/`outputMode`. `acceptance: false` prevents
+ * pi-subagents from appending a competing prose acceptance contract when the
+ * step already has a strict `outputSchema`. T3 wraps the whole chain with
+ * top-level `{ context: "fresh", async: true }`.
  */
 interface VerifierChainStep {
     readonly agent: string;
     readonly task: string;
     readonly as: string;
     readonly outputSchema: Readonly<Record<string, unknown>>;
+    readonly acceptance: false;
 }
 
 interface ArchitectChainStep {
@@ -247,6 +250,7 @@ interface ArchitectChainStep {
     readonly task: string;
     readonly as: string;
     readonly outputSchema: Readonly<Record<string, unknown>>;
+    readonly acceptance: false;
 }
 
 type VerificationChainStep =
@@ -413,6 +417,7 @@ function renderVerifierTask(group: VerificationGroup): string {
 function architectTask(
     verifierOutputNames: readonly string[],
     scope: ArchitectExpectedScope,
+    evidence: readonly EvidenceDescriptor[],
 ): string {
     const refs = verifierOutputNames
         .map((name) => `{outputs.${name}}`)
@@ -425,8 +430,15 @@ function architectTask(
             : "No verifier outputs available; assess from the run context.",
         `Exact architecture claimIds: ${scope.claimIds.join(", ") || "none"}.`,
         `Exact architecture evidenceIds: ${scope.evidenceIds.join(", ") || "none"}.`,
+        "Exact architecture evidence sources (use these references; do not guess paths):",
+        ...(evidence.length > 0
+            ? evidence.map(
+                  (descriptor) =>
+                      `${descriptor.id}: ${descriptor.sourceRefs.join(", ") || "(no source reference)"}`,
+              )
+            : ["(none)"]),
         "Return those exact claimIds and evidenceIds; do not include ordinary claims.",
-        "Return strict structured output with status clear, watch, or block.",
+        "Finish by calling structured_output with status clear, watch, or block. Do not return a prose report or acceptance-report block.",
     ].join("\n");
 }
 
@@ -529,6 +541,7 @@ export function buildVerificationChain(
         task: renderVerifierTask(group),
         as: verifierStepName(group.domain, group.outcome),
         outputSchema: VERIFIER_OUTPUT_SCHEMA,
+        acceptance: false,
     }));
 
     const chain: VerificationChainStep[] = [];
@@ -543,6 +556,11 @@ export function buildVerificationChain(
                 groups.flatMap((group) => group.evidenceIds),
             ),
         };
+        const architectureEvidence = mergeEvidence(
+            input.claims.flatMap((claim) => claim.evidence),
+        ).filter((descriptor) =>
+            architectureScope.evidenceIds.includes(descriptor.id),
+        );
         chain.push({
             agent: ARCHITECT_AGENT,
             task: architectTask(
@@ -550,12 +568,14 @@ export function buildVerificationChain(
                     verifierStepName(group.domain, group.outcome),
                 ),
                 architectureScope,
+                architectureEvidence,
             ),
             // Identifier-safe: must match SAFE_OUTPUT_NAME_PATTERN (see note in
             // verifierStepName). The hyphen form `architect-advisory` is rejected
             // by the spawn-time output-name validator.
             as: "architect_advisory",
             outputSchema: ARCHITECT_OUTPUT_SCHEMA,
+            acceptance: false,
         });
     }
 

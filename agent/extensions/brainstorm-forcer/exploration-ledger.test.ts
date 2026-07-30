@@ -2074,6 +2074,104 @@ describe("exploration ledger", () => {
         );
     });
 
+    it("scopes architect advisory failures per verifier review and restores them", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-advisory" });
+        const claims = [
+            { domain: "pi" as const, architectureImpact: true },
+            { domain: "local-code" as const, architectureImpact: true },
+            { domain: "external" as const, architectureImpact: false },
+        ].map((config, index) => {
+            const evidence = ledger.captureEvidence({
+                toolCallId: `call-${index + 1}`,
+                toolName: "read",
+                input: { path: `source-${index + 1}.ts` },
+                content: [{ type: "text", text: "source" }],
+                details: undefined,
+                isError: false,
+            });
+            const claim = ledger.recordClaim({
+                assertion: `Claim ${index + 1} is supported.`,
+                classification: "empirical",
+                critical: true,
+                verdict: "verified",
+                evidenceIds: [evidence.id],
+                contradictoryEvidenceIds: [],
+                impact: `Impact ${index + 1}.`,
+                mitigation: `Mitigation ${index + 1}.`,
+                verificationDomain: config.domain,
+                architectureImpact: config.architectureImpact,
+            });
+            return { claim, evidence };
+        });
+
+        const completion = ledger.recordVerificationCompletion({
+            verificationRunId: "async-advisory-failure",
+            advisoryFailure: {
+                claimIds: [claims[0]!.claim.id, claims[1]!.claim.id],
+                evidenceIds: [
+                    claims[0]!.evidence.id,
+                    claims[1]!.evidence.id,
+                ],
+                reason: "Step failed: architect",
+            },
+            verifiers: [
+                {
+                    agent: "pi-expert",
+                    outputName: "verify_pi_supported",
+                    outcome: "supported",
+                    claimIds: [claims[0]!.claim.id],
+                    evidenceIds: [claims[0]!.evidence.id],
+                    summary: "Pi claim supported.",
+                },
+                {
+                    agent: "scout",
+                    outputName: "verify_local_code_supported",
+                    outcome: "supported",
+                    claimIds: [claims[1]!.claim.id],
+                    evidenceIds: [claims[1]!.evidence.id],
+                    summary: "Local claim supported.",
+                },
+                {
+                    agent: "factual-researcher",
+                    outputName: "verify_external_supported",
+                    outcome: "supported",
+                    claimIds: [claims[2]!.claim.id],
+                    evidenceIds: [claims[2]!.evidence.id],
+                    summary: "External claim supported.",
+                },
+            ],
+        });
+
+        expect(completion.reviews[0]!.audit.advisoryFailure).toEqual({
+            claimIds: [claims[0]!.claim.id],
+            evidenceIds: [claims[0]!.evidence.id],
+            reason: "Step failed: architect",
+        });
+        expect(completion.reviews[1]!.audit.advisoryFailure).toEqual({
+            claimIds: [claims[1]!.claim.id],
+            evidenceIds: [claims[1]!.evidence.id],
+            reason: "Step failed: architect",
+        });
+        expect(completion.reviews[2]!.audit.advisoryFailure).toBeUndefined();
+
+        const restored = createExplorationLedger({
+            runId: "brainstorm-advisory",
+            initialRecords: ledger.getRecords(),
+        });
+        const blockers = restored.getGateBlockers({
+            approachClaimIds: [claims.map(({ claim }) => claim.id)],
+            recommendationClaimIds: claims.map(({ claim }) => claim.id),
+            userChoice: "Choose A",
+        });
+        expect(blockers).not.toContainEqual(
+            expect.stringContaining("inconsistent architect advisory failure"),
+        );
+        expect(restored.getStatusSnapshot().reviews).toMatchObject({
+            success: 3,
+            failed: 0,
+        });
+    });
+
     it("audits failed, malformed, and timed-out runs as RV records that cannot close the gate", () => {
         for (const failureKind of [
             "failed",
