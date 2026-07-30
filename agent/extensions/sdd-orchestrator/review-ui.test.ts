@@ -310,6 +310,44 @@ test('review overlay approve with validation errors keeps the overlay open', () 
     expect(result).toBe(null);
 });
 
+test('review overlay j key opens the justification editor (not consumed by roster down)', () => {
+    const source = draft();
+    const controller = createReviewController(source);
+    controller.setTaskOverride('task-1', 'light');
+    controller.confirmCriticalDowngrade('task-1', true);
+    const component = new ManifestReviewComponent(
+        { requestRender() {} } as never,
+        fakeTheme(),
+        { matches: () => false } as never,
+        source,
+        controller,
+        (() => {}) as never,
+    );
+    component.render(120);
+    component.handleInput('j');
+    // j must enter justification editing, not move the roster selection.
+    expect((component as unknown as { editingJustification: boolean }).editingJustification).toBe(true);
+    // selectedTask unchanged (still 0).
+    expect((component as unknown as { selectedTask: number }).selectedTask).toBe(0);
+});
+
+test('review overlay collapses validation into detail pane below 24 rows', () => {
+    const source = draft();
+    const controller = createReviewController(source);
+    const component = new ManifestReviewComponent(
+        { requestRender() {}, terminal: { rows: 20 } } as never,
+        fakeTheme(),
+        { matches: () => false } as never,
+        source,
+        controller,
+        (() => {}) as never,
+    );
+    const rendered = component.render(120);
+    const joined = rendered.join('\n').toLowerCase();
+    // Validation must still be visible (collapsed into detail), not vanish.
+    expect(joined).toContain('validation');
+});
+
 test('review overlay shows task QA validation and browser aggregate preview', async () => {
     let rendered: string[] = [];
     const ctx = {

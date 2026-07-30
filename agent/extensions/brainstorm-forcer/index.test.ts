@@ -5199,4 +5199,208 @@ describe("brainstorm-forcer redesign", () => {
       resolveSubagentCapabilityCeiling("lifecycle-test-session"),
     ).toBeUndefined();
   });
+
+  it("rewrites subagent_wait timeout content to remove misleading retry instruction", async () => {
+    const fixture = await createVerificationAsyncDirFixture("wait-timeout-rewrite");
+    try {
+      const api = createMockAPI();
+      const ctx = createMockContext();
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "wait-timeout-rewrite",
+        fixture.asyncDir,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+      const toolCall = api.handlers.get("tool_call")!;
+      const toolResult = api.handlers.get("tool_result")!;
+
+      // First wait: allowed
+      expect(
+        await toolCall(
+          { toolName: "subagent_wait", input: { id: "wait-timeout-rewrite" } },
+          ctx,
+        ),
+      ).toBeUndefined();
+
+      // Signal timeout with misleading retry instruction from pi-subagents
+      const result = await toolResult(
+        {
+          type: "tool_result",
+          toolCallId: "timeout-wait",
+          toolName: "subagent_wait",
+          input: { id: "wait-timeout-rewrite" },
+          content: [
+            {
+              type: "text",
+              text: "Wait timed out after 3m0s with 1 async run(s) and 0 provider item(s) still active: wait-timeout-rewrite (running). The work keeps going; call subagent_wait again or inspect subagent status.",
+            },
+          ],
+          details: { mode: "management", results: [] },
+          isError: false,
+        },
+        ctx,
+      );
+
+      // Must NOT suggest calling wait again
+      const textPieces: string[] = [];
+      if (
+        result &&
+        "content" in result &&
+        Array.isArray(result.content)
+      ) {
+        for (const c of result.content) {
+          if (
+            typeof c === "object" &&
+            c !== null &&
+            "text" in c &&
+            typeof (c as { text: unknown }).text === "string"
+          )
+            textPieces.push((c as { text: string }).text);
+        }
+      }
+      const rewrittenText = textPieces.join("\n");
+      expect(rewrittenText).not.toContain("call subagent_wait again");
+      expect(rewrittenText).toMatch(/one wait/i);
+      expect(rewrittenText).toMatch(/inspect.*status/i);
+
+      // Second wait must still be blocked
+      expect(
+        await toolCall(
+          { toolName: "subagent_wait", input: { id: "wait-timeout-rewrite" } },
+          ctx,
+        ),
+      ).toMatchObject({ block: true });
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("gives a completion-aware block reason when checking status after terminal processing", async () => {
+    const fixture = await createVerificationAsyncDirFixture("terminal-status-message");
+    try {
+      const api = createMockAPI();
+      const sessionFile = join(tmpdir(), "test-session-id.jsonl");
+      const ctx = createMockContext(
+        undefined,
+        process.cwd(),
+        "test-session-id",
+        sessionFile,
+      );
+      installVerificationRpcBridge(
+        api.events,
+        "test-session-id",
+        "terminal-status-message",
+        fixture.asyncDir,
+        sessionFile,
+      );
+      brainstormForcer(api.pi, {
+        preflight: async (_sessionId, _cwd, agents) =>
+          agents.map((agent) => ({ agent, ok: true })),
+      });
+      await enterPendingLocalCodeVerification(api, ctx);
+      const toolCall = api.handlers.get("tool_call")!;
+
+      // Trigger terminal completion: write complete status + emit async-complete
+      const structuredOutput = {
+        outcome: "supported",
+        claimIds: ["CL-001"],
+        evidenceIds: ["EV-001"],
+        summary: "Claim supported.",
+      };
+      const outputs = {
+        verify_local_code_supported: {
+          text: JSON.stringify(structuredOutput),
+          structured: structuredOutput,
+          agent: "scout",
+          stepIndex: 0,
+        },
+      };
+      const status = {
+        lifecycleArtifactVersion: 3 as const,
+        runId: "terminal-status-message",
+        sessionId: sessionFile,
+        mode: "chain" as const,
+        state: "complete" as const,
+        startedAt: Date.now() - 100,
+        endedAt: Date.now(),
+        steps: [
+          {
+            agent: "scout",
+            context: "fresh",
+            outputName: "verify_local_code_supported",
+            status: "complete",
+            exitCode: 0,
+            structuredOutput,
+          },
+        ],
+        outputs,
+      };
+      await writeFile(
+        join(fixture.asyncDir, "status.json"),
+        JSON.stringify(status),
+      );
+      api.events.emit("subagent:async-complete", {
+        runId: "terminal-status-message",
+        sessionId: sessionFile,
+        success: true,
+        state: "complete",
+        exitCode: 0,
+        results: [
+          {
+            agent: "scout",
+            context: "fresh",
+            status: "completed",
+            success: true,
+            structuredOutput,
+          },
+        ],
+        outputs,
+      });
+      await Bun.sleep(0);
+
+      // Now pendingVerification is null and lastTerminalRunId is set.
+      // Calling subagent status should give a completion-aware reason.
+      const block = await toolCall(
+        { toolName: "subagent", input: { action: "status", id: "terminal-status-message" } },
+        ctx,
+      );
+      expect(block).toMatchObject({ block: true });
+      expect(block.reason).toBeDefined();
+      const reason = String((block as any).reason);
+      expect(reason).toContain("already completed");
+      expect(reason).not.toContain("No owned verification run is pending");
+
+      // Persistence: lastTerminalRunId is in the state snapshot
+      const snapshotEntries = api.entries.filter(
+        (e) => e.customType === "brainstorm-forcer",
+      );
+      const lastSnapshot = snapshotEntries.at(-1);
+      expect(lastSnapshot).toBeDefined();
+      expect((lastSnapshot!.data as any).lastTerminalRunId).toBe(
+        "terminal-status-message",
+      );
+
+      // Leak guard: after a brainstorm restart, lastTerminalRunId is reset
+      await api.commands.get("brainstorm")!.handler("fresh topic", ctx);
+      const blockAfterReset = await toolCall(
+        {
+          toolName: "subagent",
+          input: { action: "status", id: "terminal-status-message" },
+        },
+        ctx,
+      );
+      expect(blockAfterReset).toMatchObject({ block: true });
+      const reasonAfterReset = String((blockAfterReset as any).reason);
+      // After reset, lastTerminalRunId is null — no stale runId leaks
+      expect(reasonAfterReset).not.toContain("already completed");
+      expect(reasonAfterReset).not.toContain("terminal-status-message");
+    } finally {
+      await rm(fixture.scopeDir, { recursive: true, force: true });
+    }
+  });
 });

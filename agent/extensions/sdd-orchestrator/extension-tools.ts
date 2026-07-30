@@ -584,13 +584,16 @@ async function prepare(
         else onUpdate?.(partialLine(stage));
     };
     const emitAssessUpdate = (update: AssessmentProgressUpdate) => {
+        // Cache hit: surface a single stage, not a misleading "attempt 1 · cached" status line.
+        if (update.requestId === "cached") {
+            emitStage("assessment cached");
+            return;
+        }
         const attempt = extractAttemptNumber(update.requestId);
+        const line = formatAssessStatusLine(attempt, update);
         if (isTui)
-            ctx.ui.setStatus(
-                "sdd-prepare",
-                formatAssessStatusLine(attempt, update),
-            );
-        else onUpdate?.(partialLine(formatAssessStatusLine(attempt, update)));
+            ctx.ui.setStatus("sdd-prepare", ctx.ui.theme.fg("muted", line));
+        else onUpdate?.(partialLine(line));
     };
     const clearProgress = () => {
         if (!isTui) return;
@@ -613,6 +616,7 @@ async function prepare(
             (_ctx, update) => emitAssessUpdate(update),
         );
         emitStage("parsing assessment");
+        emitStage("compiling manifest");
         const draft = compileManifest({
             planPath: toPortableHomePath(planPath),
             planContent,
@@ -622,7 +626,6 @@ async function prepare(
             parallelismEnabled: true,
             config,
         });
-        emitStage("compiling manifest");
         runtime.store.createManifest(draft);
         if (isTui) {
             emitStage("opening review");
@@ -998,20 +1001,37 @@ export function registerSddExtension(
                     },
                 );
             }
-            const runs = entries.flatMap((entry) => {
-                if ("status" in entry) return [];
+            const theme = ctx.mode === "tui" ? ctx.ui.theme : undefined;
+            const observations = new Map<
+                string,
+                ReturnType<typeof observeRun>
+            >();
+            for (const entry of entries) {
+                if ("status" in entry) continue;
                 const manifest = runtime.store.loadManifest(entry.runId);
-                return manifest?.state === "approved"
-                    ? [observeRun(manifest, entry, now(runtime))]
-                    : [];
+                if (manifest?.state === "approved") {
+                    observations.set(
+                        entry.runId,
+                        observeRun(manifest, entry, now(runtime)),
+                    );
+                }
+            }
+            const runs = [...observations.values()];
+            const body =
+                entries
+                    .map((entry) =>
+                        observations.has(entry.runId)
+                            ? renderRunObservation(
+                                  observations.get(entry.runId)!,
+                                  theme,
+                              )
+                            : renderObservable(entry),
+                    )
+                    .join("\n") || "No SDD runs.";
+            return textResult(body, {
+                snapshots: entries,
+                runs,
             });
-            return textResult(
-                entries.map(renderObservable).join("\n") || "No SDD runs.",
-                {
-                    snapshots: entries,
-                    runs,
-                },
-            );
         },
     });
 

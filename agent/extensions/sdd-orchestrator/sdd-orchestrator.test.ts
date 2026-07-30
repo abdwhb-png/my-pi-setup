@@ -1567,8 +1567,68 @@ function contextTui(
             setWorkingMessage: (message?: string) => {
                 workingCalls.push(message ?? '<default>');
             },
+            theme: { fg: (c: string, t: string) => `[${c}|${t}]` } as never,
         },
     } as unknown as ExtensionContext;
+}
+
+function runtimeWithProgressResponses(
+    store: SddStore,
+    responses: SubagentDelegationResponse[],
+    seen: string[],
+): SddRuntime & {
+    seen: string[];
+} {
+    const queue = [...responses];
+    return {
+        agentDir,
+        store,
+        config: () => config,
+        now: () => '2026-07-21T12:00:00.000Z',
+        seen,
+        delegation: {
+            async run(request: any, options?: any) {
+                const response = queue.shift();
+                if (!response) throw new Error('No fake response.');
+                seen.push(request.requestId);
+                if (options?.onUpdate) {
+                    options.onUpdate({
+                        version: 1,
+                        requestId: request.requestId,
+                        currentTool: 'grep',
+                        durationMs: 1200,
+                    });
+                }
+                return { ...response, requestId: request.requestId };
+            },
+            dispose() {},
+        },
+        workflow: {
+            async run(runId: string) {
+                return store.load(runId)!;
+            },
+            cancel(runId: string) {
+                return store.load(runId)!;
+            },
+            completeDirect(runId: string) {
+                return store.load(runId)!;
+            },
+            reconcile(runId: string) {
+                return store.load(runId)!;
+            },
+        },
+        openReview: async () => ({ type: 'cancel' }),
+    } as SddRuntime & { seen: string[] };
+}
+
+function seedRun(
+    store: SddStore,
+    runId: string,
+    state: RunSnapshot['state'],
+): void {
+    const m = approvedManifest(runId);
+    const snap = snapshot(runId, state);
+    seedApproved(store, m, snap);
 }
 
 test('prepare threads assessor progress into setStatus and setWorkingMessage during assess', async () => {
@@ -1647,6 +1707,131 @@ test('prepare non-TUI emits themed partials via onUpdate instead of setStatus', 
     expect(updates.some((u: any) => /assess/i.test(u.content?.[0]?.text ?? ''))).toBe(
         true,
     );
+});
+
+test('prepare reports the assessment cached stage on a cache hit (not a misleading status line)', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    const rt = runtimeWithProgress(store, {
+        version: 1,
+        requestId: 'ignored',
+        status: 'completed',
+        output: assessment,
+    });
+    registerSddExtension(pi.api as never, rt);
+
+    const statusCalls: string[] = [];
+    const workingCalls: string[] = [];
+    // First prepare warms the cache.
+    await execute(
+        pi.tools.get('sdd_prepare'),
+        { planPath: 'plan.md', globalProfile: 'standard' },
+        contextTui(statusCalls, workingCalls),
+    );
+    workingCalls.length = 0;
+    statusCalls.length = 0;
+    // Second prepare must hit the cache.
+    await execute(
+        pi.tools.get('sdd_prepare'),
+        { planPath: 'plan.md', globalProfile: 'standard' },
+        contextTui(statusCalls, workingCalls),
+    );
+    expect(workingCalls).toContain('assessment cached');
+    expect(statusCalls.some((c) => c.includes('attempt 1') && c.includes('cached'))).toBe(false);
+    expect(statusCalls.at(-1)).toBe('sdd-prepare=<cleared>');
+});
+
+test('prepare retries surface attempt 2 in the status line after a failed first attempt', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    // One invalid then one valid response → structuredOutputRetries=1 allows one repair.
+    const seen: string[] = [];
+    const rt = runtimeWithProgressResponses(
+        store,
+        [
+            { version: 1, requestId: 'r1', status: 'completed', output: 'bad' },
+            { version: 1, requestId: 'r2', status: 'completed', output: assessment },
+        ],
+        seen,
+    );
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, rt);
+
+    const statusCalls: string[] = [];
+    const workingCalls: string[] = [];
+    await execute(
+        pi.tools.get('sdd_prepare'),
+        { planPath: 'plan.md', globalProfile: 'standard' },
+        contextTui(statusCalls, workingCalls),
+    );
+    expect(statusCalls.some((c) => c.includes('attempt 1'))).toBe(true);
+    expect(statusCalls.some((c) => c.includes('attempt 2'))).toBe(true);
+    expect(statusCalls.at(-1)).toBe('sdd-prepare=<cleared>');
+});
+
+test('prepare clears progress in finally even when delegation rejects', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const seen: string[] = [];
+    const rt = runtimeWithProgressResponses(
+        store,
+        [], // empty queue → delegation.run throws "No fake response."
+        seen,
+    );
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, rt);
+
+    const statusCalls: string[] = [];
+    const workingCalls: string[] = [];
+    await expect(
+        execute(
+            pi.tools.get('sdd_prepare'),
+            { planPath: 'plan.md', globalProfile: 'standard' },
+            contextTui(statusCalls, workingCalls),
+        ),
+    ).rejects.toBeDefined();
+    // finally still ran despite the rejection
+    expect(statusCalls.at(-1)).toBe('sdd-prepare=<cleared>');
+    expect(workingCalls.at(-1)).toBe('<default>');
+});
+
+test('untargeted sdd_status themes approved runs and keeps legacy entries plain', async () => {
+    const store = new SddStore(agentDir);
+    seedRun(store, 'app-1', 'running');
+    seedRun(store, 'app-2', 'completed');
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+    const tuiTheme = { fg: (c: string, t: string) => `[${c}|${t}]` } as never;
+    const ctx = { ...context('tui'), ui: { ...((context('tui') as any).ui), theme: tuiTheme } };
+    const result = await execute(pi.tools.get('sdd_status'), {}, ctx);
+    const text = result.content[0].text;
+    expect(text).toContain('app-1: running');
+    expect(text).toContain('app-2: completed');
+});
+
+test('non-TUI prepare output is a compact summary, not raw JSON', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    const rt = runtimeWithProgress(store, {
+        version: 1,
+        requestId: 'ignored',
+        status: 'completed',
+        output: assessment,
+    });
+    registerSddExtension(pi.api as never, rt);
+    const result = await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    });
+    const text = result.content[0].text;
+    expect(text).not.toStartWith('{');
+    expect(text).toContain('SDD manifest prepared:');
+    expect(text).toContain('task-1');
+    expect(text).toContain('Approve with sdd_approve');
+    // Full draft still present in details.
+    expect(result.details.manifest.manifestId).toBeDefined();
 });
 
 test('package metadata describes the deterministic public-delegation extension', () => {

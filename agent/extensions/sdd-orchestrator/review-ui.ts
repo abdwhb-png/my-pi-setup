@@ -456,7 +456,25 @@ export class ManifestReviewComponent implements Component {
         lines.push(sepRow);
 
         const roster = this.rosterLines(rosterWidth, this.bodyHeight);
-        const details = this.detailLines(detailWidth);
+        let details = this.detailLines(detailWidth);
+        // When the validation pane is collapsed (short terminal), append its
+        // lines to the detail pane so validation state stays visible.
+        let validation: string[];
+        if (showValidation) {
+            validation = this.validationLines();
+        } else {
+            validation = [];
+            const collapsed = this.validationLines();
+            if (collapsed.length) {
+                details = [
+                    ...details,
+                    "",
+                    ...collapsed.flatMap((l) =>
+                        wrapTextWithAnsi(l, detailWidth),
+                    ),
+                ];
+            }
+        }
         this.detailLineCount = details.length;
         const maxDetailScroll = Math.max(0, details.length - this.bodyHeight);
         if (this.detailAutoFollow) this.detailScroll = maxDetailScroll;
@@ -466,7 +484,6 @@ export class ManifestReviewComponent implements Component {
             this.detailScroll,
             this.detailScroll + this.bodyHeight,
         );
-        const validation = showValidation ? this.validationLines() : [];
 
         for (let i = 0; i < this.bodyHeight; i++) {
             let row =
@@ -497,7 +514,7 @@ export class ManifestReviewComponent implements Component {
               );
         lines.push(footerSep);
         const position = `${this.selectedTask + 1}/${this.draft.tasks.length}`;
-        const footer = ` ↑↓/jk task · PgUp/PgDn detail · g global · o override · p parallel · i integration · c confirm · j justify · a approve · r return · ${position}`;
+        const footer = ` ↑↓ task · PgUp/PgDn detail · g global · o override · p parallel · i integration · c confirm · j justify · a approve · r return · ${position}`;
         lines.push(border + fit(theme.fg("dim", footer), innerWidth) + border);
         lines.push(theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 
@@ -518,16 +535,10 @@ export class ManifestReviewComponent implements Component {
             this.done({ type: "cancel" });
             return;
         }
-        if (
-            this.keybindings.matches(data, "tui.select.up") ||
-            matchesKey(data, "k")
-        ) {
+        if (this.keybindings.matches(data, "tui.select.up")) {
             return this.moveSelection(-1);
         }
-        if (
-            this.keybindings.matches(data, "tui.select.down") ||
-            matchesKey(data, "j")
-        ) {
+        if (this.keybindings.matches(data, "tui.select.down")) {
             return this.moveSelection(1);
         }
         if (matchesKey(data, "pageUp")) {

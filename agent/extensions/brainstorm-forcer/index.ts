@@ -301,7 +301,7 @@ function verificationControlDecision(
     if (!pendingVerification)
         return {
             allowed: false,
-            reason: "BLOCKED: No owned verification run is pending. Use brainstorm_run_verification to create verification work.",
+            reason: "BLOCKED: No owned verification run is pending.",
         };
     const action = input?.action;
     const controlAction = VERIFICATION_CONTROL_ACTIONS.find(
@@ -654,6 +654,7 @@ export default function brainstormForcer(
     let explorationLedger: ReturnType<typeof createExplorationLedger> | null =
         null;
     let pendingVerification: PendingVerificationRun | null = null;
+    let lastTerminalRunId: string | null = null;
     let activeContext: ExtensionContext | null = null;
     let launchInProgress = false;
     const earlyCompletionEvents: unknown[] = [];
@@ -1775,6 +1776,7 @@ export default function brainstormForcer(
             auditRecorded = true;
             for (const record of records) appendExplorationRecord(record, ctx);
             auditPersisted = true;
+            lastTerminalRunId = pending.runId;
             pendingVerification = null;
             saveState(ctx);
             ctx.ui.notify(
@@ -1788,6 +1790,7 @@ export default function brainstormForcer(
                 error instanceof Error ? error.message : String(error),
                 500,
             );
+            lastTerminalRunId = pending.runId;
             pendingVerification = null;
             let persistenceError = "";
             try {
@@ -1922,6 +1925,7 @@ export default function brainstormForcer(
                             appendExplorationRecord(record, ctx);
                         for (const record of completion.reviews)
                             appendExplorationRecord(record, ctx);
+                        lastTerminalRunId = pending.runId;
                         pendingVerification = null;
                         saveState(ctx);
                         ctx.ui.notify(
@@ -2046,6 +2050,7 @@ export default function brainstormForcer(
                 appendExplorationRecord(record, ctx);
             for (const record of completion.reviews)
                 appendExplorationRecord(record, ctx);
+            lastTerminalRunId = pending.runId;
             pendingVerification = null;
             saveState(ctx);
             ctx.ui.notify(
@@ -2083,6 +2088,7 @@ export default function brainstormForcer(
         artifacts = {};
         explorationLedger = null;
         pendingVerification = null;
+        lastTerminalRunId = null;
         processingRunIds.clear();
         earlyCompletionEvents.length = 0;
         ceilingManager.dispose();
@@ -2208,6 +2214,7 @@ export default function brainstormForcer(
             startedAt,
             artifacts,
             pendingVerification,
+            lastTerminalRunId,
         };
     }
 
@@ -2313,6 +2320,7 @@ export default function brainstormForcer(
                   startedAt?: string;
                   artifacts?: ArtifactCheckpoints;
                   pendingVerification?: unknown;
+                  lastTerminalRunId?: string | null;
               }
             | undefined;
         if (!data || data.active === false) return;
@@ -2365,6 +2373,11 @@ export default function brainstormForcer(
                     "warning",
                 );
             }
+            if (
+                typeof data.lastTerminalRunId === "string" ||
+                data.lastTerminalRunId === null
+            )
+                lastTerminalRunId = data.lastTerminalRunId;
             if (pendingVerification) {
                 const missing =
                     missingPendingVerificationReferences(pendingVerification);
@@ -2941,13 +2954,19 @@ export default function brainstormForcer(
             expectedSubmissionTool(activePhase),
             "brainstorm_transition",
         ].join(", ");
+        const baseReason = pendingVerificationToolBlockReason(
+            activePhase,
+            event.toolName,
+            event.input,
+            pendingVerification,
+        );
         const reason =
-            pendingVerificationToolBlockReason(
-                activePhase,
-                event.toolName,
-                event.input,
-                pendingVerification,
-            ) ??
+            (baseReason &&
+            !pendingVerification &&
+            lastTerminalRunId &&
+            baseReason.includes("No owned verification run is pending")
+                ? `BLOCKED: Verification run ${lastTerminalRunId} already completed and was audited. No pending verification run. Inspect the gate status for missing reviews or proceed to the final approach choice.`
+                : baseReason) ??
             [
                 `BLOCKED: ${event.toolName} is not allowed in the ${phaseLabel} phase.`,
                 `Allowed tools: ${allowedTools}.`,
@@ -2982,6 +3001,29 @@ export default function brainstormForcer(
             };
             saveState(ctx);
             updateWidget(ctx);
+            const timeoutText = event.content
+                .map((c) =>
+                    typeof c === "object" &&
+                    c !== null &&
+                    "text" in c &&
+                    typeof c.text === "string"
+                        ? c.text
+                        : "",
+                )
+                .join("\n");
+            if (/call subagent_wait again/i.test(timeoutText)) {
+                return {
+                    content: [
+                        {
+                            type: "text" as const,
+                            text: timeoutText.replace(
+                                /(call subagent_wait again[^.]*\.?)/gi,
+                                "use a single steer recovery. Policy allows one wait only. Next action: inspect exact status via subagent with action:status.",
+                            ),
+                        },
+                    ],
+                };
+            }
             return undefined;
         }
         if (
