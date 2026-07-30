@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve, dirname, basename } from "node:path";
+import { join, resolve, dirname, basename, relative } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fuzzyFilter } from "@earendil-works/pi-tui";
 import { expandHomePath } from "../_shared/home-path.ts";
@@ -208,14 +208,25 @@ export function enrichAutocompleteWithCache(
     const result = [...items];
 
     for (const file of extraFiles) {
-        if (seen.has(file) || existingPaths.has(file)) continue;
+        if (seen.has(file)) continue;
         seen.add(file);
+
+        // For files under CWD, show relative paths so they dedup
+        // against base provider items (which use relative paths)
+        // and produce @relative/path instead of @/absolute/path.
+        const displayPath =
+            cwd && file.startsWith(cwd + "/")
+                ? relative(cwd, file)
+                : file;
+
+        // Skip if this relative path already exists in base items
+        if (existingPaths.has(displayPath)) continue;
 
         const basename = file.split("/").pop() ?? "";
         result.push({
-            value: `@${file}`,
+            value: `@${displayPath}`,
             label: basename,
-            description: file,
+            description: displayPath,
         });
 
         if (result.length - items.length >= 20) break;

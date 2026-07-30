@@ -652,6 +652,100 @@ describe('enrichAutocompleteWithCache', () => {
         expect(labels).toContain('settings.json');
         expect(labels).not.toContain('index.ts');
     });
+
+    it('deduplicates when base has relative path and cache has same file as absolute', () => {
+        const baseItems = [
+            {
+                value: '@src/app.ts',
+                label: 'app.ts',
+                description: 'src/app.ts',
+            },
+            {
+                value: '@/other/lib/app.ts',
+                label: 'app.ts',
+                description: '/other/lib/app.ts',
+            },
+        ];
+        const cacheWithAbs = {
+            files: ['/proj/src/app.ts', '/proj/src/main.ts'],
+            ready: true,
+            running: false,
+        };
+
+        // Query @.ts → matches both app.ts and main.ts via fuzzy basename
+        // app.ts from cache is converted to relative src/app.ts → dedup'd against base
+        // main.ts from cache is new → added with relative @src/main.ts
+        const result = enrichAutocompleteWithCache(
+            '@.ts',
+            baseItems,
+            cacheWithAbs,
+            gitNoRespConfig,
+            { cwd: '/proj' },
+        );
+
+        // app.ts in src/ should NOT be duplicated
+        const appInSrc = result.filter(
+            (i) => i.description === 'src/app.ts',
+        );
+        expect(appInSrc.length).toBe(1);
+
+        // main.ts is new → added with relative path
+        const mainItem = result.find((i) => i.label === 'main.ts');
+        expect(mainItem).toBeDefined();
+        expect(mainItem!.value).toBe('@src/main.ts');
+        expect(mainItem!.description).toBe('src/main.ts');
+
+        // app.ts in /other/lib/ from base is untouched (outside CWD)
+        const appInOther = result.filter(
+            (i) => i.description === '/other/lib/app.ts',
+        );
+        expect(appInOther.length).toBe(1);
+    });
+
+    it('converts cache absolute paths to relative when under CWD, keeps absolute for others', () => {
+        const baseItems = [
+            {
+                value: '@src/config.ts',
+                label: 'config.ts',
+                description: 'src/config.ts',
+            },
+        ];
+        const cacheWithAbs = {
+            files: [
+                '/proj/src/config.ts',
+                '/proj/src/utils.ts',
+                '/other/lib/helper.ts',
+            ],
+            ready: true,
+            running: false,
+        };
+
+        // Query @utils → matches utils.ts by fuzzy on basename
+        const utilsResult = enrichAutocompleteWithCache(
+            '@utils',
+            baseItems,
+            cacheWithAbs,
+            gitNoRespConfig,
+            { cwd: '/proj' },
+        );
+        const utilsItem = utilsResult.find((i) => i.label === 'utils.ts');
+        expect(utilsItem).toBeDefined();
+        expect(utilsItem!.value).toBe('@src/utils.ts');
+        expect(utilsItem!.description).toBe('src/utils.ts');
+
+        // Query @helper → matches helper.ts by fuzzy on basename
+        const helperResult = enrichAutocompleteWithCache(
+            '@helper',
+            baseItems,
+            cacheWithAbs,
+            gitNoRespConfig,
+            { cwd: '/proj' },
+        );
+        const helperItem = helperResult.find((i) => i.label === 'helper.ts');
+        expect(helperItem).toBeDefined();
+        expect(helperItem!.value).toBe('@/other/lib/helper.ts');
+        expect(helperItem!.description).toBe('/other/lib/helper.ts');
+    });
 });
 
 describe('realtimeFdSearch', () => {
