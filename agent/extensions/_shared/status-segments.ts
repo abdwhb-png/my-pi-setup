@@ -62,7 +62,7 @@ export function renderBranch(
         : "";
 }
 
-export const renderPrefix = "📋session->";
+export const renderPrefix = "📋->";
 
 export function renderSessionName(
     state: StatusBarState,

@@ -116,7 +116,9 @@
             "placement": "aboveEditor"
         },
         "codex-fast-mode": {
-            "enabled": false
+            "enabled": true,
+            "row": 2,
+            "align": "left"
         },
         "pi-lens": {
             "row": 4
