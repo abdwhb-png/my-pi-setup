@@ -8,14 +8,14 @@ import type {
     Theme,
 } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import { resolveToolAliases } from '../_shared/tool-groups/resolver';
+import { resolveToolAliases } from '../../_shared/tool-groups/resolver';
 import registerSubagentsOverview from './index';
 import { AgentDetailView, icon, SubagentsOverviewView } from './ui';
 
 const HOME = homedir();
 const EXAMPLE_SETTINGS_PATH = path.resolve(
     import.meta.dir,
-    '../../settings.example.json',
+    '../../../settings.example.json',
 );
 
 const theme = {
@@ -69,6 +69,7 @@ describe('pi-subagents-overview', () => {
 
             let output: string[] = [];
             await handlers.get('subagents-overview')?.('', {
+                mode: 'tui',
                 hasUI: true,
                 ui: {
                     custom: async (

@@ -1,0 +1,9 @@
+{
+  "name": "pi-subagents-addons",
+  "version": "1.0.0",
+  "description": "Local companion UX and integrations for pi-subagents",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

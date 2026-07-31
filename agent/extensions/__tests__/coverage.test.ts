@@ -108,6 +108,7 @@ describe("Meta: tracked files do not hardcode the previous home directory", () =
       .filter(Boolean);
     const offenders = trackedFiles.filter((file) => {
       const fullPath = path.join(repoRoot, file);
+      if (!fs.existsSync(fullPath)) return false;
       if (!fs.statSync(fullPath).isFile()) return false;
       const content = fs.readFileSync(fullPath);
       return !content.includes(0) && content.toString("utf8").includes(legacyHomePath);

@@ -17,12 +17,16 @@ import { homedir } from 'node:os';
 import * as path from 'node:path';
 import type {
     ExtensionAPI,
+    ExtensionCommandContext,
     ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
 import { parseFrontmatter } from '@earendil-works/pi-coding-agent';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { AutocompleteItem } from '@earendil-works/pi-tui';
-import { createWidget } from '../_shared/fancy-footer';
+import { createWidget } from '../../_shared/fancy-footer';
+import type { AsyncLiveRun, LiveRunSnapshot } from './fleet-store.ts';
+import { SubagentsLiveRuntime } from './live-runtime.ts';
+import { hasVisibleLiveRuns, renderLiveWidget } from './live-ui.ts';
 import { icon, SubagentsOverviewView, AgentDetailView } from './ui';
 
 // ── ANSI color constants ──────────────────────────────
@@ -37,6 +41,9 @@ const BLUE = '\x1b[34m';
 const RESET = '\x1b[0m';
 
 const WIDGET_ID = 'pi-subagents-overview-widget';
+const LIVE_WIDGET_ID = 'pi-subagents-live-widget';
+const LIVE_REFRESH_MS = 500;
+const COMPLETION_LINGER_MS = 5_000;
 
 // ── Types ──────────────────────────────────────────────
 
@@ -133,15 +140,24 @@ function clearSkillAgentCache(): void {
     cachedSkillAgentNames = null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 // ── Data Collection ────────────────────────────────────
 
 function readOverrides(): Record<string, AgentOverride> {
     try {
         const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8');
-        const parsed = JSON.parse(raw) as {
-            subagents?: { agentOverrides?: Record<string, AgentOverride> };
-        };
-        return parsed?.subagents?.agentOverrides ?? {};
+        const parsed: unknown = JSON.parse(raw);
+        if (!isRecord(parsed) || !isRecord(parsed.subagents)) return {};
+        const candidate = parsed.subagents.agentOverrides;
+        if (!isRecord(candidate)) return {};
+        const overrides: Record<string, AgentOverride> = {};
+        for (const [name, value] of Object.entries(candidate)) {
+            if (isRecord(value)) overrides[name] = value;
+        }
+        return overrides;
     } catch {
         return {};
     }
@@ -307,6 +323,22 @@ function formatAgentBlock(
     return lines;
 }
 
+function formatOverrideValue(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (
+        typeof value === 'number' ||
+        typeof value === 'boolean' ||
+        typeof value === 'bigint'
+    ) {
+        return value.toString();
+    }
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return '[unserializable]';
+    }
+}
+
 function formatOverview(includeBanner = true): string {
     const overrides = readOverrides();
     const builtins = readBuiltinAgents();
@@ -324,7 +356,7 @@ function formatOverview(includeBanner = true): string {
     }
 
     // ── Builtin Agents ──
-    lines.push(`${BOLD}${CYAN}🏗️  BUILTIN AGENTS${RESET}`);
+    lines.push(`${BOLD}${CYAN}🏗️ BUILTIN AGENTS${RESET}`);
     lines.push('');
     for (const agent of builtins) {
         lines.push(...formatAgentBlock(agent, overrides));
@@ -388,7 +420,7 @@ function formatOverview(includeBanner = true): string {
                 .map(([key, val]) => {
                     if (Array.isArray(val))
                         return `    ${DIM}${key}:${RESET} ${val.join(', ')}`;
-                    return `    ${DIM}${key}:${RESET} ${String(val)}`;
+                    return `    ${DIM}${key}:${RESET} ${formatOverrideValue(val)}`;
                 });
             if (overriddenFields.length > 0) {
                 lines.push(`  ${BOLD}${agentName}${RESET}`);
@@ -466,9 +498,139 @@ function buildSkillAgentFilterPattern(skillNames: Set<string>): RegExp | null {
     return new RegExp(pattern, 'm');
 }
 
+function formatLiveSnapshot(snapshot: LiveRunSnapshot): string {
+    const lines = [
+        '',
+        'LIVE RUNS',
+        snapshot.fleetAvailable
+            ? `${snapshot.totalActive} active${snapshot.omitted > 0 ? ` · +${snapshot.omitted} omitted` : ''}`
+            : 'Fleet RPC unavailable · showing tracked async runs only',
+    ];
+    if (snapshot.runs.length === 0) {
+        lines.push('No subagent runs in this session.');
+        return lines.join('\n');
+    }
+    for (const run of snapshot.runs) {
+        const state = run.source === 'fleet' ? 'active' : run.state;
+        lines.push(
+            `- ${run.agent}${run.role ? `:${run.role}` : ''} · ${state} · ${run.tokens.total} tokens${run.goal ? ` · ${run.goal}` : ''}`,
+        );
+        if (run.source === 'fleet') {
+            lines.push('  Transcript: open the native inspector with Ctrl+Alt+F.');
+        }
+    }
+    return lines.join('\n');
+}
+
 // ── Extension ──────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+    const liveRuntime = new SubagentsLiveRuntime(pi.events);
+    let currentContext: ExtensionContext | undefined;
+    let stopLivePolling: (() => void) | undefined;
+    let stopLiveHideTimer: (() => void) | undefined;
+    let stopWidgetRegistrationTimer: (() => void) | undefined;
+    let liveViewOpen = false;
+    let subagentToolActive = false;
+
+    const clearLiveTimers = (): void => {
+        stopLivePolling?.();
+        stopLiveHideTimer?.();
+        stopWidgetRegistrationTimer?.();
+        stopLivePolling = undefined;
+        stopLiveHideTimer = undefined;
+        stopWidgetRegistrationTimer = undefined;
+    };
+
+    const syncLiveUi = (): void => {
+        const ctx = currentContext;
+        if (!ctx || ctx.mode !== 'tui') return;
+        const snapshot = liveRuntime.store.snapshot();
+        const now = Date.now();
+        const visible = hasVisibleLiveRuns(snapshot, now);
+        if (visible) {
+            ctx.ui.setWidget(
+                LIVE_WIDGET_ID,
+                (_tui, theme) => ({
+                    render: (width: number) =>
+                        renderLiveWidget(
+                            liveRuntime.store.snapshot(),
+                            theme,
+                            width,
+                            Date.now(),
+                        ),
+                    invalidate: () => {},
+                }),
+                { placement: 'belowEditor' },
+            );
+        } else {
+            ctx.ui.setWidget(LIVE_WIDGET_ID, undefined);
+        }
+
+        stopLiveHideTimer?.();
+        stopLiveHideTimer = undefined;
+        const recentCompletions = snapshot.runs
+            .filter(
+                (run): run is AsyncLiveRun =>
+                    run.source === 'async' && run.completedAt !== undefined,
+            )
+            .map((run) => run.completedAt ?? 0)
+            .filter((completedAt) => now - completedAt <= COMPLETION_LINGER_MS);
+        if (recentCompletions.length > 0) {
+            const nextExpiry = Math.min(...recentCompletions) + COMPLETION_LINGER_MS;
+            const hideTimer = setTimeout(
+                syncLiveUi,
+                Math.max(1, nextExpiry - now + 10),
+            );
+            stopLiveHideTimer = () => clearTimeout(hideTimer);
+            hideTimer.unref?.();
+        }
+
+        const shouldPoll = visible || liveViewOpen || subagentToolActive;
+        if (shouldPoll && !stopLivePolling) {
+            const pollTimer = setInterval(() => {
+                void liveRuntime.refresh();
+            }, LIVE_REFRESH_MS);
+            stopLivePolling = () => clearInterval(pollTimer);
+            pollTimer.unref?.();
+        } else if (!shouldPoll && stopLivePolling) {
+            stopLivePolling();
+            stopLivePolling = undefined;
+        }
+    };
+
+    const unsubscribeLiveStore = liveRuntime.store.subscribe(syncLiveUi);
+
+    const handleLiveAction = async (
+        ctx: ExtensionCommandContext,
+        action: 'steer' | 'interrupt' | 'stop',
+        run: AsyncLiveRun,
+    ): Promise<void> => {
+        try {
+            if (action === 'steer') {
+                const message = await ctx.ui.input(
+                    `Steer ${run.agent}`,
+                    'New instruction',
+                );
+                if (!message?.trim()) return;
+                await liveRuntime.control(action, run, message);
+            } else {
+                const confirmed = await ctx.ui.confirm(
+                    action === 'stop' ? 'Stop subagent' : 'Interrupt subagent',
+                    `${action === 'stop' ? 'Stop' : 'Interrupt'} ${run.agent} (${run.id})?`,
+                );
+                if (!confirmed) return;
+                await liveRuntime.control(action, run);
+            }
+            ctx.ui.notify(`${action} sent to ${run.agent}.`, 'info');
+            await liveRuntime.refresh();
+        } catch (error) {
+            ctx.ui.notify(
+                error instanceof Error ? error.message : 'Subagent control failed.',
+                'error',
+            );
+        }
+    };
     // Register a renderer for the custom message type
     pi.registerMessageRenderer(
         'pi-subagents-overview',
@@ -491,30 +653,22 @@ export default function (pi: ExtensionAPI) {
 
     // ── Intercept subagent tool results ──
 
-    (pi as any).on('tool_result', (event: unknown) => {
-        // Check if this is the subagent tool's list action
-        // CustomToolResultEvent has toolName: string
-        const ev = event as unknown as Record<string, unknown>;
-        if (ev.toolName !== 'subagent') return;
-
-        const input = ev.input as Record<string, unknown> | undefined;
-        if (!input || input.action !== 'list') return;
-
-        const content = ev.content as
-            | Array<Record<string, unknown>>
-            | undefined;
-        if (!content || content.length === 0) return;
+    pi.on('tool_result', (event) => {
+        if (event.toolName !== 'subagent' || event.input.action !== 'list') {
+            return undefined;
+        }
+        if (event.content.length === 0) return undefined;
 
         const skillNames = getSkillAgentNames();
-        if (skillNames.size === 0) return;
+        if (skillNames.size === 0) return undefined;
 
         const filterPattern = buildSkillAgentFilterPattern(skillNames);
-        if (!filterPattern) return;
+        if (!filterPattern) return undefined;
 
-        const filteredContent = content.map((entry) => {
+        const filteredContent = event.content.map((entry) => {
             if (entry.type !== 'text') return entry;
 
-            const text = entry.text as string;
+            const text = entry.text;
             if (!text.includes('(project)') && !text.includes('(user)')) {
                 return entry; // Only filter list entries with scope markers
             }
@@ -539,35 +693,49 @@ export default function (pi: ExtensionAPI) {
         description:
             'Show a clean overview of all subagents with tools, models, overrides, and stats',
         handler: async (_args, ctx) => {
-            const overview = formatOverview(!ctx.hasUI);
+            const overview = formatOverview(ctx.mode !== 'tui');
 
-            if (!ctx.hasUI) {
-                console.log(overview);
+            if (ctx.mode !== 'tui') {
+                console.log(
+                    `${overview}\n${formatLiveSnapshot(liveRuntime.store.snapshot())}`,
+                );
                 return;
             }
 
-            await (ctx.ui.custom as any)(
-                (
-                    tui: { requestRender: () => void },
-                    theme: unknown,
-                    _kb: unknown,
-                    done: () => void,
-                ) =>
-                    new SubagentsOverviewView({
-                        theme: theme as any,
-                        content: overview,
-                        done,
-                        requestRender: () => tui.requestRender(),
-                    }),
-                {
-                    overlay: true,
-                    overlayOptions: {
-                        anchor: 'center' as const,
-                        width: '80%' as const,
-                        maxWidth: 100,
+            syncLiveUi();
+            try {
+                await ctx.ui.custom<void>(
+                    (tui, theme, _kb, done) =>
+                        new SubagentsOverviewView({
+                            theme,
+                            content: overview,
+                            done: () => done(undefined),
+                            requestRender: () => tui.requestRender(),
+                            getLiveSnapshot: () => liveRuntime.store.snapshot(),
+                            onAction: (action, run) => {
+                                if (run.source === 'async' && run.controllable) {
+                                    return handleLiveAction(ctx, action, run);
+                                }
+                                return undefined;
+                            },
+                            onLiveVisibilityChange: (visible) => {
+                                liveViewOpen = visible;
+                                syncLiveUi();
+                            },
+                        }),
+                    {
+                        overlay: true,
+                        overlayOptions: {
+                            anchor: 'center',
+                            width: '80%',
+                            maxHeight: '85%',
+                        },
                     },
-                },
-            );
+                );
+            } finally {
+                liveViewOpen = false;
+                syncLiveUi();
+            }
         },
     });
 
@@ -592,34 +760,29 @@ export default function (pi: ExtensionAPI) {
         handler: async (args, ctx) => {
             const name = args.trim();
             if (!name) {
-                if (!ctx.hasUI) {
+                if (ctx.mode !== 'tui') {
                     console.log(
                         'Usage: /subagent-view <name>\nExample: /subagent-view worker',
                     );
                     return;
                 }
 
-                await (ctx.ui.custom as any)(
-                    (
-                        tui: { requestRender: () => void },
-                        theme: unknown,
-                        _kb: unknown,
-                        done: () => void,
-                    ) =>
+                await ctx.ui.custom<void>(
+                    (tui, theme, _kb, done) =>
                         new AgentDetailView({
-                            theme: theme as any,
+                            theme,
                             content:
                                 'Usage: /subagent-view <name>\nExample: /subagent-view worker\n\nRun /subagents-overview to see all available agents.',
                             agentName: 'help',
-                            done,
+                            done: () => done(undefined),
                             requestRender: () => tui.requestRender(),
                         }),
                     {
                         overlay: true,
                         overlayOptions: {
-                            anchor: 'center' as const,
-                            width: '80%' as const,
-                            maxWidth: 100,
+                            anchor: 'center',
+                            width: '80%',
+                            maxHeight: '85%',
                         },
                     },
                 );
@@ -631,31 +794,26 @@ export default function (pi: ExtensionAPI) {
             const agent = allAgents.find((a) => a.name === name);
 
             if (!agent) {
-                if (!ctx.hasUI) {
+                if (ctx.mode !== 'tui') {
                     console.log(`Agent "${name}" not found.`);
                     return;
                 }
 
-                await (ctx.ui.custom as any)(
-                    (
-                        tui: { requestRender: () => void },
-                        theme: unknown,
-                        _kb: unknown,
-                        done: () => void,
-                    ) =>
+                await ctx.ui.custom<void>(
+                    (tui, theme, _kb, done) =>
                         new AgentDetailView({
-                            theme: theme as any,
+                            theme,
                             content: `Agent "${name}" not found.\nRun /subagents-overview to see all available agents.`,
                             agentName: 'error',
-                            done,
+                            done: () => done(undefined),
                             requestRender: () => tui.requestRender(),
                         }),
                     {
                         overlay: true,
                         overlayOptions: {
-                            anchor: 'center' as const,
-                            width: '80%' as const,
-                            maxWidth: 100,
+                            anchor: 'center',
+                            width: '80%',
+                            maxHeight: '85%',
                         },
                     },
                 );
@@ -686,7 +844,7 @@ export default function (pi: ExtensionAPI) {
                         continue;
                     const valStr = Array.isArray(val)
                         ? val.join(', ')
-                        : String(val);
+                        : formatOverrideValue(val);
                     lines.push(`    ${DIM}${key}:${RESET} ${valStr}`);
                 }
             }
@@ -699,26 +857,26 @@ export default function (pi: ExtensionAPI) {
                 }
             }
 
-            await (ctx.ui.custom as any)(
-                (
-                    tui: { requestRender: () => void },
-                    theme: unknown,
-                    _kb: unknown,
-                    done: (_result: unknown) => void,
-                ) =>
+            if (ctx.mode !== 'tui') {
+                console.log(lines.join('\n'));
+                return;
+            }
+
+            await ctx.ui.custom<void>(
+                (tui, theme, _kb, done) =>
                     new AgentDetailView({
-                        theme: theme as any,
+                        theme,
                         content: lines.join('\n'),
                         agentName: agent.name,
-                        done: done as () => void,
+                        done: () => done(undefined),
                         requestRender: () => tui.requestRender(),
                     }),
                 {
                     overlay: true,
                     overlayOptions: {
-                        anchor: 'center' as const,
-                        width: '80%' as const,
-                        maxWidth: 100,
+                        anchor: 'center',
+                        width: '80%',
+                        maxHeight: '85%',
                     },
                 },
             );
@@ -738,23 +896,51 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on('session_start', async (_event, ctx) => {
+        currentContext = ctx;
         clearSkillAgentCache();
+        await liveRuntime.beginSession(
+            ctx.sessionManager.getSessionId() ?? undefined,
+        );
         // Defer registration to yield to git-status-widget's async setWidget()
-        setTimeout(() => {
+        stopWidgetRegistrationTimer?.();
+        const registrationTimer = setTimeout(() => {
+            stopWidgetRegistrationTimer = undefined;
             updateWidget(ctx);
         }, 0);
+        stopWidgetRegistrationTimer = () => clearTimeout(registrationTimer);
+        registrationTimer.unref?.();
+        syncLiveUi();
     });
 
     pi.on('input', async (_event, ctx) => {
+        currentContext = ctx;
         updateWidget(ctx);
         return { action: 'continue' };
     });
 
-    pi.on('tool_execution_end', async (_event, ctx) => {
+    pi.on('tool_execution_start', async (event, ctx) => {
+        currentContext = ctx;
+        if (event.toolName !== 'subagent') return;
+        subagentToolActive = true;
+        syncLiveUi();
+        await liveRuntime.refresh();
+    });
+
+    pi.on('tool_execution_end', async (event, ctx) => {
+        currentContext = ctx;
         updateWidget(ctx);
+        if (event.toolName !== 'subagent') return;
+        subagentToolActive = false;
+        await liveRuntime.refresh();
+        syncLiveUi();
     });
 
     pi.on('session_shutdown', async (_event, ctx) => {
+        clearLiveTimers();
+        unsubscribeLiveStore();
+        liveRuntime.dispose();
         widgetHandle?.remove(ctx);
+        ctx.ui.setWidget(LIVE_WIDGET_ID, undefined);
+        currentContext = undefined;
     });
 }
