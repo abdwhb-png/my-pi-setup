@@ -30,6 +30,8 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 - Use the `pi-cli` skill for any questions regarding the `pi` command-line interface, flags, and automation.
 - Always provide factual and accurate information. If you are unsure about something, search for reliable sources before taking action or providing an answer.
 - **Portable home paths:** Persist and document paths under the user home as `~/…`; expand them with `homedir()` before filesystem or child-process I/O. Never hardcode `/home/<user>` in tracked files. Tests must use `homedir()` or disposable fixtures, never the real home directory.
+- **TUI keyboard input:** In `Component.handleInput()`, recognize every key supported by `@earendil-works/pi-tui` with `matchesKey()` and `Key` instead of comparing raw terminal strings or escape sequences. This applies to navigation, dismissal, and printable shortcuts (`Esc`, arrows, Page Up/Down, `q`, `j`, etc.). A raw comparison is allowed only when the installed Pi TUI API cannot represent the input; document that exception and test it explicitly. Any key that mutates visible component state must also call `tui.requestRender()`. Regression tests must exercise both legacy terminal sequences and Kitty CSI-u encodings for special/navigation keys and assert the observable render or close result.
+- When working with subagents, consider the agent/settings.json model setup as the source of truth for model configuration unless a model is factually unavailable in the harness.
 
 **NEVER SPECULATE ON PI TYPES**: Always refer to the pi types in the harness or in the pi packages. Never assume a type or a property exists without verifying it in the codebase. That ensure you always import the correct types or built a specific type for your needs based on pi's actual types. If you cannot find the type, ask `pi-expert` for clarification.
 
@@ -154,9 +156,9 @@ Key difference from vitest's `vi.mock()`: bun's `mock.module()` executes in orde
 
 This catches import errors, type mismatches, and structural issues while keeping tests fast and isolated from the pi runtime.
 
-## When to use `@marcfargas/pi-test-harness` vs. plain `bun:test`
+## When to use `@abdwhb-png/pi-test-harness` vs. plain `bun:test`
 
-`@marcfargas/pi-test-harness` boots a real Pi session (jiti, tool wrapping, hook runner, event bus) — that cost is justified only when the test must exercise real runtime behavior. It is **not** a default; it is a targeted tool. Refer to the `pi-test-harness` skill for the full API.
+`@abdwhb-png/pi-test-harness` boots a real Pi session (jiti, tool wrapping, hook runner, event bus) — that cost is justified only when the test must exercise real runtime behavior. It is **not** a default; it is a targeted tool. Refer to the `pi-test-harness` skill for the full API.
 
 **Use `bun:test` + `mock.module()` (default) when:**
 
@@ -167,7 +169,7 @@ This catches import errors, type mismatches, and structural issues while keeping
 **Reach for `pi-test-harness` when the test must exercise real Pi runtime wiring that mocks cannot reproduce faithfully:**
 
 - A `pi.registerTool(...)` whose `execute()` depends on the real tool-wrapping pipeline (params validation, `beforeExecute`, `renderResult` overrides).
-- A `pi.on("tool_call" | "tool_result", ...)` hook that **blocks** or **mutates** calls — the harness is the only way to reproduce `ToolBlockedError` + the `blocked`/`blockReason` fields on `ToolCallRecord`.
+- A `pi.on("tool_call" | "tool_result", ...)` hook that **blocks** or **mutates** calls — the harness records the canonical outcome as `blocked`/`blockReason` on the `ToolCallRecord` and `isError`/result text on the `ToolResultRecord`; `ToolBlockedError` is not promised by normal Pi 0.83 runs.
 - Multi-turn agent flow where one tool's output feeds the next call, or where `turn_end` / `agent_end` hooks gate the next step.
 - `ctx.ui.confirm / select / input / editor` interactions that branch extension logic — driven via `mockUI`, asserted via `t.events.uiCallsFor(...)`.
 - An extension that **spawns `pi` as a subprocess** — only `createMockPi()` provides the PATH shim.

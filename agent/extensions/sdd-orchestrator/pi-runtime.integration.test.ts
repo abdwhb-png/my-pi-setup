@@ -9,7 +9,7 @@ import {
     says,
     when,
     type TestSession,
-} from '@marcfargas/pi-test-harness';
+} from '@abdwhb-png/pi-test-harness';
 import { registerSddExtension, type SddRuntime } from './extension-tools.ts';
 import { SddStore } from './store.ts';
 

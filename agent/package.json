@@ -25,9 +25,8 @@
     "packageManager": "bun@1.3.14",
     "dependencies": {
         "@dietrichgebert/ponytail": "^4.8.4",
-        "@earendil-works/pi-coding-agent": "^0.81.1",
-        "@earendil-works/pi-tui": "^0.81.1",
-        "@marcfargas/pi-test-harness": "^0.6.1",
+        "@earendil-works/pi-coding-agent": "^0.83.0",
+        "@earendil-works/pi-tui": "^0.83.0",
         "@mendable/firecrawl-js": "^4.28.0",
         "@sinclair/typebox": "0.34.49",
         "oxlint-tsgolint": "^0.23.0",
@@ -35,6 +34,7 @@
         "typebox": "^1.2.14"
     },
     "devDependencies": {
+        "@abdwhb-png/pi-test-harness": "file:../../projects/pi-integrations/pi-test-harness/dist/package.tgz",
         "@types/bun": "^1.3.14",
         "@types/node": "^25.9.3",
         "oxfmt": "^0.57.0",
