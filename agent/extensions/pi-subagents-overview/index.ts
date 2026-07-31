@@ -307,19 +307,21 @@ function formatAgentBlock(
     return lines;
 }
 
-function formatOverview(): string {
+function formatOverview(includeBanner = true): string {
     const overrides = readOverrides();
     const builtins = readBuiltinAgents();
     const users = readUserAgents();
 
     const lines: string[] = [];
 
-    lines.push('╔══════════════════════════════════════════════════════════╗');
-    lines.push(
-        `${CYAN}║                    Subagents Overview                    ║${RESET}`,
-    );
-    lines.push('╚══════════════════════════════════════════════════════════╝');
-    lines.push('');
+    if (includeBanner) {
+        lines.push('╔══════════════════════════════════════════════════════════╗');
+        lines.push(
+            `${CYAN}║                    Subagents Overview                    ║${RESET}`,
+        );
+        lines.push('╚══════════════════════════════════════════════════════════╝');
+        lines.push('');
+    }
 
     // ── Builtin Agents ──
     lines.push(`${BOLD}${CYAN}🏗️  BUILTIN AGENTS${RESET}`);
@@ -537,7 +539,7 @@ export default function (pi: ExtensionAPI) {
         description:
             'Show a clean overview of all subagents with tools, models, overrides, and stats',
         handler: async (_args, ctx) => {
-            const overview = formatOverview();
+            const overview = formatOverview(!ctx.hasUI);
 
             if (!ctx.hasUI) {
                 console.log(overview);
@@ -546,7 +548,7 @@ export default function (pi: ExtensionAPI) {
 
             await (ctx.ui.custom as any)(
                 (
-                    _tui: unknown,
+                    tui: { requestRender: () => void },
                     theme: unknown,
                     _kb: unknown,
                     done: () => void,
@@ -555,6 +557,7 @@ export default function (pi: ExtensionAPI) {
                         theme: theme as any,
                         content: overview,
                         done,
+                        requestRender: () => tui.requestRender(),
                     }),
                 {
                     overlay: true,
@@ -598,7 +601,7 @@ export default function (pi: ExtensionAPI) {
 
                 await (ctx.ui.custom as any)(
                     (
-                        _tui: unknown,
+                        tui: { requestRender: () => void },
                         theme: unknown,
                         _kb: unknown,
                         done: () => void,
@@ -609,6 +612,7 @@ export default function (pi: ExtensionAPI) {
                                 'Usage: /subagent-view <name>\nExample: /subagent-view worker\n\nRun /subagents-overview to see all available agents.',
                             agentName: 'help',
                             done,
+                            requestRender: () => tui.requestRender(),
                         }),
                     {
                         overlay: true,
@@ -634,7 +638,7 @@ export default function (pi: ExtensionAPI) {
 
                 await (ctx.ui.custom as any)(
                     (
-                        _tui: unknown,
+                        tui: { requestRender: () => void },
                         theme: unknown,
                         _kb: unknown,
                         done: () => void,
@@ -644,6 +648,7 @@ export default function (pi: ExtensionAPI) {
                             content: `Agent "${name}" not found.\nRun /subagents-overview to see all available agents.`,
                             agentName: 'error',
                             done,
+                            requestRender: () => tui.requestRender(),
                         }),
                     {
                         overlay: true,
@@ -696,7 +701,7 @@ export default function (pi: ExtensionAPI) {
 
             await (ctx.ui.custom as any)(
                 (
-                    _tui: unknown,
+                    tui: { requestRender: () => void },
                     theme: unknown,
                     _kb: unknown,
                     done: (_result: unknown) => void,
@@ -706,6 +711,7 @@ export default function (pi: ExtensionAPI) {
                         content: lines.join('\n'),
                         agentName: agent.name,
                         done: done as () => void,
+                        requestRender: () => tui.requestRender(),
                     }),
                 {
                     overlay: true,

@@ -50,6 +50,54 @@ function renderLine(line: string, width: number): string {
 
 describe('pi-subagents-overview', () => {
     describe('overview rendering', () => {
+        it('uses only the BoxRenderer title and keeps every overlay row aligned', async () => {
+            type CommandHandler = (
+                args: string,
+                ctx: ExtensionCommandContext,
+            ) => void | Promise<void>;
+            const handlers = new Map<string, CommandHandler>();
+            const pi = {
+                events: { on: () => {}, emit: () => {} },
+                registerMessageRenderer: () => {},
+                on: () => {},
+                registerCommand: (
+                    name: string,
+                    command: { handler: CommandHandler },
+                ) => handlers.set(name, command.handler),
+            } as unknown as ExtensionAPI;
+            registerSubagentsOverview(pi);
+
+            let output: string[] = [];
+            await handlers.get('subagents-overview')?.('', {
+                hasUI: true,
+                ui: {
+                    custom: async (
+                        factory: (
+                            tui: { requestRender: () => void },
+                            theme: Theme,
+                            keybindings: unknown,
+                            done: () => void,
+                        ) => { render: (width: number) => string[] },
+                    ) => {
+                        const view = factory(
+                            { requestRender: () => {} },
+                            theme,
+                            {},
+                            () => {},
+                        );
+                        output = view.render(80);
+                    },
+                },
+            } as unknown as ExtensionCommandContext);
+
+            expect(
+                output.filter((line) => line.includes('Subagents Overview')),
+            ).toHaveLength(1);
+            expect(output.every((line) => visibleWidth(line) === 76)).toBe(
+                true,
+            );
+        });
+
         it('keeps every row of the inner banner at the same width', async () => {
             type CommandHandler = (
                 args: string,
@@ -122,6 +170,92 @@ describe('pi-subagents-overview', () => {
                 true,
             );
         });
+    });
+
+    describe('keyboard input', () => {
+        it.each([
+            [
+                'overview',
+                (done: () => void) =>
+                    new SubagentsOverviewView({
+                        theme,
+                        content: 'Overview',
+                        done,
+                    }),
+            ],
+            [
+                'detail',
+                (done: () => void) =>
+                    new AgentDetailView({
+                        theme,
+                        content: 'Details',
+                        agentName: 'worker',
+                        done,
+                    }),
+            ],
+        ])('closes the %s view on Kitty-protocol Escape', (_name, createView) => {
+            let closed = false;
+            const view = createView(() => {
+                closed = true;
+            });
+
+            view.handleInput('\x1b[27u');
+
+            expect(closed).toBe(true);
+        });
+
+        it.each([
+            [
+                'overview',
+                (requestRender: () => void) =>
+                    new SubagentsOverviewView({
+                        theme,
+                        content: Array.from(
+                            { length: 40 },
+                            (_, index) => `Overview row ${index}`,
+                        ).join('\n'),
+                        done: () => {},
+                        requestRender,
+                    }),
+            ],
+            [
+                'detail',
+                (requestRender: () => void) =>
+                    new AgentDetailView({
+                        theme,
+                        content: Array.from(
+                            { length: 40 },
+                            (_, index) => `Detail row ${index}`,
+                        ).join('\n'),
+                        agentName: 'worker',
+                        done: () => {},
+                        requestRender,
+                    }),
+            ],
+        ])(
+            'scrolls the %s view with Kitty navigation keys and requests rendering',
+            (_name, createView) => {
+                let renderRequests = 0;
+                const view = createView(() => {
+                    renderRequests++;
+                });
+
+                expect(view.render(80).at(-1)).toContain('[0/');
+
+                view.handleInput('\x1b[57420u');
+                expect(view.render(80).at(-1)).toContain('[1/');
+
+                view.handleInput('\x1b[57422u');
+                expect(view.render(80).at(-1)).toContain('[11/');
+
+                view.handleInput('\x1b[57419u');
+                expect(view.render(80).at(-1)).toContain('[10/');
+
+                view.handleInput('\x1b[57421u');
+                expect(view.render(80).at(-1)).toContain('[0/');
+                expect(renderRequests).toBe(4);
+            },
+        );
     });
 
     describe('readOverrides', () => {

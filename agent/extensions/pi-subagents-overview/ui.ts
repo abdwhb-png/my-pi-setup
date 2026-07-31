@@ -7,7 +7,7 @@
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
 import { BoxRenderer } from "../_shared/ui/framed-box";
 
 export const icon = "👥";
@@ -16,6 +16,18 @@ export const icon = "👥";
 
 interface ScrollState {
     scrollOffset: number;
+}
+
+function isCloseInput(data: string): boolean {
+    return matchesKey(data, "escape") || data === "q" || data === "Q";
+}
+
+function getScrollDelta(data: string): number | null {
+    if (matchesKey(data, Key.up) || matchesKey(data, "k")) return -1;
+    if (matchesKey(data, Key.down) || matchesKey(data, "j")) return 1;
+    if (matchesKey(data, Key.pageUp)) return -10;
+    if (matchesKey(data, Key.pageDown)) return 10;
+    return null;
 }
 
 // ── SubagentsOverviewView ────────────────────────────
@@ -29,6 +41,7 @@ export class SubagentsOverviewView implements Component {
             theme: Theme;
             content: string;
             done: () => void;
+            requestRender: () => void;
         },
     ) {
         this.contentLines = config.content.split("\n");
@@ -36,51 +49,18 @@ export class SubagentsOverviewView implements Component {
     }
 
     handleInput(data: string): void {
-        if (data === "\x1b" || data === "q" || data === "Q") {
+        if (isCloseInput(data)) {
             this.config.done();
             return;
         }
 
-        const isUp =
-            data === "ArrowUp" ||
-            data === "\x1b[A" ||
-            data === "\x1bOA" ||
-            data === "k";
-        const isDown =
-            data === "ArrowDown" ||
-            data === "\x1b[B" ||
-            data === "\x1bOB" ||
-            data === "j";
-        const isPageUp = data === "PageUp" || data === "\x1b[5~";
-        const isPageDown = data === "PageDown" || data === "\x1b[6~";
-
-        if (isUp) {
+        const delta = getScrollDelta(data);
+        if (delta !== null) {
             this.state = {
                 ...this.state,
-                scrollOffset: Math.max(0, this.state.scrollOffset - 1),
+                scrollOffset: Math.max(0, this.state.scrollOffset + delta),
             };
-            return;
-        }
-        if (isDown) {
-            this.state = {
-                ...this.state,
-                scrollOffset: this.state.scrollOffset + 1,
-            };
-            return;
-        }
-        if (isPageUp) {
-            this.state = {
-                ...this.state,
-                scrollOffset: Math.max(0, this.state.scrollOffset - 10),
-            };
-            return;
-        }
-        if (isPageDown) {
-            this.state = {
-                ...this.state,
-                scrollOffset: this.state.scrollOffset + 10,
-            };
-            return;
+            this.config.requestRender();
         }
     }
 
@@ -94,7 +74,7 @@ export class SubagentsOverviewView implements Component {
         box.setTitle(`${icon}Subagents Overview `);
         box.setContent(this.contentLines);
         box.scrollTo(this.state.scrollOffset);
-        box.setFooter('[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close');
+        box.setFooter("[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close");
         return box.render();
     }
 }
@@ -111,6 +91,7 @@ export class AgentDetailView implements Component {
             content: string;
             agentName: string;
             done: () => void;
+            requestRender: () => void;
         },
     ) {
         this.contentLines = config.content.split("\n");
@@ -118,51 +99,18 @@ export class AgentDetailView implements Component {
     }
 
     handleInput(data: string): void {
-        if (data === "\x1b" || data === "q" || data === "Q") {
+        if (isCloseInput(data)) {
             this.config.done();
             return;
         }
 
-        const isUp =
-            data === "ArrowUp" ||
-            data === "\x1b[A" ||
-            data === "\x1bOA" ||
-            data === "k";
-        const isDown =
-            data === "ArrowDown" ||
-            data === "\x1b[B" ||
-            data === "\x1bOB" ||
-            data === "j";
-        const isPageUp = data === "PageUp" || data === "\x1b[5~";
-        const isPageDown = data === "PageDown" || data === "\x1b[6~";
-
-        if (isUp) {
+        const delta = getScrollDelta(data);
+        if (delta !== null) {
             this.state = {
                 ...this.state,
-                scrollOffset: Math.max(0, this.state.scrollOffset - 1),
+                scrollOffset: Math.max(0, this.state.scrollOffset + delta),
             };
-            return;
-        }
-        if (isDown) {
-            this.state = {
-                ...this.state,
-                scrollOffset: this.state.scrollOffset + 1,
-            };
-            return;
-        }
-        if (isPageUp) {
-            this.state = {
-                ...this.state,
-                scrollOffset: Math.max(0, this.state.scrollOffset - 10),
-            };
-            return;
-        }
-        if (isPageDown) {
-            this.state = {
-                ...this.state,
-                scrollOffset: this.state.scrollOffset + 10,
-            };
-            return;
+            this.config.requestRender();
         }
     }
 
@@ -176,7 +124,7 @@ export class AgentDetailView implements Component {
         box.setTitle(` 🧬 Agent: ${this.config.agentName} `);
         box.setContent(this.contentLines);
         box.scrollTo(this.state.scrollOffset);
-        box.setFooter('[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close');
+        box.setFooter("[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close");
         return box.render();
     }
 }
