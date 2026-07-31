@@ -1,7 +1,7 @@
 ---
 name: sdd-combined-reviewer
 description: Read-only SDD specification and quality reviewer
-tools: '@inspect, @lens-inspect, safe_bash'
+tools: "@inspect, @lens-inspect, safe_bash"
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
