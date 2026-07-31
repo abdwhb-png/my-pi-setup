@@ -1,14 +1,14 @@
 import {
     getAgentDir,
     type ExtensionAPI,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     loadConfig,
     readUpstreamYoloMode,
     type AddonConfig,
     writeUpstreamYoloMode,
-} from './config.ts';
-import { checkAndBlock, InMemorySessionCache } from './handler.ts';
+} from "./config.ts";
+import { checkAndBlock, InMemorySessionCache } from "./handler.ts";
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -17,22 +17,21 @@ function errorMessage(error: unknown): string {
 export default function (pi: ExtensionAPI) {
     const sessionCache = new InMemorySessionCache();
     let config: AddonConfig = { inherit: {} };
-    /** Yolo mode follows --yolo or upstream pi-permission-system yoloMode. */
+    /** Permission yolo follows --yolo-permission or upstream yoloMode. */
     let yolo = false;
 
-    pi.registerFlag('yolo', {
-        description:
-            'Auto-approve all inherited permission checks (ask → allow)',
-        type: 'boolean',
+    pi.registerFlag("yolo-permission", {
+        description: "Auto-approve inherited permission checks (ask → allow).",
+        type: "boolean",
     });
 
-    pi.registerCommand('yolo', {
+    pi.registerCommand("yolo-permission", {
         description:
-            'Enable or disable permission-system yolo mode. Usage: /yolo [on|off|toggle|status]',
+            "Control permission yolo mode. Usage: /yolo-permission [on|off|status]",
         getArgumentCompletions: (prefix: string) => {
             const normalized = prefix.trim().toLowerCase();
-            if (normalized.includes(' ')) return null;
-            const options = ['on', 'off', 'toggle', 'status'];
+            if (normalized.includes(" ")) return null;
+            const options = ["on", "off", "status"];
             const matches = options.filter((option) =>
                 option.startsWith(normalized),
             );
@@ -41,41 +40,46 @@ export default function (pi: ExtensionAPI) {
                 : null;
         },
         handler: async (args, ctx) => {
-            const action = args.trim().toLowerCase() || 'toggle';
+            const action = args.trim().toLowerCase();
             const agentDir = getAgentDir();
             let current: boolean;
 
             try {
                 current = readUpstreamYoloMode(agentDir);
             } catch (error) {
-                ctx.ui.notify(errorMessage(error), 'error');
+                ctx.ui.notify(errorMessage(error), "error");
                 return;
             }
 
-            if (action === 'status') {
-                ctx.ui.notify(`YOLO mode: ${current ? 'ON' : 'OFF'}`, 'info');
+            if (action === "status") {
+                ctx.ui.notify(
+                    `YOLO permission mode: ${current ? "ON" : "OFF"}`,
+                    "info",
+                );
                 return;
             }
 
-            if (!['on', 'off', 'toggle'].includes(action)) {
-                ctx.ui.notify('Usage: /yolo [on|off|toggle|status]', 'warning');
+            if (!["on", "off"].includes(action)) {
+                ctx.ui.notify(
+                    "Usage: /yolo-permission [on|off|status]",
+                    "warning",
+                );
                 return;
             }
 
-            const next =
-                action === 'on' ? true : action === 'off' ? false : !current;
+            const next = action === "on";
 
             try {
                 writeUpstreamYoloMode(agentDir, next);
             } catch (error) {
-                ctx.ui.notify(errorMessage(error), 'error');
+                ctx.ui.notify(errorMessage(error), "error");
                 return;
             }
 
             yolo = next;
             ctx.ui.notify(
-                `YOLO mode: ${next ? 'ON' : 'OFF'}. Reloading...`,
-                'info',
+                `YOLO permission mode: ${next ? "ON" : "OFF"}. Reloading...`,
+                "info",
             );
             await ctx.reload();
             return;
@@ -88,33 +92,33 @@ export default function (pi: ExtensionAPI) {
         } catch (err) {
             config = { inherit: {} };
             console.error(
-                '[pi-permission-system-addons] Config error:',
+                "[pi-permission-system-addons] Config error:",
                 errorMessage(err),
             );
         }
     }
 
-    pi.on('session_start', (_event, ctx) => {
+    pi.on("session_start", (_event, ctx) => {
         reloadConfig(ctx.cwd);
         sessionCache.clear();
         try {
             yolo =
-                process.argv.includes('--yolo') ||
+                process.argv.includes("--yolo-permission") ||
                 readUpstreamYoloMode(getAgentDir());
         } catch (error) {
-            yolo = process.argv.includes('--yolo');
+            yolo = process.argv.includes("--yolo-permission");
             console.error(
-                '[pi-permission-system-addons] Config error:',
+                "[pi-permission-system-addons] Config error:",
                 errorMessage(error),
             );
         }
     });
 
-    pi.on('session_shutdown', () => {
+    pi.on("session_shutdown", () => {
         sessionCache.clear();
     });
 
-    pi.on('tool_call', async (event, ctx) => {
+    pi.on("tool_call", async (event, ctx) => {
         if (!config.inherit[event.toolName]) return;
 
         const result = await checkAndBlock(

@@ -44,10 +44,13 @@ function setup(initialYolo = false) {
               handler: (args: string, ctx: any) => Promise<void>;
           }
         | undefined;
+    const flags: string[] = [];
     const pi = {
-        registerFlag() {},
+        registerFlag(name: string) {
+            flags.push(name);
+        },
         registerCommand(name: string, definition: typeof command) {
-            if (name === 'yolo') command = definition;
+            if (name === 'yolo-permission') command = definition;
         },
         on() {},
         events: {},
@@ -69,6 +72,7 @@ function setup(initialYolo = false) {
 
     return {
         command: command!,
+        flags,
         ctx,
         notifications,
         get reloads() {
@@ -84,17 +88,22 @@ describe('extension entry point', () => {
         expect(typeof mod.default).toBe('function');
     });
 
-    it('registers /yolo and toggles yolo mode by default', async () => {
+    it('registers only yolo-permission and rejects implicit or toggle actions', async () => {
         const fixture = setup(false);
+        const initial = readFileSync(fixture.configPath, 'utf-8');
 
         await fixture.command.handler('', fixture.ctx);
+        await fixture.command.handler('toggle', fixture.ctx);
+        await fixture.command.handler('unexpected', fixture.ctx);
 
-        expect(JSON.parse(readFileSync(fixture.configPath, 'utf-8'))).toEqual({
-            yoloMode: true,
-            permission: { bash: { '*': 'allow' } },
-        });
-        expect(fixture.notifications.at(-1)?.[0]).toContain('ON');
-        expect(fixture.reloads).toBe(1);
+        expect(fixture.flags).toEqual(['yolo-permission']);
+        expect(readFileSync(fixture.configPath, 'utf-8')).toBe(initial);
+        expect(fixture.reloads).toBe(0);
+        expect(
+            fixture.notifications.every(([message]) =>
+                message.includes('Usage: /yolo-permission'),
+            ),
+        ).toBe(true);
     });
 
     it('supports explicit off without losing policy', async () => {

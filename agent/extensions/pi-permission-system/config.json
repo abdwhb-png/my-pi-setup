@@ -1,5 +1,5 @@
 {
-    "yoloMode": false,
+    "yoloMode": true,
     "shellTools": {
         "safe_bash": {
             "commandArgument": "command"
@@ -46,7 +46,8 @@
             "./node_modules/.bin/oxfmt *": "allow",
             "* ./node_modules/.bin/oxfmt *": "allow",
             "./node_modules/.bin/oxlint *": "allow",
-            "* ./node_modules/.bin/oxlint *": "allow"
+            "* ./node_modules/.bin/oxlint *": "allow",
+            "timeout *": "allow"
         },
         "write": {
             "*": "allow",
