@@ -1,15 +1,31 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import * as fs from 'node:fs';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
+import type {
+    ExtensionAPI,
+    ExtensionCommandContext,
+    Theme,
+} from '@earendil-works/pi-coding-agent';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { resolveToolAliases } from '../_shared/tool-groups/resolver';
-import { icon } from './ui';
+import registerSubagentsOverview from './index';
+import { AgentDetailView, icon, SubagentsOverviewView } from './ui';
 
 const HOME = homedir();
 const EXAMPLE_SETTINGS_PATH = path.resolve(
     import.meta.dir,
     '../../settings.example.json',
 );
+
+const theme = {
+    fg: (_color: string, text: string) => text,
+    bg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+    italic: (text: string) => text,
+    inverse: (text: string) => text,
+    underline: (text: string) => text,
+} as unknown as Theme;
 
 function parseFrontmatterSimple(raw: string): Record<string, string> | null {
     const match = raw.match(/^---\n([\s\S]*?)\n---\n/);
@@ -33,6 +49,81 @@ function renderLine(line: string, width: number): string {
 }
 
 describe('pi-subagents-overview', () => {
+    describe('overview rendering', () => {
+        it('keeps every row of the inner banner at the same width', async () => {
+            type CommandHandler = (
+                args: string,
+                ctx: ExtensionCommandContext,
+            ) => void | Promise<void>;
+            const handlers = new Map<string, CommandHandler>();
+            const pi = {
+                events: { on: () => {}, emit: () => {} },
+                registerMessageRenderer: () => {},
+                on: () => {},
+                registerCommand: (
+                    name: string,
+                    command: { handler: CommandHandler },
+                ) => handlers.set(name, command.handler),
+            } as unknown as ExtensionAPI;
+            registerSubagentsOverview(pi);
+
+            const handler = handlers.get('subagents-overview');
+            expect(handler).toBeDefined();
+
+            const log = spyOn(console, 'log').mockImplementation(() => {});
+            let overview = '';
+            try {
+                await handler?.('', {
+                    hasUI: false,
+                } as unknown as ExtensionCommandContext);
+                overview = String(log.mock.calls[0]?.[0] ?? '');
+            } finally {
+                log.mockRestore();
+            }
+
+            const bannerRows = overview.split('\n').slice(0, 3);
+
+            expect(bannerRows.map(visibleWidth)).toEqual([60, 60, 60]);
+        });
+
+        it.each([
+            [
+                'overview',
+                () =>
+                    new SubagentsOverviewView({
+                        theme,
+                        content: Array.from(
+                            { length: 30 },
+                            (_, index) => `Agent row ${index}`,
+                        ).join('\n'),
+                        done: () => {},
+                    }),
+            ],
+            [
+                'detail',
+                () =>
+                    new AgentDetailView({
+                        theme,
+                        content: Array.from(
+                            { length: 25 },
+                            (_, index) => `Detail row ${index}`,
+                        ).join('\n'),
+                        agentName: 'worker',
+                        done: () => {},
+                    }),
+            ],
+        ])('renders one scroll counter in the %s footer', (_name, createView) => {
+            const output = createView().render(80);
+            const footer = output.at(-1) ?? '';
+            const scrollCounters = footer.match(/\[\d+\/\d+↑↓\]/g) ?? [];
+
+            expect(scrollCounters).toHaveLength(1);
+            expect(output.every((line) => visibleWidth(line) === 76)).toBe(
+                true,
+            );
+        });
+    });
+
     describe('readOverrides', () => {
         it('finds agents with overrides in settings.json', () => {
             const raw = fs.readFileSync(EXAMPLE_SETTINGS_PATH, 'utf-8');

@@ -316,7 +316,7 @@ function formatOverview(): string {
 
     lines.push('╔══════════════════════════════════════════════════════════╗');
     lines.push(
-        `${CYAN}║                    Subagents Overview                   ║${RESET}`,
+        `${CYAN}║                    Subagents Overview                    ║${RESET}`,
     );
     lines.push('╚══════════════════════════════════════════════════════════╝');
     lines.push('');

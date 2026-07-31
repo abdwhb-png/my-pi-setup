@@ -94,9 +94,7 @@ export class SubagentsOverviewView implements Component {
         box.setTitle(`${icon}Subagents Overview `);
         box.setContent(this.contentLines);
         box.scrollTo(this.state.scrollOffset);
-        box.setFooter(
-            `${box.getScrollInfo()}[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close`,
-        );
+        box.setFooter('[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close');
         return box.render();
     }
 }
@@ -178,9 +176,7 @@ export class AgentDetailView implements Component {
         box.setTitle(` 🧬 Agent: ${this.config.agentName} `);
         box.setContent(this.contentLines);
         box.scrollTo(this.state.scrollOffset);
-        box.setFooter(
-            `${box.getScrollInfo()}[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close`,
-        );
+        box.setFooter('[↑↓/PgUp/PgDn] Scroll  [q/Esc] Close');
         return box.render();
     }
 }
