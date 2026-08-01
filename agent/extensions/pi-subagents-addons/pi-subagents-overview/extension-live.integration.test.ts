@@ -229,6 +229,7 @@ describe('pi-subagents-overview live integration', () => {
                         () => {},
                     );
                     view.handleInput?.('\t');
+                    view.handleInput?.('\t');
                     for (const key of ['s', 'i', 'x']) view.handleInput?.(key);
                     await Bun.sleep(20);
                     view.dispose?.();

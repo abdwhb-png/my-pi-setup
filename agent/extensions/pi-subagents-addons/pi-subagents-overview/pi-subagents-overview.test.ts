@@ -50,7 +50,7 @@ function renderLine(line: string, width: number): string {
 
 describe('pi-subagents-overview', () => {
     describe('overview rendering', () => {
-        it('uses only the BoxRenderer title and keeps every overlay row aligned', async () => {
+        it('uses one composed framed-box title and keeps every overlay row aligned', async () => {
             type CommandHandler = (
                 args: string,
                 ctx: ExtensionCommandContext,
@@ -97,6 +97,7 @@ describe('pi-subagents-overview', () => {
             expect(output.every((line) => visibleWidth(line) === 76)).toBe(
                 true,
             );
+            expect(output.join('\n')).not.toContain('\x1b[');
         });
 
         it('keeps every row of the inner banner at the same width', async () => {

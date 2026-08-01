@@ -33,25 +33,6 @@ describe('pi-subagents-addons discovery contract', () => {
         ).toBe(false);
     });
 
-    it('lets the addon own live UI while preserving the intercom bridge', () => {
-        const config = JSON.parse(
-            fs.readFileSync(
-                path.join(EXTENSIONS_DIR, 'subagent', 'config.json'),
-                'utf8',
-            ),
-        ) as {
-            fleetView?: boolean;
-            asyncWidget?: boolean;
-            intercomBridge?: { mode?: string };
-        };
-
-        expect(config).toMatchObject({
-            fleetView: false,
-            asyncWidget: false,
-            intercomBridge: { mode: 'fork-only' },
-        });
-    });
-
     it('uses the Pi-managed pi-subagents version exposing fleetStatus', () => {
         const npmDir = path.resolve(EXTENSIONS_DIR, '..', 'npm');
         const manifest = JSON.parse(

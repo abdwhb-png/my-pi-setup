@@ -7,8 +7,21 @@
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
-import { BoxRenderer } from "../../_shared/ui/framed-box";
+import {
+    Key,
+    matchesKey,
+    type Component,
+    wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
+import {
+    allocateBoxPanelLayout,
+    BoxRenderer,
+    renderBoxFooter,
+    renderBoxHeader,
+    renderBoxPanelRow,
+    renderBoxPanelSeparator,
+    type BoxPanelLayout,
+} from "../../_shared/ui/framed-box";
 import type { LiveRun, LiveRunSnapshot } from "./fleet-store.ts";
 import { formatDuration, formatTokens } from "./live-ui.ts";
 
@@ -19,6 +32,42 @@ export const icon = "👥";
 interface ScrollState {
     scrollOffset: number;
 }
+
+export interface OverviewField {
+    label: string;
+    value: string;
+}
+
+export interface OverviewAgent {
+    name: string;
+    description: string;
+    tools: string[];
+    model: string;
+    skills: string[];
+    source: "builtin" | "user" | "project";
+    context: string | null;
+    overrideFields: OverviewField[];
+}
+
+export interface SubagentsOverviewData {
+    agents: OverviewAgent[];
+    overrides: Array<{
+        agentName: string;
+        fields: OverviewField[];
+    }>;
+    stats: {
+        builtinCount: number;
+        userCount: number;
+        safeBashAgents: string[];
+        plainBashAgents: string[];
+        skillCount: number;
+    };
+}
+
+type CatalogItem =
+    | { kind: "agent"; agent: OverviewAgent }
+    | { kind: "overrides" }
+    | { kind: "stats" };
 
 function isCloseInput(data: string): boolean {
     return matchesKey(data, "escape") || data === "q" || data === "Q";
@@ -38,6 +87,10 @@ export class SubagentsOverviewView implements Component {
     private contentLines: string[];
     private state: ScrollState;
     private tab: "catalog" | "live" = "catalog";
+    private catalogFocus: "agents" | "details" = "agents";
+    private selectedCatalogItem = 0;
+    private catalogDetailOpen = false;
+    private compactCatalog = false;
     private selectedRun = 0;
     private detailOpen = false;
     private cancelRefreshTimer: (() => void) | undefined;
@@ -45,9 +98,11 @@ export class SubagentsOverviewView implements Component {
     constructor(
         private config: {
             theme: Theme;
-            content: string;
+            content?: string;
+            data?: SubagentsOverviewData;
             done: () => void;
             requestRender?: () => void;
+            getTerminalRows?: () => number;
             getLiveSnapshot?: () => LiveRunSnapshot;
             now?: () => number;
             onRefresh?: () => void | Promise<void>;
@@ -59,7 +114,7 @@ export class SubagentsOverviewView implements Component {
             refreshMs?: number;
         },
     ) {
-        this.contentLines = config.content.split("\n");
+        this.contentLines = config.content?.split("\n") ?? [];
         this.state = { scrollOffset: 0 };
         if (config.getLiveSnapshot && config.onRefresh) {
             const refreshTimer = setInterval(() => {
@@ -72,6 +127,26 @@ export class SubagentsOverviewView implements Component {
         if (config.getLiveSnapshot) config.onLiveVisibilityChange?.(false);
     }
 
+    private movePrimaryFocus(direction: -1 | 1): void {
+        const current =
+            this.tab === "live" ? 2 : this.catalogFocus === "details" ? 1 : 0;
+        const next = (current + direction + 3) % 3;
+
+        this.detailOpen = false;
+        this.state.scrollOffset = 0;
+        if (next === 2) {
+            this.tab = "live";
+            this.catalogDetailOpen = false;
+        } else {
+            this.tab = "catalog";
+            this.catalogFocus = next === 1 ? "details" : "agents";
+            this.catalogDetailOpen =
+                this.compactCatalog && this.catalogFocus === "details";
+        }
+        this.config.onLiveVisibilityChange?.(this.tab === "live");
+        this.config.requestRender?.();
+    }
+
     handleInput(data: string): void {
         if (isCloseInput(data)) {
             if (this.detailOpen) {
@@ -80,19 +155,35 @@ export class SubagentsOverviewView implements Component {
                 this.config.requestRender?.();
                 return;
             }
+            if (this.catalogDetailOpen) {
+                this.catalogDetailOpen = false;
+                this.catalogFocus = "agents";
+                this.state.scrollOffset = 0;
+                this.config.requestRender?.();
+                return;
+            }
             this.config.done();
             return;
         }
 
-        if (
-            this.config.getLiveSnapshot &&
-            (matchesKey(data, "tab") || data === "\t" || matchesKey(data, Key.left) || matchesKey(data, Key.right))
-        ) {
-            this.tab = this.tab === "catalog" ? "live" : "catalog";
-            this.detailOpen = false;
-            this.state.scrollOffset = 0;
-            this.config.onLiveVisibilityChange?.(this.tab === "live");
-            this.config.requestRender?.();
+        const focusDirection =
+            matchesKey(data, "tab") ||
+            data === "\t" ||
+            matchesKey(data, Key.right)
+                ? 1
+                : matchesKey(data, Key.left)
+                  ? -1
+                  : null;
+        if (this.config.getLiveSnapshot && focusDirection !== null) {
+            if (this.config.data) {
+                this.movePrimaryFocus(focusDirection);
+            } else {
+                this.tab = this.tab === "catalog" ? "live" : "catalog";
+                this.detailOpen = false;
+                this.state.scrollOffset = 0;
+                this.config.onLiveVisibilityChange?.(this.tab === "live");
+                this.config.requestRender?.();
+            }
             return;
         }
 
@@ -136,8 +227,48 @@ export class SubagentsOverviewView implements Component {
             }
         }
 
+        if (this.tab === "catalog" && this.config.data) {
+            const items = this.catalogItems();
+            if (
+                this.catalogFocus === "agents" &&
+                (matchesKey(data, Key.up) || matchesKey(data, "k"))
+            ) {
+                this.selectedCatalogItem = Math.max(
+                    0,
+                    this.selectedCatalogItem - 1,
+                );
+                this.state.scrollOffset = 0;
+                this.config.requestRender?.();
+                return;
+            }
+            if (
+                this.catalogFocus === "agents" &&
+                (matchesKey(data, Key.down) || matchesKey(data, "j"))
+            ) {
+                this.selectedCatalogItem = Math.min(
+                    Math.max(0, items.length - 1),
+                    this.selectedCatalogItem + 1,
+                );
+                this.state.scrollOffset = 0;
+                this.config.requestRender?.();
+                return;
+            }
+            if (matchesKey(data, "return") && this.catalogFocus === "agents") {
+                this.catalogFocus = "details";
+                this.catalogDetailOpen = this.compactCatalog;
+                this.state.scrollOffset = 0;
+                this.config.requestRender?.();
+                return;
+            }
+        }
+
         const delta = getScrollDelta(data);
-        if (delta !== null) {
+        if (
+            delta !== null &&
+            (!this.config.data ||
+                this.tab === "live" ||
+                this.catalogFocus === "details")
+        ) {
             this.state = {
                 ...this.state,
                 scrollOffset: Math.max(0, this.state.scrollOffset + delta),
@@ -157,11 +288,18 @@ export class SubagentsOverviewView implements Component {
     }
 
     render(width: number): string[] {
+        if (!this.config.data) return this.renderLegacy(width);
+        return this.renderStructured(width);
+    }
+
+    private renderLegacy(width: number): string[] {
         const { theme } = this.config;
         const box = new BoxRenderer(theme, width);
         const hasLive = this.config.getLiveSnapshot !== undefined;
         const tabLabel = this.tab === "catalog" ? "Catalog" : "Live";
-        box.setTitle(`${icon}Subagents Overview${hasLive ? ` · ${tabLabel}` : ""} `);
+        box.setTitle(
+            `${icon}Subagents Overview${hasLive ? ` · ${tabLabel}` : ""} `,
+        );
         box.setContent(
             hasLive
                 ? this.tab === "catalog"
@@ -182,6 +320,328 @@ export class SubagentsOverviewView implements Component {
         return box.render();
     }
 
+    private catalogItems(): CatalogItem[] {
+        const agents = this.config.data?.agents ?? [];
+        return [
+            ...agents.map((agent): CatalogItem => ({ kind: "agent", agent })),
+            { kind: "overrides" },
+            { kind: "stats" },
+        ];
+    }
+
+    private catalogRosterLines(bodyHeight: number): string[] {
+        const { theme } = this.config;
+        const items = this.catalogItems();
+        this.selectedCatalogItem = Math.min(
+            this.selectedCatalogItem,
+            Math.max(0, items.length - 1),
+        );
+        const lines = items.map((item, index) => {
+            const marker = index === this.selectedCatalogItem ? "▸" : " ";
+            if (item.kind === "agent") {
+                const source =
+                    item.agent.source === "builtin"
+                        ? "B"
+                        : item.agent.source === "user"
+                          ? "U"
+                          : "P";
+                const label = `${marker} ${source} ${item.agent.name}`;
+                return index === this.selectedCatalogItem
+                    ? theme.fg("accent", theme.bold(label))
+                    : label;
+            }
+            const label =
+                item.kind === "overrides"
+                    ? `${marker} ⚙ Active overrides`
+                    : `${marker} ◫ Quick stats`;
+            return index === this.selectedCatalogItem
+                ? theme.fg("accent", theme.bold(label))
+                : theme.fg("muted", label);
+        });
+        const maxOffset = Math.max(0, lines.length - bodyHeight);
+        const offset = Math.min(
+            maxOffset,
+            Math.max(0, this.selectedCatalogItem - bodyHeight + 1),
+        );
+        return lines.slice(offset, offset + bodyHeight);
+    }
+
+    private catalogDetailLines(): string[] {
+        const data = this.config.data;
+        if (!data) return ["Catalog unavailable."];
+        const item = this.catalogItems()[this.selectedCatalogItem];
+        if (!item) return ["No catalog entries."];
+
+        if (item.kind === "overrides") {
+            if (data.overrides.length === 0) {
+                return [
+                    this.config.theme.bold("Active overrides"),
+                    "",
+                    "No overrides configured.",
+                ];
+            }
+            return [
+                this.config.theme.bold("Active overrides"),
+                "",
+                ...data.overrides.flatMap((override) => [
+                    this.config.theme.fg("accent", override.agentName),
+                    ...override.fields.map(
+                        (field) => `  ${field.label}: ${field.value}`,
+                    ),
+                    "",
+                ]),
+            ];
+        }
+
+        if (item.kind === "stats") {
+            const total = data.stats.builtinCount + data.stats.userCount;
+            return [
+                this.config.theme.bold("Quick stats"),
+                "",
+                `Agents: ${total}`,
+                `Builtin: ${data.stats.builtinCount}`,
+                `User: ${data.stats.userCount}`,
+                `Safe bash: ${data.stats.safeBashAgents.join(", ") || "none"}`,
+                `Plain bash: ${data.stats.plainBashAgents.join(", ") || "none"}`,
+                `Skills referenced: ${data.stats.skillCount}`,
+            ];
+        }
+
+        const agent = item.agent;
+        return [
+            this.config.theme.bold(agent.name),
+            this.config.theme.fg(
+                "muted",
+                agent.description || "No description.",
+            ),
+            "",
+            `Source: ${agent.source}`,
+            `Model: ${agent.model}`,
+            `Context: ${agent.context ?? "—"}`,
+            `Tools: ${agent.tools.join(", ") || "—"}`,
+            `Skills: ${agent.skills.join(", ") || "—"}`,
+            ...(agent.overrideFields.length > 0
+                ? [
+                      "",
+                      this.config.theme.fg("warning", "Override"),
+                      ...agent.overrideFields.map(
+                          (field) => `  ${field.label}: ${field.value}`,
+                      ),
+                  ]
+                : []),
+        ];
+    }
+
+    private wrapPanelLines(lines: string[], width: number): string[] {
+        const contentWidth = Math.max(1, width - 2);
+        return lines.flatMap((line) =>
+            wrapTextWithAnsi(line, contentWidth).map(
+                (wrapped) => ` ${wrapped}`,
+            ),
+        );
+    }
+
+    private panelTitle(label: string, active: boolean): string {
+        return active
+            ? this.config.theme.fg(
+                  "accent",
+                  this.config.theme.bold(` ▸ ${label}`),
+              )
+            : this.config.theme.fg("muted", ` ${label}`);
+    }
+
+    private renderStructured(width: number): string[] {
+        const { theme } = this.config;
+        const frameWidth = Math.max(4, width - 4);
+        if (frameWidth < 32) return ["Subagents overview needs ≥36 columns."];
+
+        const rows = this.config.getTerminalRows?.() ?? 32;
+        const maxHeight = Math.max(
+            1,
+            Math.min(Math.floor(rows * 0.85), Math.max(1, rows - 2)),
+        );
+        const bodyHeight = Math.max(1, maxHeight - 6);
+        const fullLayout = allocateBoxPanelLayout(frameWidth, [
+            { minWidth: frameWidth - 2 },
+        ]);
+        if (!fullLayout) return ["Subagents overview cannot fit."];
+        if (maxHeight < 7) {
+            const fallback = [
+                renderBoxHeader(
+                    theme,
+                    frameWidth,
+                    `${icon} Subagents Overview`,
+                    {
+                        titlePosition: "left",
+                        borderStyle: "rounded",
+                    },
+                ),
+                renderBoxPanelRow(
+                    theme,
+                    fullLayout,
+                    [
+                        ` ${this.tab === "catalog" ? "Catalog" : "Live"} · q/Esc close`,
+                    ],
+                    { borderStyle: "rounded" },
+                ),
+                renderBoxFooter(theme, frameWidth, "", {
+                    borderStyle: "rounded",
+                }),
+            ];
+            return fallback.slice(0, maxHeight);
+        }
+        const catalogLayout =
+            this.tab === "catalog" && frameWidth >= 72
+                ? allocateBoxPanelLayout(frameWidth, [
+                      { minWidth: 24, maxWidth: 30 },
+                      { minWidth: 36, weight: 2 },
+                  ])
+                : null;
+        this.compactCatalog = this.tab === "catalog" && catalogLayout === null;
+        const tabs =
+            this.tab === "catalog"
+                ? `${this.panelTitle("CATALOG", true)}   ${this.panelTitle("LIVE", false)}`
+                : `${this.panelTitle("CATALOG", false)}   ${this.panelTitle("LIVE", true)}`;
+        const lines = [
+            renderBoxHeader(theme, frameWidth, `${icon} Subagents Overview`, {
+                titlePosition: "left",
+                borderStyle: "rounded",
+            }),
+            renderBoxPanelRow(theme, fullLayout, [tabs], {
+                borderStyle: "rounded",
+            }),
+        ];
+
+        const layout: BoxPanelLayout = catalogLayout ?? fullLayout;
+        lines.push(
+            renderBoxPanelSeparator(theme, layout, "top", {
+                borderStyle: "rounded",
+            }),
+        );
+
+        if (this.tab === "catalog") {
+            const showDetail = catalogLayout !== null || this.catalogDetailOpen;
+            lines.push(
+                renderBoxPanelRow(
+                    theme,
+                    layout,
+                    catalogLayout
+                        ? [
+                              this.panelTitle(
+                                  "AGENTS",
+                                  this.catalogFocus === "agents",
+                              ),
+                              this.panelTitle(
+                                  "DETAILS",
+                                  this.catalogFocus === "details",
+                              ),
+                          ]
+                        : [
+                              this.panelTitle(
+                                  showDetail ? "DETAILS" : "AGENTS",
+                                  true,
+                              ),
+                          ],
+                    { borderStyle: "rounded" },
+                ),
+                renderBoxPanelSeparator(theme, layout, "middle", {
+                    borderStyle: "rounded",
+                }),
+            );
+
+            const roster = this.wrapPanelLines(
+                this.catalogRosterLines(bodyHeight),
+                layout.panelWidths[0],
+            );
+            const detailWidth =
+                catalogLayout?.panelWidths[1] ?? layout.panelWidths[0];
+            const detail = this.wrapPanelLines(
+                this.catalogDetailLines(),
+                detailWidth,
+            );
+            const detailOffset = Math.min(
+                this.state.scrollOffset,
+                Math.max(0, detail.length - bodyHeight),
+            );
+            for (let index = 0; index < bodyHeight; index++) {
+                lines.push(
+                    renderBoxPanelRow(
+                        theme,
+                        layout,
+                        catalogLayout
+                            ? [
+                                  roster[index] ?? "",
+                                  detail[detailOffset + index] ?? "",
+                              ]
+                            : [
+                                  showDetail
+                                      ? (detail[detailOffset + index] ?? "")
+                                      : (roster[index] ?? ""),
+                              ],
+                        { borderStyle: "rounded" },
+                    ),
+                );
+            }
+        } else {
+            lines.push(
+                renderBoxPanelRow(
+                    theme,
+                    fullLayout,
+                    [
+                        this.panelTitle(
+                            this.detailOpen ? "TRANSCRIPT" : "RUNS",
+                            true,
+                        ),
+                    ],
+                    {
+                        borderStyle: "rounded",
+                    },
+                ),
+                renderBoxPanelSeparator(theme, fullLayout, "middle", {
+                    borderStyle: "rounded",
+                }),
+            );
+            const live = this.wrapPanelLines(
+                this.renderLiveContent(),
+                fullLayout.panelWidths[0],
+            );
+            const liveOffset = Math.min(
+                this.state.scrollOffset,
+                Math.max(0, live.length - bodyHeight),
+            );
+            for (let index = 0; index < bodyHeight; index++) {
+                lines.push(
+                    renderBoxPanelRow(
+                        theme,
+                        fullLayout,
+                        [live[liveOffset + index] ?? ""],
+                        { borderStyle: "rounded" },
+                    ),
+                );
+            }
+        }
+
+        const footer =
+            this.tab === "live"
+                ? this.detailOpen
+                    ? "Enter/Esc back · PgUp/PgDn scroll · q close"
+                    : "↑↓ select · Enter details · Tab catalog · q/Esc close"
+                : this.compactCatalog
+                  ? this.catalogDetailOpen
+                      ? "↑↓/PgUp/PgDn scroll · Tab/←→ focus · Esc back · q close"
+                      : "↑↓ select · Enter details · Tab/←→ focus · q/Esc close"
+                  : this.catalogFocus === "details"
+                    ? "↑↓/PgUp/PgDn scroll · Tab/←→ focus · q/Esc close"
+                    : "↑↓ select · Tab/←→ focus · q/Esc close";
+        lines.push(
+            renderBoxFooter(theme, frameWidth, footer, {
+                titlePosition: "left",
+                borderStyle: "rounded",
+            }),
+        );
+        return lines;
+    }
+
     private renderLiveContent(): string[] {
         const snapshot = this.config.getLiveSnapshot?.();
         if (!snapshot) return ["Catalog  [Live]", "", "Live data unavailable."];
@@ -192,7 +652,11 @@ export class SubagentsOverviewView implements Component {
         const capability = snapshot.fleetAvailable
             ? `${snapshot.totalActive} active${snapshot.omitted > 0 ? ` · +${snapshot.omitted} omitted` : ""}`
             : "Fleet RPC unavailable · showing tracked async runs only";
-        const lines = ["Catalog  [Live]", this.config.theme.fg("dim", capability), ""];
+        const lines = [
+            "Catalog  [Live]",
+            this.config.theme.fg("dim", capability),
+            "",
+        ];
         if (snapshot.runs.length === 0) {
             lines.push("No subagent runs in this session.");
             return lines;
@@ -212,7 +676,8 @@ export class SubagentsOverviewView implements Component {
             lines.push(
                 `${marker} ${run.agent}${run.role ? `:${run.role}` : ""}  ${state}  ${formatDuration(durationEnd - run.startedAt)}  ${formatTokens(run.tokens.total)}`,
             );
-            if (run.goal) lines.push(`    ${this.config.theme.fg("dim", run.goal)}`);
+            if (run.goal)
+                lines.push(`    ${this.config.theme.fg("dim", run.goal)}`);
             if (index === this.selectedRun) {
                 lines.push(
                     run.source === "fleet"
@@ -248,7 +713,9 @@ export class SubagentsOverviewView implements Component {
         if (run.currentTool) lines.push(`Current tool: ${run.currentTool}`);
         if (run.summary) lines.push(`Summary: ${run.summary}`);
         lines.push("", "Transcript", "──────────");
-        lines.push(...(run.transcript?.split("\n") ?? ["No transcript output yet."]));
+        lines.push(
+            ...(run.transcript?.split("\n") ?? ["No transcript output yet."]),
+        );
         return lines;
     }
 }

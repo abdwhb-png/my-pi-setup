@@ -14,6 +14,44 @@ const theme = {
     underline: (text: string) => text,
 } as unknown as Theme;
 
+const overviewData = {
+    agents: [
+        {
+            name: 'worker',
+            description: 'Implements focused tasks',
+            tools: ['read', 'edit'],
+            model: 'inherit',
+            skills: [],
+            source: 'builtin' as const,
+            context: 'fork',
+            overrideFields: [],
+        },
+        {
+            name: 'reviewer',
+            description: 'Reviews completed work',
+            tools: ['read'],
+            model: 'review-model',
+            skills: ['caveman-review'],
+            source: 'user' as const,
+            context: null,
+            overrideFields: [{ label: 'model', value: 'review-model' }],
+        },
+    ],
+    overrides: [
+        {
+            agentName: 'reviewer',
+            fields: [{ label: 'model', value: 'review-model' }],
+        },
+    ],
+    stats: {
+        builtinCount: 1,
+        userCount: 1,
+        safeBashAgents: ['worker'],
+        plainBashAgents: [],
+        skillCount: 1,
+    },
+};
+
 describe('renderLiveWidget', () => {
     it('renders at most five fully closed rows and reports overflow', () => {
         const snapshot: LiveRunSnapshot = {
@@ -68,9 +106,159 @@ describe('renderLiveWidget', () => {
         expect(hasVisibleLiveRuns(snapshot, 7_000)).toBe(true);
         expect(hasVisibleLiveRuns(snapshot, 7_001)).toBe(false);
     });
+
+    it('never renders wider than the available narrow widget width', () => {
+        const snapshot: LiveRunSnapshot = {
+            fleetAvailable: true,
+            totalActive: 1,
+            omitted: 0,
+            runs: [
+                {
+                    source: 'fleet',
+                    key: 'fleet-1',
+                    agent: 'worker-with-a-long-name',
+                    goal: 'A long goal that must be truncated',
+                    startedAt: 1_000,
+                    tokens: { input: 100, output: 20, total: 120 },
+                    state: 'active',
+                    controllable: false,
+                },
+            ],
+        };
+
+        const output = renderLiveWidget(snapshot, theme, 12, 5_000);
+
+        expect(output.length).toBeGreaterThan(0);
+        expect(output.every((line) => visibleWidth(line) === 12)).toBe(true);
+    });
 });
 
 describe('SubagentsOverviewView live tab', () => {
+    it('cycles focus through agents, details, and live while scrolling only the focused panel', () => {
+        const view = new SubagentsOverviewView({
+            theme,
+            data: overviewData,
+            done: () => {},
+            getTerminalRows: () => 14,
+            getLiveSnapshot: () => ({
+                fleetAvailable: true,
+                totalActive: 0,
+                omitted: 0,
+                runs: [],
+            }),
+        });
+
+        expect(view.render(100).join('\n')).toContain('▸ AGENTS');
+
+        view.handleInput('\t');
+        const details = view.render(100).join('\n');
+        expect(details).toContain('▸ DETAILS');
+        expect(details).toContain('Implements focused tasks');
+
+        view.handleInput('\x1b[B');
+        expect(view.render(100).join('\n')).not.toBe(details);
+        expect(view.render(100).join('\n')).toContain('▸ DETAILS');
+
+        view.handleInput('\x1b[9u');
+        expect(view.render(100).join('\n')).toContain('▸ LIVE');
+        view.handleInput('\x1b[9u');
+        expect(view.render(100).join('\n')).toContain('▸ AGENTS');
+
+        view.handleInput('\x1b[C');
+        expect(view.render(100).join('\n')).toContain('▸ DETAILS');
+        view.handleInput('\x1b[57418u');
+        expect(view.render(100).join('\n')).toContain('▸ LIVE');
+        view.handleInput('\x1b[57417u');
+        expect(view.render(100).join('\n')).toContain('▸ DETAILS');
+        view.handleInput('\x1b[D');
+        expect(view.render(100).join('\n')).toContain('▸ AGENTS');
+    });
+
+    it('renders a responsive catalog with fixed tabs and composed agent/detail panels', () => {
+        const config = {
+            theme,
+            content: 'Legacy catalog',
+            data: overviewData,
+            done: () => {},
+            getTerminalRows: () => 40,
+        };
+        const view = new SubagentsOverviewView(config);
+
+        const initial = view.render(100).join('\n');
+        expect(initial).toContain('▸ CATALOG');
+        expect(initial).toContain('AGENTS');
+        expect(initial).toContain('DETAILS');
+        expect(initial).toContain('worker');
+        expect(initial).toContain('Implements focused tasks');
+
+        view.handleInput('\x1b[B');
+        const selected = view.render(100).join('\n');
+        expect(selected).toContain('reviewer');
+        expect(selected).toContain('Reviews completed work');
+        expect(selected).toContain('Override');
+
+        view.handleInput('\x1b[57419u');
+        expect(view.render(100).join('\n')).toContain('Implements focused tasks');
+        view.handleInput('\x1b[57420u');
+        expect(view.render(100).join('\n')).toContain('Reviews completed work');
+    });
+
+    it('uses a single catalog panel on narrow terminals and opens details explicitly', () => {
+        const config = {
+            theme,
+            content: 'Legacy catalog',
+            data: overviewData,
+            done: () => {},
+            getTerminalRows: () => 24,
+        };
+        const view = new SubagentsOverviewView(config);
+
+        const roster = view.render(54).join('\n');
+        expect(roster).toContain('AGENTS');
+        expect(roster).not.toContain('Implements focused tasks');
+
+        view.handleInput('\r');
+        const detail = view.render(54).join('\n');
+        expect(detail).toContain('DETAILS');
+        expect(detail).toContain('Implements focused tasks');
+
+        view.handleInput('\x1b[27u');
+        expect(view.render(54).join('\n')).toContain('AGENTS');
+
+        view.handleInput('\x1b[13u');
+        expect(view.render(54).join('\n')).toContain('DETAILS');
+        view.handleInput('\x1b');
+        expect(view.render(54).join('\n')).toContain('AGENTS');
+    });
+
+    it('caps the overview height from the live terminal row count', () => {
+        const config = {
+            theme,
+            content: Array.from({ length: 40 }, (_, index) => `Legacy row ${index}`).join(
+                '\n',
+            ),
+            data: overviewData,
+            done: () => {},
+            getTerminalRows: () => 16,
+        };
+        const view = new SubagentsOverviewView(config);
+
+        expect(view.render(100).length).toBeLessThanOrEqual(13);
+    });
+
+    it('falls back without exceeding an extremely short terminal', () => {
+        const config = {
+            theme,
+            content: 'Legacy catalog',
+            data: overviewData,
+            done: () => {},
+            getTerminalRows: () => 6,
+        };
+        const view = new SubagentsOverviewView(config);
+
+        expect(view.render(100).length).toBeLessThanOrEqual(4);
+    });
+
     it('switches from Catalog to Live and explains the native sync fallback', () => {
         const snapshot: LiveRunSnapshot = {
             fleetAvailable: true,
