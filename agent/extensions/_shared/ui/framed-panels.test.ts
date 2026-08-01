@@ -115,7 +115,7 @@ describe("shared framed panel chrome", () => {
         expect(renderPanelTitle(theme, "DETAILS", false)).toBe(" DETAILS");
     });
 
-    it("assembles full-width prelude, panel titles, body, additions, and footer", () => {
+    it("assembles full-width prelude, panel titles, body, panel footers, and box footer", () => {
         const resolved = resolveResponsivePanelLayout(30, [
             {
                 mode: "wide",
@@ -130,7 +130,7 @@ describe("shared framed panel chrome", () => {
             prelude: [" summary"],
             panelTitles: [" LEFT", " RIGHT"],
             panelRows: [[" one", " two"]],
-            additionalRows: [["", " actions"]],
+            panelFooterRows: [["", " actions"]],
             footer: "close",
         });
 
@@ -139,6 +139,31 @@ describe("shared framed panel chrome", () => {
         expect(lines.join("\n")).toContain("actions");
         expect(lines.at(-1)).toContain("close");
         expect(lines.every((line) => visibleWidth(line) === 30)).toBe(true);
+    });
+
+    it("keeps panel and box footer rows as distinct composable regions", () => {
+        const resolved = resolveResponsivePanelLayout(30, [
+            {
+                mode: "wide",
+                minWidth: 30,
+                panels: [{ minWidth: 10 }, { minWidth: 17 }],
+            },
+        ] as const)!;
+        const lines = renderFramedPanels({
+            theme,
+            title: "Review",
+            layout: resolved.layout,
+            panelRows: [[" one", " two"]],
+            panelFooterRows: [[" left help", " right help"]],
+            boxFooterRows: [" full-width help"],
+        });
+
+        const panelHelpLine = lines.find((line) => line.includes("left help"));
+        const helpLine = lines.find((line) => line.includes("full-width help"));
+        expect(panelHelpLine?.match(/│/g)).toHaveLength(3);
+        expect(helpLine).toBeDefined();
+        expect(helpLine?.match(/│/g)).toHaveLength(2);
+        expect(visibleWidth(helpLine ?? "")).toBe(30);
     });
 
     it("returns a closed bounded fallback when width or height is insufficient", () => {

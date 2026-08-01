@@ -104,7 +104,8 @@ export function renderFramedPanels(options: {
     prelude?: readonly string[];
     panelTitles?: readonly string[];
     panelRows?: readonly (readonly string[])[];
-    additionalRows?: readonly (readonly string[])[];
+    panelFooterRows?: readonly (readonly string[])[];
+    boxFooterRows?: readonly string[];
     footer?: string;
     borderStyle?: BoxBorderStyle;
     titlePosition?: "left" | "center" | "right";
@@ -116,7 +117,8 @@ export function renderFramedPanels(options: {
         prelude = [],
         panelTitles,
         panelRows = [],
-        additionalRows = [],
+        panelFooterRows = [],
+        boxFooterRows = [],
         footer = "",
         borderStyle = "rounded",
         titlePosition = "left",
@@ -146,9 +148,19 @@ export function renderFramedPanels(options: {
         ...panelRows.map((row) =>
             renderBoxPanelRow(theme, layout, row, boxOptions),
         ),
-        ...additionalRows.map((row) =>
+        ...panelFooterRows.map((row) =>
             renderBoxPanelRow(theme, layout, row, boxOptions),
         ),
+    );
+    if (boxFooterRows.length > 0) {
+        rendered.push(
+            renderBoxPanelSeparator(theme, layout, "bottom", boxOptions),
+            ...boxFooterRows.map((line) =>
+                renderBoxPanelRow(theme, fullLayout, [line], boxOptions),
+            ),
+        );
+    }
+    rendered.push(
         renderBoxFooter(theme, layout.frameWidth, footer, boxOptions),
     );
     return rendered;

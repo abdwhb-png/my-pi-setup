@@ -875,12 +875,12 @@ export class ManifestReviewComponent implements Component {
                     `${this.focusHelp()} · Home/End scroll · Space/Enter accept · g/o/p/i/c/j · a approve · r return · Esc cancel`,
                 ),
             ],
-            detailWidth,
-            { padding: 0 },
+            layout.frameWidth - 2,
+            { padding: 1 },
         );
         const availableActionLines = Math.max(
             1,
-            maxHeight - (1 + 2 + notices.length + 3 + 1 + 1),
+            maxHeight - (1 + 2 + notices.length + 3 + 1 + 1 + 1),
         );
         const visibleActionLines = actionLines.slice(0, availableActionLines);
         const editorLines = this.editingJustification
@@ -894,7 +894,7 @@ export class ManifestReviewComponent implements Component {
               )
             : [];
         const fixedLines =
-            1 + 2 + notices.length + 3 + visibleActionLines.length + 1;
+            1 + 2 + notices.length + 3 + visibleActionLines.length + 1 + 1;
         if (fixedLines > maxHeight) return renderLowHeightFallback();
         this.bodyHeight = Math.max(0, maxHeight - fixedLines);
 
@@ -945,9 +945,6 @@ export class ManifestReviewComponent implements Component {
                       : [compactContent ?? ""],
             );
         }
-        const additionalRows = visibleActionLines.map((action) =>
-            wide ? ["", action, ""] : medium ? ["", action] : [action],
-        );
         const lines = renderFramedPanels({
             theme: this.theme,
             title: `SDD manifest review ${this.theme.fg("accent", "›")} · ${this.draft.planTitle}`,
@@ -959,7 +956,7 @@ export class ManifestReviewComponent implements Component {
             ],
             panelTitles: this.panelTitleCells(this.renderedLayoutMode),
             panelRows,
-            additionalRows,
+            boxFooterRows: visibleActionLines,
         });
         return lines.map((line) => truncateToWidth(line, width));
     }

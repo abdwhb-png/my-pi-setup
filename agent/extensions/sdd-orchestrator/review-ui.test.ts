@@ -899,6 +899,10 @@ test('review overlay visibly identifies the focused panel in every responsive mo
     expect(component.render(120).join('\n')).toContain('▸ TASKS');
     expect(component.render(120).join('\n')).toContain('Focus: Tasks');
 
+    const focusLine = component.render(120).find((line) => line.includes('Focus: Tasks'));
+    expect(focusLine).toBeDefined();
+    expect(focusLine?.match(/│/g)).toHaveLength(2);
+
     component.handleInput('\t');
     expect(component.render(120).join('\n')).toContain('▸ DETAILS');
     expect(component.render(120).join('\n')).toContain('Focus: Details');
