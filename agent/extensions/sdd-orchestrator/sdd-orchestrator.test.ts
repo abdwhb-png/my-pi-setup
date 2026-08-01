@@ -24,6 +24,8 @@ import {
     type EventBus,
 } from './delegation-client.ts';
 import type { ApprovedManifest, DraftManifest } from './manifest.ts';
+import { createInitialReviewProgress } from './review-progress.ts';
+import type { ReviewProgressStorage } from './review-ui.ts';
 import type { DirectEvidence, RunSnapshot } from './state-machine.ts';
 import { SddStore } from './store.ts';
 import {
@@ -102,7 +104,14 @@ function context(mode: ExtensionContext['mode'] = 'print'): ExtensionContext {
     return {
         cwd,
         mode,
-        ui: { custom: mock() },
+        hasUI: mode === 'tui' || mode === 'rpc',
+        ui: {
+            custom: mock(),
+            notify: mock(),
+            setStatus: mock(),
+            setWorkingMessage: mock(),
+            theme: { fg: (_color: string, text: string) => text },
+        },
     } as unknown as ExtensionContext;
 }
 
@@ -411,6 +420,142 @@ test('registers exactly seven tools and one command from a thin index', () => {
     expect(source).not.toContain('authentication_or_authorization');
     expect(source).not.toContain('snapshot.lock-tickets');
     expect(source).not.toMatch(/while\s*\(/);
+});
+
+test('interactive prepare and sdd-review share persisted review progress without deleting it on cancel or return', async () => {
+    class TrackingReviewStore extends SddStore {
+        deleteCalls = 0;
+
+        override deleteReviewProgress(manifestId: string): boolean {
+            this.deleteCalls += 1;
+            return super.deleteReviewProgress(manifestId);
+        }
+    }
+
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new TrackingReviewStore(agentDir);
+    const pi = fakePi();
+    const seen: ReviewProgressStorage[] = [];
+    const rt: SddRuntime = {
+        ...runtime(store, [
+            {
+                version: 1,
+                requestId: 'ignored',
+                status: 'completed',
+                output: assessment,
+            },
+        ]),
+        openReview: async (_ctx, draft, progressStorage) => {
+            seen.push(progressStorage);
+            if (seen.length === 1) {
+                const initial = createInitialReviewProgress(draft);
+                const { version: _version, manifestId: _manifestId, revision, ...state } = initial;
+                expect(
+                    await progressStorage.saveReviewProgress?.(
+                        draft.manifestId,
+                        revision,
+                        state,
+                    ),
+                ).toEqual({ type: 'ok', revision: 1 });
+                return { type: 'cancel' };
+            }
+            expect(progressStorage.loadReviewProgress?.(draft.manifestId)).toMatchObject({
+                revision: 1,
+            });
+            return { type: 'return_to_planning' };
+        },
+    };
+    registerSddExtension(pi.api as never, rt);
+
+    const prepared = await execute(
+        pi.tools.get('sdd_prepare'),
+        { planPath: 'plan.md', globalProfile: 'standard' },
+        context('tui'),
+    );
+    const draft = prepared.details.manifest as DraftManifest;
+    await pi.commands.get('sdd-review').handler(draft.manifestId, context('tui'));
+
+    expect(seen).toHaveLength(2);
+    expect(store.deleteCalls).toBe(0);
+    expect(store.loadReviewProgress(draft.manifestId)).toMatchObject({ revision: 1 });
+});
+
+test('approval warns about pending review cleanup without blocking initial or idempotent retry', async () => {
+    class CleanupFailingStore extends SddStore {
+        protected override deleteReviewProgressUnderManifestTicket(): boolean {
+            throw new Error('review cleanup storage unavailable');
+        }
+    }
+
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new CleanupFailingStore(agentDir);
+    const pi = fakePi();
+    const rt = runtime(store, [
+        {
+            version: 1,
+            requestId: 'ignored',
+            status: 'completed',
+            output: assessment,
+        },
+    ]);
+    let runCalls = 0;
+    rt.workflow.run = async (runId) => {
+        runCalls += 1;
+        const current = store.load(runId);
+        if (!current) throw new Error('Run missing.');
+        const completed = { ...current, revision: current.revision + 1, state: 'completed' as const };
+        store.save(completed);
+        return completed;
+    };
+    registerSddExtension(pi.api as never, rt);
+
+    const prepared = await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    });
+    const draft = prepared.details.manifest as DraftManifest;
+    const initial = createInitialReviewProgress(draft);
+    const { version: _version, manifestId: _manifestId, revision, ...state } = initial;
+    store.saveReviewProgress(draft.manifestId, revision, state);
+    const approval = {
+        manifestId: draft.manifestId,
+        globalProfile: 'standard',
+        taskOverrides: {},
+        parallelismEnabled: true,
+        finalIntegrationReview: false,
+        criticalDowngradeConfirmations: {},
+        criticalDowngradeJustifications: {},
+        approvedBy: 'operator',
+    };
+    const approvalContext = context('print');
+
+    const first = await execute(pi.tools.get('sdd_approve'), approval, approvalContext);
+    const jsonContext = context('json');
+    const retry = await execute(pi.tools.get('sdd_approve'), approval, jsonContext);
+    const tuiContext = context('tui');
+    const tuiRetry = await execute(pi.tools.get('sdd_approve'), approval, tuiContext);
+
+    expect(first.content[0].text).toContain('started');
+    expect(first.content[0].text).toContain('reviewCleanupPending: true');
+    expect(first.content[0].text).toContain('reviewCleanupError:');
+    expect(first.content[0].text).toContain('review cleanup storage unavailable');
+    expect(first.details).toMatchObject({
+        reviewCleanupPending: true,
+        reviewCleanupError: 'review cleanup storage unavailable',
+    });
+    expect(retry.details.snapshot.state).toBe('completed');
+    expect(retry.details).toMatchObject({
+        reviewCleanupPending: true,
+        reviewCleanupError: 'review cleanup storage unavailable',
+    });
+    expect(tuiRetry.details.reviewCleanupPending).toBe(true);
+    expect(runCalls).toBe(1);
+    expect((approvalContext.ui.notify as ReturnType<typeof mock>)).not.toHaveBeenCalled();
+    expect((jsonContext.ui.notify as ReturnType<typeof mock>)).not.toHaveBeenCalled();
+    expect((tuiContext.ui.notify as ReturnType<typeof mock>)).toHaveBeenCalledWith(
+        expect.stringContaining('review cleanup storage unavailable'),
+        'warning',
+    );
 });
 
 test('prepare performs one bounded JSON repair and stores a complete draft', async () => {

@@ -19,6 +19,12 @@ import {
     type ApprovedManifest,
     type DraftManifest,
 } from './manifest.ts';
+import {
+    normalizeReviewProgressState,
+    parseReviewProgress,
+    type ManifestReviewProgressState,
+    type ManifestReviewProgressV1,
+} from './review-progress.ts';
 import type { RunEvent, RunSnapshot } from './state-machine.ts';
 
 type StoredManifest = DraftManifest | ApprovedManifest;
@@ -27,6 +33,22 @@ export interface ManifestApprovalResult {
     readonly created: boolean;
     readonly manifest: ApprovedManifest;
     readonly snapshot: RunSnapshot;
+    readonly reviewCleanupPending: boolean;
+    readonly reviewCleanupError?: string;
+}
+
+export class ReviewProgressConflictError extends Error {
+    readonly expectedRevision: number;
+    readonly receivedRevision: number;
+
+    constructor(expectedRevision: number, receivedRevision: number) {
+        super(
+            `Review progress revision conflict: expected ${expectedRevision}, received ${receivedRevision}.`,
+        );
+        this.name = 'ReviewProgressConflictError';
+        this.expectedRevision = expectedRevision;
+        this.receivedRevision = receivedRevision;
+    }
 }
 
 export interface TransitionRecord {
@@ -151,13 +173,33 @@ function sameLock(left: ObservedLock, right: ObservedLock): boolean {
     );
 }
 
+interface ReviewCleanupResult {
+    readonly reviewCleanupPending: boolean;
+    readonly reviewCleanupError?: string;
+}
+
+function assertNoSymlink(path: string, pathForError: string): void {
+    try {
+        const stats = lstatSync(path);
+        if (stats.isSymbolicLink()) {
+            throw new Error(`Refusing review operation through symbolic link: ${pathForError}.`);
+        }
+    } catch (error) {
+        if (!hasErrorCode(error, 'ENOENT')) throw error;
+    }
+}
+
 export class SddStore {
     private readonly root: string;
     private readonly manifestRoot: string;
+    private readonly reviewRoot: string;
+    private readonly sddRoot: string;
 
     constructor(agentDir: string = getAgentDir()) {
         this.root = resolve(agentDir, '.sdd', 'runs');
         this.manifestRoot = resolve(agentDir, '.sdd', 'manifests');
+        this.sddRoot = resolve(agentDir, '.sdd');
+        this.reviewRoot = resolve(agentDir, '.sdd', 'reviews');
     }
 
     create(snapshot: RunSnapshot): void {
@@ -328,7 +370,15 @@ export class SddStore {
                         `Approved manifest ${approved.manifestId} has no initial run.`,
                     );
                 }
-                return { created: false, manifest: current, snapshot };
+                const reviewCleanup = this.attemptReviewCleanup(
+                    approved.manifestId,
+                );
+                return {
+                    created: false,
+                    manifest: current,
+                    snapshot,
+                    ...reviewCleanup,
+                };
             }
             if (canonicalJson(current) !== canonicalJson(expectedDraft)) {
                 throw new Error(
@@ -353,13 +403,173 @@ export class SddStore {
                 this.removeInitialRun(initialSnapshot);
                 throw error;
             }
+            const reviewCleanup = this.attemptReviewCleanup(
+                approved.manifestId,
+            );
             return {
                 created: true,
                 manifest: approved,
                 snapshot: initialSnapshot,
+                ...reviewCleanup,
             };
         } finally {
             this.releaseManifestTicket(ticket);
+        }
+    }
+
+    loadReviewProgress(manifestId: string): ManifestReviewProgressV1 | null {
+        this.assertNoReviewBoundaries(manifestId);
+        const manifest = this.loadManifest(manifestId);
+        if (!manifest) {
+            throw new Error(`Manifest not found: ${manifestId}.`);
+        }
+        return this.loadReviewProgressNoBoundaries(manifest, manifestId);
+    }
+
+    saveReviewProgress(
+        manifestId: string,
+        expectedRevision: number,
+        state: ManifestReviewProgressState,
+    ): ManifestReviewProgressV1 {
+        this.assertNoReviewBoundaries(manifestId);
+        const ticket = this.acquireManifestTicket(manifestId);
+        try {
+            const manifest = this.loadManifest(manifestId);
+            if (!manifest) {
+                throw new Error(`Manifest not found: ${manifestId}.`);
+            }
+            if (manifest.state !== 'awaiting_approval') {
+                throw new Error(
+                    `Review progress can only be saved while awaiting approval: ${manifestId}.`,
+                );
+            }
+
+            const current = this.loadReviewProgressNoBoundaries(
+                manifest,
+                manifestId,
+            );
+            if (!current && expectedRevision !== 0) {
+                throw new ReviewProgressConflictError(
+                    0,
+                    expectedRevision,
+                );
+            }
+            if (current && current.revision !== expectedRevision) {
+                throw new ReviewProgressConflictError(
+                    current.revision,
+                    expectedRevision,
+                );
+            }
+            const normalized = normalizeReviewProgressState(manifest, state);
+            const next: ManifestReviewProgressV1 = {
+                version: 1 as const,
+                manifestId,
+                revision: expectedRevision + 1,
+                ...normalized,
+            };
+            const path = this.reviewPath(manifestId);
+            mkdirSync(this.reviewRoot, { recursive: true });
+            let temporaryPath: string | undefined;
+            try {
+                temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+                writeFileSync(
+                    temporaryPath,
+                    `${JSON.stringify(next, null, 2)}\n`,
+                );
+                renameSync(temporaryPath, path);
+                temporaryPath = undefined;
+            } finally {
+                try {
+                    if (temporaryPath && existsSync(temporaryPath)) {
+                        unlinkSync(temporaryPath);
+                    }
+                } catch {
+                    // Preserve the write error while leaving unrelated files alone.
+                }
+            }
+            return next;
+        } finally {
+            this.releaseManifestTicket(ticket);
+        }
+    }
+
+    deleteReviewProgress(manifestId: string): boolean {
+        this.assertNoReviewBoundaries(manifestId);
+        if (!this.loadManifest(manifestId)) {
+            throw new Error(`Manifest not found: ${manifestId}.`);
+        }
+        const ticket = this.acquireManifestTicket(manifestId);
+        try {
+            return this.deleteReviewProgressUnderManifestTicket(manifestId);
+        } finally {
+            this.releaseManifestTicket(ticket);
+        }
+    }
+
+    private loadReviewProgressNoBoundaries(
+        manifest: StoredManifest,
+        manifestId: string,
+    ): ManifestReviewProgressV1 | null {
+        const manifestState: string = manifest.state;
+        if (
+            manifestState !== 'awaiting_approval' &&
+            manifestState !== 'approved'
+        ) {
+            throw new Error(
+                `Invalid manifest state for review progress: ${manifestState}.`,
+            );
+        }
+        const path = this.reviewPath(manifestId);
+        if (!existsSync(path)) return null;
+        const raw = parseReviewProgress(
+            JSON.parse(readFileSync(path, 'utf8')),
+        );
+        if (raw.manifestId !== manifestId) {
+            throw new Error(
+                `Invalid review progress manifestId: expected ${manifestId}, received ${raw.manifestId}.`,
+            );
+        }
+        const normalized = normalizeReviewProgressState(manifest, {
+            acceptedTaskIds: raw.acceptedTaskIds,
+            decision: raw.decision,
+        });
+        return {
+            version: 1,
+            manifestId: raw.manifestId,
+            revision: raw.revision,
+            ...normalized,
+        };
+    }
+
+    private attemptReviewCleanup(manifestId: string): ReviewCleanupResult {
+        try {
+            assertNoSymlink(this.reviewRoot, '.sdd/reviews');
+            assertNoSymlink(
+                this.reviewPath(manifestId),
+                `.sdd/reviews/${manifestId}.json`,
+            );
+            this.deleteReviewProgressUnderManifestTicket(manifestId);
+            return { reviewCleanupPending: false };
+        } catch (error) {
+            return {
+                reviewCleanupPending: true,
+                reviewCleanupError: error instanceof Error
+                    ? error.message
+                    : String(error),
+            };
+        }
+    }
+
+    protected deleteReviewProgressUnderManifestTicket(
+        manifestId: string,
+    ): boolean {
+        const path = this.reviewPath(manifestId);
+        try {
+            unlinkSync(path);
+            return true;
+        } catch (error) {
+            if (hasErrorCode(error, 'ENOENT')) return false;
+            throw error;
         }
     }
 
@@ -394,13 +604,21 @@ export class SddStore {
     }
 
     deleteManifest(manifestId: string): boolean {
+        this.assertNoReviewBoundaries(manifestId);
         const path = this.manifestPath(manifestId);
+        if (!this.loadManifest(manifestId)) {
+            return false;
+        }
+        const ticket = this.acquireManifestTicket(manifestId);
         try {
+            this.deleteReviewProgressUnderManifestTicket(manifestId);
             unlinkSync(path);
             return true;
         } catch (error) {
             if (hasErrorCode(error, 'ENOENT')) return false;
             throw error;
+        } finally {
+            this.releaseManifestTicket(ticket);
         }
     }
 
@@ -572,5 +790,37 @@ export class SddStore {
             );
         }
         return resolved;
+    }
+
+    private reviewPath(manifestId: string): string {
+        if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(manifestId)) {
+            throw new Error(
+                `Invalid manifest ID: ${JSON.stringify(manifestId)}.`,
+            );
+        }
+        const resolved = resolve(this.reviewRoot, `${manifestId}.json`);
+        const relativePath = relative(this.reviewRoot, resolved);
+        if (
+            !relativePath ||
+            relativePath === '..' ||
+            relativePath.startsWith(`..${sep}`) ||
+            isAbsolute(relativePath)
+        ) {
+            throw new Error(
+                `Invalid manifest ID: ${JSON.stringify(manifestId)}.`,
+            );
+        }
+        return resolved;
+    }
+
+    private assertNoReviewBoundaries(manifestId: string): void {
+        assertNoSymlink(this.sddRoot, '.sdd');
+        assertNoSymlink(this.manifestRoot, '.sdd/manifests');
+        assertNoSymlink(this.manifestPath(manifestId), `.sdd/manifests/${manifestId}.json`);
+        assertNoSymlink(this.reviewRoot, '.sdd/reviews');
+        assertNoSymlink(
+            this.reviewPath(manifestId),
+            join('.sdd', 'reviews', `${manifestId}.json`),
+        );
     }
 }

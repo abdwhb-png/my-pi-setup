@@ -1,6 +1,14 @@
 import { describe, it, expect } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { renderBoxHeader, renderBoxFooter, renderBoxSides, BoxRenderer } from "./framed-box";
+import {
+  allocateBoxPanelLayout,
+  renderBoxHeader,
+  renderBoxFooter,
+  renderBoxPanelRow,
+  renderBoxPanelSeparator,
+  renderBoxSides,
+  BoxRenderer,
+} from "./framed-box";
 
 function createMockTheme() {
   return {
@@ -151,6 +159,213 @@ describe("renderBoxSides", () => {
   });
 });
 
+describe("allocateBoxPanelLayout", () => {
+  it("allocates widths for one panel", () => {
+    const layout = allocateBoxPanelLayout(12, [{ minWidth: 3 }]);
+    expect(layout).not.toBeNull();
+    expect(layout).toEqual({
+      frameWidth: 12,
+      panelWidths: [10],
+    });
+  });
+
+  it("allocates for two and three panels deterministically", () => {
+    const two = allocateBoxPanelLayout(14, [{ minWidth: 2 }, { minWidth: 2 }]);
+    expect(two).not.toBeNull();
+    expect(two).toEqual({
+      frameWidth: 14,
+      panelWidths: [6, 5],
+    });
+
+    const three = allocateBoxPanelLayout(14, [{ minWidth: 2 }, { minWidth: 2 }, { minWidth: 2 }]);
+    expect(three).not.toBeNull();
+    expect(three).toEqual({
+      frameWidth: 14,
+      panelWidths: [4, 3, 3],
+    });
+  });
+
+  it("distributes weighted capacity across panels using deterministic residuals", () => {
+    const layout = allocateBoxPanelLayout(14, [
+      { minWidth: 2, weight: 2 },
+      { minWidth: 2, weight: 1 },
+    ]);
+
+    expect(layout).toEqual({
+      frameWidth: 14,
+      panelWidths: [7, 4],
+    });
+  });
+
+  it("respects weights and max widths", () => {
+    const layout = allocateBoxPanelLayout(14, [
+      { minWidth: 2, maxWidth: 3, weight: 10 },
+      { minWidth: 2, weight: 1 },
+      { minWidth: 2, weight: 1 },
+    ]);
+
+    expect(layout).toEqual({
+      frameWidth: 14,
+      panelWidths: [3, 4, 3],
+    });
+  });
+
+  it("keeps maxWidth as a cap and sends leftover to the last panel only when all are saturated", () => {
+    const layout = allocateBoxPanelLayout(20, [
+      { minWidth: 2, maxWidth: 3 },
+      { minWidth: 2, maxWidth: 3 },
+    ]);
+
+    expect(layout).toEqual({
+      frameWidth: 20,
+      panelWidths: [3, 14],
+    });
+  });
+
+  it("puts remaining space on the last panel when all panels reached max", () => {
+    const layout = allocateBoxPanelLayout(20, [
+      { minWidth: 4, maxWidth: 4 },
+      { minWidth: 4, maxWidth: 4 },
+      { minWidth: 4 },
+    ]);
+
+    expect(layout).toEqual({
+      frameWidth: 20,
+      panelWidths: [4, 4, 8],
+    });
+  });
+
+  it("rejects invalid weights", () => {
+    expect(allocateBoxPanelLayout(20, [{ minWidth: 2, weight: 0 }])).toBeNull();
+    expect(allocateBoxPanelLayout(20, [{ minWidth: 2, weight: 1.5 }])).toBeNull();
+    expect(allocateBoxPanelLayout(20, [{ minWidth: 2, weight: Infinity }])).toBeNull();
+  });
+
+  it("rejects unsafe integer inputs", () => {
+    const unsafeWidth = Number.MAX_SAFE_INTEGER + 1;
+    expect(Number.isSafeInteger(unsafeWidth)).toBe(false);
+    expect(allocateBoxPanelLayout(unsafeWidth, [{ minWidth: 2 }])).toBeNull();
+  });
+
+  it("returns null when minima cannot fit", () => {
+    expect(allocateBoxPanelLayout(5, [{ minWidth: 2 }, { minWidth: 2 }])).toBeNull();
+    expect(allocateBoxPanelLayout(20, [])).toBeNull();
+  });
+
+  it("returns null for invalid integers", () => {
+    expect(allocateBoxPanelLayout(3.5, [{ minWidth: 2 }])).toBeNull();
+    expect(allocateBoxPanelLayout(10, [{ minWidth: 0 }])).toBeNull();
+    expect(allocateBoxPanelLayout(10, [{ minWidth: 2, maxWidth: 1 }])).toBeNull();
+  });
+});
+
+describe("renderBoxPanelRow", () => {
+  const layout = allocateBoxPanelLayout(14, [{ minWidth: 4 }, { minWidth: 4 }, { minWidth: 2 }]);
+
+  it("renders a single panel row with ansi, emoji and long words", () => {
+    expect(layout).not.toBeNull();
+    const row = renderBoxPanelRow(
+      theme,
+      layout!,
+      [
+        "\u001b[31m".concat("word".repeat(5), "\u001b[0m"),
+        "🧬".repeat(8),
+        "second-cell-with-a-very-long-word",
+      ],
+    );
+
+    expect(visibleWidth(row)).toBe(layout!.frameWidth);
+    expect(row).toContain("│");
+    expect(row[row.length - 1]).toBe("│");
+  });
+
+  it("throws when cell count does not match panel count", () => {
+    expect(() => renderBoxPanelRow(theme, layout!, ["only-one-cell"])).toThrow();
+  });
+
+  it("throws when layout is malformed", () => {
+    expect(() =>
+      renderBoxPanelRow(theme, { frameWidth: 9, panelWidths: [2, 2] }, ["a", "b"]),
+    ).toThrow();
+  });
+
+  it.each([
+    { cell: "line\nbreak", label: "newline" },
+    { cell: "line\rreturn", label: "carriage-return" },
+  ])("throws for $label inside a panel cell", ({ cell }) => {
+    expect(() => renderBoxPanelRow(theme, layout!, ["a", cell, "c"])).toThrow(
+      "renderBoxPanelRow cells must be single-line strings",
+    );
+  });
+});
+
+describe("renderBoxPanelSeparator", () => {
+  const layout = { frameWidth: 9, panelWidths: [1, 2, 2] } as const;
+
+  it("renders exact separators for rounded panels", () => {
+    expect(renderBoxPanelSeparator(theme, layout, "top", { borderStyle: "rounded" })).toBe(
+      "├─┬──┬──┤",
+    );
+    expect(renderBoxPanelSeparator(theme, layout, "middle", { borderStyle: "rounded" })).toBe(
+      "├─┼──┼──┤",
+    );
+    expect(renderBoxPanelSeparator(theme, layout, "bottom", { borderStyle: "rounded" })).toBe(
+      "├─┴──┴──┤",
+    );
+  });
+
+  it("renders exact separators for single panels", () => {
+    expect(renderBoxPanelSeparator(theme, layout, "top", { borderStyle: "single" })).toBe(
+      "├─┬──┬──┤",
+    );
+    expect(renderBoxPanelSeparator(theme, layout, "middle", { borderStyle: "single" })).toBe(
+      "├─┼──┼──┤",
+    );
+    expect(renderBoxPanelSeparator(theme, layout, "bottom", { borderStyle: "single" })).toBe(
+      "├─┴──┴──┤",
+    );
+  });
+
+  it("renders exact separators for double panels", () => {
+    expect(renderBoxPanelSeparator(theme, layout, "top", { borderStyle: "double" })).toBe(
+      "╠═╦══╦══╣",
+    );
+    expect(renderBoxPanelSeparator(theme, layout, "middle", { borderStyle: "double" })).toBe(
+      "╠═╬══╬══╣",
+    );
+    expect(renderBoxPanelSeparator(theme, layout, "bottom", { borderStyle: "double" })).toBe(
+      "╠═╩══╩══╣",
+    );
+  });
+
+  it("applies theme.fg on each separator segment (junction + horizontals) with non-identity theme", () => {
+    const ansiTheme = {
+      ...theme,
+      fg: (color: string, text: string) => `\u001b[31m${text}\u001b[0m`,
+    };
+
+    const result = renderBoxPanelSeparator(ansiTheme, layout, "middle", {
+      borderStyle: "single",
+    });
+
+    expect(result).toBe("\u001b[31m├─\u001b[0m\u001b[31m┼──\u001b[0m\u001b[31m┼──\u001b[0m\u001b[31m┤\u001b[0m");
+    expect(visibleWidth(result)).toBe(layout.frameWidth);
+  });
+
+  it("ensures separator lines match frame width", () => {
+    const top = renderBoxPanelSeparator(theme, layout, "top", { borderStyle: "double" });
+    expect(visibleWidth(top)).toBe(layout.frameWidth);
+    expect(top[0]).toBe("╠");
+    expect(top[top.length - 1]).toBe("╣");
+  });
+
+  it("throws when layout is malformed", () => {
+    expect(() =>
+      renderBoxPanelSeparator(theme, { frameWidth: 11, panelWidths: [] }, "top"),
+    ).toThrow();
+  });
+});
+
 // ── BoxRenderer ──────────────────────────────────────
 
 describe("BoxRenderer", () => {
@@ -218,10 +433,15 @@ describe("BoxRenderer", () => {
     expect(box.getInnerWidth()).toBe(96); // width - 4
   });
 
+  it("clamps content width to at least one column for tiny terminals", () => {
+    const box = new BoxRenderer(theme, 3);
+    expect(box.getContentWidth()).toBe(1);
+  });
+
   it("respects minWidth and maxWidth", () => {
     // Narrow terminal
     const narrow = new BoxRenderer(theme, 30, { minWidth: 40, maxWidth: 120 });
-    expect(narrow.getInnerWidth()).toBe(36); // clamped to min 40 -> 40-4=36
+    expect(narrow.getInnerWidth()).toBeLessThanOrEqual(26); // clamped to terminal - 4 => 26
 
     // Wide terminal
     const wide = new BoxRenderer(theme, 200, { minWidth: 40, maxWidth: 100 });
@@ -261,6 +481,18 @@ describe("BoxRenderer", () => {
     const result = box.render();
     expect(result.some((l) => l.includes("d"))).toBe(true);
     expect(result.some((l) => l.includes("e"))).toBe(true);
+  });
+
+  it("renders a compact single-line fallback for ultra-narrow frame", () => {
+    const box = new BoxRenderer(theme, 3, { minWidth: 40 });
+    box.setTitle("A very long title");
+    box.setContent(["Body"]);
+    box.setFooter("Footer");
+
+    const result = box.render();
+    expect(result).toHaveLength(1);
+    expect(visibleWidth(result[0])).toBeLessThan(4);
+    expect(result[0]).not.toMatch(/[╭╮╰╯┌┐└┘╔╗╚╝]/u);
   });
 
   it("scrollTo negative clamps to 0", () => {

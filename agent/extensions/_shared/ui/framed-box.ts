@@ -1,16 +1,36 @@
 import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
+export type BoxBorderStyle = "single" | "double" | "rounded";
+
 export interface BoxOptions {
   titlePosition?: "left" | "center" | "right";
-  borderStyle?: "single" | "double" | "rounded";
+  borderStyle?: BoxBorderStyle;
+}
+
+export interface BoxPanelSpec {
+  minWidth: number;
+  /**
+   * Hard cap applied during allocation.
+   *
+   * During allocation each panel never grows beyond this width.
+   * If all panels become saturated and extra width remains, the remainder is
+   * intentionally assigned to the last panel to preserve a valid frameWidth.
+   */
+  maxWidth?: number;
+  weight?: number;
 }
 
 export interface BoxRendererOptions {
   minWidth?: number;
   maxWidth?: number;
   viewportHeight?: number;
-  borderStyle?: "single" | "double" | "rounded";
+  borderStyle?: BoxBorderStyle;
+}
+
+export interface BoxPanelLayout {
+  frameWidth: number;
+  panelWidths: readonly number[];
 }
 
 const defaultOptions: BoxOptions = {
@@ -25,7 +45,21 @@ const defaultRendererOptions: Required<BoxRendererOptions> = {
   borderStyle: "rounded",
 };
 
-const borders = {
+type BoxBorder = {
+  topLeft: string;
+  topRight: string;
+  bottomLeft: string;
+  bottomRight: string;
+  horizontal: string;
+  vertical: string;
+  separator: string;
+  separatorRight: string;
+  topJunction: string;
+  crossJunction: string;
+  bottomJunction: string;
+};
+
+const borders: Record<BoxBorderStyle, BoxBorder> = {
   single: {
     topLeft: "┌",
     topRight: "┐",
@@ -35,6 +69,9 @@ const borders = {
     vertical: "│",
     separator: "├",
     separatorRight: "┤",
+    topJunction: "┬",
+    crossJunction: "┼",
+    bottomJunction: "┴",
   },
   double: {
     topLeft: "╔",
@@ -45,6 +82,9 @@ const borders = {
     vertical: "║",
     separator: "╠",
     separatorRight: "╣",
+    topJunction: "╦",
+    crossJunction: "╬",
+    bottomJunction: "╩",
   },
   rounded: {
     topLeft: "╭",
@@ -55,8 +95,193 @@ const borders = {
     vertical: "│",
     separator: "├",
     separatorRight: "┤",
+    topJunction: "┬",
+    crossJunction: "┼",
+    bottomJunction: "┴",
   },
 };
+
+const isPositiveInteger = (value: number): boolean =>
+  Number.isSafeInteger(value) && value > 0;
+
+function validatePanelSpecs(specs: readonly BoxPanelSpec[]): boolean {
+  if (specs.length === 0) return false;
+
+  for (const spec of specs) {
+    if (!isPositiveInteger(spec.minWidth)) return false;
+    if (spec.maxWidth !== undefined) {
+      if (!isPositiveInteger(spec.maxWidth) || spec.maxWidth < spec.minWidth) return false;
+    }
+
+    if (spec.weight !== undefined && !isPositiveInteger(spec.weight)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function validateBoxPanelLayout(layout: BoxPanelLayout): boolean {
+  if (!isPositiveInteger(layout.frameWidth) || layout.panelWidths.length === 0) {
+    return false;
+  }
+
+  let totalPanelWidth = 0;
+  for (const width of layout.panelWidths) {
+    if (!isPositiveInteger(width)) return false;
+    totalPanelWidth += width;
+  }
+
+  const expectedFrameWidth = 2 + (layout.panelWidths.length - 1) + totalPanelWidth;
+  return layout.frameWidth === expectedFrameWidth;
+}
+
+function ensureValidBoxPanelLayout(layout: BoxPanelLayout): void {
+  if (!validateBoxPanelLayout(layout)) {
+    throw new Error("invalid box panel layout");
+  }
+}
+
+export function allocateBoxPanelLayout(
+  frameWidth: number,
+  specs: readonly BoxPanelSpec[],
+): BoxPanelLayout | null {
+  if (!isPositiveInteger(frameWidth)) return null;
+  if (!validatePanelSpecs(specs)) return null;
+
+  const separatorCount = specs.length - 1;
+  const maxPanelWidth = frameWidth - 2 - separatorCount;
+  if (maxPanelWidth <= 0) return null;
+
+  const minPanelWidth = specs.reduce((acc, spec) => acc + spec.minWidth, 0);
+  if (minPanelWidth > maxPanelWidth) return null;
+
+  const panelWidths = specs.map((spec) => spec.minWidth);
+  let remainingWidth = maxPanelWidth - minPanelWidth;
+
+  if (remainingWidth <= 0) {
+    return {
+      frameWidth,
+      panelWidths,
+    };
+  }
+
+  while (remainingWidth > 0) {
+    const expandable = specs
+      .map((spec, index) => ({
+        index,
+        width: panelWidths[index],
+        maxWidth: spec.maxWidth,
+        weight: spec.weight ?? 1,
+      }))
+      .filter(({ width, maxWidth }) =>
+        maxWidth === undefined ? true : width < maxWidth,
+      );
+
+    if (expandable.length === 0) {
+      panelWidths[specs.length - 1] += remainingWidth;
+      return {
+        frameWidth,
+        panelWidths,
+      };
+    }
+
+    const totalWeight = expandable.reduce((acc, entry) => acc + entry.weight, 0);
+    if (totalWeight <= 0) {
+      panelWidths[specs.length - 1] += remainingWidth;
+      return {
+        frameWidth,
+        panelWidths,
+      };
+    }
+
+    const roundBudget = remainingWidth;
+    const provisionalAllocations = expandable.map((entry) => {
+      const exactAllocation = (roundBudget * entry.weight) / totalWeight;
+      const maxRoom = entry.maxWidth === undefined
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, entry.maxWidth - entry.width);
+      const baseAllocation = Math.min(Math.floor(exactAllocation), maxRoom);
+
+      return {
+        ...entry,
+        baseAllocation,
+        remainder: exactAllocation - Math.floor(exactAllocation),
+      };
+    });
+
+    let allocatedThisRound = 0;
+    for (const entry of provisionalAllocations) {
+      panelWidths[entry.index] += entry.baseAllocation;
+      allocatedThisRound += entry.baseAllocation;
+    }
+
+    let leftover = roundBudget - allocatedThisRound;
+
+    const remainderTargets = provisionalAllocations
+      .filter((entry) => {
+        const maxRoom = entry.maxWidth === undefined
+          ? Number.POSITIVE_INFINITY
+          : entry.maxWidth - entry.width;
+        return entry.baseAllocation < maxRoom;
+      })
+      .sort((a, b) => {
+        if (a.remainder === b.remainder) {
+          return a.index - b.index;
+        }
+        return b.remainder - a.remainder;
+      });
+
+    for (const entry of remainderTargets) {
+      if (leftover <= 0) break;
+
+      const maxRoom = entry.maxWidth === undefined
+        ? Number.POSITIVE_INFINITY
+        : entry.maxWidth - entry.width;
+      if (entry.baseAllocation >= maxRoom) continue;
+
+      panelWidths[entry.index] += 1;
+      leftover -= 1;
+    }
+
+    if (!provisionalAllocations.some((entry) => {
+      const maxWidth = entry.maxWidth;
+      return maxWidth === undefined || panelWidths[entry.index] < maxWidth;
+    }) && leftover > 0) {
+      panelWidths[specs.length - 1] += leftover;
+      return {
+        frameWidth,
+        panelWidths,
+      };
+    }
+
+    remainingWidth = leftover;
+  }
+
+  const layout: BoxPanelLayout = {
+    frameWidth,
+    panelWidths,
+  };
+
+  if (!validateBoxPanelLayout(layout)) {
+    return null;
+  }
+
+  return layout;
+}
+
+/**
+ * Allocate panel widths honoring minimum/maximum constraints and weights.
+ *
+ * Max width is treated as an hard cap during weighted distribution.
+ * If every panel reaches maxWidth before extra width is fully consumed,
+ * the leftover width is assigned to the last panel so the returned layout
+ * always matches the requested frameWidth.
+ */
+
+function resolveBorderStyle(borderStyle?: BoxBorderStyle): BoxBorderStyle {
+  return borderStyle || "rounded";
+}
 
 /**
  * Render a beautiful, responsive box header line.
@@ -189,11 +414,69 @@ export function renderBoxSeparator(
   options: BoxOptions = defaultOptions,
 ): string {
   const { borderStyle } = { ...defaultOptions, ...options };
-  const b = borders[borderStyle || "rounded"];
+  const b = borders[resolveBorderStyle(borderStyle)];
   return theme.fg(
     "border",
     b.separator + b.horizontal.repeat(Math.max(0, innerWidth - 2)) + b.separatorRight,
   );
+}
+
+export function renderBoxPanelRow(
+  theme: Theme,
+  layout: BoxPanelLayout,
+  cells: readonly string[],
+  options: BoxOptions = defaultOptions,
+): string {
+  ensureValidBoxPanelLayout(layout);
+
+  if (cells.length !== layout.panelWidths.length) {
+    throw new Error("cells length does not match panel layout");
+  }
+
+  const { borderStyle } = { ...defaultOptions, ...options };
+  const b = borders[resolveBorderStyle(borderStyle)];
+
+  let line = "";
+
+  for (const [index, cell] of cells.entries()) {
+    if (cell.includes("\r") || cell.includes("\n")) {
+      throw new Error("renderBoxPanelRow cells must be single-line strings");
+    }
+
+    const width = layout.panelWidths[index];
+    const safeCell = truncateToWidth(cell, width);
+    const padding = Math.max(0, width - visibleWidth(safeCell));
+    line += theme.fg("border", b.vertical) + safeCell + " ".repeat(padding);
+  }
+
+  return line + theme.fg("border", b.vertical);
+}
+
+export function renderBoxPanelSeparator(
+  theme: Theme,
+  layout: BoxPanelLayout,
+  kind: "top" | "middle" | "bottom",
+  options: BoxOptions = defaultOptions,
+): string {
+  ensureValidBoxPanelLayout(layout);
+
+  const { borderStyle } = { ...defaultOptions, ...options };
+  const b = borders[resolveBorderStyle(borderStyle)];
+
+  const junction =
+    kind === "top"
+      ? b.topJunction
+      : kind === "middle"
+        ? b.crossJunction
+        : b.bottomJunction;
+
+  let line = "";
+  for (const [index, width] of layout.panelWidths.entries()) {
+    const separator = index === 0 ? b.separator : junction;
+    line += theme.fg("border", `${separator}${b.horizontal.repeat(Math.max(0, width))}`);
+  }
+
+  return `${line}${theme.fg("border", b.separatorRight)}`;
 }
 
 /**
@@ -267,13 +550,13 @@ export class BoxRenderer {
   }
 
   getInnerWidth = (): number => {
-    const raw = Math.min(this.terminalWidth, this.opts.maxWidth);
-    const w = Math.max(raw, this.opts.minWidth);
-    return w - 4; // account for overlay padding
+    const availableInnerWidth = Math.max(1, this.terminalWidth - 4);
+    const maxInnerWidth = Math.max(1, this.opts.maxWidth - 4);
+    return Math.min(availableInnerWidth, maxInnerWidth);
   };
 
   getContentWidth = (): number => {
-    return this.getInnerWidth() - 4; // │ + 2 spaces padding on each side
+    return Math.max(1, this.getInnerWidth() - 4); // │ + 2 spaces padding on each side
   };
 
   private wrapLines(lines: string[]): string[] {
@@ -300,6 +583,12 @@ export class BoxRenderer {
     const b = borders[this.opts.borderStyle];
     const innerWidth = this.getInnerWidth();
     const viewportH = this.opts.viewportHeight;
+
+    if (innerWidth < 4) {
+      const fallbackText =
+        this.titleText ?? this.fixedHeaderLines[0] ?? this.contentLines[0] ?? this.footerText ?? "";
+      return [truncateToWidth(fallbackText, innerWidth)];
+    }
 
     const lines: string[] = [];
 

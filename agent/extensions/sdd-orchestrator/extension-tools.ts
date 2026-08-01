@@ -39,6 +39,7 @@ import {
     estimateQualitativeDuration,
     type ManifestReviewOutcome,
     openManifestReview,
+    type ReviewProgressStorage,
 } from "./review-ui.ts";
 import {
     RECOVERY_STAGES,
@@ -48,7 +49,11 @@ import {
     type TaskSnapshot,
     type TaskState,
 } from "./state-machine.ts";
-import type { SddStore } from "./store.ts";
+import {
+    ReviewProgressConflictError,
+    type ManifestApprovalResult,
+    type SddStore,
+} from "./store.ts";
 import { PROFILES, type Profile } from "./types.ts";
 import type { SddWorkflow } from "./workflow.ts";
 
@@ -61,6 +66,9 @@ type ExtensionStore = Pick<
     | "createManifest"
     | "approveManifest"
     | "listManifests"
+    | "loadReviewProgress"
+    | "saveReviewProgress"
+    | "deleteReviewProgress"
 >;
 type ExtensionDelegation = Pick<DelegationClient, "run" | "dispose">;
 type ExtensionWorkflow = Pick<
@@ -78,7 +86,43 @@ export interface SddRuntime {
     readonly openReview?: (
         ctx: ExtensionContext,
         draft: DraftManifest,
+        progressStorage: ReviewProgressStorage,
     ) => Promise<ManifestReviewOutcome>;
+}
+
+export function createReviewProgressStorage(
+    store: Pick<SddStore, "loadReviewProgress" | "saveReviewProgress">,
+): ReviewProgressStorage {
+    return {
+        loadReviewProgress: (manifestId) => store.loadReviewProgress(manifestId),
+        saveReviewProgress: (manifestId, expectedRevision, state) => {
+            try {
+                const persisted = store.saveReviewProgress(
+                    manifestId,
+                    expectedRevision,
+                    state,
+                );
+                return { type: "ok", revision: persisted.revision };
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (error instanceof ReviewProgressConflictError) {
+                    try {
+                        const current = store.loadReviewProgress(manifestId);
+                        if (current) return { type: "conflict", current };
+                    } catch (reloadError) {
+                        return {
+                            type: "error",
+                            error:
+                                reloadError instanceof Error
+                                    ? reloadError.message
+                                    : String(reloadError),
+                        };
+                    }
+                }
+                return { type: "error", error: message };
+            }
+        },
+    };
 }
 
 export interface LegacyQueuedRun {
@@ -480,6 +524,7 @@ async function approveDraft(
 ) {
     let approved: ApprovedManifest;
     let snapshot: RunSnapshot;
+    let approval: ManifestApprovalResult;
     if (manifest.state === "approved") {
         if (
             approvalDecisionDigest(manifest.decision) !==
@@ -489,21 +534,44 @@ async function approveDraft(
                 `Manifest approval conflict: ${manifest.manifestId}.`,
             );
         }
-        approved = manifest;
-        snapshot = requireSnapshot(runtime.store, manifest.manifestId);
+        const {
+            decision: _decision,
+            approvalDigest: _approvalDigest,
+            ...approvedFields
+        } = manifest;
+        const expectedDraft: DraftManifest = {
+            ...approvedFields,
+            state: "awaiting_approval",
+        };
+        approval = runtime.store.approveManifest(
+            expectedDraft,
+            manifest,
+            requireSnapshot(runtime.store, manifest.manifestId),
+        );
+        approved = approval.manifest;
+        snapshot = approval.snapshot;
     } else {
         const currentPlanContent = readFileSync(
             resolveRuntimePath(manifest.planPath, ctx.cwd),
             "utf8",
         );
         const candidate = applyApproval(manifest, decision, currentPlanContent);
-        const persisted = runtime.store.approveManifest(
+        approval = runtime.store.approveManifest(
             manifest,
             candidate,
             initialSnapshot(candidate.manifestId, candidate),
         );
-        approved = persisted.manifest;
-        snapshot = persisted.snapshot;
+        approved = approval.manifest;
+        snapshot = approval.snapshot;
+    }
+    const reviewCleanupError = approval.reviewCleanupPending
+        ? (approval.reviewCleanupError ?? "unspecified cleanup error")
+        : undefined;
+    if (reviewCleanupError && ctx.hasUI) {
+        ctx.ui.notify(
+            `SDD review progress cleanup is pending: ${reviewCleanupError}`,
+            "warning",
+        );
     }
     const runId = approved.manifestId;
     ensureApprovalEntry(pi, ctx, approved, recordedApprovalEntries);
@@ -519,8 +587,18 @@ async function approveDraft(
             direct
                 ? `Direct tasks require sdd_direct_complete({ runId: "${runId}", ... }).`
                 : "The approved workflow has started.",
+            ...(reviewCleanupError
+                ? [
+                      `Review progress cleanup pending (reviewCleanupPending: true, reviewCleanupError: ${reviewCleanupError}).`,
+                  ]
+                : []),
         ].join("\n"),
-        { snapshot, manifest: approved },
+        {
+            snapshot,
+            manifest: approved,
+            reviewCleanupPending: approval.reviewCleanupPending,
+            ...(reviewCleanupError ? { reviewCleanupError } : {}),
+        },
     );
 }
 
@@ -632,6 +710,7 @@ async function prepare(
             const outcome = await (runtime.openReview ?? openManifestReview)(
                 ctx,
                 draft,
+                createReviewProgressStorage(runtime.store),
             );
             if (outcome.type === "approve") {
                 return approveDraft(
@@ -1133,6 +1212,7 @@ export function registerSddExtension(
             const outcome = await (runtime.openReview ?? openManifestReview)(
                 ctx,
                 draft,
+                createReviewProgressStorage(runtime.store),
             );
             if (outcome.type === "approve") {
                 const result = await approveDraft(

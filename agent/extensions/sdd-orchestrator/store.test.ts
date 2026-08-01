@@ -6,19 +6,23 @@ import {
     mkdtempSync,
     readFileSync,
     readdirSync,
+    lstatSync,
     rmSync,
     unlinkSync,
     writeFileSync,
+    symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+    ReviewProgressConflictError,
     SddStore,
     snapshotDigest,
     type TransitionRecord,
 } from './store.ts';
 import type { RunSnapshot } from './state-machine.ts';
 import type { ApprovedManifest, DraftManifest } from './manifest.ts';
+import { createInitialReviewProgress } from './review-progress.ts';
 
 let agentDir: string;
 
@@ -94,6 +98,14 @@ function initialRun(manifestId = 'manifest-1'): RunSnapshot {
         ...snapshot(),
         runId: manifestId,
         state: 'approved',
+    };
+}
+
+function reviewStateFromDraft(draft: DraftManifest) {
+    const initial = createInitialReviewProgress(draft);
+    return {
+        acceptedTaskIds: initial.acceptedTaskIds,
+        decision: initial.decision,
     };
 }
 
@@ -430,6 +442,396 @@ test('creates durable drafts without overwriting an existing manifest', () => {
     expect(store.loadManifest('manifest-1')).toBeNull();
 });
 
+test('saves and loads review progress with optimistic revisions', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    store.createManifest(draft);
+    const initial = reviewStateFromDraft(draft);
+
+    expect(store.loadReviewProgress('manifest-1')).toBeNull();
+    const first = store.saveReviewProgress('manifest-1', 0, initial);
+    expect(first.revision).toBe(1);
+    const second = store.saveReviewProgress('manifest-1', 1, {
+        acceptedTaskIds: [],
+        decision: first.decision,
+    });
+    expect(second.revision).toBe(2);
+    expect(store.loadReviewProgress('manifest-1')).toEqual(second);
+    expect(() => store.saveReviewProgress('manifest-1', 1, initial)).toThrow(
+        'Review progress revision conflict: expected 2, received 1.',
+    );
+    expect(
+        readdirSync(join(agentDir, '.sdd', 'reviews')).filter((name) =>
+            name.endsWith('.tmp'),
+        ),
+    ).toEqual([]);
+});
+
+test('rejects review saves without an awaiting manifest', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    const state = reviewStateFromDraft(draft);
+
+    expect(() => store.saveReviewProgress('manifest-1', 0, state)).toThrow(
+        'Manifest not found: manifest-1.',
+    );
+    store.createManifest(draft);
+    store.approveManifest(draft, approvedManifest(draft), initialRun());
+    expect(() => store.saveReviewProgress('manifest-1', 0, state)).toThrow(
+        'Review progress can only be saved while awaiting approval: manifest-1.',
+    );
+    expect(store.loadReviewProgress('manifest-1')).toBeNull();
+});
+
+test('fails visibly for corrupt review progress', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    const reviewDir = join(agentDir, '.sdd', 'reviews');
+    const manifestId = 'manifest-1';
+    mkdirSync(reviewDir, { recursive: true });
+    store.createManifest(draft);
+    const baseline = createInitialReviewProgress(draft);
+
+    writeFileSync(join(reviewDir, 'manifest-1.json'), '{bad json');
+    expect(() => store.loadReviewProgress('manifest-1')).toThrow(SyntaxError);
+    writeFileSync(join(reviewDir, 'manifest-1.json'), JSON.stringify({ ...baseline, version: 2 }));
+    expect(() => store.loadReviewProgress('manifest-1')).toThrow(
+        'Unsupported review progress version: 2.',
+    );
+    writeFileSync(
+        join(reviewDir, 'manifest-1.json'),
+        JSON.stringify({
+            version: 1,
+            manifestId,
+            revision: -1,
+            acceptedTaskIds: [],
+            decision: {},
+        }),
+    );
+    expect(() => store.loadReviewProgress('manifest-1')).toThrow(
+        'Invalid review progress revision.',
+    );
+});
+
+test('rejects persisted review progress with unknown task keys', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    store.createManifest(draft);
+
+    const manifestId = 'manifest-1';
+    const reviewDir = join(agentDir, '.sdd', 'reviews');
+    const base = createInitialReviewProgress(draft);
+    mkdirSync(reviewDir, { recursive: true });
+    writeFileSync(
+        join(reviewDir, `${manifestId}.json`),
+        JSON.stringify({
+            ...base,
+            acceptedTaskIds: ['unknown'],
+            decision: {
+                ...base.decision,
+                taskOverrides: { unknown: 'light' },
+            },
+        }),
+    );
+
+    expect(() => store.loadReviewProgress(manifestId)).toThrow(
+        'Unknown review progress accepted task: unknown.',
+    );
+});
+
+test('blocks symlinked review boundaries before read/write/delete', () => {
+    const store = new SddStore(agentDir);
+    const manifest = draftManifest();
+    const draftState = reviewStateFromDraft(manifest);
+    const expectSymlinkError = (operation: () => unknown) =>
+        expect(operation).toThrow(/symbolic link/i);
+
+    rmSync(join(agentDir, '.sdd'), { force: true, recursive: true });
+    const sddReal = join(agentDir, 'real-sdd');
+    mkdirSync(sddReal, { recursive: true });
+    symlinkSync(sddReal, join(agentDir, '.sdd'), 'dir');
+    expectSymlinkError(() => store.loadReviewProgress('manifest-1'));
+    expectSymlinkError(() =>
+        store.saveReviewProgress('manifest-1', 0, draftState),
+    );
+    expectSymlinkError(() => store.deleteReviewProgress('manifest-1'));
+
+    rmSync(join(agentDir, '.sdd'), { force: true, recursive: true });
+    mkdirSync(join(agentDir, '.sdd'), { recursive: true });
+    const reviewsReal = join(agentDir, 'real-reviews');
+    mkdirSync(reviewsReal, { recursive: true });
+    symlinkSync(reviewsReal, join(agentDir, '.sdd', 'reviews'), 'dir');
+    expectSymlinkError(() => store.loadReviewProgress('manifest-1'));
+    expectSymlinkError(() =>
+        store.saveReviewProgress('manifest-1', 0, draftState),
+    );
+    expectSymlinkError(() => store.deleteReviewProgress('manifest-1'));
+
+    rmSync(join(agentDir, '.sdd', 'reviews'), { force: true });
+    mkdirSync(join(agentDir, '.sdd', 'reviews'), { recursive: true });
+    const reviewFileTarget = join(agentDir, 'manifest-review-target.json');
+    writeFileSync(reviewFileTarget, JSON.stringify(draftState));
+    store.createManifest(manifest);
+    symlinkSync(reviewFileTarget, join(agentDir, '.sdd', 'reviews', 'manifest-1.json'), 'file');
+    expectSymlinkError(() => store.loadReviewProgress('manifest-1'));
+    expectSymlinkError(() =>
+        store.saveReviewProgress('manifest-1', 0, draftState),
+    );
+    expectSymlinkError(() => store.deleteReviewProgress('manifest-1'));
+});
+
+test('deleteManifest refuses review-boundary symlinks and preserves manifest and external targets', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    store.createManifest(draft);
+    const manifestPath = join(agentDir, '.sdd', 'manifests', 'manifest-1.json');
+    const reviewDirTarget = join(agentDir, 'real-reviews');
+    const reviewDirMarker = join(reviewDirTarget, 'marker.txt');
+    const fileReviewTarget = join(agentDir, 'review-file-target.json');
+
+    rmSync(join(agentDir, '.sdd', 'reviews'), { force: true, recursive: true });
+    mkdirSync(join(agentDir, '.sdd'), { recursive: true });
+    mkdirSync(reviewDirTarget, { recursive: true });
+    writeFileSync(reviewDirMarker, 'keep');
+    symlinkSync(reviewDirTarget, join(agentDir, '.sdd', 'reviews'), 'dir');
+
+    expect(() => store.deleteManifest('manifest-1')).toThrow(/symbolic link/i);
+    expect(existsSync(manifestPath)).toBe(true);
+    expect(readFileSync(reviewDirMarker, 'utf8')).toBe('keep');
+
+    rmSync(join(agentDir, '.sdd', 'reviews'), { force: true, recursive: true });
+    mkdirSync(join(agentDir, '.sdd', 'reviews'), { recursive: true });
+    writeFileSync(fileReviewTarget, JSON.stringify({ keep: 'target' }));
+    const reviewFilePath = join(agentDir, '.sdd', 'reviews', 'manifest-1.json');
+    symlinkSync(fileReviewTarget, reviewFilePath, 'file');
+
+    expect(() => store.deleteManifest('manifest-1')).toThrow(/symbolic link/i);
+    expect(existsSync(manifestPath)).toBe(true);
+    expect(readFileSync(fileReviewTarget, 'utf8')).toBe(JSON.stringify({ keep: 'target' }));
+    expect(lstatSync(reviewFilePath).isSymbolicLink()).toBe(true);
+});
+
+test('deleteManifest rejects a symlinked .sdd root before creating lock files', () => {
+    const store = new SddStore(agentDir);
+    const externalSdd = join(agentDir, 'external-sdd');
+    const marker = join(externalSdd, 'marker.txt');
+    mkdirSync(externalSdd, { recursive: true });
+    writeFileSync(marker, 'keep');
+    symlinkSync(externalSdd, join(agentDir, '.sdd'), 'dir');
+
+    expect(() => store.deleteManifest('manifest-1')).toThrow(/symbolic link/i);
+    expect(readFileSync(marker, 'utf8')).toBe('keep');
+    expect(existsSync(join(externalSdd, 'manifests'))).toBe(false);
+});
+
+test('review operations reject symlinked manifest storage before reading or locking it', () => {
+    const store = new SddStore(agentDir);
+    const externalManifests = join(agentDir, 'external-manifests');
+    mkdirSync(join(agentDir, '.sdd'), { recursive: true });
+    mkdirSync(externalManifests, { recursive: true });
+    writeFileSync(
+        join(externalManifests, 'manifest-1.json'),
+        JSON.stringify(draftManifest()),
+    );
+    symlinkSync(
+        externalManifests,
+        join(agentDir, '.sdd', 'manifests'),
+        'dir',
+    );
+
+    const state = reviewStateFromDraft(draftManifest());
+    for (const operation of [
+        () => store.loadReviewProgress('manifest-1'),
+        () => store.saveReviewProgress('manifest-1', 0, state),
+        () => store.deleteReviewProgress('manifest-1'),
+    ]) {
+        expect(operation).toThrow(/symbolic link/i);
+    }
+    expect(
+        existsSync(join(externalManifests, 'manifest-1.lock-tickets')),
+    ).toBe(false);
+});
+
+test('review operations reject a symlinked manifest file path', () => {
+    const store = new SddStore(agentDir);
+    const manifest = draftManifest();
+    const state = reviewStateFromDraft(manifest);
+    store.createManifest(manifest);
+
+    const manifestPath = join(agentDir, '.sdd', 'manifests', 'manifest-1.json');
+    const target = join(agentDir, 'external-manifest-file.json');
+    writeFileSync(target, JSON.stringify(manifest, null, 2));
+    unlinkSync(manifestPath);
+    symlinkSync(target, manifestPath, 'file');
+
+    for (const operation of [
+        () => store.loadReviewProgress('manifest-1'),
+        () => store.saveReviewProgress('manifest-1', 0, state),
+        () => store.deleteReviewProgress('manifest-1'),
+    ]) {
+        expect(operation).toThrow(/symbolic link/i);
+    }
+    expect(readFileSync(target, 'utf8')).toBe(JSON.stringify(manifest, null, 2));
+});
+
+test('loadReviewProgress rejects review data whose manifestId does not match the path', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    const reviewState = reviewStateFromDraft(draft);
+    const reviewRoot = join(agentDir, '.sdd', 'reviews');
+    const reviewPath = join(reviewRoot, 'manifest-1.json');
+
+    mkdirSync(reviewRoot, { recursive: true });
+    writeFileSync(reviewPath, JSON.stringify({
+        ...reviewState,
+        version: 1,
+        manifestId: 'manifest-2',
+        revision: 1,
+    }));
+    store.createManifest(draft);
+
+    expect(() => store.loadReviewProgress('manifest-1')).toThrow(
+        'Invalid review progress manifestId: expected manifest-1, received manifest-2.',
+    );
+});
+
+test('loadReviewProgress rejects persisted review for invalid manifest state', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    const reviewState = reviewStateFromDraft(draft);
+    const manifestPath = join(agentDir, '.sdd', 'manifests', 'manifest-1.json');
+    const reviewPath = join(agentDir, '.sdd', 'reviews', 'manifest-1.json');
+
+    mkdirSync(join(agentDir, '.sdd', 'manifests'), { recursive: true });
+    mkdirSync(join(agentDir, '.sdd', 'reviews'), { recursive: true });
+    writeFileSync(
+        manifestPath,
+        JSON.stringify({ ...draft, state: 'invalid_state' }),
+    );
+    writeFileSync(
+        reviewPath,
+        JSON.stringify({
+            ...reviewState,
+            version: 1,
+            manifestId: 'manifest-1',
+            revision: 1,
+        }),
+    );
+
+    expect(() => store.loadReviewProgress('manifest-1')).toThrow(
+        'Invalid manifest state for review progress: invalid_state.',
+    );
+});
+
+test('reports expected 0 when no review progress exists for an optimistic save', () => {
+    const store = new SddStore(agentDir);
+    store.createManifest(draftManifest());
+
+    expect(() =>
+        store.saveReviewProgress('manifest-1', 3, reviewStateFromDraft(draftManifest())),
+    ).toThrow(
+        'Review progress revision conflict: expected 0, received 3.',
+    );
+});
+
+test('throws a typed revision conflict for both missing and stale review progress', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    store.createManifest(draft);
+    const state = reviewStateFromDraft(draft);
+
+    expect(() => store.saveReviewProgress(draft.manifestId, 3, state)).toThrow(
+        ReviewProgressConflictError,
+    );
+    try {
+        store.saveReviewProgress(draft.manifestId, 3, state);
+    } catch (error) {
+        expect(error).toMatchObject({
+            expectedRevision: 0,
+            receivedRevision: 3,
+            message: 'Review progress revision conflict: expected 0, received 3.',
+        });
+    }
+
+    store.saveReviewProgress(draft.manifestId, 0, state);
+
+    expect(() => store.saveReviewProgress(draft.manifestId, 0, state)).toThrow(
+        ReviewProgressConflictError,
+    );
+    try {
+        store.saveReviewProgress(draft.manifestId, 0, state);
+    } catch (error) {
+        expect(error).toMatchObject({
+            expectedRevision: 1,
+            receivedRevision: 0,
+            message: 'Review progress revision conflict: expected 1, received 0.',
+        });
+    }
+});
+
+test('deletes review progress with its manifest', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    store.createManifest(draft);
+    store.saveReviewProgress('manifest-1', 0, reviewStateFromDraft(draft));
+
+    expect(store.deleteManifest('manifest-1')).toBe(true);
+    expect(store.loadManifest('manifest-1')).toBeNull();
+    expect(() => store.loadReviewProgress('manifest-1')).toThrow(
+        'Manifest not found: manifest-1.',
+    );
+    expect(store.deleteManifest('manifest-1')).toBe(false);
+});
+
+test('approving a draft keeps success even when review cleanup cannot remove symlinked review path', () => {
+    const store = new SddStore(agentDir);
+    const manifest = draftManifest();
+    const approved = approvedManifest(manifest);
+    const reviewTarget = join(agentDir, 'external-review-target.json');
+    const reviewTargetPayload = {
+        keep: 'external-target',
+    };
+
+    store.createManifest(manifest);
+    store.saveReviewProgress('manifest-1', 0, reviewStateFromDraft(manifest));
+    writeFileSync(reviewTarget, JSON.stringify(reviewTargetPayload));
+    unlinkSync(join(agentDir, '.sdd', 'reviews', 'manifest-1.json'));
+    symlinkSync(
+        reviewTarget,
+        join(agentDir, '.sdd', 'reviews', 'manifest-1.json'),
+        'file',
+    );
+
+    const result = store.approveManifest(manifest, approved, initialRun());
+
+    expect(result.reviewCleanupPending).toBe(true);
+    expect(result.reviewCleanupError).toMatch(/symbolic link/i);
+    expect(store.loadManifest('manifest-1')).toEqual({
+        ...approved,
+        state: 'approved',
+    });
+    expect(JSON.parse(readFileSync(reviewTarget, 'utf8'))).toEqual(
+        reviewTargetPayload,
+    );
+    expect(store.load('manifest-1')).toEqual(initialRun());
+});
+
+test('rejects traversal at every review progress boundary', () => {
+    const store = new SddStore(agentDir);
+    const state = reviewStateFromDraft(draftManifest());
+    for (const manifestId of ['../escape', 'nested/review', '', '-leading']) {
+        for (const operation of [
+            () => store.loadReviewProgress(manifestId),
+            () => store.saveReviewProgress(manifestId, 0, state),
+            () => store.deleteReviewProgress(manifestId),
+            () => store.deleteManifest(manifestId),
+        ]) {
+            expect(operation).toThrow('Invalid manifest ID');
+        }
+    }
+    expect(existsSync(join(agentDir, '.sdd'))).toBe(false);
+});
+
 test('approves a draft and initial run once with identical retry idempotency', () => {
     const store = new SddStore(agentDir);
     const draft = draftManifest();
@@ -454,6 +856,57 @@ test('approves a draft and initial run once with identical retry idempotency', (
     });
     expect(store.loadManifest('manifest-1')).toEqual(approved);
     expect(store.load('manifest-1')).toEqual(initial);
+});
+
+test('approval removes review progress after the manifest and run persist', () => {
+    const store = new SddStore(agentDir);
+    const draft = draftManifest();
+    store.createManifest(draft);
+    store.saveReviewProgress('manifest-1', 0, reviewStateFromDraft(draft));
+
+    expect(store.approveManifest(draft, approvedManifest(draft), initialRun())).toMatchObject({
+        reviewCleanupPending: false,
+    });
+    expect(store.loadManifest('manifest-1')?.state).toBe('approved');
+    expect(store.load('manifest-1')).toEqual(initialRun());
+    expect(store.loadReviewProgress('manifest-1')).toBeNull();
+});
+
+test('keeps approval durable when review cleanup fails and retries it', () => {
+    class CleanupFailingStore extends SddStore {
+        cleanupAttempts = 0;
+
+        protected override deleteReviewProgressUnderManifestTicket(
+            manifestId: string,
+        ): boolean {
+            this.cleanupAttempts += 1;
+            if (this.cleanupAttempts === 1) {
+                throw new Error('injected review cleanup failure');
+            }
+            return super.deleteReviewProgressUnderManifestTicket(manifestId);
+        }
+    }
+    const store = new CleanupFailingStore(agentDir);
+    const draft = draftManifest();
+    const approved = approvedManifest(draft);
+    store.createManifest(draft);
+    store.saveReviewProgress('manifest-1', 0, reviewStateFromDraft(draft));
+
+    expect(store.approveManifest(draft, approved, initialRun())).toMatchObject({
+        created: true,
+        reviewCleanupPending: true,
+        reviewCleanupError: 'injected review cleanup failure',
+    });
+    expect(store.loadManifest('manifest-1')).toEqual(approved);
+    expect(store.load('manifest-1')).toEqual(initialRun());
+    expect(store.loadReviewProgress('manifest-1')).not.toBeNull();
+
+    expect(store.approveManifest(draft, approved, initialRun())).toMatchObject({
+        created: false,
+        reviewCleanupPending: false,
+    });
+    expect(store.cleanupAttempts).toBe(2);
+    expect(store.loadReviewProgress('manifest-1')).toBeNull();
 });
 
 test('a conflicting approval cannot overwrite the winning decision', () => {

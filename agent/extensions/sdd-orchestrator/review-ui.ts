@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
     Input,
+    Key,
     matchesKey,
     truncateToWidth,
     type Component,
@@ -10,11 +11,25 @@ import {
     wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import {
+    allocateBoxPanelLayout,
+    renderBoxFooter,
+    renderBoxHeader,
+    renderBoxPanelRow,
+    renderBoxPanelSeparator,
+} from "../_shared/ui/framed-box.ts";
+import {
     calculateLaunchPreview,
     type DraftManifest,
     type LaunchPreview,
     type ManifestDecision,
 } from "./manifest.ts";
+import {
+    createInitialReviewProgress,
+    type ManifestReviewProgressState,
+    type ManifestReviewProgressV1,
+    normalizeReviewProgressState,
+    parseReviewProgress,
+} from "./review-progress.ts";
 import { profileSeverity, taskStateGlyph } from "./review-render.ts";
 import type { TaskState } from "./state-machine.ts";
 import { PROFILES, type Profile } from "./types.ts";
@@ -79,6 +94,7 @@ export interface ReviewDecisionState {
     readonly validationLaunches: number;
     readonly maximumLaunches: number;
     readonly estimatedQualitativeDuration: QualitativeDuration;
+    readonly acceptedTaskIds: readonly string[];
 }
 
 export interface ReviewController {
@@ -89,34 +105,126 @@ export interface ReviewController {
     setFinalIntegrationReview(enabled: boolean): void;
     confirmCriticalDowngrade(taskId: string, confirmed: boolean): void;
     setCriticalJustification(taskId: string, justification: string): void;
+    setTaskAccepted(taskId: string, accepted: boolean): void;
+    toggleTaskAcceptance(taskId: string): boolean;
+    clearAllAcceptance(): void;
+    taskIsAccepted(taskId: string): boolean;
     validate(): string[];
     approve(approvedBy: string, approvedAt: string): ManifestDecision;
     cancel(): null;
 }
 
-export function createReviewController(draft: DraftManifest): ReviewController {
-    let globalProfile = draft.globalProfile;
-    let parallelismEnabled = draft.parallelismEnabled;
-    let finalIntegrationReview = false;
-    const taskOverrides: Record<string, Profile> = Object.fromEntries(
-        draft.tasks
-            .filter((task) => task.recommendedProfile !== draft.globalProfile)
-            .map((task) => [task.id, task.recommendedProfile]),
-    );
-    const confirmations: Record<string, boolean> = {};
-    const justifications: Record<string, string> = {};
+export interface ReviewProgressStorage {
+    loadReviewProgress?: (manifestId: string) => unknown;
+    saveReviewProgress?: (
+        manifestId: string,
+        expectedRevision: number,
+        progress: ManifestReviewProgressState,
+    ) => Promise<ReviewProgressSaveOutcome> | ReviewProgressSaveOutcome;
+}
+
+export type ReviewProgressSaveOutcome =
+    | { readonly type: "ok"; readonly revision?: number }
+    | {
+          readonly type: "conflict";
+          readonly current: ManifestReviewProgressV1;
+      }
+    | {
+          readonly type: "error";
+          readonly error: string;
+      }
+    | { readonly type: "noop" };
+
+type PersistResult = {
+    readonly warning: string | null;
+    readonly persistError: string | null;
+    readonly discardQueuedMutations?: boolean;
+};
+
+const toArray = (values: Iterable<string>): string[] => Array.from(values);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeSaveResult(raw: unknown): ReviewProgressSaveOutcome {
+    if (!isRecord(raw)) {
+        return { type: "noop" };
+    }
+    const result = raw;
+    if (result.type === "ok") {
+        return {
+            type: "ok",
+            revision:
+                typeof result.revision === "number"
+                    ? result.revision
+                    : undefined,
+        };
+    }
+    if (result.type === "conflict") {
+        try {
+            return {
+                type: "conflict",
+                current: parseReviewProgress(result.current),
+            };
+        } catch {
+            return { type: "noop" };
+        }
+    }
+    if (result.type === "error" && typeof result.error === "string") {
+        return { type: "error", error: result.error };
+    }
+    if (result.type === "noop") return { type: "noop" };
+    try {
+        const parsed = parseReviewProgress(raw);
+        return { type: "ok", revision: parsed.revision };
+    } catch {
+        return { type: "noop" };
+    }
+}
+
+export function createReviewController(
+    draft: DraftManifest,
+    initialState: ManifestReviewProgressState = createInitialReviewProgress(
+        draft,
+    ),
+): ReviewController {
+    let globalProfile = initialState.decision.globalProfile;
+    let parallelismEnabled = initialState.decision.parallelismEnabled;
+    let finalIntegrationReview = initialState.decision.finalIntegrationReview;
+    let globalTaskOverrides: Record<string, Profile> = {
+        ...initialState.decision.taskOverrides,
+    };
+    let confirmations: Record<string, boolean> = {
+        ...initialState.decision.criticalDowngradeConfirmations,
+    };
+    let justifications: Record<string, string> = {
+        ...initialState.decision.criticalDowngradeJustifications,
+    };
+    const acceptedTaskIds = new Set(initialState.acceptedTaskIds);
     const taskIds = new Set(draft.tasks.map((task) => task.id));
+
+    const clearAcceptanceForTask = (taskId: string): void => {
+        acceptedTaskIds.delete(taskId);
+    };
+
+    const assertKnownTask = (taskId: string): void => {
+        if (!taskIds.has(taskId)) {
+            throw new Error(`Unknown task: ${taskId}.`);
+        }
+    };
 
     const effectiveProfiles = () =>
         Object.fromEntries(
             draft.tasks.map((task) => [
                 task.id,
-                taskOverrides[task.id] ?? globalProfile,
+                globalTaskOverrides[task.id] ?? globalProfile,
             ]),
         );
     const validationErrors = () => {
         const errors: string[] = [];
         const profiles = effectiveProfiles();
+        const accepted = toArray(acceptedTaskIds);
         for (const task of draft.tasks) {
             const profile = profiles[task.id];
             if (
@@ -135,6 +243,11 @@ export function createReviewController(draft: DraftManifest): ReviewController {
                 );
             }
         }
+        for (const taskId of toArray(taskIds)) {
+            if (!accepted.includes(taskId)) {
+                errors.push(`Task ${taskId} is not accepted.`);
+            }
+        }
         return errors;
     };
 
@@ -148,10 +261,13 @@ export function createReviewController(draft: DraftManifest): ReviewController {
             );
             return {
                 globalProfile,
-                taskOverrides: { ...taskOverrides },
+                taskOverrides: { ...globalTaskOverrides },
                 parallelismEnabled,
                 criticalDowngradeConfirmations: { ...confirmations },
                 criticalDowngradeJustifications: { ...justifications },
+                acceptedTaskIds: toArray(taskIds).filter((taskId) =>
+                    acceptedTaskIds.has(taskId),
+                ),
                 ...preview,
                 estimatedQualitativeDuration: estimateQualitativeDuration(
                     draft.tasks,
@@ -161,29 +277,62 @@ export function createReviewController(draft: DraftManifest): ReviewController {
             };
         },
         setGlobalProfile(profile) {
+            if (globalProfile === profile) return;
             globalProfile = profile;
+            acceptedTaskIds.clear();
         },
         setTaskOverride(taskId, profile) {
-            if (!taskIds.has(taskId))
-                throw new Error(`Unknown task: ${taskId}.`);
-            if (profile === undefined) delete taskOverrides[taskId];
-            else taskOverrides[taskId] = profile;
+            assertKnownTask(taskId);
+            if (globalTaskOverrides[taskId] === profile) return;
+            if (profile === undefined) delete globalTaskOverrides[taskId];
+            else globalTaskOverrides[taskId] = profile;
+            clearAcceptanceForTask(taskId);
         },
         setParallelism(enabled) {
+            if (parallelismEnabled === enabled) return;
             parallelismEnabled = enabled;
+            acceptedTaskIds.clear();
         },
         setFinalIntegrationReview(enabled) {
+            if (finalIntegrationReview === enabled) return;
             finalIntegrationReview = enabled;
+            acceptedTaskIds.clear();
         },
         confirmCriticalDowngrade(taskId, confirmed) {
-            if (!taskIds.has(taskId))
-                throw new Error(`Unknown task: ${taskId}.`);
+            assertKnownTask(taskId);
+            if (confirmations[taskId] === confirmed) return;
             confirmations[taskId] = confirmed;
+            clearAcceptanceForTask(taskId);
         },
         setCriticalJustification(taskId, justification) {
-            if (!taskIds.has(taskId))
-                throw new Error(`Unknown task: ${taskId}.`);
+            assertKnownTask(taskId);
+            if (justifications[taskId] === justification) return;
             justifications[taskId] = justification;
+            clearAcceptanceForTask(taskId);
+        },
+        setTaskAccepted(taskId, accepted) {
+            assertKnownTask(taskId);
+            if (accepted) {
+                acceptedTaskIds.add(taskId);
+            } else {
+                acceptedTaskIds.delete(taskId);
+            }
+        },
+        toggleTaskAcceptance(taskId) {
+            assertKnownTask(taskId);
+            if (acceptedTaskIds.has(taskId)) {
+                acceptedTaskIds.delete(taskId);
+                return false;
+            }
+            acceptedTaskIds.add(taskId);
+            return true;
+        },
+        clearAllAcceptance() {
+            acceptedTaskIds.clear();
+        },
+        taskIsAccepted(taskId) {
+            assertKnownTask(taskId);
+            return acceptedTaskIds.has(taskId);
         },
         validate: validationErrors,
         approve(approvedBy, approvedAt) {
@@ -191,7 +340,7 @@ export function createReviewController(draft: DraftManifest): ReviewController {
             if (errors[0]) throw new Error(errors[0]);
             return {
                 globalProfile,
-                taskOverrides: { ...taskOverrides },
+                taskOverrides: { ...globalTaskOverrides },
                 parallelismEnabled,
                 finalIntegrationReview,
                 criticalDowngradeConfirmations: { ...confirmations },
@@ -249,25 +398,41 @@ function taskReviewState(
 
 export class ManifestReviewComponent implements Component {
     private selectedTask = 0;
+    private focusedPanel: "roster" | "detail" | "validation" = "roster";
     private detailScroll = 0;
-    private detailAutoFollow = true;
     private detailLineCount = 0;
+    private validationScroll = 0;
+    private validationLineCount = 0;
+    private renderedLayoutMode: "compact" | "medium" | "wide" = "wide";
     private bodyHeight = 8;
     private editingJustification = false;
     private readonly justificationInput = new Input();
     private errors: string[] = [];
+    private saveError: string | null = null;
+    private conflictWarning: string | null = null;
+    private revision = 0;
+    private pendingSave = Promise.resolve();
+    private saveInFlight = 0;
+    private persistenceEpoch = 0;
 
     constructor(
         private readonly tui: TUI,
         private readonly theme: ReviewTheme,
         private readonly keybindings: KeybindingsManager,
         private readonly draft: DraftManifest,
-        private readonly controller: ReviewController,
+        private controller: ReviewController,
         private readonly done: (result: ManifestReviewOutcome) => void,
+        initialRevision = 0,
+        private readonly progressStorage: ReviewProgressStorage = {},
     ) {
+        this.revision = initialRevision;
         this.justificationInput.onSubmit = (value) => {
             const task = this.draft.tasks[this.selectedTask];
-            if (task) this.controller.setCriticalJustification(task.id, value);
+            if (task) {
+                const rollbackState = this.serializeProgress();
+                this.controller.setCriticalJustification(task.id, value);
+                this.persistMutation("critical-justification", rollbackState);
+            }
             this.editingJustification = false;
             this.tui.requestRender();
         };
@@ -277,13 +442,165 @@ export class ManifestReviewComponent implements Component {
         };
     }
 
+    private get selectedTaskId(): string | null {
+        return this.draft.tasks[this.selectedTask]?.id ?? null;
+    }
+
+    private get taskIds(): string[] {
+        return this.draft.tasks.map((task) => task.id);
+    }
+
+    private serializeProgress(): ManifestReviewProgressState {
+        const state = this.controller.current;
+        return {
+            acceptedTaskIds: [...state.acceptedTaskIds],
+            decision: {
+                globalProfile: state.globalProfile,
+                taskOverrides: { ...state.taskOverrides },
+                parallelismEnabled: state.parallelismEnabled,
+                finalIntegrationReview: state.finalIntegrationReview,
+                criticalDowngradeConfirmations: {
+                    ...state.criticalDowngradeConfirmations,
+                },
+                criticalDowngradeJustifications: {
+                    ...state.criticalDowngradeJustifications,
+                },
+            },
+        };
+    }
+
+    private async persistToStore(
+        expectedRevision: number,
+        state: ManifestReviewProgressState,
+    ): Promise<PersistResult> {
+        const save = this.progressStorage.saveReviewProgress;
+        if (!save) {
+            this.revision = expectedRevision + 1;
+            return { warning: null, persistError: null };
+        }
+
+        const raw = normalizeSaveResult(
+            await save(this.draft.manifestId, expectedRevision, state),
+        );
+        if (raw.type === "ok") {
+            this.revision = raw.revision ?? expectedRevision + 1;
+            return { warning: null, persistError: null };
+        }
+        if (raw.type === "noop") {
+            this.revision = expectedRevision + 1;
+            return { warning: null, persistError: null };
+        }
+        if (raw.type === "error") {
+            return {
+                warning: null,
+                persistError: `Failed to persist review progress: ${raw.error}`,
+            };
+        }
+        try {
+            const current = parseReviewProgress(raw.current);
+            if (current.manifestId !== this.draft.manifestId) {
+                throw new Error(
+                    `Review progress manifestId mismatch: ${current.manifestId}.`,
+                );
+            }
+            const normalized = normalizeReviewProgressState(this.draft, {
+                acceptedTaskIds: current.acceptedTaskIds,
+                decision: current.decision,
+            });
+            this.conflictWarning =
+                "Review progress was updated by another session. Reloaded latest state.";
+            this.saveError = null;
+            this.controller = createReviewController(this.draft, normalized);
+            this.revision = current.revision;
+            return {
+                warning: this.conflictWarning,
+                persistError: null,
+                discardQueuedMutations: true,
+            };
+        } catch (error) {
+            return {
+                warning: null,
+                persistError:
+                    error instanceof Error
+                        ? error.message
+                        : "Review progress conflict could not be applied.",
+            };
+        }
+    }
+
+    private persistMutation(
+        _reason: string,
+        rollbackState: ManifestReviewProgressState = this.serializeProgress(),
+    ): void {
+        const state = this.serializeProgress();
+        const epoch = this.persistenceEpoch;
+        this.saveInFlight += 1;
+        const runSave = async (): Promise<void> => {
+            if (epoch !== this.persistenceEpoch) {
+                this.saveInFlight = Math.max(0, this.saveInFlight - 1);
+                this.tui.requestRender();
+                return;
+            }
+            try {
+                const result = await this.persistToStore(this.revision, state);
+                this.saveError = result.persistError;
+                if (result.discardQueuedMutations) {
+                    const hasQueuedLocalMutations = this.saveInFlight > 1;
+                    this.persistenceEpoch += 1;
+                    this.conflictWarning =
+                        "Review progress was updated by another session. Reloaded latest state." +
+                        (hasQueuedLocalMutations
+                            ? " Pending local changes were discarded."
+                            : "");
+                } else if (result.persistError) {
+                    this.controller = createReviewController(
+                        this.draft,
+                        rollbackState,
+                    );
+                    this.persistenceEpoch += 1;
+                }
+                if (!result.warning && this.saveError === null) {
+                    this.conflictWarning = null;
+                }
+                if (result.warning && !result.discardQueuedMutations) {
+                    this.conflictWarning = result.warning;
+                }
+                this.saveInFlight = Math.max(0, this.saveInFlight - 1);
+                this.tui.requestRender();
+            } catch (error) {
+                this.controller = createReviewController(
+                    this.draft,
+                    rollbackState,
+                );
+                this.persistenceEpoch += 1;
+                this.saveError =
+                    error instanceof Error
+                        ? `Failed to persist review progress: ${error.message}`
+                        : "Failed to persist review progress.";
+                this.saveInFlight = Math.max(0, this.saveInFlight - 1);
+                this.tui.requestRender();
+            }
+        };
+        this.pendingSave =
+            this.saveInFlight === 1
+                ? runSave()
+                : this.pendingSave.then(runSave, runSave);
+    }
+
+    private mutateAndPersist(mutator: () => void): void {
+        const rollbackState = this.serializeProgress();
+        mutator();
+        this.persistMutation("mutation", rollbackState);
+        this.tui.requestRender();
+    }
+
     private moveSelection(delta: number): void {
         if (this.draft.tasks.length === 0) return;
         this.selectedTask = Math.max(
             0,
             Math.min(this.draft.tasks.length - 1, this.selectedTask + delta),
         );
-        this.detailAutoFollow = true;
+        this.detailScroll = 0;
         this.tui.requestRender();
     }
 
@@ -310,7 +627,10 @@ export class ManifestReviewComponent implements Component {
                     state.taskOverrides[task.id] ?? state.globalProfile;
                 const reviewState = taskReviewState(this.draft, task.id, state);
                 const glyph = taskStateGlyph(this.theme, reviewState);
-                const left = `${marker} ${glyph} ${task.id}: ${task.title}`;
+                const accepted = this.controller.taskIsAccepted(task.id)
+                    ? this.theme.fg("success", "[x]")
+                    : this.theme.fg("muted", "[ ]");
+                const left = `${marker} ${accepted} ${glyph} ${task.id}: ${task.title}`;
                 return rightAligned(
                     left,
                     profileSeverity(this.theme, effective),
@@ -326,6 +646,7 @@ export class ManifestReviewComponent implements Component {
         const effective = state.taskOverrides[task.id] ?? state.globalProfile;
         const raw = [
             this.theme.bold(task.title),
+            `description: ${task.description}`,
             this.theme.fg("muted", `id: ${task.id}`),
             `recommended: ${profileSeverity(this.theme, task.recommendedProfile)}  effective: ${profileSeverity(this.theme, effective)}`,
             `parallel: ${task.parallelEligible ? "yes" : "no"}  integration: ${state.finalIntegrationReview ? "required" : "off"}`,
@@ -347,7 +668,6 @@ export class ManifestReviewComponent implements Component {
                 `justification=${state.criticalDowngradeJustifications[task.id] || "(required)"}`,
             );
         }
-        raw.push(`description: ${task.description}`);
         const lines: string[] = [];
         for (const line of raw) {
             const wrapped = wrapTextWithAnsi(line, Math.max(1, width));
@@ -361,12 +681,33 @@ export class ManifestReviewComponent implements Component {
         const task = this.draft.tasks[this.selectedTask];
         const lines: string[] = [];
         const errors = this.controller.validate();
+        this.errors = errors;
         if (errors.length) {
             lines.push(this.theme.fg("error", "Validation errors:"));
             for (const error of errors)
                 lines.push(this.theme.fg("error", `· ${error}`));
         } else {
             lines.push(this.theme.fg("success", "Validation: OK"));
+        }
+        if (this.saveError) {
+            lines.push(this.theme.fg("error", this.saveError));
+        }
+        if (this.conflictWarning) {
+            lines.push(this.theme.fg("warning", this.conflictWarning));
+        }
+        const unaccepted =
+            state.acceptedTaskIds.length === this.draft.tasks.length
+                ? []
+                : this.taskIds.filter(
+                      (taskId) => !state.acceptedTaskIds.includes(taskId),
+                  );
+        if (unaccepted.length) {
+            lines.push(
+                this.theme.fg(
+                    "warning",
+                    `Pending acceptance: ${unaccepted.join(", ")}`,
+                ),
+            );
         }
         if (task && task.recommendedProfile === "critical") {
             const effective =
@@ -388,141 +729,313 @@ export class ManifestReviewComponent implements Component {
         return lines;
     }
 
+    private panelTitle(
+        panel: "roster" | "detail" | "validation",
+        label: string,
+    ): string {
+        return this.focusedPanel === panel
+            ? this.theme.fg("accent", this.theme.bold(`▸ ${label}`))
+            : this.theme.fg("muted", label);
+    }
+
+    private panelTitleCells(
+        mode: "compact" | "medium" | "wide",
+    ): readonly string[] {
+        if (mode === "wide") {
+            return [
+                this.panelTitle("roster", "TASKS"),
+                this.panelTitle("detail", "DETAILS"),
+                this.panelTitle("validation", "VALIDATION"),
+            ];
+        }
+        if (mode === "medium") {
+            const combinedTitle =
+                this.focusedPanel === "validation"
+                    ? `${this.theme.fg("muted", "DETAILS +")} ${this.panelTitle("validation", "VALIDATION")}`
+                    : this.focusedPanel === "detail"
+                      ? `${this.panelTitle("detail", "DETAILS")} ${this.theme.fg("muted", "+ VALIDATION")}`
+                      : this.theme.fg("muted", "DETAILS + VALIDATION");
+            return [this.panelTitle("roster", "TASKS"), combinedTitle];
+        }
+        const label =
+            this.focusedPanel === "roster"
+                ? "TASKS"
+                : this.focusedPanel === "detail"
+                  ? "DETAILS"
+                  : "VALIDATION";
+        return [this.panelTitle(this.focusedPanel, label)];
+    }
+
+    private focusHelp(): string {
+        const focused =
+            this.focusedPanel === "roster"
+                ? "Tasks"
+                : this.focusedPanel === "detail"
+                  ? "Details"
+                  : "Validation";
+        const controls =
+            this.focusedPanel === "roster"
+                ? "↑↓ select task"
+                : `↑↓/PgUp/PgDn scroll ${focused.toLowerCase()}`;
+        return `Focus: ${focused} · Tab panels · ${controls}`;
+    }
+
     render(width: number): string[] {
         if (width < 36)
             return ["Manifest review needs ≥36 columns. Esc closes."];
-        const theme = this.theme;
-        const innerWidth = width - 2;
+
         const rows = this.tui.terminal?.rows ?? 32;
-        const showValidation = rows >= 24;
-        this.bodyHeight = Math.max(
-            4,
-            Math.min(30, Math.floor(rows * 0.85) - 6),
-        );
-        const rosterWidth = Math.max(
-            22,
-            Math.min(46, Math.floor((innerWidth - 1) * 0.38)),
-        );
-        const validationWidth = showValidation
-            ? Math.max(20, Math.min(34, Math.floor((innerWidth - 1) * 0.22)))
-            : 0;
-        const dividers = showValidation ? 2 : 1;
-        const detailWidth = Math.max(
+        const maxHeight = Math.max(
             1,
-            innerWidth - rosterWidth - validationWidth - dividers,
+            Math.min(Math.floor(rows * 0.85), rows - 2),
         );
+        if (maxHeight < 3)
+            return ["Manifest review is too short to display. Esc closes."];
+
+        const wide = width >= 96;
+        const medium = width >= 60;
+        this.renderedLayoutMode = wide ? "wide" : medium ? "medium" : "compact";
+        const layout = wide
+            ? allocateBoxPanelLayout(width, [
+                  { minWidth: 24, maxWidth: 24 },
+                  { minWidth: 40, weight: 1 },
+                  { minWidth: 28, maxWidth: 28 },
+              ])
+            : medium
+              ? allocateBoxPanelLayout(width, [
+                    { minWidth: 24, maxWidth: 24 },
+                    { minWidth: 33, weight: 1 },
+                ])
+              : allocateBoxPanelLayout(width, [{ minWidth: width - 2 }]);
+        const fullLayout = allocateBoxPanelLayout(width, [
+            { minWidth: width - 2 },
+        ]);
+        if (!layout || !fullLayout)
+            return ["Manifest review cannot fit. Esc closes."];
+
+        const renderLowHeightFallback = (): string[] =>
+            [
+                renderBoxHeader(this.theme, width, "SDD manifest review", {
+                    borderStyle: "rounded",
+                    titlePosition: "left",
+                }),
+                renderBoxPanelRow(
+                    this.theme,
+                    fullLayout,
+                    [
+                        ` ${this.focusHelp()} · a approve · r return · Esc cancel`,
+                    ],
+                    { borderStyle: "rounded" },
+                ),
+                renderBoxFooter(this.theme, width, "", {
+                    borderStyle: "rounded",
+                }),
+            ].map((line) => truncateToWidth(line, width));
+        if (maxHeight <= 8) return renderLowHeightFallback();
 
         const state = this.controller.current;
-        const border = theme.fg("border", "│");
-        const lines: string[] = [];
-
-        // Header box
-        lines.push(theme.fg("border", `╭${"─".repeat(innerWidth)}╮`));
-        lines.push(
-            border +
-                fit(
-                    ` ${theme.bold("SDD manifest review")} ${theme.fg("dim", "· " + this.draft.planTitle)}`,
-                    innerWidth,
-                ) +
-                border,
+        const rosterWidth = layout.panelWidths[0];
+        const detailWidth = layout.panelWidths[medium ? 1 : 0];
+        const validationWidth = wide ? layout.panelWidths[2] : detailWidth;
+        const pending = this.taskIds.filter(
+            (taskId) => !state.acceptedTaskIds.includes(taskId),
         );
-        lines.push(
-            border +
-                fit(
-                    ` ${theme.fg("muted", `duration: ${state.estimatedQualitativeDuration} · launches: ${state.maximumLaunches} · global: ${profileSeverity(theme, state.globalProfile)} · parallel: ${state.parallelismEnabled ? "on" : "off"}`)}`,
-                    innerWidth,
-                ) +
-                border,
+        const notices = [
+            ...(this.saveError ? [this.theme.fg("error", this.saveError)] : []),
+            ...(this.conflictWarning
+                ? [this.theme.fg("warning", this.conflictWarning)]
+                : []),
+            ...(pending.length
+                ? [
+                      this.theme.fg(
+                          "warning",
+                          `Pending acceptance: ${pending.join(", ")}`,
+                      ),
+                  ]
+                : []),
+        ].flatMap((notice) => wrapTextWithAnsi(notice, width - 2));
+        const actionLines = wrapTextWithAnsi(
+            this.theme.fg(
+                "dim",
+                `${this.focusHelp()} · Home/End scroll · Space/Enter accept · g/o/p/i/c/j · a approve · r return · Esc cancel`,
+            ),
+            detailWidth,
         );
-        lines.push(
-            border +
-                fit(
-                    ` ${theme.fg("muted", `Validation launches: qa=${state.qaLaunches}, browser=${state.browserLaunches}, total=${state.validationLaunches} (of profile budget ${state.profileLaunches})`)}`,
-                    innerWidth,
-                ) +
-                border,
+        const availableActionLines = Math.max(
+            1,
+            maxHeight - (1 + 2 + notices.length + 3 + 1 + 1),
         );
-
-        // Body separator
-        const sepRow = showValidation
-            ? theme.fg(
-                  "border",
-                  `├${"─".repeat(rosterWidth)}┬${"─".repeat(detailWidth)}┬${"─".repeat(validationWidth)}┤`,
-              )
-            : theme.fg(
-                  "border",
-                  `├${"─".repeat(rosterWidth)}┬${"─".repeat(detailWidth)}┤`,
-              );
-        lines.push(sepRow);
+        const visibleActionLines = actionLines.slice(0, availableActionLines);
+        const editorLines = this.editingJustification
+            ? [
+                  this.theme.bold("Critical downgrade justification:"),
+                  ...this.justificationInput.render(detailWidth),
+              ].flatMap((line) => wrapTextWithAnsi(line, detailWidth))
+            : [];
+        const fixedLines =
+            1 + 2 + notices.length + 3 + visibleActionLines.length + 1;
+        if (fixedLines > maxHeight) return renderLowHeightFallback();
+        this.bodyHeight = Math.max(0, maxHeight - fixedLines);
 
         const roster = this.rosterLines(rosterWidth, this.bodyHeight);
-        let details = this.detailLines(detailWidth);
-        // When the validation pane is collapsed (short terminal), append its
-        // lines to the detail pane so validation state stays visible.
-        let validation: string[];
-        if (showValidation) {
-            validation = this.validationLines();
-        } else {
-            validation = [];
-            const collapsed = this.validationLines();
-            if (collapsed.length) {
-                details = [
-                    ...details,
-                    "",
-                    ...collapsed.flatMap((l) =>
-                        wrapTextWithAnsi(l, detailWidth),
-                    ),
-                ];
-            }
+        let details = [...editorLines, ...this.detailLines(detailWidth)];
+        const validation = this.validationLines().flatMap((line) =>
+            wrapTextWithAnsi(line, validationWidth),
+        );
+        if (!wide && medium) {
+            details = [...details, "", ...validation];
         }
         this.detailLineCount = details.length;
+        this.validationLineCount = validation.length;
         const maxDetailScroll = Math.max(0, details.length - this.bodyHeight);
-        if (this.detailAutoFollow) this.detailScroll = maxDetailScroll;
-        else if (this.detailScroll > maxDetailScroll)
-            this.detailScroll = maxDetailScroll;
+        const maxValidationScroll = Math.max(
+            0,
+            validation.length - this.bodyHeight,
+        );
+        this.detailScroll = Math.max(
+            0,
+            Math.min(this.detailScroll, maxDetailScroll),
+        );
+        this.validationScroll = Math.max(
+            0,
+            Math.min(this.validationScroll, maxValidationScroll),
+        );
         const visibleDetails = details.slice(
             this.detailScroll,
             this.detailScroll + this.bodyHeight,
         );
+        const visibleValidation = validation.slice(
+            this.validationScroll,
+            this.validationScroll + this.bodyHeight,
+        );
 
-        for (let i = 0; i < this.bodyHeight; i++) {
-            let row =
-                border +
-                fit(roster[i] ?? "", rosterWidth) +
-                theme.fg("border", "│");
-            row += fit(visibleDetails[i] ?? "", detailWidth);
-            if (showValidation) {
-                row +=
-                    theme.fg("border", "│") +
-                    fit(validation[i] ?? "", validationWidth) +
-                    border;
-            } else {
-                row += border;
-            }
-            lines.push(row);
+        const lines = [
+            renderBoxHeader(
+                this.theme,
+                width,
+                `SDD manifest review ${this.theme.fg("accent", "›")} · ${this.draft.planTitle}`,
+                { borderStyle: "rounded", titlePosition: "left" },
+            ),
+            renderBoxPanelRow(
+                this.theme,
+                fullLayout,
+                [
+                    ` ${this.theme.fg("muted", `duration: ${state.estimatedQualitativeDuration} · launches: ${state.maximumLaunches} · global: ${state.globalProfile} · parallel: ${state.parallelismEnabled ? "on" : "off"}`)}`,
+                ],
+                { borderStyle: "rounded" },
+            ),
+            renderBoxPanelRow(
+                this.theme,
+                fullLayout,
+                [
+                    ` ${this.theme.fg("muted", `Validation launches: qa=${state.qaLaunches}, browser=${state.browserLaunches}, total=${state.validationLaunches} (of profile budget ${state.profileLaunches})`)}`,
+                ],
+                { borderStyle: "rounded" },
+            ),
+            ...notices.map((notice) =>
+                renderBoxPanelRow(this.theme, fullLayout, [` ${notice}`], {
+                    borderStyle: "rounded",
+                }),
+            ),
+            renderBoxPanelSeparator(this.theme, layout, "top", {
+                borderStyle: "rounded",
+            }),
+            renderBoxPanelRow(
+                this.theme,
+                layout,
+                this.panelTitleCells(this.renderedLayoutMode),
+                { borderStyle: "rounded" },
+            ),
+            renderBoxPanelSeparator(this.theme, layout, "middle", {
+                borderStyle: "rounded",
+            }),
+        ];
+
+        for (let index = 0; index < this.bodyHeight; index++) {
+            const compactContent =
+                this.focusedPanel === "roster"
+                    ? roster[index]
+                    : this.focusedPanel === "detail"
+                      ? visibleDetails[index]
+                      : visibleValidation[index];
+            lines.push(
+                renderBoxPanelRow(
+                    this.theme,
+                    layout,
+                    wide
+                        ? [
+                              roster[index] ?? "",
+                              visibleDetails[index] ?? "",
+                              visibleValidation[index] ?? "",
+                          ]
+                        : medium
+                          ? [roster[index] ?? "", visibleDetails[index] ?? ""]
+                          : [compactContent ?? ""],
+                    { borderStyle: "rounded" },
+                ),
+            );
         }
-
-        // Footer
-        const footerSep = showValidation
-            ? theme.fg(
-                  "border",
-                  `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┴${"─".repeat(validationWidth)}┤`,
-              )
-            : theme.fg(
-                  "border",
-                  `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`,
-              );
-        lines.push(footerSep);
-        const position = `${this.selectedTask + 1}/${this.draft.tasks.length}`;
-        const footer = ` ↑↓ task · PgUp/PgDn detail · g global · o override · p parallel · i integration · c confirm · j justify · a approve · r return · ${position}`;
-        lines.push(border + fit(theme.fg("dim", footer), innerWidth) + border);
-        lines.push(theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
-
-        if (this.editingJustification) {
-            lines.push("", "Critical downgrade justification:");
-            lines.push(...this.justificationInput.render(width));
+        for (const action of visibleActionLines) {
+            lines.push(
+                renderBoxPanelRow(
+                    this.theme,
+                    layout,
+                    wide ? ["", action, ""] : medium ? ["", action] : [action],
+                    { borderStyle: "rounded" },
+                ),
+            );
         }
+        lines.push(
+            renderBoxFooter(this.theme, width, "", { borderStyle: "rounded" }),
+        );
         return lines.map((line) => truncateToWidth(line, width));
+    }
+
+    private scrollFocusedPanel(delta: number): void {
+        if (
+            this.focusedPanel === "validation" &&
+            this.renderedLayoutMode !== "medium"
+        ) {
+            const maxScroll = Math.max(
+                0,
+                this.validationLineCount - this.bodyHeight,
+            );
+            this.validationScroll = Math.max(
+                0,
+                Math.min(maxScroll, this.validationScroll + delta),
+            );
+            return;
+        }
+        const maxScroll = Math.max(0, this.detailLineCount - this.bodyHeight);
+        this.detailScroll = Math.max(
+            0,
+            Math.min(maxScroll, this.detailScroll + delta),
+        );
+    }
+
+    private scrollFocusedPanelToEnd(): void {
+        if (
+            this.focusedPanel === "validation" &&
+            this.renderedLayoutMode !== "medium"
+        ) {
+            this.validationScroll = Math.max(
+                0,
+                this.validationLineCount - this.bodyHeight,
+            );
+            return;
+        }
+        this.detailScroll = Math.max(0, this.detailLineCount - this.bodyHeight);
+    }
+
+    private scrollFocusedPanelToStart(): void {
+        if (
+            this.focusedPanel === "validation" &&
+            this.renderedLayoutMode !== "medium"
+        ) {
+            this.validationScroll = 0;
+            return;
+        }
+        this.detailScroll = 0;
     }
 
     handleInput(data: string): void {
@@ -531,85 +1044,27 @@ export class ManifestReviewComponent implements Component {
             this.tui.requestRender();
             return;
         }
-        if (this.keybindings.matches(data, "tui.select.cancel")) {
+        if (
+            this.keybindings.matches(data, "tui.select.cancel") ||
+            matchesKey(data, Key.escape) ||
+            matchesKey(data, "q") ||
+            matchesKey(data, Key.shift("q")) ||
+            matchesKey(data, Key.ctrl("c"))
+        ) {
             this.done({ type: "cancel" });
             return;
         }
-        if (this.keybindings.matches(data, "tui.select.up")) {
-            return this.moveSelection(-1);
-        }
-        if (this.keybindings.matches(data, "tui.select.down")) {
-            return this.moveSelection(1);
-        }
-        if (matchesKey(data, "pageUp")) {
-            this.detailAutoFollow = false;
-            this.detailScroll = Math.max(
-                0,
-                this.detailScroll - this.bodyHeight,
-            );
+        if (
+            this.keybindings.matches(data, "tui.select.up") ||
+            matchesKey(data, Key.up) ||
+            matchesKey(data, "k")
+        ) {
+            if (this.focusedPanel === "roster") return this.moveSelection(-1);
+            this.scrollFocusedPanel(-1);
             this.tui.requestRender();
             return;
         }
-        if (matchesKey(data, "pageDown")) {
-            const maxScroll = Math.max(
-                0,
-                this.detailLineCount - this.bodyHeight,
-            );
-            this.detailScroll = Math.min(
-                maxScroll,
-                this.detailScroll + this.bodyHeight,
-            );
-            this.detailAutoFollow = this.detailScroll >= maxScroll;
-            this.tui.requestRender();
-            return;
-        }
-        if (matchesKey(data, "home")) {
-            this.detailAutoFollow = false;
-            this.detailScroll = 0;
-            this.tui.requestRender();
-            return;
-        }
-        if (matchesKey(data, "end")) {
-            this.detailScroll = Math.max(
-                0,
-                this.detailLineCount - this.bodyHeight,
-            );
-            this.detailAutoFollow = true;
-            this.tui.requestRender();
-            return;
-        }
-        if (data === "g") {
-            const current = PROFILES.indexOf(
-                this.controller.current.globalProfile,
-            );
-            this.controller.setGlobalProfile(
-                PROFILES[(current + 1) % PROFILES.length],
-            );
-        } else if (data === "p") {
-            this.controller.setParallelism(
-                !this.controller.current.parallelismEnabled,
-            );
-        } else if (data === "i") {
-            this.controller.setFinalIntegrationReview(
-                !this.controller.current.finalIntegrationReview,
-            );
-        } else if (data === "o") {
-            const task = this.draft.tasks[this.selectedTask];
-            if (task) {
-                const current = this.controller.current.taskOverrides[task.id];
-                const options: Array<Profile | undefined> = [
-                    undefined,
-                    ...PROFILES,
-                ];
-                this.controller.setTaskOverride(
-                    task.id,
-                    options[(options.indexOf(current) + 1) % options.length],
-                );
-            }
-        } else if (data === "c") {
-            const task = this.draft.tasks[this.selectedTask];
-            if (task) this.controller.confirmCriticalDowngrade(task.id, true);
-        } else if (data === "j") {
+        if (matchesKey(data, "j")) {
             const task = this.draft.tasks[this.selectedTask];
             if (task) {
                 this.justificationInput.setValue(
@@ -619,13 +1074,136 @@ export class ManifestReviewComponent implements Component {
                 );
                 this.justificationInput.focused = true;
                 this.editingJustification = true;
+                this.focusedPanel = "detail";
             }
-        } else if (data === "r") {
+            this.tui.requestRender();
+            return;
+        }
+        if (
+            this.keybindings.matches(data, "tui.select.down") ||
+            matchesKey(data, Key.down)
+        ) {
+            if (this.focusedPanel === "roster") return this.moveSelection(1);
+            this.scrollFocusedPanel(1);
+            this.tui.requestRender();
+            return;
+        }
+        if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+            const panels: Array<typeof this.focusedPanel> = [
+                "roster",
+                "detail",
+                "validation",
+            ];
+            const next =
+                (panels.indexOf(this.focusedPanel) + 1) % panels.length;
+            this.focusedPanel = panels[next]!;
+            this.tui.requestRender();
+            return;
+        }
+        if (
+            matchesKey(data, Key.shift(Key.tab)) ||
+            matchesKey(data, Key.left)
+        ) {
+            const panels: Array<typeof this.focusedPanel> = [
+                "roster",
+                "detail",
+                "validation",
+            ];
+            const previous =
+                (panels.indexOf(this.focusedPanel) + panels.length - 1) %
+                panels.length;
+            this.focusedPanel = panels[previous]!;
+            this.tui.requestRender();
+            return;
+        }
+        if (matchesKey(data, Key.pageUp)) {
+            this.scrollFocusedPanel(-this.bodyHeight);
+            this.tui.requestRender();
+            return;
+        }
+        if (matchesKey(data, Key.pageDown)) {
+            this.scrollFocusedPanel(this.bodyHeight);
+            this.tui.requestRender();
+            return;
+        }
+        if (matchesKey(data, Key.home)) {
+            this.scrollFocusedPanelToStart();
+            this.tui.requestRender();
+            return;
+        }
+        if (matchesKey(data, Key.end)) {
+            this.scrollFocusedPanelToEnd();
+            this.tui.requestRender();
+            return;
+        }
+        if (
+            matchesKey(data, Key.space) ||
+            matchesKey(data, Key.enter) ||
+            matchesKey(data, Key.return)
+        ) {
+            const taskId = this.selectedTaskId;
+            if (taskId) {
+                this.mutateAndPersist(() =>
+                    this.controller.toggleTaskAcceptance(taskId),
+                );
+            }
+            return;
+        }
+        if (matchesKey(data, "g")) {
+            const current = PROFILES.indexOf(
+                this.controller.current.globalProfile,
+            );
+            this.mutateAndPersist(() =>
+                this.controller.setGlobalProfile(
+                    PROFILES[(current + 1) % PROFILES.length],
+                ),
+            );
+        } else if (matchesKey(data, "p")) {
+            this.mutateAndPersist(() =>
+                this.controller.setParallelism(
+                    !this.controller.current.parallelismEnabled,
+                ),
+            );
+        } else if (matchesKey(data, "i")) {
+            this.mutateAndPersist(() =>
+                this.controller.setFinalIntegrationReview(
+                    !this.controller.current.finalIntegrationReview,
+                ),
+            );
+        } else if (matchesKey(data, "o")) {
+            const task = this.draft.tasks[this.selectedTask];
+            if (task) {
+                const current = this.controller.current.taskOverrides[task.id];
+                const options: Array<Profile | undefined> = [
+                    undefined,
+                    ...PROFILES,
+                ];
+                this.mutateAndPersist(() =>
+                    this.controller.setTaskOverride(
+                        task.id,
+                        options[
+                            (options.indexOf(current) + 1) % options.length
+                        ],
+                    ),
+                );
+            }
+        } else if (matchesKey(data, "c")) {
+            const task = this.draft.tasks[this.selectedTask];
+            if (task) {
+                this.mutateAndPersist(() =>
+                    this.controller.confirmCriticalDowngrade(task.id, true),
+                );
+            }
+        } else if (matchesKey(data, "r")) {
             this.done({ type: "return_to_planning" });
             return;
-        } else if (data === "a") {
+        } else if (matchesKey(data, "a")) {
             this.errors = this.controller.validate();
-            if (!this.errors.length) {
+            if (
+                !this.errors.length &&
+                !this.saveError &&
+                this.saveInFlight === 0
+            ) {
                 this.done({
                     type: "approve",
                     decision: this.controller.approve(
@@ -644,14 +1222,51 @@ export class ManifestReviewComponent implements Component {
     }
 }
 
+type ResolvedReviewProgress = {
+    readonly initialState: ManifestReviewProgressState;
+    readonly initialRevision: number;
+};
+
+async function resolveReviewProgress(
+    draft: DraftManifest,
+    progressStorage: ReviewProgressStorage,
+): Promise<ResolvedReviewProgress> {
+    const initialProgress = createInitialReviewProgress(draft);
+    if (!progressStorage.loadReviewProgress) {
+        return { initialState: initialProgress, initialRevision: 0 };
+    }
+
+    const raw = await progressStorage.loadReviewProgress(draft.manifestId);
+    if (!raw) return { initialState: initialProgress, initialRevision: 0 };
+
+    const parsed = parseReviewProgress(raw);
+    if (parsed.manifestId !== draft.manifestId) {
+        throw new Error(
+            `Review progress manifestId mismatch: ${parsed.manifestId}.`,
+        );
+    }
+    return {
+        initialState: normalizeReviewProgressState(draft, {
+            acceptedTaskIds: parsed.acceptedTaskIds,
+            decision: parsed.decision,
+        }),
+        initialRevision: parsed.revision,
+    };
+}
+
 export async function openManifestReview(
     ctx: ExtensionContext,
     draft: DraftManifest,
+    reviewProgressStorage: ReviewProgressStorage = {},
 ): Promise<ManifestReviewOutcome> {
     if (ctx.mode !== "tui") {
         throw new Error("Manifest review overlay requires TUI mode.");
     }
-    const controller = createReviewController(draft);
+    const { initialState, initialRevision } = await resolveReviewProgress(
+        draft,
+        reviewProgressStorage,
+    );
+    const controller = createReviewController(draft, initialState);
     return ctx.ui.custom<ManifestReviewOutcome>(
         (tui, theme, keybindings, done) =>
             new ManifestReviewComponent(
@@ -661,6 +1276,8 @@ export async function openManifestReview(
                 draft,
                 controller,
                 done,
+                initialRevision,
+                reviewProgressStorage,
             ),
         {
             overlay: true,
