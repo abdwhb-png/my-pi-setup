@@ -259,6 +259,21 @@ describe('SubagentsOverviewView live tab', () => {
         expect(view.render(100).length).toBeLessThanOrEqual(4);
     });
 
+    it('keeps the narrow-width fallback inside shared closed chrome', () => {
+        const view = new SubagentsOverviewView({
+            theme,
+            content: 'Legacy catalog',
+            data: overviewData,
+            done: () => {},
+            getTerminalRows: () => 24,
+        });
+
+        const rendered = view.render(34);
+        expect(rendered).toHaveLength(3);
+        expect(rendered[0]).toStartWith('╭');
+        expect(rendered.at(-1)).toStartWith('╰');
+    });
+
     it('switches from Catalog to Live and explains the native sync fallback', () => {
         const snapshot: LiveRunSnapshot = {
             fleetAvailable: true,
@@ -290,7 +305,7 @@ describe('SubagentsOverviewView live tab', () => {
         view.handleInput('\t');
         const live = view.render(80).join('\n');
 
-        expect(live).toContain('Catalog  [Live]');
+        expect(live).not.toContain('Catalog  [Live]');
         expect(live).toContain('worker');
         expect(live).toContain('Ctrl+Alt+F');
     });

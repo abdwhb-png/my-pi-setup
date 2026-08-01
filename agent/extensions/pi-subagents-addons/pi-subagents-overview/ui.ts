@@ -7,21 +7,18 @@
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
+import { cycleFocus } from "../../_shared/ui/focus-navigation.ts";
+import { BoxRenderer } from "../../_shared/ui/framed-box";
 import {
-    Key,
-    matchesKey,
-    type Component,
-    wrapTextWithAnsi,
-} from "@earendil-works/pi-tui";
-import {
-    allocateBoxPanelLayout,
-    BoxRenderer,
-    renderBoxFooter,
-    renderBoxHeader,
-    renderBoxPanelRow,
-    renderBoxPanelSeparator,
-    type BoxPanelLayout,
-} from "../../_shared/ui/framed-box";
+    computePanelOverlayHeight,
+    renderFramedPanelFallback,
+    renderFramedPanels,
+    renderPanelTitle,
+    resolveResponsivePanelLayout,
+    slicePanelViewport,
+    wrapPanelLines,
+} from "../../_shared/ui/framed-panels.ts";
 import type { LiveRun, LiveRunSnapshot } from "./fleet-store.ts";
 import { formatDuration, formatTokens } from "./live-ui.ts";
 
@@ -128,18 +125,21 @@ export class SubagentsOverviewView implements Component {
     }
 
     private movePrimaryFocus(direction: -1 | 1): void {
-        const current =
-            this.tab === "live" ? 2 : this.catalogFocus === "details" ? 1 : 0;
-        const next = (current + direction + 3) % 3;
+        const current = this.tab === "live" ? "live" : this.catalogFocus;
+        const next = cycleFocus(
+            ["agents", "details", "live"] as const,
+            current,
+            direction,
+        );
 
         this.detailOpen = false;
         this.state.scrollOffset = 0;
-        if (next === 2) {
+        if (next === "live") {
             this.tab = "live";
             this.catalogDetailOpen = false;
         } else {
             this.tab = "catalog";
-            this.catalogFocus = next === 1 ? "details" : "agents";
+            this.catalogFocus = next;
             this.catalogDetailOpen =
                 this.compactCatalog && this.catalogFocus === "details";
         }
@@ -178,7 +178,11 @@ export class SubagentsOverviewView implements Component {
             if (this.config.data) {
                 this.movePrimaryFocus(focusDirection);
             } else {
-                this.tab = this.tab === "catalog" ? "live" : "catalog";
+                this.tab = cycleFocus(
+                    ["catalog", "live"] as const,
+                    this.tab,
+                    focusDirection,
+                );
                 this.detailOpen = false;
                 this.state.scrollOffset = 0;
                 this.config.onLiveVisibilityChange?.(this.tab === "live");
@@ -432,192 +436,127 @@ export class SubagentsOverviewView implements Component {
         ];
     }
 
-    private wrapPanelLines(lines: string[], width: number): string[] {
-        const contentWidth = Math.max(1, width - 2);
-        return lines.flatMap((line) =>
-            wrapTextWithAnsi(line, contentWidth).map(
-                (wrapped) => ` ${wrapped}`,
-            ),
-        );
-    }
-
     private panelTitle(label: string, active: boolean): string {
-        return active
-            ? this.config.theme.fg(
-                  "accent",
-                  this.config.theme.bold(` ▸ ${label}`),
-              )
-            : this.config.theme.fg("muted", ` ${label}`);
+        return renderPanelTitle(this.config.theme, label, active);
     }
 
     private renderStructured(width: number): string[] {
         const { theme } = this.config;
-        const frameWidth = Math.max(4, width - 4);
-        if (frameWidth < 32) return ["Subagents overview needs ≥36 columns."];
-
+        const frameWidth = Math.max(1, width - 4);
         const rows = this.config.getTerminalRows?.() ?? 32;
-        const maxHeight = Math.max(
-            1,
-            Math.min(Math.floor(rows * 0.85), Math.max(1, rows - 2)),
-        );
+        const maxHeight = computePanelOverlayHeight(rows);
+        if (frameWidth < 32) {
+            return renderFramedPanelFallback({
+                theme,
+                width: frameWidth,
+                maxHeight: Math.min(3, maxHeight),
+                title: `${icon} Subagents Overview`,
+                message: "Subagents overview needs ≥36 columns.",
+                footer: "q/Esc close",
+            });
+        }
         const bodyHeight = Math.max(1, maxHeight - 6);
-        const fullLayout = allocateBoxPanelLayout(frameWidth, [
-            { minWidth: frameWidth - 2 },
-        ]);
-        if (!fullLayout) return ["Subagents overview cannot fit."];
+        const resolved = resolveResponsivePanelLayout(frameWidth, [
+            {
+                mode: "compact",
+                minWidth: 32,
+                panels: [{ minWidth: 30 }],
+            },
+            {
+                mode: "wide",
+                minWidth: 72,
+                panels: [
+                    { minWidth: 24, maxWidth: 30 },
+                    { minWidth: 36, weight: 2 },
+                ],
+            },
+        ] as const);
+        if (!resolved) return ["Subagents overview cannot fit."];
         if (maxHeight < 7) {
-            const fallback = [
-                renderBoxHeader(
-                    theme,
-                    frameWidth,
-                    `${icon} Subagents Overview`,
-                    {
-                        titlePosition: "left",
-                        borderStyle: "rounded",
-                    },
-                ),
-                renderBoxPanelRow(
-                    theme,
-                    fullLayout,
-                    [
-                        ` ${this.tab === "catalog" ? "Catalog" : "Live"} · q/Esc close`,
-                    ],
-                    { borderStyle: "rounded" },
-                ),
-                renderBoxFooter(theme, frameWidth, "", {
-                    borderStyle: "rounded",
-                }),
-            ];
-            return fallback.slice(0, maxHeight);
+            return renderFramedPanelFallback({
+                theme,
+                width: frameWidth,
+                maxHeight,
+                title: `${icon} Subagents Overview`,
+                message: `${this.tab === "catalog" ? "Catalog" : "Live"} · q/Esc close`,
+            });
         }
         const catalogLayout =
-            this.tab === "catalog" && frameWidth >= 72
-                ? allocateBoxPanelLayout(frameWidth, [
-                      { minWidth: 24, maxWidth: 30 },
-                      { minWidth: 36, weight: 2 },
-                  ])
+            this.tab === "catalog" && resolved.mode === "wide"
+                ? resolved.layout
                 : null;
         this.compactCatalog = this.tab === "catalog" && catalogLayout === null;
         const tabs =
             this.tab === "catalog"
                 ? `${this.panelTitle("CATALOG", true)}   ${this.panelTitle("LIVE", false)}`
                 : `${this.panelTitle("CATALOG", false)}   ${this.panelTitle("LIVE", true)}`;
-        const lines = [
-            renderBoxHeader(theme, frameWidth, `${icon} Subagents Overview`, {
-                titlePosition: "left",
-                borderStyle: "rounded",
-            }),
-            renderBoxPanelRow(theme, fullLayout, [tabs], {
-                borderStyle: "rounded",
-            }),
-        ];
-
-        const layout: BoxPanelLayout = catalogLayout ?? fullLayout;
-        lines.push(
-            renderBoxPanelSeparator(theme, layout, "top", {
-                borderStyle: "rounded",
-            }),
-        );
+        const layout =
+            catalogLayout ??
+            resolveResponsivePanelLayout(frameWidth, [
+                { mode: "single", minWidth: 32, panels: [{ minWidth: 30 }] },
+            ] as const)?.layout;
+        if (!layout) return ["Subagents overview cannot fit."];
+        let panelTitles: readonly string[];
+        const panelRows: string[][] = [];
 
         if (this.tab === "catalog") {
             const showDetail = catalogLayout !== null || this.catalogDetailOpen;
-            lines.push(
-                renderBoxPanelRow(
-                    theme,
-                    layout,
-                    catalogLayout
-                        ? [
-                              this.panelTitle(
-                                  "AGENTS",
-                                  this.catalogFocus === "agents",
-                              ),
-                              this.panelTitle(
-                                  "DETAILS",
-                                  this.catalogFocus === "details",
-                              ),
-                          ]
-                        : [
-                              this.panelTitle(
-                                  showDetail ? "DETAILS" : "AGENTS",
-                                  true,
-                              ),
-                          ],
-                    { borderStyle: "rounded" },
-                ),
-                renderBoxPanelSeparator(theme, layout, "middle", {
-                    borderStyle: "rounded",
-                }),
-            );
+            panelTitles = catalogLayout
+                ? [
+                      this.panelTitle("AGENTS", this.catalogFocus === "agents"),
+                      this.panelTitle(
+                          "DETAILS",
+                          this.catalogFocus === "details",
+                      ),
+                  ]
+                : [this.panelTitle(showDetail ? "DETAILS" : "AGENTS", true)];
 
-            const roster = this.wrapPanelLines(
+            const roster = wrapPanelLines(
                 this.catalogRosterLines(bodyHeight),
                 layout.panelWidths[0],
             );
             const detailWidth =
                 catalogLayout?.panelWidths[1] ?? layout.panelWidths[0];
-            const detail = this.wrapPanelLines(
+            const detail = wrapPanelLines(
                 this.catalogDetailLines(),
                 detailWidth,
             );
-            const detailOffset = Math.min(
+            const detailViewport = slicePanelViewport(
+                detail,
                 this.state.scrollOffset,
-                Math.max(0, detail.length - bodyHeight),
+                bodyHeight,
             );
+            this.state.scrollOffset = detailViewport.offset;
             for (let index = 0; index < bodyHeight; index++) {
-                lines.push(
-                    renderBoxPanelRow(
-                        theme,
-                        layout,
-                        catalogLayout
-                            ? [
-                                  roster[index] ?? "",
-                                  detail[detailOffset + index] ?? "",
-                              ]
-                            : [
-                                  showDetail
-                                      ? (detail[detailOffset + index] ?? "")
-                                      : (roster[index] ?? ""),
-                              ],
-                        { borderStyle: "rounded" },
-                    ),
+                panelRows.push(
+                    catalogLayout
+                        ? [
+                              roster[index] ?? "",
+                              detailViewport.lines[index] ?? "",
+                          ]
+                        : [
+                              showDetail
+                                  ? (detailViewport.lines[index] ?? "")
+                                  : (roster[index] ?? ""),
+                          ],
                 );
             }
         } else {
-            lines.push(
-                renderBoxPanelRow(
-                    theme,
-                    fullLayout,
-                    [
-                        this.panelTitle(
-                            this.detailOpen ? "TRANSCRIPT" : "RUNS",
-                            true,
-                        ),
-                    ],
-                    {
-                        borderStyle: "rounded",
-                    },
-                ),
-                renderBoxPanelSeparator(theme, fullLayout, "middle", {
-                    borderStyle: "rounded",
-                }),
-            );
-            const live = this.wrapPanelLines(
+            panelTitles = [
+                this.panelTitle(this.detailOpen ? "TRANSCRIPT" : "RUNS", true),
+            ];
+            const live = wrapPanelLines(
                 this.renderLiveContent(),
-                fullLayout.panelWidths[0],
+                layout.panelWidths[0],
             );
-            const liveOffset = Math.min(
+            const liveViewport = slicePanelViewport(
+                live,
                 this.state.scrollOffset,
-                Math.max(0, live.length - bodyHeight),
+                bodyHeight,
             );
+            this.state.scrollOffset = liveViewport.offset;
             for (let index = 0; index < bodyHeight; index++) {
-                lines.push(
-                    renderBoxPanelRow(
-                        theme,
-                        fullLayout,
-                        [live[liveOffset + index] ?? ""],
-                        { borderStyle: "rounded" },
-                    ),
-                );
+                panelRows.push([liveViewport.lines[index] ?? ""]);
             }
         }
 
@@ -633,18 +572,20 @@ export class SubagentsOverviewView implements Component {
                   : this.catalogFocus === "details"
                     ? "↑↓/PgUp/PgDn scroll · Tab/←→ focus · q/Esc close"
                     : "↑↓ select · Tab/←→ focus · q/Esc close";
-        lines.push(
-            renderBoxFooter(theme, frameWidth, footer, {
-                titlePosition: "left",
-                borderStyle: "rounded",
-            }),
-        );
-        return lines;
+        return renderFramedPanels({
+            theme,
+            title: `${icon} Subagents Overview`,
+            layout,
+            prelude: [tabs],
+            panelTitles,
+            panelRows,
+            footer,
+        });
     }
 
     private renderLiveContent(): string[] {
         const snapshot = this.config.getLiveSnapshot?.();
-        if (!snapshot) return ["Catalog  [Live]", "", "Live data unavailable."];
+        if (!snapshot) return ["Live data unavailable."];
         this.selectedRun = Math.min(
             this.selectedRun,
             Math.max(0, snapshot.runs.length - 1),
@@ -652,11 +593,7 @@ export class SubagentsOverviewView implements Component {
         const capability = snapshot.fleetAvailable
             ? `${snapshot.totalActive} active${snapshot.omitted > 0 ? ` · +${snapshot.omitted} omitted` : ""}`
             : "Fleet RPC unavailable · showing tracked async runs only";
-        const lines = [
-            "Catalog  [Live]",
-            this.config.theme.fg("dim", capability),
-            "",
-        ];
+        const lines = [this.config.theme.fg("dim", capability), ""];
         if (snapshot.runs.length === 0) {
             lines.push("No subagent runs in this session.");
             return lines;

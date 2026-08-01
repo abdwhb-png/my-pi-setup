@@ -429,7 +429,7 @@ test('review overlay renders three themed panes with box drawing at wide width',
     expect(joined).toContain('task-1');
 });
 
-test('review overlay falls back to a single message below 36 columns', async () => {
+test('review overlay renders a closed fallback below 36 columns', async () => {
     let rendered: string[] = [];
     const ctx = {
         mode: 'tui',
@@ -443,8 +443,10 @@ test('review overlay falls back to a single message below 36 columns', async () 
     };
 
     await openManifestReview(ctx as never, draft());
-    expect(rendered).toHaveLength(1);
-    expect(rendered[0]).toContain('36 columns');
+    expect(rendered).toHaveLength(3);
+    expect(rendered[0]).toContain('╭');
+    expect(rendered[1]).toContain('36 columns');
+    expect(rendered.at(-1)).toContain('╰');
 });
 
 test('review overlay approve with validation errors keeps the overlay open', () => {
@@ -564,7 +566,9 @@ test('review overlay uses the prescribed responsive panes and a bounded closed f
             );
             const rendered = component.render(width);
             if (width < 36) {
-                expect(rendered).toEqual(['Manifest review needs ≥36 columns. Esc closes.']);
+                expect(rendered).toHaveLength(3);
+                expect(rendered[0]).toStartWith('╭');
+                expect(rendered.at(-1)).toStartWith('╰');
                 continue;
             }
             const budget = Math.max(1, Math.min(Math.floor(rows * 0.85), rows - 2));

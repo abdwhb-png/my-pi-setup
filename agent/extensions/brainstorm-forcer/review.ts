@@ -1,6 +1,13 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, type Component } from "@earendil-works/pi-tui";
-import { BoxRenderer } from "../_shared/ui/framed-box";
+import { cycleFocus } from "../_shared/ui/focus-navigation.ts";
+import {
+    renderFramedPanelFallback,
+    renderFramedPanels,
+    resolveResponsivePanelLayout,
+    slicePanelViewport,
+    wrapPanelLines,
+} from "../_shared/ui/framed-panels.ts";
 
 export type ReviewDecision = "Approve" | "Reject" | "Reject with reason";
 export type ReviewAction = ReviewDecision | "Close";
@@ -41,14 +48,36 @@ export class ArtifactReviewView implements Component {
 
     render(width: number): string[] {
         const { theme } = this.options;
-        const box = new BoxRenderer(theme, width, {
-            viewportHeight: this.viewportRows,
-        });
-        box.setTitle(this.options.title);
-        box.setFixedHeader([theme.fg("dim", this.options.subtitle)]);
-        const bodyLines = this.options.body.render(box.getContentWidth());
-        box.setContent(bodyLines);
-        box.scrollTo(this.scrollOffset);
+        const frameWidth = Math.min(Math.max(1, width - 4), 136);
+        const resolved = resolveResponsivePanelLayout(frameWidth, [
+            {
+                mode: "preview",
+                minWidth: 4,
+                panels: [{ minWidth: 2 }],
+            },
+        ] as const);
+        if (!resolved) {
+            return renderFramedPanelFallback({
+                theme,
+                width: frameWidth,
+                maxHeight: 3,
+                title: this.options.title,
+                message: this.options.subtitle,
+                footer: `Esc ${this.escapeAction.toLowerCase()}`,
+            });
+        }
+        const panelWidth = resolved.layout.panelWidths[0];
+        const contentWidth = Math.max(1, panelWidth - 2);
+        const bodyLines = wrapPanelLines(
+            this.options.body.render(contentWidth),
+            panelWidth,
+        );
+        const viewport = slicePanelViewport(
+            bodyLines,
+            this.scrollOffset,
+            this.viewportRows,
+        );
+        this.scrollOffset = viewport.offset;
 
         const actions = this.actions
             .map((action, index) =>
@@ -58,9 +87,23 @@ export class ArtifactReviewView implements Component {
             )
             .join("  ");
         const help = `↑/↓ scroll · ←/→ action · Enter select · Esc ${this.escapeAction.toLowerCase()}`;
-        box.setFooter(`${actions}  ${theme.fg("dim", help)}`);
+        const scrollInfo =
+            viewport.maxOffset > 0
+                ? ` [${viewport.offset}/${viewport.maxOffset}↑↓] `
+                : "";
 
-        return box.render();
+        return renderFramedPanels({
+            theme,
+            title: this.options.title,
+            layout: resolved.layout,
+            prelude: wrapPanelLines(
+                [theme.fg("dim", this.options.subtitle)],
+                panelWidth,
+            ),
+            panelRows: viewport.lines.map((line) => [line]),
+            footer: `${scrollInfo}${actions}  ${theme.fg("dim", help)}`,
+            titlePosition: "center",
+        });
     }
 
     handleInput(data: string): void {
@@ -85,12 +128,15 @@ export class ArtifactReviewView implements Component {
         } else if (matchesKey(data, "pageDown")) {
             this.scrollOffset += this.viewportRows;
         } else if (matchesKey(data, "left") || data === "h") {
-            this.selectedAction =
-                (this.selectedAction + this.actions.length - 1) %
-                this.actions.length;
+            const current = this.actions[this.selectedAction];
+            this.selectedAction = current
+                ? this.actions.indexOf(cycleFocus(this.actions, current, -1))
+                : Math.max(0, this.actions.length - 1);
         } else if (matchesKey(data, "right") || data === "l" || data === "\t") {
-            this.selectedAction =
-                (this.selectedAction + 1) % this.actions.length;
+            const current = this.actions[this.selectedAction];
+            this.selectedAction = current
+                ? this.actions.indexOf(cycleFocus(this.actions, current, 1))
+                : 0;
         } else if (
             data.toLowerCase() === "a" &&
             this.actions.includes("Approve")

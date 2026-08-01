@@ -84,4 +84,23 @@ describe("ArtifactReviewView", () => {
     makeView().handleInput("\u001b");
     expect(decisions.at(-1)).toBe("Reject");
   });
+
+  it("recovers deterministically when the current action focus is invalid", () => {
+    const decisions: string[] = [];
+    const view = new ArtifactReviewView({
+      title: "Review",
+      subtitle: "artifact.md",
+      body: createBody(["content"]),
+      viewportRows: 3,
+      theme,
+      requestRender: () => undefined,
+      done: (decision) => decisions.push(decision),
+    });
+    (view as unknown as { selectedAction: number }).selectedAction = 99;
+
+    view.handleInput("\u001b[C");
+    view.handleInput("\u001b[13u");
+
+    expect(decisions).toEqual(["Approve"]);
+  });
 });

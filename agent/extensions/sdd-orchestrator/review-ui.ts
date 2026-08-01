@@ -10,13 +10,16 @@ import {
     visibleWidth,
     wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { cycleFocus } from "../_shared/ui/focus-navigation.ts";
 import {
-    allocateBoxPanelLayout,
-    renderBoxFooter,
-    renderBoxHeader,
-    renderBoxPanelRow,
-    renderBoxPanelSeparator,
-} from "../_shared/ui/framed-box.ts";
+    computePanelOverlayHeight,
+    renderFramedPanelFallback,
+    renderFramedPanels,
+    renderPanelTitle,
+    resolveResponsivePanelLayout,
+    slicePanelViewport,
+    wrapPanelLines,
+} from "../_shared/ui/framed-panels.ts";
 import {
     calculateLaunchPreview,
     type DraftManifest,
@@ -733,9 +736,12 @@ export class ManifestReviewComponent implements Component {
         panel: "roster" | "detail" | "validation",
         label: string,
     ): string {
-        return this.focusedPanel === panel
-            ? this.theme.fg("accent", this.theme.bold(`▸ ${label}`))
-            : this.theme.fg("muted", label);
+        return renderPanelTitle(
+            this.theme,
+            label,
+            this.focusedPanel === panel,
+            { padding: 0 },
+        );
     }
 
     private panelTitleCells(
@@ -781,85 +787,96 @@ export class ManifestReviewComponent implements Component {
     }
 
     render(width: number): string[] {
-        if (width < 36)
-            return ["Manifest review needs ≥36 columns. Esc closes."];
-
         const rows = this.tui.terminal?.rows ?? 32;
-        const maxHeight = Math.max(
-            1,
-            Math.min(Math.floor(rows * 0.85), rows - 2),
-        );
+        const maxHeight = computePanelOverlayHeight(rows);
+        if (width < 36) {
+            return renderFramedPanelFallback({
+                theme: this.theme,
+                width,
+                maxHeight: Math.min(3, maxHeight),
+                title: "SDD manifest review",
+                message: "Need ≥36 columns · Esc",
+            });
+        }
         if (maxHeight < 3)
             return ["Manifest review is too short to display. Esc closes."];
 
-        const wide = width >= 96;
-        const medium = width >= 60;
-        this.renderedLayoutMode = wide ? "wide" : medium ? "medium" : "compact";
-        const layout = wide
-            ? allocateBoxPanelLayout(width, [
-                  { minWidth: 24, maxWidth: 24 },
-                  { minWidth: 40, weight: 1 },
-                  { minWidth: 28, maxWidth: 28 },
-              ])
-            : medium
-              ? allocateBoxPanelLayout(width, [
+        const resolved = resolveResponsivePanelLayout(width, [
+            {
+                mode: "compact",
+                minWidth: 36,
+                panels: [{ minWidth: 34 }],
+            },
+            {
+                mode: "medium",
+                minWidth: 60,
+                panels: [
                     { minWidth: 24, maxWidth: 24 },
                     { minWidth: 33, weight: 1 },
-                ])
-              : allocateBoxPanelLayout(width, [{ minWidth: width - 2 }]);
-        const fullLayout = allocateBoxPanelLayout(width, [
-            { minWidth: width - 2 },
-        ]);
-        if (!layout || !fullLayout)
-            return ["Manifest review cannot fit. Esc closes."];
+                ],
+            },
+            {
+                mode: "wide",
+                minWidth: 96,
+                panels: [
+                    { minWidth: 24, maxWidth: 24 },
+                    { minWidth: 40, weight: 1 },
+                    { minWidth: 28, maxWidth: 28 },
+                ],
+            },
+        ] as const);
+        if (!resolved) return ["Manifest review cannot fit. Esc closes."];
+        const { layout } = resolved;
+        this.renderedLayoutMode = resolved.mode;
+        const wide = resolved.mode === "wide";
+        const medium = resolved.mode === "medium";
 
         const renderLowHeightFallback = (): string[] =>
-            [
-                renderBoxHeader(this.theme, width, "SDD manifest review", {
-                    borderStyle: "rounded",
-                    titlePosition: "left",
-                }),
-                renderBoxPanelRow(
-                    this.theme,
-                    fullLayout,
-                    [
-                        ` ${this.focusHelp()} · a approve · r return · Esc cancel`,
-                    ],
-                    { borderStyle: "rounded" },
-                ),
-                renderBoxFooter(this.theme, width, "", {
-                    borderStyle: "rounded",
-                }),
-            ].map((line) => truncateToWidth(line, width));
+            renderFramedPanelFallback({
+                theme: this.theme,
+                width,
+                maxHeight,
+                title: "SDD manifest review",
+                message: `${this.focusHelp()} · a approve · r return · Esc cancel`,
+            }).map((line) => truncateToWidth(line, width));
         if (maxHeight <= 8) return renderLowHeightFallback();
 
         const state = this.controller.current;
         const rosterWidth = layout.panelWidths[0];
-        const detailWidth = layout.panelWidths[medium ? 1 : 0];
+        const detailWidth = layout.panelWidths[wide || medium ? 1 : 0];
         const validationWidth = wide ? layout.panelWidths[2] : detailWidth;
         const pending = this.taskIds.filter(
             (taskId) => !state.acceptedTaskIds.includes(taskId),
         );
-        const notices = [
-            ...(this.saveError ? [this.theme.fg("error", this.saveError)] : []),
-            ...(this.conflictWarning
-                ? [this.theme.fg("warning", this.conflictWarning)]
-                : []),
-            ...(pending.length
-                ? [
-                      this.theme.fg(
-                          "warning",
-                          `Pending acceptance: ${pending.join(", ")}`,
-                      ),
-                  ]
-                : []),
-        ].flatMap((notice) => wrapTextWithAnsi(notice, width - 2));
-        const actionLines = wrapTextWithAnsi(
-            this.theme.fg(
-                "dim",
-                `${this.focusHelp()} · Home/End scroll · Space/Enter accept · g/o/p/i/c/j · a approve · r return · Esc cancel`,
-            ),
+        const notices = wrapPanelLines(
+            [
+                ...(this.saveError
+                    ? [this.theme.fg("error", this.saveError)]
+                    : []),
+                ...(this.conflictWarning
+                    ? [this.theme.fg("warning", this.conflictWarning)]
+                    : []),
+                ...(pending.length
+                    ? [
+                          this.theme.fg(
+                              "warning",
+                              `Pending acceptance: ${pending.join(", ")}`,
+                          ),
+                      ]
+                    : []),
+            ],
+            width - 2,
+            { padding: 0 },
+        );
+        const actionLines = wrapPanelLines(
+            [
+                this.theme.fg(
+                    "dim",
+                    `${this.focusHelp()} · Home/End scroll · Space/Enter accept · g/o/p/i/c/j · a approve · r return · Esc cancel`,
+                ),
+            ],
             detailWidth,
+            { padding: 0 },
         );
         const availableActionLines = Math.max(
             1,
@@ -867,10 +884,14 @@ export class ManifestReviewComponent implements Component {
         );
         const visibleActionLines = actionLines.slice(0, availableActionLines);
         const editorLines = this.editingJustification
-            ? [
-                  this.theme.bold("Critical downgrade justification:"),
-                  ...this.justificationInput.render(detailWidth),
-              ].flatMap((line) => wrapTextWithAnsi(line, detailWidth))
+            ? wrapPanelLines(
+                  [
+                      this.theme.bold("Critical downgrade justification:"),
+                      ...this.justificationInput.render(detailWidth),
+                  ],
+                  detailWidth,
+                  { padding: 0 },
+              )
             : [];
         const fixedLines =
             1 + 2 + notices.length + 3 + visibleActionLines.length + 1;
@@ -879,78 +900,32 @@ export class ManifestReviewComponent implements Component {
 
         const roster = this.rosterLines(rosterWidth, this.bodyHeight);
         let details = [...editorLines, ...this.detailLines(detailWidth)];
-        const validation = this.validationLines().flatMap((line) =>
-            wrapTextWithAnsi(line, validationWidth),
+        const validation = wrapPanelLines(
+            this.validationLines(),
+            validationWidth,
+            { padding: 0 },
         );
         if (!wide && medium) {
             details = [...details, "", ...validation];
         }
         this.detailLineCount = details.length;
         this.validationLineCount = validation.length;
-        const maxDetailScroll = Math.max(0, details.length - this.bodyHeight);
-        const maxValidationScroll = Math.max(
-            0,
-            validation.length - this.bodyHeight,
-        );
-        this.detailScroll = Math.max(
-            0,
-            Math.min(this.detailScroll, maxDetailScroll),
-        );
-        this.validationScroll = Math.max(
-            0,
-            Math.min(this.validationScroll, maxValidationScroll),
-        );
-        const visibleDetails = details.slice(
+        const detailViewport = slicePanelViewport(
+            details,
             this.detailScroll,
-            this.detailScroll + this.bodyHeight,
+            this.bodyHeight,
         );
-        const visibleValidation = validation.slice(
+        const validationViewport = slicePanelViewport(
+            validation,
             this.validationScroll,
-            this.validationScroll + this.bodyHeight,
+            this.bodyHeight,
         );
+        this.detailScroll = detailViewport.offset;
+        this.validationScroll = validationViewport.offset;
+        const visibleDetails = detailViewport.lines;
+        const visibleValidation = validationViewport.lines;
 
-        const lines = [
-            renderBoxHeader(
-                this.theme,
-                width,
-                `SDD manifest review ${this.theme.fg("accent", "›")} · ${this.draft.planTitle}`,
-                { borderStyle: "rounded", titlePosition: "left" },
-            ),
-            renderBoxPanelRow(
-                this.theme,
-                fullLayout,
-                [
-                    ` ${this.theme.fg("muted", `duration: ${state.estimatedQualitativeDuration} · launches: ${state.maximumLaunches} · global: ${state.globalProfile} · parallel: ${state.parallelismEnabled ? "on" : "off"}`)}`,
-                ],
-                { borderStyle: "rounded" },
-            ),
-            renderBoxPanelRow(
-                this.theme,
-                fullLayout,
-                [
-                    ` ${this.theme.fg("muted", `Validation launches: qa=${state.qaLaunches}, browser=${state.browserLaunches}, total=${state.validationLaunches} (of profile budget ${state.profileLaunches})`)}`,
-                ],
-                { borderStyle: "rounded" },
-            ),
-            ...notices.map((notice) =>
-                renderBoxPanelRow(this.theme, fullLayout, [` ${notice}`], {
-                    borderStyle: "rounded",
-                }),
-            ),
-            renderBoxPanelSeparator(this.theme, layout, "top", {
-                borderStyle: "rounded",
-            }),
-            renderBoxPanelRow(
-                this.theme,
-                layout,
-                this.panelTitleCells(this.renderedLayoutMode),
-                { borderStyle: "rounded" },
-            ),
-            renderBoxPanelSeparator(this.theme, layout, "middle", {
-                borderStyle: "rounded",
-            }),
-        ];
-
+        const panelRows: string[][] = [];
         for (let index = 0; index < this.bodyHeight; index++) {
             const compactContent =
                 this.focusedPanel === "roster"
@@ -958,36 +933,34 @@ export class ManifestReviewComponent implements Component {
                     : this.focusedPanel === "detail"
                       ? visibleDetails[index]
                       : visibleValidation[index];
-            lines.push(
-                renderBoxPanelRow(
-                    this.theme,
-                    layout,
-                    wide
-                        ? [
-                              roster[index] ?? "",
-                              visibleDetails[index] ?? "",
-                              visibleValidation[index] ?? "",
-                          ]
-                        : medium
-                          ? [roster[index] ?? "", visibleDetails[index] ?? ""]
-                          : [compactContent ?? ""],
-                    { borderStyle: "rounded" },
-                ),
+            panelRows.push(
+                wide
+                    ? [
+                          roster[index] ?? "",
+                          visibleDetails[index] ?? "",
+                          visibleValidation[index] ?? "",
+                      ]
+                    : medium
+                      ? [roster[index] ?? "", visibleDetails[index] ?? ""]
+                      : [compactContent ?? ""],
             );
         }
-        for (const action of visibleActionLines) {
-            lines.push(
-                renderBoxPanelRow(
-                    this.theme,
-                    layout,
-                    wide ? ["", action, ""] : medium ? ["", action] : [action],
-                    { borderStyle: "rounded" },
-                ),
-            );
-        }
-        lines.push(
-            renderBoxFooter(this.theme, width, "", { borderStyle: "rounded" }),
+        const additionalRows = visibleActionLines.map((action) =>
+            wide ? ["", action, ""] : medium ? ["", action] : [action],
         );
+        const lines = renderFramedPanels({
+            theme: this.theme,
+            title: `SDD manifest review ${this.theme.fg("accent", "›")} · ${this.draft.planTitle}`,
+            layout,
+            prelude: [
+                ` ${this.theme.fg("muted", `duration: ${state.estimatedQualitativeDuration} · launches: ${state.maximumLaunches} · global: ${state.globalProfile} · parallel: ${state.parallelismEnabled ? "on" : "off"}`)}`,
+                ` ${this.theme.fg("muted", `Validation launches: qa=${state.qaLaunches}, browser=${state.browserLaunches}, total=${state.validationLaunches} (of profile budget ${state.profileLaunches})`)}`,
+                ...notices.map((notice) => ` ${notice}`),
+            ],
+            panelTitles: this.panelTitleCells(this.renderedLayoutMode),
+            panelRows,
+            additionalRows,
+        });
         return lines.map((line) => truncateToWidth(line, width));
     }
 
@@ -1089,14 +1062,12 @@ export class ManifestReviewComponent implements Component {
             return;
         }
         if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
-            const panels: Array<typeof this.focusedPanel> = [
+            const panels: readonly (typeof this.focusedPanel)[] = [
                 "roster",
                 "detail",
                 "validation",
             ];
-            const next =
-                (panels.indexOf(this.focusedPanel) + 1) % panels.length;
-            this.focusedPanel = panels[next]!;
+            this.focusedPanel = cycleFocus(panels, this.focusedPanel, 1);
             this.tui.requestRender();
             return;
         }
@@ -1104,15 +1075,12 @@ export class ManifestReviewComponent implements Component {
             matchesKey(data, Key.shift(Key.tab)) ||
             matchesKey(data, Key.left)
         ) {
-            const panels: Array<typeof this.focusedPanel> = [
+            const panels: readonly (typeof this.focusedPanel)[] = [
                 "roster",
                 "detail",
                 "validation",
             ];
-            const previous =
-                (panels.indexOf(this.focusedPanel) + panels.length - 1) %
-                panels.length;
-            this.focusedPanel = panels[previous]!;
+            this.focusedPanel = cycleFocus(panels, this.focusedPanel, -1);
             this.tui.requestRender();
             return;
         }
