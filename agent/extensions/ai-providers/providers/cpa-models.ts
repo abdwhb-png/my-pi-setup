@@ -5,14 +5,19 @@
  * them with metadata via a 4-layer fallback chain:
  *   1. Generic defaults (128K ctx, 32K out, $0)
  *   2. Family-based defaults (detected from model ID prefix)
- *   3. OpenRouter API metadata (public /v1/models endpoint)
- *   4. Provider-specific overrides (pricing for API-key providers)
+ *   3. Static fallback (image-capable model ids)
+ *   4. models.dev catalog metadata (exact reference lookup, shared with the
+ *      rest of the harness — no OpenRouter endpoint is consulted)
+ *   5. Provider-specific overrides (pricing for API-key providers)
  *
  * No model is ever skipped due to unknown owned_by — new providers added
  * to CPA appear automatically with family-based defaults.
  */
 
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import type { ModelsDevCatalog } from "../../_shared/models-dev/catalog";
+import { getModelsDevCatalog } from "../../_shared/models-dev/catalog";
+import { resolveCpaModelsDevRefs } from "../../_shared/models-dev/mapping";
 import { loadAiProvidersConfig } from "../config.ts";
 import { OVERRIDE_TABLES } from "../constants/cpa-overrides";
 import {
@@ -32,15 +37,12 @@ export interface CpaCatalogResult {
     source: "live" | "fallback";
 }
 
-interface OpenRouterModel {
-    id: string;
-    name: string;
-    context_length: number;
-    pricing: { prompt: string; completion: string };
-    top_provider: { max_completion_tokens: number | null };
-    supported_parameters?: string[];
-    architecture?: { input_modalities?: string[] };
-}
+/**
+ * The only catalog surface enrichment needs: exact reference lookup.
+ * Injected by callers so tests stay deterministic; production defaults to
+ * {@link getModelsDevCatalog}.
+ */
+export type CpaCatalogLookup = Pick<ModelsDevCatalog, "lookupFirst">;
 
 // ── Static image support map (for non-OpenRouter models) ──
 // These model IDs are known to support image input through CPA.
@@ -50,14 +52,12 @@ export const STATIC_IMAGE_MODELS = new Set<string>([
     "claude-sonnet-4-6",
     "claude-opus-4-6-thinking",
     // Antigravity — Gemini models (multimodal by default)
-    "gemini-3.1-pro-low",
-    "gemini-3-flash",
-    "gemini-3-flash-agent",
-    "gemini-3.1-flash-lite",
     "gemini-3.1-flash-image",
-    "gemini-3.5-flash-low",
-    "gemini-3.5-flash-extra-low",
-    "gemini-pro-agent",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-pro-preview",
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3-flash-preview",
     // Codex — GPT models (vision)
     "gpt-5.4",
     "gpt-5.4-mini",
@@ -69,33 +69,6 @@ export const STATIC_IMAGE_MODELS = new Set<string>([
     "ocg/go-deepseek-v4-flash",
 ]);
 
-// ── Module-level cache ──
-
-let orMetadataCache: Map<string, OpenRouterModel> | null = null;
-
-/** Reset the OpenRouter metadata cache (for testing). */
-export function resetOrMetadataCache(): void {
-    orMetadataCache = null;
-}
-
-// ── Helper: parse per-million cost strings from OpenRouter ──
-
-function parseOrCost(s: string): number {
-    const n = parseFloat(s);
-    if (isNaN(n) || n < 0) return 0;
-    // OpenRouter pricing is per-token in the string; convert to per-million
-    // Example: "0.0000001" → 0.1 (per million tokens)
-    // But the API returns strings like "1e-7" — parseFloat handles this
-    // The value is per-token, so multiply by 1e6
-    return n * 1_000_000;
-}
-
-// ── Helper: strip ocg/ prefix to get alias ──
-
-function ocgAlias(modelId: string): string {
-    return modelId.startsWith("ocg/") ? modelId.slice(4) : modelId;
-}
-
 // ── Step 1a: Fetch model IDs from CPA ──
 
 export async function fetchCpaModelIds(
@@ -103,6 +76,7 @@ export async function fetchCpaModelIds(
     apiKey: string,
 ): Promise<CpaModelEntry[]> {
     const controller = new AbortController();
+    // oxlint-disable-next-line @typescript-eslint/no-unsafe-assignment -- typeAware lint resolves setTimeout as `any`; the handle is opaque and only passed back to clearTimeout.
     const timeout = setTimeout(() => controller.abort(), 3000);
 
     try {
@@ -119,21 +93,21 @@ export async function fetchCpaModelIds(
             return [];
         }
 
-        const json = await response.json();
-        const data = json.data as
-            | Array<{
-                  id: string;
-                  created?: number;
-                  object?: string;
-                  owned_by?: string;
-              }>
-            | undefined;
-        if (!data || !Array.isArray(data)) {
+        // oxlint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- response.json() returns any; the payload shape is validated below.
+        const json = (await response.json()) as {
+            data?: Array<{
+                id?: string;
+                created?: number;
+                object?: string;
+                owned_by?: string;
+            }>;
+        };
+        if (!json.data || !Array.isArray(json.data)) {
             console.warn("[cpa-models] Unexpected /v1/models response shape");
             return [];
         }
 
-        return data.map((m) => ({
+        return json.data.map((m) => ({
             id: String(m.id ?? ""),
             owned_by: String(m.owned_by ?? "unknown"),
         }));
@@ -150,84 +124,6 @@ export async function fetchCpaModelIds(
 }
 
 // ── Step 1b: Fetch OpenRouter metadata ──
-
-export async function fetchOpenRouterMetadata(): Promise<
-    Map<string, OpenRouterModel>
-> {
-    if (orMetadataCache) return orMetadataCache;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    try {
-        const response = await fetch("https://openrouter.ai/api/v1/models", {
-            signal: controller.signal,
-        });
-
-        if (!response.ok) {
-            console.warn(
-                `[cpa-models] OpenRouter /v1/models returned ${response.status}`,
-            );
-            return new Map();
-        }
-
-        const json = await response.json();
-        const data = json.data as
-            | Array<{
-                  id: string;
-                  name: string;
-                  context_length: number;
-                  pricing: { prompt: string; completion: string };
-                  top_provider: { max_completion_tokens: number | null };
-                  supported_parameters?: string[];
-                  architecture?: { input_modalities?: string[] };
-              }>
-            | undefined;
-
-        if (!data || !Array.isArray(data)) {
-            console.warn(
-                "[cpa-models] Unexpected OpenRouter /v1/models response shape",
-            );
-            return new Map();
-        }
-
-        const map = new Map<string, OpenRouterModel>();
-        for (const m of data) {
-            if (m.id) {
-                map.set(String(m.id), {
-                    id: String(m.id),
-                    name: String(m.name ?? ""),
-                    context_length: m.context_length ?? 0,
-                    pricing: {
-                        prompt: String(m.pricing?.prompt ?? "0"),
-                        completion: String(m.pricing?.completion ?? "0"),
-                    },
-                    top_provider: {
-                        max_completion_tokens:
-                            m.top_provider?.max_completion_tokens ?? null,
-                    },
-                    supported_parameters: m.supported_parameters ?? [],
-                    architecture: m.architecture ?? undefined,
-                });
-            }
-        }
-
-        orMetadataCache = map;
-        return map;
-    } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-            console.warn("[cpa-models] OpenRouter /v1/models fetch timed out");
-        } else {
-            console.warn(
-                "[cpa-models] OpenRouter /v1/models fetch failed:",
-                err,
-            );
-        }
-        return new Map();
-    } finally {
-        clearTimeout(timeout);
-    }
-}
 
 // ── Step 1c: Family-based defaults ──
 
@@ -448,7 +344,7 @@ function formatModelName(id: string, ownedBy: string): string {
 
 export function enrichModel(
     entry: CpaModelEntry,
-    orMetadata: Map<string, OpenRouterModel>,
+    catalog: CpaCatalogLookup,
     overridePrefixes: Record<string, string> = loadAiProvidersConfig().cpa
         .overridePrefixes ?? { ocg: "go" },
 ): ProviderModelConfig | null {
@@ -474,41 +370,48 @@ export function enrichModel(
     if (family.maxTokens) maxTokens = family.maxTokens;
     if (family.reasoning !== undefined) reasoning = family.reasoning;
 
-    // ── Layer 3: OpenRouter API metadata ──
-    // Try matching the model ID directly, and also try without the ocg/ prefix
-    const orForOcg = modelId.startsWith("ocg/") ? ocgAlias(modelId) : null;
-    const orMatch =
-        orMetadata.get(modelId) ??
-        (orForOcg ? orMetadata.get(orForOcg) : undefined);
+    // ── Layer 3: Static fallback (image-capable model ids) ──
+    let input: Array<"text" | "image"> = ["text"];
+    if (STATIC_IMAGE_MODELS.has(modelId)) {
+        input = ["text", "image"];
+    }
 
-    if (orMatch) {
-        if (orMatch.context_length > 0) contextWindow = orMatch.context_length;
-        if (orMatch.top_provider?.max_completion_tokens) {
-            maxTokens = orMatch.top_provider.max_completion_tokens;
-        } else if (orMatch.context_length > 0) {
-            // Fallback: if no explicit max tokens, use a fraction of context
-            maxTokens = Math.min(orMatch.context_length, maxTokens);
+    // ── Layer 4: models.dev catalog metadata (exact reference lookup) ──
+    // The shared mapping resolves this entry to ordered exact refs (provider
+    // scope first, base scope for Antigravity aliases); the first match wins.
+    // Fields are applied one-by-one with `!== undefined` so an explicit zero
+    // (a real free-tier price) is honored while absent fields keep the
+    // generic/family/static fallback values.
+    const refs = resolveCpaModelsDevRefs(modelId, ownedBy);
+    const match = refs.length > 0 ? catalog.lookupFirst(refs) : undefined;
+    if (match) {
+        const m = match.model;
+        if (m.contextWindow !== undefined) contextWindow = m.contextWindow;
+        if (m.maxTokens !== undefined) maxTokens = m.maxTokens;
+        if (m.reasoning !== undefined) reasoning = m.reasoning;
+        if (m.cost) {
+            if (m.cost.input !== undefined) cost.input = m.cost.input;
+            if (m.cost.output !== undefined) cost.output = m.cost.output;
+            if (m.cost.cacheRead !== undefined)
+                cost.cacheRead = m.cost.cacheRead;
+            if (m.cost.cacheWrite !== undefined)
+                cost.cacheWrite = m.cost.cacheWrite;
         }
-        const promptCost = parseOrCost(orMatch.pricing?.prompt ?? "0");
-        const completionCost = parseOrCost(orMatch.pricing?.completion ?? "0");
-        if (promptCost > 0 || completionCost > 0) {
-            cost = {
-                ...genericCost,
-                input: promptCost,
-                output: completionCost,
-            };
-        }
-        if (orMatch.supported_parameters) {
-            reasoning = orMatch.supported_parameters.includes("reasoning");
+        // Pi input always contains text; add image only for the exact
+        // normalized "image" modality from the catalog record.
+        if (m.inputModalities?.includes("image")) {
+            input = ["text", "image"];
         }
     }
 
-    // ── Layer 4: Prefix-driven alias overrides ──
+    // ── Layer 5: Prefix-driven alias overrides ──
     // Config-gated: `overridePrefixes` maps a model-id prefix to an
     // OVERRIDE_TABLES key (default { ocg: "go" }). Dispatches on the
     // model-id prefix instead of the provider display name, so adding or
     // renaming a provider in cliproxy needs no code change here — only a
-    // config entry pointing at the right table.
+    // config entry pointing at the right table. Overrides apply last and win
+    // over conflicting catalog values; missing override fields preserve the
+    // catalog/fallback values.
     const slashIdx = modelId.indexOf("/");
     const prefix = slashIdx > 0 ? modelId.slice(0, slashIdx) : null;
     const tableName = prefix ? overridePrefixes[prefix] : undefined;
@@ -531,17 +434,6 @@ export function enrichModel(
         };
     }
 
-    // ── Image support detection ──
-    let input: Array<"text" | "image"> = ["text"];
-    // Check OpenRouter architecture.input_modalities for OR-routed models
-    if (orMatch?.architecture?.input_modalities?.includes("image")) {
-        input = ["text", "image"];
-    }
-    // Check static image map (for non-OR models or when OR metadata is unavailable)
-    if (STATIC_IMAGE_MODELS.has(modelId)) {
-        input = ["text", "image"];
-    }
-
     return {
         id: modelId,
         name: formatModelName(modelId, ownedBy),
@@ -556,11 +448,21 @@ export function enrichModel(
 
 // ── Step 1e: Build provider config ──
 
+export interface BuildCpaModelsOptions {
+    /**
+     * Catalog used for enrichment. Defaults to the process-wide
+     * {@link getModelsDevCatalog} — lookupFirst is snapshot-only, so the
+     * default catalog never triggers a network request from this function.
+     */
+    catalog?: CpaCatalogLookup;
+}
+
 export async function buildCpaModels(
     baseUrl: string,
     apiKey: string,
+    options?: BuildCpaModelsOptions,
 ): Promise<CpaCatalogResult> {
-    // 1. Fetch CPA model IDs
+    // 1. Fetch CPA model IDs (the only external request this function makes)
     const entries = await fetchCpaModelIds(baseUrl, apiKey);
 
     // 2. If CPA down, return static fallback
@@ -568,17 +470,15 @@ export async function buildCpaModels(
         return { models: STATIC_FALLBACK_MODELS, source: "fallback" };
     }
 
-    // 3. Fetch OpenRouter metadata
-    const orMetadata = await fetchOpenRouterMetadata();
-
-    // 4. Enrich each entry
+    // 3. Enrich each entry against the shared catalog (in-memory lookup)
+    const catalog = options?.catalog ?? getModelsDevCatalog();
     const models: ProviderModelConfig[] = [];
     for (const entry of entries) {
-        const model = enrichModel(entry, orMetadata);
+        const model = enrichModel(entry, catalog);
         if (model) models.push(model);
     }
 
-    // 5. If all enrichment failed, return static fallback
+    // 4. If all enrichment failed, return static fallback
     if (models.length === 0) {
         return { models: STATIC_FALLBACK_MODELS, source: "fallback" };
     }

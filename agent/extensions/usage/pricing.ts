@@ -1,169 +1,125 @@
-import * as fs from "node:fs/promises";
-import { homedir } from "node:os";
-import * as path from "node:path";
-
+import {
+    getModelsDevCatalog,
+    type ModelsDevCatalog,
+    type ModelsDevCatalogStatus,
+    type ModelsDevCost,
+} from "../_shared/models-dev/catalog";
+import { applyFactoryRouteCostOverride } from "../_shared/models-dev/factory-pricing";
+import { resolveUsageModelsDevRefs } from "../_shared/models-dev/mapping";
 import type { ModelRates } from "./types";
 
-/** Default cache file path */
-export const PRICING_CACHE_PATH: string = path.join(
-  homedir(),
-  ".pi",
-  "agent",
-  "pricing-cache.json",
-);
-
 /**
- * Load cached pricing from local JSON file.
- * Returns empty Map if file doesn't exist or is invalid.
+ * Split a source key at its first slash. Both halves must be non-empty after
+ * trimming; anything else is malformed and unmappable.
  */
-export async function loadPricingCache(
-  cachePath?: string,
-): Promise<Map<string, ModelRates>> {
-  const resolvedPath = cachePath ?? PRICING_CACHE_PATH;
-  try {
-    const raw = await fs.readFile(resolvedPath, "utf-8");
-    const parsed: Record<string, { inputPerMillion: number; outputPerMillion: number; cacheReadPerMillion: number }> =
-      JSON.parse(raw);
-    const map = new Map<string, ModelRates>();
-    for (const [key, rates] of Object.entries(parsed)) {
-      map.set(key, {
-        modelKey: key,
-        inputPerMillion: rates.inputPerMillion ?? 0,
-        outputPerMillion: rates.outputPerMillion ?? 0,
-        cacheReadPerMillion: rates.cacheReadPerMillion ?? 0,
-        source: "cached",
-      });
+function splitSourceKey(
+    sourceKey: string,
+): { provider: string; model: string } | undefined {
+    const slash = sourceKey.indexOf("/");
+    if (slash <= 0 || slash === sourceKey.length - 1) return undefined;
+    const provider = sourceKey.slice(0, slash);
+    const model = sourceKey.slice(slash + 1);
+    if (provider.trim().length === 0 || model.trim().length === 0) {
+        return undefined;
     }
-    return map;
-  } catch {
-    return new Map();
-  }
+    return { provider, model };
+}
+
+/** Map catalog provenance to the ModelRates source vocabulary. */
+function provenanceToSource(
+    provenance: ModelsDevCatalogStatus["provenance"],
+): ModelRates["source"] {
+    switch (provenance) {
+        case "cache":
+            return "cached";
+        case "network":
+            return "models.dev";
+        default:
+            return "unavailable";
+    }
 }
 
 /**
- * Save pricing to local cache file.
+ * Project one matched catalog cost onto the report rates. A record is
+ * available when any normalized cost field is defined — including explicit
+ * zero. Every other required number is filled with zero only here.
  */
-export async function savePricingCache(
-  prices: Map<string, ModelRates>,
-  cachePath?: string,
-): Promise<void> {
-  const resolvedPath = cachePath ?? PRICING_CACHE_PATH;
-  const obj: Record<string, { inputPerMillion: number; outputPerMillion: number; cacheReadPerMillion: number }> = {};
-  for (const [key, rates] of prices) {
-    obj[key] = {
-      inputPerMillion: rates.inputPerMillion,
-      outputPerMillion: rates.outputPerMillion,
-      cacheReadPerMillion: rates.cacheReadPerMillion,
+function projectRates(
+    sourceKey: string,
+    source: ModelRates["source"],
+    cost: ModelsDevCost | undefined,
+): ModelRates {
+    const available =
+        cost !== undefined &&
+        (cost.input !== undefined ||
+            cost.output !== undefined ||
+            cost.cacheRead !== undefined ||
+            cost.cacheWrite !== undefined);
+    if (!available) {
+        return {
+            modelKey: sourceKey,
+            inputPerMillion: 0,
+            outputPerMillion: 0,
+            cacheReadPerMillion: 0,
+            cacheWritePerMillion: 0,
+            source: "unavailable",
+        };
+    }
+    return {
+        modelKey: sourceKey,
+        inputPerMillion: cost.input ?? 0,
+        outputPerMillion: cost.output ?? 0,
+        cacheReadPerMillion: cost.cacheRead ?? 0,
+        cacheWritePerMillion: cost.cacheWrite ?? 0,
+        source,
     };
-  }
-  await fs.writeFile(resolvedPath, JSON.stringify(obj, null, 2), "utf-8");
 }
 
 /**
- * Fetch pricing for specific model sourceKeys from models.dev API.
- * Uses a filtered approach — fetches the API and extracts only matching models.
- * Returns Map of matched models. On any error, returns empty Map.
- */
-export async function fetchFromModelsDev(
-  sourceKeys: string[],
-): Promise<Map<string, ModelRates>> {
-  if (sourceKeys.length === 0) return new Map();
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-
-    const response = await fetch("https://models.dev/api.json", {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-
-    if (!response.ok) return new Map();
-
-    const data: unknown = await response.json();
-    if (typeof data !== "object" || data === null) return new Map();
-
-    const result = new Map<string, ModelRates>();
-
-    // Normalise sourceKeys for matching — support prefix match or contains match
-    const lowerKeys = sourceKeys.map((k) => k.toLowerCase());
-
-    for (const [modelKey, rates] of Object.entries(data)) {
-      const lowerModelKey = modelKey.toLowerCase();
-
-      // Check if this model key starts with or contains any requested key
-      const matches = lowerKeys.some(
-        (k) => lowerModelKey.startsWith(k) || lowerModelKey.includes(k),
-      );
-      if (!matches) continue;
-
-      if (typeof rates !== "object" || rates === null) continue;
-
-      const r = rates as Record<string, unknown>;
-      const input = typeof r.input === "number" ? r.input : 0;
-      const output = typeof r.output === "number" ? r.output : 0;
-      const cacheRead = typeof r.cache_read === "number" ? r.cache_read : 0;
-
-      result.set(modelKey, {
-        modelKey,
-        inputPerMillion: input,
-        outputPerMillion: output,
-        cacheReadPerMillion: cacheRead,
-        source: "models.dev",
-      });
-    }
-
-    return result;
-  } catch {
-    return new Map();
-  }
-}
-
-/**
- * Look up pricing for a set of model sourceKeys.
+ * Look up pricing for a set of model source keys.
  * Returns a Map<sourceKey, ModelRates>.
- * Uses local cache first, then tries models.dev API for uncached models.
- * On fetch failure, marks models as "unavailable".
+ *
+ * Resolves each key through the shared models.dev mapping and catalog: exact
+ * reference lookup only — no raw models.dev JSON parsing and no contains
+ * fallback. The catalog is loaded once; when no snapshot exists the one
+ * refresh is awaited (`/usage --full` is explicit), and when a snapshot does
+ * exist it is served immediately while a non-blocking freshness check runs.
  */
 export async function lookupPricing(
-  sourceKeys: string[],
-  cachePath?: string,
+    sourceKeys: string[],
+    catalog?: ModelsDevCatalog,
 ): Promise<Map<string, ModelRates>> {
-  // 1. Load cache
-  const cache = await loadPricingCache(cachePath);
+    if (sourceKeys.length === 0) return new Map();
 
-  // 2. Find uncached keys
-  const uncached = sourceKeys.filter((key) => !cache.has(key));
+    const resolved = catalog ?? getModelsDevCatalog();
 
-  // 3. Fetch from API for uncached keys
-  if (uncached.length > 0) {
-    const fetched = await fetchFromModelsDev(uncached);
-
-    // Merge fetched into cache
-    for (const [key, rates] of fetched) {
-      cache.set(key, rates);
+    const status = await resolved.load();
+    if (status.providerCount === 0 && status.baseCount === 0) {
+        await resolved.refresh();
+    } else {
+        void resolved.refresh();
     }
 
-    // 4. Save updated cache (only if we got something new)
-    if (fetched.size > 0) {
-      await savePricingCache(cache, cachePath).catch(() => {});
+    const source = provenanceToSource(resolved.getStatus().provenance);
+    const result = new Map<string, ModelRates>();
+    for (const sourceKey of sourceKeys) {
+        const split = splitSourceKey(sourceKey);
+        const refs = split
+            ? resolveUsageModelsDevRefs(split.provider, split.model)
+            : [];
+        const match = refs.length > 0 ? resolved.lookupFirst(refs) : undefined;
+        const projected =
+            split?.provider === "factory-ai"
+                ? applyFactoryRouteCostOverride(split.model, match?.model.cost)
+                : { cost: match?.model.cost, overridden: false };
+        result.set(
+            sourceKey,
+            projectRates(
+                sourceKey,
+                projected.overridden ? "override" : source,
+                projected.cost,
+            ),
+        );
     }
-  }
-
-  // 5. For any key still missing, mark as unavailable
-  for (const key of sourceKeys) {
-    if (!cache.has(key)) {
-      cache.set(key, {
-        modelKey: key,
-        inputPerMillion: 0,
-        outputPerMillion: 0,
-        cacheReadPerMillion: 0,
-        source: "unavailable",
-      });
-    }
-  }
-
-  return cache;
+    return result;
 }

@@ -4,18 +4,16 @@
  * Covers:
  *   - registerCpaProvider registers with correct name, baseUrl, api, apiKey
  *   - Initial registration uses STATIC_FALLBACK_MODELS
- *   - Registers a session_start event handler
- *   - session_start handler calls buildCpaModels and re-registers
- *   - session_start handler does NOT re-register if dynamicModels is empty
- *   - session_start handler catches errors without throwing
+ *   - Does not register a provider-local session_start handler
+ *   - Exposes a stable provider projection handle
  */
 
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, mock } from 'bun:test';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
-import { resetOrMetadataCache } from './cpa-models.ts';
 import { registerCpaProvider, getCliproxyApiKey } from './cpa.ts';
+import type { LifecycleCtx } from './cpa.ts';
 
 interface RegisteredProvider {
     name: string;
@@ -95,10 +93,6 @@ const fakeModel: ProviderModelConfig = {
     cost: { input: 0.5, output: 1.0, cacheRead: 0, cacheWrite: 0 },
 };
 
-beforeEach(() => {
-    resetOrMetadataCache();
-});
-
 // ── Tests ──
 
 describe('registerCpaProvider', () => {
@@ -132,130 +126,16 @@ describe('registerCpaProvider', () => {
         expect(models).toEqual(STATIC_FALLBACK_MODELS);
     });
 
-    test('registers a session_start event handler', () => {
+    test('leaves session_start ownership to the shared lifecycle', () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
-        registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
-
-        const handlers = registeredHandlers.filter(
-            (h) => h.event === 'session_start',
-        );
-        expect(handlers.length).toBe(1);
-    });
-
-    test('session_start handler calls buildModels with correct args', async () => {
-        const { pi, registeredHandlers } = createMockExtensionAPI();
-        const mockBuild = mock((_baseUrl: string, _apiKey: string) => {
-            return Promise.resolve({
-                models: [fakeModel],
-                source: 'live' as const,
-            });
+        const handle = registerCpaProvider(pi, {
+            buildModels: createMockBuildCpaModels(),
         });
 
-        registerCpaProvider(pi, { buildModels: mockBuild });
-
-        const handler = registeredHandlers.find(
-            (h) => h.event === 'session_start',
-        );
-        expect(handler).toBeDefined();
-
-        const mockCtx = {
-            modelRegistry: {
-                registerProvider: () => {},
-                authStorage: { get: () => undefined },
-            },
-        };
-
-        await handler!.handler({}, mockCtx);
-
-        expect(mockBuild).toHaveBeenCalledWith(
-            'http://localhost:8317/v1',
-            expect.any(String),
-        );
-    });
-
-    test('session_start handler re-registers with dynamic models when available', async () => {
-        const { pi, registeredProviders, registeredHandlers } =
-            createMockExtensionAPI();
-        const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
-        );
-
-        registerCpaProvider(pi, { buildModels: mockBuild });
-
-        // Initial registration
-        expect(registeredProviders.length).toBe(1);
-        expect(registeredProviders[0].config.models).toEqual(
-            STATIC_FALLBACK_MODELS,
-        );
-
-        const handler = registeredHandlers.find(
-            (h) => h.event === 'session_start',
-        )!;
-        const mockCtx = {
-            modelRegistry: {
-                find: () => undefined,
-                authStorage: { get: () => undefined },
-            },
-        };
-
-        await handler.handler({}, mockCtx);
-
-        // Should have re-registered with dynamic models
-        expect(registeredProviders.length).toBe(2);
-        expect(registeredProviders[1].name).toBe('cpa');
-        expect(registeredProviders[1].config.models).toEqual([fakeModel]);
-    });
-
-    test('session_start handler does NOT re-register if dynamicModels is empty', async () => {
-        const { pi, registeredProviders, registeredHandlers } =
-            createMockExtensionAPI();
-        const mockBuild = mock(() =>
-            Promise.resolve({
-                models: STATIC_FALLBACK_MODELS,
-                source: 'fallback' as const,
-            }),
-        );
-
-        registerCpaProvider(pi, { buildModels: mockBuild });
-
-        expect(registeredProviders.length).toBe(1);
-
-        const handler = registeredHandlers.find(
-            (h) => h.event === 'session_start',
-        )!;
-        const mockCtx = {
-            modelRegistry: {
-                registerProvider: () => {},
-                authStorage: { get: () => undefined },
-            },
-        };
-
-        await handler.handler({}, mockCtx);
-
-        // No additional registration
-        expect(registeredProviders.length).toBe(1);
-    });
-
-    test('session_start handler catches errors without throwing', async () => {
-        const { pi, registeredHandlers } = createMockExtensionAPI();
-        const mockBuild = mock(() => {
-            return Promise.reject(new Error('Network failure'));
-        });
-
-        registerCpaProvider(pi, { buildModels: mockBuild });
-
-        const handler = registeredHandlers.find(
-            (h) => h.event === 'session_start',
-        )!;
-        const mockCtx = {
-            modelRegistry: {
-                registerProvider: () => {},
-                authStorage: { get: () => undefined },
-            },
-        };
-
-        // Should not throw
-        await expect(handler.handler({}, mockCtx)).resolves.toBeUndefined();
+        expect(handle.providerId).toBe('cpa');
+        expect(
+            registeredHandlers.filter((handler) => handler.event === 'session_start'),
+        ).toEqual([]);
     });
 
     test('blocks input and directs the user to /model when the active CPA model is stale', async () => {
@@ -522,6 +402,63 @@ describe('registerCpaProvider', () => {
         );
     });
 
+    test('returns a handle whose refreshProjection refreshes through the catalog guard', async () => {
+        const { pi, registeredProviders } = createMockExtensionAPI();
+        const mockBuild = mock(() =>
+            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+        );
+
+        const handle = registerCpaProvider(pi, { buildModels: mockBuild });
+        expect(handle).toBeDefined();
+        expect(typeof handle.refreshProjection).toBe('function');
+
+        const notify = mock(() => {});
+        const mockCtx = {
+            model: { provider: 'cpa', id: fakeModel.id },
+            modelRegistry: { find: () => fakeModel },
+            hasUI: true,
+            ui: { notify },
+        };
+
+        await handle.refreshProjection(mockCtx as unknown as LifecycleCtx);
+
+        // refreshProjection runs the existing forced refresh: model reloaded,
+        // provider re-registered, active model validated.
+        expect(mockBuild).toHaveBeenCalledWith(
+            'http://localhost:8317/v1',
+            expect.any(String),
+        );
+        expect(registeredProviders.length).toBe(2);
+        expect(registeredProviders[1].config.models).toEqual([fakeModel]);
+        expect(notify).toHaveBeenCalledWith(
+            expect.stringContaining('actualisé'),
+            'info',
+        );
+    });
+
+    test('returns a handle whose refreshProjection reports a stale active model', async () => {
+        const { pi } = createMockExtensionAPI();
+        const mockBuild = mock(() =>
+            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+        );
+
+        const handle = registerCpaProvider(pi, { buildModels: mockBuild });
+        const notify = mock(() => {});
+        const mockCtx = {
+            model: { provider: 'cpa', id: 'ocg/deepseek-v4-pro' },
+            modelRegistry: { find: () => undefined },
+            hasUI: true,
+            ui: { notify },
+        };
+
+        await handle.refreshProjection(mockCtx as unknown as LifecycleCtx);
+
+        expect(notify).toHaveBeenCalledWith(
+            expect.stringContaining('/model'),
+            'warning',
+        );
+    });
+
     test('does NOT register a streamSimple (built-in openai-completions used)', () => {
         const { pi, registeredProviders } = createMockExtensionAPI();
         registerCpaProvider(pi, { buildModels: createMockBuildCpaModels() });
@@ -538,56 +475,22 @@ describe('registerCpaProvider', () => {
         expect(config.oauth).toBeUndefined();
     });
 
-    test('routes catalog drift to console.warn at session_start', async () => {
-        const { pi, registeredHandlers } = createMockExtensionAPI();
-        // Live catalog includes a model NOT in STATIC_FALLBACK_MODELS → drift.
-        const driftModel: ProviderModelConfig = {
-            id: 'ocg/go-brand-new-drift-model',
-            name: 'Drift',
-            reasoning: true,
-            input: ['text'],
-            contextWindow: 2000,
-            maxTokens: 200,
-            cost: { input: 0.5, output: 1.0, cacheRead: 0, cacheWrite: 0 },
-        };
+    test('refreshProjection performs the dynamic registration once', async () => {
+        const { pi, registeredProviders } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({
-                models: [...STATIC_FALLBACK_MODELS, driftModel],
-                source: 'live' as const,
-            }),
+            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
         );
-        registerCpaProvider(pi, { buildModels: mockBuild });
+        const handle = registerCpaProvider(pi, { buildModels: mockBuild });
 
-        const warnSpy = mock(() => {});
-        const originalWarn = console.warn;
-        console.warn = warnSpy;
-        const notify = mock(() => {});
-        try {
-            const handler = registeredHandlers.find(
-                (h) => h.event === 'session_start',
-            )!;
-            await handler.handler(
-                {},
-                {
-                    modelRegistry: { find: () => undefined },
-                    hasUI: true,
-                    ui: { notify },
-                },
-            );
-        } finally {
-            console.warn = originalWarn;
-        }
+        await handle.refreshProjection({
+            modelRegistry: { find: () => undefined },
+            hasUI: true,
+            ui: { notify: mock(() => {}) },
+        } as unknown as LifecycleCtx);
 
-        // Drift surfaces once via console.warn at startup.
-        const driftCalls = (warnSpy.mock.calls as unknown[][])
-            .map((c) => String(c[0]))
-            .filter((m) => m.includes('Catalog drift'));
-        expect(driftCalls.length).toBe(1);
-        // Runtime sink (ui.notify) is not used for drift at startup.
-        const driftNotify = (notify.mock.calls as unknown[][])
-            .map((c) => String(c[0]))
-            .filter((m) => m.includes('Catalog drift'));
-        expect(driftNotify.length).toBe(0);
+        expect(mockBuild).toHaveBeenCalledTimes(1);
+        expect(registeredProviders).toHaveLength(2);
+        expect(registeredProviders[1].config.models).toEqual([fakeModel]);
     });
 
     test('routes catalog drift to ctx.ui.notify at runtime (input hook)', async () => {

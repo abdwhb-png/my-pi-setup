@@ -63,3 +63,6 @@ nul
 pnpm-lock.yaml
 skills-lock.json
 agent/tool-result-archive/
+
+# Runtime cache (models.dev catalog)
+/agent/cache/models-dev-catalog-v1.json

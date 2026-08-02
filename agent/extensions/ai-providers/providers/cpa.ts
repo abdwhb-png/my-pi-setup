@@ -35,7 +35,23 @@ const PROVIDER_API = "openai-completions" as const;
 
 // ── Lifecycle event context shape ──
 
-type LifecycleCtx = Parameters<Parameters<ExtensionAPI["on"]>[1]>[1];
+export type LifecycleCtx = Parameters<Parameters<ExtensionAPI["on"]>[1]>[1];
+
+/**
+ * Handle returned by {@link registerCpaProvider}.
+ *
+ * `refreshProjection` performs the same forced catalog refresh the
+ * `/cpa-refresh` command runs: reloads live models through the catalog
+ * guard, re-registers the provider projection, and reports stale/unverified
+ * states to the user.
+ */
+export interface CpaProviderHandle {
+    providerId: "cpa";
+    refreshProjection(
+        ctx: LifecycleCtx,
+        options?: { force?: boolean },
+    ): Promise<void>;
+}
 
 /**
  * Plain console.warn sink used at startup. Counts are emitted as a single
@@ -144,7 +160,7 @@ export function registerCpaProvider(
         isSubagentChild?: () => boolean;
         exitProcess?: (code: number) => void;
     },
-): void {
+): CpaProviderHandle {
     const buildModels = options?.buildModels ?? buildCpaModels;
     const isSubagentChild =
         options?.isSubagentChild ??
@@ -204,21 +220,38 @@ export function registerCpaProvider(
         else console.warn(`[cpa] ${message}`);
     }
 
+    /**
+     * Forced refresh exposed as the provider handle: reload the live
+     * projection through the catalog guard, re-register models, and report
+     * stale/unverified states. `/cpa-refresh` delegates to this.
+     */
+    const handle: CpaProviderHandle = {
+        providerId: PROVIDER_NAME,
+        async refreshProjection(ctx) {
+            const result = await refreshCatalog(ctx, true);
+            if (result.state === "stale") {
+                notifyStaleModelOnce(ctx, result.modelId);
+                return;
+            }
+
+            const message =
+                result.state === "valid"
+                    ? "Catalogue CPA actualisé. Le modèle actif est valide."
+                    : "Catalogue CPA indisponible. Le dernier état vérifié est conservé.";
+            if (ctx.hasUI)
+                ctx.ui.notify(
+                    message,
+                    result.state === "valid" ? "info" : "warning",
+                );
+            else console.warn(`[cpa] ${message}`);
+        },
+    };
+
     // Phase 1: Register with static fallback models immediately (synchronous)
     pi.registerProvider(
         PROVIDER_NAME,
         buildProviderConfig(STATIC_FALLBACK_MODELS),
     );
-
-    // Phase 2: On session_start, fetch dynamic models and re-register.
-    // Startup phase: drift goes to console.warn (logs, no TUI intrusion).
-    pi.on("session_start", async (_event, ctx) => {
-        try {
-            await refreshCatalog(ctx, true, consoleDriftSink);
-        } catch {
-            // If dynamic fetch fails, keep static fallback models
-        }
-    });
 
     pi.on("model_select", async (event, ctx) => {
         if (event.model.provider !== PROVIDER_NAME) return;
@@ -274,22 +307,9 @@ export function registerCpaProvider(
     pi.registerCommand("cpa-refresh", {
         description: "Refresh CPA models and validate the active model",
         handler: async (_args, ctx) => {
-            const result = await refreshCatalog(ctx, true);
-            if (result.state === "stale") {
-                notifyStaleModelOnce(ctx, result.modelId);
-                return;
-            }
-
-            const message =
-                result.state === "valid"
-                    ? "Catalogue CPA actualisé. Le modèle actif est valide."
-                    : "Catalogue CPA indisponible. Le dernier état vérifié est conservé.";
-            if (ctx.hasUI)
-                ctx.ui.notify(
-                    message,
-                    result.state === "valid" ? "info" : "warning",
-                );
-            else console.warn(`[cpa] ${message}`);
+            await handle.refreshProjection(ctx);
         },
     });
+
+    return handle;
 }
