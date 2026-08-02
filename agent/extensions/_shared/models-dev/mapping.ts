@@ -61,6 +61,22 @@ const FACTORY_OWNED_BASES: Readonly<Record<string, string>> = {
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
 };
 
+/** Exact route identities observed in persisted historical Factory usage. */
+const FACTORY_HISTORICAL_REFS: Readonly<
+    Record<string, readonly ModelsDevRef[]>
+> = {
+    "deepseek/deepseek-v4-pro": [baseRef("deepseek/deepseek-v4-pro")],
+    "deepseek/deepseek-v4-flash": [baseRef("deepseek/deepseek-v4-flash")],
+    "gpt-5.5": [providerRef("openai", "gpt-5.5")],
+    "gemini-3-flash-preview": [providerRef("google", "gemini-3-flash-preview")],
+    "google/gemma-4-31b-it:free": [
+        providerRef("openrouter", "google/gemma-4-31b-it:free"),
+    ],
+    "qwen/qwen3.6-plus-preview:free": [
+        providerRef("openrouter", "qwen/qwen3.6-plus-preview:free"),
+    ],
+};
+
 /**
  * SDK model-provider strings verified against @factory/droid-sdk's
  * `ModelProvider` enum. `_shared` stays independent from the SDK itself;
@@ -88,9 +104,9 @@ function slicePrefix(id: string, prefix: string): string | undefined {
     return isEmptyId(rest) ? undefined : rest;
 }
 
-/** Exact OpenRouter ref; free routes never inherit paid-route metadata. */
+/** Exact OpenRouter ref; always includes a base fallback for field-by-field merge. */
 function openRouterRefs(modelId: string): ModelsDevRef[] {
-    return [providerRef("openrouter", modelId)];
+    return [providerRef("openrouter", modelId), baseRef(modelId)];
 }
 
 /** Keep the first occurrence of identical refs while preserving order. */
@@ -150,7 +166,7 @@ function resolveCpaLikeRefs(modelId: string): ModelsDevRef[] {
     if (modelId.includes("/")) return openRouterRefs(modelId);
 
     return CPA_OPENAI_MODEL_IDS.has(modelId)
-        ? [providerRef("openai", modelId)]
+        ? [providerRef("openai", modelId), baseRef(`openai/${modelId}`)]
         : [];
 }
 
@@ -178,13 +194,13 @@ export function resolveCpaModelsDevRefs(
     }
     if (ownedBy === "openrouter") {
         return modelId.includes("/")
-            ? [providerRef("openrouter", modelId)]
+            ? [providerRef("openrouter", modelId), baseRef(modelId)]
             : [];
     }
     if (ownedBy === "openai") {
         return modelId === "codex-auto-review" || isEmptyId(modelId)
             ? []
-            : [providerRef("openai", modelId)];
+            : [providerRef("openai", modelId), baseRef(`openai/${modelId}`)];
     }
     if (ownedBy === "z.ai (coding)") {
         const model = slicePrefix(modelId, "zai-coding/") ?? modelId;
@@ -210,7 +226,10 @@ export function resolveFactoryModelsDevRefs(
     if (isEmptyId(modelId)) return [];
 
     if (EXACT_FACTORY_PROVIDERS.has(modelProvider)) {
-        return [providerRef(modelProvider, modelId)];
+        return [
+            providerRef(modelProvider, modelId),
+            baseRef(`${modelProvider}/${modelId}`),
+        ];
     }
 
     if (modelProvider === FACTORY_SDK_PROVIDER) {
@@ -240,14 +259,33 @@ export function resolveUsageModelsDevRefs(
 
     switch (providerId) {
         case "openrouter":
+            return [
+                providerRef(providerId, modelId),
+                baseRef(modelId), // modelId already IS the base ref (e.g. "deepseek/deepseek-v4-flash")
+            ];
         case "openai":
         case "anthropic":
         case "google":
-            return [providerRef(providerId, modelId)];
+            return [
+                providerRef(providerId, modelId),
+                baseRef(`${providerId}/${modelId}`),
+            ];
         case "cpa":
             return dedupeRefs(resolveCpaLikeRefs(modelId));
-        case "factory-ai":
-            return resolveFactoryOwnedBases(modelId);
+        case "factory-ai": {
+            const historicalRefs = FACTORY_HISTORICAL_REFS[modelId];
+            return historicalRefs
+                ? [...historicalRefs]
+                : resolveFactoryOwnedBases(modelId);
+        }
+        case "openai-codex":
+            return [providerRef("openai", modelId)];
+        case "opencode-go":
+            return [providerRef("opencode-go", modelId)];
+        case "zai":
+            return [providerRef("zai", modelId)];
+        case "or":
+            return [providerRef("openrouter", modelId)];
         default:
             return [];
     }

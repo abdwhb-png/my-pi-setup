@@ -38,16 +38,60 @@ function refKey(ref: ModelsDevRef): string {
 /** Deterministic lookup stub returning real ModelsDevMatch values by exact ref. */
 function lookupStub(
     matches: ModelsDevMatch[],
-): Pick<ModelsDevCatalog, 'lookupFirst'> {
+): Pick<ModelsDevCatalog, 'lookupFirst' | 'lookupMerge'> {
     const byKey = new Map<string, ModelsDevMatch>();
     for (const match of matches) byKey.set(refKey(match.ref), match);
+    const lookupFn = (refs: readonly ModelsDevRef[]) => {
+        for (const ref of refs) {
+            const match = byKey.get(refKey(ref));
+            if (match) return match;
+        }
+        return undefined;
+    };
     return {
-        lookupFirst: (refs) => {
+        lookupFirst: (refs) => lookupFn(refs),
+        lookupMerge: (refs) => {
+            let merged: Record<string, unknown> | undefined;
             for (const ref of refs) {
                 const match = byKey.get(refKey(ref));
-                if (match) return match;
+                if (!match) continue;
+                const m = match.model as unknown as Record<string, unknown>;
+                if (!merged) {
+                    merged = { name: m.name };
+                }
+                for (const key of [
+                    'reasoning',
+                    'contextWindow',
+                    'maxTokens',
+                    'inputModalities',
+                ]) {
+                    if (
+                        m[key] !== undefined &&
+                        merged[key] === undefined
+                    ) {
+                        merged[key] = m[key];
+                    }
+                }
+                if (m.cost) {
+                    if (!merged.cost) merged.cost = {};
+                    const mc = merged.cost as Record<string, number>;
+                    const src = m.cost as Record<string, number>;
+                    for (const ck of [
+                        'input',
+                        'output',
+                        'cacheRead',
+                        'cacheWrite',
+                    ]) {
+                        if (
+                            src[ck] !== undefined &&
+                            mc[ck] === undefined
+                        ) {
+                            mc[ck] = src[ck];
+                        }
+                    }
+                }
             }
-            return undefined;
+            return merged as ModelsDevModel | undefined;
         },
     };
 }
@@ -616,6 +660,37 @@ describe('enrichModel enrichment pipeline', () => {
             (result.compat as { supportsDeveloperRole?: boolean })
                 ?.supportsDeveloperRole,
         ).toBe(false);
+    });
+
+    it('narrows to text-only when the catalog record explicitly omits image', () => {
+        // gemini-3.5-flash is in STATIC_IMAGE_MODELS → currently ["text","image"]
+        // A catalog record with inputModalities: ["text"] is explicit text-only evidence.
+        const catalog = lookupStub([
+            baseMatch('google/gemini-3.5-flash', {
+                name: 'Gemini 3.5 Flash',
+                inputModalities: ['text'],
+            }),
+        ]);
+        const entry: CpaModelEntry = {
+            id: 'gemini-3.5-flash',
+            owned_by: 'antigravity',
+        };
+        const result = enrichModel(entry, catalog, { ocg: 'go' })!;
+        expect(result.input).toEqual(['text']);
+    });
+
+    it('preserves static image capability when the catalog record has no inputModalities', () => {
+        const catalog = lookupStub([
+            baseMatch('google/gemini-3.5-flash', {
+                name: 'Gemini 3.5 Flash',
+            }),
+        ]);
+        const entry: CpaModelEntry = {
+            id: 'gemini-3.5-flash',
+            owned_by: 'antigravity',
+        };
+        const result = enrichModel(entry, catalog, { ocg: 'go' })!;
+        expect(result.input).toEqual(['text', 'image']);
     });
 
     it('always includes compat: supportsDeveloperRole: false', () => {

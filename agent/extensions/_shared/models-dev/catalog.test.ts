@@ -88,6 +88,113 @@ afterEach(() => {
     }
 });
 
+describe('lookupMerge', () => {
+    it('merges provider and base records field-by-field, first ref wins per field', async () => {
+        const envelope = {
+            version: 1,
+            fetchedAt: 1_700_000_000_000,
+            providers: {
+                openai: {
+                    models: {
+                        'gpt-5.4': {
+                            name: 'GPT 5.4',
+                            cost: { input: 1.25, output: 10, cache_read: 0.5, cache_write: 0.25 },
+                        },
+                    },
+                },
+            },
+            models: {
+                'openai/gpt-5.4': {
+                    name: 'GPT 5.4 Base',
+                    reasoning: true,
+                    contextWindow: 1_000_000,
+                    maxTokens: 128_000,
+                    inputModalities: ['text', 'image'],
+                    cost: { input: 2.5, output: 10, cache_read: 1.25, cache_write: 2.5 },
+                },
+            },
+        };
+        const { catalog } = makeCatalogWithCache(envelope);
+        await catalog.load();
+
+        const merged = catalog.lookupMerge([
+            { scope: 'provider' as const, providerId: 'openai', modelId: 'gpt-5.4' },
+            { scope: 'model' as const, modelId: 'openai/gpt-5.4' },
+        ]);
+
+        expect(merged).toBeDefined();
+        // Provider name wins (first ref)
+        expect(merged!.name).toBe('GPT 5.4');
+        // Base fills reasoning, context, maxTokens, input (absent in provider)
+        expect(merged!.reasoning).toBe(true);
+        expect(merged!.contextWindow).toBe(1_000_000);
+        expect(merged!.maxTokens).toBe(128_000);
+        expect(merged!.inputModalities).toEqual(['text', 'image']);
+        // Provider cost wins per-field (first ref)
+        expect(merged!.cost).toEqual({ input: 1.25, output: 10, cacheRead: 0.5, cacheWrite: 0.25 });
+    });
+
+    it('preserves explicit zero and false from first matching ref', async () => {
+        const envelope = {
+            version: 1,
+            fetchedAt: 1_700_000_000_000,
+            providers: {
+                acme: {
+                    models: {
+                        'acme/free': {
+                            name: 'Free Tier',
+                            reasoning: false,
+                            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                        },
+                    },
+                },
+            },
+            models: {
+                'acme/free': {
+                    name: 'Free Tier Base',
+                    reasoning: true,
+                    contextWindow: 200_000,
+                    cost: { input: 5, output: 10, cacheRead: 5, cacheWrite: 10 },
+                },
+            },
+        };
+        const { catalog } = makeCatalogWithCache(envelope);
+        await catalog.load();
+
+        const merged = catalog.lookupMerge([
+            { scope: 'provider' as const, providerId: 'acme', modelId: 'acme/free' },
+            { scope: 'model' as const, modelId: 'acme/free' },
+        ]);
+
+        expect(merged!.reasoning).toBe(false);
+        expect(merged!.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+        // contextWindow filled from base (absent in provider)
+        expect(merged!.contextWindow).toBe(200_000);
+    });
+
+    it('returns undefined when no ref matches', async () => {
+        const { catalog } = makeCatalogWithCache(cacheEnvelope);
+        await catalog.load();
+
+        expect(catalog.lookupMerge([
+            { scope: 'provider', providerId: 'nonexistent', modelId: 'no-match' },
+        ])).toBeUndefined();
+    });
+
+    it('returns the only match when one ref matches', async () => {
+        const { catalog } = makeCatalogWithCache(cacheEnvelope);
+        await catalog.load();
+
+        const merged = catalog.lookupMerge([
+            { scope: 'provider', providerId: 'openai', modelId: 'gpt-4o' },
+            { scope: 'model', modelId: 'openai/gpt-4o-missing' },
+        ]);
+
+        expect(merged!.name).toBe('GPT-4o');
+        expect(merged!.reasoning).toBe(true);
+    });
+});
+
 describe('lookupFirst', () => {
     it('resolves exact provider and base references, never partial IDs', async () => {
         const { catalog } = makeCatalogWithCache(cacheEnvelope);
@@ -136,13 +243,14 @@ describe('lookupFirst', () => {
         expect(zeroCost?.model.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
     });
 
-    it('defaults missing names to the record ID and keeps only actual booleans', async () => {
+    it('defaults missing names to the record ID when a structural witness exists', async () => {
+        // { reasoning: true } has one valid witness → name fallback applies.
         const envelope = {
             version: 1,
             fetchedAt: 1_700_000_000_000,
             providers: {},
             models: {
-                'acme/solo': { reasoning: 'yes' },
+                'acme/solo': { reasoning: true },
             },
         };
         const { catalog } = makeCatalogWithCache(envelope);
@@ -150,7 +258,29 @@ describe('lookupFirst', () => {
 
         const match = catalog.lookupFirst([{ scope: 'model', modelId: 'acme/solo' }]);
         expect(match?.model.name).toBe('acme/solo');
-        expect(match?.model.reasoning).toBeUndefined();
+        expect(match?.model.reasoning).toBe(true);
+    });
+
+    it('skips records with no structural witness (empty, invalid-only, unknown-only)', async () => {
+        const envelope = {
+            version: 1,
+            fetchedAt: 1_700_000_000_000,
+            providers: {},
+            models: {
+                'acme/empty': {},
+                'acme/invalid-only': { reasoning: 'yes' },
+                'acme/unknown-only': { deprecated: true, version: 2 },
+                'acme/valid': { name: 'Valid' },
+            },
+        };
+        const { catalog } = makeCatalogWithCache(envelope);
+        await catalog.load();
+
+        expect(catalog.lookupFirst([{ scope: 'model', modelId: 'acme/empty' }])).toBeUndefined();
+        expect(catalog.lookupFirst([{ scope: 'model', modelId: 'acme/invalid-only' }])).toBeUndefined();
+        expect(catalog.lookupFirst([{ scope: 'model', modelId: 'acme/unknown-only' }])).toBeUndefined();
+        const valid = catalog.lookupFirst([{ scope: 'model', modelId: 'acme/valid' }]);
+        expect(valid?.model.name).toBe('Valid');
     });
 
     it('keeps an empty modality array as valid and ignores arrays with non-string items', async () => {
@@ -558,6 +688,77 @@ describe('refresh', () => {
         expect(fetchFn).toHaveBeenCalledTimes(1);
         expect(results[0].status).toBe('updated');
         expect(results[1].status).toBe('updated');
+    });
+
+    it('rejects HTTP 200 with only invalid/empty records and keeps disk + memory intact', async () => {
+        const fetchFn: ModelsDevFetchFn = async () =>
+            new Response(
+                JSON.stringify({
+                    providers: {
+                        acme: { models: { 'acme/empty': {}, 'acme/bad': { reasoning: 'yes' } } },
+                    },
+                    models: { 'acme/empty2': {}, 'acme/bad2': { deprecated: true } },
+                }),
+                { status: 200, headers: { etag: 'W/"new-etag"' } },
+            );
+        const { cachePath, catalog } = makeCatalogWithCache(cacheEnvelope, {
+            fetchFn,
+            ttlMs: 0,
+            now: () => 1_700_086_500_000,
+        });
+
+        await catalog.load();
+        const diskBefore = readFileSync(cachePath, 'utf-8');
+        const statusBefore = catalog.getStatus();
+
+        const result = await catalog.refresh();
+
+        expect(result.status).toBe('failed');
+        expect(result.error).toMatch(/payload/i);
+        // Provenance, ETag, counts unchanged
+        expect(catalog.getStatus().provenance).toBe('cache');
+        expect(catalog.getStatus().etag).toBe(statusBefore.etag);
+        expect(catalog.getStatus().providerCount).toBe(statusBefore.providerCount);
+        expect(catalog.getStatus().baseCount).toBe(statusBefore.baseCount);
+        // Memory intact
+        expect(catalog.lookupFirst([{ scope: 'model', modelId: 'openai/gpt-4o' }])?.model.name).toBe('GPT-4o');
+        // Invalid IDs absent
+        expect(catalog.lookupFirst([{ scope: 'model', modelId: 'acme/empty' }])).toBeUndefined();
+        expect(catalog.lookupFirst([{ scope: 'model', modelId: 'acme/bad' }])).toBeUndefined();
+        // Disk unchanged
+        expect(readFileSync(cachePath, 'utf-8')).toBe(diskBefore);
+    });
+
+    it('accepts HTTP 200 where invalid siblings coexist with one valid record', async () => {
+        const fetchFn: ModelsDevFetchFn = async () =>
+            new Response(
+                JSON.stringify({
+                    providers: {
+                        acme: {
+                            models: {
+                                'acme/good': providerModelRecord,
+                                'acme/empty': {},
+                                'acme/bad': { reasoning: 'yes' },
+                            },
+                        },
+                    },
+                    models: {},
+                }),
+                { status: 200 },
+            );
+        const { catalog } = makeCatalogWithCache(cacheEnvelope, {
+            fetchFn,
+            ttlMs: 0,
+            now: () => 1_700_086_500_000,
+        });
+
+        await catalog.load();
+        const result = await catalog.refresh();
+
+        expect(result.status).toBe('updated');
+        expect(catalog.lookupFirst([{ scope: 'provider', providerId: 'acme', modelId: 'acme/good' }])?.model.name).toBe('GPT-4o');
+        expect(catalog.lookupFirst([{ scope: 'provider', providerId: 'acme', modelId: 'acme/empty' }])).toBeUndefined();
+        expect(catalog.lookupFirst([{ scope: 'provider', providerId: 'acme', modelId: 'acme/bad' }])).toBeUndefined();
     });
 
     it('persists a version-1 envelope atomically and leaves no temporary file', async () => {

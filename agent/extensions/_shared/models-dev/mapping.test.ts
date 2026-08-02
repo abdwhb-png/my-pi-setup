@@ -15,19 +15,28 @@ const providerRef = (providerId: string, modelId: string): ModelsDevRef => ({
 const baseRef = (modelId: string): ModelsDevRef => ({ scope: 'model', modelId });
 
 describe('resolveCpaModelsDevRefs', () => {
-    it('maps live OpenRouter ids only for the OpenRouter owner, without paid fallback', () => {
+    it('maps live OpenRouter ids for the OpenRouter owner with base ref fallback', () => {
         const cases: Array<[string, ModelsDevRef[]]> = [
             [
                 'deepseek/deepseek-v4-flash',
-                [providerRef('openrouter', 'deepseek/deepseek-v4-flash')],
+                [
+                    providerRef('openrouter', 'deepseek/deepseek-v4-flash'),
+                    baseRef('deepseek/deepseek-v4-flash'),
+                ],
             ],
             [
                 'deepseek/deepseek-v4-flash:free',
-                [providerRef('openrouter', 'deepseek/deepseek-v4-flash:free')],
+                [
+                    providerRef('openrouter', 'deepseek/deepseek-v4-flash:free'),
+                    baseRef('deepseek/deepseek-v4-flash:free'),
+                ],
             ],
             [
                 'nvidia/nemotron-3-ultra-550b-a55b:free',
-                [providerRef('openrouter', 'nvidia/nemotron-3-ultra-550b-a55b:free')],
+                [
+                    providerRef('openrouter', 'nvidia/nemotron-3-ultra-550b-a55b:free'),
+                    baseRef('nvidia/nemotron-3-ultra-550b-a55b:free'),
+                ],
             ],
         ];
         for (const [modelId, expected] of cases) {
@@ -85,11 +94,20 @@ describe('resolveCpaModelsDevRefs', () => {
         ]);
     });
 
-    it('maps live OpenAI ids by owner and known historical ids without owner', () => {
+    it('maps live OpenAI ids by owner and known historical ids with base ref fallback', () => {
         const cases: Array<[string, ModelsDevRef[]]> = [
-            ['gpt-5.4', [providerRef('openai', 'gpt-5.4')]],
-            ['gpt-5.4-mini', [providerRef('openai', 'gpt-5.4-mini')]],
-            ['gpt-5.5', [providerRef('openai', 'gpt-5.5')]],
+            [
+                'gpt-5.4',
+                [providerRef('openai', 'gpt-5.4'), baseRef('openai/gpt-5.4')],
+            ],
+            [
+                'gpt-5.4-mini',
+                [providerRef('openai', 'gpt-5.4-mini'), baseRef('openai/gpt-5.4-mini')],
+            ],
+            [
+                'gpt-5.5',
+                [providerRef('openai', 'gpt-5.5'), baseRef('openai/gpt-5.5')],
+            ],
             ['codex-auto-review', []],
         ];
         for (const [modelId, expected] of cases) {
@@ -202,20 +220,38 @@ describe('resolveCpaModelsDevRefs', () => {
 });
 
 describe('resolveFactoryModelsDevRefs', () => {
-    it('maps anthropic, openai, and google to exact provider refs', () => {
-        const cases: Array<[string, string]> = [
-            ['anthropic', 'claude-sonnet-4-6'],
-            ['anthropic', 'claude-fable-5'],
-            ['openai', 'gpt-5.4'],
-            ['openai', 'o3-mini'],
-            ['google', 'gemini-3-flash-preview'],
-            ['google', 'gemini-2.5-flash'],
+    it('maps anthropic, openai, and google to provider+base refs', () => {
+        const cases: Array<[string, string, ModelsDevRef[]]> = [
+            [
+                'anthropic', 'claude-sonnet-4-6',
+                [providerRef('anthropic', 'claude-sonnet-4-6'), baseRef('anthropic/claude-sonnet-4-6')],
+            ],
+            [
+                'anthropic', 'claude-fable-5',
+                [providerRef('anthropic', 'claude-fable-5'), baseRef('anthropic/claude-fable-5')],
+            ],
+            [
+                'openai', 'gpt-5.4',
+                [providerRef('openai', 'gpt-5.4'), baseRef('openai/gpt-5.4')],
+            ],
+            [
+                'openai', 'o3-mini',
+                [providerRef('openai', 'o3-mini'), baseRef('openai/o3-mini')],
+            ],
+            [
+                'google', 'gemini-3-flash-preview',
+                [providerRef('google', 'gemini-3-flash-preview'), baseRef('google/gemini-3-flash-preview')],
+            ],
+            [
+                'google', 'gemini-2.5-flash',
+                [providerRef('google', 'gemini-2.5-flash'), baseRef('google/gemini-2.5-flash')],
+            ],
         ];
-        for (const [modelProvider, modelId] of cases) {
+        for (const [modelProvider, modelId, expected] of cases) {
             expect(
                 resolveFactoryModelsDevRefs(modelProvider, modelId),
                 `${modelProvider}/${modelId}`,
-            ).toEqual([providerRef(modelProvider, modelId)]);
+            ).toEqual(expected);
         }
     });
 
@@ -267,24 +303,35 @@ describe('resolveFactoryModelsDevRefs', () => {
 });
 
 describe('resolveUsageModelsDevRefs', () => {
-    it('maps ordinary openrouter, openai, anthropic, and google providers exactly', () => {
+    it('maps ordinary openrouter, openai, anthropic, and google providers with base ref fallback', () => {
         const cases: Array<[string, string, ModelsDevRef[]]> = [
             [
                 'openrouter',
                 'deepseek/deepseek-v4-flash',
-                [providerRef('openrouter', 'deepseek/deepseek-v4-flash')],
+                [
+                    providerRef('openrouter', 'deepseek/deepseek-v4-flash'),
+                    baseRef('deepseek/deepseek-v4-flash'),
+                ],
             ],
             [
                 'openrouter',
                 'deepseek/deepseek-v4-flash:free',
-                [providerRef('openrouter', 'deepseek/deepseek-v4-flash:free')],
+                [
+                    providerRef('openrouter', 'deepseek/deepseek-v4-flash:free'),
+                    baseRef('deepseek/deepseek-v4-flash:free'),
+                ],
             ],
-            ['openai', 'gpt-5.4', [providerRef('openai', 'gpt-5.4')]],
-            ['anthropic', 'claude-sonnet-4-6', [providerRef('anthropic', 'claude-sonnet-4-6')]],
             [
-                'google',
-                'gemini-3-flash-preview',
-                [providerRef('google', 'gemini-3-flash-preview')],
+                'openai', 'gpt-5.4',
+                [providerRef('openai', 'gpt-5.4'), baseRef('openai/gpt-5.4')],
+            ],
+            [
+                'anthropic', 'claude-sonnet-4-6',
+                [providerRef('anthropic', 'claude-sonnet-4-6'), baseRef('anthropic/claude-sonnet-4-6')],
+            ],
+            [
+                'google', 'gemini-3-flash-preview',
+                [providerRef('google', 'gemini-3-flash-preview'), baseRef('google/gemini-3-flash-preview')],
             ],
         ];
         for (const [providerId, modelId, expected] of cases) {
@@ -301,11 +348,17 @@ describe('resolveUsageModelsDevRefs', () => {
             ['go-deepseek-v4-flash', []],
             [
                 'deepseek/deepseek-v4-flash',
-                [providerRef('openrouter', 'deepseek/deepseek-v4-flash')],
+                [
+                    providerRef('openrouter', 'deepseek/deepseek-v4-flash'),
+                    baseRef('deepseek/deepseek-v4-flash'),
+                ],
             ],
             [
                 'deepseek/deepseek-v4-flash:free',
-                [providerRef('openrouter', 'deepseek/deepseek-v4-flash:free')],
+                [
+                    providerRef('openrouter', 'deepseek/deepseek-v4-flash:free'),
+                    baseRef('deepseek/deepseek-v4-flash:free'),
+                ],
             ],
             ['zai-coding/glm-5.2', [providerRef('zai-coding-plan', 'glm-5.2')]],
             ['glm-5.2', [providerRef('zai-coding-plan', 'glm-5.2')]],
@@ -338,6 +391,80 @@ describe('resolveUsageModelsDevRefs', () => {
         ];
         for (const [modelId, expected] of cases) {
             expect(resolveUsageModelsDevRefs('factory-ai', modelId), modelId).toEqual(expected);
+        }
+    });
+
+    it('maps observed historical factory-ai route identities exactly', () => {
+        const cases: Array<[string, ModelsDevRef[]]> = [
+            ['deepseek/deepseek-v4-pro', [baseRef('deepseek/deepseek-v4-pro')]],
+            ['deepseek/deepseek-v4-flash', [baseRef('deepseek/deepseek-v4-flash')]],
+            ['gpt-5.5', [providerRef('openai', 'gpt-5.5')]],
+            ['gemini-3-flash-preview', [providerRef('google', 'gemini-3-flash-preview')]],
+            [
+                'google/gemma-4-31b-it:free',
+                [providerRef('openrouter', 'google/gemma-4-31b-it:free')],
+            ],
+            [
+                'qwen/qwen3.6-plus-preview:free',
+                [providerRef('openrouter', 'qwen/qwen3.6-plus-preview:free')],
+            ],
+        ];
+        for (const [modelId, expected] of cases) {
+            expect(resolveUsageModelsDevRefs('factory-ai', modelId), modelId).toEqual(expected);
+        }
+    });
+
+    it('maps openai-codex to openai provider with exact model id', () => {
+        const cases: Array<[string, ModelsDevRef[]]> = [
+            ['gpt-5.6-sol', [providerRef('openai', 'gpt-5.6-sol')]],
+            ['gpt-5.6-luna', [providerRef('openai', 'gpt-5.6-luna')]],
+            ['gpt-5.6-terra', [providerRef('openai', 'gpt-5.6-terra')]],
+            ['gpt-5.4', [providerRef('openai', 'gpt-5.4')]],
+            ['gpt-5.5', [providerRef('openai', 'gpt-5.5')]],
+        ];
+        for (const [modelId, expected] of cases) {
+            expect(resolveUsageModelsDevRefs('openai-codex', modelId), modelId).toEqual(expected);
+        }
+    });
+
+    it('maps opencode-go pass-through with exact model id', () => {
+        const cases: Array<[string, ModelsDevRef[]]> = [
+            ['deepseek-v4-pro', [providerRef('opencode-go', 'deepseek-v4-pro')]],
+            ['glm-5.2', [providerRef('opencode-go', 'glm-5.2')]],
+            ['qwen3.7-plus', [providerRef('opencode-go', 'qwen3.7-plus')]],
+            ['kimi-k2.6', [providerRef('opencode-go', 'kimi-k2.6')]],
+            ['mimo-v2.5', [providerRef('opencode-go', 'mimo-v2.5')]],
+            ['deepseek-v4-flash', [providerRef('opencode-go', 'deepseek-v4-flash')]],
+        ];
+        for (const [modelId, expected] of cases) {
+            expect(resolveUsageModelsDevRefs('opencode-go', modelId), modelId).toEqual(expected);
+        }
+    });
+
+    it('maps zai pass-through with exact model id', () => {
+        const cases: Array<[string, ModelsDevRef[]]> = [
+            ['glm-5.2', [providerRef('zai', 'glm-5.2')]],
+            ['glm-5v-turbo', [providerRef('zai', 'glm-5v-turbo')]],
+        ];
+        for (const [modelId, expected] of cases) {
+            expect(resolveUsageModelsDevRefs('zai', modelId), modelId).toEqual(expected);
+        }
+    });
+
+    it('maps or prefix to openrouter with verbatim model id, including :free', () => {
+        const cases: Array<[string, ModelsDevRef[]]> = [
+            ['deepseek-v4-pro', [providerRef('openrouter', 'deepseek-v4-pro')]],
+            ['deepseek-v4-flash', [providerRef('openrouter', 'deepseek-v4-flash')]],
+            ['google/gemma-4-26b-a4b-it:free', [providerRef('openrouter', 'google/gemma-4-26b-a4b-it:free')]],
+            ['poolside/laguna-m.1:free', [providerRef('openrouter', 'poolside/laguna-m.1:free')]],
+            ['nvidia/nemotron-3-super-120b-a12b:free', [providerRef('openrouter', 'nvidia/nemotron-3-super-120b-a12b:free')]],
+            ['moonshotai/kimi-k2.6:free', [providerRef('openrouter', 'moonshotai/kimi-k2.6:free')]],
+            ['qwen/qwen3.6-plus-preview:free', [providerRef('openrouter', 'qwen/qwen3.6-plus-preview:free')]],
+            ['google/gemma-4-26b-a4b-it', [providerRef('openrouter', 'google/gemma-4-26b-a4b-it')]],
+            ['google/gemma-4-31b-it:free', [providerRef('openrouter', 'google/gemma-4-31b-it:free')]],
+        ];
+        for (const [modelId, expected] of cases) {
+            expect(resolveUsageModelsDevRefs('or', modelId), modelId).toEqual(expected);
         }
     });
 

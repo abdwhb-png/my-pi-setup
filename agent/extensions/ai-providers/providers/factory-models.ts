@@ -34,6 +34,13 @@ export interface FactoryModelEntry {
     reasoning: boolean;
     supportedReasoningEfforts: string[];
     input: Array<"text" | "image">;
+    /**
+     * Whether the SDK explicitly declared image support.
+     * - `true`: `noImageSupport === false` — SDK says image-capable
+     * - `false`: `noImageSupport === true` — SDK says text-only
+     * - `undefined`: `noImageSupport` absent — NO evidence; defer to catalog
+     */
+    imageExplicit?: boolean;
     contextWindow: number;
     maxTokens: number;
     costInput: number;
@@ -41,7 +48,10 @@ export interface FactoryModelEntry {
 }
 
 /** The only catalog surface enrichment needs: exact reference lookup. */
-export type FactoryCatalogLookup = Pick<ModelsDevCatalog, "lookupFirst">;
+export type FactoryCatalogLookup = Pick<
+    ModelsDevCatalog,
+    "lookupFirst" | "lookupMerge"
+>;
 
 let factoryModelsCache: FactoryModelEntry[] = [];
 
@@ -291,6 +301,12 @@ function toFactoryModelEntry(model: AvailableModelConfig): FactoryModelEntry {
         reasoning: hasReasoning(supportedReasoningEfforts),
         supportedReasoningEfforts,
         input: model.noImageSupport ? ["text"] : ["text", "image"],
+        imageExplicit:
+            model.noImageSupport === true
+                ? false
+                : model.noImageSupport === false
+                  ? true
+                  : undefined,
         contextWindow: defaults.contextWindow,
         maxTokens: defaults.maxTokens,
         costInput: defaults.costInput,
@@ -357,11 +373,12 @@ function resolveFactoryModel(
         cacheRead: 0,
         cacheWrite: 0,
     };
+    let input = m.input;
 
     const refs = resolveFactoryModelsDevRefs(m.provider, m.id);
-    const match = refs.length > 0 ? catalog.lookupFirst(refs) : undefined;
-    if (match) {
-        const md = match.model;
+    const merged = refs.length > 0 ? catalog.lookupMerge(refs) : undefined;
+    if (merged) {
+        const md = merged;
         if (md.contextWindow !== undefined) contextWindow = md.contextWindow;
         if (md.maxTokens !== undefined) maxTokens = md.maxTokens;
         if (md.cost) {
@@ -371,6 +388,13 @@ function resolveFactoryModel(
                 cost.cacheRead = md.cost.cacheRead;
             if (md.cost.cacheWrite !== undefined)
                 cost.cacheWrite = md.cost.cacheWrite;
+        }
+        // Catalog can narrow/widen input only when SDK has no explicit
+        // image-capability signal (imageExplicit undefined).
+        if (m.imageExplicit === undefined && md.inputModalities !== undefined) {
+            input = md.inputModalities.includes("image")
+                ? ["text", "image"]
+                : ["text"];
         }
     }
 
@@ -389,7 +413,7 @@ function resolveFactoryModel(
         id: m.id,
         name: `${m.name} [${m.multiplier}×]`,
         reasoning: m.reasoning,
-        input: m.input,
+        input,
         contextWindow,
         maxTokens,
         cost,

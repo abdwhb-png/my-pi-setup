@@ -83,6 +83,12 @@ export interface ModelsDevCatalogOptions {
 export interface ModelsDevCatalog {
     load(): Promise<ModelsDevCatalogStatus>;
     lookupFirst(refs: readonly ModelsDevRef[]): ModelsDevMatch | undefined;
+    /**
+     * Merge all matching refs field-by-field; the first ref that carries a
+     * field wins. Missing fields from earlier refs fall through to later
+     * refs. Returns undefined only when no ref matches at all.
+     */
+    lookupMerge(refs: readonly ModelsDevRef[]): ModelsDevModel | undefined;
     refresh(options?: { force?: boolean }): Promise<ModelsDevRefreshResult>;
     getStatus(): ModelsDevCatalogStatus;
 }
@@ -187,6 +193,79 @@ class ModelsDevCatalogImpl implements ModelsDevCatalog {
             if (model) return { ref, model };
         }
         return undefined;
+    }
+
+    lookupMerge(refs: readonly ModelsDevRef[]): ModelsDevModel | undefined {
+        const snapshot = this.snapshot;
+        if (!snapshot) return undefined;
+
+        // ponytail: field-by-field first-ref-wins merge. Fast enough for ~2 refs per call.
+        let merged: ModelsDevModel | undefined;
+
+        for (const ref of refs) {
+            const model =
+                ref.scope === "provider"
+                    ? snapshot.providers.get(ref.providerId)?.get(ref.modelId)
+                    : snapshot.models.get(ref.modelId);
+            if (!model) continue;
+
+            if (!merged) {
+                merged = { name: model.name };
+                // Copy every field; null cost fields are not copied.
+            }
+
+            // name: first ref wins
+            if (merged.name === undefined) merged.name = model.name;
+            // reasoning: first ref wins
+            if (
+                model.reasoning !== undefined &&
+                merged.reasoning === undefined
+            ) {
+                merged.reasoning = model.reasoning;
+            }
+            // inputModalities: first ref wins
+            if (
+                model.inputModalities !== undefined &&
+                merged.inputModalities === undefined
+            ) {
+                merged.inputModalities = model.inputModalities;
+            }
+            // contextWindow: first ref wins
+            if (
+                model.contextWindow !== undefined &&
+                merged.contextWindow === undefined
+            ) {
+                merged.contextWindow = model.contextWindow;
+            }
+            // maxTokens: first ref wins
+            if (
+                model.maxTokens !== undefined &&
+                merged.maxTokens === undefined
+            ) {
+                merged.maxTokens = model.maxTokens;
+            }
+            // cost: per-field first-ref-wins merge
+            if (model.cost) {
+                if (!merged.cost) merged.cost = {};
+                const mc = merged.cost;
+                if (mc.input === undefined && model.cost.input !== undefined)
+                    mc.input = model.cost.input;
+                if (mc.output === undefined && model.cost.output !== undefined)
+                    mc.output = model.cost.output;
+                if (
+                    mc.cacheRead === undefined &&
+                    model.cost.cacheRead !== undefined
+                )
+                    mc.cacheRead = model.cost.cacheRead;
+                if (
+                    mc.cacheWrite === undefined &&
+                    model.cost.cacheWrite !== undefined
+                )
+                    mc.cacheWrite = model.cost.cacheWrite;
+            }
+        }
+
+        return merged && Object.keys(merged).length > 0 ? merged : undefined;
     }
 
     private lookup(ref: ModelsDevRef): ModelsDevModel | undefined {
@@ -468,31 +547,53 @@ function normalizeModel(
     const name =
         typeof raw.name === "string" && raw.name.length > 0
             ? raw.name
-            : modelId;
-    const model: ModelsDevModel = { name };
+            : undefined;
+    const model: ModelsDevModel = { name: name ?? modelId };
 
-    if (typeof raw.reasoning === "boolean") model.reasoning = raw.reasoning;
+    // At least one valid fact constitutes a structural witness:
+    // a valid name string, a boolean reasoning flag, a string-array of
+    // input modalities (including empty), a positive context/max-tokens
+    // integer, or any non-negative finite cost field.
+    let hasWitness = name !== undefined;
+
+    if (typeof raw.reasoning === "boolean") {
+        model.reasoning = raw.reasoning;
+        hasWitness = true;
+    }
 
     // Accept both the raw models.dev shape and the normalized persisted shape.
     const modalities = isRecord(raw.modalities) ? raw.modalities : undefined;
     const inputModalities =
         pickStringArray(raw.inputModalities) ??
         (modalities ? pickStringArray(modalities.input) : undefined);
-    if (inputModalities) model.inputModalities = inputModalities;
+    if (inputModalities) {
+        model.inputModalities = inputModalities;
+        hasWitness = true;
+    }
 
     const limit = isRecord(raw.limit) ? raw.limit : undefined;
     const contextWindow =
         pickPositiveInteger(raw.contextWindow) ??
         (limit ? pickPositiveInteger(limit.context) : undefined);
-    if (contextWindow !== undefined) model.contextWindow = contextWindow;
+    if (contextWindow !== undefined) {
+        model.contextWindow = contextWindow;
+        hasWitness = true;
+    }
     const maxTokens =
         pickPositiveInteger(raw.maxTokens) ??
         (limit ? pickPositiveInteger(limit.output) : undefined);
-    if (maxTokens !== undefined) model.maxTokens = maxTokens;
+    if (maxTokens !== undefined) {
+        model.maxTokens = maxTokens;
+        hasWitness = true;
+    }
 
     const cost = pickCost(raw.cost);
-    if (cost) model.cost = cost;
+    if (cost) {
+        model.cost = cost;
+        hasWitness = true;
+    }
 
+    if (!hasWitness) return null;
     return model;
 }
 

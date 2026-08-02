@@ -24,6 +24,7 @@ const catalog = {
     refresh: mock(async () => ({ status: 'fresh' as const, catalog: status })),
     getStatus: () => status,
     lookupFirst: () => undefined,
+    lookupMerge: () => undefined,
 };
 
 mock.module('../_shared/models-dev/catalog', () => ({

@@ -13,6 +13,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
 import { registerCpaProvider, getCliproxyApiKey } from './cpa.ts';
+import type { CpaModelEntry } from './cpa-models.ts';
 import type { LifecycleCtx } from './cpa.ts';
 
 interface RegisteredProvider {
@@ -78,6 +79,7 @@ function createMockBuildCpaModels() {
     return mock((_baseUrl: string, _apiKey: string) => {
         return Promise.resolve({
             models: STATIC_FALLBACK_MODELS,
+            entries: [],
             source: 'fallback' as const,
         });
     });
@@ -92,6 +94,8 @@ const fakeModel: ProviderModelConfig = {
     maxTokens: 200,
     cost: { input: 0.5, output: 1.0, cacheRead: 0, cacheWrite: 0 },
 };
+
+const fakeEntry: CpaModelEntry = { id: 'ocg/go-test', owned_by: 'ocode-go (main)' };
 
 // ── Tests ──
 
@@ -141,7 +145,7 @@ describe('registerCpaProvider', () => {
     test('blocks input and directs the user to /model when the active CPA model is stale', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
         registerCpaProvider(pi, { buildModels: mockBuild });
         const handler = registeredHandlers.find(
@@ -167,7 +171,7 @@ describe('registerCpaProvider', () => {
     test('shuts down stale CPA input in standalone headless mode', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
         registerCpaProvider(pi, { buildModels: mockBuild });
         const handler = registeredHandlers.find(
@@ -201,7 +205,7 @@ describe('registerCpaProvider', () => {
     test('terminates a stale CPA subagent child so outer fallback can run', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
         const exitProcess = mock(() => {});
         registerCpaProvider(pi, {
@@ -241,7 +245,7 @@ describe('registerCpaProvider', () => {
     test('does not repeat the stale warning for the same model state', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
         registerCpaProvider(pi, { buildModels: mockBuild });
         const handler = registeredHandlers.find(
@@ -270,7 +274,7 @@ describe('registerCpaProvider', () => {
         const mockBuild = mock(() =>
             Promise.resolve({
                 models: STATIC_FALLBACK_MODELS,
-                source: 'fallback' as const,
+                entries: [], source: 'fallback' as const,
             }),
         );
         registerCpaProvider(pi, { buildModels: mockBuild });
@@ -300,7 +304,7 @@ describe('registerCpaProvider', () => {
     test('cancels compaction when the active CPA model is stale', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
         registerCpaProvider(pi, { buildModels: mockBuild });
         const handler = registeredHandlers.find(
@@ -326,7 +330,7 @@ describe('registerCpaProvider', () => {
     test('revalidates immediately after selecting a different CPA model', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
         registerCpaProvider(pi, { buildModels: mockBuild });
         const modelSelect = registeredHandlers.find(
@@ -355,7 +359,7 @@ describe('registerCpaProvider', () => {
     test('warns immediately when a selected CPA model is stale', async () => {
         const { pi, registeredHandlers } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
         registerCpaProvider(pi, { buildModels: mockBuild });
         const modelSelect = registeredHandlers.find(
@@ -380,7 +384,7 @@ describe('registerCpaProvider', () => {
     test('registers /cpa-refresh and reports a stale active model', async () => {
         const { pi, registeredCommands } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
         registerCpaProvider(pi, { buildModels: mockBuild });
         const command = registeredCommands.find(
@@ -405,7 +409,7 @@ describe('registerCpaProvider', () => {
     test('returns a handle whose refreshProjection refreshes through the catalog guard', async () => {
         const { pi, registeredProviders } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
 
         const handle = registerCpaProvider(pi, { buildModels: mockBuild });
@@ -439,7 +443,7 @@ describe('registerCpaProvider', () => {
     test('returns a handle whose refreshProjection reports a stale active model', async () => {
         const { pi } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
 
         const handle = registerCpaProvider(pi, { buildModels: mockBuild });
@@ -475,10 +479,93 @@ describe('registerCpaProvider', () => {
         expect(config.oauth).toBeUndefined();
     });
 
+    test('refreshProjection with force:false does not call buildModels again within TTL', async () => {
+        const { pi, registeredProviders } = createMockExtensionAPI();
+        const mockBuild = mock(() =>
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
+        );
+        const handle = registerCpaProvider(pi, { buildModels: mockBuild });
+
+        const mockCtx = {
+            model: { provider: 'cpa', id: fakeModel.id },
+            modelRegistry: { find: () => fakeModel },
+            hasUI: true,
+            ui: { notify: mock(() => {}) },
+        };
+
+        // First call with force:true does a live fetch
+        await handle.refreshProjection(mockCtx as unknown as LifecycleCtx, { force: true });
+        expect(mockBuild).toHaveBeenCalledTimes(1);
+        expect(registeredProviders).toHaveLength(2);
+
+        // Second call without force re-registers from cache within TTL — no new fetch
+        await handle.refreshProjection(mockCtx as unknown as LifecycleCtx);
+        expect(mockBuild).toHaveBeenCalledTimes(1); // still 1
+        expect(registeredProviders).toHaveLength(3); // third registration from cached data
+    });
+
+    test('refreshProjection re-enriches cached entries from the current models.dev snapshot', async () => {
+        const { pi, registeredProviders } = createMockExtensionAPI();
+        const entry: CpaModelEntry = { id: 'gpt-test', owned_by: 'openai' };
+        const mockBuild = mock(() =>
+            Promise.resolve({ models: [fakeModel], entries: [entry], source: 'live' as const }),
+        );
+        let catalogContextWindow = 4_000;
+        const catalog = {
+            lookupFirst: () => undefined,
+            lookupMerge: () => ({
+                name: 'GPT Test',
+                contextWindow: catalogContextWindow,
+            }),
+        };
+        const handle = registerCpaProvider(pi, {
+            buildModels: mockBuild,
+            getCatalog: () => catalog,
+        });
+        const mockCtx = {
+            model: { provider: 'cpa', id: fakeModel.id },
+            modelRegistry: { find: () => fakeModel },
+            hasUI: true,
+            ui: { notify: mock(() => {}) },
+        };
+
+        await handle.refreshProjection(mockCtx as unknown as LifecycleCtx, { force: true });
+        catalogContextWindow = 9_000;
+        await handle.refreshProjection(mockCtx as unknown as LifecycleCtx);
+
+        expect(mockBuild).toHaveBeenCalledTimes(1);
+        expect(registeredProviders.at(-1)?.config.models).toHaveLength(1);
+        const reprojected = registeredProviders.at(-1)?.config.models?.[0] as
+            | ProviderModelConfig
+            | undefined;
+        expect(reprojected?.contextWindow).toBe(9_000);
+    });
+
+    test('refreshProjection with force:true triggers a live fetch even within TTL', async () => {
+        const { pi, registeredProviders } = createMockExtensionAPI();
+        const mockBuild = mock(() =>
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
+        );
+        const handle = registerCpaProvider(pi, { buildModels: mockBuild });
+
+        const mockCtx = {
+            model: { provider: 'cpa', id: fakeModel.id },
+            modelRegistry: { find: () => fakeModel },
+            hasUI: true,
+            ui: { notify: mock(() => {}) },
+        };
+
+        await handle.refreshProjection(mockCtx as unknown as LifecycleCtx, { force: true });
+        await handle.refreshProjection(mockCtx as unknown as LifecycleCtx, { force: true });
+
+        expect(mockBuild).toHaveBeenCalledTimes(2);
+        expect(registeredProviders).toHaveLength(3);
+    });
+
     test('refreshProjection performs the dynamic registration once', async () => {
         const { pi, registeredProviders } = createMockExtensionAPI();
         const mockBuild = mock(() =>
-            Promise.resolve({ models: [fakeModel], source: 'live' as const }),
+            Promise.resolve({ models: [fakeModel], entries: [fakeEntry], source: 'live' as const }),
         );
         const handle = registerCpaProvider(pi, { buildModels: mockBuild });
 
@@ -507,7 +594,7 @@ describe('registerCpaProvider', () => {
         const mockBuild = mock(() =>
             Promise.resolve({
                 models: [...STATIC_FALLBACK_MODELS, driftModel],
-                source: 'live' as const,
+                entries: [fakeEntry], source: 'live' as const,
             }),
         );
         registerCpaProvider(pi, { buildModels: mockBuild });

@@ -18,13 +18,15 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { createUiColors } from "../../_shared/ui/ui-colors.ts";
 import { loadAiProvidersConfig } from "../config.ts";
 import { STATIC_FALLBACK_MODELS } from "../constants/cpa-static-models";
 import type { CatalogDiffCounts } from "./catalog-diff.ts";
 import { reportCatalogDiff } from "./catalog-diff.ts";
 import { createCpaCatalogGuard } from "./cpa-catalog-guard.ts";
-import { buildCpaModels } from "./cpa-models.ts";
+import { buildCpaModels, enrichModel } from "./cpa-models.ts";
+import type { CpaCatalogLookup, CpaModelEntry } from "./cpa-models.ts";
 
 // ── Constants ──
 
@@ -157,11 +159,13 @@ export function registerCpaProvider(
     pi: ExtensionAPI,
     options?: {
         buildModels?: typeof buildCpaModels;
+        getCatalog?: () => CpaCatalogLookup;
         isSubagentChild?: () => boolean;
         exitProcess?: (code: number) => void;
     },
 ): CpaProviderHandle {
     const buildModels = options?.buildModels ?? buildCpaModels;
+    const getCatalog = options?.getCatalog ?? getModelsDevCatalog;
     const isSubagentChild =
         options?.isSubagentChild ??
         (() => Boolean(process.env.PI_SUBAGENT_CHILD_AGENT));
@@ -177,6 +181,10 @@ export function registerCpaProvider(
     const reportedCatalogDrift = new Set<string>();
     let lastNotifiedStaleModelId: string | undefined;
     let unverifiedWarningShown = false;
+    // ponytail: cache raw CPA entries so non-forced projections can
+    // re-enrich against the current catalog without re-fetching CPA /v1/models.
+    const lastEntries: CpaModelEntry[] = [];
+    let lastEnrichedModels: ProviderModelConfig[] = [];
 
     async function refreshCatalog(
         ctx: LifecycleCtx,
@@ -184,12 +192,22 @@ export function registerCpaProvider(
         sink: (counts: CatalogDiffCounts) => void = themedDriftSink(ctx),
     ) {
         const apiKey = getCliproxyApiKey();
-        return catalogGuard.refresh({
+        const result = await catalogGuard.refresh({
             force,
             activeModel: ctx.model
                 ? { provider: ctx.model.provider, id: ctx.model.id }
                 : undefined,
-            loadCatalog: () => buildModels(PROVIDER_BASE_URL, apiKey),
+            loadCatalog: async () => {
+                const catalog = await buildModels(PROVIDER_BASE_URL, apiKey);
+                // ponytail: snapshot raw entries and enriched models for metadata-only reprojection.
+                if (catalog.source === "live") {
+                    // Mutate const array in-place — entries discovered from CPA.
+                    lastEntries.length = 0;
+                    lastEntries.push(...catalog.entries);
+                    lastEnrichedModels = catalog.models;
+                }
+                return catalog;
+            },
             registerModels: (models) => {
                 pi.registerProvider(PROVIDER_NAME, buildProviderConfig(models));
                 reportCatalogDiff(models, STATIC_FALLBACK_MODELS, {
@@ -201,6 +219,7 @@ export function registerCpaProvider(
             hasModel: (provider, id) =>
                 Boolean(ctx.modelRegistry.find(provider, id)),
         });
+        return result;
     }
 
     function notifyStaleModelOnce(ctx: LifecycleCtx, modelId: string): void {
@@ -221,29 +240,52 @@ export function registerCpaProvider(
     }
 
     /**
-     * Forced refresh exposed as the provider handle: reload the live
-     * projection through the catalog guard, re-register models, and report
-     * stale/unverified states. `/cpa-refresh` delegates to this.
+     * Provider projection handle.
+     *
+     * When `options.force` is true or no cached models exist, performs a full
+     * live discovery through CPA /v1/models (same as `/cpa-refresh`).
+     * Otherwise re-registers the last known enriched models from cache — a
+     * metadata-only reprojection that avoids a redundant CPA fetch when
+     * only the models.dev catalog changed.
      */
     const handle: CpaProviderHandle = {
         providerId: PROVIDER_NAME,
-        async refreshProjection(ctx) {
-            const result = await refreshCatalog(ctx, true);
-            if (result.state === "stale") {
-                notifyStaleModelOnce(ctx, result.modelId);
+        async refreshProjection(ctx, options) {
+            if (options?.force || lastEnrichedModels.length === 0) {
+                const result = await refreshCatalog(ctx, true);
+                if (result.state === "stale") {
+                    notifyStaleModelOnce(ctx, result.modelId);
+                    return;
+                }
+
+                const message =
+                    result.state === "valid"
+                        ? "Catalogue CPA actualisé. Le modèle actif est valide."
+                        : "Catalogue CPA indisponible. Le dernier état vérifié est conservé.";
+                if (ctx.hasUI)
+                    ctx.ui.notify(
+                        message,
+                        result.state === "valid" ? "info" : "warning",
+                    );
+                else console.warn(`[cpa] ${message}`);
                 return;
             }
 
-            const message =
-                result.state === "valid"
-                    ? "Catalogue CPA actualisé. Le modèle actif est valide."
-                    : "Catalogue CPA indisponible. Le dernier état vérifié est conservé.";
-            if (ctx.hasUI)
-                ctx.ui.notify(
-                    message,
-                    result.state === "valid" ? "info" : "warning",
-                );
-            else console.warn(`[cpa] ${message}`);
+            // Metadata-only reprojection: re-enrich cached entries against
+            // the current models.dev catalog snapshot without fetching CPA.
+            // No notification — models.dev lifecycle handles its own.
+            if (lastEntries.length > 0) {
+                const catalog = getCatalog();
+                const models = lastEntries
+                    .map((e) => enrichModel(e, catalog))
+                    .filter((m): m is ProviderModelConfig => m !== null);
+                if (models.length > 0) {
+                    pi.registerProvider(
+                        PROVIDER_NAME,
+                        buildProviderConfig(models),
+                    );
+                }
+            }
         },
     };
 
@@ -307,7 +349,7 @@ export function registerCpaProvider(
     pi.registerCommand("cpa-refresh", {
         description: "Refresh CPA models and validate the active model",
         handler: async (_args, ctx) => {
-            await handle.refreshProjection(ctx);
+            await handle.refreshProjection(ctx, { force: true });
         },
     });
 

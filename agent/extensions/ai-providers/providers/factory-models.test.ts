@@ -67,16 +67,39 @@ function refKey(ref: ModelsDevRef): string {
 
 function lookupStub(matches: ModelsDevMatch[]): {
     lookupFirst: (refs: ModelsDevRef[]) => ModelsDevMatch | undefined;
+    lookupMerge: (refs: readonly ModelsDevRef[]) => ModelsDevModel | undefined;
 } {
     const byKey = new Map<string, ModelsDevMatch>();
     for (const match of matches) byKey.set(refKey(match.ref), match);
+    const lookupFn = (refs: readonly ModelsDevRef[]) => {
+        for (const ref of refs) {
+            const match = byKey.get(refKey(ref));
+            if (match) return match;
+        }
+        return undefined;
+    };
     return {
-        lookupFirst: (refs) => {
+        lookupFirst: (refs) => lookupFn(refs),
+        lookupMerge: (refs) => {
+            let merged: Record<string, unknown> | undefined;
             for (const ref of refs) {
                 const match = byKey.get(refKey(ref));
-                if (match) return match;
+                if (!match) continue;
+                const m = match.model as unknown as Record<string, unknown>;
+                if (!merged) merged = { name: m.name };
+                for (const key of ['reasoning', 'contextWindow', 'maxTokens', 'inputModalities']) {
+                    if (m[key] !== undefined && merged[key] === undefined) merged[key] = m[key];
+                }
+                if (m.cost) {
+                    if (!merged.cost) merged.cost = {};
+                    const mc = merged.cost as Record<string, number>;
+                    const src = m.cost as Record<string, number>;
+                    for (const ck of ['input', 'output', 'cacheRead', 'cacheWrite']) {
+                        if (src[ck] !== undefined && mc[ck] === undefined) mc[ck] = src[ck];
+                    }
+                }
             }
-            return undefined;
+            return (merged && Object.keys(merged).length > 1 ? merged : undefined) as ModelsDevModel | undefined;
         },
     };
 }
@@ -351,12 +374,11 @@ describe('toProviderModels enrichment', () => {
         });
     });
 
-    it('never lets the catalog change SDK identity, display name, reasoning, or input', () => {
+    it('never lets the catalog change SDK identity, display name, or reasoning', () => {
         const catalog = lookupStub([
             providerMatch('anthropic', 'claude-sonnet-4-6', {
                 name: 'COMPLETELY WRONG NAME',
                 reasoning: false,
-                inputModalities: ['text'],
             }),
         ]);
         const [model] = toProviderModels([makeEntry()], catalog);
@@ -364,6 +386,40 @@ describe('toProviderModels enrichment', () => {
         expect(model.id).toBe('claude-sonnet-4-6');
         expect(model.name).toBe('Claude Sonnet 4.6 [1×]');
         expect(model.reasoning).toBe(true);
+    });
+
+    it('narrows to text-only from the catalog when SDK noImageSupport is absent', () => {
+        const catalog = lookupStub([
+            providerMatch('google', 'some-gemini', {
+                name: 'Some Gemini',
+                inputModalities: ['text'],
+            }),
+        ]);
+        // makeEntry default: noImageSupport absent → input derived as ["text","image"]
+        const entry = makeEntry({
+            id: 'some-gemini',
+            provider: 'google',
+            input: ['text', 'image'],
+        });
+        const [model] = toProviderModels([entry], catalog);
+        expect(model.input).toEqual(['text']);
+    });
+
+    it('keeps image capability when SDK noImageSupport is explicitly false, ignoring text-only catalog', () => {
+        const catalog = lookupStub([
+            providerMatch('google', 'some-gemini', {
+                name: 'Some Gemini',
+                inputModalities: ['text'],
+            }),
+        ]);
+        // noImageSupport:false → imageExplicit:true — SDK authority blocks narrowing
+        const entry = makeEntry({
+            id: 'some-gemini',
+            provider: 'google',
+            input: ['text', 'image'],
+            imageExplicit: true,
+        });
+        const [model] = toProviderModels([entry], catalog);
         expect(model.input).toEqual(['text', 'image']);
     });
 });

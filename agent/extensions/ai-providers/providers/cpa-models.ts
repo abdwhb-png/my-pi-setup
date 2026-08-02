@@ -34,6 +34,8 @@ export interface CpaModelEntry {
 
 export interface CpaCatalogResult {
     models: ProviderModelConfig[];
+    /** Raw CPA /v1/models entries (un-enriched), used for metadata-only reprojection. */
+    entries: CpaModelEntry[];
     source: "live" | "fallback";
 }
 
@@ -42,7 +44,10 @@ export interface CpaCatalogResult {
  * Injected by callers so tests stay deterministic; production defaults to
  * {@link getModelsDevCatalog}.
  */
-export type CpaCatalogLookup = Pick<ModelsDevCatalog, "lookupFirst">;
+export type CpaCatalogLookup = Pick<
+    ModelsDevCatalog,
+    "lookupFirst" | "lookupMerge"
+>;
 
 // ── Static image support map (for non-OpenRouter models) ──
 // These model IDs are known to support image input through CPA.
@@ -383,24 +388,28 @@ export function enrichModel(
     // (a real free-tier price) is honored while absent fields keep the
     // generic/family/static fallback values.
     const refs = resolveCpaModelsDevRefs(modelId, ownedBy);
-    const match = refs.length > 0 ? catalog.lookupFirst(refs) : undefined;
-    if (match) {
-        const m = match.model;
-        if (m.contextWindow !== undefined) contextWindow = m.contextWindow;
-        if (m.maxTokens !== undefined) maxTokens = m.maxTokens;
-        if (m.reasoning !== undefined) reasoning = m.reasoning;
-        if (m.cost) {
-            if (m.cost.input !== undefined) cost.input = m.cost.input;
-            if (m.cost.output !== undefined) cost.output = m.cost.output;
-            if (m.cost.cacheRead !== undefined)
-                cost.cacheRead = m.cost.cacheRead;
-            if (m.cost.cacheWrite !== undefined)
-                cost.cacheWrite = m.cost.cacheWrite;
+    const merged = refs.length > 0 ? catalog.lookupMerge(refs) : undefined;
+    if (merged) {
+        if (merged.contextWindow !== undefined)
+            contextWindow = merged.contextWindow;
+        if (merged.maxTokens !== undefined) maxTokens = merged.maxTokens;
+        if (merged.reasoning !== undefined) reasoning = merged.reasoning;
+        if (merged.cost) {
+            if (merged.cost.input !== undefined) cost.input = merged.cost.input;
+            if (merged.cost.output !== undefined)
+                cost.output = merged.cost.output;
+            if (merged.cost.cacheRead !== undefined)
+                cost.cacheRead = merged.cost.cacheRead;
+            if (merged.cost.cacheWrite !== undefined)
+                cost.cacheWrite = merged.cost.cacheWrite;
         }
-        // Pi input always contains text; add image only for the exact
-        // normalized "image" modality from the catalog record.
-        if (m.inputModalities?.includes("image")) {
-            input = ["text", "image"];
+        // Catalog inputModalities replaces static/image fallback entirely
+        // when present: explicit text-only narrows, explicit image widens.
+        // Absent inputModalities means no evidence — keep the static value.
+        if (merged.inputModalities !== undefined) {
+            input = merged.inputModalities.includes("image")
+                ? ["text", "image"]
+                : ["text"];
         }
     }
 
@@ -467,7 +476,11 @@ export async function buildCpaModels(
 
     // 2. If CPA down, return static fallback
     if (entries.length === 0) {
-        return { models: STATIC_FALLBACK_MODELS, source: "fallback" };
+        return {
+            models: STATIC_FALLBACK_MODELS,
+            entries: [],
+            source: "fallback",
+        };
     }
 
     // 3. Enrich each entry against the shared catalog (in-memory lookup)
@@ -480,8 +493,12 @@ export async function buildCpaModels(
 
     // 4. If all enrichment failed, return static fallback
     if (models.length === 0) {
-        return { models: STATIC_FALLBACK_MODELS, source: "fallback" };
+        return {
+            models: STATIC_FALLBACK_MODELS,
+            entries: [],
+            source: "fallback",
+        };
     }
 
-    return { models, source: "live" };
+    return { models, entries, source: "live" };
 }
