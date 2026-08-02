@@ -1,10 +1,11 @@
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV } from './subagent-profile.ts';
 
 // ---------------------------------------------------------------------------
 // Mocks — kept minimal so we exercise the real ponytail.ts wrapper logic.
 //
-// - ./config: stub loadPonytailConfig to control the enabled flag per test.
+// - ./config: stub loadPonytailConfig to control enabled and defaultMode per test.
 // - The wrapper exposes __setFactoryForTests to inject a fake ponytail
 //   factory without going through the real npm resolver.
 // ---------------------------------------------------------------------------
@@ -29,6 +30,7 @@ mock.module('@earendil-works/pi-coding-agent', () => ({
 const {
     default: ponytail,
     detectPonytailMode,
+    resolvePonytailDefaultMode,
     setFactoryForTests,
     resetPonytailCacheForTests,
 } = await import('./ponytail.ts');
@@ -93,6 +95,98 @@ describe('ponytail wrapper — kill-switch', () => {
         ponytail(pi);
 
         expect(factory).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes saveTokens.ponytail.defaultMode to the upstream extension', () => {
+        const previousMode = process.env.PONYTAIL_DEFAULT_MODE;
+        try {
+            delete process.env.PONYTAIL_DEFAULT_MODE;
+            mockConfig = { enabled: true, defaultMode: 'ultra' };
+            const factory = mock(() => {
+                expect(process.env.PONYTAIL_DEFAULT_MODE).toBe('ultra');
+            });
+            setFactoryForTests(factory as never);
+
+            ponytail(makePi());
+
+            expect(factory).toHaveBeenCalledTimes(1);
+        } finally {
+            if (previousMode === undefined) delete process.env.PONYTAIL_DEFAULT_MODE;
+            else process.env.PONYTAIL_DEFAULT_MODE = previousMode;
+        }
+    });
+
+    it('keeps a valid PONYTAIL_DEFAULT_MODE shell override over profile and settings', () => {
+        const previousMode = process.env.PONYTAIL_DEFAULT_MODE;
+        const previousProfile =
+            process.env[SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV];
+        try {
+            process.env.PONYTAIL_DEFAULT_MODE = 'lite';
+            process.env[SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV] = 'ultra';
+            mockConfig = { enabled: true, defaultMode: 'full' };
+            const factory = mock(() => {
+                expect(process.env.PONYTAIL_DEFAULT_MODE).toBe('lite');
+            });
+            setFactoryForTests(factory as never);
+
+            ponytail(makePi());
+
+            expect(factory).toHaveBeenCalledTimes(1);
+        } finally {
+            if (previousMode === undefined) delete process.env.PONYTAIL_DEFAULT_MODE;
+            else process.env.PONYTAIL_DEFAULT_MODE = previousMode;
+            if (previousProfile === undefined) {
+                delete process.env[SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV];
+            } else {
+                process.env[SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV] =
+                    previousProfile;
+            }
+        }
+    });
+
+    it('uses the child profile over saveTokens.ponytail.defaultMode', () => {
+        const previousMode = process.env.PONYTAIL_DEFAULT_MODE;
+        const previousProfile =
+            process.env[SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV];
+        try {
+            delete process.env.PONYTAIL_DEFAULT_MODE;
+            process.env[SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV] = 'ultra';
+            mockConfig = { enabled: true, defaultMode: 'full' };
+            const factory = mock(() => {
+                expect(process.env.PONYTAIL_DEFAULT_MODE).toBe('ultra');
+            });
+            setFactoryForTests(factory as never);
+
+            ponytail(makePi());
+
+            expect(factory).toHaveBeenCalledTimes(1);
+        } finally {
+            if (previousMode === undefined) delete process.env.PONYTAIL_DEFAULT_MODE;
+            else process.env.PONYTAIL_DEFAULT_MODE = previousMode;
+            if (previousProfile === undefined) {
+                delete process.env[SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV];
+            } else {
+                process.env[SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV] =
+                    previousProfile;
+            }
+        }
+    });
+
+    it('ignores an invalid shell mode and falls back to the valid profile', () => {
+        expect(
+            resolvePonytailDefaultMode('full', {
+                PONYTAIL_DEFAULT_MODE: 'invalid',
+                [SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV]: 'ultra',
+            }),
+        ).toBe('ultra');
+    });
+
+    it('ignores an invalid shell mode and falls back to settings without a profile', () => {
+        expect(
+            resolvePonytailDefaultMode('full', {
+                PONYTAIL_DEFAULT_MODE: 'invalid',
+            }),
+        ).toBe('full');
     });
 });
 

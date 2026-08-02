@@ -24,10 +24,56 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { loadPonytailConfig } from './config';
+import { SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV } from './subagent-profile.ts';
 
 type PonytailFactory = (pi: ExtensionAPI) => void;
 
 let cachedFactory: PonytailFactory | null | undefined = null;
+
+const PONYTAIL_DEFAULT_MODE_ENV = 'PONYTAIL_DEFAULT_MODE';
+const PONYTAIL_DEFAULT_MODES = new Set([
+    'off',
+    'lite',
+    'full',
+    'ultra',
+    'review',
+]);
+
+function normalizePonytailDefaultMode(
+    value: string | undefined,
+): string | undefined {
+    const normalized = value?.trim().toLowerCase();
+    return normalized && PONYTAIL_DEFAULT_MODES.has(normalized)
+        ? normalized
+        : undefined;
+}
+
+/**
+ * Resolve a Ponytail default without overriding its documented shell escape
+ * hatch. The private profile variable is set only in pi-subagents children.
+ */
+export function resolvePonytailDefaultMode(
+    configuredDefaultMode: string | undefined,
+    env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+    return (
+        normalizePonytailDefaultMode(env[PONYTAIL_DEFAULT_MODE_ENV]) ??
+        normalizePonytailDefaultMode(
+            env[SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV],
+        ) ??
+        normalizePonytailDefaultMode(configuredDefaultMode)
+    );
+}
+
+function applyPonytailDefaultMode(
+    configuredDefaultMode: string | undefined,
+    env: NodeJS.ProcessEnv = process.env,
+): void {
+    if (normalizePonytailDefaultMode(env[PONYTAIL_DEFAULT_MODE_ENV])) return;
+
+    const resolved = resolvePonytailDefaultMode(configuredDefaultMode, env);
+    if (resolved) env[PONYTAIL_DEFAULT_MODE_ENV] = resolved;
+}
 
 /**
  * Resolve the upstream `ponytailExtension` factory once per process.
@@ -95,6 +141,8 @@ export default function ponytail(pi: ExtensionAPI): void {
     const cfg = loadPonytailConfig();
     // Kill-switch: undefined = enabled.
     if (cfg.enabled === false) return;
+
+    applyPonytailDefaultMode(cfg.defaultMode);
 
     const factory = loadPonytailFactory();
     // Defensive: the loader guarantees a function or null, but stale cache

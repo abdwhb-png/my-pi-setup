@@ -46,7 +46,8 @@
             "defaultLevel": "full"
         },
         "ponytail": {
-            "enabled": true
+            "enabled": true,
+            "defaultMode": "full"
         }
     },
     "fileResolver": {
@@ -112,6 +113,9 @@
                     "@lens-write",
                     "@implement",
                     "contact_supervisor"
+                ],
+                "subagentOnlyExtensions": [
+                    "~/.pi/agent/extensions/save-tokens/subagent-profiles/ultra.ts"
                 ]
             },
             "scout": {
@@ -210,6 +214,9 @@
                 "fallbackModels": [
                     "cpa/deepseek/deepseek-v4-flash",
                     "cpa/qwen/qwen3.6-plus-preview:free"
+                ],
+                "subagentOnlyExtensions": [
+                    "~/.pi/agent/extensions/save-tokens/subagent-profiles/ultra.ts"
                 ]
             },
             "sdd-worker": {

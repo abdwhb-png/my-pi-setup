@@ -64,6 +64,32 @@ The config dialog lets you:
 
 Settings are saved to `~/.pi/agent/settings.json` under `saveTokens.caveman` and persist across all sessions.
 
+### Subagent ultra profile
+
+The reusable `ultra` profile keeps the parent session unchanged and applies
+Caveman and Ponytail defaults only in a `pi-subagents` child. Attach it to any
+role through `subagents.agentOverrides.<role>.subagentOnlyExtensions`:
+
+```json
+{
+  "subagents": {
+    "agentOverrides": {
+      "worker": {
+        "subagentOnlyExtensions": [
+          "~/.pi/agent/extensions/save-tokens/subagent-profiles/ultra.ts"
+        ]
+      }
+    }
+  }
+}
+```
+
+Add the same path to any other role you want to run in ultra mode, then use
+`/reload` before launching a new child. Caveman keeps a resumed session's
+saved level. Ponytail resolves its default in this order: a valid
+`PONYTAIL_DEFAULT_MODE` shell variable, the child profile, then
+`saveTokens.ponytail.defaultMode` (followed by Ponytail's own configuration).
+
 ### Status Bar
 
 When active, a status bar displays caveman level and an animated campfire flickers in the footer using colored braille characters. This can be disabled in the `/caveman config` menu.

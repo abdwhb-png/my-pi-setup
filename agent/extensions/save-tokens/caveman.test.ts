@@ -86,7 +86,46 @@ const {
     detectCavemanLevel,
     LEVELS,
     resetCavemanCacheForTests,
+    resolveCavemanInitialLevel,
 } = await import('./caveman.ts');
+
+describe('Caveman subagent defaults', () => {
+    it('uses the ultra profile for a fresh child session', () => {
+        expect(
+            resolveCavemanInitialLevel(
+                null,
+                'full',
+                {
+                    PI_SAVE_TOKENS_CAVEMAN_DEFAULT_LEVEL: 'ultra',
+                },
+            ),
+        ).toBe('ultra');
+    });
+
+    it('falls back to the configured default when the profile is invalid', () => {
+        expect(
+            resolveCavemanInitialLevel(
+                null,
+                'full',
+                {
+                    PI_SAVE_TOKENS_CAVEMAN_DEFAULT_LEVEL: 'not-a-level',
+                },
+            ),
+        ).toBe('full');
+    });
+
+    it('preserves a resumed session level over the child profile', () => {
+        expect(
+            resolveCavemanInitialLevel(
+                'lite',
+                'full',
+                {
+                    PI_SAVE_TOKENS_CAVEMAN_DEFAULT_LEVEL: 'ultra',
+                },
+            ),
+        ).toBe('lite');
+    });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers

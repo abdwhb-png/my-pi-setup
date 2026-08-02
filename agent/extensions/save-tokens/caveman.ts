@@ -30,6 +30,7 @@ import {
     Text,
 } from '@earendil-works/pi-tui';
 import { loadCavemanConfig } from './config';
+import { SAVE_TOKENS_CAVEMAN_DEFAULT_LEVEL_ENV } from './subagent-profile.ts';
 
 // ---------------------------------------------------------------------------
 // Levels
@@ -46,6 +47,7 @@ const LEVELS = [
     'micro',
 ] as const;
 export { LEVELS };
+const CAVEMAN_LEVELS = new Set<string>(LEVELS);
 const STOP_ALIASES = new Set(['off', 'stop', 'quit']);
 type Level = (typeof LEVELS)[number];
 
@@ -266,9 +268,35 @@ export function buildCavemanPrompt(level: string): string | null {
     return `ACTIVE LEVEL: ${level}. Apply the matching row from the intensity table below.\n\n${body}`;
 }
 
+function isKnownCavemanLevel(value: string): value is Level {
+    return CAVEMAN_LEVELS.has(value);
+}
+
 /** Type guard: narrow a runtime string to a valid Caveman level. */
 function isCavemanLevel(value: string): value is Exclude<Level, 'off'> {
-    return LEVELS.includes(value as Level) && value !== 'off';
+    return isKnownCavemanLevel(value) && value !== 'off';
+}
+
+/**
+ * Resolve the level for a session that has just started.
+ *
+ * A persisted session choice remains authoritative. Fresh pi-subagents
+ * children may provide a validated profile level through their private
+ * environment variable; all other sessions retain the configured default.
+ */
+export function resolveCavemanInitialLevel(
+    sessionLevel: Level | null,
+    configuredDefaultLevel: Level,
+    env: NodeJS.ProcessEnv = process.env,
+): Level {
+    if (sessionLevel !== null) return sessionLevel;
+
+    const profileLevel = env[SAVE_TOKENS_CAVEMAN_DEFAULT_LEVEL_ENV];
+    if (profileLevel && isKnownCavemanLevel(profileLevel)) {
+        return profileLevel;
+    }
+
+    return configuredDefaultLevel;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,12 +411,9 @@ export default function caveman(pi: ExtensionAPI) {
             }
         }
 
-        if (sessionLevel !== null) {
-            // Resuming — use session state
-            level = sessionLevel;
-        } else if (settings.defaultLevel !== 'off') {
-            // New session — apply default from config
-            level = settings.defaultLevel;
+        level = resolveCavemanInitialLevel(sessionLevel, settings.defaultLevel);
+        if (sessionLevel === null && level !== 'off') {
+            // New session — persist the effective default (profile or config).
             pi.appendEntry('caveman-level', { level });
         }
 
