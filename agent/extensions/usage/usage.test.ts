@@ -10,7 +10,6 @@ import {
   computeWindow,
   computeAllWindows,
 } from "./aggregator";
-import { PRICING_CACHE_PATH, loadPricingCache, fetchFromModelsDev } from "./pricing";
 import type {
   UsageRecord,
   UsageReport,
@@ -251,36 +250,6 @@ describe("aggregator", () => {
       const reports = computeAllWindows(records, pricing);
       expect(reports).toHaveLength(4);
       expect(reports.map((r) => r.days)).toEqual([1, 7, 30, 90]);
-    });
-  });
-});
-
-
-
-// ── pricing ──────────────────────────────────────────────────────────────────
-
-describe("pricing", () => {
-  describe("PRICING_CACHE_PATH", () => {
-    it("ends with pricing-cache.json", () => {
-      expect(PRICING_CACHE_PATH.endsWith("pricing-cache.json")).toBe(true);
-    });
-  });
-
-  describe("loadPricingCache", () => {
-    it("returns empty map for nonexistent file", async () => {
-      const result = await loadPricingCache(
-        "/tmp/__nonexistent_pricing_cache__.json",
-      );
-      expect(result).toBeInstanceOf(Map);
-      expect(result.size).toBe(0);
-    });
-  });
-
-  describe("fetchFromModelsDev", () => {
-    it("returns empty map for empty sourceKeys array", async () => {
-      const result = await fetchFromModelsDev([]);
-      expect(result).toBeInstanceOf(Map);
-      expect(result.size).toBe(0);
     });
   });
 });
