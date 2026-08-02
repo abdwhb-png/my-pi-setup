@@ -46,6 +46,9 @@ function createRuntime(agentDir: string): SddRuntime {
             reconcile: mock(() => {
                 throw new Error('Unexpected reconciliation in status test.');
             }),
+            recordWorkspaceApplied: mock(() => {
+                throw new Error('Unexpected delivery in status test.');
+            }),
         },
     };
 }

@@ -164,6 +164,18 @@ export interface PlannedDelegation {
     plannedAt: string;
 }
 
+export interface IsolatedWorkspace {
+    readonly mode: 'isolated';
+    readonly sourceRoot: string;
+    readonly baseCommit: string;
+    readonly worktreePath: string;
+    readonly delivery: {
+        readonly status: 'pending' | 'applied';
+        readonly patchDigest?: string;
+        readonly appliedAt?: string;
+    };
+}
+
 export interface RunSnapshot {
     runId: string;
     revision: number;
@@ -171,6 +183,7 @@ export interface RunSnapshot {
     tasks: Record<string, TaskSnapshot>;
     consumedIdempotencyKeys: string[];
     plannedDelegations: Record<string, PlannedDelegation>;
+    workspace?: IsolatedWorkspace;
     terminalReason?: string;
     integrationReview?: {
         launches: number;
@@ -277,6 +290,12 @@ export type RunEvent =
           type: 'run-terminal-reason-recorded';
           expectedRevision: number;
           reason: string;
+      }
+    | {
+          type: 'workspace-delivery-applied';
+          expectedRevision: number;
+          patchDigest: string;
+          appliedAt: string;
       };
 
 const RUN_TRANSITIONS: Record<RunState, readonly RunState[]> = {
@@ -403,6 +422,15 @@ export function transition(
     ) {
         return snapshot;
     }
+    if (event.type === 'workspace-delivery-applied') {
+        const delivery = snapshot.workspace?.delivery;
+        if (delivery?.status === 'applied') {
+            if (delivery.patchDigest !== event.patchDigest) {
+                throw new Error('SDD workspace delivery digest conflict.');
+            }
+            return snapshot;
+        }
+    }
     if (
         event.type === 'recovery-attestation-applied' &&
         snapshot.tasks[event.taskId]?.recoveryChoice
@@ -455,6 +483,27 @@ export function transition(
             ...snapshot,
             revision: snapshot.revision + 1,
             terminalReason: event.reason,
+        };
+    }
+
+    if (event.type === 'workspace-delivery-applied') {
+        if (snapshot.state !== 'completed') {
+            throw new Error('SDD workspace delivery requires a completed run.');
+        }
+        if (!snapshot.workspace || snapshot.workspace.delivery.status !== 'pending') {
+            throw new Error('SDD workspace delivery is not pending.');
+        }
+        return {
+            ...snapshot,
+            revision: snapshot.revision + 1,
+            workspace: {
+                ...snapshot.workspace,
+                delivery: {
+                    status: 'applied',
+                    patchDigest: event.patchDigest,
+                    appliedAt: event.appliedAt,
+                },
+            },
         };
     }
 

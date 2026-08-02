@@ -192,6 +192,7 @@ test('Light persists implementation and response before verifying one worker', a
     expect(client.requests[0]).toMatchObject({
         requestId: 'run-1:task-1:worker:1',
         context: 'fresh',
+        cwd: '/repo',
     });
     expect(result.state).toBe('completed');
     expect(result.tasks['task-1']).toMatchObject({
@@ -209,6 +210,249 @@ test('Light persists implementation and response before verifying one worker', a
     );
     expect(responseSave).toBeGreaterThanOrEqual(0);
     expect(verifiedSave).toBeGreaterThan(responseSave);
+});
+
+test('an isolated snapshot routes delegated workers through its recorded worktree', async () => {
+    const approved = manifest('light');
+    const initial = snapshot(1);
+    initial.workspace = {
+        mode: 'isolated',
+        sourceRoot: '/repo',
+        baseCommit: 'a'.repeat(40),
+        worktreePath: '/isolated/run-1',
+        delivery: { status: 'pending' },
+    };
+    const store = new MemoryStore(initial);
+    const client = new QueueDelegationClient([workerResponse('implemented')]);
+    const workspace = {
+        resolveExecutionCwd(recorded: RunSnapshot['workspace'], sourceCwd: string) {
+            expect(sourceCwd).toBe('/repo');
+            expect(recorded).toEqual(initial.workspace);
+            return '/isolated/run-1';
+        },
+    };
+
+    const result = await new SddWorkflow(
+        store,
+        client,
+        () => approved,
+        undefined,
+        workspace,
+    ).run('run-1', context);
+
+    expect(result.state).toBe('completed');
+    expect(client.requests[0]?.cwd).toBe('/isolated/run-1');
+});
+
+test('an unavailable isolated worktree leaves the run needs_input without delegation', async () => {
+    const approved = manifest('light');
+    const initial = snapshot(1);
+    initial.workspace = {
+        mode: 'isolated',
+        sourceRoot: '/repo',
+        baseCommit: 'a'.repeat(40),
+        worktreePath: '/isolated/missing',
+        delivery: { status: 'pending' },
+    };
+    const store = new MemoryStore(initial);
+    const client = new QueueDelegationClient([workerResponse('must not run')]);
+    const workspace = {
+        resolveExecutionCwd() {
+            throw new Error('SDD isolated worktree is missing: /isolated/missing.');
+        },
+    };
+
+    const result = await new SddWorkflow(
+        store,
+        client,
+        () => approved,
+        undefined,
+        workspace,
+    ).run('run-1', context);
+
+    expect(client.requests).toHaveLength(0);
+    expect(result).toMatchObject({
+        state: 'needs_input',
+        terminalReason: 'SDD isolated worktree is missing: /isolated/missing.',
+    });
+});
+
+test('an existing isolated run with mixed Direct and delegated tasks fails closed before either can run', async () => {
+    const base = manifest('light');
+    const delegated = { ...base.tasks[0]!, id: 'delegated', dependencies: ['direct'] };
+    const direct = {
+        ...base.tasks[0]!,
+        id: 'direct',
+        effectiveProfile: 'direct' as const,
+        recommendedProfile: 'direct' as const,
+        dependencies: [],
+        budgets: {
+            ...base.tasks[0]!.budgets,
+            initialWorkers: 0,
+            correctionWorkers: 0,
+            reviewerAttempts: 0,
+            maxLaunches: 0,
+        },
+    };
+    const approved = {
+        ...base,
+        maximumLaunches: 1,
+        tasks: [direct, delegated],
+    };
+    const initial = snapshot(0);
+    initial.tasks = {
+        direct: {
+            id: 'direct',
+            state: 'pending',
+            launches: 0,
+            maxLaunches: 0,
+        },
+        delegated: {
+            id: 'delegated',
+            state: 'pending',
+            launches: 0,
+            maxLaunches: 1,
+        },
+    };
+    initial.workspace = {
+        mode: 'isolated',
+        sourceRoot: '/repo',
+        baseCommit: 'a'.repeat(40),
+        worktreePath: '/isolated/run-1',
+        delivery: { status: 'pending' },
+    };
+    const store = new MemoryStore(initial);
+    const client = new QueueDelegationClient([workerResponse('must not run')]);
+    const workspace = {
+        resolveExecutionCwd() {
+            throw new Error('workspace resolution must not run');
+        },
+    };
+
+    const result = await new SddWorkflow(
+        store,
+        client,
+        () => approved,
+        undefined,
+        workspace,
+    ).run('run-1', context);
+
+    expect(client.requests).toHaveLength(0);
+    expect(result).toMatchObject({
+        state: 'needs_input',
+        terminalReason: 'isolated_workspace_mixed_profiles',
+    });
+});
+
+test('an isolated worktree is the cwd for workers, corrections, reviewers, and integration review', async () => {
+    const approved = {
+        ...manifest('standard'),
+        finalIntegrationReview: true,
+        maximumLaunches: 5,
+    };
+    const initial = snapshot(4);
+    initial.workspace = {
+        mode: 'isolated',
+        sourceRoot: '/repo',
+        baseCommit: 'a'.repeat(40),
+        worktreePath: '/isolated/run-1',
+        delivery: { status: 'pending' },
+    };
+    const store = new MemoryStore(initial);
+    const client = new QueueDelegationClient([
+        workerResponse('initial implementation'),
+        reviewResponse('combined', 'changes_required'),
+        workerResponse('corrected implementation'),
+        reviewResponse('combined', 'pass'),
+        integrationResponse('pass'),
+    ]);
+    const workspace = {
+        resolveExecutionCwd() {
+            return '/isolated/run-1';
+        },
+    };
+
+    const result = await new SddWorkflow(
+        store,
+        client,
+        () => approved,
+        undefined,
+        workspace,
+    ).run('run-1', context);
+
+    expect(result.state).toBe('completed');
+    expect(client.requests).toHaveLength(5);
+    expect(client.requests.every((request) => request.cwd === '/isolated/run-1')).toBe(
+        true,
+    );
+});
+
+test('records delivery only after an isolated run completed', () => {
+    const approved = manifest('light');
+    const initial = snapshot(1);
+    initial.state = 'completed';
+    initial.tasks['task-1'].state = 'verified';
+    initial.workspace = {
+        mode: 'isolated',
+        sourceRoot: '/repo',
+        baseCommit: 'a'.repeat(40),
+        worktreePath: '/isolated/run-1',
+        delivery: { status: 'pending' },
+    };
+    const store = new MemoryStore(initial);
+    const workflow = new SddWorkflow(
+        store,
+        new QueueDelegationClient([]),
+        () => approved,
+    );
+
+    const delivered = workflow.recordWorkspaceApplied(
+        'run-1',
+        'b'.repeat(64),
+        '2026-08-02T12:00:00.000Z',
+    );
+
+    expect(delivered.workspace?.delivery).toEqual({
+        status: 'applied',
+        patchDigest: 'b'.repeat(64),
+        appliedAt: '2026-08-02T12:00:00.000Z',
+    });
+});
+
+test('records a matching workspace delivery once when concurrent apply callers converge', () => {
+    const approved = manifest('light');
+    const initial = snapshot(1);
+    initial.state = 'completed';
+    initial.tasks['task-1'].state = 'verified';
+    initial.workspace = {
+        mode: 'isolated',
+        sourceRoot: '/repo',
+        baseCommit: 'a'.repeat(40),
+        worktreePath: '/isolated/run-1',
+        delivery: { status: 'pending' },
+    };
+    const store = new MemoryStore(initial);
+    const workflow = new SddWorkflow(
+        store,
+        new QueueDelegationClient([]),
+        () => approved,
+    );
+    const digest = 'c'.repeat(64);
+
+    const first = workflow.recordWorkspaceApplied(
+        'run-1',
+        digest,
+        '2026-08-02T12:00:00.000Z',
+    );
+    const second = workflow.recordWorkspaceApplied(
+        'run-1',
+        digest,
+        '2026-08-02T12:00:01.000Z',
+    );
+
+    expect(second).toEqual(first);
+    expect(store.saves).toHaveLength(1);
+    expect(store.events).toHaveLength(1);
 });
 
 test('concurrent run calls join one in-process execution without reconciling it', async () => {
@@ -295,6 +539,74 @@ test('source digest drift fails closed before emitting a delegation', async () =
         state: 'needs_input',
         terminalReason: 'source_digest_changed',
     });
+});
+
+test('checks a relative approved plan from the source cwd, not the process cwd', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'sdd-workflow-relative-'));
+    try {
+        writeFileSync(join(directory, 'plan.md'), 'approved plan');
+        const approved = {
+            ...manifest('light'),
+            planPath: 'plan.md',
+            sourceDigest: createHash('sha256')
+                .update('approved plan')
+                .digest('hex'),
+        };
+        const store = new MemoryStore(snapshot(1));
+        const client = new QueueDelegationClient([workerResponse('implemented')]);
+
+        const result = await new SddWorkflow(
+            store,
+            client,
+            () => approved,
+        ).run('run-1', { cwd: directory } as ExtensionContext);
+
+        expect(result.state).toBe('completed');
+        expect(client.requests).toHaveLength(1);
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('checks a relative Direct plan from the source cwd before recording evidence', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'sdd-direct-relative-'));
+    try {
+        writeFileSync(join(directory, 'plan.md'), 'approved plan');
+        const approved = {
+            ...manifest('direct'),
+            planPath: 'plan.md',
+            sourceDigest: createHash('sha256')
+                .update('approved plan')
+                .digest('hex'),
+        };
+        const initial = snapshot(0);
+        initial.state = 'running';
+        initial.tasks['task-1'].state = 'awaiting_direct_agent';
+        const store = new MemoryStore(initial);
+
+        const result = new SddWorkflow(
+            store,
+            new QueueDelegationClient([]),
+            () => approved,
+        ).completeDirect(
+            'run-1',
+            'task-1',
+            {
+                changedFiles: ['src/one.ts'],
+                tests: ['bun test one.test.ts'],
+                commands: ['bun test one.test.ts'],
+                validationOutput: '1 pass, 0 fail',
+                residualRisks: ['none'],
+            },
+            'ignored old bytes',
+            undefined,
+            directory,
+        );
+
+        expect(result.state).toBe('completed');
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
 });
 
 test('source digest is rechecked before each later delegation', async () => {

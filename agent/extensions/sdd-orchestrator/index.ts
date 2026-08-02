@@ -9,6 +9,7 @@ import { registerSddExtension, type SddRuntime } from './extension-tools.ts';
 import { openManifestReview } from './review-ui.ts';
 import { SddStore } from './store.ts';
 import { SddWorkflow } from './workflow.ts';
+import { GitWorkspaceManager } from './workspace.ts';
 
 export {
     collectRunStatuses,
@@ -18,11 +19,14 @@ export {
     type SddRuntime,
 } from './extension-tools.ts';
 
-function createRuntime(pi: ExtensionAPI): SddRuntime {
-    const agentDir = getAgentDir();
+export function createRuntime(
+    pi: ExtensionAPI,
+    agentDir = getAgentDir(),
+): SddRuntime {
     const store = new SddStore(agentDir);
     const delegation = new DelegationClient(pi.events);
     const activity = new SddActivityStore();
+    const workspace = new GitWorkspaceManager(agentDir);
     const workflow = new SddWorkflow(
         store,
         delegation,
@@ -31,12 +35,14 @@ function createRuntime(pi: ExtensionAPI): SddRuntime {
             return manifest?.state === 'approved' ? manifest : null;
         },
         activity,
+        workspace,
     );
     return {
         agentDir,
         store,
         delegation,
         workflow,
+        workspace,
         activity,
         openReview: openManifestReview,
         openLive: openSddLive,

@@ -53,6 +53,37 @@ test('applies legal run and task transitions and increments revisions', () => {
     });
 });
 
+test('records an applied isolated-worktree delivery exactly once', () => {
+    const completed = snapshot('verified', 'completed');
+    completed.workspace = {
+        mode: 'isolated',
+        sourceRoot: '/repo',
+        baseCommit: 'a'.repeat(40),
+        worktreePath: '/state/run-1',
+        delivery: { status: 'pending' },
+    };
+    const event = {
+        type: 'workspace-delivery-applied' as const,
+        expectedRevision: 0,
+        patchDigest: 'b'.repeat(64),
+        appliedAt: '2026-08-02T12:00:00.000Z',
+    };
+
+    const applied = transition(completed, event);
+
+    expect(applied).toMatchObject({
+        revision: 1,
+        workspace: {
+            delivery: {
+                status: 'applied',
+                patchDigest: event.patchDigest,
+                appliedAt: event.appliedAt,
+            },
+        },
+    });
+    expect(transition(applied, event)).toBe(applied);
+});
+
 test('accepts every designed run and task state edge', () => {
     const runEdges: ReadonlyArray<readonly [RunState, RunState]> = [
         ['draft', 'assessed'],

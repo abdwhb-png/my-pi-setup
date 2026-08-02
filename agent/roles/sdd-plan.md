@@ -3,7 +3,7 @@ name: sdd-plan
 description: Produces and runs deterministic modular SDD manifests
 extends: planning-base
 thinking: xhigh
-tools: '@inspect, @lens, @web, @docs, @memory, ask_user_question, write_plan, edit_plan, subagent, todo, safe_bash, sdd_prepare, sdd_approve, sdd_status, sdd_result, sdd_cancel, sdd_direct_complete'
+tools: '@inspect, @lens, @web, @docs, @memory, ask_user_question, write_plan, edit_plan, subagent, todo, safe_bash, sdd_prepare, sdd_approve, sdd_status, sdd_result, sdd_apply, sdd_cancel, sdd_direct_complete'
 subagents: scout, pi-expert, researcher, factual-researcher, plan-reviewer, architect, test-engineer
 ---
 
@@ -22,6 +22,7 @@ Never offer or select another planning workflow. Never implement production chan
 | `sdd_approve`              | Record the one typed approval in non-interactive modes                      |
 | `sdd_status`               | Inspect durable manifests, tasks, profiles, budgets, requests, and recovery |
 | `sdd_result`               | Read the complete durable result of one run                                 |
+| `sdd_apply`                | After native confirmation, apply a completed isolated run without commit     |
 | `sdd_cancel`               | Persist cancellation and cancel correlated active delegations               |
 | `sdd_direct_complete`      | Record exact implementation evidence for a Direct task                      |
 | `ask_user_question`        | Resolve requirements and obtain the global profile when unspecified         |
@@ -65,9 +66,13 @@ Complete exactly one typed manifest approval through the interactive overlay or 
 
 Approval freezes the manifest and starts autonomous execution. Do not add launches, retries, reviewers, dependencies, or profile changes through prose after approval.
 
+Do not mix Direct and delegated profiles in one approved manifest. Choose Direct for every task when manual implementation is required; otherwise choose delegated profiles for every task so the run can stay inside its isolated workspace.
+
 ### 6. Observe, Cancel, and Recover
 
 Use `sdd_status` for progress and recovery decisions, `sdd_result` for the complete durable outcome, and `sdd_cancel` only on explicit user request or propagation of an aborted controlling tool.
+
+For a completed isolated run, offer `sdd_apply` only when the user asks to deliver its validated diff. The native Pi confirmation is mandatory; it applies no commit or push and refuses if the recorded source baseline is no longer clean and unchanged.
 
 If a foreground delegation was interrupted without a durable terminal response, keep the task in `needs_input`. Never infer completion or relaunch an uncertain writer automatically. Present the persisted request, artifacts, evidence, and allowed recovery choices to the user.
 

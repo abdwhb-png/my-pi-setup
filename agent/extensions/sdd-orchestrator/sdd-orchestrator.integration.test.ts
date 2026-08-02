@@ -17,7 +17,7 @@ import type { SddConfig } from './config.ts';
 import { DelegationClient, type EventBus } from './delegation-client.ts';
 import type { ApprovedManifest, DraftManifest } from './manifest.ts';
 import { registerSddExtension } from './index.ts';
-import type { RunSnapshot } from './state-machine.ts';
+import type { IsolatedWorkspace, RunSnapshot } from './state-machine.ts';
 import { SddStore } from './store.ts';
 import { SddWorkflow } from './workflow.ts';
 
@@ -35,6 +35,29 @@ const config: SddConfig = {
     maxConcurrentWriters: 2,
     structuredOutputRetries: 1,
 };
+
+function testWorkspace() {
+    return {
+        prepare(runId: string, sourceCwd: string): IsolatedWorkspace {
+            return {
+                mode: 'isolated',
+                sourceRoot: sourceCwd,
+                baseCommit: 'a'.repeat(40),
+                worktreePath: join(sourceCwd, `.sdd-test-${runId}`),
+                delivery: { status: 'pending' },
+            };
+        },
+        apply(): never {
+            throw new Error('Unexpected apply.');
+        },
+        resolveExecutionCwd(
+            _workspace: IsolatedWorkspace,
+            sourceCwd: string,
+        ): string {
+            return sourceCwd;
+        },
+    };
+}
 
 type ResponseFactory = (
     request: SubagentDelegationRequest,
@@ -538,16 +561,18 @@ async function runProfile(
             ...scriptedExecution,
         );
         const store = new SddStore(agentDir);
+        const workspace = testWorkspace();
         const workflow = new SddWorkflow(store, delegation, (runId) => {
             const manifest = store.loadManifest(runId);
             return manifest?.state === 'approved' ? manifest : null;
-        });
+        }, undefined, workspace);
         const pi = createFakePi();
         registerSddExtension(pi.api as never, {
             agentDir,
             store,
             delegation,
             workflow,
+            workspace,
             config: () => config,
             now: () => '2026-07-21T12:00:00.000Z',
         });
@@ -616,6 +641,7 @@ test('Direct uses no execution child and completes only after exact evidence', a
             'sdd_approve',
             'sdd_status',
             'sdd_result',
+            'sdd_apply',
             'sdd_cancel',
             'sdd_direct_complete',
         ]);
@@ -1009,6 +1035,8 @@ test('public recovery retries survive injected crashes after atomic save and con
                     completeDirect: workflow.completeDirect.bind(workflow),
                     cancel: workflow.cancel.bind(workflow),
                     reconcile: workflow.reconcile.bind(workflow),
+                    recordWorkspaceApplied:
+                        workflow.recordWorkspaceApplied.bind(workflow),
                     async run(id, ctx) {
                         if (crashPoint === 'after-save' && !injected) {
                             injected = true;
@@ -1420,16 +1448,18 @@ test('Critical downgrade gates only Light and Direct and persists the decision',
                 ),
             );
             const store = new SddStore(agentDir);
+            const workspace = testWorkspace();
             const workflow = new SddWorkflow(store, delegation, (runId) => {
                 const manifest = store.loadManifest(runId);
                 return manifest?.state === 'approved' ? manifest : null;
-            });
+            }, undefined, workspace);
             const pi = createFakePi();
             registerSddExtension(pi.api as never, {
                 agentDir,
                 store,
                 delegation,
                 workflow,
+                workspace,
                 config: () => config,
                 now: () => '2026-07-21T12:00:00.000Z',
             });
@@ -1549,16 +1579,18 @@ test('two disjoint roots overlap only with approval and gate their dependent tas
                 ),
             );
             const store = new SddStore(agentDir);
+            const workspace = testWorkspace();
             const workflow = new SddWorkflow(store, delegation, (runId) => {
                 const manifest = store.loadManifest(runId);
                 return manifest?.state === 'approved' ? manifest : null;
-            });
+            }, undefined, workspace);
             const pi = createFakePi();
             registerSddExtension(pi.api as never, {
                 agentDir,
                 store,
                 delegation,
                 workflow,
+                workspace,
                 config: () => config,
                 now: () => '2026-07-21T12:00:00.000Z',
             });
@@ -1658,16 +1690,18 @@ test('duplicate and late terminal responses cannot change a cancelled public run
             ),
         );
         const store = new SddStore(agentDir);
+        const workspace = testWorkspace();
         const workflow = new SddWorkflow(store, delegation, (runId) => {
             const manifest = store.loadManifest(runId);
             return manifest?.state === 'approved' ? manifest : null;
-        });
+        }, undefined, workspace);
         const pi = createFakePi();
         registerSddExtension(pi.api as never, {
             agentDir,
             store,
             delegation,
             workflow,
+            workspace,
             config: () => config,
             now: () => '2026-07-21T12:00:00.000Z',
         });

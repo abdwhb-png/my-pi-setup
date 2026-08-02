@@ -29,6 +29,7 @@ import type {
     SddDelegationActivityContext,
     SddWorkflowObserver,
 } from './workflow-observer.ts';
+import type { SddWorkspaceExecution } from './workspace.ts';
 
 type WorkflowStore = Pick<SddStore, 'load' | 'save' | 'appendTransition'>;
 type WorkflowDelegation = Pick<DelegationClient, 'run' | 'cancel'>;
@@ -63,6 +64,16 @@ function mustRunSequentially(task: ApprovedManifestTask): boolean {
         task.effectiveProfile === 'direct' ||
         !task.parallelEligible ||
         SHARED_CONTRACT_SIGNALS.some((signal) => task.signals.includes(signal))
+    );
+}
+
+function mixesDirectAndDelegatedTasks(manifest: ApprovedManifest): boolean {
+    const hasDirectTask = manifest.tasks.some(
+        (task) => task.effectiveProfile === 'direct',
+    );
+    return (
+        hasDirectTask &&
+        manifest.tasks.some((task) => task.effectiveProfile !== 'direct')
     );
 }
 
@@ -113,12 +124,14 @@ export function selectRunnableBatch(
 
 export class SddWorkflow {
     private readonly activeRuns = new Map<string, Promise<RunSnapshot>>();
+    private readonly sourceCwds = new Map<string, string>();
 
     constructor(
         private readonly store: WorkflowStore,
         private readonly delegation: WorkflowDelegation,
         private readonly loadManifest: ManifestResolver,
         private readonly observer?: SddWorkflowObserver,
+        private readonly workspace?: SddWorkspaceExecution,
     ) {}
 
     run(
@@ -134,12 +147,14 @@ export class SddWorkflow {
         };
         signal?.addEventListener('abort', onAbort, { once: true });
         if (signal?.aborted) onAbort();
+        this.sourceCwds.set(runId, ctx.cwd);
         const execution = this.runExclusive(runId, ctx);
         this.activeRuns.set(runId, execution);
         const release = () => {
             signal?.removeEventListener('abort', onAbort);
             if (this.activeRuns.get(runId) === execution) {
                 this.activeRuns.delete(runId);
+                this.sourceCwds.delete(runId);
             }
         };
         void execution.then(release, release);
@@ -162,7 +177,26 @@ export class SddWorkflow {
         }
         if (snapshot.state !== 'running') return snapshot;
 
-        if (!this.sourceDigestMatches(manifest)) {
+        if (snapshot.workspace && mixesDirectAndDelegatedTasks(manifest)) {
+            return this.failRun(
+                runId,
+                'isolated_workspace_mixed_profiles',
+                'needs_input',
+            );
+        }
+
+        let executionCwd: string;
+        try {
+            executionCwd = this.executionCwd(snapshot, ctx.cwd);
+        } catch (error) {
+            return this.failRun(
+                runId,
+                error instanceof Error ? error.message : String(error),
+                'needs_input',
+            );
+        }
+
+        if (!this.sourceDigestMatches(runId, manifest)) {
             return this.failRun(runId, 'source_digest_changed', 'needs_input');
         }
 
@@ -190,14 +224,16 @@ export class SddWorkflow {
             });
             if (resumable) {
                 // oxlint-disable-next-line no-await-in-loop -- persisted task boundaries resume in manifest order.
-                await this.resumeTask(runId, ctx.cwd, config, resumable);
+                await this.resumeTask(runId, executionCwd, config, resumable);
                 continue;
             }
             const batch = selectRunnableBatch(manifest, snapshot);
             if (batch.length === 0) break;
             // oxlint-disable-next-line no-await-in-loop -- dependency batches must finish before the next batch is selected.
             await Promise.all(
-                batch.map((task) => this.runTask(runId, ctx.cwd, config, task)),
+                batch.map((task) =>
+                    this.runTask(runId, executionCwd, config, task),
+                ),
             );
             if (batch[0]?.effectiveProfile === 'direct') break;
         }
@@ -209,7 +245,7 @@ export class SddWorkflow {
             )
         ) {
             if (manifest.finalIntegrationReview) {
-                return this.runIntegrationReview(runId, ctx.cwd, config);
+                return this.runIntegrationReview(runId, executionCwd, config);
             }
             return this.finishRun(runId, 'completed');
         }
@@ -828,6 +864,7 @@ export class SddWorkflow {
         evidence: DirectEvidence,
         _currentPlanContent: string,
         recovery?: RecoveryAttestation,
+        sourceCwd?: string,
     ): RunSnapshot {
         const manifest = this.requireManifest(runId);
         const task = manifest.tasks.find(
@@ -863,7 +900,7 @@ export class SddWorkflow {
         ) {
             throw new Error(`Task ${taskId} is not awaiting Direct evidence.`);
         }
-        if (!this.sourceDigestMatches(manifest)) {
+        if (!this.sourceDigestMatches(runId, manifest, sourceCwd)) {
             throw new Error('Source plan changed after approval.');
         }
 
@@ -917,6 +954,27 @@ export class SddWorkflow {
             return this.finishRun(runId, 'completed');
         }
         return verified;
+    }
+
+    recordWorkspaceApplied(
+        runId: string,
+        patchDigest: string,
+        appliedAt: string,
+    ): RunSnapshot {
+        const current = this.requireSnapshot(runId);
+        const delivery = current.workspace?.delivery;
+        if (delivery?.status === 'applied') {
+            if (delivery.patchDigest !== patchDigest) {
+                throw new Error('SDD workspace delivery digest conflict.');
+            }
+            return current;
+        }
+        return this.persist(runId, {
+            type: 'workspace-delivery-applied',
+            expectedRevision: current.revision,
+            patchDigest,
+            appliedAt,
+        });
     }
 
     private buildRecoveryChoice(
@@ -1276,10 +1334,17 @@ export class SddWorkflow {
         }
     }
 
-    private sourceDigestMatches(manifest: ApprovedManifest): boolean {
+    private sourceDigestMatches(
+        runId: string,
+        manifest: ApprovedManifest,
+        sourceCwd?: string,
+    ): boolean {
         try {
             const source = readFileSync(
-                resolveRuntimePath(manifest.planPath, process.cwd()),
+                resolveRuntimePath(
+                    manifest.planPath,
+                    this.sourceCwds.get(runId) ?? sourceCwd ?? process.cwd(),
+                ),
             );
             return (
                 createHash('sha256').update(source).digest('hex') ===
@@ -1288,6 +1353,17 @@ export class SddWorkflow {
         } catch {
             return false;
         }
+    }
+
+    private executionCwd(snapshot: RunSnapshot, sourceCwd: string): string {
+        if (!snapshot.workspace) return sourceCwd;
+        if (!this.workspace) {
+            throw new Error('SDD isolated workspace support is unavailable.');
+        }
+        return this.workspace.resolveExecutionCwd(
+            snapshot.workspace,
+            sourceCwd,
+        );
     }
 
     private hasActiveRequest(snapshot: RunSnapshot): boolean {
@@ -1398,7 +1474,7 @@ export class SddWorkflow {
         if (snapshot.cancellation) {
             return this.finishRun(runId, 'cancelled');
         }
-        if (!this.sourceDigestMatches(manifest)) {
+        if (!this.sourceDigestMatches(runId, manifest)) {
             return this.failRun(runId, 'source_digest_changed', 'needs_input');
         }
         snapshot = this.persist(runId, {
@@ -1691,7 +1767,7 @@ export class SddWorkflow {
                 error: 'cancellation_requested',
             };
         }
-        if (!this.sourceDigestMatches(this.requireManifest(runId))) {
+        if (!this.sourceDigestMatches(runId, this.requireManifest(runId))) {
             this.failRun(runId, 'source_digest_changed', 'needs_input');
             return {
                 version: 1,

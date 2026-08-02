@@ -14,6 +14,7 @@ import {
     rmSync,
     writeFileSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
@@ -30,6 +31,7 @@ import { createInitialReviewProgress } from './review-progress.ts';
 import type { ReviewProgressStorage } from './review-ui.ts';
 import type { DirectEvidence, RunSnapshot } from './state-machine.ts';
 import { SddStore } from './store.ts';
+import { SddWorkflow } from './workflow.ts';
 import {
     collectRunStatuses,
     registerSddExtension,
@@ -110,11 +112,42 @@ function context(mode: ExtensionContext['mode'] = 'print'): ExtensionContext {
         ui: {
             custom: mock(),
             notify: mock(),
+            confirm: mock(async () => true),
             setStatus: mock(),
             setWorkingMessage: mock(),
             theme: { fg: (_color: string, text: string) => text },
         },
     } as unknown as ExtensionContext;
+}
+
+function testWorkspacePreflight() {
+    return {
+        prepare(runId: string, sourceCwd: string) {
+            return {
+                mode: 'isolated' as const,
+                sourceRoot: sourceCwd,
+                baseCommit: 'a'.repeat(40),
+                worktreePath: join(tmpdir(), `sdd-test-worktree-${runId}`),
+                delivery: { status: 'pending' as const },
+            };
+        },
+        apply() {
+            throw new Error('Unexpected apply.');
+        },
+    };
+}
+
+function git(path: string, args: readonly string[]): string {
+    return execFileSync('git', args, { cwd: path, encoding: 'utf8' });
+}
+
+function initializeGitRepository(path: string): void {
+    git(path, ['init', '--initial-branch=main']);
+    git(path, ['config', 'user.email', 'sdd@example.test']);
+    git(path, ['config', 'user.name', 'SDD test']);
+    writeFileSync(join(path, 'README.md'), 'fixture\n');
+    git(path, ['add', 'README.md']);
+    git(path, ['commit', '-m', 'fixture']);
 }
 
 function contextWithEntries(
@@ -365,6 +398,24 @@ function runtime(
                 if (!current) throw new Error('Run missing.');
                 return current;
             },
+            recordWorkspaceApplied(runId, patchDigest, appliedAt) {
+                const current = store.load(runId);
+                if (!current?.workspace) throw new Error('Run workspace missing.');
+                const applied = {
+                    ...current,
+                    revision: current.revision + 1,
+                    workspace: {
+                        ...current.workspace,
+                        delivery: {
+                            status: 'applied' as const,
+                            patchDigest,
+                            appliedAt,
+                        },
+                    },
+                };
+                store.save(applied);
+                return applied;
+            },
         },
         openReview: async () => ({ type: 'cancel' }),
     };
@@ -379,7 +430,7 @@ async function execute(
     return tool.execute('call-1', params, signal, undefined, ctx);
 }
 
-test('registers exactly seven tools and one command from a thin index', () => {
+test('registers exactly eight tools and one command from a thin index', () => {
     const pi = fakePi();
     const store = new SddStore(agentDir);
     registerSddExtension(pi.api as never, runtime(store));
@@ -390,6 +441,7 @@ test('registers exactly seven tools and one command from a thin index', () => {
         'sdd_approve',
         'sdd_status',
         'sdd_result',
+        'sdd_apply',
         'sdd_cancel',
         'sdd_direct_complete',
     ]);
@@ -492,14 +544,17 @@ test('approval warns about pending review cleanup without blocking initial or id
     writeFileSync(join(cwd, 'plan.md'), planContent);
     const store = new CleanupFailingStore(agentDir);
     const pi = fakePi();
-    const rt = runtime(store, [
-        {
-            version: 1,
-            requestId: 'ignored',
-            status: 'completed',
-            output: assessment,
-        },
-    ]);
+    const rt: SddRuntime = {
+        ...runtime(store, [
+            {
+                version: 1,
+                requestId: 'ignored',
+                status: 'completed',
+                output: assessment,
+            },
+        ]),
+        workspace: testWorkspacePreflight(),
+    };
     let runCalls = 0;
     rt.workflow.run = async (runId) => {
         runCalls += 1;
@@ -537,7 +592,8 @@ test('approval warns about pending review cleanup without blocking initial or id
     const tuiContext = context('tui');
     const tuiRetry = await execute(pi.tools.get('sdd_approve'), approval, tuiContext);
 
-    expect(first.content[0].text).toContain('started');
+    expect(first.content[0].text).toContain('completed');
+    expect(first.content[0].text).not.toContain('started');
     expect(first.content[0].text).toContain('reviewCleanupPending: true');
     expect(first.content[0].text).toContain('reviewCleanupError:');
     expect(first.content[0].text).toContain('review cleanup storage unavailable');
@@ -558,6 +614,284 @@ test('approval warns about pending review cleanup without blocking initial or id
         expect.stringContaining('review cleanup storage unavailable'),
         'warning',
     );
+});
+
+test('approval returns a needs_input terminal summary instead of announcing a started run', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    const rt: SddRuntime = {
+        ...runtime(store, [
+            {
+                version: 1,
+                requestId: 'ignored',
+                status: 'completed',
+                output: assessment,
+            },
+        ]),
+        workspace: testWorkspacePreflight(),
+    };
+    rt.workflow.run = async (runId) => {
+        const current = store.load(runId);
+        if (!current) throw new Error('Run missing.');
+        const needsInput = {
+            ...current,
+            revision: current.revision + 1,
+            state: 'needs_input' as const,
+            terminalReason: 'SDD isolated worktree is missing: /state/run-1.',
+            tasks: {
+                ...current.tasks,
+                'task-1': {
+                    ...current.tasks['task-1']!,
+                    state: 'needs_input' as const,
+                    terminalReason:
+                        'SDD isolated worktree is missing: /state/run-1.',
+                },
+            },
+        };
+        store.save(needsInput);
+        return needsInput;
+    };
+    registerSddExtension(pi.api as never, rt);
+
+    const prepared = await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    });
+    const draft = prepared.details.manifest as DraftManifest;
+    const approved = await execute(pi.tools.get('sdd_approve'), {
+        manifestId: draft.manifestId,
+        globalProfile: 'standard',
+        taskOverrides: {},
+        parallelismEnabled: true,
+        criticalDowngradeConfirmations: {},
+        criticalDowngradeJustifications: {},
+        approvedBy: 'operator',
+    });
+
+    expect(approved.content[0].text).toContain('needs_input');
+    expect(approved.content[0].text).toContain('SDD isolated worktree is missing');
+    expect(approved.content[0].text).not.toContain('started');
+});
+
+test('writer approval leaves the manifest awaiting approval when the source worktree is dirty', async () => {
+    initializeGitRepository(cwd);
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    const rt: SddRuntime = {
+        ...runtime(store, [
+            {
+                version: 1,
+                requestId: 'ignored',
+                status: 'completed',
+                output: assessment,
+            },
+        ]),
+        workspace: {
+            prepare() {
+                throw new Error(
+                    'SDD writer runs require a clean Git worktree.',
+                );
+            },
+            apply() {
+                throw new Error('Unexpected apply.');
+            },
+        },
+    };
+    registerSddExtension(
+        pi.api as never,
+        rt,
+    );
+
+    const prepared = await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    });
+    const draft = prepared.details.manifest as DraftManifest;
+    writeFileSync(join(cwd, 'uncommitted.txt'), 'dirty\n');
+
+    await expect(
+        execute(pi.tools.get('sdd_approve'), {
+            manifestId: draft.manifestId,
+            globalProfile: 'standard',
+            taskOverrides: {},
+            parallelismEnabled: true,
+            criticalDowngradeConfirmations: {},
+            criticalDowngradeJustifications: {},
+            approvedBy: 'operator',
+        }),
+    ).rejects.toThrow('SDD writer runs require a clean Git worktree.');
+
+    expect(store.loadManifest(draft.manifestId)?.state).toBe(
+        'awaiting_approval',
+    );
+    expect(store.load(draft.manifestId)).toBeNull();
+});
+
+test('approval rejects a manifest that mixes Direct and delegated tasks before preparing a workspace', async () => {
+    const twoTaskPlan = `${planContent}
+### Task 2: Change another file
+
+~~~sdd-task
+{"id":"task-2","dependsOn":["task-1"],"files":["src/two.ts"],"verify":[{"id":"two","command":"bun test two"}]}
+~~~
+`;
+    const parsedAssessment = JSON.parse(assessment) as {
+        tasks: Array<Record<string, unknown>>;
+    };
+    const twoTaskAssessment = JSON.stringify({
+        ...parsedAssessment,
+        tasks: [
+            parsedAssessment.tasks[0],
+            {
+                ...parsedAssessment.tasks[0],
+                taskId: 'task-2',
+            },
+        ],
+    });
+    writeFileSync(join(cwd, 'plan.md'), twoTaskPlan);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    const prepare = mock(() => {
+        throw new Error('workspace preparation must not run');
+    });
+    const rt: SddRuntime = {
+        ...runtime(store, [
+            {
+                version: 1,
+                requestId: 'ignored',
+                status: 'completed',
+                output: twoTaskAssessment,
+            },
+        ]),
+        workspace: {
+            prepare,
+            apply() {
+                throw new Error('Unexpected apply.');
+            },
+        },
+    };
+    registerSddExtension(pi.api as never, rt);
+
+    const prepared = await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    });
+    const draft = prepared.details.manifest as DraftManifest;
+
+    await expect(
+        execute(pi.tools.get('sdd_approve'), {
+            manifestId: draft.manifestId,
+            globalProfile: 'standard',
+            taskOverrides: { 'task-1': 'direct' },
+            parallelismEnabled: true,
+            criticalDowngradeConfirmations: {},
+            criticalDowngradeJustifications: {},
+            approvedBy: 'operator',
+        }),
+    ).rejects.toThrow('cannot mix Direct and delegated tasks');
+
+    expect(prepare).not.toHaveBeenCalled();
+    expect(store.loadManifest(draft.manifestId)?.state).toBe(
+        'awaiting_approval',
+    );
+    expect(store.load(draft.manifestId)).toBeNull();
+});
+
+test('writer approval fails closed when isolated workspace support is unavailable', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    registerSddExtension(
+        pi.api as never,
+        runtime(store, [
+            {
+                version: 1,
+                requestId: 'ignored',
+                status: 'completed',
+                output: assessment,
+            },
+        ]),
+    );
+
+    const prepared = await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    });
+    const draft = prepared.details.manifest as DraftManifest;
+
+    await expect(
+        execute(pi.tools.get('sdd_approve'), {
+            manifestId: draft.manifestId,
+            globalProfile: 'standard',
+            taskOverrides: {},
+            parallelismEnabled: true,
+            criticalDowngradeConfirmations: {},
+            criticalDowngradeJustifications: {},
+            approvedBy: 'operator',
+        }),
+    ).rejects.toThrow('SDD isolated workspace support is unavailable.');
+
+    expect(store.loadManifest(draft.manifestId)?.state).toBe(
+        'awaiting_approval',
+    );
+    expect(store.load(draft.manifestId)).toBeNull();
+});
+
+test('writer approval persists its prepared isolated workspace before running the workflow', async () => {
+    writeFileSync(join(cwd, 'plan.md'), planContent);
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    const preparedWorkspace = {
+        mode: 'isolated' as const,
+        sourceRoot: cwd,
+        baseCommit: 'a'.repeat(40),
+        worktreePath: join(tmpdir(), 'sdd-worktree-run-1'),
+        delivery: { status: 'pending' as const },
+    };
+    const prepareWorkspace = mock(() => preparedWorkspace);
+    const rt: SddRuntime = {
+        ...runtime(store, [
+            {
+                version: 1,
+                requestId: 'ignored',
+                status: 'completed',
+                output: assessment,
+            },
+        ]),
+        workspace: {
+            prepare: prepareWorkspace,
+            apply() {
+                throw new Error('Unexpected apply.');
+            },
+        },
+    };
+    rt.workflow.run = async (runId) => {
+        const current = store.load(runId);
+        if (!current) throw new Error('Run missing.');
+        expect(current.workspace).toEqual(preparedWorkspace);
+        return current;
+    };
+    registerSddExtension(pi.api as never, rt);
+
+    const prepared = await execute(pi.tools.get('sdd_prepare'), {
+        planPath: 'plan.md',
+        globalProfile: 'standard',
+    });
+    const draft = prepared.details.manifest as DraftManifest;
+
+    await execute(pi.tools.get('sdd_approve'), {
+        manifestId: draft.manifestId,
+        globalProfile: 'standard',
+        taskOverrides: {},
+        parallelismEnabled: true,
+        criticalDowngradeConfirmations: {},
+        criticalDowngradeJustifications: {},
+        approvedBy: 'operator',
+    });
+
+    expect(prepareWorkspace).toHaveBeenCalledWith(draft.manifestId, cwd);
 });
 
 test('prepare performs one bounded JSON repair and stores a complete draft', async () => {
@@ -1396,6 +1730,13 @@ test('targeted status and result expose task, review, and acceptance evidence to
         },
     };
     const completed = snapshot(runId, 'completed');
+    completed.workspace = {
+        mode: 'isolated',
+        sourceRoot: cwd,
+        baseCommit: 'a'.repeat(40),
+        worktreePath: join(tmpdir(), 'sdd-worktree-completed-run'),
+        delivery: { status: 'pending' },
+    };
     completed.tasks['task-1'] = {
         id: 'task-1',
         state: 'verified',
@@ -1417,6 +1758,7 @@ test('targeted status and result expose task, review, and acceptance evidence to
                 requestId: 'worker-1',
                 status: 'completed',
                 runId: 'child-1',
+                error: 'integration guard failed: expected isolated workspace',
                 acceptance: {
                     status: 'verified',
                     evidenceStatus: 'verified',
@@ -1452,8 +1794,267 @@ test('targeted status and result expose task, review, and acceptance evidence to
         expect(output).toContain(
             'task-1: completed, acceptance verified, child child-1',
         );
+        expect(output).toContain(
+            'error integration guard failed: expected isolated workspace',
+        );
         expect(output).toContain('active requests: none');
+        expect(output).toContain('workspace: isolated');
+        expect(output).toContain('delivery: pending');
     }
+});
+
+test('sdd_apply requires native UI confirmation and persists a successful delivery once', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'apply-run';
+    const completed = snapshot(runId, 'completed');
+    completed.workspace = {
+        mode: 'isolated',
+        sourceRoot: cwd,
+        baseCommit: 'a'.repeat(40),
+        worktreePath: join(tmpdir(), 'sdd-worktree-apply-run'),
+        delivery: { status: 'pending' },
+    };
+    seedApproved(store, approvedManifest(runId), completed);
+    const apply = mock(() => ({ patchDigest: 'b'.repeat(64) }));
+    const pi = fakePi();
+    const rt: SddRuntime = {
+        ...runtime(store),
+        workspace: {
+            prepare() {
+                throw new Error('Unexpected prepare.');
+            },
+            apply,
+        },
+    };
+    registerSddExtension(pi.api as never, rt);
+
+    await expect(
+        execute(pi.tools.get('sdd_apply'), { runId }),
+    ).rejects.toThrow('sdd_apply requires a native Pi confirmation UI.');
+    expect(apply).not.toHaveBeenCalled();
+
+    const cancelledContext = context('tui');
+    cancelledContext.ui.confirm = mock(async () => false);
+    const cancelled = await execute(
+        pi.tools.get('sdd_apply'),
+        { runId },
+        cancelledContext,
+    );
+    expect(cancelled.content[0].text).toContain('cancelled');
+    expect(apply).not.toHaveBeenCalled();
+
+    const confirmedContext = context('tui');
+    confirmedContext.ui.confirm = mock(async () => true);
+    const applied = await execute(
+        pi.tools.get('sdd_apply'),
+        { runId },
+        confirmedContext,
+    );
+    expect(applied.content[0].text).toContain('delivery: applied');
+    expect(apply).toHaveBeenCalledWith(completed.workspace, cwd);
+    expect(store.load(runId)?.workspace?.delivery).toMatchObject({
+        status: 'applied',
+        patchDigest: 'b'.repeat(64),
+    });
+
+    const repeated = await execute(
+        pi.tools.get('sdd_apply'),
+        { runId },
+        confirmedContext,
+    );
+    expect(repeated.content[0].text).toContain('already applied');
+    expect(apply).toHaveBeenCalledTimes(1);
+});
+
+test('sdd_apply rechecks delivery after confirmation before applying', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'apply-confirmation-race';
+    const completed = snapshot(runId, 'completed');
+    completed.workspace = {
+        mode: 'isolated',
+        sourceRoot: cwd,
+        baseCommit: 'a'.repeat(40),
+        worktreePath: join(tmpdir(), 'sdd-worktree-apply-confirmation-race'),
+        delivery: { status: 'pending' },
+    };
+    seedApproved(store, approvedManifest(runId), completed);
+    const apply = mock(() => ({ patchDigest: 'b'.repeat(64) }));
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, {
+        ...runtime(store),
+        workspace: {
+            prepare() {
+                throw new Error('Unexpected prepare.');
+            },
+            apply,
+        },
+    });
+    const confirmedContext = context('tui');
+    confirmedContext.ui.confirm = mock(async () => {
+        const current = store.load(runId);
+        if (!current?.workspace) throw new Error('Missing test workspace.');
+        store.save({
+            ...current,
+            revision: current.revision + 1,
+            workspace: {
+                ...current.workspace,
+                delivery: {
+                    status: 'applied',
+                    patchDigest: 'c'.repeat(64),
+                    appliedAt: '2026-07-21T12:01:00.000Z',
+                },
+            },
+        });
+        return true;
+    });
+
+    const result = await execute(
+        pi.tools.get('sdd_apply'),
+        { runId },
+        confirmedContext,
+    );
+
+    expect(result.content[0].text).toContain('already applied');
+    expect(apply).not.toHaveBeenCalled();
+});
+
+test('concurrent sdd_apply calls persist one matching delivery transition', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'apply-concurrent';
+    const completed = snapshot(runId, 'completed');
+    completed.workspace = {
+        mode: 'isolated',
+        sourceRoot: cwd,
+        baseCommit: 'a'.repeat(40),
+        worktreePath: join(tmpdir(), 'sdd-worktree-apply-concurrent'),
+        delivery: { status: 'pending' },
+    };
+    seedApproved(store, approvedManifest(runId), completed);
+    const appendTransition = store.appendTransition.bind(store);
+    let transitionCount = 0;
+    store.appendTransition = (record) => {
+        transitionCount += 1;
+        appendTransition(record);
+    };
+    const workflow = new SddWorkflow(
+        store,
+        {
+            async run() {
+                throw new Error('Unexpected delegation.');
+            },
+            cancel() {},
+        },
+        (id) => {
+            const manifest = store.loadManifest(id);
+            return manifest?.state === 'approved' ? manifest : null;
+        },
+    );
+    let firstApplyEntered!: () => void;
+    const firstApply = new Promise<void>((resolve) => {
+        firstApplyEntered = resolve;
+    });
+    let releaseFirstApply!: () => void;
+    const releaseFirst = new Promise<void>((resolve) => {
+        releaseFirstApply = resolve;
+    });
+    let applyCount = 0;
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, {
+        ...runtime(store),
+        workflow,
+        workspace: {
+            prepare() {
+                throw new Error('Unexpected prepare.');
+            },
+            async apply() {
+                applyCount += 1;
+                if (applyCount === 1) {
+                    firstApplyEntered();
+                    await releaseFirst;
+                }
+                return { patchDigest: 'e'.repeat(64) };
+            },
+        },
+    });
+    const confirmedContext = context('tui');
+    confirmedContext.ui.confirm = mock(async () => true);
+
+    const first = execute(pi.tools.get('sdd_apply'), { runId }, confirmedContext);
+    await firstApply;
+    const second = execute(pi.tools.get('sdd_apply'), { runId }, confirmedContext);
+    await Bun.sleep(0);
+    releaseFirstApply();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(applyCount).toBe(2);
+    expect(firstResult.content[0].text).toContain('delivery: applied');
+    expect(secondResult.content[0].text).toContain('delivery: applied');
+    expect(transitionCount).toBe(1);
+    expect(store.load(runId)?.workspace?.delivery).toMatchObject({
+        status: 'applied',
+        patchDigest: 'e'.repeat(64),
+    });
+});
+
+test('sdd_apply retries journaled delivery after snapshot persistence is interrupted', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'apply-snapshot-interrupted';
+    const completed = snapshot(runId, 'completed');
+    completed.workspace = {
+        mode: 'isolated',
+        sourceRoot: cwd,
+        baseCommit: 'a'.repeat(40),
+        worktreePath: join(tmpdir(), 'sdd-worktree-apply-snapshot-interrupted'),
+        delivery: { status: 'pending' },
+    };
+    seedApproved(store, approvedManifest(runId), completed);
+    let deliveryJournalIsApplied = false;
+    const apply = mock(() => {
+        deliveryJournalIsApplied = true;
+        return { patchDigest: 'd'.repeat(64) };
+    });
+    const pi = fakePi();
+    const rt = runtime(store);
+    const recordWorkspaceApplied = rt.workflow.recordWorkspaceApplied;
+    let interruptPersistence = true;
+    rt.workflow.recordWorkspaceApplied = (run, patchDigest, appliedAt) => {
+        if (interruptPersistence) {
+            interruptPersistence = false;
+            throw new Error('simulated snapshot persistence interruption');
+        }
+        return recordWorkspaceApplied(run, patchDigest, appliedAt);
+    };
+    registerSddExtension(pi.api as never, {
+        ...rt,
+        workspace: {
+            prepare() {
+                throw new Error('Unexpected prepare.');
+            },
+            apply,
+        },
+    });
+    const confirmedContext = context('tui');
+    confirmedContext.ui.confirm = mock(async () => true);
+
+    await expect(
+        execute(pi.tools.get('sdd_apply'), { runId }, confirmedContext),
+    ).rejects.toThrow('simulated snapshot persistence interruption');
+    expect(deliveryJournalIsApplied).toBe(true);
+    expect(store.load(runId)?.workspace?.delivery.status).toBe('pending');
+
+    const recovered = await execute(
+        pi.tools.get('sdd_apply'),
+        { runId },
+        confirmedContext,
+    );
+
+    expect(recovered.content[0].text).toContain('delivery: applied');
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(store.load(runId)?.workspace?.delivery).toMatchObject({
+        status: 'applied',
+        patchDigest: 'd'.repeat(64),
+    });
 });
 
 test('Direct completion resumes a dependent task and returns the durable result', async () => {
@@ -1706,6 +2307,9 @@ function runtimeWithProgress(
             reconcile(runId: string) {
                 return store.load(runId)!;
             },
+            recordWorkspaceApplied(runId: string) {
+                return store.load(runId)!;
+            },
         },
         openReview: async () => ({ type: 'cancel' }),
     };
@@ -1773,6 +2377,9 @@ function runtimeWithProgressResponses(
                 return store.load(runId)!;
             },
             reconcile(runId: string) {
+                return store.load(runId)!;
+            },
+            recordWorkspaceApplied(runId: string) {
                 return store.load(runId)!;
             },
         },

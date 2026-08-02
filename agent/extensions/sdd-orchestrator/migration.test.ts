@@ -60,7 +60,8 @@ test('planning base and plan role keep Plannotator planning separate from SDD an
         '@lens',
         '@web',
         '@docs',
-        '@memory',
+        '@memory-consult',
+        '@ctx-inspect',
         'ask_user_question',
         'write_plan',
         'edit_plan',
@@ -108,6 +109,7 @@ test('sdd-plan owns the parser-exact deterministic workflow and manual Direct ha
         'sdd_approve',
         'sdd_status',
         'sdd_result',
+        'sdd_apply',
         'sdd_cancel',
         'sdd_direct_complete',
     ]);
@@ -133,6 +135,9 @@ test('sdd-plan owns the parser-exact deterministic workflow and manual Direct ha
         'Before any non-TUI `sdd_approve` call, show the user the exact compiled decision and obtain explicit approval of those exact values',
     );
     expect(plan).toContain('switch roles manually');
+    expect(plan).toContain(
+        'Do not mix Direct and delegated profiles in one approved manifest.',
+    );
     expect(plan).not.toMatch(/\b(?:Plannotator|quick-planner|plan_submit)\b/);
 });
 
@@ -164,10 +169,10 @@ test('quick-planner inherits the planning method without referencing other plann
         '@inspect',
         '@lens',
         '@docs',
+        '@memory-consult',
+        '@ctx-inspect',
         'ask_user_question',
         'session_plan',
-        'session_search',
-        'memory_search',
         'todo',
         'subagent',
     ]);

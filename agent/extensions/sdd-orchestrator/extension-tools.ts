@@ -50,6 +50,7 @@ import {
 import {
     RECOVERY_STAGES,
     type DirectEvidence,
+    type IsolatedWorkspace,
     type RecoveryAttestation,
     type RunSnapshot,
     type TaskSnapshot,
@@ -62,6 +63,7 @@ import {
 } from "./store.ts";
 import { PROFILES, type Profile } from "./types.ts";
 import type { SddWorkflow } from "./workflow.ts";
+import type { SddWorkspaceDelivery } from "./workspace.ts";
 
 type ExtensionStore = Pick<
     SddStore,
@@ -79,14 +81,26 @@ type ExtensionStore = Pick<
 type ExtensionDelegation = Pick<DelegationClient, "run" | "dispose">;
 type ExtensionWorkflow = Pick<
     SddWorkflow,
-    "run" | "cancel" | "completeDirect" | "reconcile"
+    "run" | "cancel" | "completeDirect" | "reconcile" | "recordWorkspaceApplied"
 >;
+
+export interface SddWorkspacePreflight {
+    prepare(
+        runId: string,
+        sourceCwd: string,
+    ): IsolatedWorkspace | Promise<IsolatedWorkspace>;
+    apply(
+        workspace: IsolatedWorkspace,
+        sourceCwd: string,
+    ): SddWorkspaceDelivery | Promise<SddWorkspaceDelivery>;
+}
 
 export interface SddRuntime {
     readonly agentDir: string;
     readonly store: ExtensionStore;
     readonly delegation: ExtensionDelegation;
     readonly workflow: ExtensionWorkflow;
+    readonly workspace?: SddWorkspacePreflight;
     readonly activity?: SddActivityStore;
     readonly config?: (cwd: string) => SddConfig;
     readonly now?: () => string;
@@ -273,6 +287,10 @@ const RunSchema = Type.Object(
     { runId: Type.String({ minLength: 1 }) },
     { additionalProperties: false },
 );
+const ApplySchema = Type.Object(
+    { runId: Type.String({ minLength: 1 }) },
+    { additionalProperties: false },
+);
 const RecoveryAttestationSchema = Type.Object(
     {
         action: Type.Literal("attest"),
@@ -377,7 +395,8 @@ function isTerminalSnapshot(snapshot: RunSnapshot): boolean {
     return (
         snapshot.state === "completed" ||
         snapshot.state === "failed" ||
-        snapshot.state === "cancelled"
+        snapshot.state === "cancelled" ||
+        snapshot.state === "needs_input"
     );
 }
 
@@ -452,6 +471,7 @@ function ensureApprovalEntry(
 function initialSnapshot(
     runId: string,
     manifest: ApprovedManifest,
+    workspace?: IsolatedWorkspace,
 ): RunSnapshot {
     return {
         runId,
@@ -470,6 +490,7 @@ function initialSnapshot(
         ),
         consumedIdempotencyKeys: [],
         plannedDelegations: {},
+        ...(workspace ? { workspace } : {}),
     };
 }
 
@@ -625,6 +646,7 @@ async function approveDraft(
     let approved: ApprovedManifest;
     let snapshot: RunSnapshot;
     let approval: ManifestApprovalResult;
+    let workspace: IsolatedWorkspace | undefined;
     if (manifest.state === "approved") {
         if (
             approvalDecisionDigest(manifest.decision) !==
@@ -656,10 +678,32 @@ async function approveDraft(
             "utf8",
         );
         const candidate = applyApproval(manifest, decision, currentPlanContent);
+        const hasDirectTask = candidate.tasks.some(
+            (task) => task.effectiveProfile === "direct",
+        );
+        const hasDelegatedTask = candidate.tasks.some(
+            (task) => task.effectiveProfile !== "direct",
+        );
+        if (hasDirectTask && hasDelegatedTask) {
+            throw new Error(
+                "SDD approval cannot mix Direct and delegated tasks. Use Direct for every task or select a delegated profile for every task.",
+            );
+        }
+        if (hasDelegatedTask) {
+            if (!runtime.workspace) {
+                throw new Error(
+                    "SDD isolated workspace support is unavailable.",
+                );
+            }
+            workspace = await runtime.workspace.prepare(
+                candidate.manifestId,
+                ctx.cwd,
+            );
+        }
         approval = runtime.store.approveManifest(
             manifest,
             candidate,
-            initialSnapshot(candidate.manifestId, candidate),
+            initialSnapshot(candidate.manifestId, candidate, workspace),
         );
         approved = approval.manifest;
         snapshot = approval.snapshot;
@@ -690,12 +734,22 @@ async function approveDraft(
     const direct = approved.tasks.some(
         (task) => task.effectiveProfile === "direct",
     );
+    const terminalSummary = isTerminalSnapshot(snapshot)
+        ? renderRunObservation(
+              observeRun(approved, snapshot, now(runtime)),
+              ctx.mode === "tui" ? ctx.ui.theme : undefined,
+          )
+        : undefined;
     return textResult(
         [
-            `SDD run ${runId} started.`,
-            direct
-                ? `Direct tasks require sdd_direct_complete({ runId: "${runId}", ... }).`
-                : "The approved workflow has started.",
+            terminalSummary ?? `SDD run ${runId} started.`,
+            ...(terminalSummary
+                ? []
+                : [
+                      direct
+                          ? `Direct tasks require sdd_direct_complete({ runId: "${runId}", ... }).`
+                          : "The approved workflow has started.",
+                  ]),
             ...(reviewCleanupError
                 ? [
                       `Review progress cleanup pending (reviewCleanupPending: true, reviewCleanupError: ${reviewCleanupError}).`,
@@ -977,6 +1031,7 @@ function observeRun(
                     status: response.status,
                     childRunId: response.runId,
                     acceptance: response.acceptance,
+                    error: response.error,
                     outputPath: response.outputPath,
                     sessionFile: response.sessionFile,
                 }),
@@ -1019,6 +1074,10 @@ function runStateGlyph(
     return theme ? theme.fg(color, glyph) : glyph;
 }
 
+function boundedDisplay(value: string, maximum = 160): string {
+    return value.length <= maximum ? value : `${value.slice(0, maximum - 1)}…`;
+}
+
 export function renderRunObservation(
     observation: ReturnType<typeof observeRun>,
     theme?: ObservationTheme,
@@ -1026,6 +1085,12 @@ export function renderRunObservation(
     const lines = [
         `${runStateGlyph(theme, observation.snapshot.state)} ${observation.snapshot.runId}: ${observation.snapshot.state}`,
         `estimate: ${observation.qualitativeEstimate} (${observation.estimateDrift})`,
+        ...(observation.snapshot.workspace
+            ? [
+                  `workspace: isolated (${boundedDisplay(observation.snapshot.workspace.worktreePath)})`,
+                  `delivery: ${observation.snapshot.workspace.delivery.status}${observation.snapshot.workspace.delivery.patchDigest ? ` (${observation.snapshot.workspace.delivery.patchDigest.slice(0, 12)})` : ""}`,
+              ]
+            : []),
         "tasks:",
         ...observation.selectedProfiles.map((task) => {
             const taskSnapshot = observation.snapshot.tasks[task.taskId];
@@ -1058,7 +1123,7 @@ export function renderRunObservation(
         ...(observation.acceptanceEvidence.length
             ? observation.acceptanceEvidence.map(
                   (evidence) =>
-                      `- ${evidence.taskId}: ${evidence.status}, acceptance ${evidence.acceptance?.status ?? "not_reported"}, child ${evidence.childRunId ?? "not_reported"}`,
+                      `- ${evidence.taskId}: ${evidence.status}, acceptance ${evidence.acceptance?.status ?? "not_reported"}, child ${evidence.childRunId ?? "not_reported"}${evidence.error ? `, error ${boundedDisplay(evidence.error)}` : ""}`,
               )
             : ["- none"]),
     ];
@@ -1257,6 +1322,115 @@ export function registerSddExtension(
     });
 
     pi.registerTool({
+        name: "sdd_apply",
+        label: "Apply Isolated SDD Run",
+        description:
+            "After native confirmation, apply a completed isolated SDD worktree without staging, committing, or pushing.",
+        parameters: ApplySchema,
+        async execute(_id, params, _signal, _onUpdate, ctx) {
+            if (!ctx.hasUI) {
+                throw new Error(
+                    "sdd_apply requires a native Pi confirmation UI.",
+                );
+            }
+            const snapshot = requireSnapshot(runtime.store, params.runId);
+            const manifest = runtime.store.loadManifest(params.runId);
+            if (!manifest || manifest.state !== "approved") {
+                throw new Error(
+                    `Approved manifest not found: ${params.runId}.`,
+                );
+            }
+            if (snapshot.state !== "completed") {
+                throw new Error(
+                    `sdd_apply is only available for completed runs: ${params.runId}.`,
+                );
+            }
+            if (!snapshot.workspace || snapshot.workspace.mode !== "isolated") {
+                throw new Error(
+                    `sdd_apply requires an isolated workspace: ${params.runId}.`,
+                );
+            }
+            if (snapshot.workspace.delivery.status === "applied") {
+                const observation = observeRun(
+                    manifest,
+                    snapshot,
+                    now(runtime),
+                );
+                return textResult(
+                    `SDD apply already applied for ${params.runId}.\n${renderRunObservation(
+                        observation,
+                        ctx.mode === "tui" ? ctx.ui.theme : undefined,
+                    )}`,
+                    { snapshot, observation },
+                );
+            }
+            if (!runtime.workspace) {
+                throw new Error(
+                    "SDD isolated workspace support is unavailable.",
+                );
+            }
+            const confirmed = await ctx.ui.confirm(
+                "Apply isolated SDD changes",
+                `Apply the validated changes from SDD run ${params.runId} to the current source worktree? This does not commit or push.`,
+            );
+            if (!confirmed) {
+                return textResult(
+                    `SDD apply cancelled for ${params.runId}; source unchanged.`,
+                    { snapshot },
+                );
+            }
+            const currentSnapshot = requireSnapshot(
+                runtime.store,
+                params.runId,
+            );
+            if (currentSnapshot.state !== "completed") {
+                throw new Error(
+                    `sdd_apply is only available for completed runs: ${params.runId}.`,
+                );
+            }
+            if (
+                !currentSnapshot.workspace ||
+                currentSnapshot.workspace.mode !== "isolated"
+            ) {
+                throw new Error(
+                    `sdd_apply requires an isolated workspace: ${params.runId}.`,
+                );
+            }
+            if (currentSnapshot.workspace.delivery.status === "applied") {
+                const observation = observeRun(
+                    manifest,
+                    currentSnapshot,
+                    now(runtime),
+                );
+                return textResult(
+                    `SDD apply already applied for ${params.runId}.\n${renderRunObservation(
+                        observation,
+                        ctx.mode === "tui" ? ctx.ui.theme : undefined,
+                    )}`,
+                    { snapshot: currentSnapshot, observation },
+                );
+            }
+            const delivery = await runtime.workspace.apply(
+                currentSnapshot.workspace,
+                ctx.cwd,
+            );
+            const applied = runtime.workflow.recordWorkspaceApplied(
+                params.runId,
+                delivery.patchDigest,
+                now(runtime),
+            );
+            const observation = observeRun(manifest, applied, now(runtime));
+            return textResult(
+                `SDD isolated workspace applied for ${params.runId}.\n${renderRunObservation(
+                    observation,
+                    ctx.mode === "tui" ? ctx.ui.theme : undefined,
+                )}`,
+                { snapshot: applied, observation },
+            );
+        },
+    });
+
+    pi.registerTool({
         name: "sdd_cancel",
         label: "Cancel SDD Run",
         description: "Persist and request cancellation for an SDD run.",
@@ -1299,6 +1473,7 @@ export function registerSddExtension(
                     "utf8",
                 ),
                 params.recovery as RecoveryAttestation | undefined,
+                ctx.cwd,
             );
             liveUi.track(ctx, manifest, directSnapshot, true);
             if (ctx.mode === "tui") {
