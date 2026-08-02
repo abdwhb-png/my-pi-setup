@@ -122,15 +122,24 @@ Pi sends prefixed model IDs: `ocg/go-deepseek-v4-flash` → CPA strips `ocg/` �
 
 ### Sub-agent model strategy (July 2026)
 
-#### Mental model
+#### Mental model — proportionnalité coût ↔ complexité
 
-Les subagents sont classés en 3 tiers de complexité. Le choix du modèle suit deux priorités : **disponibilité d'abord, coût ensuite**.
+`settings.json` est la **propriété exclusive de l'utilisateur** : il peut attribuer les modèles comme il le veut, où il le veut, à tout moment. Les tables de cette section ne sont **pas une source de vérité** à re-synchroniser : ce sont des instantanés de référence (juillet 2026), un point de départ possible, pas une norme. Si `settings.json` diverge de la mémoire, c'est `settings.json` qui a raison — la mémoire documente un principe, pas l'état courant de la config.
 
-| Tier       | Subagents                                           | Besoin                               | Modèle primaire            | Coût (in/out) |
-| ---------- | --------------------------------------------------- | ------------------------------------ | -------------------------- | ------------- |
-| **Low**    | worker, delegate, scout, task-doer, context-builder | Tâches simples, code, lecture        | `ocg/go-deepseek-v4-flash` | $0.14/$0.28   |
-| **Medium** | researcher, planner, sdd-orchestrator               | Analyse, recherche, planification    | `ocg/go-deepseek-v4-pro`   | $1.74/$3.48   |
-| **High**   | reviewer, oracle                                    | Revue critique, décision stratégique | `ocg/go-glm-5.2`           | $1.40/$4.40   |
+Le seul principe structurant est la **proportionnalité** : tâche cheap → modèle cheap, tâche complexe → modèle performant.
+
+- **Tâches cheaps, répétitives, à faible enjeu** (code simple, lecture de fichiers, recherches ciblées, exécution) → **modèles cheaps** (ex. `deepseek-v4-flash`). Inutile d'y brûler des tokens chers.
+- **Tâches complexes, d'orchestration, de planification ou de review importante** (plans multi-étapes, décisions stratégiques, revue critique, arbitrages) → **modèles plus performants** (ex. `deepseek-v4-pro`, `glm-5.2`). La qualité de l'output justifie le coût.
+
+Pour classer un subagent, se poser la question : « qu'est-ce qu'il produit et quel est l'impact d'une erreur ? » — pas « quel modèle était listé dans la mémoire ». Les 3 tiers ci-dessous ne font que catégoriser cette complexité, ils ne figent aucune affectation.
+
+| Tier       | Type de tâche                         | Exemples de subagents                               | Profil de modèle                        |
+| ---------- | ------------------------------------- | --------------------------------------------------- | --------------------------------------- |
+| **Low**    | Simple, répétitif, faible enjeu       | worker, delegate, scout, task-doer, context-builder | Cheap (ex. `deepseek-v4-flash`)         |
+| **Medium** | Analyse, recherche, planification     | researcher, planner, sdd-orchestrator               | Milieu de gamme (ex. `deepseek-v4-pro`) |
+| **High**   | Review critique, décision stratégique | reviewer, oracle                                    | Haut de gamme (ex. `glm-5.2`)           |
+
+> ⚠️ **Instantané, pas norme** : les affectations ci-dessous (juillet 2026) sont une configuration passée, fournie comme point de départ. L'utilisateur est libre — et même encouragé — d'en diverger selon ses besoins du moment.
 
 #### Stratégie de fallback
 
@@ -164,23 +173,23 @@ Chaque subagent a 2 fallbacks. Le principe général : **ocg → pool payé → 
 - **Mix provider = résilience** : primary Go, FB1 OpenRouter → deux infrastructures distinctes
 - **Coût maîtrisé** : les low complexity tournent à $0.14/$0.28 max, les medium/high ont des fallbacks moins chers que leur primary
 
-#### Règle pour ajouter un nouveau subagent
+#### Règle pour (ré)attribuer un subagent
 
-1. Déterminer son tier (low/medium/high) selon la complexité de sa tâche
-2. Lui assigner le primary et les fallbacks correspondant à son tier
-3. Reviewer et oracle utilisent le pattern haute complexité (fb1 ocg, fb2 paid, pas de free)
-4. Toujours utiliser le préfixe `cpa/` pour verrouiller le provider
-5. Enregistrer la décision ici et dans `settings.json` → `subagents.agentOverrides`
+1. Estimer la complexité réelle de sa tâche (simple/répétitif → cheap ; complexe/orchestration/review → performant)
+2. Choisir librement le modèle et le provider — l'instantané n'est qu'une suggestion
+3. `settings.json` → `subagents.agentOverrides` est la **seule source de vérité opérationnelle**
+4. Ne pas mettre à jour MEMORY.md pour refléter chaque changement : la mémoire documente le principe, pas l'état courant
+5. Astuce technique : le préfixe `cpa/` verrouille le provider et survit aux changements de modèle courant (`/model`)
 
-#### Sub-agent resilience
+#### Sub-agent resilience (technique)
 
-Sub-agents use `cpa/` provider prefix in settings.json to survive `/model` changes:
+Astuce technique, pas doctrinale : sub-agents utilisent le préfixe `cpa/` dans `settings.json` pour survivre aux changements de modèle courant :
 
 ```json
 "worker": { "model": "cpa/ocg/go-deepseek-v4-flash" }
 ```
 
-`cpa/` locks the provider; the model ID determines CPA routing (ocg/ → Go, no prefix → pool global).
+`cpa/` verrouille le provider ; l'ID de modèle détermine le routage CPA (ocg/ → Go, pas de préfixe → pool global). C'est un détail d'implémentation, pas une obligation d'utiliser tel ou tel modèle.
 
 ### Decisions
 

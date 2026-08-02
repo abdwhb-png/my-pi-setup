@@ -1,8 +1,9 @@
 ---
 description: Delegate to subagents.
+role: atlas-orchestrator
 ---
 
-Delegate work to subagents.
+Delegate work to subagents. $ARGUMENTS
 Load `subagent-driven-development` as main skill to orchestrate subagents. And since you're using pi-subagents, also use `pi-subagents` skill to manage subagents.
 
 ## Model attribution
