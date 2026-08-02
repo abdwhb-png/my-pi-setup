@@ -1,5 +1,4 @@
-import { dlopen } from "bun:ffi";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
     existsSync,
@@ -69,35 +68,39 @@ const APPLY_CLEAN_WORKTREE_ERROR =
     "SDD apply requires the recorded source worktree to be clean.";
 const FLOCK_RETRY_COUNT = 20;
 const FLOCK_RETRY_DELAY_MS = 25;
-const LOCK_EXCLUSIVE = 2;
-const LOCK_UNLOCK = 8;
-const LOCK_NONBLOCKING = 4;
-
-type NativeFlock = (descriptor: number, operation: number) => number;
-
-let nativeFlock: NativeFlock | undefined;
-
-function flock(descriptor: number, operation: number): number {
-    if (process.platform !== "linux") {
-        throw new Error("SDD native workspace locking requires Linux.");
-    }
-    if (!nativeFlock) {
-        try {
-            nativeFlock = dlopen("libc.so.6", {
-                flock: { args: ["i32", "i32"], returns: "i32" },
-            }).symbols.flock;
-        } catch (error) {
-            throw new Error("SDD native workspace locking is unavailable.", {
-                cause: error,
-            });
-        }
-    }
-    return nativeFlock(descriptor, operation);
-}
+const FLOCK_HELD_EXIT_CODE = 75;
+const FLOCK_INHERITED_DESCRIPTOR = 3;
 
 class WorkspaceLockHeldError extends Error {
     constructor(lockPath: string) {
         super(`SDD workspace lock is already held: ${lockPath}.`);
+    }
+}
+
+function lockInheritedDescriptor(descriptor: number, lockPath: string): void {
+    const result = spawnSync(
+        "flock",
+        [
+            "-n",
+            "-E",
+            String(FLOCK_HELD_EXIT_CODE),
+            String(FLOCK_INHERITED_DESCRIPTOR),
+        ],
+        { stdio: ["ignore", "ignore", "pipe", descriptor] },
+    );
+    if (result.error) {
+        throw new Error(`SDD workspace lock command failed: ${lockPath}.`, {
+            cause: result.error,
+        });
+    }
+    if (result.status === FLOCK_HELD_EXIT_CODE) {
+        throw new WorkspaceLockHeldError(lockPath);
+    }
+    if (result.status !== 0) {
+        const details = result.stderr?.toString().trim();
+        throw new Error(
+            `SDD workspace lock command failed: ${lockPath}${details ? `: ${details}` : "."}`,
+        );
     }
 }
 
@@ -577,29 +580,20 @@ export class GitWorkspaceManager implements SddWorkspaceExecution {
             });
         }
         try {
-            if (flock(descriptor, LOCK_EXCLUSIVE | LOCK_NONBLOCKING) !== 0) {
-                throw new WorkspaceLockHeldError(lockPath);
-            }
+            lockInheritedDescriptor(descriptor, lockPath);
         } catch (error) {
             closeSync(descriptor);
             throw error;
         }
-        // Keep this descriptor open in Pi for the full action. Its kernel lock
-        // therefore cannot outlive the Pi process that owns the operation.
+        // `flock` locks the inherited open-file description. The short-lived
+        // helper exits immediately; Pi retains this descriptor for the action,
+        // so the kernel lock cannot outlive Pi or disappear while Pi continues.
         let released = false;
         return {
             async release(): Promise<void> {
                 if (released) return;
                 released = true;
-                try {
-                    if (flock(descriptor, LOCK_UNLOCK) !== 0) {
-                        throw new Error(
-                            `SDD workspace lock did not release: ${lockPath}.`,
-                        );
-                    }
-                } finally {
-                    closeSync(descriptor);
-                }
+                closeSync(descriptor);
             },
         };
     }
