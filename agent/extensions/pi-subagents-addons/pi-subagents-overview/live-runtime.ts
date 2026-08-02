@@ -1,23 +1,32 @@
-import { readAsyncArtifacts } from './artifact-reader.ts';
-import { LiveRunStore, type AsyncLiveRun } from './fleet-store.ts';
+import {
+    SUBAGENT_DELEGATION_RESPONSE_EVENT,
+    SUBAGENT_DELEGATION_STARTED_EVENT,
+} from "pi-subagents/delegation";
+import { readAsyncArtifacts } from "./artifact-reader.ts";
+import { LiveRunStore, type AsyncLiveRun } from "./fleet-store.ts";
 import {
     SUBAGENT_RPC_READY_EVENT,
     SubagentRpcClient,
     parseFleetStatus,
     type EventBusLike,
-} from './rpc-client.ts';
+} from "./rpc-client.ts";
 
-const ASYNC_STARTED_EVENT = 'subagent:async-started';
-const ASYNC_COMPLETE_EVENT = 'subagent:async-complete';
-const PROCESS_TERMINAL_EVENT = 'subagent:process-terminal';
+const ASYNC_STARTED_EVENT = "subagent:async-started";
+const ASYNC_COMPLETE_EVENT = "subagent:async-complete";
+const PROCESS_TERMINAL_EVENT = "subagent:process-terminal";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
+    return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function sessionIdFrom(value: unknown): string | undefined {
     if (!isRecord(value)) return undefined;
-    return typeof value.sessionId === 'string' ? value.sessionId : undefined;
+    return typeof value.sessionId === "string" ? value.sessionId : undefined;
+}
+
+function requestIdFrom(value: unknown): string | undefined {
+    if (!isRecord(value)) return undefined;
+    return typeof value.requestId === "string" ? value.requestId : undefined;
 }
 
 export class SubagentsLiveRuntime {
@@ -28,6 +37,8 @@ export class SubagentsLiveRuntime {
     private fleetStatusSupported = false;
     private disposed = false;
     private refreshPromise: Promise<void> | undefined;
+    private readonly activeForegroundDelegations = new Set<string>();
+    private readonly foregroundActivityListeners = new Set<() => void>();
 
     constructor(private readonly events: EventBusLike) {
         this.client = new SubagentRpcClient(events);
@@ -49,9 +60,9 @@ export class SubagentsLiveRuntime {
                 return;
             }
             const id =
-                typeof payload.runId === 'string'
+                typeof payload.runId === "string"
                     ? payload.runId
-                    : typeof payload.id === 'string'
+                    : typeof payload.id === "string"
                       ? payload.id
                       : undefined;
             const run = id
@@ -59,18 +70,50 @@ export class SubagentsLiveRuntime {
                       .snapshot()
                       .runs.find(
                           (candidate): candidate is AsyncLiveRun =>
-                              candidate.source === 'async' && candidate.id === id,
+                              candidate.source === "async" &&
+                              candidate.id === id,
                       )
                 : undefined;
             if (run) this.refreshArtifact(run);
+        });
+        this.listen(SUBAGENT_DELEGATION_STARTED_EVENT, (payload) => {
+            const requestId = requestIdFrom(payload);
+            if (!requestId) return;
+            this.activeForegroundDelegations.add(requestId);
+            this.notifyForegroundActivity();
+            void this.refresh();
+        });
+        this.listen(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
+            const requestId = requestIdFrom(payload);
+            if (
+                !requestId ||
+                !this.activeForegroundDelegations.delete(requestId)
+            ) {
+                return;
+            }
+            this.notifyForegroundActivity();
+            void this.refresh();
         });
     }
 
     async beginSession(sessionId?: string): Promise<void> {
         this.sessionId = sessionId;
         this.fleetStatusSupported = false;
+        if (this.activeForegroundDelegations.size > 0) {
+            this.activeForegroundDelegations.clear();
+            this.notifyForegroundActivity();
+        }
         this.store.reset();
         await this.negotiateAndRefresh();
+    }
+
+    hasActiveForegroundDelegations(): boolean {
+        return this.activeForegroundDelegations.size > 0;
+    }
+
+    subscribeForegroundActivity(listener: () => void): () => void {
+        this.foregroundActivityListeners.add(listener);
+        return () => this.foregroundActivityListeners.delete(listener);
     }
 
     refresh(): Promise<void> {
@@ -83,7 +126,7 @@ export class SubagentsLiveRuntime {
     }
 
     async control(
-        action: 'steer' | 'interrupt' | 'stop',
+        action: "steer" | "interrupt" | "stop",
         run: AsyncLiveRun,
         message?: string,
     ): Promise<unknown> {
@@ -91,12 +134,12 @@ export class SubagentsLiveRuntime {
             throw new Error(`Async run ${run.id} is no longer controllable.`);
         }
         const steeringMessage = message?.trim();
-        if (action === 'steer' && !steeringMessage) {
-            throw new Error('Steer requires a non-empty message.');
+        if (action === "steer" && !steeringMessage) {
+            throw new Error("Steer requires a non-empty message.");
         }
         return this.client.request(action, {
             id: run.controlId,
-            ...(action === 'steer' ? { message: steeringMessage } : {}),
+            ...(action === "steer" ? { message: steeringMessage } : {}),
         });
     }
 
@@ -105,6 +148,8 @@ export class SubagentsLiveRuntime {
         this.disposed = true;
         for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
         this.client.dispose();
+        this.activeForegroundDelegations.clear();
+        this.foregroundActivityListeners.clear();
         this.store.reset();
     }
 
@@ -122,10 +167,14 @@ export class SubagentsLiveRuntime {
         );
     }
 
+    private notifyForegroundActivity(): void {
+        for (const listener of this.foregroundActivityListeners) listener();
+    }
+
     private async negotiateAndRefresh(): Promise<void> {
         if (this.disposed) return;
         try {
-            const ping = await this.client.request('ping');
+            const ping = await this.client.request("ping");
             const capabilities =
                 isRecord(ping) && isRecord(ping.capabilities)
                     ? ping.capabilities
@@ -143,7 +192,7 @@ export class SubagentsLiveRuntime {
     private async refreshNow(): Promise<void> {
         if (this.fleetStatusSupported) {
             try {
-                const status = await this.client.request('status');
+                const status = await this.client.request("status");
                 const fleet =
                     isRecord(status) && status.fleet !== undefined
                         ? parseFleetStatus(status.fleet)
@@ -156,7 +205,7 @@ export class SubagentsLiveRuntime {
             this.store.setFleetStatus(undefined);
         }
         for (const run of this.store.snapshot().runs) {
-            if (run.source === 'async') this.refreshArtifact(run);
+            if (run.source === "async") this.refreshArtifact(run);
         }
     }
 

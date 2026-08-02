@@ -6,6 +6,10 @@ import type {
     Theme,
 } from '@earendil-works/pi-coding-agent';
 import type { Component } from '@earendil-works/pi-tui';
+import {
+    SUBAGENT_DELEGATION_RESPONSE_EVENT,
+    SUBAGENT_DELEGATION_STARTED_EVENT,
+} from 'pi-subagents/delegation';
 import registerSubagentsOverview from './index.ts';
 import {
     SUBAGENT_RPC_REPLY_EVENT_PREFIX,
@@ -13,6 +17,249 @@ import {
 } from './rpc-client.ts';
 
 describe('pi-subagents-overview live integration', () => {
+    it('closes the overview and preserves legacy and Kitty Ctrl+Alt+F for the native inspector', async () => {
+        type Handler = (
+            event: { type: string },
+            ctx: ExtensionContext,
+        ) => void | Promise<void>;
+        type TerminalInputHandler = (
+            data: string,
+        ) => { consume?: boolean; data?: string } | undefined;
+        const extensionHandlers = new Map<string, Handler>();
+        const busHandlers = new Map<string, Set<(data: unknown) => void>>();
+        let overviewHandler:
+            | ((args: string, ctx: ExtensionCommandContext) => Promise<void>)
+            | undefined;
+        let terminalInputHandler: TerminalInputHandler | undefined;
+        let terminalInputUnsubscribed = false;
+        let overlayOpen = false;
+        const events = {
+            on: (event: string, handler: (data: unknown) => void) => {
+                const handlers = busHandlers.get(event) ?? new Set();
+                handlers.add(handler);
+                busHandlers.set(event, handlers);
+                return () => handlers.delete(handler);
+            },
+            emit: (event: string, data: unknown) => {
+                if (event === SUBAGENT_RPC_REQUEST_EVENT) {
+                    const request = data as { requestId: string; method: string };
+                    queueMicrotask(() =>
+                        events.emit(
+                            `${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`,
+                            {
+                                version: 1,
+                                requestId: request.requestId,
+                                method: request.method,
+                                success: true,
+                                data:
+                                    request.method === 'ping'
+                                        ? { capabilities: {} }
+                                        : {},
+                            },
+                        ),
+                    );
+                }
+                for (const handler of busHandlers.get(event) ?? []) handler(data);
+            },
+        };
+        const pi = {
+            events,
+            registerMessageRenderer: () => {},
+            registerCommand: (
+                name: string,
+                command: {
+                    handler: (
+                        args: string,
+                        ctx: ExtensionCommandContext,
+                    ) => Promise<void>;
+                },
+            ) => {
+                if (name === 'subagents-overview') {
+                    overviewHandler = command.handler;
+                }
+            },
+            on: (event: string, handler: Handler) =>
+                extensionHandlers.set(event, handler),
+        } as unknown as ExtensionAPI;
+        registerSubagentsOverview(pi);
+        const theme = {
+            fg: (_color: string, text: string) => text,
+            bold: (text: string) => text,
+        } as unknown as Theme;
+        const ctx = {
+            mode: 'tui',
+            hasUI: true,
+            sessionManager: { getSessionId: () => 'session-1' },
+            ui: {
+                setWidget: () => {},
+                onTerminalInput: (handler: TerminalInputHandler) => {
+                    terminalInputHandler = handler;
+                    return () => {
+                        terminalInputUnsubscribed = true;
+                        terminalInputHandler = undefined;
+                    };
+                },
+                custom: async (
+                    factory: (
+                        tui: { requestRender(): void },
+                        theme: Theme,
+                        kb: unknown,
+                        done: (value: unknown) => void,
+                    ) => Component,
+                ) =>
+                    new Promise<void>((resolve) => {
+                        overlayOpen = true;
+                        factory(
+                            { requestRender: () => {} },
+                            theme,
+                            undefined,
+                            () => {
+                                overlayOpen = false;
+                                resolve();
+                            },
+                        );
+                    }),
+            },
+        } as unknown as ExtensionCommandContext;
+
+        await extensionHandlers.get('session_start')?.(
+            { type: 'session_start' },
+            ctx,
+        );
+        expect(terminalInputHandler?.('\x1b\x06')).toBeUndefined();
+
+        for (const input of ['\x1b\x06', '\x1b[102;7u']) {
+            const commandPromise = overviewHandler?.('', ctx);
+            await Bun.sleep(0);
+            expect(overlayOpen).toBe(true);
+            expect(terminalInputHandler?.(input)).toEqual({ data: input });
+            expect(overlayOpen).toBe(false);
+            await commandPromise;
+        }
+
+        await extensionHandlers.get('session_shutdown')?.(
+            { type: 'session_shutdown' },
+            ctx,
+        );
+        expect(terminalInputUnsubscribed).toBe(true);
+        expect(terminalInputHandler).toBeUndefined();
+    });
+
+    it('polls foreground delegations until their final response without opening the overview', async () => {
+        type Handler = (
+            event: { type: string },
+            ctx: ExtensionContext,
+        ) => void | Promise<void>;
+        const extensionHandlers = new Map<string, Handler>();
+        const busHandlers = new Map<string, Set<(data: unknown) => void>>();
+        const widgetChanges: Array<{ key: string; content: unknown }> = [];
+        let statusRequests = 0;
+        const events = {
+            on: (event: string, handler: (data: unknown) => void) => {
+                const handlers = busHandlers.get(event) ?? new Set();
+                handlers.add(handler);
+                busHandlers.set(event, handlers);
+                return () => handlers.delete(handler);
+            },
+            emit: (event: string, data: unknown) => {
+                if (event === SUBAGENT_RPC_REQUEST_EVENT) {
+                    const request = data as { requestId: string; method: string };
+                    if (request.method === 'status') statusRequests++;
+                    const responseData =
+                        request.method === 'ping'
+                            ? { capabilities: { fleetStatus: { version: 1 } } }
+                            : {
+                                  fleet: {
+                                      version: 1,
+                                      entries:
+                                          statusRequests === 3
+                                              ? [
+                                                    {
+                                                        key: 'foreground-1',
+                                                        agent: 'worker',
+                                                        startedAt: Date.now(),
+                                                        tokens: {
+                                                            input: 1,
+                                                            output: 1,
+                                                            total: 2,
+                                                        },
+                                                    },
+                                                ]
+                                              : [],
+                                      totalActive: statusRequests === 3 ? 1 : 0,
+                                      omitted: 0,
+                                  },
+                              };
+                    queueMicrotask(() =>
+                        events.emit(
+                            `${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`,
+                            {
+                                version: 1,
+                                requestId: request.requestId,
+                                method: request.method,
+                                success: true,
+                                data: responseData,
+                            },
+                        ),
+                    );
+                }
+                for (const handler of busHandlers.get(event) ?? []) handler(data);
+            },
+        };
+        const pi = {
+            events,
+            registerMessageRenderer: () => {},
+            registerCommand: () => {},
+            on: (event: string, handler: Handler) =>
+                extensionHandlers.set(event, handler),
+        } as unknown as ExtensionAPI;
+        registerSubagentsOverview(pi);
+        const ctx = {
+            mode: 'tui',
+            hasUI: true,
+            sessionManager: { getSessionId: () => 'session-1' },
+            ui: {
+                setWidget: (key: string, content: unknown) =>
+                    widgetChanges.push({ key, content }),
+                onTerminalInput: () => () => {},
+            },
+        } as unknown as ExtensionContext;
+
+        await extensionHandlers.get('session_start')?.(
+            { type: 'session_start' },
+            ctx,
+        );
+        events.emit(SUBAGENT_DELEGATION_STARTED_EVENT, {
+            version: 1,
+            requestId: 'request-1',
+        });
+        await Bun.sleep(550);
+
+        expect(statusRequests).toBeGreaterThanOrEqual(3);
+        expect(
+            widgetChanges.some(
+                (change) =>
+                    change.key === 'pi-subagents-live-widget' &&
+                    typeof change.content === 'function',
+            ),
+        ).toBe(true);
+
+        events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+            version: 1,
+            requestId: 'request-1',
+            status: 'completed',
+        });
+        await Bun.sleep(10);
+        expect(widgetChanges.at(-1)).toEqual({
+            key: 'pi-subagents-live-widget',
+            content: undefined,
+        });
+        await extensionHandlers.get('session_shutdown')?.(
+            { type: 'session_shutdown' },
+            ctx,
+        );
+    });
+
     it('installs the live widget for an active fleet and removes it on shutdown', async () => {
         type Handler = (
             event: { type: string },
@@ -86,6 +333,7 @@ describe('pi-subagents-overview live integration', () => {
             ui: {
                 setWidget: (key: string, content: unknown) =>
                     widgetChanges.push({ key, content }),
+                onTerminalInput: () => () => {},
             },
         } as unknown as ExtensionContext;
 
@@ -207,6 +455,7 @@ describe('pi-subagents-overview live integration', () => {
             sessionManager: { getSessionId: () => 'session-1' },
             ui: {
                 setWidget: () => {},
+                onTerminalInput: () => () => {},
                 input: async () => 'Continue carefully',
                 confirm: async (title: string) => {
                     confirmations.push(title);

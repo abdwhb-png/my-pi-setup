@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import {
+    SUBAGENT_DELEGATION_RESPONSE_EVENT,
+    SUBAGENT_DELEGATION_STARTED_EVENT,
+} from 'pi-subagents/delegation';
+import {
     SUBAGENT_RPC_REPLY_EVENT_PREFIX,
     SUBAGENT_RPC_REQUEST_EVENT,
     type EventBusLike,
@@ -68,6 +72,44 @@ class RuntimeEventBus implements EventBusLike {
 }
 
 describe('SubagentsLiveRuntime', () => {
+    it('keeps foreground polling active until every delegation responds', async () => {
+        const events = new RuntimeEventBus();
+        const runtime = new SubagentsLiveRuntime(events);
+        const activity: boolean[] = [];
+        const unsubscribe = runtime.subscribeForegroundActivity(() => {
+            activity.push(runtime.hasActiveForegroundDelegations());
+        });
+
+        await runtime.beginSession('session-1');
+        events.emit(SUBAGENT_DELEGATION_STARTED_EVENT, {
+            version: 1,
+            requestId: 'request-1',
+        });
+        events.emit(SUBAGENT_DELEGATION_STARTED_EVENT, {
+            version: 1,
+            requestId: 'request-2',
+        });
+
+        expect(runtime.hasActiveForegroundDelegations()).toBe(true);
+        events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+            version: 1,
+            requestId: 'request-1',
+            status: 'completed',
+        });
+        expect(runtime.hasActiveForegroundDelegations()).toBe(true);
+        events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+            version: 1,
+            requestId: 'request-2',
+            status: 'completed',
+        });
+
+        expect(runtime.hasActiveForegroundDelegations()).toBe(false);
+        expect(activity).toEqual([true, true, true, false]);
+
+        unsubscribe();
+        runtime.dispose();
+    });
+
     it('negotiates fleetStatus, tracks async lifecycle events, and disposes listeners', async () => {
         const events = new RuntimeEventBus();
         const runtime = new SubagentsLiveRuntime(events);

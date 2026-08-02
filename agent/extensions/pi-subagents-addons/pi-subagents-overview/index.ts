@@ -21,7 +21,12 @@ import type {
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+    Key,
+    matchesKey,
+    truncateToWidth,
+    visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { createWidget } from "../../_shared/fancy-footer";
 import type { AsyncLiveRun, LiveRunSnapshot } from "./fleet-store.ts";
@@ -601,6 +606,8 @@ export default function (pi: ExtensionAPI) {
     let stopWidgetRegistrationTimer: (() => void) | undefined;
     let liveViewOpen = false;
     let subagentToolActive = false;
+    let closeOverviewForNativeFleet: (() => void) | undefined;
+    let stopTerminalInputListener: (() => void) | undefined;
 
     const clearLiveTimers = (): void => {
         stopLivePolling?.();
@@ -656,7 +663,11 @@ export default function (pi: ExtensionAPI) {
             hideTimer.unref?.();
         }
 
-        const shouldPoll = visible || liveViewOpen || subagentToolActive;
+        const shouldPoll =
+            visible ||
+            liveViewOpen ||
+            subagentToolActive ||
+            liveRuntime.hasActiveForegroundDelegations();
         if (shouldPoll && !stopLivePolling) {
             const pollTimer = setInterval(() => {
                 void liveRuntime.refresh();
@@ -670,6 +681,8 @@ export default function (pi: ExtensionAPI) {
     };
 
     const unsubscribeLiveStore = liveRuntime.store.subscribe(syncLiveUi);
+    const unsubscribeForegroundActivity =
+        liveRuntime.subscribeForegroundActivity(syncLiveUi);
 
     const handleLiveAction = async (
         ctx: ExtensionCommandContext,
@@ -774,13 +787,16 @@ export default function (pi: ExtensionAPI) {
             }
 
             syncLiveUi();
+            let closeThisOverview: (() => void) | undefined;
             try {
                 await ctx.ui.custom<void>(
-                    (tui, theme, _kb, done) =>
-                        new SubagentsOverviewView({
+                    (tui, theme, _kb, done) => {
+                        closeThisOverview = () => done(undefined);
+                        closeOverviewForNativeFleet = closeThisOverview;
+                        return new SubagentsOverviewView({
                             theme,
                             data: buildOverviewData(),
-                            done: () => done(undefined),
+                            done: closeThisOverview,
                             requestRender: () => tui.requestRender(),
                             getTerminalRows: () => tui.terminal?.rows ?? 32,
                             getLiveSnapshot: () => liveRuntime.store.snapshot(),
@@ -797,7 +813,8 @@ export default function (pi: ExtensionAPI) {
                                 liveViewOpen = visible;
                                 syncLiveUi();
                             },
-                        }),
+                        });
+                    },
                     {
                         overlay: true,
                         overlayOptions: {
@@ -808,6 +825,9 @@ export default function (pi: ExtensionAPI) {
                     },
                 );
             } finally {
+                if (closeOverviewForNativeFleet === closeThisOverview) {
+                    closeOverviewForNativeFleet = undefined;
+                }
                 liveViewOpen = false;
                 syncLiveUi();
             }
@@ -972,6 +992,15 @@ export default function (pi: ExtensionAPI) {
 
     pi.on("session_start", async (_event, ctx) => {
         currentContext = ctx;
+        stopTerminalInputListener?.();
+        stopTerminalInputListener = ctx.ui.onTerminalInput((data) => {
+            const closeOverview = closeOverviewForNativeFleet;
+            if (!closeOverview || !matchesKey(data, Key.ctrlAlt("f"))) {
+                return undefined;
+            }
+            closeOverview();
+            return { data };
+        });
         clearSkillAgentCache();
         await liveRuntime.beginSession(
             ctx.sessionManager.getSessionId() ?? undefined,
@@ -1012,7 +1041,11 @@ export default function (pi: ExtensionAPI) {
 
     pi.on("session_shutdown", async (_event, ctx) => {
         clearLiveTimers();
+        stopTerminalInputListener?.();
+        stopTerminalInputListener = undefined;
+        closeOverviewForNativeFleet = undefined;
         unsubscribeLiveStore();
+        unsubscribeForegroundActivity();
         liveRuntime.dispose();
         widgetHandle?.remove(ctx);
         ctx.ui.setWidget(LIVE_WIDGET_ID, undefined);
