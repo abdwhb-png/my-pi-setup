@@ -25,6 +25,10 @@ import {
     type TaskState,
 } from './state-machine.ts';
 import { snapshotDigest, type SddStore } from './store.ts';
+import type {
+    SddDelegationActivityContext,
+    SddWorkflowObserver,
+} from './workflow-observer.ts';
 
 type WorkflowStore = Pick<SddStore, 'load' | 'save' | 'appendTransition'>;
 type WorkflowDelegation = Pick<DelegationClient, 'run' | 'cancel'>;
@@ -114,6 +118,7 @@ export class SddWorkflow {
         private readonly store: WorkflowStore,
         private readonly delegation: WorkflowDelegation,
         private readonly loadManifest: ManifestResolver,
+        private readonly observer?: SddWorkflowObserver,
     ) {}
 
     run(
@@ -1408,12 +1413,24 @@ export class SddWorkflow {
                 plannedAt: new Date().toISOString(),
             },
         });
-        const response = await this.delegation.run(request);
+        const activity = this.activityContext(
+            runId,
+            '__integration__',
+            'integration',
+            1,
+            request,
+        );
+        this.observePrepared(activity);
+        const response = await this.delegation.run(request, {
+            onStarted: (event) => this.observeStarted(activity, event),
+            onUpdate: (event) => this.observeUpdate(activity, event),
+        });
         snapshot = this.persist(runId, {
             type: 'integration-delegation-response-recorded',
             expectedRevision: snapshot.revision,
             response,
         });
+        this.observeFinished(activity, response);
         return this.applyIntegrationResponse(runId);
     }
 
@@ -1511,7 +1528,75 @@ export class SddWorkflow {
             timestamp: new Date().toISOString(),
             snapshotDigest: snapshotDigest(next),
         });
+        try {
+            this.observer?.onSnapshot?.(structuredClone(next));
+        } catch {
+            // Observability is best-effort and must never affect durable state.
+        }
         return next;
+    }
+
+    private activityContext(
+        runId: string,
+        taskId: string,
+        stage: string,
+        attempt: number,
+        request: Parameters<WorkflowDelegation['run']>[0],
+    ): SddDelegationActivityContext {
+        return {
+            runId,
+            taskId,
+            requestId: request.requestId,
+            stage,
+            attempt,
+            agent: request.agent,
+            ...(request.model === undefined ? {} : { model: request.model }),
+        };
+    }
+
+    private observePrepared(context: SddDelegationActivityContext): void {
+        try {
+            this.observer?.onDelegationPrepared?.(context);
+        } catch {
+            // Best-effort observer boundary.
+        }
+    }
+
+    private observeStarted(
+        context: SddDelegationActivityContext,
+        event: Parameters<
+            NonNullable<SddWorkflowObserver['onDelegationStarted']>
+        >[1],
+    ): void {
+        try {
+            this.observer?.onDelegationStarted?.(context, event);
+        } catch {
+            // Best-effort observer boundary.
+        }
+    }
+
+    private observeUpdate(
+        context: SddDelegationActivityContext,
+        event: Parameters<
+            NonNullable<SddWorkflowObserver['onDelegationUpdate']>
+        >[1],
+    ): void {
+        try {
+            this.observer?.onDelegationUpdate?.(context, event);
+        } catch {
+            // Best-effort observer boundary.
+        }
+    }
+
+    private observeFinished(
+        context: SddDelegationActivityContext,
+        response: SubagentDelegationResponse,
+    ): void {
+        try {
+            this.observer?.onDelegationFinished?.(context, response);
+        } catch {
+            // Best-effort observer boundary.
+        }
     }
 
     private taskTransition(
@@ -1616,8 +1701,20 @@ export class SddWorkflow {
             };
         }
         this.planDelegation(runId, task.id, request.requestId, stage, attempt);
-        const response = await this.delegation.run(request);
+        const activity = this.activityContext(
+            runId,
+            task.id,
+            stage,
+            attempt,
+            request,
+        );
+        this.observePrepared(activity);
+        const response = await this.delegation.run(request, {
+            onStarted: (event) => this.observeStarted(activity, event),
+            onUpdate: (event) => this.observeUpdate(activity, event),
+        });
         this.recordResponse(runId, task.id, response);
+        this.observeFinished(activity, response);
         return response;
     }
 

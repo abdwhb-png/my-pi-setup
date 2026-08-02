@@ -18,6 +18,7 @@ const terminalStatuses = [
     'interrupted',
     'turn_budget_exhausted',
     'tool_budget_exhausted',
+    'structured_output_failed',
     'acceptance_failed',
     'invalid_request',
     'unavailable_context',
@@ -25,6 +26,7 @@ const terminalStatuses = [
 type DelegationAcceptance = NonNullable<
     SubagentDelegationResponse['acceptance']
 >;
+type DelegationEvidenceStatus = DelegationAcceptance['evidenceStatus'];
 const acceptanceStatuses = [
     'pending',
     'not-required',
@@ -32,10 +34,26 @@ const acceptanceStatuses = [
     'attested',
     'checked',
     'verified',
+    'review-required',
     'reviewed',
     'accepted',
     'rejected',
 ] as const satisfies ReadonlyArray<DelegationAcceptance['status']>;
+const evidenceStatuses = [
+    'pending',
+    'not-required',
+    'claimed',
+    'attested',
+    'checked',
+    'verified',
+    'rejected',
+] as const satisfies ReadonlyArray<DelegationEvidenceStatus>;
+
+interface ParsedAcceptance {
+    status: DelegationAcceptance['status'];
+    evidenceStatus?: DelegationEvidenceStatus;
+    explicit: boolean;
+}
 
 function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
     return typeof value === 'object' && value !== null;
@@ -140,13 +158,30 @@ function isTerminalStatus(
 
 function isOptionalAcceptance(
     value: unknown,
-): value is DelegationAcceptance | undefined {
+): value is ParsedAcceptance | undefined {
     return (
         value === undefined ||
         (isRecord(value) &&
             acceptanceStatuses.some((status) => status === value.status) &&
-            typeof value.explicit === 'boolean')
+            typeof value.explicit === 'boolean' &&
+            (value.evidenceStatus === undefined ||
+                evidenceStatuses.some(
+                    (status) => status === value.evidenceStatus,
+                )))
     );
+}
+
+function fallbackEvidenceStatus(
+    status: DelegationAcceptance['status'],
+): DelegationEvidenceStatus {
+    if (
+        status === 'review-required' ||
+        status === 'reviewed' ||
+        status === 'accepted'
+    ) {
+        return 'verified';
+    }
+    return status;
 }
 
 function parseTerminalResponse(
@@ -193,6 +228,9 @@ function parseTerminalResponse(
     if (value.acceptance !== undefined) {
         response.acceptance = {
             status: value.acceptance.status,
+            evidenceStatus:
+                value.acceptance.evidenceStatus ??
+                fallbackEvidenceStatus(value.acceptance.status),
             explicit: value.acceptance.explicit,
         };
     }

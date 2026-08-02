@@ -181,6 +181,7 @@ test('settles every terminal status and ignores malformed terminal payloads', as
         'interrupted',
         'turn_budget_exhausted',
         'tool_budget_exhausted',
+        'structured_output_failed',
         'acceptance_failed',
         'invalid_request',
         'unavailable_context',
@@ -269,7 +270,11 @@ test('ignores malformed response optionals and sanitizes a valid response', asyn
         output: 'done',
         outputPath: '/tmp/output',
         sessionFile: '/tmp/session.jsonl',
-        acceptance: { status: 'verified', explicit: true },
+        acceptance: {
+            status: 'verified',
+            evidenceStatus: 'verified',
+            explicit: true,
+        },
         turns: 1,
         toolCount: 2,
         durationMs: 3,
@@ -281,6 +286,25 @@ test('ignores malformed response optionals and sanitizes a valid response', asyn
 
     events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, valid);
     await expect(pending).resolves.toEqual(sanitized);
+});
+
+test('accepts the public review-required acceptance status', async () => {
+    const events = new FakeEventBus();
+    const client = new DelegationClient(events);
+    const pending = client.run(request('req-review'));
+    const terminal = {
+        version: 1,
+        requestId: 'req-review',
+        status: 'completed',
+        acceptance: {
+            status: 'review-required',
+            evidenceStatus: 'verified',
+            explicit: true,
+        },
+    } as const;
+
+    events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, terminal);
+    await expect(pending).resolves.toEqual(terminal);
 });
 
 test('rejects at its hard deadline and ignores a late response', async () => {
@@ -503,7 +527,7 @@ test('a terminal response clears its hard deadline', async () => {
 test('uses only the public pi-subagents delegation boundary', () => {
     const source = readFileSync(new URL('./delegation-client.ts', import.meta.url), 'utf8');
 
-    expect(source).toContain("from 'pi-subagents/delegation'");
+    expect(source).toMatch(/from ["']pi-subagents\/delegation["']/);
     expect(source).not.toContain('/src/');
     expect(source).not.toContain('subagents:rpc');
     expect(source).not.toContain('child_process');

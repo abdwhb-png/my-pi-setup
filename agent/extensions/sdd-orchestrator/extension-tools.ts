@@ -12,6 +12,12 @@ import {
     resolveRuntimePath,
     toPortableHomePath,
 } from "../_shared/home-path.ts";
+import type { SddActivityStore } from "./activity-store.ts";
+import {
+    openSddLive,
+    renderSddActivityWidget,
+    type SddActivitySource,
+} from "./activity-ui.ts";
 import {
     AssessmentCache,
     assessmentCacheKey,
@@ -81,6 +87,7 @@ export interface SddRuntime {
     readonly store: ExtensionStore;
     readonly delegation: ExtensionDelegation;
     readonly workflow: ExtensionWorkflow;
+    readonly activity?: SddActivityStore;
     readonly config?: (cwd: string) => SddConfig;
     readonly now?: () => string;
     readonly openReview?: (
@@ -88,13 +95,104 @@ export interface SddRuntime {
         draft: DraftManifest,
         progressStorage: ReviewProgressStorage,
     ) => Promise<ManifestReviewOutcome>;
+    readonly openLive?: (
+        ctx: ExtensionContext,
+        source: SddActivitySource,
+        runId: string,
+    ) => Promise<void>;
+}
+
+const LIVE_WIDGET_ID = "sdd-orchestrator-live";
+const TERMINAL_WIDGET_LINGER_MS = 5_000;
+
+interface SddLiveUiCoordinator {
+    track(
+        ctx: ExtensionContext,
+        manifest: ApprovedManifest,
+        snapshot: RunSnapshot,
+        live: boolean,
+    ): void;
+    dispose(ctx?: ExtensionContext): void;
+}
+
+function createLiveUiCoordinator(runtime: SddRuntime): SddLiveUiCoordinator {
+    const activity = runtime.activity;
+    let currentContext: ExtensionContext | undefined;
+    const terminalTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    const syncWidget = (): void => {
+        const ctx = currentContext;
+        if (!activity || !ctx || ctx.mode !== "tui") return;
+        const runs = activity.getLiveRuns();
+        if (runs.length === 0) {
+            ctx.ui.setWidget?.(LIVE_WIDGET_ID, undefined);
+            return;
+        }
+        ctx.ui.setWidget?.(
+            LIVE_WIDGET_ID,
+            (_tui, theme) => ({
+                render(width: number) {
+                    const visibleRuns = activity.getLiveRuns();
+                    const selected =
+                        visibleRuns.find((run) => !run.presentationTerminal) ??
+                        visibleRuns.at(-1);
+                    return selected
+                        ? renderSddActivityWidget(
+                              selected,
+                              width,
+                              theme,
+                              Date.now(),
+                          )
+                        : [];
+                },
+                invalidate() {},
+            }),
+            { placement: "belowEditor" },
+        );
+
+        for (const run of runs) {
+            const existing = terminalTimers.get(run.runId);
+            if (!run.presentationTerminal) {
+                if (existing) clearTimeout(existing);
+                terminalTimers.delete(run.runId);
+                continue;
+            }
+            if (existing) continue;
+            const timer = setTimeout(() => {
+                terminalTimers.delete(run.runId);
+                activity.setLive(run.runId, false);
+            }, TERMINAL_WIDGET_LINGER_MS);
+            timer.unref?.();
+            terminalTimers.set(run.runId, timer);
+        }
+    };
+    const unsubscribe = activity?.subscribe(syncWidget);
+
+    return {
+        track(ctx, manifest, snapshot, live) {
+            if (!activity) return;
+            if (ctx.mode === "tui") currentContext = ctx;
+            activity.trackRun(manifest, snapshot, { live });
+        },
+        dispose(ctx) {
+            for (const timer of terminalTimers.values()) clearTimeout(timer);
+            terminalTimers.clear();
+            unsubscribe?.();
+            const target = ctx ?? currentContext;
+            if (target?.mode === "tui") {
+                target.ui.setWidget?.(LIVE_WIDGET_ID, undefined);
+            }
+            currentContext = undefined;
+        },
+    };
 }
 
 export function createReviewProgressStorage(
     store: Pick<SddStore, "loadReviewProgress" | "saveReviewProgress">,
 ): ReviewProgressStorage {
     return {
-        loadReviewProgress: (manifestId) => store.loadReviewProgress(manifestId),
+        loadReviewProgress: (manifestId) =>
+            store.loadReviewProgress(manifestId),
         saveReviewProgress: (manifestId, expectedRevision, state) => {
             try {
                 const persisted = store.saveReviewProgress(
@@ -104,7 +202,8 @@ export function createReviewProgressStorage(
                 );
                 return { type: "ok", revision: persisted.revision };
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message =
+                    error instanceof Error ? error.message : String(error);
                 if (error instanceof ReviewProgressConflictError) {
                     try {
                         const current = store.loadReviewProgress(manifestId);
@@ -520,6 +619,7 @@ async function approveDraft(
     manifest: DraftManifest | ApprovedManifest,
     decision: ManifestDecision,
     recordedApprovalEntries: Set<string>,
+    liveUi: SddLiveUiCoordinator,
     signal?: AbortSignal,
 ) {
     let approved: ApprovedManifest;
@@ -576,7 +676,16 @@ async function approveDraft(
     const runId = approved.manifestId;
     ensureApprovalEntry(pi, ctx, approved, recordedApprovalEntries);
     if (!isTerminalSnapshot(snapshot)) {
-        snapshot = await runtime.workflow.run(runId, ctx, signal);
+        liveUi.track(ctx, approved, snapshot, true);
+        if (ctx.mode === "tui") {
+            ctx.ui.setWorkingMessage("running SDD workflow");
+        }
+        try {
+            snapshot = await runtime.workflow.run(runId, ctx, signal);
+            runtime.activity?.onSnapshot(snapshot);
+        } finally {
+            if (ctx.mode === "tui") ctx.ui.setWorkingMessage();
+        }
     }
     const direct = approved.tasks.some(
         (task) => task.effectiveProfile === "direct",
@@ -652,6 +761,7 @@ async function prepare(
     planPathInput: string,
     globalProfile: Profile,
     recordedApprovalEntries: Set<string>,
+    liveUi: SddLiveUiCoordinator,
     signal?: AbortSignal,
     onUpdate?: AgentToolUpdateCallback,
 ) {
@@ -720,6 +830,7 @@ async function prepare(
                     draft,
                     outcome.decision,
                     recordedApprovalEntries,
+                    liveUi,
                     signal,
                 );
             }
@@ -967,6 +1078,7 @@ export function registerSddExtension(
     runtime: SddRuntime,
 ): void {
     const recordedApprovalEntries = new Set<string>();
+    const liveUi = createLiveUiCoordinator(runtime);
     pi.registerTool({
         name: "sdd_prepare",
         label: "Prepare SDD Manifest",
@@ -981,6 +1093,7 @@ export function registerSddExtension(
                 params.planPath,
                 params.globalProfile,
                 recordedApprovalEntries,
+                liveUi,
                 signal,
                 update,
             ),
@@ -1000,6 +1113,7 @@ export function registerSddExtension(
                 params.planPath,
                 "standard",
                 recordedApprovalEntries,
+                liveUi,
                 signal,
                 update,
             );
@@ -1041,6 +1155,7 @@ export function registerSddExtension(
                     approvedAt: now(runtime),
                 },
                 recordedApprovalEntries,
+                liveUi,
                 signal,
             );
         },
@@ -1175,7 +1290,7 @@ export function registerSddExtension(
                 validationOutput: params.validationOutput,
                 residualRisks: params.residualRisks,
             };
-            runtime.workflow.completeDirect(
+            const directSnapshot = runtime.workflow.completeDirect(
                 params.runId,
                 params.taskId,
                 evidence,
@@ -1185,11 +1300,21 @@ export function registerSddExtension(
                 ),
                 params.recovery as RecoveryAttestation | undefined,
             );
-            const snapshot = await runtime.workflow.run(
-                params.runId,
-                ctx,
-                signal,
-            );
+            liveUi.track(ctx, manifest, directSnapshot, true);
+            if (ctx.mode === "tui") {
+                ctx.ui.setWorkingMessage("running SDD workflow");
+            }
+            let snapshot: RunSnapshot;
+            try {
+                snapshot = await runtime.workflow.run(
+                    params.runId,
+                    ctx,
+                    signal,
+                );
+                runtime.activity?.onSnapshot(snapshot);
+            } finally {
+                if (ctx.mode === "tui") ctx.ui.setWorkingMessage();
+            }
             return textResult(
                 `Direct evidence recorded for ${params.taskId}.`,
                 {
@@ -1222,6 +1347,7 @@ export function registerSddExtension(
                     draft,
                     outcome.decision,
                     recordedApprovalEntries,
+                    liveUi,
                 );
                 ctx.ui.notify(result.content[0].text, "info");
             } else {
@@ -1232,6 +1358,88 @@ export function registerSddExtension(
                     "info",
                 );
             }
+        },
+    });
+
+    pi.registerCommand("sdd-live", {
+        description: "Inspect live or durable SDD run activity.",
+        async handler(args, ctx) {
+            if (ctx.mode !== "tui") {
+                throw new Error("sdd-live requires TUI mode.");
+            }
+            const activity = runtime.activity;
+            if (!activity) {
+                throw new Error("SDD live activity is unavailable.");
+            }
+            let runId = args.trim();
+            if (!runId) {
+                const candidates = runtime.store
+                    .list()
+                    .filter(
+                        (snapshot) =>
+                            snapshot.state === "approved" ||
+                            snapshot.state === "running",
+                    )
+                    .map((snapshot) => {
+                        const manifest = runtime.store.loadManifest(
+                            snapshot.runId,
+                        );
+                        return manifest?.state === "approved"
+                            ? { snapshot, manifest }
+                            : null;
+                    })
+                    .filter(
+                        (
+                            candidate,
+                        ): candidate is {
+                            snapshot: RunSnapshot;
+                            manifest: ApprovedManifest;
+                        } => candidate !== null,
+                    );
+                if (candidates.length === 0) {
+                    ctx.ui.notify(
+                        "No active SDD runs. Use /sdd-live <runId>.",
+                        "warning",
+                    );
+                    return;
+                }
+                if (candidates.length === 1) {
+                    runId = candidates[0].snapshot.runId;
+                } else {
+                    const labels = candidates.map(
+                        ({ snapshot, manifest }) =>
+                            `${snapshot.runId} · ${snapshot.state} · ${manifest.planTitle}`,
+                    );
+                    const selected = await ctx.ui.select(
+                        "Select an active SDD run",
+                        labels,
+                    );
+                    if (!selected) return;
+                    const selectedIndex = labels.indexOf(selected);
+                    if (selectedIndex < 0) {
+                        throw new Error(
+                            "Selected SDD run could not be resolved.",
+                        );
+                    }
+                    const selectedRun = candidates[selectedIndex];
+                    if (!selectedRun) {
+                        throw new Error(
+                            "Selected SDD run could not be resolved.",
+                        );
+                    }
+                    runId = selectedRun.snapshot.runId;
+                }
+            }
+
+            const snapshot = runtime.store.load(runId);
+            const manifest = runtime.store.loadManifest(runId);
+            if (!snapshot || !manifest || manifest.state !== "approved") {
+                throw new Error(`SDD run not found: ${runId}.`);
+            }
+            activity.trackRun(manifest, snapshot, {
+                live: activity.getRun(runId)?.live ?? false,
+            });
+            await (runtime.openLive ?? openSddLive)(ctx, activity, runId);
         },
     });
 
@@ -1255,14 +1463,31 @@ export function registerSddExtension(
                 continue;
             }
             const reconciled = runtime.workflow.reconcile(snapshot.runId);
+            const manifest = runtime.store.loadManifest(snapshot.runId);
+            if (manifest?.state === "approved") {
+                liveUi.track(ctx, manifest, reconciled, true);
+                runtime.activity?.onSnapshot(reconciled);
+            }
             if (shouldContinueAfterReconcile(reconciled)) {
-                // oxlint-disable-next-line no-await-in-loop -- persisted runs resume in durable store order and must not overlap writers across manifests.
-                await runtime.workflow.run(snapshot.runId, ctx);
+                if (ctx.mode === "tui") {
+                    ctx.ui.setWorkingMessage("running SDD workflow");
+                }
+                try {
+                    // oxlint-disable-next-line no-await-in-loop -- persisted runs resume in durable store order and must not overlap writers across manifests.
+                    const result = await runtime.workflow.run(
+                        snapshot.runId,
+                        ctx,
+                    );
+                    runtime.activity?.onSnapshot(result);
+                } finally {
+                    if (ctx.mode === "tui") ctx.ui.setWorkingMessage();
+                }
             }
         }
     });
 
-    pi.on("session_shutdown", () => {
+    pi.on("session_shutdown", (_event, ctx) => {
+        liveUi.dispose(ctx);
         runtime.delegation.dispose();
     });
 }

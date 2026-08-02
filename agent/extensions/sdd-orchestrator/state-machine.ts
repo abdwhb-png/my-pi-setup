@@ -50,6 +50,7 @@ export interface DelegationTerminalResponse {
         | 'interrupted'
         | 'turn_budget_exhausted'
         | 'tool_budget_exhausted'
+        | 'structured_output_failed'
         | 'acceptance_failed'
         | 'invalid_request'
         | 'unavailable_context';
@@ -70,8 +71,17 @@ export interface DelegationTerminalResponse {
             | 'attested'
             | 'checked'
             | 'verified'
+            | 'review-required'
             | 'reviewed'
             | 'accepted'
+            | 'rejected';
+        evidenceStatus:
+            | 'pending'
+            | 'not-required'
+            | 'claimed'
+            | 'attested'
+            | 'checked'
+            | 'verified'
             | 'rejected';
         explicit: boolean;
     };
@@ -729,7 +739,11 @@ export function transition(
             output: review
                 ? JSON.stringify(review)
                 : `Recovery attested by ${event.choice.authorizedBy}; binding ${event.choice.digest}.`,
-            acceptance: { status: 'accepted', explicit: true },
+            acceptance: {
+                status: 'accepted',
+                evidenceStatus: 'verified',
+                explicit: true,
+            },
         };
         return {
             ...snapshot,

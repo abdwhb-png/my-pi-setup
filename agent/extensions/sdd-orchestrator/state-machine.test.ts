@@ -392,7 +392,11 @@ test('marks a terminal delegation response as applied exactly once', () => {
             version: 1,
             requestId: responseId,
             status: 'completed',
-            acceptance: { status: 'verified', explicit: true },
+            acceptance: {
+                status: 'verified',
+                evidenceStatus: 'verified',
+                explicit: true,
+            },
         },
     };
     const applied = transition(running, {
@@ -474,7 +478,11 @@ test('applies and deduplicates one boundary-bound recovery revision', () => {
                 terminalResponses: {
                     [requestId]: {
                         status: 'completed',
-                        acceptance: { status: 'accepted', explicit: true },
+                        acceptance: {
+                            status: 'accepted',
+                            evidenceStatus: 'verified',
+                            explicit: true,
+                        },
                     },
                 },
             },

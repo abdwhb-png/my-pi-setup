@@ -144,7 +144,11 @@ function acceptedWorker(output: string): ResponseFactory {
         requestId: request.requestId,
         status: 'completed',
         output,
-        acceptance: { status: 'verified', explicit: true },
+        acceptance: {
+            status: 'verified',
+            evidenceStatus: 'verified',
+            explicit: true,
+        },
     });
 }
 

@@ -2,6 +2,8 @@ import {
     getAgentDir,
     type ExtensionAPI,
 } from '@earendil-works/pi-coding-agent';
+import { SddActivityStore } from './activity-store.ts';
+import { openSddLive } from './activity-ui.ts';
 import { DelegationClient } from './delegation-client.ts';
 import { registerSddExtension, type SddRuntime } from './extension-tools.ts';
 import { openManifestReview } from './review-ui.ts';
@@ -20,16 +22,24 @@ function createRuntime(pi: ExtensionAPI): SddRuntime {
     const agentDir = getAgentDir();
     const store = new SddStore(agentDir);
     const delegation = new DelegationClient(pi.events);
-    const workflow = new SddWorkflow(store, delegation, (runId) => {
-        const manifest = store.loadManifest(runId);
-        return manifest?.state === 'approved' ? manifest : null;
-    });
+    const activity = new SddActivityStore();
+    const workflow = new SddWorkflow(
+        store,
+        delegation,
+        (runId) => {
+            const manifest = store.loadManifest(runId);
+            return manifest?.state === 'approved' ? manifest : null;
+        },
+        activity,
+    );
     return {
         agentDir,
         store,
         delegation,
         workflow,
+        activity,
         openReview: openManifestReview,
+        openLive: openSddLive,
     };
 }
 

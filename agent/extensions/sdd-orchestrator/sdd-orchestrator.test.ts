@@ -4,6 +4,7 @@ import {
     expect,
     mock,
     test,
+    vi,
 } from 'bun:test';
 import {
     existsSync,
@@ -18,6 +19,7 @@ import { join, relative } from 'node:path';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { SubagentDelegationResponse } from 'pi-subagents/delegation';
 import type { SddConfig } from './config.ts';
+import { SddActivityStore } from './activity-store.ts';
 import {
     DelegationClient,
     DelegationDisposedError,
@@ -391,7 +393,7 @@ test('registers exactly seven tools and one command from a thin index', () => {
         'sdd_cancel',
         'sdd_direct_complete',
     ]);
-    expect([...pi.commands.keys()]).toEqual(['sdd-review']);
+    expect([...pi.commands.keys()]).toEqual(['sdd-review', 'sdd-live']);
     for (const tool of pi.tools.values()) {
         expect(tool.parameters.additionalProperties).toBe(false);
     }
@@ -988,7 +990,11 @@ test('session startup and resume reconcile every nonterminal durable run only', 
                         version: 1,
                         requestId: 'persisted-request',
                         status: 'completed',
-                        acceptance: { status: 'accepted', explicit: true },
+                        acceptance: {
+                            status: 'accepted',
+                            evidenceStatus: 'verified',
+                            explicit: true,
+                        },
                     },
                 },
             },
@@ -1074,7 +1080,11 @@ test('session startup continues one newly reconciled persisted terminal boundary
                         version: 1,
                         requestId,
                         status: 'completed',
-                        acceptance: { status: 'verified', explicit: true },
+                        acceptance: {
+                            status: 'verified',
+                            evidenceStatus: 'verified',
+                            explicit: true,
+                        },
                     },
                 },
             },
@@ -1407,7 +1417,11 @@ test('targeted status and result expose task, review, and acceptance evidence to
                 requestId: 'worker-1',
                 status: 'completed',
                 runId: 'child-1',
-                acceptance: { status: 'verified', explicit: true },
+                acceptance: {
+                    status: 'verified',
+                    evidenceStatus: 'verified',
+                    explicit: true,
+                },
             },
         },
     };
@@ -1988,4 +2002,137 @@ test('package metadata describes the deterministic public-delegation extension',
     expect(metadata.description.toLowerCase()).toContain('public delegation');
     expect(metadata.pi.extensions).toEqual(['./index.ts']);
     expect(metadata.dependencies).toBeUndefined();
+});
+
+test('sdd-live opens while a resumed workflow promise is still active', async () => {
+    const runId = 'live-run';
+    const store = new SddStore(agentDir);
+    seedApproved(store, approvedManifest(runId), snapshot(runId, 'running'));
+    const pi = fakePi();
+    const base = runtime(store);
+    const activity = new SddActivityStore();
+    const opened: string[] = [];
+    let resolveRun!: (value: RunSnapshot) => void;
+    const pendingRun = new Promise<RunSnapshot>((resolve) => {
+        resolveRun = resolve;
+    });
+    base.workflow.run = () => pendingRun;
+    registerSddExtension(pi.api as never, {
+        ...base,
+        activity,
+        openLive: async (_ctx, _source, selectedRunId) => {
+            opened.push(selectedRunId);
+        },
+    });
+    const start = pi.handlers.get('session_start')?.[0];
+    const startPromise = start!(
+        { type: 'session_start', reason: 'resume' },
+        context('tui'),
+    );
+    await Promise.resolve();
+
+    await pi.commands.get('sdd-live').handler(runId, context('tui'));
+    expect(opened).toEqual([runId]);
+    expect(activity.getRun(runId)).toMatchObject({ live: true, state: 'running' });
+
+    resolveRun(snapshot(runId, 'completed'));
+    await startPromise;
+});
+
+test('sdd-live selects among active runs and hydrates explicit historical runs without showing them live', async () => {
+    const store = new SddStore(agentDir);
+    for (const [runId, state] of [
+        ['active-one', 'approved'],
+        ['active-two', 'running'],
+        ['historical', 'completed'],
+    ] as const) {
+        seedApproved(store, approvedManifest(runId), snapshot(runId, state));
+    }
+    const pi = fakePi();
+    const activity = new SddActivityStore();
+    const opened: string[] = [];
+    const choices: string[][] = [];
+    registerSddExtension(pi.api as never, {
+        ...runtime(store),
+        activity,
+        openLive: async (_ctx, _source, runId) => {
+            opened.push(runId);
+        },
+    });
+    const tui = context('tui');
+    tui.ui.select = async (_title, options) => {
+        choices.push(options);
+        return options.find((option) => option.startsWith('active-two'));
+    };
+
+    await pi.commands.get('sdd-live').handler('', tui);
+    await pi.commands.get('sdd-live').handler('historical', tui);
+
+    expect(choices[0]).toHaveLength(2);
+    expect(opened).toEqual(['active-two', 'historical']);
+    expect(activity.getRun('historical')).toMatchObject({
+        live: false,
+        presentationTerminal: true,
+    });
+    expect(activity.getLiveRuns().some((run) => run.runId === 'historical')).toBe(false);
+});
+
+test('sdd-live reports resolution and mode errors explicitly', async () => {
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, {
+        ...runtime(store),
+        activity: new SddActivityStore(),
+    });
+    const command = pi.commands.get('sdd-live');
+
+    await expect(command.handler('missing', context('tui'))).rejects.toThrow(
+        'SDD run not found: missing.',
+    );
+    await expect(command.handler('', context())).rejects.toThrow(
+        'sdd-live requires TUI mode.',
+    );
+});
+
+test('terminal live widget lingers five seconds and shutdown clears UI before delegation', async () => {
+    vi.useFakeTimers();
+    try {
+        const runId = 'terminal-widget';
+        const store = new SddStore(agentDir);
+        seedApproved(store, approvedManifest(runId), snapshot(runId, 'running'));
+        const pi = fakePi();
+        const base = runtime(store);
+        const order: string[] = [];
+        base.workflow.run = async () => snapshot(runId, 'completed');
+        base.delegation.dispose = () => order.push('dispose');
+        registerSddExtension(pi.api as never, {
+            ...base,
+            activity: new SddActivityStore(),
+        });
+        const tui = context('tui');
+        let widget: unknown;
+        tui.ui.setWidget = (_id, next) => {
+            widget = next;
+            if (next === undefined) order.push('clear-widget');
+        };
+
+        await pi.handlers.get('session_start')?.[0]?.(
+            { type: 'session_start', reason: 'resume' },
+            tui,
+        );
+        expect(widget).toBeDefined();
+        vi.advanceTimersByTime(4_999);
+        expect(widget).toBeDefined();
+        vi.advanceTimersByTime(1);
+        expect(widget).toBeUndefined();
+
+        await pi.handlers.get('session_shutdown')?.[0]?.(
+            { type: 'session_shutdown', reason: 'reload' },
+            tui,
+        );
+        expect(order.at(-2)).toBe('clear-widget');
+        expect(order.at(-1)).toBe('dispose');
+    } finally {
+        vi.useRealTimers();
+    }
 });

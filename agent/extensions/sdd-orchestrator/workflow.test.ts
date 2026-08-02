@@ -16,6 +16,11 @@ import type {
 import type { ApprovedManifest, ApprovedManifestTask } from './manifest.ts';
 import type { RunEvent, RunSnapshot } from './state-machine.ts';
 import type { TransitionRecord } from './store.ts';
+import type { DelegationRunOptions } from './delegation-client.ts';
+import type {
+    SddDelegationActivityContext,
+    SddWorkflowObserver,
+} from './workflow-observer.ts';
 import {
     completeDirect,
     SddWorkflow,
@@ -160,7 +165,11 @@ test('Light persists implementation and response before verifying one worker', a
                 requestId: 'replaced-by-fake',
                 status: 'completed',
                 output: 'implemented',
-                acceptance: { status: 'verified', explicit: true },
+                acceptance: {
+                    status: 'verified',
+                    evidenceStatus: 'verified',
+                    explicit: true,
+                },
             },
         ],
         (request) => {
@@ -374,7 +383,11 @@ function workerResponse(output: string): SubagentDelegationResponse {
         requestId: 'replaced-by-fake',
         status: 'completed',
         output,
-        acceptance: { status: 'verified', explicit: true },
+        acceptance: {
+            status: 'verified',
+            evidenceStatus: 'verified',
+            explicit: true,
+        },
     };
 }
 
@@ -978,7 +991,11 @@ test('uncertain recovery requires an exact typed attestation and applies it atom
                     'run-1:task-1:worker:1': {
                         requestId: 'run-1:task-1:worker:1',
                         status: 'completed',
-                        acceptance: { status: 'accepted', explicit: true },
+                        acceptance: {
+                            status: 'accepted',
+                            evidenceStatus: 'verified',
+                            explicit: true,
+                        },
                     },
                 },
             },
@@ -2324,4 +2341,125 @@ test('a Direct singleton pauses later manifest tasks until its handoff completes
         'task-1': { state: 'awaiting_direct_agent' },
         'task-2': { state: 'pending' },
     });
+});
+
+test('workflow observation follows durable persistence for worker, reviewer, correction, and integration', async () => {
+    const approved = {
+        ...manifest('standard'),
+        finalIntegrationReview: true,
+        maximumLaunches: 5,
+    };
+    const store = new MemoryStore(snapshot(4));
+    const responses = [
+        workerResponse('initial implementation'),
+        reviewResponse('combined', 'changes_required'),
+        workerResponse('corrected implementation'),
+        reviewResponse('combined', 'pass'),
+        integrationResponse('pass'),
+    ];
+    const events: string[] = [];
+    const observer: SddWorkflowObserver = {
+        onSnapshot(observed) {
+            expect(store.current).toEqual(observed);
+            events.push(`snapshot:${observed.revision}`);
+        },
+        onDelegationPrepared(activity) {
+            expect(
+                activity.stage === 'integration'
+                    ? store.current.integrationReview?.activeRequestId
+                    : store.current.tasks[activity.taskId]?.activeRequestId,
+            ).toBe(activity.requestId);
+            events.push(`prepared:${activity.stage}`);
+        },
+        onDelegationStarted(activity) {
+            events.push(`started:${activity.stage}`);
+        },
+        onDelegationUpdate(activity) {
+            events.push(`update:${activity.stage}`);
+        },
+        onDelegationFinished(activity, response) {
+            const persisted =
+                activity.stage === 'integration'
+                    ? store.current.integrationReview?.terminalResponse
+                    : store.current.tasks[activity.taskId]?.terminalResponses?.[
+                          response.requestId
+                      ];
+            expect(persisted).toEqual(response);
+            events.push(`finished:${activity.stage}`);
+        },
+    };
+    const client = {
+        cancel() {},
+        async run(
+            request: SubagentDelegationRequest,
+            options?: DelegationRunOptions,
+        ) {
+            events.push(`run:${request.requestId}`);
+            options?.onStarted?.({ version: 1, requestId: request.requestId });
+            options?.onUpdate?.({
+                version: 1,
+                requestId: request.requestId,
+                currentTool: 'read',
+            });
+            const response = responses.shift();
+            if (!response) throw new Error('Missing response.');
+            return { ...response, requestId: request.requestId };
+        },
+    };
+
+    const result = await new SddWorkflow(
+        store,
+        client,
+        () => approved,
+        observer,
+    ).run('run-1', context);
+
+    expect(result.state).toBe('completed');
+    expect(
+        events.filter((event) => event.startsWith('prepared:')),
+    ).toEqual([
+        'prepared:worker',
+        'prepared:combined',
+        'prepared:correction',
+        'prepared:combined',
+        'prepared:integration',
+    ]);
+    for (const stage of [
+        'worker',
+        'combined',
+        'correction',
+        'integration',
+    ]) {
+        expect(events.indexOf(`prepared:${stage}`)).toBeLessThan(
+            events.indexOf(`started:${stage}`),
+        );
+        expect(events.indexOf(`started:${stage}`)).toBeLessThan(
+            events.indexOf(`finished:${stage}`),
+        );
+    }
+});
+
+test('observer failures never fail or cancel the workflow', async () => {
+    const approved = manifest('light');
+    const store = new MemoryStore(snapshot(1));
+    const client = new QueueDelegationClient([
+        workerResponse('implementation'),
+    ]);
+    const throwing = new Proxy(
+        {},
+        {
+            get: () => () => {
+                throw new Error('observer failure');
+            },
+        },
+    ) as SddWorkflowObserver;
+
+    const result = await new SddWorkflow(
+        store,
+        client,
+        () => approved,
+        throwing,
+    ).run('run-1', context);
+
+    expect(result.state).toBe('completed');
 });
