@@ -1,5 +1,4 @@
 - "pi" always stand for pi agent harness, not Rasberry Pi or something else.
-- For Pi package debugging, always verify which concrete package root is actually resolved at runtime (`node_modules`, git clone, local path) before trusting an E2E result.
 - Never patch the global Bun installation to fix Pi package issues; prefer harness-level solutions such as Pi extensions, wrappers, explicit finalizers, and repo-managed symlinks.
 
 <user_preferences>
@@ -14,8 +13,8 @@
 
 <doing_research>
 
-- Always prefer firecrawl mcp tools for web page scrapin. If the mcp is not available fallback to the firecrawl cli usage (available skills: `firecrawl`, `firecrawl-crawl`, `firecrawl-scrape`, `firecrawl-search`)!
-- Sometimes basic web search is not enough, you need to couple it with firecral tools to get more accurate and up-to-date information.
+- Always prefer firecrawl mcp tools for web page scrapin. If the mcp is not available fallback to the firecrawl-cli usage (`firecrawl` skill).
+- Sometimes basic web search is not enough, you need to couple it with firecrawl tools to get more accurate and up-to-date information.
 
 </doing_research>
 

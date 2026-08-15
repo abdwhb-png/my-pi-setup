@@ -1,5 +1,5 @@
 ---
-description: Help without implementation
+description: Ask questions
 argument-hint: '<request-description>'
 role: ask
 thinking: medium

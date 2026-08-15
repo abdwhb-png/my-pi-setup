@@ -12,6 +12,7 @@
 - When you write an ADR or a documentation, always lookup for already present file so you can name the file you want to add correctly.
 - Use the `factual-research` skill for factual research or delegate to researcher subagent when necessary.
 - Use `safe_bash` instead of `bash` for any bash commands. `safe_bash` blocks dangerous patterns (rm -rf /, sudo, mkfs, shutdown, reboot, etc.) and is available as an installed extension.
+- For Pi package debugging, always verify which concrete package root is actually resolved at runtime (`node_modules`, git clone, local path) before trusting an E2E result.
 
 </general-constraints>
 

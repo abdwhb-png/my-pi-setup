@@ -61,7 +61,7 @@ Persist the comprehensive plan with `session_plan` action `save`, passing the co
 On user input after showing the plan:
 
 - Changes requested → call `session_plan` action `read` when the current plan is no longer in context, revise it, persist the complete updated snapshot with action `save`, and present it again
-- Questions asked → clarify, or use #tool:vscode/askQuestions for follow-ups
+- Questions asked → clarify, or use `ask_user_question` for follow-ups
 - Alternatives wanted → loop back to **Discovery** with new subagent
 - Approval given → acknowledge, the user can now use handoff buttons
 
@@ -101,6 +101,6 @@ Keep iterating until explicit approval or handoff.
 Rules:
 
 - NO code blocks — describe changes, link to files and specific symbols/functions
-- NO blocking questions at the end — ask during workflow via #tool:vscode/askQuestions
+- NO blocking questions at the end — ask during workflow via `ask_user_question`
 - The plan MUST be presented to the user, don't just mention the plan file.
   </plan_style_guide>
