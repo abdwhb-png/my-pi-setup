@@ -83,12 +83,34 @@ export const OVERRIDE_TABLES: Record<
         },
         "go-mimo-v2.5-pro": {
             contextWindow: 1_000_000,
-            maxTokens: 1_000_000,
+            maxTokens: 131_072,
             reasoning: true,
             cost: {
                 input: 1.74,
                 output: 3.48,
                 cacheRead: 0.0145,
+                cacheWrite: 0,
+            },
+        },
+        "deepseek-v4-flash-free": {
+            contextWindow: 1_000_000,
+            maxTokens: 131_072,
+            reasoning: true,
+            cost: {
+                input: 0.14,
+                output: 0.28,
+                cacheRead: 0.0028,
+                cacheWrite: 0,
+            },
+        },
+        "mimo-v2.5-free": {
+            contextWindow: 1_000_000,
+            maxTokens: 128_000,
+            reasoning: true,
+            cost: {
+                input: 0.14,
+                output: 0.28,
+                cacheRead: 0.0028,
                 cacheWrite: 0,
             },
         },

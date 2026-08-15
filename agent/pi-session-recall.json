@@ -3,5 +3,14 @@
         "provider": "cpa",
         "id": "ocg/go-deepseek-v4-flash"
     },
-    "fallback-models": [{ "provider": "cpa", "id": "gemini-3.1-pro-low" }]
+    "fallback-models": [
+        {
+            "provider": "cpa",
+            "id": "ocz/deepseek-v4-flash-free"
+        },
+        {
+            "provider": "cpa",
+            "id": "gemini-3.7-flash"
+        }
+    ]
 }
