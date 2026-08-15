@@ -1,0 +1,26 @@
+{
+    "skill_name": "pi-test-harness",
+    "evals": [
+        {
+            "id": 1,
+            "name": "in-process-common-case",
+            "prompt": "I'm writing a Pi extension that registers a tool called `summarize_doc`. When the user asks 'Summarize README.md', I want to verify my tool is invoked with { path: 'README.md' } and the assistant returns a citation-rich summary string — without ever calling an LLM or hitting the filesystem. Show me the test for that, using @abdwhb-png/pi-test-harness.",
+            "expected_output": "A working test spec (runner-agnostic — Vitest, bun:test, or Jest all fine) that uses createTestSession with the extension path, includes the tool the extension registers outside mockTools so its real execute runs, mocks built-ins only, drives the conversation with when/calls/says, and asserts the requested path through toolCallsFor('summarize_doc')[0].input. It may pair the filtered call/result arrays by index. It must not use ToolCallRecord.params or assume ToolCallRecord has toolCallId.",
+            "files": []
+        },
+        {
+            "id": 2,
+            "name": "hook-blocking-vs-error",
+            "prompt": "My Pi 0.83 extension registers a `tool_call` hook that blocks `bash` whenever the command contains `rm -rf`. Show me a deterministic test that proves the hook blocked the call before the mocked bash handler ran and distinguishes that block from an ordinary tool error using @abdwhb-png/pi-test-harness.",
+            "expected_output": "A test that loads the real extension, supplies a bash mock handler with an observable call counter, drives the blocked command through when/calls/says, and asserts the canonical event records: ToolCallRecord.blocked is true, blockReason explains the block, the matching ToolResultRecord.isError is true, and its text contains the reason. It also proves the mock handler count stayed zero. It must not expect createTestSession.run() to throw ToolBlockedError; that class remains exported only for source compatibility in normal Pi 0.83 AgentSession runs.",
+            "files": []
+        },
+        {
+            "id": 3,
+            "name": "subprocess-extension-mock_pi",
+            "prompt": "I have a Pi extension that delegates high-risk work to a child Pi agent via `pi --mode json -p`. I want a test that simulates two consecutive subprocess calls where the first returns 'Task done' (exit 0) and the second crashes with stderr='agent crashed' and exit code 1, then verifies my extension surfaces a friendly error to the user rather than crashing. The fake pi shim must be installed and uninstalled cleanly.",
+            "expected_output": "A test that uses createMockPi(), calls install(), queues { output: 'Task done', exitCode: 0 } then { stderr: 'agent crashed', exitCode: 1 }, drives the extension via createTestSession plus a playbook, asserts on the assistant's final text containing a friendly message rather than raw stderr, and disposes the test session plus calls mockPi.uninstall() in cleanup. It must load or import the real extension code, must not recreate its subprocess helper inside the test, and must not use createTestSession alone; createMockPi is required for subprocess simulation.",
+            "files": []
+        }
+    ]
+}
