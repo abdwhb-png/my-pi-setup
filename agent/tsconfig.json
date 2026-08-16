@@ -21,6 +21,8 @@
     "node_modules",
     "git",
     "npm",
+    "npm/node_modules/pi-subagents",
+    "npm/node_modules/pi-fancy-footer",
     "skills",
     "extensions-legacy",
   ]
