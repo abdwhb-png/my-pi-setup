@@ -121,7 +121,7 @@ Closed verification routes:
 | `external` | `factual-researcher` |
 | `performance` | `performance-reviewer` |
 
-`expert-reviewer` and generic `reviewer` are intentionally excluded. The
+`code-reviewer` and generic `reviewer` are intentionally excluded. The
 architect runs only for selected architecture-impacting claims and is advisory:
 `clear` and `watch` do not block; `block` blocks only its exact claim scope.
 

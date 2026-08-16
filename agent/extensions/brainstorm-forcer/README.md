@@ -104,7 +104,7 @@ The closed routing table is:
 | `external`    | `factual-researcher`   |
 | `performance` | `performance-reviewer` |
 
-`expert-reviewer` and the generic `reviewer` are intentionally excluded from
+`code-reviewer` and the generic `reviewer` are intentionally excluded from
 new brainstorming verification routes. Arbitrary agents, `worker`, and
 `oracle` are also rejected.
 

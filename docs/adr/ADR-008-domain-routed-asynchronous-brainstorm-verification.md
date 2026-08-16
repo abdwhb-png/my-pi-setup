@@ -64,7 +64,7 @@ Every new claim supplies a closed `verificationDomain` and
 | `external`    | `factual-researcher`   |
 | `performance` | `performance-reviewer` |
 
-`expert-reviewer` and generic `reviewer` are intentionally excluded from new
+`code-reviewer` and generic `reviewer` are intentionally excluded from new
 brainstorming routes. `worker`, `oracle`, and arbitrary agent names are also
 outside the allowlist. Direct generic `subagent` execution is blocked during
 Exploring.

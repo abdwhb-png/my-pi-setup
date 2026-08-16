@@ -59,7 +59,7 @@ export const ARCHITECTURAL_STATUSES = [
 
 /**
  * Closed routing map: every domain maps to exactly one factual verifier.
- * `expert-reviewer` and the generic `reviewer` never appear here — `pi` goes
+ * `code-reviewer` and the generic `reviewer` never appear here — `pi` goes
  * to the dedicated `pi-expert`, keeping factual verification separate from the
  * advisory reviewer used elsewhere in the brainstorming workflow.
  */
@@ -72,7 +72,7 @@ export const VERIFICATION_ROUTING = Object.freeze({
 
 /**
  * Exact verifier agent allowlist. T3 uses this to reject any agent discovered
- * at runtime that is not a factual verifier (e.g. expert-reviewer, reviewer,
+ * at runtime that is not a factual verifier (e.g. code-reviewer, reviewer,
  * worker, oracle).
  */
 export const VERIFIER_AGENT_ALLOWLIST = Object.freeze([

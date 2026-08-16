@@ -39,9 +39,9 @@ Verify:
 
 Issue a verdict: **OKAY** (plan is sound, implementation follows it), **ITERATE** (fixable gaps, max 3 issues), or **REJECT** (blocking problem needs user decision).
 
-If ITERATE, list exactly what must be fixed. The plan-reviewer checks the plan, not the code style — save code quality findings for the expert-reviewer step.
+If ITERATE, list exactly what must be fixed. The plan-reviewer checks the plan, not the code style — save code quality findings for the code-reviewer step.
 
-## expert-reviewer
+## code-reviewer
 phase: Review
 phaseGroup: 1
 label: Deep code review
