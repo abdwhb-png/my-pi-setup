@@ -10,7 +10,7 @@ function readAgent(name: string): string {
 
 test('validation agents can persist reports without general file-write authority', () => {
     for (const [name, reportPath] of [
-        ['qa-tester', 'qa-result.json'],
+        ['sdd-qa-tester', 'qa-result.json'],
         ['browser-tester', 'browser-result.json'],
     ] as const) {
         const agent = readAgent(name);

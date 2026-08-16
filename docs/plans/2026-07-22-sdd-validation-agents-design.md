@@ -16,7 +16,7 @@ The desired addition is therefore explicit and typed: a plan opts into QA checks
 
 ## Goals
 
-- Add a read-only `qa-tester` for explicitly declared automated checks.
+- Add a read-only `sdd-qa` for explicitly declared automated checks.
 - Add a read-only `browser-tester` for explicitly declared user-facing scenarios.
 - Use Chrome DevTools AXI first and `agent-browser` only after an AXI capability/transport failure.
 - Isolate browser sessions by SDD run and preserve reproducible artefact references.
@@ -34,9 +34,9 @@ The desired addition is therefore explicit and typed: a plan opts into QA checks
 
 ## Agents
 
-### `qa-tester`
+### `sdd-qa`
 
-`qa-tester` is a fresh, read-only, medium-reasoning execution validator. It receives the approved task contract plus only the task's declared QA commands. It may inspect source, diagnostics, and command output, but it cannot edit files, broaden the command list, launch another agent, or contact a supervisor.
+`sdd-qa` is a fresh, read-only, medium-reasoning execution validator. It receives the approved task contract plus only the task's declared QA commands. It may inspect source, diagnostics, and command output, but it cannot edit files, broaden the command list, launch another agent, or contact a supervisor.
 
 Its terminal output is a schema-validated `QaResult` containing the task ID, verdict (`pass`, `fail`, or `blocked`), commands executed, evidence, and reproducible findings. Before returning that same JSON payload, it persists it as `qa-result.json` through `write_report`. It has no `write`, `edit`, or `edit_report` authority. `fail` and `blocked` both move that task and the run to `needs_input`; no correction is inferred.
 
@@ -90,7 +90,7 @@ The manifest records a distinct validation-launch preview: one QA launch per opt
 
 ```text
 task worker/reviews
-  -> qa-tester only when that task declares qa
+  -> sdd-qa only when that task declares qa
   -> task verified
 
 all tasks verified

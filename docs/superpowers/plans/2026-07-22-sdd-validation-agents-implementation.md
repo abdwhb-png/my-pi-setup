@@ -6,7 +6,7 @@
 
 **Goal:** Add explicit, bounded QA and Chrome-first browser validation to deterministic SDD without changing existing profile behavior for plans that declare no validation.
 
-**Architecture:** Extend the strict SDD-plan metadata with typed optional QA commands and browser scenarios. Persist their manifest representation and execution state. `qa-tester` runs declared checks per task after normal SDD validation; `browser-tester` executes all declared scenarios once as a manifest-level final wave. Both return strict JSON, and either failure pauses the run for human input.
+**Architecture:** Extend the strict SDD-plan metadata with typed optional QA commands and browser scenarios. Persist their manifest representation and execution state. `sdd-qa-tester` runs declared checks per task after normal SDD validation; `browser-tester` executes all declared scenarios once as a manifest-level final wave. Both return strict JSON, and either failure pauses the run for human input.
 
 **Constraints:** Use only `pi-subagents/delegation`; no package fork; no automatic fixer for testing failures; fresh children only; no intercom; no write tools; AXI first; `agent-browser` fallback only on tool/transport unavailability; no dev/build command; preserve the existing SDD profile budgets for plans with no QA/browser metadata.
 
@@ -35,11 +35,11 @@
 ### Task 3: Create bounded tester agent contracts and settings overrides
 
 ~~~sdd-task
-{"id":"task-3","dependsOn":["task-1"],"files":["agent/agents/qa-tester.md","agent/agents/browser-tester.md","agent/settings.json","agent/extensions/sdd-orchestrator/prompts.test.ts"],"verify":[{"id":"agent-contract-tests","command":"cd ~/.pi/agent && bun test extensions/sdd-orchestrator/prompts.test.ts"},{"id":"settings-json","command":"cd ~/.pi/agent && bun -e \"JSON.parse(require('node:fs').readFileSync('settings.json','utf8'))\""}]}
+{"id":"task-3","dependsOn":["task-1"],"files":["agent/agents/sdd-qa-tester.md","agent/agents/browser-tester.md","agent/settings.json","agent/extensions/sdd-orchestrator/prompts.test.ts"],"verify":[{"id":"agent-contract-tests","command":"cd ~/.pi/agent && bun test extensions/sdd-orchestrator/prompts.test.ts"},{"id":"settings-json","command":"cd ~/.pi/agent && bun -e \"JSON.parse(require('node:fs').readFileSync('settings.json','utf8'))\""}]}
 ~~~
 
-- [ ] RED: Add frontmatter/contract tests for `qa-tester` and `browser-tester`: fresh, medium reasoning, project context, explicit read-only acceptance, no `contact_supervisor`, no general edit/write capability, exact skills, and `write_report` as the sole bounded mutation.
-- [ ] GREEN: Create both agents. `qa-tester` may use `@inspect`, `@lens-inspect`, `safe_bash`, and `write_report`. `browser-tester` may use `@inspect`, `safe_bash`, and `write_report`, declares `skills: chrome-devtools-axi, agent-browser`, and requires AXI-first, named-session isolation, fresh snapshots, evidence, cleanup, durable final JSON reporting, and honest fallback failure reporting.
+- [ ] RED: Add frontmatter/contract tests for `sdd-qa-tester` and `browser-tester`: fresh, medium reasoning, project context, explicit read-only acceptance, no `contact_supervisor`, no general edit/write capability, exact skills, and `write_report` as the sole bounded mutation.
+- [ ] GREEN: Create both agents. `sdd-qa-tester` may use `@inspect`, `@lens-inspect`, `safe_bash`, and `write_report`. `browser-tester` may use `@inspect`, `safe_bash`, and `write_report`, declares `skills: chrome-devtools-axi, agent-browser`, and requires AXI-first, named-session isolation, fresh snapshots, evidence, cleanup, durable final JSON reporting, and honest fallback failure reporting.
 - [ ] GREEN: Add only minimal model/fallback overrides if existing settings conventions require them; otherwise inherit the configured subagent default. Do not alter existing agent overrides.
 - [ ] REFACTOR: Keep agent output contracts aligned with the schemas introduced in Task 4.
 
@@ -70,7 +70,7 @@
 {"id":"task-6","dependsOn":["task-4","task-5"],"files":["agent/extensions/sdd-orchestrator/config.ts","agent/extensions/sdd-orchestrator/config.test.ts","agent/extensions/sdd-orchestrator/workflow.ts","agent/extensions/sdd-orchestrator/workflow.test.ts","agent/extensions/sdd-orchestrator/sdd-orchestrator.integration.test.ts"],"verify":[{"id":"workflow-tests","command":"cd ~/.pi/agent && bun test extensions/sdd-orchestrator/config.test.ts extensions/sdd-orchestrator/workflow.test.ts extensions/sdd-orchestrator/sdd-orchestrator.integration.test.ts"}]}
 ~~~
 
-- [ ] RED: Add integration tests showing no QA delegation without `qa`, exactly one `qa-tester` delegation with it, and `fail`/`blocked` results pausing the right task and run without a correction worker.
+- [ ] RED: Add integration tests showing no QA delegation without `qa`, exactly one `sdd-qa-tester` delegation with it, and `fail`/`blocked` results pausing the right task and run without a correction worker.
 - [ ] GREEN: Add configurable QA/browser agent names and timeouts; invoke QA only after the normal profile work succeeds, including `sdd_direct_complete` evidence.
 - [ ] GREEN: Persist request then response before applying it; route cancellation and recovery through the existing foreground-delegation logic.
 - [ ] REFACTOR: Keep current worker/reviewer launch counts unchanged for legacy plans.

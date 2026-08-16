@@ -746,7 +746,7 @@ jq -r '[.runId,(.tasks|length),.queuedAt] | @tsv' .sdd/queue/*.json
 - [ ] Tant que `sdd-mqxpovpu-8m9fgo` reste queued, **arrêter cette tâche avant toute suppression** et demander une décision explicite : annuler proprement, archiver explicitement, ou achever ce run. Ne pas déplacer, réécrire ou supprimer ses fichiers par supposition.
 - [ ] Après résolution explicite et préflight vert, lancer une dernière fois `bun test --isolate extensions/sdd-orchestrator` pour figer la santé du donneur avant retrait.
 - [ ] Extraire au préalable toute primitive encore consommée. Vérifier `rg -n "sdd-orchestrator/" agent/extensions/sdd-missions agent/extensions/_shared`; le résultat doit être vide.
-- [ ] Supprimer le dossier legacy entier, le rôle `sdd-plan` et les six agents spécifiques listés. Ne pas supprimer `qa-tester`, `browser-tester`, les reviewers génériques ou les tool groups sans une référence orpheline prouvée.
+- [ ] Supprimer le dossier legacy entier, le rôle `sdd-plan` et les six agents spécifiques listés. Ne pas supprimer `sdd-qa-tester`, `browser-tester`, les reviewers génériques ou les tool groups sans une référence orpheline prouvée.
 - [ ] Remplacer les overrides legacy par les nouveaux agents/routes dans `settings.example.json` et l'actif ignoré `settings.json`. Ne pas continuer à lire `sddOrchestrator`.
 - [ ] Avant d'éditer `agent/prompts/delegate-subagents.md`, relire son diff préexistant. Modifier uniquement la ligne de tier/routage SDD et conserver les changements utilisateur actuels.
 - [ ] Remplacer `sdd-worker` dans le deny-list de vérification brainstorm par `sdd-mission-worker`, car ce writer reste interdit comme verifier.

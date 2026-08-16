@@ -171,7 +171,7 @@ test('builds bounded QA and AXI-first browser validation requests', () => {
         session: 'sdd-run-1-browser',
     });
 
-    expect(qa.agent).toBe('qa-tester');
+    expect(qa.agent).toBe('sdd-qa-tester');
     expect(qa.task).toContain('bun run test:a11y profile');
     expect(browser.agent).toBe('browser-tester');
     expect(browser.task).toContain('AXI-first');
@@ -685,10 +685,10 @@ describe('read-only agent contracts', () => {
         }
     });
 
-    test('defines qa-tester as a fresh medium read-only JSON-only role', () => {
-        const agent = readAgent('qa-tester');
+    test('defines sdd-qa-tester as a fresh medium read-only JSON-only role', () => {
+        const agent = readAgent('sdd-qa-tester');
 
-        expect(agent).toContain('name: qa-tester');
+        expect(agent).toContain('name: sdd-qa-tester');
         expect(agent).toContain('description: Read-only QA execution tester');
         expect(agent).toContain(
             "tools: '@inspect, @lens-inspect, safe_bash, write_report'",

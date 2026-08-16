@@ -29,9 +29,9 @@ describe('scoped report tools', () => {
         const cwd = temporaryProject();
         const writer = createReportWriter({
             cwd,
-            role: 'qa-tester',
+            role: 'sdd-qa-tester',
             sessionId: 'session-1',
-            agent: 'qa-tester',
+            agent: 'sdd-qa-tester',
         });
 
         expect(writer.create({
@@ -39,11 +39,11 @@ describe('scoped report tools', () => {
             content: '# QA passed\n',
             tool: 'write_report',
         }).kind).toBe('success');
-        expect(readFileSync(join(cwd, '.pi/artifacts/reports/qa-tester/session-1/summary.md'), 'utf8')).toBe('# QA passed\n');
+        expect(readFileSync(join(cwd, '.pi/artifacts/reports/sdd-qa-tester/session-1/summary.md'), 'utf8')).toBe('# QA passed\n');
 
         const roots = createCommonArtifactRoots();
         expect(roots.resolve(cwd, 'session-1')).toContain(
-            join(cwd, '.pi/artifacts/reports/qa-tester/session-1'),
+            join(cwd, '.pi/artifacts/reports/sdd-qa-tester/session-1'),
         );
         expect(existsSync(join(cwd, '.pi/artifacts/.audit/session-1.jsonl'))).toBeTrue();
     });
@@ -63,7 +63,7 @@ describe('scoped report tools', () => {
                 getSessionId: () => 'session-1',
                 getEntries: () => [{
                     type: 'custom', customType: 'pi-roles:active-role',
-                    data: { name: 'qa-tester', source: 'user', path: 'qa.md', appliedAt: 1 },
+                    data: { name: 'sdd-qa-tester', source: 'user', path: 'qa.md', appliedAt: 1 },
                 }],
             },
         };

@@ -38,7 +38,7 @@ const DEFAULT_CONFIG: SddConfig = {
         assessor: 'orchestration-assessor',
         quickWorker: 'quick-worker',
         worker: 'sdd-worker',
-        qaTester: 'qa-tester',
+        qaTester: 'sdd-qa-tester',
         browserTester: 'browser-tester',
         combinedReviewer: 'sdd-combined-reviewer',
         specReviewer: 'sdd-spec-reviewer',

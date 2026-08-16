@@ -26,7 +26,7 @@ describe("createScopedWriter", () => {
       projectRoot,
       policy: {
         id: "report-v1",
-        root: ".pi/artifacts/reports/qa-tester/run-1",
+        root: ".pi/artifacts/reports/sdd-qa-tester/run-1",
         allowedExtensions: [".md", ".json"],
         operations: ["create", "edit"],
         maxBytes: 1024,
@@ -34,8 +34,8 @@ describe("createScopedWriter", () => {
         allowNestedDirectories: true,
       },
       actor: {
-        agent: "qa-tester",
-        role: "qa-tester",
+        agent: "sdd-qa-tester",
+        role: "sdd-qa-tester",
         runId: "run-1",
       },
     });
@@ -48,7 +48,7 @@ describe("createScopedWriter", () => {
 
     expect(result.kind).toBe("success");
     expect(
-      readFileSync(join(projectRoot, ".pi/artifacts/reports/qa-tester/run-1/result.md"), "utf8"),
+      readFileSync(join(projectRoot, ".pi/artifacts/reports/sdd-qa-tester/run-1/result.md"), "utf8"),
     ).toBe("# Passed\n");
 
     const auditPath = join(projectRoot, ".pi/artifacts/.audit/run-1.jsonl");
@@ -57,31 +57,31 @@ describe("createScopedWriter", () => {
       version: 1,
       operation: "create",
       tool: "write_report",
-      path: ".pi/artifacts/reports/qa-tester/run-1/result.md",
+      path: ".pi/artifacts/reports/sdd-qa-tester/run-1/result.md",
       sha256Before: null,
-      agent: "qa-tester",
-      role: "qa-tester",
+      agent: "sdd-qa-tester",
+      role: "sdd-qa-tester",
       runId: "run-1",
     });
   });
 
   test("edits exactly one matching block and rejects an ambiguous replacement", () => {
     const projectRoot = temporaryProject();
-    const root = join(projectRoot, ".pi/artifacts/reports/qa-tester/run-1");
+    const root = join(projectRoot, ".pi/artifacts/reports/sdd-qa-tester/run-1");
     mkdirSync(root, { recursive: true });
     writeFileSync(join(root, "result.md"), "first\nneedle\nlast\n", "utf8");
     const writer = createScopedWriter({
       projectRoot,
       policy: {
         id: "report-v1",
-        root: ".pi/artifacts/reports/qa-tester/run-1",
+        root: ".pi/artifacts/reports/sdd-qa-tester/run-1",
         allowedExtensions: [".md"],
         operations: ["edit"],
         maxBytes: 1024,
         auditNamespace: "reports",
         allowNestedDirectories: true,
       },
-      actor: { agent: "qa-tester", role: "qa-tester", runId: "run-1" },
+      actor: { agent: "sdd-qa-tester", role: "sdd-qa-tester", runId: "run-1" },
     });
 
     expect(
@@ -106,21 +106,21 @@ describe("createScopedWriter", () => {
 
   test("edits an empty existing artifact as one exact whole-file match", () => {
     const projectRoot = temporaryProject();
-    const root = join(projectRoot, ".pi/artifacts/reports/qa-tester/run-1");
+    const root = join(projectRoot, ".pi/artifacts/reports/sdd-qa-tester/run-1");
     mkdirSync(root, { recursive: true });
     writeFileSync(join(root, "empty.md"), "", "utf8");
     const writer = createScopedWriter({
       projectRoot,
       policy: {
         id: "report-v1",
-        root: ".pi/artifacts/reports/qa-tester/run-1",
+        root: ".pi/artifacts/reports/sdd-qa-tester/run-1",
         allowedExtensions: [".md"],
         operations: ["edit"],
         maxBytes: 1024,
         auditNamespace: "reports",
         allowNestedDirectories: true,
       },
-      actor: { agent: "qa-tester", role: "qa-tester", runId: "run-1" },
+      actor: { agent: "sdd-qa-tester", role: "sdd-qa-tester", runId: "run-1" },
     });
 
     const result = writer.edit({
@@ -141,20 +141,20 @@ describe("createScopedWriter", () => {
   test("rejects traversal, unsupported extensions, and symlink escapes without writing", () => {
     const projectRoot = temporaryProject();
     const outside = join(projectRoot, "outside.md");
-    const root = join(projectRoot, ".pi/artifacts/reports/qa-tester/run-1");
+    const root = join(projectRoot, ".pi/artifacts/reports/sdd-qa-tester/run-1");
     mkdirSync(root, { recursive: true });
     const writer = createScopedWriter({
       projectRoot,
       policy: {
         id: "report-v1",
-        root: ".pi/artifacts/reports/qa-tester/run-1",
+        root: ".pi/artifacts/reports/sdd-qa-tester/run-1",
         allowedExtensions: [".md"],
         operations: ["create"],
         maxBytes: 1024,
         auditNamespace: "reports",
         allowNestedDirectories: true,
       },
-      actor: { agent: "qa-tester", role: "qa-tester", runId: "run-1" },
+      actor: { agent: "sdd-qa-tester", role: "sdd-qa-tester", runId: "run-1" },
     });
 
     expect(writer.create({ path: "../outside.md", content: "x", tool: "write_report" }).kind).toBe(
@@ -176,14 +176,14 @@ describe("createScopedWriter", () => {
       projectRoot,
       policy: {
         id: "report-v1",
-        root: ".pi/artifacts/reports/qa-tester/run-1",
+        root: ".pi/artifacts/reports/sdd-qa-tester/run-1",
         allowedExtensions: [".md"],
         operations: ["create"],
         maxBytes: 1024,
         auditNamespace: "reports",
         allowNestedDirectories: true,
       },
-      actor: { agent: "qa-tester", role: "qa-tester", runId: "run-1" },
+      actor: { agent: "sdd-qa-tester", role: "sdd-qa-tester", runId: "run-1" },
       appendAudit: () => {
         throw new Error("disk full");
       },
@@ -193,17 +193,17 @@ describe("createScopedWriter", () => {
       writer.create({ path: "report.md", content: "proof", tool: "write_report" }),
     ).toMatchObject({
       kind: "partial_failure",
-      path: ".pi/artifacts/reports/qa-tester/run-1/report.md",
+      path: ".pi/artifacts/reports/sdd-qa-tester/run-1/report.md",
     });
     expect(
-      readFileSync(join(projectRoot, ".pi/artifacts/reports/qa-tester/run-1/report.md"), "utf8"),
+      readFileSync(join(projectRoot, ".pi/artifacts/reports/sdd-qa-tester/run-1/report.md"), "utf8"),
     ).toBe("proof");
   });
 
   test("purges only the registered roots of one confirmed run and audits it", () => {
     const projectRoot = temporaryProject();
-    const firstRun = join(projectRoot, ".pi/artifacts/reports/qa-tester/run-1");
-    const secondRun = join(projectRoot, ".pi/artifacts/reports/qa-tester/run-2");
+    const firstRun = join(projectRoot, ".pi/artifacts/reports/sdd-qa-tester/run-1");
+    const secondRun = join(projectRoot, ".pi/artifacts/reports/sdd-qa-tester/run-2");
     mkdirSync(firstRun, { recursive: true });
     mkdirSync(secondRun, { recursive: true });
     writeFileSync(join(firstRun, "report.md"), "old", "utf8");
@@ -211,7 +211,7 @@ describe("createScopedWriter", () => {
     const roots = createArtifactRootRegistry();
     roots.register({
       id: "reports",
-      resolve: (root, runId) => [join(root, ".pi/artifacts/reports/qa-tester", runId)],
+      resolve: (root, runId) => [join(root, ".pi/artifacts/reports/sdd-qa-tester", runId)],
     });
 
     const result = purgeArtifacts({

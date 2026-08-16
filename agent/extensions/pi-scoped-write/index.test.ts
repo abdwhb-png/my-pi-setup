@@ -87,9 +87,9 @@ test('the scoped-write extension owns all five scoped tools and attributes write
                         type: 'custom',
                         customType: 'pi-roles:active-role',
                         data: {
-                            name: 'qa-tester',
+                            name: 'sdd-qa-tester',
                             source: 'user',
-                            path: 'qa-tester.md',
+                            path: 'sdd-qa-tester.md',
                             appliedAt: 1,
                         },
                     },
@@ -103,7 +103,7 @@ test('the scoped-write extension owns all five scoped tools and attributes write
         readFileSync(
             join(
                 cwd,
-                '.pi/artifacts/reports/qa-tester/session-1/summary.md',
+                '.pi/artifacts/reports/sdd-qa-tester/session-1/summary.md',
             ),
             'utf8',
         ),
@@ -135,7 +135,7 @@ test('report tools attribute a subagent write to its declared child agent', asyn
     const previousChild = process.env.PI_SUBAGENT_CHILD;
     const previousAgent = process.env.PI_SUBAGENT_CHILD_AGENT;
     process.env.PI_SUBAGENT_CHILD = '1';
-    process.env.PI_SUBAGENT_CHILD_AGENT = 'qa-tester';
+    process.env.PI_SUBAGENT_CHILD_AGENT = 'sdd-qa-tester';
 
     try {
         const write = registered.get('write_report');
@@ -171,7 +171,7 @@ test('report tools attribute a subagent write to its declared child agent', asyn
         readFileSync(
             join(
                 cwd,
-                '.pi/artifacts/reports/qa-tester/child-session-1/qa-result.json',
+                '.pi/artifacts/reports/sdd-qa-tester/child-session-1/qa-result.json',
             ),
             'utf8',
         ),
@@ -183,8 +183,8 @@ test('report tools attribute a subagent write to its declared child agent', asyn
         ),
     );
     expect(audit).toMatchObject({
-        agent: 'qa-tester',
-        role: 'qa-tester',
+        agent: 'sdd-qa-tester',
+        role: 'sdd-qa-tester',
         tool: 'write_report',
     });
 });
