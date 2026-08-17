@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,8 +20,25 @@ import {
 } from "./tool-results/metrics";
 import { COMPRESSION_EVENT_ENTRY_TYPE } from "../_shared/compression-protocol";
 import type { CompressionDetails } from "../_shared/compression-protocol";
+import type {
+  CompressionBackend,
+  CompressionBackendRequest,
+  CompressionBackendResult,
+  CompressorModel,
+  FetchLike,
+} from "./tool-results/types";
 
 type HandlerOptions = Parameters<typeof createToolResultHandler>[0];
+type TestHandlerOptions = HandlerOptions & {
+  baseUrl?: string;
+  fetchImpl?: FetchLike;
+};
+
+const TEST_MODEL: CompressorModel = {
+  provider: 'anthropic',
+  id: 'claude-3-5-sonnet-20241022',
+  contextWindow: 200000,
+};
 
 const TEST_CONFIG = {
   minBytesByGroup: { shell: 0, read: 0, search: 0 },
@@ -30,16 +47,48 @@ const TEST_CONFIG = {
   capErrors: false,
 };
 
-function createTestToolResultHandler(options: HandlerOptions = {}) {
+function createTestToolResultHandler(options: TestHandlerOptions = {}) {
+  const { baseUrl: _baseUrl, fetchImpl, ...handlerOptions } = options;
   const hasExplicitThreshold =
     options.minBytes !== undefined || options.minBytesByGroup !== undefined;
+
+  // Convert fetchImpl to a mock CompressionBackend
+  let mockBackend: CompressionBackend | null = null;
+  if (fetchImpl) {
+    mockBackend = {
+      id: 'edgee' as const,
+      compress: async (request: CompressionBackendRequest, signal?: AbortSignal) => {
+        const response = await fetchImpl(
+          'http://127.0.0.1:8320/compress',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              tool_name: request.toolName,
+              arguments: JSON.stringify(request.arguments),
+              output: request.output,
+              agent: '',
+            }),
+            signal,
+          },
+        );
+        if (!response.ok) {
+          throw new Error(`compression service failed with status ${response.status}`);
+        }
+        const json = (await response.json()) as { compressed_output?: string | null };
+        return { output: json.compressed_output ?? null };
+      },
+    };
+  }
+
   return createToolResultHandler({
+    backend: mockBackend,
     ...(hasExplicitThreshold
       ? {}
       : { minBytesByGroup: { shell: 0, read: 0, search: 0 } }),
     aggregates: false,
     capErrors: false,
-    ...options,
+    ...handlerOptions,
   });
 }
 
@@ -51,6 +100,62 @@ function parseToolName(init?: RequestInit): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Injected mock backend that records every request the policy layer forwards.
+ * Proves the policy passes original tool names and counts `compress` calls
+ * without any HTTP transport.
+ */
+type RecordingBackend = CompressionBackend & {
+  readonly requests: CompressionBackendRequest[];
+  readonly seenToolNames: string[];
+  callCount(): number;
+  reset(): void;
+};
+
+function createRecordingBackend(
+  respond: string | null | ((request: CompressionBackendRequest) => CompressionBackendResult),
+): RecordingBackend {
+  const requests: CompressionBackendRequest[] = [];
+  const seenToolNames: string[] = [];
+  return {
+    id: "headroom",
+    requests,
+    seenToolNames,
+    callCount: () => requests.length,
+    reset: () => {
+      requests.length = 0;
+      seenToolNames.length = 0;
+    },
+    compress: (request: CompressionBackendRequest) => {
+      requests.push(request);
+      seenToolNames.push(request.toolName);
+      const result =
+        typeof respond === "function"
+          ? respond(request)
+          : { output: respond };
+      return Promise.resolve(result);
+    },
+  };
+}
+
+function toolResultEvent(input: {
+  toolName: string;
+  toolCallId: string;
+  input?: object;
+  text: string;
+  isError?: boolean;
+  details?: unknown;
+}): ToolResultEvent {
+  return {
+    toolName: input.toolName,
+    toolCallId: input.toolCallId,
+    input: input.input ?? {},
+    content: [{ type: "text", text: input.text }],
+    isError: input.isError ?? false,
+    details: input.details,
+  } as ToolResultEvent;
 }
 
 describe("isCompressibleToolName", () => {
@@ -218,12 +323,13 @@ describe("createCompressionMetrics", () => {
     metrics.record({ kind: "failed", toolName: "ls", originalLength: 20, compressedLength: 0 });
 
     expect(formatStatsStatus(metrics.snapshot())).toBe("cmp 2/3 ok • saved 100B • fail 1");
-    expect(formatStatsWidgetLines(metrics.snapshot(), "http://127.0.0.1:8320")).toEqual([
-      "compressor http://127.0.0.1:8320",
-      "ok 2/3 • saved 100B • fail 1 • top: read 60B, safe_bash 40B",
+    // Widget shows the active engine name and state derived from recent calls.
+    expect(formatStatsWidgetLines(metrics.snapshot(), "headroom")).toEqual([
+      "compressor headroom",
+      "last 3: ok 2 • saved 100B • fail 1",
     ]);
 
-    expect(formatDetailedStats(metrics.snapshot(), "http://127.0.0.1:8320")).toContain("1. read — saved 60B • ok 1 • skipped 0 • fail 0");
+    expect(formatDetailedStats(metrics.snapshot(), "headroom")).toContain("1. read — saved 60B • ok 1 • skipped 0 • fail 0");
   });
 });
 
@@ -243,7 +349,8 @@ describe("createToolResultHandler", () => {
   it("skips unsupported tools", async () => {
     const fetchImpl = mock(() => Promise.resolve(new Response("{}")));
     const handler = createTestToolResultHandler({ fetchImpl });
-    const event = {
+    const event: ToolResultEvent = {
+      type: "tool_result",
       toolName: "write",
       toolCallId: "1",
       input: { path: "a" },
@@ -251,7 +358,7 @@ describe("createToolResultHandler", () => {
       isError: false,
       details: undefined,
     };
-    await expect(handler(event as any)).resolves.toBeUndefined();
+    await expect(handler(event, TEST_MODEL as any)).resolves.toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -266,7 +373,8 @@ describe("createToolResultHandler", () => {
       baseUrl: "http://127.0.0.1:8320",
       onObservation: (event) => observations.push(event),
     });
-    const event = {
+    const event: ToolResultEvent = {
+      type: "tool_result",
       toolName: "read",
       toolCallId: "1",
       input: { path: "src/main.rs" },
@@ -274,7 +382,7 @@ describe("createToolResultHandler", () => {
       isError: false,
       details: undefined,
     };
-    const result = await handler(event as any);
+    const result = await handler(event, TEST_MODEL as any);
     expect(result).toEqual({
       content: [{ type: "text", text: "trimmed" }],
       details: {
@@ -287,14 +395,16 @@ describe("createToolResultHandler", () => {
       },
     });
     expect(observations).toEqual([
-      {
+      expect.objectContaining({
         kind: "compressed",
         toolCallId: "1",
         toolName: "read",
         originalLength: "very long output".length,
         compressedLength: "trimmed".length,
         subject: "main.rs",
-      },
+        backend: "edgee",
+        latencyMs: expect.any(Number),
+      }),
     ]);
   });
 
@@ -313,7 +423,7 @@ describe("createToolResultHandler", () => {
       content: [{ type: "text", text: "very long original output\n".repeat(40) }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
 
     expect(result?.content[0]?.text).toContain("trimmed");
     expect(result?.content[0]?.text).toContain("run read /tmp/pi-tool-results/full-c1.txt for full output");
@@ -340,7 +450,7 @@ describe("createToolResultHandler", () => {
       content: [{ type: "text", text: source }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
 
     const output = result?.content[0]?.text ?? "";
     expect(output).toContain("HEAD");
@@ -372,7 +482,7 @@ describe("createToolResultHandler", () => {
       content: [{ type: "text", text: source }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
 
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(result?.content[0]?.text).toContain("run read /tmp/pi-tool-results/full-grep1.txt for full output");
@@ -380,6 +490,112 @@ describe("createToolResultHandler", () => {
       (result?.details as { compression: CompressionDetails } | undefined)
         ?.compression.archivePath,
     ).toBe("/tmp/pi-tool-results/full-grep1.txt");
+  });
+
+  it("routes find output to a deterministic archived cap without calling the backend", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "lost paths" }, { status: 200 })));
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8787",
+      archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-find1.txt"),
+    });
+    const source = [
+      "/repo/first.txt",
+      ...Array.from({ length: 900 }, (_, index) => `/repo/generated/file-${index}.txt`),
+      "/repo/last.txt",
+    ].join("\n");
+
+    const result = await handler({
+      toolName: "find",
+      toolCallId: "find1",
+      input: { path: "/repo", pattern: "*.txt" },
+      content: [{ type: "text", text: source }],
+      isError: false,
+      details: undefined,
+    } as any, TEST_MODEL);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const output = result?.content[0]?.text ?? "";
+    expect(output).toContain("/repo/first.txt");
+    expect(output).toContain("/repo/last.txt");
+    expect(output).toContain("omitted by head/tail cap");
+    expect(output).toContain("run read /tmp/pi-tool-results/full-find1.txt for full output");
+  });
+
+  it("keeps find output below the cap intact without calling the backend", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "lost paths" }, { status: 200 })));
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8787",
+      archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-find2.txt"),
+    });
+    const source = Array.from({ length: 180 }, (_, index) => `/repo/generated/file-${index}.txt`).join("\n");
+
+    const result = await handler({
+      toolName: "find",
+      toolCallId: "find2",
+      input: { path: "/repo", pattern: "*.txt" },
+      content: [{ type: "text", text: source }],
+      isError: false,
+      details: undefined,
+    } as any, TEST_MODEL);
+
+    expect(Buffer.byteLength(source, "utf8")).toBeGreaterThan(4096);
+    expect(source.length).toBeLessThan(8192);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
+
+  it("applies the find cap before the generic search threshold", async () => {
+    const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "lost paths" }, { status: 200 })));
+    const handler = createTestToolResultHandler({
+      fetchImpl,
+      baseUrl: "http://127.0.0.1:8787",
+      minBytesByGroup: { shell: 4096, read: 8192, search: 10000 },
+      capFallbackBytes: 2000,
+      archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-find3.txt"),
+    });
+    const source = Array.from({ length: 180 }, (_, index) => `/repo/generated/file-${index}.txt`).join("\n");
+
+    const result = await handler({
+      toolName: "find",
+      toolCallId: "find3",
+      input: { path: "/repo", pattern: "*.txt" },
+      content: [{ type: "text", text: source }],
+      isError: false,
+      details: undefined,
+    } as any, TEST_MODEL);
+
+    expect(source.length).toBeGreaterThan(2000);
+    expect(Buffer.byteLength(source, "utf8")).toBeLessThan(10000);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result?.content[0]?.text).toContain("omitted by head/tail cap");
+    expect(result?.content[0]?.text).toContain("run read /tmp/pi-tool-results/full-find3.txt for full output");
+  });
+
+  it("caps find output even when no semantic backend is available", async () => {
+    const handler = createToolResultHandler({
+      backend: null,
+      archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-find4.txt"),
+      aggregates: true,
+      capErrors: true,
+    });
+    const source = [
+      "/repo/first.txt",
+      ...Array.from({ length: 900 }, (_, index) => `/repo/generated/file-${index}.txt`),
+      "/repo/last.txt",
+    ].join("\n");
+
+    const result = await handler(toolResultEvent({
+      toolName: "find",
+      toolCallId: "find4",
+      input: { path: "/repo", pattern: "*.txt" },
+      text: source,
+    }), TEST_MODEL);
+
+    expect(result?.content[0]?.text).toContain("/repo/first.txt");
+    expect(result?.content[0]?.text).toContain("/repo/last.txt");
+    expect(result?.content[0]?.text).toContain("run read /tmp/pi-tool-results/full-find4.txt for full output");
   });
 
   it("compression details match expected shape and types", async () => {
@@ -394,7 +610,7 @@ describe("createToolResultHandler", () => {
       content: [{ type: "text", text: "a".repeat(5000) }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result).toBeDefined();
     expect(result!.details).toBeDefined();
     const cd = result!.details!.compression as CompressionDetails;
@@ -424,11 +640,11 @@ describe("createToolResultHandler", () => {
       content: [{ type: "text", text: "./\n" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
 
     expect(result).toBeUndefined();
     expect(observations).toEqual([
-      {
+      expect.objectContaining({
         kind: "skipped",
         toolCallId: "ns1",
         toolName: "safe_bash",
@@ -436,7 +652,9 @@ describe("createToolResultHandler", () => {
         compressedLength: 0,
         reason: "not_smaller",
         subject: "find . -maxdepth 1",
-      },
+        backend: "edgee",
+        latencyMs: expect.any(Number),
+      }),
     ]);
   });
 
@@ -447,7 +665,8 @@ describe("createToolResultHandler", () => {
       fetchImpl,
       onObservation: (event) => observations.push(event),
     });
-    const event = {
+    const event: ToolResultEvent = {
+      type: "tool_result",
       toolName: "read",
       toolCallId: "1",
       input: { path: "a" },
@@ -458,10 +677,10 @@ describe("createToolResultHandler", () => {
       isError: false,
       details: undefined,
     };
-    await expect(handler(event as any)).resolves.toBeUndefined();
+    await expect(handler(event, TEST_MODEL as any)).resolves.toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(observations).toEqual([
-      {
+      expect.objectContaining({
         kind: "skipped",
         toolCallId: "1",
         toolName: "read",
@@ -469,8 +688,11 @@ describe("createToolResultHandler", () => {
         compressedLength: 0,
         reason: "non_text_content",
         subject: "a",
-      },
+        // Selected backend is a config fact; no call was made, so no latency.
+        backend: "edgee",
+      }),
     ]);
+    expect(observations[0]).not.toHaveProperty("latencyMs");
   });
 
   it("records failed events when service unavailable", async () => {
@@ -481,7 +703,8 @@ describe("createToolResultHandler", () => {
       baseUrl: "http://127.0.0.1:8320",
       onObservation: (event) => observations.push(event),
     });
-    const event = {
+    const event: ToolResultEvent = {
+      type: "tool_result",
       toolName: "grep",
       toolCallId: "1",
       input: { pattern: "foo", path: "src" },
@@ -489,9 +712,9 @@ describe("createToolResultHandler", () => {
       isError: false,
       details: undefined,
     };
-    await expect(handler(event as any)).resolves.toBeUndefined();
+    await expect(handler(event, TEST_MODEL as any)).resolves.toBeUndefined();
     expect(observations).toEqual([
-      {
+      expect.objectContaining({
         kind: "failed",
         toolCallId: "1",
         toolName: "grep",
@@ -499,60 +722,50 @@ describe("createToolResultHandler", () => {
         compressedLength: 0,
         reason: "service_error",
         subject: "src",
-      },
+        backend: "edgee",
+        // A backend throw still gets a measured latency.
+        latencyMs: expect.any(Number),
+      }),
     ]);
   });
 
-  it("maps ls and find to glob and safe_bash to bash", async () => {
-    const seenToolNames: string[] = [];
-    const fetchImpl = mock(async (_url: string | URL | Request, init?: RequestInit) => {
-      const toolName = parseToolName(init);
-      if (toolName) seenToolNames.push(toolName);
-      return Response.json({ compressed_output: "trimmed" }, { status: 200 });
+  it("forwards backend-routed tool names without translation", async () => {
+    const backend = createRecordingBackend("trimmed");
+    const handler = createToolResultHandler({
+      backend,
+      minBytesByGroup: { shell: 0, read: 0, search: 0 },
+      aggregates: false,
+      capErrors: false,
     });
-    const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
 
-    await handler({
+    await handler(toolResultEvent({
       toolName: "ls",
       toolCallId: "1",
       input: { path: ".", all: true },
-      content: [{ type: "text", text: "file1\nfile2\nfile3" }],
-      isError: false,
-      details: undefined,
-    } as any);
-    await handler({
-      toolName: "find",
-      toolCallId: "2",
-      input: { pattern: "*.ts", path: "src" },
-      content: [{ type: "text", text: "src/a.ts\nsrc/b.ts" }],
-      isError: false,
-      details: undefined,
-    } as any);
-    await handler({
+      text: "file1\nfile2\nfile3",
+    }), TEST_MODEL);
+    await handler(toolResultEvent({
       toolName: "safe_bash",
       toolCallId: "3",
       input: { command: "ls -la" },
-      content: [{ type: "text", text: "very long output" }],
-      isError: false,
-      details: undefined,
-    } as any);
+      text: "very long output",
+    }), TEST_MODEL);
 
-    expect(seenToolNames).toEqual(["glob", "glob", "bash"]);
+    expect(backend.seenToolNames).toEqual(["ls", "safe_bash"]);
   });
 });
 
 describe("grouped thresholds and result integrity", () => {
   it("uses the threshold for each compression group", async () => {
-    const fetchImpl = mock(() =>
-      Promise.resolve(
-        Response.json({ compressed_output: "x" }, { status: 200 }),
-      ),
-    );
+    const backend = createRecordingBackend("x");
     const handler = createToolResultHandler({
-      fetchImpl,
+      backend,
       minBytesByGroup: { shell: 4, read: 6, search: 5 },
+      aggregates: false,
+      capErrors: false,
     });
 
+    // UTF-8 byte boundaries: "é" is 2 bytes, "a" is 1 byte.
     const cases = [
       ["bash", "é", false],
       ["bash", "éé", true],
@@ -566,16 +779,17 @@ describe("grouped thresholds and result integrity", () => {
     ] as const;
 
     for (const [toolName, text, eligible] of cases) {
-      fetchImpl.mockClear();
-      await handler({
-        toolName,
-        toolCallId: `${toolName}-${Buffer.byteLength(text, "utf8")}`,
-        input: {},
-        content: [{ type: "text", text }],
-        isError: false,
-        details: undefined,
-      } as any);
-      expect(fetchImpl).toHaveBeenCalledTimes(eligible ? 1 : 0);
+      backend.reset();
+      await handler(
+        toolResultEvent({
+          toolName,
+          toolCallId: `${toolName}-${Buffer.byteLength(text, "utf8")}`,
+          input: {},
+          text,
+        }),
+        TEST_MODEL,
+      );
+      expect(backend.callCount()).toBe(eligible ? 1 : 0);
     }
   });
 
@@ -602,7 +816,7 @@ describe("grouped thresholds and result integrity", () => {
       content: [{ type: "text", text: originalText }],
       isError: false,
       details,
-    } as any);
+    } as any, TEST_MODEL);
 
     expect(archiveOriginal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -633,7 +847,7 @@ describe("grouped thresholds and result integrity", () => {
       content: [{ type: "text", text: "a sufficiently long output" }],
       isError: false,
       details: "opaque-details",
-    } as any);
+    } as any, TEST_MODEL);
 
     expect(result?.details).toMatchObject({
       originalDetails: "opaque-details",
@@ -661,7 +875,7 @@ describe("grouped thresholds and result integrity", () => {
         content: [{ type: "text", text: "long grep output" }],
         isError: false,
         details: { preserved: true },
-      } as any),
+      } as any, TEST_MODEL),
     ).resolves.toBeUndefined();
   });
 
@@ -683,7 +897,7 @@ describe("grouped thresholds and result integrity", () => {
         content: [{ type: "text", text: "a sufficiently long output" }],
         isError: false,
         details: { preserved: true },
-      } as any),
+      } as any, TEST_MODEL),
     ).resolves.toBeUndefined();
   });
 
@@ -705,7 +919,7 @@ describe("grouped thresholds and result integrity", () => {
         content: [{ type: "text", text: "small original" }],
         isError: false,
         details: { preserved: true },
-      } as any),
+      } as any, TEST_MODEL),
     ).resolves.toBeUndefined();
   });
 });
@@ -903,7 +1117,11 @@ describe("extension registration", () => {
   it("appends compressed outcome entry and reports summary-only turn and agent notifications", async () => {
     const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
     const realFetch = globalThis.fetch;
-    globalThis.fetch = mock(async () => Response.json({ compressed_output: "trimmed" })) as unknown as typeof fetch;
+    globalThis.fetch = mock(async () =>
+      Response.json({
+        messages: [{ role: "tool", tool_call_id: "c1", content: "trimmed" }],
+      }),
+    ) as unknown as typeof fetch;
 
     const { pi, handlers, entries } = createMockExtensionAPI();
     const ctx = createMockContext() as any;
@@ -977,7 +1195,11 @@ describe("extension registration", () => {
   it("appends skipped outcome entry and reports it at turn_end", async () => {
     const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
     const realFetch = globalThis.fetch;
-    globalThis.fetch = mock(async () => Response.json({ compressed_output: "same output" })) as unknown as typeof fetch;
+    globalThis.fetch = mock(async () =>
+      Response.json({
+        messages: [{ role: "tool", tool_call_id: "s1", content: "same output" }],
+      }),
+    ) as unknown as typeof fetch;
 
     const { pi, handlers, entries } = createMockExtensionAPI();
     const ctx = createMockContext() as any;
@@ -996,7 +1218,7 @@ describe("extension registration", () => {
 
     expect(entries).toContainEqual({
       customType: COMPRESSION_EVENT_ENTRY_TYPE,
-      data: {
+      data: expect.objectContaining({
         toolCallId: "s1",
         toolName: "grep",
         timestamp: expect.any(Number),
@@ -1004,7 +1226,10 @@ describe("extension registration", () => {
         originalLength: "same output".length,
         subject: "foo",
         reason: "no_change",
-      },
+        backend: "headroom",
+        backendVersion: "322425c43bffde1ed0b64fecf3cf5951565dd82b",
+        latencyMs: expect.any(Number),
+      }),
     });
     await handlers.get("turn_end")?.({}, ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("compression turn: ok 0/1 • skipped 1 • fail 0"), "info");
@@ -1044,7 +1269,7 @@ describe("extension registration", () => {
 
     expect(entries).toContainEqual({
       customType: COMPRESSION_EVENT_ENTRY_TYPE,
-      data: {
+      data: expect.objectContaining({
         toolCallId: "1",
         toolName: "grep",
         timestamp: expect.any(Number),
@@ -1052,11 +1277,14 @@ describe("extension registration", () => {
         originalLength: "src/a.rs:1: foo".length,
         subject: "src",
         reason: "service_error",
-      },
+        backend: "headroom",
+        backendVersion: "322425c43bffde1ed0b64fecf3cf5951565dd82b",
+        latencyMs: expect.any(Number),
+      }),
     });
     expect(entries).toContainEqual({
       customType: COMPRESSION_EVENT_ENTRY_TYPE,
-      data: {
+      data: expect.objectContaining({
         toolCallId: "2",
         toolName: "bash",
         timestamp: expect.any(Number),
@@ -1064,7 +1292,10 @@ describe("extension registration", () => {
         originalLength: "other output".length,
         subject: "ls -la",
         reason: "service_error",
-      },
+        backend: "headroom",
+        backendVersion: "322425c43bffde1ed0b64fecf3cf5951565dd82b",
+        latencyMs: expect.any(Number),
+      }),
     });
     await handlers.get("turn_end")?.({}, ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("compression turn: ok 0/2 • skipped 0 • fail 2"), "warning");
@@ -1072,15 +1303,69 @@ describe("extension registration", () => {
     globalThis.fetch = realFetch;
   });
 
+  it("warns once per backend/reason per session and resets on a new session", async () => {
+    const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => {
+      throw new Error("offline");
+    }) as unknown as typeof fetch;
+
+    try {
+      const { pi, handlers } = createMockExtensionAPI();
+      const ctx = createMockContext() as any;
+      localToolResultCompressor(pi, TEST_CONFIG);
+
+      await handlers.get("session_start")?.({}, ctx);
+      await handlers.get("turn_start")?.({}, ctx);
+      const failed = (toolCallId: string) => ({
+        toolName: "grep",
+        toolCallId,
+        input: { pattern: "x", path: "src" },
+        content: [{ type: "text", text: "src/a.rs:1: x" }],
+        isError: false,
+        details: undefined,
+      });
+      await handlers.get("tool_result")?.(failed("w1"), ctx);
+      await handlers.get("tool_result")?.(failed("w2"), ctx);
+
+      const failureWarnings = () =>
+        ctx.ui.notify.mock.calls
+          .filter((call: unknown[]) => call[1] === "warning")
+          .map((call: unknown[]): string => String(call[0]))
+          .filter((message: string) => message.includes("compression failed"));
+      // Same backend/reason failure class → exactly one warning this session.
+      expect(failureWarnings()).toHaveLength(1);
+
+      // A new session resets the dedupe → the same failure class warns again.
+      await handlers.get("session_start")?.({}, ctx);
+      await handlers.get("turn_start")?.({}, ctx);
+      await handlers.get("tool_result")?.(failed("w3"), ctx);
+      expect(failureWarnings()).toHaveLength(2);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it("summarizes multiple read outcomes truthfully at turn_end", async () => {
     const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
     const responses = [
-      Response.json({ compressed_output: "same output" }),
-      Response.json({ compressed_output: "trimmed" }),
-      Response.json({ compressed_output: "same output" }),
+      Response.json({
+        messages: [{ role: "tool", tool_call_id: "r1", content: "same output" }],
+      }),
+      Response.json({
+        messages: [{ role: "tool", tool_call_id: "r2", content: "trimmed" }],
+      }),
+      Response.json({
+        messages: [{ role: "tool", tool_call_id: "r3", content: "same output" }],
+      }),
     ];
     const realFetch = globalThis.fetch;
-    globalThis.fetch = mock(async () => responses.shift() ?? Response.json({ compressed_output: "same output" })) as unknown as typeof fetch;
+    globalThis.fetch = mock(async () =>
+      responses.shift() ??
+      Response.json({
+        messages: [{ role: "tool", tool_call_id: "r3", content: "same output" }],
+      }),
+    ) as unknown as typeof fetch;
 
     const { pi, handlers } = createMockExtensionAPI();
     const ctx = createMockContext() as any;
@@ -1137,7 +1422,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
       content: [{ type: "text", text: "very long output" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result).toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(observations).toEqual([]);
@@ -1158,7 +1443,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
       content: [{ type: "text", text: "some text" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(excluded).toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
 
@@ -1169,7 +1454,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
       content: [{ type: "text", text: "found something here" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(eligible).toBeDefined();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
@@ -1191,7 +1476,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
       content: [{ type: "text", text: "short" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(belowThreshold).toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(observations).toEqual([]);
@@ -1203,7 +1488,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
       content: [{ type: "text", text: "a".repeat(150) }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(eligible).toBeDefined();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
@@ -1223,7 +1508,7 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
       content: [{ type: "text", text: "éé" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(result).toBeDefined();
@@ -1277,12 +1562,12 @@ describe("audit-aware compression policy", () => {
     resetAuditState("standard");
   });
 
-  it("standard profile: compresses all tool types", async () => {
+  it("standard profile: processes backend tools and preserves small find output", async () => {
     // standard is the default — no setActiveProfile needed
     const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
     const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
 
-    for (const toolName of ["grep", "find", "ls", "read", "bash", "safe_bash"]) {
+    for (const toolName of ["grep", "ls", "read", "bash", "safe_bash"]) {
       fetchImpl.mockClear();
       const result = await handler({
         toolName,
@@ -1291,18 +1576,30 @@ describe("audit-aware compression policy", () => {
         content: [{ type: "text", text: "some output" }],
         isError: false,
         details: undefined,
-      } as any);
+      } as any, TEST_MODEL);
       expect(fetchImpl).toHaveBeenCalled();
       expect(result).toBeDefined();
     }
+
+    fetchImpl.mockClear();
+    const findResult = await handler({
+      toolName: "find",
+      toolCallId: "find-standard",
+      input: { path: ".", pattern: "*.ts" },
+      content: [{ type: "text", text: "some output" }],
+      isError: false,
+      details: undefined,
+    } as any, TEST_MODEL);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(findResult).toBeUndefined();
   });
 
-  it("audit profile: keeps compression enabled for all tool types", async () => {
+  it("audit profile: processes backend tools and preserves small find output", async () => {
     setActiveProfile("audit");
     const fetchImpl = mock(async () => Response.json({ compressed_output: "compressed" }, { status: 200 }));
     const handler = createTestToolResultHandler({ fetchImpl, baseUrl: "http://127.0.0.1:8320" });
 
-    for (const toolName of ["grep", "find", "ls", "read", "bash", "safe_bash"]) {
+    for (const toolName of ["grep", "ls", "read", "bash", "safe_bash"]) {
       fetchImpl.mockClear();
       const result = await handler({
         toolName,
@@ -1311,10 +1608,22 @@ describe("audit-aware compression policy", () => {
         content: [{ type: "text", text: "some output" }],
         isError: false,
         details: undefined,
-      } as any);
+      } as any, TEST_MODEL);
       expect(fetchImpl).toHaveBeenCalled();
       expect(result).toBeDefined();
     }
+
+    fetchImpl.mockClear();
+    const findResult = await handler({
+      toolName: "find",
+      toolCallId: "find-audit",
+      input: { path: ".", pattern: "*.ts" },
+      content: [{ type: "text", text: "some output" }],
+      isError: false,
+      details: undefined,
+    } as any, TEST_MODEL);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(findResult).toBeUndefined();
   });
 
   it("advanced profile: disables compression for search tools (grep, find, ls)", async () => {
@@ -1331,7 +1640,7 @@ describe("audit-aware compression policy", () => {
         content: [{ type: "text", text: "some output" }],
         isError: false,
         details: undefined,
-      } as any);
+      } as any, TEST_MODEL);
       expect(fetchImpl).not.toHaveBeenCalled();
       expect(result).toBeUndefined();
     }
@@ -1351,7 +1660,7 @@ describe("audit-aware compression policy", () => {
         content: [{ type: "text", text: "some output" }],
         isError: false,
         details: undefined,
-      } as any);
+      } as any, TEST_MODEL);
       expect(fetchImpl).not.toHaveBeenCalled();
       expect(result).toBeUndefined();
     }
@@ -1369,7 +1678,7 @@ describe("audit-aware compression policy", () => {
       content: [{ type: "text", text: "some output" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(fetchImpl).toHaveBeenCalled();
     expect(result).toBeDefined();
   });
@@ -1415,7 +1724,7 @@ describe("aggregate header integration", () => {
       content: [{ type: "text", text: grepText }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result?.content[0]?.text).toContain("[stats] matches: 3 | files: 2");
     expect(result?.content[0]?.text).toContain("trimmed");
   });
@@ -1437,7 +1746,7 @@ describe("aggregate header integration", () => {
       content: [{ type: "text", text: readText }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result?.content[0]?.text).toContain("[stats] chars:");
     expect(result?.content[0]?.text).toContain("lines: 101");
     expect(result?.content[0]?.text).toContain("trimmed");
@@ -1462,7 +1771,7 @@ describe("aggregate header integration", () => {
       content: [{ type: "text", text: bashText }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result?.content[0]?.text).toContain("[stats] lines: 200");
     expect(result?.content[0]?.text).toContain("run read /tmp/pi-archive/bash-out.txt for full output");
   });
@@ -1483,7 +1792,7 @@ describe("aggregate header integration", () => {
       content: [{ type: "text", text: "src/a.ts:10: foo\nsrc/b.ts:5: foo" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result?.content[0]?.text).not.toContain("[stats]");
     expect(result?.content[0]?.text).toContain("trimmed");
   });
@@ -1513,7 +1822,7 @@ describe("error cap behavior", () => {
       content: [{ type: "text", text: errorText }],
       isError: true,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(result).toBeDefined();
     const output = result?.content[0]?.text ?? "";
@@ -1541,7 +1850,7 @@ describe("error cap behavior", () => {
       content: [{ type: "text", text: "small error" }],
       isError: true,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result).toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -1564,7 +1873,7 @@ describe("error cap behavior", () => {
       content: [{ type: "text", text: "a".repeat(5000) }],
       isError: true,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result).toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -1587,7 +1896,7 @@ describe("error cap behavior", () => {
       content: [{ type: "text", text: "a".repeat(5000) }],
       isError: true,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result).toBeUndefined();
   });
 
@@ -1610,7 +1919,7 @@ describe("error cap behavior", () => {
       content: [{ type: "text", text: errorText }],
       isError: true,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result).toBeDefined();
     expect(fetchImpl).not.toHaveBeenCalled();
     const output = result?.content[0]?.text ?? "";
@@ -1641,7 +1950,7 @@ describe("empty-state guard", () => {
       content: [{ type: "text", text: "" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result).toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -1650,7 +1959,7 @@ describe("empty-state guard", () => {
     const fetchImpl = mock(() =>
       Promise.resolve(Response.json({ compressed_output: "x" }, { status: 200 })),
     );
-    const handler = createToolResultHandler({
+    const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       minBytesByGroup: { shell: 100, read: 100, search: 100 },
@@ -1664,7 +1973,7 @@ describe("empty-state guard", () => {
       content: [{ type: "text", text: "short" }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result).toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -1688,7 +1997,7 @@ describe("empty-state guard", () => {
       content: [{ type: "text", text: source }],
       isError: false,
       details: undefined,
-    } as any);
+    } as any, TEST_MODEL);
     expect(result).toBeDefined();
     const output = result?.content[0]?.text ?? "";
     expect(output.length).toBeGreaterThan(0);

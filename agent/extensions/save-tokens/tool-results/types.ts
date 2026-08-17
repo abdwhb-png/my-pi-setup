@@ -1,15 +1,67 @@
 import type {
+    CompressionBackendMetrics,
     CompressionFailedReason,
     CompressionKind,
     CompressionSkippedReason,
-} from '../../_shared/compression-protocol';
+} from "../../_shared/compression-protocol";
+
+// ---------------------------------------------------------------------------
+// Backend contracts
+// ---------------------------------------------------------------------------
+
+export type CompressionBackendId = "headroom" | "edgee";
+
+/**
+ * Verified engine versions for telemetry.
+ * - `edgee`: vendored `edgee-compressor` crate version 0.1.3 (crates.io).
+ * - `headroom`: upstream pin (full commit) of the headroom-source clone.
+ */
+export const COMPRESSION_BACKEND_VERSIONS: Record<
+    CompressionBackendId,
+    string
+> = {
+    headroom: "322425c43bffde1ed0b64fecf3cf5951565dd82b",
+    edgee: "0.1.3",
+};
+
+export interface CompressorModel {
+    provider: string;
+    id: string;
+    contextWindow: number;
+}
+
+export interface CompressionBackendRequest {
+    toolCallId: string;
+    toolName: string;
+    arguments: unknown;
+    output: string;
+    model: CompressorModel;
+}
+
+export interface CompressionBackendResult {
+    output: string | null;
+    reason?: string;
+    metrics?: CompressionBackendMetrics;
+}
+
+export interface CompressionBackend {
+    readonly id: CompressionBackendId;
+    compress(
+        request: CompressionBackendRequest,
+        signal?: AbortSignal,
+    ): Promise<CompressionBackendResult>;
+}
+
+// ---------------------------------------------------------------------------
+// General types
+// ---------------------------------------------------------------------------
 
 export type FetchLike = (
     input: string | URL | Request,
     init?: RequestInit,
 ) => Promise<Response>;
 
-export type CompressionGroup = 'shell' | 'read' | 'search';
+export type CompressionGroup = "shell" | "read" | "search";
 export type CompressionThresholds = Record<CompressionGroup, number>;
 
 export interface ArchiveRetentionConfig {
@@ -26,6 +78,16 @@ export type CompressionObservation = {
     subject?: string;
     reason?: CompressionSkippedReason | CompressionFailedReason;
     archivePath?: string;
+    /** Selected backend id, when a backend was configured (Task 10). */
+    backend?: CompressionBackendId;
+    /** Verified backend engine version (Task 10). */
+    backendVersion?: string;
+    /** Backend call latency in ms, measured by the policy layer (Task 10). */
+    latencyMs?: number;
+    /** Native engine metrics normalized by the adapter (Task 10). */
+    nativeMetrics?: CompressionBackendMetrics;
+    /** Tokenizer family selected by the engine registry, when factual (Task 10). */
+    tokenizer?: string;
 };
 
 export type CompressionMetricObservation = {
@@ -33,6 +95,16 @@ export type CompressionMetricObservation = {
     toolName: string;
     originalLength: number;
     compressedLength: number;
+    latencyMs?: number;
+};
+
+/** One bounded recent call, used to derive widget state. */
+export type RecentCompressionCall = {
+    kind: CompressionKind;
+    toolName: string;
+    originalLength: number;
+    compressedLength: number;
+    latencyMs?: number;
 };
 
 export type CompressionSummary = {
@@ -51,8 +123,8 @@ export interface LocalCompressorConfig {
     showWidget: boolean;
     archiveOriginal: boolean;
     capFallbackBytes?: number;
-    routingStrategy: 'edgee' | 'benchmark';
-    summaryGranularity: 'none' | 'turn' | 'agent' | 'all';
+    routingStrategy: "edgee" | "benchmark";
+    summaryGranularity: "none" | "turn" | "agent" | "all";
     enabled: boolean;
     excludeTools: string[];
     minBytesByGroup: CompressionThresholds;
@@ -70,32 +142,25 @@ export interface ArchiveOriginalInput {
     sourcePath?: string;
 }
 
+/**
+ * Policy-only options. Transport concerns (URL, timeout, agent, fetch) live in
+ * the selected {@link CompressionBackend} adapter, never here.
+ */
 export interface ToolResultHandlerOptions {
-    fetchImpl?: FetchLike;
-    baseUrl?: string;
-    agent?: string;
-    timeoutMs?: number;
+    backend?: CompressionBackend | null;
+    backendFailureReason?: Extract<CompressionFailedReason, "invalid_backend">;
+    /** Verified version of the selected backend engine (Task 10 telemetry). */
+    backendVersion?: string;
     onObservation?: (event: CompressionObservation) => void;
     archiveOriginal?: (input: ArchiveOriginalInput) => Promise<string | null>;
     capFallbackBytes?: number;
-    routingStrategy?: 'edgee' | 'benchmark';
+    routingStrategy?: "edgee" | "benchmark";
     enabled?: boolean;
     excludeTools?: string[];
     minBytes?: number;
     minBytesByGroup?: CompressionThresholds;
     aggregates?: boolean;
     capErrors?: boolean;
-}
-
-export interface CompressRequest {
-    tool_name: string;
-    arguments: string;
-    output: string;
-    agent: string;
-}
-
-export interface CompressResponse {
-    compressed_output?: string | null;
 }
 
 export type ToolCompressionStats = {
@@ -114,4 +179,6 @@ export type CompressionSnapshot = {
     toolCounts: Record<string, number>;
     toolStats: Record<string, ToolCompressionStats>;
     firstCompressedTools: string[];
+    /** Bounded recent-call state; widget derived state comes from it. */
+    recentCalls: RecentCompressionCall[];
 };

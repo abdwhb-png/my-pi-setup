@@ -42,7 +42,7 @@ export function summarizeCompressionEvents(
 export function updateUi(
     ctx: ExtensionContext | null,
     snapshot: CompressionSnapshot,
-    baseUrl: string,
+    engine: string,
     widget: WidgetHandle | null,
     setWidgetText: (text: string) => void,
     showStatus: boolean,
@@ -52,7 +52,7 @@ export function updateUi(
     if (!ctx?.hasUI) return;
     const colors = createUiColors(ctx.ui.theme);
     const status = formatStatsStatus(snapshot);
-    const lines = formatStatsWidgetLines(snapshot, baseUrl);
+    const lines = formatStatsWidgetLines(snapshot, engine);
 
     if (showStatus) {
         const statusText =

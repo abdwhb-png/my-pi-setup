@@ -40,8 +40,10 @@ Les sources ont changé depuis le benchmark initial :
 6. Démarrer manuellement uniquement le service sélectionné via Docker Compose.
 7. Garder dans `save-tokens` les seuils, archives, cap fallback, fail-open,
    télémétrie et UI.
-8. Bloquer techniquement tout egress du service Headroom. Les flags applicatifs
-   seuls ne constituent pas une frontière de sécurité suffisante.
+8. Bloquer techniquement tout egress des moteurs Headroom et Edgee. Les flags
+  applicatifs seuls ne constituent pas une frontière de sécurité suffisante.
+9. Publier chaque backend par un relay fixe dédié; ne jamais dual-homer les
+  moteurs ni exposer directement leurs ports.
 
 ## Architecture
 
@@ -187,9 +189,10 @@ accepté. Les octets, caractères et tokens ne doivent pas être mélangés.
 
 ## Service Headroom
 
-Le proxy officiel est un sidecar local persistant :
+Le proxy officiel reste un moteur local persistant derrière un relay dédié :
 
-- bind hôte `127.0.0.1:8787` ;
+- moteur sans port hôte, uniquement sur le réseau `compression` interne ;
+- relay fixe `127.0.0.1:8787` vers `headroom:8787/v1/compress` ;
 - `HEADROOM_OFFLINE=1` ;
 - `HEADROOM_STATELESS=1` ;
 - télémétrie/beacon désactivés explicitement ;
@@ -250,7 +253,9 @@ commit parent de la suppression du crate. Le dossier vendored inclut :
 - note expliquant que la branche Edgee actuelle ne maintient plus ce moteur.
 
 Le build ne dépend plus de `edgee-source`, qui reste le CLI/gateway actuel. Le
-port hôte est bind uniquement sur `127.0.0.1:8320`.
+Le moteur Edgee ne publie aucun port et reste sur le réseau interne. Un relay
+Rust dédié publie `127.0.0.1:8320`, accepte seulement `POST /compress`, et
+construit sa cible `edgee:8320/compress` depuis des constantes.
 
 ## Flux d'un résultat
 
@@ -295,7 +300,8 @@ de health constant n'est nécessaire.
 
 ## Docker Compose et exploitation
 
-Un Compose racine définit deux profils indépendants :
+Un Compose racine définit deux profils runtime indépendants et un profil
+`verification` pour le canary :
 
 ```bash
 docker compose --profile headroom up -d
@@ -348,7 +354,9 @@ et smoke test du service réel.
 
 - canary unique dans payload ;
 - aucune requête externe contenant canary ;
-- egress depuis container doit échouer ;
+- egress doit échouer depuis Headroom et Edgee ;
+- moteurs sans binding hôte ni route par défaut ;
+- relays seuls publiés sur loopback, cibles fixes et tests anti-SSRF ;
 - Pi vers loopback doit réussir ;
 - aucune télémétrie distante ;
 - archives et télémétrie locales restent explicitement documentées.

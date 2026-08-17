@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import {
+    chmod,
     copyFile,
     lstat,
     mkdir,
@@ -50,12 +52,18 @@ export async function archiveOriginalToolResult(
         `${Date.now()}-${safeToolName}-${safeToolCallId}-${digest}.txt`,
     );
 
-    await mkdir(archiveRoot, { recursive: true });
+    await mkdir(archiveRoot, { recursive: true, mode: 0o700 });
+    await chmod(archiveRoot, 0o700);
     try {
         if (input.sourcePath) {
-            await copyFile(input.sourcePath, filePath);
+            await copyFile(input.sourcePath, filePath, constants.COPYFILE_EXCL);
+            await chmod(filePath, 0o600);
         } else {
-            await writeFile(filePath, input.text, 'utf8');
+            await writeFile(filePath, input.text, {
+                encoding: 'utf8',
+                mode: 0o600,
+                flag: 'wx',
+            });
         }
     } catch (error) {
         await unlink(filePath).catch(() => undefined);

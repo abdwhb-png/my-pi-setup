@@ -15,14 +15,26 @@
  * When telemetry is disabled (`enabled === false`), both functions are no-ops.
  */
 
-import type { ExtensionAPI, ExtensionContext, ExtensionEvent, BeforeAgentStartEvent, SessionStartEvent, SessionShutdownEvent, AgentStartEvent, AgentEndEvent, TurnStartEvent, TurnEndEvent, ToolResultEvent } from '@earendil-works/pi-coding-agent';
-import { randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
-import { loadTelemetryConfig } from '../config';
-import type { TelemetryConfig } from '../config';
-import { createWriter, purgeTelemetry, type TelemetryWriter } from './storage';
-import { redactValue } from './redaction';
-import { findCompressionEventByToolCallId } from '../../_shared/compression-protocol';
+import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+    ExtensionEvent,
+    BeforeAgentStartEvent,
+    SessionStartEvent,
+    SessionShutdownEvent,
+    AgentStartEvent,
+    AgentEndEvent,
+    TurnStartEvent,
+    TurnEndEvent,
+    ToolResultEvent,
+} from "@earendil-works/pi-coding-agent";
+import { findCompressionEventByToolCallId } from "../../_shared/compression-protocol";
+import { loadTelemetryConfig } from "../config";
+import type { TelemetryConfig } from "../config";
+import { redactValue } from "./redaction";
+import { createWriter, purgeTelemetry, type TelemetryWriter } from "./storage";
 import {
     TELEMETRY_SCHEMA_VERSION,
     type TelemetryEvent,
@@ -38,13 +50,16 @@ import {
     type TelemetryExperimentTag,
     type JsonValue,
     type UsageMetrics,
-} from './types';
+} from "./types";
 
-type MessageStartEvent = Extract<ExtensionEvent, { type: 'message_start' }>;
-type MessageUpdateEvent = Extract<ExtensionEvent, { type: 'message_update' }>;
-type MessageEndEvent = Extract<ExtensionEvent, { type: 'message_end' }>;
-type ModelSelectEvent = Extract<ExtensionEvent, { type: 'model_select' }>;
-type ThinkingLevelSelectEvent = Extract<ExtensionEvent, { type: 'thinking_level_select' }>;
+type MessageStartEvent = Extract<ExtensionEvent, { type: "message_start" }>;
+type MessageUpdateEvent = Extract<ExtensionEvent, { type: "message_update" }>;
+type MessageEndEvent = Extract<ExtensionEvent, { type: "message_end" }>;
+type ModelSelectEvent = Extract<ExtensionEvent, { type: "model_select" }>;
+type ThinkingLevelSelectEvent = Extract<
+    ExtensionEvent,
+    { type: "thinking_level_select" }
+>;
 
 // ---------------------------------------------------------------------------
 // Mode markers for systemPrompt scanning
@@ -98,7 +113,7 @@ function createState(config: TelemetryConfig): TelemetryState {
         sessionId: null,
         startTime: 0,
         writer: null,
-        writerRoot: config.directory ?? '',
+        writerRoot: config.directory ?? "",
         runId: null,
         runStartTime: null,
         turnIndex: 0,
@@ -154,9 +169,9 @@ function convert(value: unknown, seen: WeakSet<object>): JsonValue {
     // Primitives — pass through
     if (value === null) return null;
     if (value === undefined) return null;
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-    if (typeof value === 'string') return value;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value === "string") return value;
 
     // Date → ISO string
     if (value instanceof Date) return value.toISOString();
@@ -172,13 +187,13 @@ function convert(value: unknown, seen: WeakSet<object>): JsonValue {
     }
 
     // Functions, Symbols, BigInt → null (not valid JSON)
-    if (typeof value === 'function' || typeof value === 'symbol') return null;
-    if (typeof value === 'bigint') return String(value);
+    if (typeof value === "function" || typeof value === "symbol") return null;
+    if (typeof value === "bigint") return String(value);
 
     // Objects with numeric/symbol/string keys
-    if (typeof value === 'object') {
+    if (typeof value === "object") {
         // Circular detection
-        if (seen.has(value)) return '[CIRCULAR]' as unknown as JsonValue;
+        if (seen.has(value)) return "[CIRCULAR]" as unknown as JsonValue;
         seen.add(value);
 
         // Array
@@ -193,7 +208,10 @@ function convert(value: unknown, seen: WeakSet<object>): JsonValue {
         // Plain object (or class instance with enumerable properties)
         const result: Record<string, JsonValue> = {};
         for (const key of Object.keys(value)) {
-            result[key] = convert((value as Record<string, unknown>)[key], seen);
+            result[key] = convert(
+                (value as Record<string, unknown>)[key],
+                seen,
+            );
         }
         return result;
     }
@@ -210,7 +228,12 @@ function sumContentLength(content: unknown): number {
     if (!Array.isArray(content)) return 0;
     let total = 0;
     for (const item of content) {
-        if (item && typeof item === 'object' && 'text' in item && typeof (item as { text: string }).text === 'string') {
+        if (
+            item &&
+            typeof item === "object" &&
+            "text" in item &&
+            typeof (item as { text: string }).text === "string"
+        ) {
             total += (item as { text: string }).text.length;
         }
     }
@@ -218,25 +241,13 @@ function sumContentLength(content: unknown): number {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: extract TextContent text concatenated
-// ---------------------------------------------------------------------------
-
-function extractTextContent(content: unknown): string {
-    if (!Array.isArray(content)) return '';
-    const parts: string[] = [];
-    for (const item of content) {
-        if (item && typeof item === 'object' && 'text' in item && typeof (item as { text: string }).text === 'string') {
-            parts.push((item as { text: string }).text);
-        }
-    }
-    return parts.join('\n');
-}
-
-// ---------------------------------------------------------------------------
 // Helper: safe append — catches errors so they never propagate to agent loop
 // ---------------------------------------------------------------------------
 
-async function safeAppend(state: TelemetryState, record: TelemetryEvent): Promise<boolean> {
+async function safeAppend(
+    state: TelemetryState,
+    record: TelemetryEvent,
+): Promise<boolean> {
     if (!state.writer) return false;
     try {
         // Apply redaction before writing
@@ -250,7 +261,9 @@ async function safeAppend(state: TelemetryState, record: TelemetryEvent): Promis
         if (!state.notificationSent) {
             state.notificationSent = true;
             // Log only — avoid requiring UI for reliability
-            console.warn('[save-tokens/telemetry] write failed; suppressing further notifications');
+            console.warn(
+                "[save-tokens/telemetry] write failed; suppressing further notifications",
+            );
         }
         return false;
     }
@@ -260,7 +273,10 @@ async function safeAppend(state: TelemetryState, record: TelemetryEvent): Promis
 // Helper: apply redaction to a record's content/input/details fields
 // ---------------------------------------------------------------------------
 
-function applyRedactionToRecord(record: TelemetryEvent, config: TelemetryConfig): TelemetryEvent {
+function applyRedactionToRecord(
+    record: TelemetryEvent,
+    config: TelemetryConfig,
+): TelemetryEvent {
     const opts = {
         maxDepth: config.maxDepth,
         maxStringLength: config.maxStringLength,
@@ -276,7 +292,7 @@ function applyRedactionToRecord(record: TelemetryEvent, config: TelemetryConfig)
     };
 
     // Only certain record types have redactable content
-    if ('content' in record || 'input' in record || 'details' in record) {
+    if ("content" in record || "input" in record || "details" in record) {
         const r = record as TelemetryRawToolResult | TelemetryFinalToolResult;
         return {
             ...r,
@@ -299,7 +315,10 @@ function handleSessionStart(
     writerFactory: typeof createWriter,
     purgeFn?: typeof purgeTelemetry,
 ) {
-    return async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+    return async (
+        _event: SessionStartEvent,
+        ctx: ExtensionContext,
+    ): Promise<void> => {
         state.sessionId = state.idGen();
         state.startTime = state.clock();
 
@@ -307,8 +326,11 @@ function handleSessionStart(
         state.cwd = ctx.cwd ?? null;
         state.project = ctx.cwd ? basename(ctx.cwd) : null;
         state.model = ctx.model?.id ?? null;
-        state.provider = (typeof ctx.model?.provider === 'string' ? ctx.model.provider : null) ?? null;
-        state.thinkingLevel = pi.getThinkingLevel() as string ?? null;
+        state.provider =
+            (typeof ctx.model?.provider === "string"
+                ? ctx.model.provider
+                : null) ?? null;
+        state.thinkingLevel = (pi.getThinkingLevel() as string) ?? null;
 
         // Create writer
         try {
@@ -320,7 +342,9 @@ function handleSessionStart(
         // Purge old telemetry at startup — errors non-blocking
         if (purgeFn && state.writerRoot) {
             try {
-                await purgeFn(state.writerRoot, { retentionDays: state.config.retentionDays ?? 90 });
+                await purgeFn(state.writerRoot, {
+                    retentionDays: state.config.retentionDays ?? 90,
+                });
             } catch {
                 // Non-blocking
             }
@@ -333,7 +357,7 @@ function handleSessionStart(
             eventId: state.idGen(),
             timestamp: new Date().toISOString(),
             sessionId: state.sessionId,
-            event: 'session_start',
+            event: "session_start",
             cwd: state.cwd ?? undefined,
             model: state.model ?? undefined,
             provider: state.provider ?? undefined,
@@ -350,7 +374,7 @@ function handleSessionStart(
         await safeAppend(state, record);
 
         // Lightweight ref entry for session reconstruction
-        pi.appendEntry('pi:save-tokens:telemetry-ref', {
+        pi.appendEntry("pi:save-tokens:telemetry-ref", {
             schemaVersion: TELEMETRY_SCHEMA_VERSION,
             sessionId: state.sessionId,
             startTime: state.startTime,
@@ -359,23 +383,30 @@ function handleSessionStart(
 }
 
 function handleRawToolResult(state: TelemetryState) {
-    return async (event: ToolResultEvent, _ctx: ExtensionContext): Promise<void> => {
+    return async (
+        event: ToolResultEvent,
+        _ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId || !state.runId || !state.turnActive) return;
 
         const contentLength = sumContentLength(event.content);
         const cfg = state.config;
 
         // Capture content/input/details if configured; otherwise just metrics
-        const content = cfg.captureContent ? toJsonSafe(event.content) : undefined;
+        const content = cfg.captureContent
+            ? toJsonSafe(event.content)
+            : undefined;
         const input = cfg.captureContent ? toJsonSafe(event.input) : undefined;
-        const details = cfg.captureContent ? toJsonSafe(event.details) : undefined;
+        const details = cfg.captureContent
+            ? toJsonSafe(event.details)
+            : undefined;
 
         const record: TelemetryRawToolResult = {
             schemaVersion: TELEMETRY_SCHEMA_VERSION,
             eventId: state.idGen(),
             timestamp: new Date().toISOString(),
             sessionId: state.sessionId,
-            event: 'raw_tool_result',
+            event: "raw_tool_result",
             runId: state.runId ?? undefined,
             turnIndex: state.turnIndex,
             toolCallId: event.toolCallId,
@@ -393,31 +424,89 @@ function handleRawToolResult(state: TelemetryState) {
 }
 
 function handleFinalToolResult(state: TelemetryState) {
-    return async (event: ToolResultEvent, ctx: ExtensionContext): Promise<void> => {
+    return async (
+        event: ToolResultEvent,
+        ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId || !state.runId || !state.turnActive) return;
 
         const contentLength = sumContentLength(event.content);
         const cfg = state.config;
 
-        const content = cfg.captureContent ? toJsonSafe(event.content) : undefined;
+        const content = cfg.captureContent
+            ? toJsonSafe(event.content)
+            : undefined;
         const input = cfg.captureContent ? toJsonSafe(event.input) : undefined;
-        const details = cfg.captureContent ? toJsonSafe(event.details) : undefined;
+        const details = cfg.captureContent
+            ? toJsonSafe(event.details)
+            : undefined;
 
         // Canonical source: pi:compression:event from session entries (takes priority)
-        let compressionDetails: TelemetryFinalToolResult['compressionDetails'];
+        let compressionDetails: TelemetryFinalToolResult["compressionDetails"];
         if (ctx.sessionManager) {
             try {
-                const entries = ctx.sessionManager.getEntries() as { type: string; customType?: string; data?: object }[];
-                const compEvent = findCompressionEventByToolCallId(entries, event.toolCallId);
-                if (compEvent && compEvent.kind === 'compressed') {
-                    compressionDetails = {
-                        originalLength: compEvent.originalLength,
-                        compressedLength: compEvent.compressedLength,
-                        savedBytes: compEvent.savedBytes,
-                        savedPct: compEvent.savedPct,
-                        kind: 'compressed',
-                        archivePath: compEvent.archivePath,
+                const entries = ctx.sessionManager.getEntries() as {
+                    type: string;
+                    customType?: string;
+                    data?: object;
+                }[];
+                const compEvent = findCompressionEventByToolCallId(
+                    entries,
+                    event.toolCallId,
+                );
+                if (compEvent) {
+                    // Task 10: correlate all three outcomes. Call-only facts
+                    // (backend, version, latency, tokenizer, native metrics)
+                    // are mirrored verbatim when the canonical event carries
+                    // them; sizes default to zero for non-compressed kinds.
+                    const common = {
+                        ...(compEvent.backend
+                            ? { backend: compEvent.backend }
+                            : {}),
+                        ...(compEvent.backendVersion
+                            ? { backendVersion: compEvent.backendVersion }
+                            : {}),
+                        ...(compEvent.latencyMs !== undefined
+                            ? { latencyMs: compEvent.latencyMs }
+                            : {}),
+                        ...(compEvent.tokenizer
+                            ? { tokenizer: compEvent.tokenizer }
+                            : {}),
+                        ...(compEvent.nativeMetrics
+                            ? { nativeMetrics: compEvent.nativeMetrics }
+                            : {}),
                     };
+                    if (compEvent.kind === "compressed") {
+                        compressionDetails = {
+                            originalLength: compEvent.originalLength,
+                            compressedLength: compEvent.compressedLength,
+                            savedBytes: compEvent.savedBytes,
+                            savedPct: compEvent.savedPct,
+                            kind: "compressed",
+                            archivePath: compEvent.archivePath,
+                            ...common,
+                        };
+                    } else if (compEvent.kind === "skipped") {
+                        compressionDetails = {
+                            originalLength: compEvent.originalLength,
+                            compressedLength: 0,
+                            savedBytes: 0,
+                            savedPct: 0,
+                            kind: "skipped",
+                            reason: compEvent.reason,
+                            ...common,
+                        };
+                    } else {
+                        compressionDetails = {
+                            originalLength: compEvent.originalLength,
+                            compressedLength: 0,
+                            savedBytes: 0,
+                            savedPct: 0,
+                            kind: "failed",
+                            reason: compEvent.reason,
+                            ...common,
+                        };
+                    }
                 }
             } catch {
                 // Non-blocking
@@ -425,9 +514,16 @@ function handleFinalToolResult(state: TelemetryState) {
         }
 
         // Fallback ad hoc: extract from event.details only if no canonical event
-        if (!compressionDetails && event.details && typeof event.details === 'object') {
+        if (
+            !compressionDetails &&
+            event.details &&
+            typeof event.details === "object"
+        ) {
             const d = event.details as Record<string, unknown>;
-            if (d.originalLength !== undefined || d.compressedLength !== undefined) {
+            if (
+                d.originalLength !== undefined ||
+                d.compressedLength !== undefined
+            ) {
                 compressionDetails = {
                     originalLength: d.originalLength as number,
                     compressedLength: d.compressedLength as number,
@@ -444,7 +540,7 @@ function handleFinalToolResult(state: TelemetryState) {
             eventId: state.idGen(),
             timestamp: new Date().toISOString(),
             sessionId: state.sessionId,
-            event: 'final_tool_result',
+            event: "final_tool_result",
             runId: state.runId,
             turnIndex: state.turnIndex,
             toolCallId: event.toolCallId,
@@ -463,7 +559,10 @@ function handleFinalToolResult(state: TelemetryState) {
 }
 
 function handleBeforeAgentStart(state: TelemetryState) {
-    return async (event: BeforeAgentStartEvent, _ctx: ExtensionContext): Promise<void> => {
+    return async (
+        event: BeforeAgentStartEvent,
+        _ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId) return;
 
         const systemPrompt = event.systemPrompt;
@@ -472,26 +571,26 @@ function handleBeforeAgentStart(state: TelemetryState) {
         const cavemanMatch = systemPrompt.match(CAVEMAN_LEVEL_RE);
         const ponytailMatch = systemPrompt.match(PONYTAIL_MODE_RE);
 
-        const newCaveman = cavemanMatch ? cavemanMatch[1]!.toLowerCase() : null;
-        const newPonytail = ponytailMatch ? ponytailMatch[1]!.toLowerCase() : null;
+        const newCaveman = cavemanMatch?.[1]?.toLowerCase() ?? null;
+        const newPonytail = ponytailMatch?.[1]?.toLowerCase() ?? null;
 
         // Write mode_change if caveman level changed
         if (newCaveman !== state.cavemanLevel) {
-            const prev = state.cavemanLevel ?? 'off';
-            const next = newCaveman ?? 'off';
+            const prev = state.cavemanLevel ?? "off";
+            const next = newCaveman ?? "off";
             if (prev !== next) {
                 const modeRecord: TelemetryModeChange = {
                     schemaVersion: TELEMETRY_SCHEMA_VERSION,
                     eventId: state.idGen(),
                     timestamp: new Date().toISOString(),
                     sessionId: state.sessionId,
-                    event: 'mode_change',
-                    component: 'caveman',
+                    event: "mode_change",
+                    component: "caveman",
                     requested: next,
                     effective: next,
                     previous: prev,
                     next,
-                    source: 'systemPrompt_scan',
+                    source: "systemPrompt_scan",
                 };
                 await safeAppend(state, modeRecord);
             }
@@ -500,21 +599,21 @@ function handleBeforeAgentStart(state: TelemetryState) {
 
         // Write mode_change if ponytail mode changed
         if (newPonytail !== state.ponytailMode) {
-            const prev = state.ponytailMode ?? 'off';
-            const next = newPonytail ?? 'off';
+            const prev = state.ponytailMode ?? "off";
+            const next = newPonytail ?? "off";
             if (prev !== next) {
                 const modeRecord: TelemetryModeChange = {
                     schemaVersion: TELEMETRY_SCHEMA_VERSION,
                     eventId: state.idGen(),
                     timestamp: new Date().toISOString(),
                     sessionId: state.sessionId,
-                    event: 'mode_change',
-                    component: 'ponytail',
+                    event: "mode_change",
+                    component: "ponytail",
                     requested: next,
                     effective: next,
                     previous: prev,
                     next,
-                    source: 'systemPrompt_scan',
+                    source: "systemPrompt_scan",
                 };
                 await safeAppend(state, modeRecord);
             }
@@ -527,7 +626,10 @@ function handleBeforeAgentStart(state: TelemetryState) {
 }
 
 function handleAgentStart(state: TelemetryState) {
-    return async (event: AgentStartEvent, _ctx: ExtensionContext): Promise<void> => {
+    return async (
+        _event: AgentStartEvent,
+        _ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId) return;
 
         state.runId = state.idGen();
@@ -540,7 +642,7 @@ function handleAgentStart(state: TelemetryState) {
             eventId: state.idGen(),
             timestamp: new Date().toISOString(),
             sessionId: state.sessionId,
-            event: 'agent_run_start',
+            event: "agent_run_start",
             runId: state.runId,
             turnCount: 0,
             model: state.model ?? undefined,
@@ -555,10 +657,15 @@ function handleAgentStart(state: TelemetryState) {
 }
 
 function handleAgentEnd(state: TelemetryState) {
-    return async (event: AgentEndEvent, _ctx: ExtensionContext): Promise<void> => {
+    return async (
+        _event: AgentEndEvent,
+        _ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId || !state.runId) return;
 
-        const durationMs = state.runStartTime ? state.clock() - state.runStartTime : 0;
+        const durationMs = state.runStartTime
+            ? state.clock() - state.runStartTime
+            : 0;
         const turnCount = state.runTurnCount;
 
         const record: TelemetryAgentRunEnd = {
@@ -566,7 +673,7 @@ function handleAgentEnd(state: TelemetryState) {
             eventId: state.idGen(),
             timestamp: new Date().toISOString(),
             sessionId: state.sessionId,
-            event: 'agent_run_end',
+            event: "agent_run_end",
             runId: state.runId,
             durationMs,
             turnCount,
@@ -586,7 +693,10 @@ function handleAgentEnd(state: TelemetryState) {
 }
 
 function handleTurnStart(state: TelemetryState) {
-    return async (event: TurnStartEvent, _ctx: ExtensionContext): Promise<void> => {
+    return async (
+        event: TurnStartEvent,
+        _ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId || !state.runId) return;
 
         state.turnIndex = event.turnIndex;
@@ -600,7 +710,7 @@ function handleTurnStart(state: TelemetryState) {
             eventId: state.idGen(),
             timestamp: new Date().toISOString(),
             sessionId: state.sessionId,
-            event: 'turn_start',
+            event: "turn_start",
             runId: state.runId,
             turnIndex: state.turnIndex,
             model: state.model ?? undefined,
@@ -615,15 +725,21 @@ function handleTurnStart(state: TelemetryState) {
 }
 
 function handleTurnEnd(state: TelemetryState) {
-    return async (event: TurnEndEvent, _ctx: ExtensionContext): Promise<void> => {
+    return async (
+        event: TurnEndEvent,
+        _ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId || !state.runId || !state.turnActive) return;
 
-        const durationMs = state.turnStartTime ? state.clock() - state.turnStartTime : undefined;
+        const durationMs = state.turnStartTime
+            ? state.clock() - state.turnStartTime
+            : undefined;
 
         // Extract usage from message if available
-        const usage = event.message.role === 'assistant'
-            ? event.message.usage
-            : undefined;
+        const usage =
+            event.message.role === "assistant"
+                ? event.message.usage
+                : undefined;
         let usageMetrics: UsageMetrics | undefined;
 
         if (usage) {
@@ -644,7 +760,7 @@ function handleTurnEnd(state: TelemetryState) {
             eventId: state.idGen(),
             timestamp: new Date().toISOString(),
             sessionId: state.sessionId,
-            event: 'turn_end',
+            event: "turn_end",
             runId: state.runId,
             turnIndex: state.turnIndex,
             toolCallCount,
@@ -664,21 +780,30 @@ function handleTurnEnd(state: TelemetryState) {
 }
 
 function handleMessageStart(state: TelemetryState) {
-    return async (event: MessageStartEvent, _ctx: ExtensionContext): Promise<void> => {
+    return async (
+        _event: MessageStartEvent,
+        _ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId) return;
         state.messageStartTime = state.clock();
     };
 }
 
 function handleMessageUpdate(state: TelemetryState) {
-    return async (event: MessageUpdateEvent, _ctx: ExtensionContext): Promise<void> => {
+    return async (
+        _event: MessageUpdateEvent,
+        _ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId) return;
         // Track streaming progress — TTFT is captured on first message_end
     };
 }
 
 function handleMessageEnd(state: TelemetryState) {
-    return async (event: MessageEndEvent, _ctx: ExtensionContext): Promise<void> => {
+    return async (
+        _event: MessageEndEvent,
+        _ctx: ExtensionContext,
+    ): Promise<void> => {
         if (!state.sessionId) return;
         // TTFT elapsed since message_start
         if (state.messageStartTime) {
@@ -691,7 +816,10 @@ function handleMessageEnd(state: TelemetryState) {
 function handleModelSelect(state: TelemetryState) {
     return async (event: ModelSelectEvent): Promise<void> => {
         state.model = event.model.id;
-        state.provider = typeof event.model.provider === 'string' ? event.model.provider : String(event.model.provider);
+        state.provider =
+            typeof event.model.provider === "string"
+                ? event.model.provider
+                : String(event.model.provider);
     };
 }
 
@@ -702,17 +830,19 @@ function handleThinkingLevelSelect(state: TelemetryState) {
 }
 
 function handleSessionShutdown(state: TelemetryState) {
-    return async (event: SessionShutdownEvent): Promise<void> => {
+    return async (_event: SessionShutdownEvent): Promise<void> => {
         if (!state.sessionId) return;
 
-        const durationMs = state.startTime ? state.clock() - state.startTime : 0;
+        const durationMs = state.startTime
+            ? state.clock() - state.startTime
+            : 0;
 
         const record: TelemetrySessionEnd = {
             schemaVersion: TELEMETRY_SCHEMA_VERSION,
             eventId: state.idGen(),
             timestamp: new Date().toISOString(),
             sessionId: state.sessionId,
-            event: 'session_end',
+            event: "session_end",
             durationMs,
             toolCallCount: state.sessionToolCallCount,
         };
@@ -794,14 +924,17 @@ export function createSaveTokensTelemetry(
         if (beforeRegistered) return;
         beforeRegistered = true;
         // Must be first: session init
-        pi.on('session_start', handleSessionStart(state, pi, writerFactory, purgeFn));
+        pi.on(
+            "session_start",
+            handleSessionStart(state, pi, writerFactory, purgeFn),
+        );
         // Model and thinking level tracking (cross-cutting, need early capture)
-        pi.on('model_select', handleModelSelect(state));
-        pi.on('thinking_level_select', handleThinkingLevelSelect(state));
+        pi.on("model_select", handleModelSelect(state));
+        pi.on("thinking_level_select", handleThinkingLevelSelect(state));
         // Raw tool_result observer — sees content BEFORE compression
-        pi.on('tool_result', handleRawToolResult(state));
+        pi.on("tool_result", handleRawToolResult(state));
         // Count tool calls across the session
-        pi.on('tool_call', () => {
+        pi.on("tool_call", () => {
             state.sessionToolCallCount++;
             state.turnToolCallCount++;
         });
@@ -813,25 +946,28 @@ export function createSaveTokensTelemetry(
         if (afterRegistered) return;
         afterRegistered = true;
         // before_agent_start — scans systemPrompt AFTER caveman/ponytail injected
-        pi.on('before_agent_start', handleBeforeAgentStart(state));
+        pi.on("before_agent_start", handleBeforeAgentStart(state));
         // Agent lifecycle
-        pi.on('agent_start', handleAgentStart(state));
-        pi.on('agent_end', handleAgentEnd(state));
+        pi.on("agent_start", handleAgentStart(state));
+        pi.on("agent_end", handleAgentEnd(state));
         // Turn lifecycle
-        pi.on('turn_start', handleTurnStart(state));
-        pi.on('turn_end', handleTurnEnd(state));
+        pi.on("turn_start", handleTurnStart(state));
+        pi.on("turn_end", handleTurnEnd(state));
         // Message streaming
-        pi.on('message_start', handleMessageStart(state));
-        pi.on('message_update', handleMessageUpdate(state));
-        pi.on('message_end', handleMessageEnd(state));
+        pi.on("message_start", handleMessageStart(state));
+        pi.on("message_update", handleMessageUpdate(state));
+        pi.on("message_end", handleMessageEnd(state));
         // Final tool_result observer — sees content AFTER compression
-        pi.on('tool_result', handleFinalToolResult(state));
+        pi.on("tool_result", handleFinalToolResult(state));
         // Session shutdown — flush last
-        pi.on('session_shutdown', handleSessionShutdown(state));
+        pi.on("session_shutdown", handleSessionShutdown(state));
     };
 
     // tag() — write experiment tag for current session.
-    const tag = async (tagValue: string, value?: string | number | boolean): Promise<boolean> => {
+    const tag = async (
+        tagValue: string,
+        value?: string | number | boolean,
+    ): Promise<boolean> => {
         // Must have an active session and writer
         if (!state.sessionId || !state.writer) return false;
 
@@ -840,7 +976,7 @@ export function createSaveTokensTelemetry(
             eventId: state.idGen(),
             timestamp: new Date().toISOString(),
             sessionId: state.sessionId,
-            event: 'experiment_tag',
+            event: "experiment_tag",
             tag: tagValue,
             value,
         };

@@ -50,8 +50,9 @@ describe('archiveOriginalToolResult', () => {
             text: 'alpha\nbêta',
         });
 
-        expect(path).not.toBeNull();
-        expect(readFileSync(path!, 'utf8')).toBe('alpha\nbêta');
+        expect(readFileSync(path, 'utf8')).toBe('alpha\nbêta');
+        expect(lstatSync(archiveRoot).mode & 0o777).toBe(0o700);
+        expect(lstatSync(path).mode & 0o777).toBe(0o600);
     });
 
     it('copies a full-output source byte for byte', async () => {
@@ -65,7 +66,8 @@ describe('archiveOriginalToolResult', () => {
             sourcePath,
         });
 
-        expect(readFileSync(path!)).toEqual(Buffer.from([0, 1, 2, 255]));
+        expect(readFileSync(path)).toEqual(Buffer.from([0, 1, 2, 255]));
+        expect(lstatSync(path).mode & 0o777).toBe(0o600);
     });
 
     it('rejects an unreadable declared full-output source', async () => {

@@ -115,4 +115,86 @@ describe("compression protocol", () => {
     expect(getLatestCompressionEvent(entries)?.toolCallId).toBe("t2");
     expect(getLatestCompressionEvent(entries, "read")?.toolCallId).toBe("t3");
   });
+
+  it("round-trips enriched Task 10 fields (backend, version, latency, tokenizer, native metrics)", () => {
+    const entries = [
+      {
+        type: "custom",
+        customType: COMPRESSION_EVENT_ENTRY_TYPE,
+        data: {
+          toolCallId: "t1",
+          toolName: "read",
+          timestamp: 1,
+          kind: "compressed",
+          originalLength: 100,
+          compressedLength: 40,
+          savedBytes: 60,
+          savedPct: 60,
+          backend: "headroom",
+          backendVersion: "322425c43bffde1ed0b64fecf3cf5951565dd82b",
+          latencyMs: 42,
+          tokenizer: "claude-3-5-sonnet-20241022",
+          nativeMetrics: {
+            tokensBefore: 100,
+            tokensAfter: 40,
+            compressionRatio: 0.6,
+            transforms: ["dedup"],
+          },
+        },
+        id: "e1",
+      },
+    ];
+
+    expect(listCompressionEvents(entries)).toEqual([
+      {
+        toolCallId: "t1",
+        toolName: "read",
+        timestamp: 1,
+        kind: "compressed",
+        originalLength: 100,
+        compressedLength: 40,
+        savedBytes: 60,
+        savedPct: 60,
+        backend: "headroom",
+        backendVersion: "322425c43bffde1ed0b64fecf3cf5951565dd82b",
+        latencyMs: 42,
+        tokenizer: "claude-3-5-sonnet-20241022",
+        nativeMetrics: {
+          tokensBefore: 100,
+          tokensAfter: 40,
+          compressionRatio: 0.6,
+          transforms: ["dedup"],
+        },
+      },
+    ]);
+  });
+
+  it("keeps old entries without the enriched fields backward-compatible", () => {
+    const entries = [
+      {
+        type: "custom",
+        customType: COMPRESSION_EVENT_ENTRY_TYPE,
+        data: {
+          toolCallId: "old-1",
+          toolName: "grep",
+          timestamp: 1,
+          kind: "skipped",
+          originalLength: 20,
+          reason: "no_change",
+        },
+        id: "e1",
+      },
+    ];
+
+    const events = listCompressionEvents(entries);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({
+      toolCallId: "old-1",
+      toolName: "grep",
+      timestamp: 1,
+      kind: "skipped",
+      originalLength: 20,
+      reason: "no_change",
+    });
+  });
 });

@@ -896,6 +896,89 @@ describe('compression correlation', () => {
         expect(cd).toBeDefined();
         expect(cd.originalLength).toBe(3000);
     });
+
+    it('correlates skipped session entries with reason and backend', async () => {
+        const sessionEntries = [
+            { type: 'custom', customType: 'pi:compression:event', data: { kind: 'skipped', toolCallId: 'tc-skip-001', toolName: 'ls', timestamp: Date.now(), originalLength: 100, reason: 'unsupported_tool', backend: 'edgee', backendVersion: '0.1.3', latencyMs: 12 } },
+        ];
+        const pi = makePi();
+        const ctrl = createSaveTokensTelemetry(pi, makeDeps());
+        ctrl.before();
+        ctrl.after();
+        const sessionCtx = { cwd: '/test', sessionManager: { getEntries: () => sessionEntries } };
+        await pi._triggerHandlers('session_start', { type: 'session_start', reason: 'startup' }, sessionCtx);
+        await pi._triggerHandlers('agent_start', { type: 'agent_start' }, { cwd: '/test' });
+        await pi._triggerHandlers('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() }, { cwd: '/test' });
+        writerAppendMock.mockClear();
+
+        await pi._triggerHandlers(
+            'tool_result',
+            {
+                type: 'tool_result',
+                toolCallId: 'tc-skip-001',
+                toolName: 'ls',
+                content: [{ type: 'text', text: 'unchanged' }],
+                details: {},
+                isError: false,
+            },
+            { cwd: '/test', signal: undefined, sessionManager: { getEntries: () => sessionEntries } },
+        );
+
+        const finalRecords = writerAppendMock.mock.calls
+            .map(c => c[0] as Record<string, unknown>)
+            .filter(r => r.event === 'final_tool_result');
+        expect(finalRecords.length).toBeGreaterThanOrEqual(1);
+        const cd = finalRecords[0]!.compressionDetails as Record<string, unknown>;
+        expect(cd).toBeDefined();
+        expect(cd.kind).toBe('skipped');
+        expect(cd.reason).toBe('unsupported_tool');
+        expect(cd.backend).toBe('edgee');
+        expect(cd.backendVersion).toBe('0.1.3');
+        expect(cd.latencyMs).toBe(12);
+        expect(cd.savedBytes).toBe(0);
+        expect(cd.savedPct).toBe(0);
+    });
+
+    it('correlates failed session entries with exact reason and latency', async () => {
+        const sessionEntries = [
+            { type: 'custom', customType: 'pi:compression:event', data: { kind: 'failed', toolCallId: 'tc-fail-001', toolName: 'grep', timestamp: Date.now(), originalLength: 500, reason: 'timeout', backend: 'headroom', backendVersion: '322425c43bffde1ed0b64fecf3cf5951565dd82b', latencyMs: 800, nativeMetrics: { tokensBefore: 300, tokensAfter: 0 } } },
+        ];
+        const pi = makePi();
+        const ctrl = createSaveTokensTelemetry(pi, makeDeps());
+        ctrl.before();
+        ctrl.after();
+        const sessionCtx = { cwd: '/test', sessionManager: { getEntries: () => sessionEntries } };
+        await pi._triggerHandlers('session_start', { type: 'session_start', reason: 'startup' }, sessionCtx);
+        await pi._triggerHandlers('agent_start', { type: 'agent_start' }, { cwd: '/test' });
+        await pi._triggerHandlers('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() }, { cwd: '/test' });
+        writerAppendMock.mockClear();
+
+        await pi._triggerHandlers(
+            'tool_result',
+            {
+                type: 'tool_result',
+                toolCallId: 'tc-fail-001',
+                toolName: 'grep',
+                content: [{ type: 'text', text: 'unchanged' }],
+                details: {},
+                isError: false,
+            },
+            { cwd: '/test', signal: undefined, sessionManager: { getEntries: () => sessionEntries } },
+        );
+
+        const finalRecords = writerAppendMock.mock.calls
+            .map(c => c[0] as Record<string, unknown>)
+            .filter(r => r.event === 'final_tool_result');
+        expect(finalRecords.length).toBeGreaterThanOrEqual(1);
+        const cd = finalRecords[0]!.compressionDetails as Record<string, unknown>;
+        expect(cd).toBeDefined();
+        expect(cd.kind).toBe('failed');
+        expect(cd.reason).toBe('timeout');
+        expect(cd.backend).toBe('headroom');
+        expect(cd.latencyMs).toBe(800);
+        expect(cd.nativeMetrics).toEqual({ tokensBefore: 300, tokensAfter: 0 });
+        expect(cd.savedBytes).toBe(0);
+    });
 });
 
 // ===========================================================================

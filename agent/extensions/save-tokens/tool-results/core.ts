@@ -1,20 +1,27 @@
-import { basename } from 'node:path';
-import type { ToolResultEvent } from '@earendil-works/pi-coding-agent';
-import { getActivePolicy } from '../../_shared/audit-mode';
-import type { CompressionDetails } from '../../_shared/compression-protocol';
-import { getLocalCompressorConfig } from '../config-runtime';
-import { buildAggregateHeader } from './aggregates';
+import { basename } from "node:path";
+import type { ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import { getActivePolicy } from "../../_shared/audit-mode";
+import type {
+    CompressionDetails,
+    CompressionFailedReason,
+    CompressionSkippedReason,
+} from "../../_shared/compression-protocol";
+import { buildAggregateHeader } from "./aggregates";
 import type {
     ArchiveOriginalInput,
-    CompressRequest,
-    CompressResponse,
     ToolResultHandlerOptions,
-} from './types';
+    CompressorModel,
+    CompressionBackendId,
+    CompressionObservation,
+} from "./types";
 
-type CompressionRoute = 'edgee' | 'cap';
+type CompressionRoute = "edgee" | "cap";
 
 /** Default cap target for large error outputs when capFallbackBytes is not set. */
 const DEFAULT_ERROR_CAP_BYTES = 8192;
+
+/** Default deterministic cap for path listings that semantic compression corrupts. */
+const DEFAULT_FIND_CAP_BYTES = 8192;
 
 /**
  * §3 AXI — Unified escape hatch note for compressed results.
@@ -31,38 +38,92 @@ export function buildEscapeHatchNote(
 }
 
 export function chooseCompressionRoute(input: {
-    strategy: 'edgee' | 'benchmark';
+    strategy: "edgee" | "benchmark";
     toolName: string;
     text: string;
 }): CompressionRoute {
-    if (input.strategy !== 'benchmark') return 'edgee';
-    if (input.toolName === 'read') return 'edgee';
+    if (input.toolName === "find") return "cap";
+    if (input.strategy !== "benchmark") return "edgee";
+    if (input.toolName === "read") return "edgee";
     if (
-        input.toolName === 'grep' ||
-        input.toolName === 'bash' ||
-        input.toolName === 'safe_bash' ||
-        input.toolName === 'ls' ||
-        input.toolName === 'find'
+        input.toolName === "grep" ||
+        input.toolName === "bash" ||
+        input.toolName === "safe_bash" ||
+        input.toolName === "ls" ||
+        input.toolName === "find"
     ) {
-        return 'cap';
+        return "cap";
     }
-    return 'edgee';
+    return "edgee";
 }
 
-function normalizeToolName(toolName: string): string {
-    if (toolName === 'safe_bash') return 'bash';
-    if (toolName === 'ls' || toolName === 'find') return 'glob';
-    return toolName;
+/**
+ * Benign backend outcomes: the backend declined to compress but nothing broke.
+ * Everything else (service/http/invalid/timeout/aborted) is a real failure.
+ */
+const BENIGN_BACKEND_REASONS: ReadonlySet<string> = new Set([
+    // Native Headroom adapter: identical or non-shorter output is a benign
+    // decline, not a backend failure.
+    "no_change",
+    "not_shorter",
+    "unsupported_tool",
+    "no_output",
+]);
+
+/**
+ * Classifies a `CompressionBackendResult.reason` into a policy outcome.
+ *
+ * Failure reasons produce a `failed` observation so telemetry reflects real
+ * backend breakage. Benign no-op reasons (and an absent reason) produce a
+ * `skipped` observation and fail-open behavior.
+ */
+export function classifyBackendReason(
+    reason: string | undefined,
+): "failed" | "skipped" {
+    if (reason === undefined) return "skipped";
+    return BENIGN_BACKEND_REASONS.has(reason) ? "skipped" : "failed";
+}
+
+/**
+ * Exact `CompressionFailedReason` members the adapters may report, plus the
+ * template-literal `http_<number>` members. Preserved verbatim.
+ */
+const SUPPORTED_FAILED_REASONS: ReadonlySet<string> = new Set([
+    "service_error",
+    "timeout",
+    "aborted",
+    "http_error",
+    "invalid_response",
+    "invalid_json",
+]);
+
+/**
+ * Safely maps an arbitrary backend reason string into a canonical
+ * `CompressionFailedReason`. Supported exact reasons (including `http_<n>`)
+ * are preserved verbatim; any other string normalizes to the generic
+ * `service_error` — impossible reason strings are never preserved through an
+ * unsafe cast.
+ */
+export function normalizeFailedReason(
+    reason: string | undefined,
+): CompressionFailedReason {
+    if (
+        reason !== undefined &&
+        (SUPPORTED_FAILED_REASONS.has(reason) || /^http_\d+$/.test(reason))
+    ) {
+        return reason as CompressionFailedReason;
+    }
+    return "service_error";
 }
 
 export function isCompressibleToolName(toolName: string): boolean {
     return (
-        toolName === 'read' ||
-        toolName === 'grep' ||
-        toolName === 'bash' ||
-        toolName === 'safe_bash' ||
-        toolName === 'ls' ||
-        toolName === 'find'
+        toolName === "read" ||
+        toolName === "grep" ||
+        toolName === "bash" ||
+        toolName === "safe_bash" ||
+        toolName === "ls" ||
+        toolName === "find"
     );
 }
 
@@ -77,32 +138,32 @@ export function isCompressibleToolName(toolName: string): boolean {
  */
 export function toolCompressionContext(
     toolName: string,
-): 'search' | 'read' | 'shell' | null {
-    if (toolName === 'grep' || toolName === 'find' || toolName === 'ls')
-        return 'search';
-    if (toolName === 'read') return 'read';
-    if (toolName === 'bash' || toolName === 'safe_bash') return 'shell';
+): "search" | "read" | "shell" | null {
+    if (toolName === "grep" || toolName === "find" || toolName === "ls")
+        return "search";
+    if (toolName === "read") return "read";
+    if (toolName === "bash" || toolName === "safe_bash") return "shell";
     return null;
 }
 
 function isTextBlock(
     value: object | null | undefined,
-): value is { type: 'text'; text: string } {
+): value is { type: "text"; text: string } {
     const block = value as { type?: string; text?: string } | null | undefined;
-    return block?.type === 'text' && typeof block.text === 'string';
+    return block?.type === "text" && typeof block.text === "string";
 }
 
 export function extractCompressibleText(content: object[]): string | null {
     if (!Array.isArray(content) || content.length === 0) return null;
     if (!content.every(isTextBlock)) return null;
-    return content.map((block) => block.text).join('\n');
+    return content.map((block) => block.text).join("\n");
 }
 
 function fullOutputPath(details: unknown): string | undefined {
-    if (!details || typeof details !== 'object' || Array.isArray(details))
+    if (!details || typeof details !== "object" || Array.isArray(details))
         return undefined;
     const value = (details as Record<string, unknown>).fullOutputPath;
-    return typeof value === 'string' && value.length > 0 ? value : undefined;
+    return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function archiveInput(
@@ -125,7 +186,7 @@ function mergedDetails(
     original: unknown,
     compression: CompressionDetails,
 ): Record<string, unknown> & { compression: CompressionDetails } {
-    if (original && typeof original === 'object' && !Array.isArray(original)) {
+    if (original && typeof original === "object" && !Array.isArray(original)) {
         return { ...(original as Record<string, unknown>), compression };
     }
     return original === undefined
@@ -142,65 +203,23 @@ function headTailCap(text: string, targetLength: number): string {
     return text.slice(0, head) + marker + text.slice(text.length - tail);
 }
 
-function withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    signal?: AbortSignal,
-): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-        // oxlint-disable-next-line typescript/no-unsafe-assignment
-        const timer: ReturnType<typeof setTimeout> = setTimeout(
-            () => reject(new Error(`Timed out after ${timeoutMs}ms`)),
-            timeoutMs,
-        );
-        const abort = () => {
-            clearTimeout(timer);
-            reject(new Error('Aborted'));
-        };
-        signal?.addEventListener('abort', abort, { once: true });
-        promise.then(
-            (value) => {
-                clearTimeout(timer);
-                signal?.removeEventListener('abort', abort);
-                resolve(value);
-            },
-            (error) => {
-                clearTimeout(timer);
-                signal?.removeEventListener('abort', abort);
-                reject(error);
-            },
-        );
-    });
-}
-
-async function requestCompression(
-    payload: CompressRequest,
-    options: Required<
-        Pick<ToolResultHandlerOptions, 'fetchImpl' | 'baseUrl' | 'timeoutMs'>
-    >,
-    signal?: AbortSignal,
-): Promise<CompressResponse> {
-    const response = await withTimeout(
-        options.fetchImpl(`${options.baseUrl.replace(/\/$/, '')}/compress`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal,
-        }),
-        options.timeoutMs,
-        signal,
-    );
-
-    if (!response.ok) {
-        throw new Error(
-            `compression service failed with status ${response.status}`,
-        );
-    }
-
-    const json = (await response.json()) as {
-        compressed_output?: string | null;
-    };
-    return { compressed_output: json.compressed_output };
+/**
+ * Observation enrichment for the selected backend (Task 10 telemetry).
+ *
+ * `backend`/`backendVersion` are selected-backend config facts: they are
+ * present on every observation once a backend is configured, including
+ * policy-only cap/archive paths that never call the engine. Call-only facts
+ * (tokenizer, latencyMs, nativeMetrics) are added at the backend-call sites
+ * and must never appear on policy paths.
+ */
+function observationMeta(
+    backend: { id: CompressionBackendId } | null | undefined,
+    backendVersion: string | undefined,
+): Pick<CompressionObservation, "backend" | "backendVersion"> {
+    const meta: Pick<CompressionObservation, "backend" | "backendVersion"> = {};
+    if (backend) meta.backend = backend.id;
+    if (backendVersion) meta.backendVersion = backendVersion;
+    return meta;
 }
 
 async function maybeCreateArchivedCap(
@@ -209,6 +228,10 @@ async function maybeCreateArchivedCap(
     subject: string | undefined,
     options?: ToolResultHandlerOptions,
     aggregatePrefix?: string | null,
+    meta?: Pick<
+        CompressionObservation,
+        "backend" | "backendVersion" | "tokenizer"
+    >,
 ) {
     const targetBytes = options?.capFallbackBytes;
     if (
@@ -221,10 +244,13 @@ async function maybeCreateArchivedCap(
     const archivePath = await options.archiveOriginal(
         archiveInput(event, subject, text),
     );
-    if (!archivePath) throw new Error('archive did not return a path');
+    if (!archivePath) throw new Error("archive did not return a path");
     const note = buildEscapeHatchNote(text.length, archivePath);
-    const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : '';
-    const capped = headTailCap(text, Math.max(0, targetBytes - note.length - prefix.length));
+    const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : "";
+    const capped = headTailCap(
+        text,
+        Math.max(0, targetBytes - note.length - prefix.length),
+    );
     const outputText = `${prefix}${capped}${note}`;
     if (outputText.length >= text.length) return null;
     const originalLength = text.length;
@@ -236,13 +262,14 @@ async function maybeCreateArchivedCap(
             : 0;
 
     options.onObservation?.({
-        kind: 'compressed',
+        kind: "compressed",
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         originalLength,
         compressedLength,
         subject,
         archivePath,
+        ...meta,
     });
 
     const compression = {
@@ -253,34 +280,35 @@ async function maybeCreateArchivedCap(
         archivePath,
     } satisfies CompressionDetails;
     return {
-        content: [{ type: 'text' as const, text: outputText }],
+        content: [{ type: "text" as const, text: outputText }],
         details: mergedDetails(event.details, compression),
     };
 }
 
 export function createToolResultHandler(options?: ToolResultHandlerOptions) {
-    const env = getLocalCompressorConfig();
-    const fetchImpl = options?.fetchImpl ?? fetch;
-    const baseUrl = options?.baseUrl ?? env.baseUrl;
-    const agent = options?.agent ?? env.agent;
-    const timeoutMs = options?.timeoutMs ?? env.timeoutMs;
-    const routingStrategy = options?.routingStrategy ?? env.routingStrategy;
-    const enabled = options?.enabled ?? env.enabled;
-    const excludedTools = new Set(options?.excludeTools ?? env.excludeTools);
-    const aggregates = options?.aggregates ?? env.aggregates;
-    const capErrors = options?.capErrors ?? env.capErrors;
+    const backend = options?.backend;
+    const backendVersion = options?.backendVersion;
+    const routingStrategy = options?.routingStrategy ?? "edgee";
+    const enabled = options?.enabled ?? true;
+    const excludedTools = new Set(options?.excludeTools ?? []);
+    const aggregates = options?.aggregates ?? true;
+    const capErrors = options?.capErrors ?? true;
     const legacyMinBytes = options?.minBytes;
     const minBytesByGroup =
         options?.minBytesByGroup ??
         (legacyMinBytes === undefined
-            ? env.minBytesByGroup
+            ? { shell: 0, read: 0, search: 0 }
             : {
                   shell: legacyMinBytes,
                   read: legacyMinBytes,
                   search: legacyMinBytes,
               });
 
-    return async (event: ToolResultEvent, signal?: AbortSignal) => {
+    return async (
+        event: ToolResultEvent,
+        model: CompressorModel,
+        signal?: AbortSignal,
+    ) => {
         if (!isCompressibleToolName(event.toolName)) return;
         if (!enabled || excludedTools.has(event.toolName)) return;
 
@@ -289,14 +317,57 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
         const policy = getActivePolicy();
         const ctx = toolCompressionContext(event.toolName);
         if (
-            (ctx === 'search' && policy['compression.disableForSearch']) ||
-            (ctx === 'read' && policy['compression.disableForRead']) ||
-            (ctx === 'shell' && policy['compression.disableForShellResults'])
+            (ctx === "search" && policy["compression.disableForSearch"]) ||
+            (ctx === "read" && policy["compression.disableForRead"]) ||
+            (ctx === "shell" && policy["compression.disableForShellResults"])
         ) {
             return;
         }
 
         const subject = summarizeToolSubject(event.toolName, event.input);
+        const meta = observationMeta(backend, backendVersion);
+
+        if (event.toolName === "find" && !event.isError) {
+            const text = extractCompressibleText(event.content);
+            if (!text) return;
+            const aggregatePrefix = aggregates
+                ? buildAggregateHeader(event.toolName, event.input, text)
+                : null;
+            try {
+                return (
+                    (await maybeCreateArchivedCap(
+                        text,
+                        event,
+                        subject,
+                        inputCapOptions(event.toolName, options),
+                        aggregatePrefix,
+                        meta,
+                    )) ?? undefined
+                );
+            } catch {
+                return;
+            }
+        }
+
+        if (!backend) {
+            if (options?.backendFailureReason) {
+                const text = extractCompressibleText(event.content);
+                if (!text) return;
+                if (!ctx) return;
+                if (Buffer.byteLength(text, "utf8") < minBytesByGroup[ctx])
+                    return;
+                options.onObservation?.({
+                    kind: "failed",
+                    toolCallId: event.toolCallId,
+                    toolName: event.toolName,
+                    originalLength: text.length,
+                    compressedLength: 0,
+                    reason: options.backendFailureReason,
+                    subject,
+                });
+            }
+            return;
+        }
 
         // §6 AXI — Cap large error outputs (head/tail + archive, never Edgee)
         if (event.isError) {
@@ -304,7 +375,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
             const text = extractCompressibleText(event.content);
             if (!text) return;
             if (!ctx) return;
-            if (Buffer.byteLength(text, 'utf8') < minBytesByGroup[ctx]) return;
+            if (Buffer.byteLength(text, "utf8") < minBytesByGroup[ctx]) return;
             const aggregatePrefix = aggregates
                 ? buildAggregateHeader(event.toolName, event.input, text)
                 : null;
@@ -317,6 +388,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                     subject,
                     { ...options, capFallbackBytes: errorCapBytes },
                     aggregatePrefix,
+                    meta,
                 );
                 if (capped) return capped;
             } catch {
@@ -328,18 +400,19 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
         const text = extractCompressibleText(event.content);
         if (!text) {
             options?.onObservation?.({
-                kind: 'skipped',
+                kind: "skipped",
                 toolCallId: event.toolCallId,
                 toolName: event.toolName,
                 originalLength: 0,
                 compressedLength: 0,
-                reason: 'non_text_content',
+                reason: "non_text_content",
                 subject,
+                ...meta,
             });
             return;
         }
         if (!ctx) return;
-        if (Buffer.byteLength(text, 'utf8') < minBytesByGroup[ctx]) return;
+        if (Buffer.byteLength(text, "utf8") < minBytesByGroup[ctx]) return;
 
         const aggregatePrefix = aggregates
             ? buildAggregateHeader(event.toolName, event.input, text)
@@ -351,69 +424,121 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                     strategy: routingStrategy,
                     toolName: event.toolName,
                     text,
-                }) === 'cap'
+                }) === "cap"
             ) {
                 const capped = await maybeCreateArchivedCap(
                     text,
                     event,
                     subject,
-                    options,
+                    inputCapOptions(event.toolName, options),
                     aggregatePrefix,
+                    meta,
                 );
                 if (capped) return capped;
+                return;
             }
         } catch {
             options?.onObservation?.({
-                kind: 'failed',
+                kind: "failed",
                 toolCallId: event.toolCallId,
                 toolName: event.toolName,
                 originalLength: text.length,
                 compressedLength: 0,
-                reason: 'service_error',
+                reason: "service_error",
                 subject,
+                ...meta,
             });
             return;
         }
 
-        const payload: CompressRequest = {
-            tool_name: normalizeToolName(event.toolName),
-            arguments: JSON.stringify(event.input ?? {}),
-            output: text,
-            agent,
-        };
-
+        // Latency is measured around the selected backend call only; it is
+        // set here so the catch (archive/policy errors and backend throws)
+        // can still report it as the elapsed time since the call started.
+        const startedAt = performance.now();
+        // Call-scoped meta: adds the effective Headroom tokenizer fact only
+        // where the backend engine actually ran and returned a result. The
+        // catch (throw) path deliberately omits it — the engine may never
+        // have processed the request.
+        // Headroom does not expose the effective TokenCounter in its response.
+        // Do not infer it from the model id: registry factories can fall back
+        // to EstimatingTokenCounter at runtime.
+        const callMeta = meta;
+        let latencyMs: number | undefined;
         try {
-            const result = await requestCompression(
-                payload,
-                { fetchImpl, baseUrl, timeoutMs },
-                signal,
-            );
-            if (
-                !result.compressed_output ||
-                result.compressed_output === text
-            ) {
+            // The original tool name is forwarded verbatim; the selected
+            // adapter owns any provider-specific translation.
+            const backendRequest = {
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                arguments: event.input ?? {},
+                output: text,
+                model,
+            };
+
+            const result = await backend.compress(backendRequest, signal);
+            latencyMs = Math.round(performance.now() - startedAt);
+
+            // Backend produced nothing usable. A real backend failure remains
+            // the canonical observation even when cap/archive supplies the
+            // fail-open content returned to Pi.
+            if (!result.output || result.output === text) {
+                const outcome = result.output
+                    ? "skipped"
+                    : classifyBackendReason(result.reason);
+                if (outcome === "failed") {
+                    options?.onObservation?.({
+                        kind: "failed",
+                        toolCallId: event.toolCallId,
+                        toolName: event.toolName,
+                        originalLength: text.length,
+                        compressedLength: 0,
+                        reason: normalizeFailedReason(result.reason),
+                        subject,
+                        ...callMeta,
+                        latencyMs,
+                        ...(result.metrics
+                            ? { nativeMetrics: result.metrics }
+                            : {}),
+                    });
+                    const capped = await maybeCreateArchivedCap(
+                        text,
+                        event,
+                        subject,
+                        { ...options, onObservation: undefined },
+                        aggregatePrefix,
+                        meta,
+                    );
+                    return capped ?? undefined;
+                }
                 const capped = await maybeCreateArchivedCap(
                     text,
                     event,
                     subject,
                     options,
                     aggregatePrefix,
+                    meta,
                 );
                 if (capped) return capped;
                 options?.onObservation?.({
-                    kind: 'skipped',
+                    kind: "skipped",
                     toolCallId: event.toolCallId,
                     toolName: event.toolName,
                     originalLength: text.length,
                     compressedLength: 0,
-                    reason: 'no_change',
+                    // Exact benign backend reason, when available.
+                    reason: benignSkippedReason(result.reason),
                     subject,
+                    ...callMeta,
+                    latencyMs,
+                    ...(result.metrics
+                        ? { nativeMetrics: result.metrics }
+                        : {}),
                 });
                 return;
             }
 
             const originalLength = text.length;
-            const compressedLength = result.compressed_output.length;
+            const compressedLength = result.output.length;
             if (compressedLength >= originalLength) {
                 const capped = await maybeCreateArchivedCap(
                     text,
@@ -421,83 +546,131 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                     subject,
                     options,
                     aggregatePrefix,
+                    meta,
                 );
                 if (capped) return capped;
                 options?.onObservation?.({
-                    kind: 'skipped',
+                    kind: "skipped",
                     toolCallId: event.toolCallId,
                     toolName: event.toolName,
                     originalLength,
                     compressedLength: 0,
-                    reason: 'not_smaller',
+                    reason: "not_smaller",
                     subject,
+                    ...callMeta,
+                    latencyMs,
+                    ...(result.metrics
+                        ? { nativeMetrics: result.metrics }
+                        : {}),
                 });
                 return;
             }
 
-            const savedBytes = Math.max(0, originalLength - compressedLength);
-            const savedPct =
-                originalLength > 0
-                    ? Math.round((savedBytes / originalLength) * 100)
-                    : 0;
             const archivePath =
                 (await options?.archiveOriginal?.(
                     archiveInput(event, subject, text),
                 )) ?? null;
             if (options?.archiveOriginal && !archivePath) {
-                throw new Error('archive did not return a path');
+                throw new Error("archive did not return a path");
             }
             const archiveNote = archivePath
                 ? buildEscapeHatchNote(originalLength, archivePath)
-                : '';
-            const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : '';
-            const outputText = `${prefix}${result.compressed_output}${archiveNote}`;
+                : "";
+            const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : "";
+            const outputText = `${prefix}${result.output}${archiveNote}`;
             if (outputText.length >= originalLength) {
                 options?.onObservation?.({
-                    kind: 'skipped',
+                    kind: "skipped",
                     toolCallId: event.toolCallId,
                     toolName: event.toolName,
                     originalLength,
                     compressedLength: 0,
-                    reason: 'not_smaller',
+                    reason: "not_smaller",
                     subject,
+                    ...callMeta,
+                    latencyMs,
+                    ...(result.metrics
+                        ? { nativeMetrics: result.metrics }
+                        : {}),
                 });
                 return;
             }
+            const finalCompressedLength = outputText.length;
+            const savedBytes = Math.max(
+                0,
+                originalLength - finalCompressedLength,
+            );
+            const savedPct =
+                originalLength > 0
+                    ? Math.round((savedBytes / originalLength) * 100)
+                    : 0;
 
             options?.onObservation?.({
-                kind: 'compressed',
+                kind: "compressed",
                 toolCallId: event.toolCallId,
                 toolName: event.toolName,
                 originalLength,
-                compressedLength,
+                compressedLength: finalCompressedLength,
                 subject,
                 archivePath: archivePath ?? undefined,
+                ...callMeta,
+                latencyMs,
+                ...(result.metrics ? { nativeMetrics: result.metrics } : {}),
             });
             const compression = {
                 originalLength,
-                compressedLength,
+                compressedLength: finalCompressedLength,
                 savedBytes,
                 savedPct,
                 ...(archivePath ? { archivePath } : {}),
             } satisfies CompressionDetails;
             return {
-                content: [{ type: 'text' as const, text: outputText }],
+                content: [{ type: "text" as const, text: outputText }],
                 details: mergedDetails(event.details, compression),
             };
         } catch {
+            // A backend throw still gets a measured latency: elapsed time
+            // since the call started, never left undefined.
+            latencyMs ??= Math.round(performance.now() - startedAt);
             options?.onObservation?.({
-                kind: 'failed',
+                kind: "failed",
                 toolCallId: event.toolCallId,
                 toolName: event.toolName,
                 originalLength: text.length,
                 compressedLength: 0,
-                reason: 'service_error',
+                reason: "service_error",
                 subject,
+                // Selected-backend config facts only — the engine may never
+                // have processed the request, so no tokenizer claim here.
+                ...meta,
+                latencyMs,
             });
             return;
         }
     };
+}
+
+function inputCapOptions(
+    toolName: string,
+    options: ToolResultHandlerOptions | undefined,
+): ToolResultHandlerOptions | undefined {
+    if (toolName !== "find" || options?.capFallbackBytes !== undefined) {
+        return options;
+    }
+    return { ...options, capFallbackBytes: DEFAULT_FIND_CAP_BYTES };
+}
+
+/**
+ * Maps a backend decline reason to the canonical skipped reason, preserving
+ * the exact benign reason when the adapter reports one.
+ */
+function benignSkippedReason(
+    reason: string | undefined,
+): CompressionSkippedReason {
+    if (reason !== undefined && BENIGN_BACKEND_REASONS.has(reason)) {
+        return reason as CompressionSkippedReason;
+    }
+    return "no_change";
 }
 
 export function summarizeToolSubject(
@@ -505,33 +678,30 @@ export function summarizeToolSubject(
     input: object | undefined,
 ): string | undefined {
     if (!input) return undefined;
-    const record = input as Record<
-        string,
-        object | string | number | boolean | undefined
-    >;
-    if (toolName === 'read') {
-        const path = record.path ?? record.file_path;
-        return typeof path === 'string' ? basename(path) : undefined;
+    const field = (name: string): unknown => Reflect.get(input, name);
+    if (toolName === "read") {
+        const path = field("path") ?? field("file_path");
+        return typeof path === "string" ? basename(path) : undefined;
     }
-    if (toolName === 'grep') {
-        const path = record.path;
-        const pattern = record.pattern;
-        if (typeof path === 'string') return basename(path);
-        return typeof pattern === 'string' ? pattern : undefined;
+    if (toolName === "grep") {
+        const path = field("path");
+        const pattern = field("pattern");
+        if (typeof path === "string") return basename(path);
+        return typeof pattern === "string" ? pattern : undefined;
     }
-    if (toolName === 'ls') {
-        const path = record.path;
-        return typeof path === 'string' ? basename(path) || path : undefined;
+    if (toolName === "ls") {
+        const path = field("path");
+        return typeof path === "string" ? basename(path) || path : undefined;
     }
-    if (toolName === 'find') {
-        const path = record.path;
-        const pattern = record.pattern;
-        if (typeof pattern === 'string') return pattern;
-        return typeof path === 'string' ? basename(path) || path : undefined;
+    if (toolName === "find") {
+        const path = field("path");
+        const pattern = field("pattern");
+        if (typeof pattern === "string") return pattern;
+        return typeof path === "string" ? basename(path) || path : undefined;
     }
-    if (toolName === 'bash' || toolName === 'safe_bash') {
-        const command = record.command;
-        if (typeof command !== 'string') return undefined;
+    if (toolName === "bash" || toolName === "safe_bash") {
+        const command = field("command");
+        if (typeof command !== "string") return undefined;
         return command.length > 48 ? `${command.slice(0, 45)}...` : command;
     }
     return undefined;

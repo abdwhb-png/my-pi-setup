@@ -33,28 +33,41 @@
  * }
  */
 
-import { homedir } from 'os';
-import { join } from 'path';
-import { SettingsManager } from '@earendil-works/pi-coding-agent';
+import { homedir } from "os";
+import { join } from "path";
+import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import type {
     ArchiveRetentionConfig,
+    CompressionBackendId,
     CompressionThresholds,
-} from './tool-results/types';
+} from "./tool-results/types";
 
 // ---------------------------------------------------------------------------
 // Interfaces
 // ---------------------------------------------------------------------------
 
-export interface CompressorConfig {
+export interface BackendConnectionConfig {
     baseUrl?: string;
+    timeoutMs?: number;
     agent?: string;
+}
+
+export interface CompressorConfig {
+    backend?: CompressionBackendId;
+    invalidBackend?: string;
+    backends?: Partial<Record<CompressionBackendId, BackendConnectionConfig>>;
+    /** @deprecated Legacy Edgee alias — migrated to backends.edgee.baseUrl */
+    baseUrl?: string;
+    /** @deprecated Legacy Edgee alias — migrated to backends.edgee.agent */
+    agent?: string;
+    /** @deprecated Legacy Edgee alias — migrated to backends.edgee.timeoutMs */
     timeoutMs?: number;
     showStatus?: boolean;
     showWidget?: boolean;
     archiveOriginal?: boolean;
     capFallbackBytes?: number;
-    routingStrategy?: 'edgee' | 'benchmark';
-    summaryGranularity?: 'none' | 'turn' | 'agent' | 'all';
+    routingStrategy?: "edgee" | "benchmark";
+    summaryGranularity?: "none" | "turn" | "agent" | "all";
     enabled?: boolean;
     excludeTools?: string[];
     /** Legacy global threshold; group values take precedence. */
@@ -99,7 +112,7 @@ export interface SaveTokensConfig {
 // ---------------------------------------------------------------------------
 
 export function resolveDefaultTelemetryDirectory(): string {
-    return join(homedir(), '.pi', 'agent', 'save-tokens-telemetry');
+    return join(homedir(), ".pi", "agent", "save-tokens-telemetry");
 }
 
 const DEFAULT_TELEMETRY: TelemetryConfig = {
@@ -130,11 +143,11 @@ interface LooseDict {
     [key: string]: string | number | boolean | null | object;
 }
 
-const COMPRESSION_GROUPS = ['shell', 'read', 'search'] as const;
+const COMPRESSION_GROUPS = ["shell", "read", "search"] as const;
 
 function isNonNegativeInteger(value: unknown): value is number {
     return (
-        typeof value === 'number' &&
+        typeof value === "number" &&
         Number.isFinite(value) &&
         Number.isInteger(value) &&
         value >= 0
@@ -144,7 +157,7 @@ function isNonNegativeInteger(value: unknown): value is number {
 function normalizeThresholds(
     raw: unknown,
 ): Partial<CompressionThresholds> | undefined {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
     const entries = Object.entries(raw);
     if (entries.some(([key]) => !COMPRESSION_GROUPS.includes(key as never))) {
         return undefined;
@@ -161,7 +174,7 @@ function normalizeThresholds(
 function normalizeArchiveRetention(
     raw: unknown,
 ): Partial<ArchiveRetentionConfig> | undefined {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
     const value = raw as Record<string, unknown>;
     const normalized: Partial<ArchiveRetentionConfig> = {};
     if (isFinitePositive(value.maxAgeDays)) {
@@ -173,36 +186,77 @@ function normalizeArchiveRetention(
     return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
+const VALID_BACKENDS: readonly string[] = ["headroom", "edgee"];
+
+function normalizeBackendConnectionConfig(
+    raw: unknown,
+): BackendConnectionConfig | undefined {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const r = raw as Record<string, unknown>;
+    const out: BackendConnectionConfig = {};
+    if (typeof r.baseUrl === "string") out.baseUrl = r.baseUrl;
+    if (typeof r.timeoutMs === "number" && Number.isFinite(r.timeoutMs))
+        out.timeoutMs = r.timeoutMs;
+    if (typeof r.agent === "string") out.agent = r.agent;
+    return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function normalizeBackends(
+    raw: unknown,
+): Partial<Record<CompressionBackendId, BackendConnectionConfig>> | undefined {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const r = raw as Record<string, unknown>;
+    const out: Partial<Record<CompressionBackendId, BackendConnectionConfig>> =
+        {};
+    for (const id of VALID_BACKENDS) {
+        const sub = normalizeBackendConnectionConfig(r[id]);
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- validated by VALID_BACKENDS
+        if (sub) out[id as CompressionBackendId] = sub;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function normalizeCompressor(raw: object): CompressorConfig | undefined {
-    if (!raw || typeof raw !== 'object') return undefined;
+    if (!raw || typeof raw !== "object") return undefined;
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const r = raw as LooseDict;
     const out: CompressorConfig = {};
-    if (typeof r.baseUrl === 'string') out.baseUrl = r.baseUrl;
-    if (typeof r.agent === 'string') out.agent = r.agent;
-    if (typeof r.timeoutMs === 'number') out.timeoutMs = r.timeoutMs;
-    if (typeof r.showStatus === 'boolean') out.showStatus = r.showStatus;
-    if (typeof r.showWidget === 'boolean') out.showWidget = r.showWidget;
-    if (typeof r.archiveOriginal === 'boolean')
+    if (typeof r.backend === "string" && VALID_BACKENDS.includes(r.backend)) {
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- validated above
+        out.backend = r.backend as CompressionBackendId;
+    } else if (typeof r.backend === "string") {
+        out.invalidBackend = r.backend;
+    }
+    const backends = normalizeBackends(r.backends);
+    if (backends) out.backends = backends;
+    // oxlint-disable-next-line typescript/no-deprecated -- legacy migration reads deprecated fields
+    if (typeof r.baseUrl === "string") out.baseUrl = r.baseUrl;
+    // oxlint-disable-next-line typescript/no-deprecated -- legacy migration reads deprecated fields
+    if (typeof r.agent === "string") out.agent = r.agent;
+    // oxlint-disable-next-line typescript/no-deprecated -- legacy migration reads deprecated fields
+    if (typeof r.timeoutMs === "number") out.timeoutMs = r.timeoutMs;
+    if (typeof r.showStatus === "boolean") out.showStatus = r.showStatus;
+    if (typeof r.showWidget === "boolean") out.showWidget = r.showWidget;
+    if (typeof r.archiveOriginal === "boolean")
         out.archiveOriginal = r.archiveOriginal;
-    if (typeof r.capFallbackBytes === 'number')
+    if (typeof r.capFallbackBytes === "number")
         out.capFallbackBytes = r.capFallbackBytes;
-    if (r.routingStrategy === 'edgee' || r.routingStrategy === 'benchmark')
+    if (r.routingStrategy === "edgee" || r.routingStrategy === "benchmark")
         out.routingStrategy = r.routingStrategy;
     if (
-        r.summaryGranularity === 'none' ||
-        r.summaryGranularity === 'turn' ||
-        r.summaryGranularity === 'agent' ||
-        r.summaryGranularity === 'all'
+        r.summaryGranularity === "none" ||
+        r.summaryGranularity === "turn" ||
+        r.summaryGranularity === "agent" ||
+        r.summaryGranularity === "all"
     ) {
         out.summaryGranularity = r.summaryGranularity;
     }
-    if (typeof r.enabled === 'boolean') out.enabled = r.enabled;
+    if (typeof r.enabled === "boolean") out.enabled = r.enabled;
     if (Array.isArray(r.excludeTools)) {
         out.excludeTools = [
             ...new Set(
                 r.excludeTools.filter(
-                    (tool): tool is string => typeof tool === 'string',
+                    (tool): tool is string => typeof tool === "string",
                 ),
             ),
         ];
@@ -212,35 +266,35 @@ function normalizeCompressor(raw: object): CompressorConfig | undefined {
     if (minBytesByGroup) out.minBytesByGroup = minBytesByGroup;
     const archiveRetention = normalizeArchiveRetention(r.archiveRetention);
     if (archiveRetention) out.archiveRetention = archiveRetention;
-    if (typeof r.aggregates === 'boolean') out.aggregates = r.aggregates;
-    if (typeof r.capErrors === 'boolean') out.capErrors = r.capErrors;
+    if (typeof r.aggregates === "boolean") out.aggregates = r.aggregates;
+    if (typeof r.capErrors === "boolean") out.capErrors = r.capErrors;
     return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function normalizeCaveman(raw: object): CavemanConfig | undefined {
-    if (!raw || typeof raw !== 'object') return undefined;
+    if (!raw || typeof raw !== "object") return undefined;
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const r = raw as LooseDict;
     const out: CavemanConfig = {};
-    if (typeof r.defaultLevel === 'string') out.defaultLevel = r.defaultLevel;
-    if (typeof r.showStatus === 'boolean') out.showStatus = r.showStatus;
+    if (typeof r.defaultLevel === "string") out.defaultLevel = r.defaultLevel;
+    if (typeof r.showStatus === "boolean") out.showStatus = r.showStatus;
     return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function normalizePonytail(raw: object): PonytailConfig | undefined {
-    if (!raw || typeof raw !== 'object') return undefined;
+    if (!raw || typeof raw !== "object") return undefined;
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const r = raw as LooseDict;
     const out: PonytailConfig = {};
-    if (typeof r.enabled === 'boolean') out.enabled = r.enabled;
-    if (typeof r.defaultMode === 'string') out.defaultMode = r.defaultMode;
-    if (typeof r.showStatus === 'boolean') out.showStatus = r.showStatus;
+    if (typeof r.enabled === "boolean") out.enabled = r.enabled;
+    if (typeof r.defaultMode === "string") out.defaultMode = r.defaultMode;
+    if (typeof r.showStatus === "boolean") out.showStatus = r.showStatus;
     return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function isFinitePositive(v: unknown): v is number {
     return (
-        typeof v === 'number' &&
+        typeof v === "number" &&
         Number.isFinite(v) &&
         Number.isInteger(v) &&
         v > 0
@@ -248,7 +302,7 @@ export function isFinitePositive(v: unknown): v is number {
 }
 
 export function normalizeTelemetry(raw: object): TelemetryConfig {
-    if (!raw || typeof raw !== 'object') {
+    if (!raw || typeof raw !== "object") {
         return { ...DEFAULT_TELEMETRY };
     }
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
@@ -256,11 +310,11 @@ export function normalizeTelemetry(raw: object): TelemetryConfig {
     // Start with defaults, overlay valid overrides
     const out: TelemetryConfig = { ...DEFAULT_TELEMETRY };
 
-    if (typeof r.enabled === 'boolean') out.enabled = r.enabled;
-    if (typeof r.directory === 'string') out.directory = r.directory;
-    if (typeof r.captureContent === 'boolean')
+    if (typeof r.enabled === "boolean") out.enabled = r.enabled;
+    if (typeof r.directory === "string") out.directory = r.directory;
+    if (typeof r.captureContent === "boolean")
         out.captureContent = r.captureContent;
-    if (typeof r.redactSecrets === 'boolean')
+    if (typeof r.redactSecrets === "boolean")
         out.redactSecrets = r.redactSecrets;
 
     // Numeric bounds: must be finite, positive integers
@@ -274,7 +328,7 @@ export function normalizeTelemetry(raw: object): TelemetryConfig {
 }
 
 export function normalizeConfig(raw: object): Partial<SaveTokensConfig> {
-    if (!raw || typeof raw !== 'object') return {};
+    if (!raw || typeof raw !== "object") return {};
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const r = raw as LooseDict;
     const cv = r.compressor;
@@ -282,19 +336,19 @@ export function normalizeConfig(raw: object): Partial<SaveTokensConfig> {
     const pt = r.ponytail;
     const tl = r.telemetry;
     const compressor =
-        typeof cv === 'object' && cv !== null
+        typeof cv === "object" && cv !== null
             ? normalizeCompressor(cv)
             : undefined;
     const caveman =
-        typeof ca === 'object' && ca !== null
+        typeof ca === "object" && ca !== null
             ? normalizeCaveman(ca)
             : undefined;
     const ponytail =
-        typeof pt === 'object' && pt !== null
+        typeof pt === "object" && pt !== null
             ? normalizePonytail(pt)
             : undefined;
     const telemetry =
-        typeof tl === 'object' && tl !== null
+        typeof tl === "object" && tl !== null
             ? normalizeTelemetry(tl)
             : undefined;
     return {
@@ -311,7 +365,7 @@ export function normalizeConfig(raw: object): Partial<SaveTokensConfig> {
 // Merge
 // ---------------------------------------------------------------------------
 
-function mergeConfig(
+export function mergeConfig(
     base: SaveTokensConfig,
     overrides: Partial<SaveTokensConfig>,
 ): SaveTokensConfig {
@@ -325,17 +379,34 @@ function mergeConfig(
         ...baseCompressor.archiveRetention,
         ...overrideCompressor.archiveRetention,
     };
+    const baseBackends = baseCompressor.backends ?? {};
+    const overrideBackends = overrideCompressor.backends ?? {};
+    const backends: Partial<
+        Record<CompressionBackendId, BackendConnectionConfig>
+    > = {};
+    for (const id of VALID_BACKENDS) {
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- validated by VALID_BACKENDS
+        const bid = id as CompressionBackendId;
+        const b = baseBackends[bid];
+        const o = overrideBackends[bid];
+        if (b || o) backends[bid] = { ...b, ...o };
+    }
+    const mergedCompressor: CompressorConfig = {
+        ...baseCompressor,
+        ...overrideCompressor,
+        ...("backend" in overrideCompressor ||
+        "invalidBackend" in overrideCompressor
+            ? { invalidBackend: overrideCompressor.invalidBackend }
+            : {}),
+        ...(Object.keys(minBytesByGroup).length > 0 ? { minBytesByGroup } : {}),
+        ...(Object.keys(archiveRetention).length > 0
+            ? { archiveRetention }
+            : {}),
+        ...(Object.keys(backends).length > 0 ? { backends } : {}),
+    };
+
     return {
-        compressor: {
-            ...baseCompressor,
-            ...overrideCompressor,
-            ...(Object.keys(minBytesByGroup).length > 0
-                ? { minBytesByGroup }
-                : {}),
-            ...(Object.keys(archiveRetention).length > 0
-                ? { archiveRetention }
-                : {}),
-        },
+        compressor: mergedCompressor,
         caveman: { ...base.caveman, ...overrides.caveman },
         ponytail: { ...base.ponytail, ...overrides.ponytail },
         telemetry: {
@@ -350,12 +421,15 @@ function mergeConfig(
 // Public API
 // ---------------------------------------------------------------------------
 
-export function loadSaveTokensConfig(cwd = process.cwd()): SaveTokensConfig {
+export function loadSaveTokensConfig(
+    cwd = process.cwd(),
+    agentDir?: string,
+): SaveTokensConfig {
     let globalConfig: Partial<SaveTokensConfig> = {};
     let projectConfig: Partial<SaveTokensConfig> = {};
 
     try {
-        const manager = SettingsManager.create(cwd);
+        const manager = SettingsManager.create(cwd, agentDir);
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion
         const globalSettings = manager.getGlobalSettings() as LooseDict;
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion
@@ -363,9 +437,9 @@ export function loadSaveTokensConfig(cwd = process.cwd()): SaveTokensConfig {
         const st = globalSettings.saveTokens;
         const sp = projectSettings.saveTokens;
         globalConfig =
-            typeof st === 'object' && st !== null ? normalizeConfig(st) : {};
+            typeof st === "object" && st !== null ? normalizeConfig(st) : {};
         projectConfig =
-            typeof sp === 'object' && sp !== null ? normalizeConfig(sp) : {};
+            typeof sp === "object" && sp !== null ? normalizeConfig(sp) : {};
     } catch {
         // not in pi runtime or settings inaccessible
     }
@@ -376,19 +450,31 @@ export function loadSaveTokensConfig(cwd = process.cwd()): SaveTokensConfig {
     );
 }
 
-export function loadCompressorConfig(cwd = process.cwd()): CompressorConfig {
-    return loadSaveTokensConfig(cwd).compressor ?? {};
+export function loadCompressorConfig(
+    cwd = process.cwd(),
+    agentDir?: string,
+): CompressorConfig {
+    return loadSaveTokensConfig(cwd, agentDir).compressor ?? {};
 }
 
-export function loadCavemanConfig(cwd = process.cwd()): CavemanConfig {
-    return loadSaveTokensConfig(cwd).caveman ?? {};
+export function loadCavemanConfig(
+    cwd = process.cwd(),
+    agentDir?: string,
+): CavemanConfig {
+    return loadSaveTokensConfig(cwd, agentDir).caveman ?? {};
 }
 
-export function loadPonytailConfig(cwd = process.cwd()): PonytailConfig {
-    return loadSaveTokensConfig(cwd).ponytail ?? {};
+export function loadPonytailConfig(
+    cwd = process.cwd(),
+    agentDir?: string,
+): PonytailConfig {
+    return loadSaveTokensConfig(cwd, agentDir).ponytail ?? {};
 }
 
-export function loadTelemetryConfig(cwd = process.cwd()): TelemetryConfig {
-    const cfg = loadSaveTokensConfig(cwd).telemetry;
+export function loadTelemetryConfig(
+    cwd = process.cwd(),
+    agentDir?: string,
+): TelemetryConfig {
+    const cfg = loadSaveTokensConfig(cwd, agentDir).telemetry;
     return cfg ?? DEFAULT_TELEMETRY;
 }

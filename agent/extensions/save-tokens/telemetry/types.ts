@@ -26,16 +26,16 @@ export const TELEMETRY_SCHEMA_VERSION = 1;
 // ---------------------------------------------------------------------------
 
 export type TelemetryEventType =
-    | 'session_start'
-    | 'session_end'
-    | 'agent_run_start'
-    | 'agent_run_end'
-    | 'turn_start'
-    | 'turn_end'
-    | 'raw_tool_result'
-    | 'final_tool_result'
-    | 'mode_change'
-    | 'experiment_tag';
+    | "session_start"
+    | "session_end"
+    | "agent_run_start"
+    | "agent_run_end"
+    | "turn_start"
+    | "turn_end"
+    | "raw_tool_result"
+    | "final_tool_result"
+    | "mode_change"
+    | "experiment_tag";
 
 // ---------------------------------------------------------------------------
 // JSON-safe value type (for content, input, details payloads)
@@ -74,6 +74,23 @@ export interface CompressionDetails {
     archivePath?: string;
     kind?: string;
     reason?: string;
+    /** Selected backend id (headroom | edgee), mirrored from the canonical event. */
+    backend?: string;
+    /** Verified backend engine version, mirrored from the canonical event. */
+    backendVersion?: string;
+    /** Backend call latency in ms, mirrored from the canonical event. */
+    latencyMs?: number;
+    /** Tokenizer / effective model id, mirrored from the canonical event. */
+    tokenizer?: string;
+    /** Native engine metrics normalized by the adapter, mirrored from the canonical event. */
+    nativeMetrics?: {
+        tokensBefore?: number;
+        tokensAfter?: number;
+        tokensSaved?: number;
+        compressionRatio?: number;
+        transforms?: string[];
+        ccrHashes?: string[];
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -113,14 +130,15 @@ export interface TelemetryEventBase extends TelemetryIdentity {
 // Session lifecycle
 // ---------------------------------------------------------------------------
 
-export interface TelemetrySessionStart extends TelemetryEventBase, TelemetryRuntimeContext {
-    event: 'session_start';
+export interface TelemetrySessionStart
+    extends TelemetryEventBase, TelemetryRuntimeContext {
+    event: "session_start";
     extensions?: string[];
     configSnapshot?: TelemetryConfigSnapshot;
 }
 
 export interface TelemetrySessionEnd extends TelemetryEventBase {
-    event: 'session_end';
+    event: "session_end";
     durationMs: number;
     toolCallCount: number;
 }
@@ -129,14 +147,16 @@ export interface TelemetrySessionEnd extends TelemetryEventBase {
 // Agent run
 // ---------------------------------------------------------------------------
 
-export interface TelemetryAgentRunStart extends TelemetryEventBase, TelemetryRuntimeContext {
-    event: 'agent_run_start';
+export interface TelemetryAgentRunStart
+    extends TelemetryEventBase, TelemetryRuntimeContext {
+    event: "agent_run_start";
     runId: string;
     turnCount?: number;
 }
 
-export interface TelemetryAgentRunEnd extends TelemetryEventBase, TelemetryRuntimeContext {
-    event: 'agent_run_end';
+export interface TelemetryAgentRunEnd
+    extends TelemetryEventBase, TelemetryRuntimeContext {
+    event: "agent_run_end";
     runId: string;
     durationMs: number;
     turnCount: number;
@@ -146,14 +166,16 @@ export interface TelemetryAgentRunEnd extends TelemetryEventBase, TelemetryRunti
 // Turn
 // ---------------------------------------------------------------------------
 
-export interface TelemetryTurnStart extends TelemetryEventBase, TelemetryRuntimeContext {
-    event: 'turn_start';
+export interface TelemetryTurnStart
+    extends TelemetryEventBase, TelemetryRuntimeContext {
+    event: "turn_start";
     runId: string;
     turnIndex: number;
 }
 
-export interface TelemetryTurnEnd extends TelemetryEventBase, TelemetryRuntimeContext {
-    event: 'turn_end';
+export interface TelemetryTurnEnd
+    extends TelemetryEventBase, TelemetryRuntimeContext {
+    event: "turn_end";
     runId: string;
     turnIndex: number;
     toolCallCount: number;
@@ -166,7 +188,7 @@ export interface TelemetryTurnEnd extends TelemetryEventBase, TelemetryRuntimeCo
 // ---------------------------------------------------------------------------
 
 export interface TelemetryRawToolResult extends TelemetryEventBase {
-    event: 'raw_tool_result';
+    event: "raw_tool_result";
     runId: string;
     turnIndex: number;
     toolCallId: string;
@@ -180,7 +202,7 @@ export interface TelemetryRawToolResult extends TelemetryEventBase {
 }
 
 export interface TelemetryFinalToolResult extends TelemetryEventBase {
-    event: 'final_tool_result';
+    event: "final_tool_result";
     runId: string;
     turnIndex: number;
     toolCallId: string;
@@ -200,7 +222,7 @@ export interface TelemetryFinalToolResult extends TelemetryEventBase {
 // ---------------------------------------------------------------------------
 
 export interface TelemetryModeChange extends TelemetryEventBase {
-    event: 'mode_change';
+    event: "mode_change";
     component: string;
     requested: string;
     effective?: string;
@@ -214,7 +236,7 @@ export interface TelemetryModeChange extends TelemetryEventBase {
 // ---------------------------------------------------------------------------
 
 export interface TelemetryExperimentTag extends TelemetryEventBase {
-    event: 'experiment_tag';
+    event: "experiment_tag";
     tag: string;
     value?: string | number | boolean;
 }
@@ -240,7 +262,7 @@ export type TelemetryEvent =
 // ---------------------------------------------------------------------------
 
 export interface CompressionSnapshotField {
-    compressor: 'local-compressor' | 'caveman' | 'ponytail';
+    compressor: "local-compressor" | "caveman" | "ponytail";
     configured: Record<string, unknown>;
     requested: Record<string, unknown>;
     effective: Record<string, unknown>;
