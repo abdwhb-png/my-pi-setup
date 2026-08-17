@@ -7,61 +7,61 @@ import {
     type SubagentDelegationRequest,
     type SubagentDelegationResponse,
     type SubagentDelegationUpdate,
-} from 'pi-subagents/delegation';
+} from "pi-subagents/delegation";
 
 const noop = () => {};
 const terminalStatuses = [
-    'completed',
-    'failed',
-    'timed_out',
-    'cancelled',
-    'interrupted',
-    'turn_budget_exhausted',
-    'tool_budget_exhausted',
-    'structured_output_failed',
-    'acceptance_failed',
-    'invalid_request',
-    'unavailable_context',
-] as const satisfies ReadonlyArray<SubagentDelegationResponse['status']>;
+    "completed",
+    "failed",
+    "timed_out",
+    "cancelled",
+    "interrupted",
+    "turn_budget_exhausted",
+    "tool_budget_exhausted",
+    "structured_output_failed",
+    "acceptance_failed",
+    "invalid_request",
+    "unavailable_context",
+] as const satisfies ReadonlyArray<SubagentDelegationResponse["status"]>;
 type DelegationAcceptance = NonNullable<
-    SubagentDelegationResponse['acceptance']
+    SubagentDelegationResponse["acceptance"]
 >;
-type DelegationEvidenceStatus = DelegationAcceptance['evidenceStatus'];
+type DelegationEvidenceStatus = DelegationAcceptance["evidenceStatus"];
 const acceptanceStatuses = [
-    'pending',
-    'not-required',
-    'claimed',
-    'attested',
-    'checked',
-    'verified',
-    'review-required',
-    'reviewed',
-    'accepted',
-    'rejected',
-] as const satisfies ReadonlyArray<DelegationAcceptance['status']>;
+    "pending",
+    "not-required",
+    "claimed",
+    "attested",
+    "checked",
+    "verified",
+    "review-required",
+    "reviewed",
+    "accepted",
+    "rejected",
+] as const satisfies ReadonlyArray<DelegationAcceptance["status"]>;
 const evidenceStatuses = [
-    'pending',
-    'not-required',
-    'claimed',
-    'attested',
-    'checked',
-    'verified',
-    'rejected',
+    "pending",
+    "not-required",
+    "claimed",
+    "attested",
+    "checked",
+    "verified",
+    "rejected",
 ] as const satisfies ReadonlyArray<DelegationEvidenceStatus>;
 
 interface ParsedAcceptance {
-    status: DelegationAcceptance['status'];
+    status: DelegationAcceptance["status"];
     evidenceStatus?: DelegationEvidenceStatus;
     explicit: boolean;
 }
 
 function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
-    return typeof value === 'object' && value !== null;
+    return typeof value === "object" && value !== null;
 }
 
 function isValidRequestId(value: unknown): value is string {
     return (
-        typeof value === 'string' &&
+        typeof value === "string" &&
         value.trim().length > 0 &&
         value.length <= 256 &&
         !/[\r\n]/.test(value)
@@ -80,32 +80,32 @@ function parseStarted(value: unknown): DelegationStarted | undefined {
 }
 
 function isOptionalString(value: unknown): value is string | undefined {
-    return value === undefined || typeof value === 'string';
+    return value === undefined || typeof value === "string";
 }
 
 function isOptionalNumber(value: unknown): value is number | undefined {
-    return value === undefined || typeof value === 'number';
+    return value === undefined || typeof value === "number";
 }
 
 function isOptionalStringArray(value: unknown): value is string[] | undefined {
     return (
         value === undefined ||
         (Array.isArray(value) &&
-            value.every((item) => typeof item === 'string'))
+            value.every((item) => typeof item === "string"))
     );
 }
 
 function isOptionalRecentTools(
     value: unknown,
-): value is SubagentDelegationUpdate['recentTools'] {
+): value is SubagentDelegationUpdate["recentTools"] {
     return (
         value === undefined ||
         (Array.isArray(value) &&
             value.every(
                 (item) =>
                     isRecord(item) &&
-                    typeof item.tool === 'string' &&
-                    typeof item.args === 'string',
+                    typeof item.tool === "string" &&
+                    typeof item.args === "string",
             ))
     );
 }
@@ -152,7 +152,7 @@ function parseUpdate(value: unknown): SubagentDelegationUpdate | undefined {
 
 function isTerminalStatus(
     value: unknown,
-): value is SubagentDelegationResponse['status'] {
+): value is SubagentDelegationResponse["status"] {
     return terminalStatuses.some((status) => status === value);
 }
 
@@ -163,7 +163,7 @@ function isOptionalAcceptance(
         value === undefined ||
         (isRecord(value) &&
             acceptanceStatuses.some((status) => status === value.status) &&
-            typeof value.explicit === 'boolean' &&
+            typeof value.explicit === "boolean" &&
             (value.evidenceStatus === undefined ||
                 evidenceStatuses.some(
                     (status) => status === value.evidenceStatus,
@@ -172,14 +172,14 @@ function isOptionalAcceptance(
 }
 
 function fallbackEvidenceStatus(
-    status: DelegationAcceptance['status'],
+    status: DelegationAcceptance["status"],
 ): DelegationEvidenceStatus {
     if (
-        status === 'review-required' ||
-        status === 'reviewed' ||
-        status === 'accepted'
+        status === "review-required" ||
+        status === "reviewed" ||
+        status === "accepted"
     ) {
-        return 'verified';
+        return "verified";
     }
     return status;
 }
@@ -256,7 +256,7 @@ export interface DelegationRunOptions {
 
 type DelegationStarted = Pick<
     SubagentDelegationResponse,
-    'version' | 'requestId'
+    "version" | "requestId"
 >;
 
 interface PendingDelegation {
@@ -271,14 +271,14 @@ interface PendingDelegation {
 export class DelegationDeadlineError extends Error {
     constructor(requestId: string) {
         super(`Delegation request ${requestId} exceeded its deadline.`);
-        this.name = 'DelegationDeadlineError';
+        this.name = "DelegationDeadlineError";
     }
 }
 
 export class DelegationDisposedError extends Error {
     constructor() {
-        super('Delegation client is disposed.');
-        this.name = 'DelegationDisposedError';
+        super("Delegation client is disposed.");
+        this.name = "DelegationDisposedError";
     }
 }
 
@@ -321,7 +321,7 @@ export class DelegationClient {
         if (!isValidRequestId(request.requestId)) {
             return Promise.reject(
                 new Error(
-                    'Delegation requestId must be a non-empty string of at most 256 characters without newlines.',
+                    "Delegation requestId must be a non-empty string of at most 256 characters without newlines.",
                 ),
             );
         }
@@ -346,7 +346,7 @@ export class DelegationClient {
         const pending: PendingDelegation = {
             cancelEmitted: false,
             cleanup: () => {
-                options.signal?.removeEventListener('abort', onAbort);
+                options.signal?.removeEventListener("abort", onAbort);
                 clearDeadline();
             },
             onStarted: (event) => options.onStarted?.(event),
@@ -355,7 +355,7 @@ export class DelegationClient {
             resolve: resolveRun,
         };
         this.pending.set(request.requestId, pending);
-        options.signal?.addEventListener('abort', onAbort, { once: true });
+        options.signal?.addEventListener("abort", onAbort, { once: true });
         if (options.deadlineMs !== undefined && options.deadlineMs > 0) {
             const deadline = setTimeout(() => {
                 if (this.pending.get(request.requestId) !== pending) return;

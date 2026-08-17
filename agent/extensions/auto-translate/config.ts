@@ -8,16 +8,16 @@
  *   2. legacy file translate.json (global -> project) — fallback only
  */
 
-import { loadExtensionConfig } from '../_shared/config-loader.ts';
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
 import {
     DEFAULT_CONFIG,
     type TranslateConfig,
     type LanguagesMap,
-} from './types.ts';
+} from "./types.ts";
 
 /** Type guard: a plain string-keyed object (not an array). */
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Normalize a single parsed JSON object into a partial config, dropping invalid fields. */
@@ -29,11 +29,11 @@ export function normalizeTranslateConfig(
 
     const result: Partial<TranslateConfig> = {};
 
-    if (typeof value.model === 'string' && value.model.length > 0) {
+    if (typeof value.model === "string" && value.model.length > 0) {
         result.model = value.model;
     }
     if (
-        typeof value.defaultTargetLanguage === 'string' &&
+        typeof value.defaultTargetLanguage === "string" &&
         value.defaultTargetLanguage.length > 0
     ) {
         result.defaultTargetLanguage = value.defaultTargetLanguage;
@@ -42,7 +42,7 @@ export function normalizeTranslateConfig(
     if (isRecord(value.languages)) {
         const languages: LanguagesMap = {};
         for (const [code, name] of Object.entries(value.languages)) {
-            if (typeof name === 'string' && name.length > 0) {
+            if (typeof name === "string" && name.length > 0) {
                 languages[code] = name;
             }
         }
@@ -79,8 +79,8 @@ export function loadTranslateConfig(
         merge: mergeTranslateConfig,
         sources: [
             {
-                settingsKey: 'translate',
-                legacyFilename: 'translate.json',
+                settingsKey: "translate",
+                legacyFilename: "translate.json",
                 projectLocal: true,
             },
         ],

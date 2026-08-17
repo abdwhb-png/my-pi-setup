@@ -14,26 +14,26 @@ export class InMemorySessionCache {
     }
 }
 
-const PATH_SURFACES = new Set(['read', 'write', 'edit', 'grep', 'find', 'ls']);
+const PATH_SURFACES = new Set(["read", "write", "edit", "grep", "find", "ls"]);
 
 export function extractValue(
     surface: string,
     input: Record<string, unknown>,
 ): string | undefined {
-    if (surface === 'bash') {
-        return typeof input.command === 'string' ? input.command : undefined;
+    if (surface === "bash") {
+        return typeof input.command === "string" ? input.command : undefined;
     }
     if (PATH_SURFACES.has(surface)) {
-        if (typeof input.path === 'string') return input.path;
-        if (typeof input.pattern === 'string') return input.pattern;
+        if (typeof input.path === "string") return input.path;
+        if (typeof input.pattern === "string") return input.pattern;
         return undefined;
     }
     return undefined;
 }
 
-import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { getPermissionsService } from '@gotgenes/pi-permission-system';
-import type { AddonConfig } from './config.ts';
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getPermissionsService } from "@gotgenes/pi-permission-system";
+import type { AddonConfig } from "./config.ts";
 
 interface EventBus {
     emit(channel: string, data: unknown): void;
@@ -59,8 +59,8 @@ export async function checkAndBlock(
     const checkValue = value ?? toolName;
 
     const result = svc.checkPermission(targetSurface, checkValue);
-    if (result.state === 'allow') return undefined;
-    if (result.state === 'deny') {
+    if (result.state === "allow") return undefined;
+    if (result.state === "deny") {
         return {
             block: true,
             reason:
@@ -102,26 +102,26 @@ async function handleAsk(
         ? `Inherited permission check (${surface})`
         : `Permission check (${surface})`;
     const msg = `Allow '${toolName}' to run: ${value}?`;
-    const options = ['Yes', 'Yes for this session', 'No', 'No, provide reason'];
+    const options = ["Yes", "Yes for this session", "No", "No, provide reason"];
 
     const decision = await ctx.ui.select(`${title}\n${msg}`, options);
 
-    if (decision === 'Yes') return undefined;
-    if (decision === 'Yes for this session') {
+    if (decision === "Yes") return undefined;
+    if (decision === "Yes for this session") {
         if (matchedPattern) sessionCache.add(matchedPattern, value);
         return undefined;
     }
-    if (decision === 'No, provide reason') {
+    if (decision === "No, provide reason") {
         const reason = await ctx.ui.input(
             `${title}\nShare why this request was denied (optional).`,
-            'Reason shown back to the agent',
+            "Reason shown back to the agent",
         );
         const denial =
-            typeof reason === 'string' && reason.trim().length > 0
+            typeof reason === "string" && reason.trim().length > 0
                 ? reason.trim()
-                : 'Denied by user';
+                : "Denied by user";
         return { block: true, reason: denial };
     }
 
-    return { block: true, reason: 'Denied by user' };
+    return { block: true, reason: "Denied by user" };
 }

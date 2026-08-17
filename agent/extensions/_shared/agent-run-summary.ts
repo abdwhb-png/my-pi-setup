@@ -1,10 +1,10 @@
 import type {
     ExtensionAPI,
     ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 
-export const TPS_SUMMARY_EVENT = 'agent-run-summary:tps';
-export const TOOL_SUMMARY_EVENT = 'agent-run-summary:tools';
+export const TPS_SUMMARY_EVENT = "agent-run-summary:tps";
+export const TOOL_SUMMARY_EVENT = "agent-run-summary:tools";
 
 export interface AgentRunSummaryPayload {
     prefix: string;
@@ -14,19 +14,19 @@ export interface AgentRunSummaryPayload {
 export function isAgentRunSummaryPayload(
     value: unknown,
 ): value is AgentRunSummaryPayload {
-    if (typeof value !== 'object' || value === null) return false;
+    if (typeof value !== "object" || value === null) return false;
     return (
-        'prefix' in value &&
-        typeof (value as { prefix?: unknown }).prefix === 'string' &&
+        "prefix" in value &&
+        typeof (value as { prefix?: unknown }).prefix === "string" &&
         (value as { prefix: string }).prefix.length > 0 &&
-        'text' in value &&
-        typeof (value as { text?: unknown }).text === 'string' &&
+        "text" in value &&
+        typeof (value as { text?: unknown }).text === "string" &&
         (value as { text: string }).text.length > 0
     );
 }
 
 type AgentSettledHandler = (
-    event: { type: 'agent_settled' },
+    event: { type: "agent_settled" },
     ctx: ExtensionContext,
 ) => void | Promise<void>;
 
@@ -36,7 +36,7 @@ export function onAgentSettled(
     handler: AgentSettledHandler,
 ): void {
     const settledApi = pi as unknown as {
-        on(event: 'agent_settled', handler: AgentSettledHandler): void;
+        on(event: "agent_settled", handler: AgentSettledHandler): void;
     };
-    settledApi.on('agent_settled', handler);
+    settledApi.on("agent_settled", handler);
 }

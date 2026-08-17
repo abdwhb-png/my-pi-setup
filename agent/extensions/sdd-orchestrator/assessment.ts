@@ -1,32 +1,32 @@
-import { type Static, Type } from '@sinclair/typebox';
-import { PROFILES, type ParsedTask } from './types.ts';
+import { type Static, Type } from "@sinclair/typebox";
+import { PROFILES, type ParsedTask } from "./types.ts";
 
 export const CRITICAL_SIGNALS = [
-    'migration_or_data_transform',
-    'authentication_or_authorization',
-    'secrets',
-    'financial_logic',
-    'concurrency_or_processes',
-    'resource_lifecycle',
-    'shared_infrastructure',
-    'pi_core_behavior',
-    'inter_extension_protocol',
-    'irreversible_operation',
-    'architecture_uncertainty',
+    "migration_or_data_transform",
+    "authentication_or_authorization",
+    "secrets",
+    "financial_logic",
+    "concurrency_or_processes",
+    "resource_lifecycle",
+    "shared_infrastructure",
+    "pi_core_behavior",
+    "inter_extension_protocol",
+    "irreversible_operation",
+    "architecture_uncertainty",
 ] as const;
 
 export const STANDARD_SIGNALS = [
-    'multi_module',
-    'public_contract',
-    'external_integration',
-    'weak_test_coverage',
-    'requirements_uncertainty',
+    "multi_module",
+    "public_contract",
+    "external_integration",
+    "weak_test_coverage",
+    "requirements_uncertainty",
 ] as const;
 
 export const LOW_RISK_SIGNALS = [
-    'isolated_scope',
-    'clear_requirements',
-    'existing_test_pattern',
+    "isolated_scope",
+    "clear_requirements",
+    "existing_test_pattern",
 ] as const;
 
 const SIGNALS = [
@@ -53,9 +53,9 @@ export const TaskAssessmentSchema = Type.Object(
             ),
         ),
         confidence: Type.Union([
-            Type.Literal('high'),
-            Type.Literal('medium'),
-            Type.Literal('low'),
+            Type.Literal("high"),
+            Type.Literal("medium"),
+            Type.Literal("low"),
         ]),
         uncertainties: Type.Array(Type.String({ minLength: 1 })),
         advisoryMinimum: ProfileSchema,
@@ -74,10 +74,10 @@ export const AssessmentSchema = Type.Object(
 
 type SchemaTaskAssessment = Static<typeof TaskAssessmentSchema>;
 
-export type TaskAssessment = Omit<SchemaTaskAssessment, 'taskId'> & {
-    taskId: ParsedTask['id'];
+export type TaskAssessment = Omit<SchemaTaskAssessment, "taskId"> & {
+    taskId: ParsedTask["id"];
 };
 
-export type Assessment = Omit<Static<typeof AssessmentSchema>, 'tasks'> & {
+export type Assessment = Omit<Static<typeof AssessmentSchema>, "tasks"> & {
     tasks: TaskAssessment[];
 };

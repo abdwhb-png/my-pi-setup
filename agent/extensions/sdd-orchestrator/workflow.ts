@@ -1,11 +1,11 @@
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
-import type { SubagentDelegationResponse } from 'pi-subagents/delegation';
-import { resolveRuntimePath } from '../_shared/home-path.ts';
-import { loadSddConfig } from './config.ts';
-import type { DelegationClient } from './delegation-client.ts';
-import type { ApprovedManifest, ApprovedManifestTask } from './manifest.ts';
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { SubagentDelegationResponse } from "pi-subagents/delegation";
+import { resolveRuntimePath } from "../_shared/home-path.ts";
+import { loadSddConfig } from "./config.ts";
+import type { DelegationClient } from "./delegation-client.ts";
+import type { ApprovedManifest, ApprovedManifestTask } from "./manifest.ts";
 import {
     buildCorrectionRequest,
     buildReviewRequest,
@@ -13,7 +13,7 @@ import {
     parseReviewResponse,
     type Review,
     type ReviewStage,
-} from './prompts.ts';
+} from "./prompts.ts";
 import {
     recoveryAttestationDigest,
     transition,
@@ -23,32 +23,32 @@ import {
     type RunEvent,
     type RunSnapshot,
     type TaskState,
-} from './state-machine.ts';
-import { snapshotDigest, type SddStore } from './store.ts';
+} from "./state-machine.ts";
+import { snapshotDigest, type SddStore } from "./store.ts";
 import type {
     SddDelegationActivityContext,
     SddWorkflowObserver,
-} from './workflow-observer.ts';
-import type { SddWorkspaceExecution } from './workspace.ts';
+} from "./workflow-observer.ts";
+import type { SddWorkspaceExecution } from "./workspace.ts";
 
-type WorkflowStore = Pick<SddStore, 'load' | 'save' | 'appendTransition'>;
-type WorkflowDelegation = Pick<DelegationClient, 'run' | 'cancel'>;
+type WorkflowStore = Pick<SddStore, "load" | "save" | "appendTransition">;
+type WorkflowDelegation = Pick<DelegationClient, "run" | "cancel">;
 export type ManifestResolver = (
     runId: string,
 ) => ApprovedManifest | null | undefined;
 
 function accepted(response: SubagentDelegationResponse): boolean {
     return (
-        response.status === 'completed' &&
-        (response.acceptance?.status === 'verified' ||
-            response.acceptance?.status === 'accepted')
+        response.status === "completed" &&
+        (response.acceptance?.status === "verified" ||
+            response.acceptance?.status === "accepted")
     );
 }
 
 const SHARED_CONTRACT_SIGNALS = [
-    'shared_infrastructure',
-    'pi_core_behavior',
-    'inter_extension_protocol',
+    "shared_infrastructure",
+    "pi_core_behavior",
+    "inter_extension_protocol",
 ] as const;
 
 function filesOverlap(
@@ -61,7 +61,7 @@ function filesOverlap(
 
 function mustRunSequentially(task: ApprovedManifestTask): boolean {
     return (
-        task.effectiveProfile === 'direct' ||
+        task.effectiveProfile === "direct" ||
         !task.parallelEligible ||
         SHARED_CONTRACT_SIGNALS.some((signal) => task.signals.includes(signal))
     );
@@ -69,11 +69,11 @@ function mustRunSequentially(task: ApprovedManifestTask): boolean {
 
 function mixesDirectAndDelegatedTasks(manifest: ApprovedManifest): boolean {
     const hasDirectTask = manifest.tasks.some(
-        (task) => task.effectiveProfile === 'direct',
+        (task) => task.effectiveProfile === "direct",
     );
     return (
         hasDirectTask &&
-        manifest.tasks.some((task) => task.effectiveProfile !== 'direct')
+        manifest.tasks.some((task) => task.effectiveProfile !== "direct")
     );
 }
 
@@ -83,10 +83,10 @@ export function selectRunnableBatch(
 ): ApprovedManifestTask[] {
     const runnable = manifest.tasks.filter(
         (task) =>
-            snapshot.tasks[task.id]?.state === 'pending' &&
+            snapshot.tasks[task.id]?.state === "pending" &&
             task.dependencies.every(
                 (dependency) =>
-                    snapshot.tasks[dependency]?.state === 'verified',
+                    snapshot.tasks[dependency]?.state === "verified",
             ),
     );
     const first = runnable[0];
@@ -145,13 +145,13 @@ export class SddWorkflow {
         const onAbort = () => {
             this.cancel(runId);
         };
-        signal?.addEventListener('abort', onAbort, { once: true });
+        signal?.addEventListener("abort", onAbort, { once: true });
         if (signal?.aborted) onAbort();
         this.sourceCwds.set(runId, ctx.cwd);
         const execution = this.runExclusive(runId, ctx);
         this.activeRuns.set(runId, execution);
         const release = () => {
-            signal?.removeEventListener('abort', onAbort);
+            signal?.removeEventListener("abort", onAbort);
             if (this.activeRuns.get(runId) === execution) {
                 this.activeRuns.delete(runId);
                 this.sourceCwds.delete(runId);
@@ -168,20 +168,20 @@ export class SddWorkflow {
         const manifest = this.requireManifest(runId);
         let snapshot = this.requireSnapshot(runId);
         this.validateSnapshot(snapshot, manifest);
-        if (snapshot.state === 'approved') {
+        if (snapshot.state === "approved") {
             snapshot = this.persist(runId, {
-                type: 'run-transition',
+                type: "run-transition",
                 expectedRevision: snapshot.revision,
-                to: 'running',
+                to: "running",
             });
         }
-        if (snapshot.state !== 'running') return snapshot;
+        if (snapshot.state !== "running") return snapshot;
 
         if (snapshot.workspace && mixesDirectAndDelegatedTasks(manifest)) {
             return this.failRun(
                 runId,
-                'isolated_workspace_mixed_profiles',
-                'needs_input',
+                "isolated_workspace_mixed_profiles",
+                "needs_input",
             );
         }
 
@@ -192,35 +192,35 @@ export class SddWorkflow {
             return this.failRun(
                 runId,
                 error instanceof Error ? error.message : String(error),
-                'needs_input',
+                "needs_input",
             );
         }
 
         if (!this.sourceDigestMatches(runId, manifest)) {
-            return this.failRun(runId, 'source_digest_changed', 'needs_input');
+            return this.failRun(runId, "source_digest_changed", "needs_input");
         }
 
         if (snapshot.cancellation) {
             return this.hasActiveRequest(snapshot)
                 ? snapshot
-                : this.finishRun(runId, 'cancelled');
+                : this.finishRun(runId, "cancelled");
         }
 
         snapshot = this.reconcile(runId);
-        if (snapshot.state !== 'running') return snapshot;
+        if (snapshot.state !== "running") return snapshot;
 
         const config = loadSddConfig(ctx.cwd);
         while (true) {
             snapshot = this.requireSnapshot(runId);
-            if (snapshot.state !== 'running') break;
+            if (snapshot.state !== "running") break;
             if (snapshot.cancellation) {
                 return this.hasActiveRequest(snapshot)
                     ? snapshot
-                    : this.finishRun(runId, 'cancelled');
+                    : this.finishRun(runId, "cancelled");
             }
             const resumable = manifest.tasks.find((task) => {
                 const state = snapshot.tasks[task.id]?.state;
-                return state === 'reviewing' || state === 'fixing';
+                return state === "reviewing" || state === "fixing";
             });
             if (resumable) {
                 // oxlint-disable-next-line no-await-in-loop -- persisted task boundaries resume in manifest order.
@@ -235,19 +235,19 @@ export class SddWorkflow {
                     this.runTask(runId, executionCwd, config, task),
                 ),
             );
-            if (batch[0]?.effectiveProfile === 'direct') break;
+            if (batch[0]?.effectiveProfile === "direct") break;
         }
 
         snapshot = this.requireSnapshot(runId);
         if (
             manifest.tasks.every(
-                (task) => snapshot.tasks[task.id]?.state === 'verified',
+                (task) => snapshot.tasks[task.id]?.state === "verified",
             )
         ) {
             if (manifest.finalIntegrationReview) {
                 return this.runIntegrationReview(runId, executionCwd, config);
             }
-            return this.finishRun(runId, 'completed');
+            return this.finishRun(runId, "completed");
         }
         return snapshot;
     }
@@ -258,15 +258,15 @@ export class SddWorkflow {
         config: ReturnType<typeof loadSddConfig>,
         task: ApprovedManifestTask,
     ): Promise<RunSnapshot> {
-        if (task.effectiveProfile === 'direct') {
-            return this.taskTransition(runId, task.id, 'awaiting_direct_agent');
+        if (task.effectiveProfile === "direct") {
+            return this.taskTransition(runId, task.id, "awaiting_direct_agent");
         }
 
-        this.taskTransition(runId, task.id, 'implementing');
+        this.taskTransition(runId, task.id, "implementing");
         let implementationResponse = await this.launch(
             runId,
             task,
-            'worker',
+            "worker",
             1,
             buildWorkerRequest({
                 requestId: `${runId}:${task.id}:worker:1`,
@@ -282,23 +282,23 @@ export class SddWorkflow {
                 implementationResponse,
             );
         }
-        this.taskTransition(runId, task.id, 'reviewing');
-        if (task.effectiveProfile === 'light') {
-            this.taskTransition(runId, task.id, 'verified');
+        this.taskTransition(runId, task.id, "reviewing");
+        if (task.effectiveProfile === "light") {
+            this.taskTransition(runId, task.id, "verified");
         }
         this.markResponseApplied(
             runId,
             task.id,
             implementationResponse.requestId,
         );
-        if (task.effectiveProfile === 'light') {
+        if (task.effectiveProfile === "light") {
             return this.requireSnapshot(runId);
         }
 
-        if (task.effectiveProfile === 'critical') {
+        if (task.effectiveProfile === "critical") {
             let corrections = 0;
             let reviewerAttempts = 0;
-            for (const stage of ['spec', 'quality'] as const) {
+            for (const stage of ["spec", "quality"] as const) {
                 let stageAttempt = 0;
                 while (true) {
                     // oxlint-disable-next-line no-await-in-loop -- each review result deterministically selects the next stage.
@@ -314,7 +314,7 @@ export class SddWorkflow {
                     );
                     reviewerAttempts += reviewed.attempts;
                     stageAttempt += reviewed.attempts;
-                    if (reviewed.response.status !== 'completed') {
+                    if (reviewed.response.status !== "completed") {
                         return this.settleFailedResponse(
                             runId,
                             task.id,
@@ -325,39 +325,39 @@ export class SddWorkflow {
                         this.failTask(
                             runId,
                             task.id,
-                            'invalid_review_output',
-                            'failed',
+                            "invalid_review_output",
+                            "failed",
                         );
-                        return this.finishRun(runId, 'failed');
+                        return this.finishRun(runId, "failed");
                     }
                     const review = reviewed.review;
-                    if (review.verdict === 'pass') {
-                        if (stage === 'quality') {
-                            this.taskTransition(runId, task.id, 'verified');
+                    if (review.verdict === "pass") {
+                        if (stage === "quality") {
+                            this.taskTransition(runId, task.id, "verified");
                         }
                         this.markReviewApplied(
                             runId,
                             task.id,
                             reviewed.response.requestId,
                         );
-                        if (stage === 'quality') {
+                        if (stage === "quality") {
                             return this.requireSnapshot(runId);
                         }
                         break;
                     }
-                    if (review.verdict === 'blocked') {
+                    if (review.verdict === "blocked") {
                         this.failTask(
                             runId,
                             task.id,
-                            'reviewer_blocked',
-                            'needs_input',
+                            "reviewer_blocked",
+                            "needs_input",
                         );
                         this.markReviewApplied(
                             runId,
                             task.id,
                             reviewed.response.requestId,
                         );
-                        return this.finishRun(runId, 'needs_input');
+                        return this.finishRun(runId, "needs_input");
                     }
                     if (
                         corrections >= task.budgets.correctionWorkers ||
@@ -366,15 +366,15 @@ export class SddWorkflow {
                         this.failTask(
                             runId,
                             task.id,
-                            'budget_exhausted',
-                            'failed',
+                            "budget_exhausted",
+                            "failed",
                         );
                         this.markReviewApplied(
                             runId,
                             task.id,
                             reviewed.response.requestId,
                         );
-                        return this.finishRun(runId, 'failed');
+                        return this.finishRun(runId, "failed");
                     }
                     corrections++;
                     // oxlint-disable-next-line no-await-in-loop -- a correction consumes the rejecting review before re-review.
@@ -397,7 +397,7 @@ export class SddWorkflow {
                     }
                 }
             }
-            return this.taskTransition(runId, task.id, 'verified');
+            return this.taskTransition(runId, task.id, "verified");
         }
 
         let corrections = 0;
@@ -409,13 +409,13 @@ export class SddWorkflow {
                 cwd,
                 config,
                 task,
-                'combined',
+                "combined",
                 reviewAttempt + 1,
                 implementationResponse,
                 task.budgets.reviewerAttempts - reviewAttempt,
             );
             reviewAttempt += reviewed.attempts;
-            if (reviewed.response.status !== 'completed') {
+            if (reviewed.response.status !== "completed") {
                 return this.settleFailedResponse(
                     runId,
                     task.id,
@@ -426,14 +426,14 @@ export class SddWorkflow {
                 this.failTask(
                     runId,
                     task.id,
-                    'invalid_review_output',
-                    'failed',
+                    "invalid_review_output",
+                    "failed",
                 );
-                return this.finishRun(runId, 'failed');
+                return this.finishRun(runId, "failed");
             }
             const review = reviewed.review;
-            if (review.verdict === 'pass') {
-                this.taskTransition(runId, task.id, 'verified');
+            if (review.verdict === "pass") {
+                this.taskTransition(runId, task.id, "verified");
                 this.markReviewApplied(
                     runId,
                     task.id,
@@ -441,31 +441,31 @@ export class SddWorkflow {
                 );
                 return this.requireSnapshot(runId);
             }
-            if (review.verdict === 'blocked') {
+            if (review.verdict === "blocked") {
                 this.failTask(
                     runId,
                     task.id,
-                    'reviewer_blocked',
-                    'needs_input',
+                    "reviewer_blocked",
+                    "needs_input",
                 );
                 this.markReviewApplied(
                     runId,
                     task.id,
                     reviewed.response.requestId,
                 );
-                return this.finishRun(runId, 'needs_input');
+                return this.finishRun(runId, "needs_input");
             }
             if (
                 corrections >= task.budgets.correctionWorkers ||
                 reviewAttempt >= task.budgets.reviewerAttempts
             ) {
-                this.failTask(runId, task.id, 'budget_exhausted', 'failed');
+                this.failTask(runId, task.id, "budget_exhausted", "failed");
                 this.markReviewApplied(
                     runId,
                     task.id,
                     reviewed.response.requestId,
                 );
-                return this.finishRun(runId, 'failed');
+                return this.finishRun(runId, "failed");
             }
             corrections++;
             // oxlint-disable-next-line no-await-in-loop -- Standard permits one ordered correction before re-review.
@@ -504,8 +504,8 @@ export class SddWorkflow {
         const planned = Object.values(snapshot.plannedDelegations).findLast(
             (delegation) =>
                 delegation.taskId === taskId &&
-                (delegation.stage === 'worker' ||
-                    delegation.stage === 'correction') &&
+                (delegation.stage === "worker" ||
+                    delegation.stage === "correction") &&
                 snapshot.tasks[taskId]?.terminalResponses?.[
                     delegation.requestId
                 ] !== undefined,
@@ -550,10 +550,10 @@ export class SddWorkflow {
         config: ReturnType<typeof loadSddConfig>,
         task: ApprovedManifestTask,
     ): Promise<RunSnapshot> {
-        if (task.effectiveProfile === 'standard') {
+        if (task.effectiveProfile === "standard") {
             return this.resumeStandard(runId, cwd, config, task);
         }
-        if (task.effectiveProfile === 'critical') {
+        if (task.effectiveProfile === "critical") {
             return this.resumeCritical(runId, cwd, config, task);
         }
         return this.requireSnapshot(runId);
@@ -571,15 +571,15 @@ export class SddWorkflow {
         );
         let plans = this.taskDelegations(runId, task.id);
         let corrections = plans.filter(
-            (delegation) => delegation.stage === 'correction',
+            (delegation) => delegation.stage === "correction",
         ).length;
-        if (this.requireSnapshot(runId).tasks[task.id]?.state === 'fixing') {
+        if (this.requireSnapshot(runId).tasks[task.id]?.state === "fixing") {
             const rejecting = this.latestTaskReview(runId, task.id);
-            if (!rejecting || rejecting.review.verdict !== 'changes_required') {
+            if (!rejecting || rejecting.review.verdict !== "changes_required") {
                 return this.failRun(
                     runId,
-                    'missing_rejecting_review',
-                    'needs_input',
+                    "missing_rejecting_review",
+                    "needs_input",
                 );
             }
             corrections++;
@@ -599,11 +599,11 @@ export class SddWorkflow {
                     implementationResponse,
                 );
             }
-            this.taskTransition(runId, task.id, 'reviewing');
+            this.taskTransition(runId, task.id, "reviewing");
         }
         plans = this.taskDelegations(runId, task.id);
         let reviewAttempt = plans.filter(
-            (delegation) => delegation.stage === 'combined',
+            (delegation) => delegation.stage === "combined",
         ).length;
         while (reviewAttempt < task.budgets.reviewerAttempts) {
             // oxlint-disable-next-line no-await-in-loop -- persisted Standard verdicts deterministically select the next boundary.
@@ -612,13 +612,13 @@ export class SddWorkflow {
                 cwd,
                 config,
                 task,
-                'combined',
+                "combined",
                 reviewAttempt + 1,
                 implementationResponse,
                 task.budgets.reviewerAttempts - reviewAttempt,
             );
             reviewAttempt += reviewed.attempts;
-            if (reviewed.response.status !== 'completed') {
+            if (reviewed.response.status !== "completed") {
                 return this.settleFailedResponse(
                     runId,
                     task.id,
@@ -629,13 +629,13 @@ export class SddWorkflow {
                 this.failTask(
                     runId,
                     task.id,
-                    'invalid_review_output',
-                    'failed',
+                    "invalid_review_output",
+                    "failed",
                 );
-                return this.finishRun(runId, 'failed');
+                return this.finishRun(runId, "failed");
             }
-            if (reviewed.review.verdict === 'pass') {
-                this.taskTransition(runId, task.id, 'verified');
+            if (reviewed.review.verdict === "pass") {
+                this.taskTransition(runId, task.id, "verified");
                 this.markReviewApplied(
                     runId,
                     task.id,
@@ -643,31 +643,31 @@ export class SddWorkflow {
                 );
                 return this.requireSnapshot(runId);
             }
-            if (reviewed.review.verdict === 'blocked') {
+            if (reviewed.review.verdict === "blocked") {
                 this.failTask(
                     runId,
                     task.id,
-                    'reviewer_blocked',
-                    'needs_input',
+                    "reviewer_blocked",
+                    "needs_input",
                 );
                 this.markReviewApplied(
                     runId,
                     task.id,
                     reviewed.response.requestId,
                 );
-                return this.finishRun(runId, 'needs_input');
+                return this.finishRun(runId, "needs_input");
             }
             if (
                 corrections >= task.budgets.correctionWorkers ||
                 reviewAttempt >= task.budgets.reviewerAttempts
             ) {
-                this.failTask(runId, task.id, 'budget_exhausted', 'failed');
+                this.failTask(runId, task.id, "budget_exhausted", "failed");
                 this.markReviewApplied(
                     runId,
                     task.id,
                     reviewed.response.requestId,
                 );
-                return this.finishRun(runId, 'failed');
+                return this.finishRun(runId, "failed");
             }
             corrections++;
             // oxlint-disable-next-line no-await-in-loop -- a persisted rejection must be corrected before its ordered re-review.
@@ -704,21 +704,21 @@ export class SddWorkflow {
         );
         let plans = this.taskDelegations(runId, task.id);
         let corrections = plans.filter(
-            (delegation) => delegation.stage === 'correction',
+            (delegation) => delegation.stage === "correction",
         ).length;
-        let forcedStage: 'spec' | 'quality' | undefined;
-        if (this.requireSnapshot(runId).tasks[task.id]?.state === 'fixing') {
+        let forcedStage: "spec" | "quality" | undefined;
+        if (this.requireSnapshot(runId).tasks[task.id]?.state === "fixing") {
             const rejecting = this.latestTaskReview(runId, task.id);
             if (
                 !rejecting ||
-                rejecting.review.verdict !== 'changes_required' ||
-                (rejecting.review.stage !== 'spec' &&
-                    rejecting.review.stage !== 'quality')
+                rejecting.review.verdict !== "changes_required" ||
+                (rejecting.review.stage !== "spec" &&
+                    rejecting.review.stage !== "quality")
             ) {
                 return this.failRun(
                     runId,
-                    'missing_rejecting_review',
-                    'needs_input',
+                    "missing_rejecting_review",
+                    "needs_input",
                 );
             }
             forcedStage = rejecting.review.stage;
@@ -739,11 +739,11 @@ export class SddWorkflow {
                     implementationResponse,
                 );
             }
-            this.taskTransition(runId, task.id, 'reviewing');
+            this.taskTransition(runId, task.id, "reviewing");
         }
         plans = this.taskDelegations(runId, task.id);
         let reviewerAttempts = plans.filter((delegation) =>
-            ['spec', 'quality'].includes(delegation.stage),
+            ["spec", "quality"].includes(delegation.stage),
         ).length;
         const taskSnapshot = this.requireSnapshot(runId).tasks[task.id];
         const appliedReviews = Object.entries(taskSnapshot.reviewResults ?? {})
@@ -752,16 +752,16 @@ export class SddWorkflow {
             )
             .map(([, review]) => review);
         const specPassed = appliedReviews.some(
-            (review) => review.stage === 'spec' && review.verdict === 'pass',
+            (review) => review.stage === "spec" && review.verdict === "pass",
         );
-        const stages: Array<'spec' | 'quality'> = forcedStage
+        const stages: Array<"spec" | "quality"> = forcedStage
             ? [
                   forcedStage,
-                  ...(forcedStage === 'spec' ? ['quality' as const] : []),
+                  ...(forcedStage === "spec" ? ["quality" as const] : []),
               ]
             : specPassed
-              ? ['quality']
-              : ['spec', 'quality'];
+              ? ["quality"]
+              : ["spec", "quality"];
         for (const stage of stages) {
             let stageAttempt = plans.filter(
                 (delegation) => delegation.stage === stage,
@@ -780,7 +780,7 @@ export class SddWorkflow {
                 );
                 reviewerAttempts += reviewed.attempts;
                 stageAttempt += reviewed.attempts;
-                if (reviewed.response.status !== 'completed') {
+                if (reviewed.response.status !== "completed") {
                     return this.settleFailedResponse(
                         runId,
                         task.id,
@@ -791,48 +791,48 @@ export class SddWorkflow {
                     this.failTask(
                         runId,
                         task.id,
-                        'invalid_review_output',
-                        'failed',
+                        "invalid_review_output",
+                        "failed",
                     );
-                    return this.finishRun(runId, 'failed');
+                    return this.finishRun(runId, "failed");
                 }
-                if (reviewed.review.verdict === 'pass') {
-                    if (stage === 'quality') {
-                        this.taskTransition(runId, task.id, 'verified');
+                if (reviewed.review.verdict === "pass") {
+                    if (stage === "quality") {
+                        this.taskTransition(runId, task.id, "verified");
                     }
                     this.markReviewApplied(
                         runId,
                         task.id,
                         reviewed.response.requestId,
                     );
-                    if (stage === 'quality') return this.requireSnapshot(runId);
+                    if (stage === "quality") return this.requireSnapshot(runId);
                     break;
                 }
-                if (reviewed.review.verdict === 'blocked') {
+                if (reviewed.review.verdict === "blocked") {
                     this.failTask(
                         runId,
                         task.id,
-                        'reviewer_blocked',
-                        'needs_input',
+                        "reviewer_blocked",
+                        "needs_input",
                     );
                     this.markReviewApplied(
                         runId,
                         task.id,
                         reviewed.response.requestId,
                     );
-                    return this.finishRun(runId, 'needs_input');
+                    return this.finishRun(runId, "needs_input");
                 }
                 if (
                     corrections >= task.budgets.correctionWorkers ||
                     reviewerAttempts >= task.budgets.reviewerAttempts
                 ) {
-                    this.failTask(runId, task.id, 'budget_exhausted', 'failed');
+                    this.failTask(runId, task.id, "budget_exhausted", "failed");
                     this.markReviewApplied(
                         runId,
                         task.id,
                         reviewed.response.requestId,
                     );
-                    return this.finishRun(runId, 'failed');
+                    return this.finishRun(runId, "failed");
                 }
                 corrections++;
                 // oxlint-disable-next-line no-await-in-loop -- Critical corrections precede re-review of the rejecting stage.
@@ -888,24 +888,24 @@ export class SddWorkflow {
             return snapshot;
         }
         const uncertainRecovery =
-            snapshot.state === 'needs_input' &&
-            taskSnapshot?.state === 'needs_input' &&
-            taskSnapshot.terminalReason === 'uncertain_foreground_delegation';
-        if (task.effectiveProfile !== 'direct' && !uncertainRecovery) {
+            snapshot.state === "needs_input" &&
+            taskSnapshot?.state === "needs_input" &&
+            taskSnapshot.terminalReason === "uncertain_foreground_delegation";
+        if (task.effectiveProfile !== "direct" && !uncertainRecovery) {
             throw new Error(`Task ${taskId} is not a Direct task.`);
         }
         if (
             !uncertainRecovery &&
-            snapshot.tasks[taskId]?.state !== 'awaiting_direct_agent'
+            snapshot.tasks[taskId]?.state !== "awaiting_direct_agent"
         ) {
             throw new Error(`Task ${taskId} is not awaiting Direct evidence.`);
         }
         if (!this.sourceDigestMatches(runId, manifest, sourceCwd)) {
-            throw new Error('Source plan changed after approval.');
+            throw new Error("Source plan changed after approval.");
         }
 
         if (uncertainRecovery) {
-            if (!choice) throw new Error('Recovery attestation is required.');
+            if (!choice) throw new Error("Recovery attestation is required.");
             const planned = snapshot.plannedDelegations[choice.requestId];
             if (!planned || planned.taskId !== taskId) {
                 throw new Error(
@@ -923,7 +923,7 @@ export class SddWorkflow {
                 );
             }
             return this.persist(runId, {
-                type: 'recovery-attestation-applied',
+                type: "recovery-attestation-applied",
                 expectedRevision: snapshot.revision,
                 taskId,
                 profile: task.effectiveProfile,
@@ -932,26 +932,26 @@ export class SddWorkflow {
         }
         if (recovery) {
             throw new Error(
-                'Recovery attestation is only valid for uncertain needs_input tasks.',
+                "Recovery attestation is only valid for uncertain needs_input tasks.",
             );
         }
 
         this.persist(runId, {
-            type: 'direct-evidence-recorded',
+            type: "direct-evidence-recorded",
             expectedRevision: snapshot.revision,
             taskId,
             evidence,
         });
-        this.taskTransition(runId, taskId, 'verified');
+        this.taskTransition(runId, taskId, "verified");
         const verified = this.requireSnapshot(runId);
         if (
             manifest.tasks.every(
                 (candidate) =>
-                    verified.tasks[candidate.id]?.state === 'verified',
+                    verified.tasks[candidate.id]?.state === "verified",
             )
         ) {
             if (manifest.finalIntegrationReview) return verified;
-            return this.finishRun(runId, 'completed');
+            return this.finishRun(runId, "completed");
         }
         return verified;
     }
@@ -963,14 +963,14 @@ export class SddWorkflow {
     ): RunSnapshot {
         const current = this.requireSnapshot(runId);
         const delivery = current.workspace?.delivery;
-        if (delivery?.status === 'applied') {
+        if (delivery?.status === "applied") {
             if (delivery.patchDigest !== patchDigest) {
-                throw new Error('SDD workspace delivery digest conflict.');
+                throw new Error("SDD workspace delivery digest conflict.");
             }
             return current;
         }
         return this.persist(runId, {
-            type: 'workspace-delivery-applied',
+            type: "workspace-delivery-applied",
             expectedRevision: current.revision,
             patchDigest,
             appliedAt,
@@ -981,19 +981,19 @@ export class SddWorkflow {
         recovery: RecoveryAttestation,
         evidence: DirectEvidence,
     ): RecoveryChoice {
-        if (recovery.action !== 'attest' || !recovery.confirmation) {
+        if (recovery.action !== "attest" || !recovery.confirmation) {
             throw new Error(
-                'Recovery attestation requires explicit confirmation.',
+                "Recovery attestation requires explicit confirmation.",
             );
         }
         const authorizedBy = recovery.authorizedBy.trim();
         if (!authorizedBy) {
             throw new Error(
-                'Recovery attestation authorizedBy must not be empty.',
+                "Recovery attestation authorizedBy must not be empty.",
             );
         }
         const attestation: RecoveryAttestation = {
-            action: 'attest',
+            action: "attest",
             confirmation: true,
             authorizedBy,
             requestId: recovery.requestId,
@@ -1008,7 +1008,7 @@ export class SddWorkflow {
         };
         return {
             ...attestation,
-            priorReason: 'uncertain_foreground_delegation',
+            priorReason: "uncertain_foreground_delegation",
             evidence: boundEvidence,
             digest: recoveryAttestationDigest(attestation, boundEvidence),
         };
@@ -1018,14 +1018,14 @@ export class SddWorkflow {
         const manifest = this.requireManifest(runId);
         let snapshot = this.requireSnapshot(runId);
         this.validateSnapshot(snapshot, manifest);
-        if (snapshot.state !== 'running') return snapshot;
+        if (snapshot.state !== "running") return snapshot;
 
         for (const task of manifest.tasks) {
             snapshot = this.requireSnapshot(runId);
             const taskSnapshot = snapshot.tasks[task.id];
             if (!taskSnapshot) continue;
             if (
-                ['verified', 'needs_input', 'failed', 'cancelled'].includes(
+                ["verified", "needs_input", "failed", "cancelled"].includes(
                     taskSnapshot.state,
                 )
             ) {
@@ -1035,14 +1035,14 @@ export class SddWorkflow {
                 snapshot.plannedDelegations,
             ).filter((delegation) => delegation.taskId === task.id);
             if (
-                taskSnapshot.state === 'implementing' &&
+                taskSnapshot.state === "implementing" &&
                 plannedDelegations.length === 0
             ) {
                 this.failTask(
                     runId,
                     task.id,
-                    'missing_delegation_plan',
-                    'needs_input',
+                    "missing_delegation_plan",
+                    "needs_input",
                 );
                 continue;
             }
@@ -1050,8 +1050,8 @@ export class SddWorkflow {
                 this.failTask(
                     runId,
                     task.id,
-                    'uncertain_foreground_delegation',
-                    'needs_input',
+                    "uncertain_foreground_delegation",
+                    "needs_input",
                 );
                 continue;
             }
@@ -1071,9 +1071,9 @@ export class SddWorkflow {
                 ) {
                     continue;
                 }
-                if (response.status !== 'completed') {
+                if (response.status !== "completed") {
                     if (
-                        ['implementing', 'reviewing', 'fixing'].includes(
+                        ["implementing", "reviewing", "fixing"].includes(
                             currentTask.state,
                         )
                     ) {
@@ -1083,12 +1083,12 @@ export class SddWorkflow {
                     break;
                 }
                 if (
-                    planned.stage === 'worker' ||
-                    planned.stage === 'correction'
+                    planned.stage === "worker" ||
+                    planned.stage === "correction"
                 ) {
                     if (!accepted(response)) {
                         if (
-                            ['implementing', 'reviewing', 'fixing'].includes(
+                            ["implementing", "reviewing", "fixing"].includes(
                                 currentTask.state,
                             )
                         ) {
@@ -1097,31 +1097,31 @@ export class SddWorkflow {
                         break;
                     }
                     if (
-                        planned.stage === 'worker' &&
-                        currentTask.state === 'implementing'
+                        planned.stage === "worker" &&
+                        currentTask.state === "implementing"
                     ) {
-                        this.taskTransition(runId, task.id, 'reviewing');
+                        this.taskTransition(runId, task.id, "reviewing");
                     } else if (
-                        planned.stage === 'correction' &&
-                        currentTask.state === 'fixing'
+                        planned.stage === "correction" &&
+                        currentTask.state === "fixing"
                     ) {
-                        this.taskTransition(runId, task.id, 'reviewing');
+                        this.taskTransition(runId, task.id, "reviewing");
                     }
                     if (
-                        planned.stage === 'worker' &&
-                        task.effectiveProfile === 'light' &&
+                        planned.stage === "worker" &&
+                        task.effectiveProfile === "light" &&
                         this.requireSnapshot(runId).tasks[task.id]?.state ===
-                            'reviewing'
+                            "reviewing"
                     ) {
-                        this.taskTransition(runId, task.id, 'verified');
+                        this.taskTransition(runId, task.id, "verified");
                     }
                     this.markResponseApplied(runId, task.id, planned.requestId);
                     continue;
                 }
                 if (
-                    planned.stage !== 'combined' &&
-                    planned.stage !== 'spec' &&
-                    planned.stage !== 'quality'
+                    planned.stage !== "combined" &&
+                    planned.stage !== "spec" &&
+                    planned.stage !== "quality"
                 ) {
                     this.markResponseApplied(runId, task.id, planned.requestId);
                     continue;
@@ -1164,8 +1164,8 @@ export class SddWorkflow {
                         this.failTask(
                             runId,
                             task.id,
-                            'invalid_review_output',
-                            'failed',
+                            "invalid_review_output",
+                            "failed",
                         );
                         break;
                     }
@@ -1173,32 +1173,32 @@ export class SddWorkflow {
                 snapshot = this.requireSnapshot(runId);
                 const refreshed = snapshot.tasks[task.id];
                 const corrections = plannedDelegations.filter(
-                    (delegation) => delegation.stage === 'correction',
+                    (delegation) => delegation.stage === "correction",
                 ).length;
                 const reviewerAttempts = plannedDelegations.filter(
                     (delegation) =>
-                        delegation.stage === 'combined' ||
-                        delegation.stage === 'spec' ||
-                        delegation.stage === 'quality',
+                        delegation.stage === "combined" ||
+                        delegation.stage === "spec" ||
+                        delegation.stage === "quality",
                 ).length;
-                if (review.verdict === 'blocked') {
-                    if (refreshed.state === 'reviewing') {
+                if (review.verdict === "blocked") {
+                    if (refreshed.state === "reviewing") {
                         this.failTask(
                             runId,
                             task.id,
-                            'reviewer_blocked',
-                            'needs_input',
+                            "reviewer_blocked",
+                            "needs_input",
                         );
                     }
                     this.markReviewApplied(runId, task.id, planned.requestId);
                     break;
                 }
-                if (review.verdict === 'pass') {
+                if (review.verdict === "pass") {
                     if (
-                        planned.stage !== 'spec' &&
-                        refreshed.state === 'reviewing'
+                        planned.stage !== "spec" &&
+                        refreshed.state === "reviewing"
                     ) {
-                        this.taskTransition(runId, task.id, 'verified');
+                        this.taskTransition(runId, task.id, "verified");
                     }
                     this.markReviewApplied(runId, task.id, planned.requestId);
                     continue;
@@ -1207,16 +1207,16 @@ export class SddWorkflow {
                     corrections >= task.budgets.correctionWorkers ||
                     reviewerAttempts >= task.budgets.reviewerAttempts
                 ) {
-                    if (refreshed.state === 'reviewing') {
+                    if (refreshed.state === "reviewing") {
                         this.failTask(
                             runId,
                             task.id,
-                            'budget_exhausted',
-                            'failed',
+                            "budget_exhausted",
+                            "failed",
                         );
                     }
-                } else if (refreshed.state === 'reviewing') {
-                    this.taskTransition(runId, task.id, 'fixing');
+                } else if (refreshed.state === "reviewing") {
+                    this.taskTransition(runId, task.id, "fixing");
                 }
                 this.markReviewApplied(runId, task.id, planned.requestId);
                 break;
@@ -1226,37 +1226,37 @@ export class SddWorkflow {
         snapshot = this.requireSnapshot(runId);
         if (
             Object.values(snapshot.tasks).some(
-                (task) => task.state === 'needs_input',
+                (task) => task.state === "needs_input",
             )
         ) {
-            return this.finishRun(runId, 'needs_input');
+            return this.finishRun(runId, "needs_input");
         }
         if (
             Object.values(snapshot.tasks).some(
-                (task) => task.state === 'failed',
+                (task) => task.state === "failed",
             )
         ) {
-            return this.finishRun(runId, 'failed');
+            return this.finishRun(runId, "failed");
         }
         if (
             manifest.tasks.every(
-                (task) => snapshot.tasks[task.id]?.state === 'verified',
+                (task) => snapshot.tasks[task.id]?.state === "verified",
             ) &&
             !manifest.finalIntegrationReview
         ) {
-            return this.finishRun(runId, 'completed');
+            return this.finishRun(runId, "completed");
         }
         if (
             manifest.finalIntegrationReview &&
             manifest.tasks.every(
-                (task) => snapshot.tasks[task.id]?.state === 'verified',
+                (task) => snapshot.tasks[task.id]?.state === "verified",
             )
         ) {
             if (snapshot.integrationReview?.activeRequestId) {
                 return this.failRun(
                     runId,
-                    'uncertain_foreground_delegation',
-                    'needs_input',
+                    "uncertain_foreground_delegation",
+                    "needs_input",
                 );
             }
             if (snapshot.integrationReview?.terminalResponse) {
@@ -1270,19 +1270,19 @@ export class SddWorkflow {
         const manifest = this.requireManifest(runId);
         let snapshot = this.requireSnapshot(runId);
         if (snapshot.cancellation) {
-            return snapshot.state === 'running' &&
+            return snapshot.state === "running" &&
                 !this.hasActiveRequest(snapshot)
-                ? this.finishRun(runId, 'cancelled')
+                ? this.finishRun(runId, "cancelled")
                 : snapshot;
         }
-        if (snapshot.state === 'approved') {
+        if (snapshot.state === "approved") {
             snapshot = this.persist(runId, {
-                type: 'run-transition',
+                type: "run-transition",
                 expectedRevision: snapshot.revision,
-                to: 'running',
+                to: "running",
             });
         }
-        if (snapshot.state !== 'running') return snapshot;
+        if (snapshot.state !== "running") return snapshot;
         const requestIds = manifest.tasks
             .map((task) => snapshot.tasks[task.id]?.activeRequestId)
             .filter(
@@ -1292,7 +1292,7 @@ export class SddWorkflow {
             requestIds.push(snapshot.integrationReview.activeRequestId);
         }
         snapshot = this.persist(runId, {
-            type: 'cancellation-requested',
+            type: "cancellation-requested",
             expectedRevision: snapshot.revision,
             requestedAt: new Date().toISOString(),
             requestIds,
@@ -1301,7 +1301,7 @@ export class SddWorkflow {
             this.delegation.cancel(requestId);
         }
         return requestIds.length === 0
-            ? this.finishRun(runId, 'cancelled')
+            ? this.finishRun(runId, "cancelled")
             : snapshot;
     }
 
@@ -1347,7 +1347,7 @@ export class SddWorkflow {
                 ),
             );
             return (
-                createHash('sha256').update(source).digest('hex') ===
+                createHash("sha256").update(source).digest("hex") ===
                 manifest.sourceDigest
             );
         } catch {
@@ -1358,7 +1358,7 @@ export class SddWorkflow {
     private executionCwd(snapshot: RunSnapshot, sourceCwd: string): string {
         if (!snapshot.workspace) return sourceCwd;
         if (!this.workspace) {
-            throw new Error('SDD isolated workspace support is unavailable.');
+            throw new Error("SDD isolated workspace support is unavailable.");
         }
         return this.workspace.resolveExecutionCwd(
             snapshot.workspace,
@@ -1407,8 +1407,8 @@ export class SddWorkflow {
                 sourceDigest: manifest.sourceDigest,
                 approvedTasksAndEvidence: evidence,
             }),
-            recommendedProfile: 'standard',
-            effectiveProfile: 'standard',
+            recommendedProfile: "standard",
+            effectiveProfile: "standard",
             classificationRules: [],
             signals: [],
             dependencies: manifest.tasks.map((task) => task.id),
@@ -1432,13 +1432,13 @@ export class SddWorkflow {
         const manifest = this.requireManifest(runId);
         let snapshot = this.requireSnapshot(runId);
         if (snapshot.integrationReview?.applied) {
-            return this.finishRun(runId, 'completed');
+            return this.finishRun(runId, "completed");
         }
         if (snapshot.integrationReview?.activeRequestId) {
             return this.failRun(
                 runId,
-                'uncertain_foreground_delegation',
-                'needs_input',
+                "uncertain_foreground_delegation",
+                "needs_input",
             );
         }
         if (snapshot.integrationReview?.terminalResponse) {
@@ -1451,8 +1451,8 @@ export class SddWorkflow {
         if (taskLaunches >= manifest.maximumLaunches) {
             return this.failRun(
                 runId,
-                'manifest_launch_budget_exhausted',
-                'failed',
+                "manifest_launch_budget_exhausted",
+                "failed",
             );
         }
         const requestId = `${runId}:manifest:integration:1`;
@@ -1463,36 +1463,36 @@ export class SddWorkflow {
             cwd,
             config,
             task,
-            stage: 'integration',
+            stage: "integration",
             implementationResponse: {
                 version: 1,
                 requestId: `${runId}:manifest:evidence`,
-                status: 'completed',
+                status: "completed",
                 output: task.description,
             },
         });
         if (snapshot.cancellation) {
-            return this.finishRun(runId, 'cancelled');
+            return this.finishRun(runId, "cancelled");
         }
         if (!this.sourceDigestMatches(runId, manifest)) {
-            return this.failRun(runId, 'source_digest_changed', 'needs_input');
+            return this.failRun(runId, "source_digest_changed", "needs_input");
         }
         snapshot = this.persist(runId, {
-            type: 'integration-delegation-planned',
+            type: "integration-delegation-planned",
             expectedRevision: snapshot.revision,
             delegation: {
                 idempotencyKey: requestId,
                 taskId: task.id,
                 requestId,
-                stage: 'integration',
+                stage: "integration",
                 attempt: 1,
                 plannedAt: new Date().toISOString(),
             },
         });
         const activity = this.activityContext(
             runId,
-            '__integration__',
-            'integration',
+            "__integration__",
+            "integration",
             1,
             request,
         );
@@ -1502,7 +1502,7 @@ export class SddWorkflow {
             onUpdate: (event) => this.observeUpdate(activity, event),
         });
         snapshot = this.persist(runId, {
-            type: 'integration-delegation-response-recorded',
+            type: "integration-delegation-response-recorded",
             expectedRevision: snapshot.revision,
             response,
         });
@@ -1516,39 +1516,39 @@ export class SddWorkflow {
         const response = snapshot.integrationReview?.terminalResponse;
         if (!response) return snapshot;
         if (
-            response.status === 'cancelled' &&
+            response.status === "cancelled" &&
             snapshot.cancellation?.requestIds.includes(response.requestId)
         ) {
-            return this.finishRun(runId, 'cancelled');
+            return this.finishRun(runId, "cancelled");
         }
-        if (response.status !== 'completed') {
+        if (response.status !== "completed") {
             return this.failRun(
                 runId,
-                response.status === 'unavailable_context'
-                    ? 'integration_unavailable_context'
+                response.status === "unavailable_context"
+                    ? "integration_unavailable_context"
                     : `integration_${response.status}`,
-                response.status === 'unavailable_context'
-                    ? 'needs_input'
-                    : 'failed',
+                response.status === "unavailable_context"
+                    ? "needs_input"
+                    : "failed",
             );
         }
         let review = snapshot.integrationReview?.review;
         if (!review) {
             try {
                 review = parseReviewResponse(
-                    response.output ?? '',
+                    response.output ?? "",
                     `manifest:${manifest.manifestId}`,
-                    'integration',
+                    "integration",
                 );
             } catch {
                 return this.failRun(
                     runId,
-                    'invalid_integration_review_output',
-                    'needs_input',
+                    "invalid_integration_review_output",
+                    "needs_input",
                 );
             }
             snapshot = this.persist(runId, {
-                type: 'integration-review-recorded',
+                type: "integration-review-recorded",
                 expectedRevision: snapshot.revision,
                 requestId: response.requestId,
                 review,
@@ -1556,29 +1556,29 @@ export class SddWorkflow {
         }
         if (!snapshot.integrationReview?.applied) {
             snapshot = this.persist(runId, {
-                type: 'integration-review-applied',
+                type: "integration-review-applied",
                 expectedRevision: snapshot.revision,
                 requestId: response.requestId,
             });
         }
-        if (review.verdict === 'pass') {
-            return this.finishRun(runId, 'completed');
+        if (review.verdict === "pass") {
+            return this.finishRun(runId, "completed");
         }
         return this.failRun(
             runId,
-            review.verdict === 'blocked'
-                ? 'integration_reviewer_blocked'
-                : 'integration_changes_required',
-            review.verdict === 'blocked' ? 'needs_input' : 'failed',
+            review.verdict === "blocked"
+                ? "integration_reviewer_blocked"
+                : "integration_changes_required",
+            review.verdict === "blocked" ? "needs_input" : "failed",
         );
     }
 
     private validateDirectEvidence(evidence: DirectEvidence): void {
         for (const field of [
-            'changedFiles',
-            'tests',
-            'commands',
-            'residualRisks',
+            "changedFiles",
+            "tests",
+            "commands",
+            "residualRisks",
         ] as const) {
             if (
                 evidence[field].length === 0 ||
@@ -1589,7 +1589,7 @@ export class SddWorkflow {
         }
         if (!evidence.validationOutput.trim()) {
             throw new Error(
-                'Direct evidence validationOutput must not be empty.',
+                "Direct evidence validationOutput must not be empty.",
             );
         }
     }
@@ -1617,7 +1617,7 @@ export class SddWorkflow {
         taskId: string,
         stage: string,
         attempt: number,
-        request: Parameters<WorkflowDelegation['run']>[0],
+        request: Parameters<WorkflowDelegation["run"]>[0],
     ): SddDelegationActivityContext {
         return {
             runId,
@@ -1641,7 +1641,7 @@ export class SddWorkflow {
     private observeStarted(
         context: SddDelegationActivityContext,
         event: Parameters<
-            NonNullable<SddWorkflowObserver['onDelegationStarted']>
+            NonNullable<SddWorkflowObserver["onDelegationStarted"]>
         >[1],
     ): void {
         try {
@@ -1654,7 +1654,7 @@ export class SddWorkflow {
     private observeUpdate(
         context: SddDelegationActivityContext,
         event: Parameters<
-            NonNullable<SddWorkflowObserver['onDelegationUpdate']>
+            NonNullable<SddWorkflowObserver["onDelegationUpdate"]>
         >[1],
     ): void {
         try {
@@ -1682,7 +1682,7 @@ export class SddWorkflow {
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
         return this.persist(runId, {
-            type: 'task-transition',
+            type: "task-transition",
             expectedRevision: snapshot.revision,
             taskId,
             to,
@@ -1691,12 +1691,12 @@ export class SddWorkflow {
 
     private finishRun(
         runId: string,
-        to: 'needs_input' | 'failed' | 'cancelled' | 'completed',
+        to: "needs_input" | "failed" | "cancelled" | "completed",
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
-        if (snapshot.state !== 'running') return snapshot;
+        if (snapshot.state !== "running") return snapshot;
         return this.persist(runId, {
-            type: 'run-transition',
+            type: "run-transition",
             expectedRevision: snapshot.revision,
             to,
         });
@@ -1705,11 +1705,11 @@ export class SddWorkflow {
     private failRun(
         runId: string,
         reason: string,
-        state: 'needs_input' | 'failed' | 'cancelled',
+        state: "needs_input" | "failed" | "cancelled",
     ): RunSnapshot {
         let snapshot = this.requireSnapshot(runId);
         this.persist(runId, {
-            type: 'run-terminal-reason-recorded',
+            type: "run-terminal-reason-recorded",
             expectedRevision: snapshot.revision,
             reason,
         });
@@ -1725,7 +1725,7 @@ export class SddWorkflow {
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
         return this.persist(runId, {
-            type: 'delegation-planned',
+            type: "delegation-planned",
             expectedRevision: snapshot.revision,
             idempotencyKey: requestId,
             taskId,
@@ -1743,7 +1743,7 @@ export class SddWorkflow {
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
         return this.persist(runId, {
-            type: 'delegation-response-recorded',
+            type: "delegation-response-recorded",
             expectedRevision: snapshot.revision,
             taskId,
             response,
@@ -1755,25 +1755,25 @@ export class SddWorkflow {
         task: ApprovedManifestTask,
         stage: string,
         attempt: number,
-        request: Parameters<WorkflowDelegation['run']>[0],
+        request: Parameters<WorkflowDelegation["run"]>[0],
     ): Promise<SubagentDelegationResponse> {
         const snapshot = this.requireSnapshot(runId);
         if (snapshot.cancellation) {
-            this.finishRun(runId, 'cancelled');
+            this.finishRun(runId, "cancelled");
             return {
                 version: 1,
                 requestId: request.requestId,
-                status: 'cancelled',
-                error: 'cancellation_requested',
+                status: "cancelled",
+                error: "cancellation_requested",
             };
         }
         if (!this.sourceDigestMatches(runId, this.requireManifest(runId))) {
-            this.failRun(runId, 'source_digest_changed', 'needs_input');
+            this.failRun(runId, "source_digest_changed", "needs_input");
             return {
                 version: 1,
                 requestId: request.requestId,
-                status: 'unavailable_context',
-                error: 'source_digest_changed',
+                status: "unavailable_context",
+                error: "source_digest_changed",
             };
         }
         this.planDelegation(runId, task.id, request.requestId, stage, attempt);
@@ -1835,7 +1835,7 @@ export class SddWorkflow {
                 }),
             );
         let response = await launch(firstAttempt);
-        if (response.status !== 'completed') {
+        if (response.status !== "completed") {
             return { response, attempts: 1 };
         }
         try {
@@ -1865,11 +1865,11 @@ export class SddWorkflow {
                 attempt: 1,
                 validationError:
                     error instanceof Error ? error.message : String(error),
-                originalOutput: response.output ?? '',
+                originalOutput: response.output ?? "",
                 remainingReviewerAttempts: remainingReviewerAttempts - 1,
                 remainingLaunches,
             });
-            if (response.status !== 'completed') {
+            if (response.status !== "completed") {
                 return { response, attempts: 2 };
             }
             try {
@@ -1896,13 +1896,13 @@ export class SddWorkflow {
         stage: ReviewStage,
     ): Review {
         const review = parseReviewResponse(
-            response.output ?? '',
+            response.output ?? "",
             taskId,
             stage,
         );
         const snapshot = this.requireSnapshot(runId);
         this.persist(runId, {
-            type: 'review-recorded',
+            type: "review-recorded",
             expectedRevision: snapshot.revision,
             taskId,
             requestId: response.requestId,
@@ -1918,7 +1918,7 @@ export class SddWorkflow {
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
         this.persist(runId, {
-            type: 'review-applied',
+            type: "review-applied",
             expectedRevision: snapshot.revision,
             taskId,
             requestId,
@@ -1933,7 +1933,7 @@ export class SddWorkflow {
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
         return this.persist(runId, {
-            type: 'delegation-response-applied',
+            type: "delegation-response-applied",
             expectedRevision: snapshot.revision,
             taskId,
             requestId,
@@ -1946,43 +1946,43 @@ export class SddWorkflow {
         response: SubagentDelegationResponse,
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
-        if (/^BLOCKED:\s+\S/.test(response.output?.trimStart() ?? '')) {
-            this.failTask(runId, taskId, 'worker_blocked', 'needs_input');
-            return this.finishRun(runId, 'needs_input');
+        if (/^BLOCKED:\s+\S/.test(response.output?.trimStart() ?? "")) {
+            this.failTask(runId, taskId, "worker_blocked", "needs_input");
+            return this.finishRun(runId, "needs_input");
         }
-        if (response.error === 'source_digest_changed') {
+        if (response.error === "source_digest_changed") {
             this.failTask(
                 runId,
                 taskId,
-                'source_digest_changed',
-                'needs_input',
+                "source_digest_changed",
+                "needs_input",
             );
-            return this.finishRun(runId, 'needs_input');
+            return this.finishRun(runId, "needs_input");
         }
-        if (response.error === 'cancellation_requested') {
-            this.failTask(runId, taskId, 'cancelled', 'cancelled');
-            return this.finishRun(runId, 'cancelled');
+        if (response.error === "cancellation_requested") {
+            this.failTask(runId, taskId, "cancelled", "cancelled");
+            return this.finishRun(runId, "cancelled");
         }
         if (
-            response.status === 'cancelled' &&
+            response.status === "cancelled" &&
             snapshot.cancellation?.requestIds.includes(response.requestId)
         ) {
-            this.failTask(runId, taskId, 'cancelled', 'cancelled');
-            return this.finishRun(runId, 'cancelled');
+            this.failTask(runId, taskId, "cancelled", "cancelled");
+            return this.finishRun(runId, "cancelled");
         }
-        const needsInput = response.status === 'unavailable_context';
+        const needsInput = response.status === "unavailable_context";
         const reason = needsInput
-            ? 'unavailable_context'
-            : response.status === 'completed'
-              ? 'acceptance_not_verified'
+            ? "unavailable_context"
+            : response.status === "completed"
+              ? "acceptance_not_verified"
               : response.status;
         this.failTask(
             runId,
             taskId,
             reason,
-            needsInput ? 'needs_input' : 'failed',
+            needsInput ? "needs_input" : "failed",
         );
-        return this.finishRun(runId, needsInput ? 'needs_input' : 'failed');
+        return this.finishRun(runId, needsInput ? "needs_input" : "failed");
     }
 
     private async correct(
@@ -1995,7 +1995,7 @@ export class SddWorkflow {
         correction: number,
         rejectingRequestId: string,
     ): Promise<SubagentDelegationResponse> {
-        this.taskTransition(runId, task.id, 'fixing');
+        this.taskTransition(runId, task.id, "fixing");
         this.markReviewApplied(runId, task.id, rejectingRequestId);
         return this.launchCorrection(
             runId,
@@ -2020,7 +2020,7 @@ export class SddWorkflow {
         const response = await this.launch(
             runId,
             task,
-            'correction',
+            "correction",
             correction,
             buildCorrectionRequest({
                 requestId: `${runId}:${task.id}:correction:${correction}`,
@@ -2036,7 +2036,7 @@ export class SddWorkflow {
             }),
         );
         if (accepted(response)) {
-            this.taskTransition(runId, task.id, 'reviewing');
+            this.taskTransition(runId, task.id, "reviewing");
             this.markResponseApplied(runId, task.id, response.requestId);
         }
         return response;
@@ -2046,18 +2046,18 @@ export class SddWorkflow {
         runId: string,
         taskId: string,
         reason: string,
-        state: 'needs_input' | 'failed' | 'cancelled',
+        state: "needs_input" | "failed" | "cancelled",
     ): void {
         let snapshot = this.requireSnapshot(runId);
         this.persist(runId, {
-            type: 'terminal-reason-recorded',
+            type: "terminal-reason-recorded",
             expectedRevision: snapshot.revision,
             taskId,
             reason,
         });
         snapshot = this.requireSnapshot(runId);
         this.persist(runId, {
-            type: 'task-transition',
+            type: "task-transition",
             expectedRevision: snapshot.revision,
             taskId,
             to: state,

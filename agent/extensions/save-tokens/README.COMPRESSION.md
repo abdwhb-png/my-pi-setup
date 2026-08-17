@@ -43,10 +43,17 @@ restart Pi. Starting a new session alone does not rebuild the backend registry.
 ## Tool Policy
 
 `find` output bypasses semantic backends because plain path listings can be
-misclassified as prose and lose exact paths. Listings up to 8192 characters
-remain intact. Larger listings use a deterministic head/tail cap and archive
-the complete original before replacement. `capFallbackBytes`, when configured,
-overrides the 8192-character `find` cap.
+misclassified as prose and lose exact paths. Listings that fit the deterministic
+cap budget remain intact. Larger listings use a deterministic head/tail cap and
+archive the complete original before replacement.
+
+The deterministic cap is expressed as an **estimated-token budget**
+(`capFallbackTokens`, default `2700`), not a character count. The estimator is
+Unicode-safe: it prices dense CJK/Kana/Hangul scripts at 1.5 code points per
+token, astral emoji at one token each, and everything else at 3 code points per
+token, iterating by code point so surrogate pairs are never split.
+`maxFallbackBytes` (default `48000`) is a secondary hard guard on the rendered
+result's UTF-8 byte length. Configure either under `saveTokens.compressor`.
 
 ## Switching Backends
 

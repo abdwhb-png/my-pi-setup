@@ -2,18 +2,18 @@ import type {
     ExtensionAPI,
     ExtensionContext,
     ExtensionFactory,
-} from '@earendil-works/pi-coding-agent';
-import { getAgentDir, SettingsManager } from '@earendil-works/pi-coding-agent';
-import { Type } from '@sinclair/typebox';
-import { loadToolGroupsConfig } from '../_shared/tool-groups/config.ts';
-import { isToolGroupsPackageLast } from '../_shared/tool-groups/package-order.ts';
-import { resolveToolAliases } from '../_shared/tool-groups/resolver.ts';
+} from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { loadToolGroupsConfig } from "../_shared/tool-groups/config.ts";
+import { isToolGroupsPackageLast } from "../_shared/tool-groups/package-order.ts";
+import { resolveToolAliases } from "../_shared/tool-groups/resolver.ts";
 import {
     TOOL_GROUP_PREFIX,
     TOOL_GROUPS_REQUESTED_TOOLS_ENV,
     type ToolGroupsConfig,
     type ToolGroupDiagnostic,
-} from '../_shared/tool-groups/types.ts';
+} from "../_shared/tool-groups/types.ts";
 
 function loadRequestedToolsFromEnv(): string[] | undefined {
     const raw = process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV];
@@ -25,7 +25,7 @@ function loadRequestedToolsFromEnv(): string[] | undefined {
         if (!Array.isArray(value)) return undefined;
         const names = value.filter(
             (name): name is string =>
-                typeof name === 'string' && name.trim().length > 0,
+                typeof name === "string" && name.trim().length > 0,
         );
         return names.some((name) => name.startsWith(TOOL_GROUP_PREFIX))
             ? names
@@ -38,12 +38,12 @@ function loadRequestedToolsFromEnv(): string[] | undefined {
 function diagnosticsKey(diags: ToolGroupDiagnostic[]): string {
     const entries = diags.map((d) => `${d.code}|${d.group}|${d.member}`);
     entries.sort();
-    return entries.join(',');
+    return entries.join(",");
 }
 
 function formatDiagnostics(diags: ToolGroupDiagnostic[]): string {
     const lines = diags.map((d) => `  [${d.code}] ${d.message}`);
-    return `Tool-group diagnostics:\n${lines.join('\n')}`;
+    return `Tool-group diagnostics:\n${lines.join("\n")}`;
 }
 
 function checkToolGroupsPackageOrder(cwd: string): void {
@@ -56,8 +56,8 @@ function checkToolGroupsPackageOrder(cwd: string): void {
             !isToolGroupsPackageLast(packages, agentDir)
         ) {
             console.warn(
-                '[tool-groups] Package order drift detected: tool-groups package is not loaded last. ' +
-                    'Run /reload to ensure tool-group configuration is applied correctly.',
+                "[tool-groups] Package order drift detected: tool-groups package is not loaded last. " +
+                    "Run /reload to ensure tool-group configuration is applied correctly.",
             );
         }
     } catch {
@@ -71,9 +71,9 @@ export function createToolGroupsExtension(
 ): ExtensionFactory {
     return (pi: ExtensionAPI) => {
         const cwd =
-            typeof process !== 'undefined' && typeof process.cwd === 'function'
+            typeof process !== "undefined" && typeof process.cwd === "function"
                 ? process.cwd()
-                : '.';
+                : ".";
         const config = loadConfig(cwd);
         const groups = config.groups;
         const requestedTools = loadRequestedTools();
@@ -110,7 +110,7 @@ export function createToolGroupsExtension(
                     lastDiagKey = key;
                     const msg = formatDiagnostics(diagnostics);
                     if (ctx.hasUI) {
-                        ctx.ui.notify(msg, 'warning');
+                        ctx.ui.notify(msg, "warning");
                     } else {
                         console.warn(msg);
                     }
@@ -147,7 +147,7 @@ export function createToolGroupsExtension(
         function expandAliases(
             _event: unknown,
             ctx: ExtensionContext,
-        ): { action: 'continue' } | void {
+        ): { action: "continue" } | void {
             const active = pi.getActiveTools();
             const hasAliases = active.some((name) =>
                 name.startsWith(TOOL_GROUP_PREFIX),
@@ -164,18 +164,18 @@ export function createToolGroupsExtension(
             reportDiagnostics(result.diagnostics, ctx);
         }
 
-        pi.on('session_start', (event, ctx) => {
+        pi.on("session_start", (event, ctx) => {
             applyRequestedTools(ctx);
             expandAliases(event, ctx);
             checkToolGroupsPackageOrder(cwd);
         });
 
-        pi.on('input', (event, ctx) => {
+        pi.on("input", (event, ctx) => {
             expandAliases(event, ctx);
-            return { action: 'continue' as const };
+            return { action: "continue" as const };
         });
 
-        pi.on('before_agent_start', (event, ctx) => {
+        pi.on("before_agent_start", (event, ctx) => {
             expandAliases(event, ctx);
         });
     };

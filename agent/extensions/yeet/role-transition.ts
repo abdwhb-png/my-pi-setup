@@ -1,10 +1,10 @@
-export const YEET_ROLE_TRANSITION_ENTRY_TYPE = 'yeet:role-transition' as const;
+export const YEET_ROLE_TRANSITION_ENTRY_TYPE = "yeet:role-transition" as const;
 
 export type YeetRoleTransitionPhase =
-    | 'queued'
-    | 'active'
-    | 'completed'
-    | 'cancelled';
+    | "queued"
+    | "active"
+    | "completed"
+    | "cancelled";
 
 export interface YeetRoleTransition {
     id: string;
@@ -17,7 +17,7 @@ export interface YeetRoleTransition {
 /** Persist one append-only phase of a Yeet role transition. */
 export function writeYeetRoleTransition(
     pi: { appendEntry: (customType: string, data?: unknown) => void },
-    transition: Omit<YeetRoleTransition, 'timestamp'> & {
+    transition: Omit<YeetRoleTransition, "timestamp"> & {
         timestamp?: number;
     },
 ): YeetRoleTransition {
@@ -31,16 +31,16 @@ export function writeYeetRoleTransition(
 
 function isTransitionPhase(value: string): value is YeetRoleTransitionPhase {
     return (
-        value === 'queued' ||
-        value === 'active' ||
-        value === 'completed' ||
-        value === 'cancelled'
+        value === "queued" ||
+        value === "active" ||
+        value === "completed" ||
+        value === "cancelled"
     );
 }
 
 // oxlint-disable-next-line typescript/no-restricted-types -- session entry data is unknown at the Pi API boundary
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
+    return typeof value === "object" && value !== null;
 }
 
 /** Return the newest valid persisted Yeet role transition. */
@@ -56,7 +56,7 @@ export function findLatestYeetRoleTransition(
         const entry = entries[index];
         if (
             !entry ||
-            entry.type !== 'custom' ||
+            entry.type !== "custom" ||
             entry.customType !== YEET_ROLE_TRANSITION_ENTRY_TYPE
         ) {
             continue;
@@ -71,15 +71,15 @@ export function findLatestYeetRoleTransition(
         const targetCwd = data.targetCwd;
         const timestamp = data.timestamp;
         if (
-            typeof id !== 'string' ||
+            typeof id !== "string" ||
             !id ||
-            typeof phase !== 'string' ||
+            typeof phase !== "string" ||
             !isTransitionPhase(phase) ||
-            typeof targetCwd !== 'string' ||
+            typeof targetCwd !== "string" ||
             !targetCwd ||
-            typeof timestamp !== 'number' ||
-            (phase === 'active' &&
-                (typeof previousRole !== 'string' || !previousRole))
+            typeof timestamp !== "number" ||
+            (phase === "active" &&
+                (typeof previousRole !== "string" || !previousRole))
         ) {
             continue;
         }
@@ -88,7 +88,7 @@ export function findLatestYeetRoleTransition(
             id,
             phase,
             previousRole:
-                typeof previousRole === 'string' ? previousRole : undefined,
+                typeof previousRole === "string" ? previousRole : undefined,
             targetCwd,
             timestamp,
         };

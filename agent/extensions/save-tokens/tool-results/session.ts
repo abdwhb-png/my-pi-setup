@@ -60,6 +60,18 @@ export function toCompressionEventPayload(event: CompressionObservation) {
             savedBytes,
             savedPct,
             archivePath: event.archivePath,
+            ...(event.originalUtf8Bytes !== undefined
+                ? { originalUtf8Bytes: event.originalUtf8Bytes }
+                : {}),
+            ...(event.compressedUtf8Bytes !== undefined
+                ? { compressedUtf8Bytes: event.compressedUtf8Bytes }
+                : {}),
+            ...(event.estimatedTokensBefore !== undefined
+                ? { estimatedTokensBefore: event.estimatedTokensBefore }
+                : {}),
+            ...(event.estimatedTokensAfter !== undefined
+                ? { estimatedTokensAfter: event.estimatedTokensAfter }
+                : {}),
             ...enriched,
         };
     }

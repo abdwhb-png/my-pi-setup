@@ -192,7 +192,10 @@ export class GitWorkspaceManager implements SddWorkspaceExecution {
         this.onDeliveryCheckpoint = options.onDeliveryCheckpoint;
     }
 
-    async prepare(runId: string, sourceCwd: string): Promise<IsolatedWorkspace> {
+    async prepare(
+        runId: string,
+        sourceCwd: string,
+    ): Promise<IsolatedWorkspace> {
         if (!isValidRunId(runId)) {
             throw new Error(`Invalid SDD run id for Git worktree: ${runId}.`);
         }
@@ -568,16 +571,17 @@ export class GitWorkspaceManager implements SddWorkspaceExecution {
         throw lastError ?? new WorkspaceLockHeldError(lockPath);
     }
 
-    private acquireRunLockOnce(
-        lockPath: string,
-    ): { release(): Promise<void> } {
+    private acquireRunLockOnce(lockPath: string): { release(): Promise<void> } {
         let descriptor: number;
         try {
             descriptor = openSync(lockPath, "a");
         } catch (error) {
-            throw new Error(`SDD workspace lock file could not open: ${lockPath}.`, {
-                cause: error,
-            });
+            throw new Error(
+                `SDD workspace lock file could not open: ${lockPath}.`,
+                {
+                    cause: error,
+                },
+            );
         }
         try {
             lockInheritedDescriptor(descriptor, lockPath);

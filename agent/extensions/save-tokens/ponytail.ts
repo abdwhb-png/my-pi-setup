@@ -20,23 +20,23 @@
  * pattern that survives across bun/node without patch-package.
  */
 
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { loadPonytailConfig } from './config';
-import { SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV } from './subagent-profile.ts';
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { loadPonytailConfig } from "./config";
+import { SAVE_TOKENS_PONYTAIL_DEFAULT_MODE_ENV } from "./subagent-profile.ts";
 
 type PonytailFactory = (pi: ExtensionAPI) => void;
 
 let cachedFactory: PonytailFactory | null | undefined = null;
 
-const PONYTAIL_DEFAULT_MODE_ENV = 'PONYTAIL_DEFAULT_MODE';
+const PONYTAIL_DEFAULT_MODE_ENV = "PONYTAIL_DEFAULT_MODE";
 const PONYTAIL_DEFAULT_MODES = new Set([
-    'off',
-    'lite',
-    'full',
-    'ultra',
-    'review',
+    "off",
+    "lite",
+    "full",
+    "ultra",
+    "review",
 ]);
 
 function normalizePonytailDefaultMode(
@@ -98,7 +98,7 @@ function loadPonytailFactory(): PonytailFactory | null {
     // Walking up 3 levels gets us from ponytail.mjs back to <pkg-root>.
     let ponytailRoot: string;
     try {
-        const mainPath = hostRequire.resolve('@dietrichgebert/ponytail');
+        const mainPath = hostRequire.resolve("@dietrichgebert/ponytail");
         ponytailRoot = dirname(dirname(dirname(mainPath)));
     } catch {
         cachedFactory = null;
@@ -114,10 +114,10 @@ function loadPonytailFactory(): PonytailFactory | null {
         // it via a structural PonytailFactory so the cast is verifiable.
         // oxlint-disable-next-line typescript/no-unsafe-assignment
         const mod: { default?: PonytailFactory } = hostRequire(
-            join(ponytailRoot, 'pi-extension', 'index.js'),
+            join(ponytailRoot, "pi-extension", "index.js"),
         );
         const factory = mod.default;
-        if (typeof factory === 'function') {
+        if (typeof factory === "function") {
             cachedFactory = factory;
             return cachedFactory;
         }
@@ -147,11 +147,11 @@ export default function ponytail(pi: ExtensionAPI): void {
     const factory = loadPonytailFactory();
     // Defensive: the loader guarantees a function or null, but stale cache
     // or test-injection could violate the invariant — guard at runtime.
-    if (typeof factory !== 'function') {
-        pi.on('session_start', async (_event, ctx) => {
+    if (typeof factory !== "function") {
+        pi.on("session_start", async (_event, ctx) => {
             ctx.ui.notify(
-                'Ponytail: upstream package not loadable. Install @dietrichgebert/ponytail or set saveTokens.ponytail.enabled=false.',
-                'warning',
+                "Ponytail: upstream package not loadable. Install @dietrichgebert/ponytail or set saveTokens.ponytail.enabled=false.",
+                "warning",
             );
         });
         return;
@@ -188,7 +188,7 @@ const PONYTAIL_MODE_RE = /PONYTAIL MODE ACTIVE\s*[—–-]\s*level:\s*(\S+)/i;
  *          the marker is absent (mode off or Ponytail not injected).
  */
 export function detectPonytailMode(systemPrompt: string): string | null {
-    if (typeof systemPrompt !== 'string') return null;
+    if (typeof systemPrompt !== "string") return null;
     const match = systemPrompt.match(PONYTAIL_MODE_RE);
     return match ? match[1]!.toLowerCase() : null;
 }

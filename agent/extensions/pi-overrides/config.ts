@@ -10,7 +10,7 @@
  *   import { loadFileResolverConfig, setFileResolverConfig, getFileResolverConfig } from './config.ts';
  */
 
-import { loadExtensionConfig } from '../_shared/config-loader.ts';
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,8 +62,8 @@ export const DEFAULT_CONFIG: FileResolverConfig = {
         respectGitignore: true,
         followSymlinks: true,
         includeHidden: true,
-        excludePatterns: ['.git', 'node_modules'],
-        types: ['f'],
+        excludePatterns: [".git", "node_modules"],
+        types: ["f"],
     },
     rg: {
         respectGitignore: true,
@@ -96,16 +96,16 @@ export function setFileResolverConfig(config: FileResolverConfig): void {
 // ---------------------------------------------------------------------------
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isBoolean(v: unknown): v is boolean {
-    return typeof v === 'boolean';
+    return typeof v === "boolean";
 }
 
 function isStringArray(value: unknown): string[] {
     if (!Array.isArray(value)) return [];
-    return value.filter((v): v is string => typeof v === 'string');
+    return value.filter((v): v is string => typeof v === "string");
 }
 
 // ---------------------------------------------------------------------------
@@ -254,8 +254,8 @@ export function loadFileResolverConfig(
         merge: mergeFileResolverConfig,
         sources: [
             {
-                settingsKey: 'fileResolver',
-                legacyFilename: 'pi-file-resolver.json',
+                settingsKey: "fileResolver",
+                legacyFilename: "pi-file-resolver.json",
                 projectLocal: true,
             },
         ],

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from "node:crypto";
 import {
     appendFileSync,
     existsSync,
@@ -10,7 +10,7 @@ import {
     rmSync,
     unlinkSync,
     writeFileSync,
-} from 'node:fs';
+} from "node:fs";
 import {
     dirname,
     extname,
@@ -19,9 +19,9 @@ import {
     relative,
     resolve,
     sep,
-} from 'node:path';
+} from "node:path";
 
-export type ScopedWriteOperation = 'create' | 'edit';
+export type ScopedWriteOperation = "create" | "edit";
 
 export interface ScopedWritePolicy {
     readonly id: string;
@@ -47,7 +47,7 @@ export interface ScopedWriteAuditEvent {
     readonly role: string;
     readonly tool: string;
     readonly policy: string;
-    readonly operation: ScopedWriteOperation | 'purge';
+    readonly operation: ScopedWriteOperation | "purge";
     readonly path: string;
     readonly bytesBefore: number;
     readonly bytesAfter: number;
@@ -56,18 +56,18 @@ export interface ScopedWriteAuditEvent {
 }
 
 export interface ScopedWriteSuccess {
-    readonly kind: 'success';
+    readonly kind: "success";
     readonly path: string;
     readonly auditPath: string;
 }
 
 export interface ScopedWriteRejected {
-    readonly kind: 'rejected';
+    readonly kind: "rejected";
     readonly reason: string;
 }
 
 export interface ScopedWritePartialFailure {
-    readonly kind: 'partial_failure';
+    readonly kind: "partial_failure";
     readonly path: string;
     readonly reason: string;
 }
@@ -121,23 +121,23 @@ export interface PurgeArtifactsInput {
 }
 
 export type PurgeArtifactsResult =
-    | { readonly kind: 'success'; readonly removedPaths: readonly string[] }
-    | { readonly kind: 'rejected'; readonly reason: string }
+    | { readonly kind: "success"; readonly removedPaths: readonly string[] }
+    | { readonly kind: "rejected"; readonly reason: string }
     | {
-          readonly kind: 'partial_failure';
+          readonly kind: "partial_failure";
           readonly removedPaths: readonly string[];
           readonly reason: string;
       };
 
 function sha256(content: string): string {
-    return createHash('sha256').update(content).digest('hex');
+    return createHash("sha256").update(content).digest("hex");
 }
 
 function isInside(root: string, target: string): boolean {
     const rel = relative(root, target);
     return (
-        rel === '' ||
-        (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+        rel === "" ||
+        (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel))
     );
 }
 
@@ -147,32 +147,32 @@ function validatePath(
     rawPath: string,
 ): { absolutePath: string; relativePath: string } | ScopedWriteRejected {
     const path = rawPath.trim();
-    if (!path) return { kind: 'rejected', reason: 'Path must not be empty.' };
+    if (!path) return { kind: "rejected", reason: "Path must not be empty." };
     if (isAbsolute(path)) {
-        return { kind: 'rejected', reason: 'Absolute paths are not allowed.' };
+        return { kind: "rejected", reason: "Absolute paths are not allowed." };
     }
-    if (path.split(/[\\/]+/).includes('..')) {
-        return { kind: 'rejected', reason: 'Path traversal is not allowed.' };
+    if (path.split(/[\\/]+/).includes("..")) {
+        return { kind: "rejected", reason: "Path traversal is not allowed." };
     }
     if (!policy.allowNestedDirectories && /[\\/]/.test(path)) {
         return {
-            kind: 'rejected',
-            reason: 'Nested directories are not allowed.',
+            kind: "rejected",
+            reason: "Nested directories are not allowed.",
         };
     }
     const extension = extname(path).toLowerCase();
     if (!policy.allowedExtensions.includes(extension)) {
         return {
-            kind: 'rejected',
-            reason: `Extension '${extension || '(none)'}' is not allowed.`,
+            kind: "rejected",
+            reason: `Extension '${extension || "(none)"}' is not allowed.`,
         };
     }
     const root = resolve(projectRoot, policy.root);
     const absolutePath = resolve(root, path);
     if (!isInside(root, absolutePath)) {
         return {
-            kind: 'rejected',
-            reason: 'Path must be inside the declared root.',
+            kind: "rejected",
+            reason: "Path must be inside the declared root.",
         };
     }
     return { absolutePath, relativePath: relative(projectRoot, absolutePath) };
@@ -183,7 +183,7 @@ function hasSymlinkInExistingPath(
     target: string,
 ): boolean {
     const rel = relative(projectRoot, target);
-    if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
         return true;
     }
     let current = projectRoot;
@@ -202,7 +202,7 @@ function atomicWrite(path: string, content: string): void {
         `.${randomUUID()}.${process.pid}.tmp`,
     );
     try {
-        writeFileSync(temporaryPath, content, 'utf8');
+        writeFileSync(temporaryPath, content, "utf8");
         renameSync(temporaryPath, path);
     } finally {
         if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
@@ -210,7 +210,7 @@ function atomicWrite(path: string, content: string): void {
 }
 
 function countMatches(content: string, needle: string): number {
-    if (!needle) return content === '' ? 1 : 0;
+    if (!needle) return content === "" ? 1 : 0;
     let count = 0;
     let index = 0;
     while ((index = content.indexOf(needle, index)) !== -1) {
@@ -227,13 +227,13 @@ function appendAuditEvent(
 ): string {
     const auditPath = join(
         projectRoot,
-        '.pi',
-        'artifacts',
-        '.audit',
+        ".pi",
+        "artifacts",
+        ".audit",
         `${runId}.jsonl`,
     );
     mkdirSync(dirname(auditPath), { recursive: true });
-    appendFileSync(auditPath, `${JSON.stringify(event)}\n`, 'utf8');
+    appendFileSync(auditPath, `${JSON.stringify(event)}\n`, "utf8");
     return auditPath;
 }
 
@@ -255,7 +255,7 @@ export function createArtifactRootRegistry(): ArtifactRootRegistry {
         register(root) {
             if (!/^[A-Za-z0-9._-]+$/.test(root.id)) {
                 throw new Error(
-                    'Artifact root id must contain only safe characters.',
+                    "Artifact root id must contain only safe characters.",
                 );
             }
             if (roots.has(root.id)) {
@@ -278,14 +278,14 @@ export function purgeArtifacts(
 ): PurgeArtifactsResult {
     if (!/^[A-Za-z0-9._-]+$/.test(input.runId)) {
         return {
-            kind: 'rejected',
-            reason: 'Run id must contain only safe characters.',
+            kind: "rejected",
+            reason: "Run id must contain only safe characters.",
         };
     }
     if (!input.confirmed) {
         return {
-            kind: 'rejected',
-            reason: 'Purge requires explicit confirmation.',
+            kind: "rejected",
+            reason: "Purge requires explicit confirmation.",
         };
     }
     const projectRoot = resolve(input.projectRoot);
@@ -294,8 +294,8 @@ export function purgeArtifacts(
         .map((root) => resolve(root));
     if (roots.some((root) => !isInside(projectRoot, root))) {
         return {
-            kind: 'rejected',
-            reason: 'Registered purge root is outside the project.',
+            kind: "rejected",
+            reason: "Registered purge root is outside the project.",
         };
     }
     const removedPaths: string[] = [];
@@ -303,7 +303,7 @@ export function purgeArtifacts(
         for (const root of roots) {
             if (!existsSync(root)) continue;
             const events = listFiles(root).map((file) => {
-                const content = readFileSync(file, 'utf8');
+                const content = readFileSync(file, "utf8");
                 return {
                     version: 1 as const,
                     timestamp: new Date().toISOString(),
@@ -311,10 +311,10 @@ export function purgeArtifacts(
                     agent: input.actor.agent,
                     role: input.actor.role,
                     tool: input.tool,
-                    policy: 'purge-v1',
-                    operation: 'purge' as const,
+                    policy: "purge-v1",
+                    operation: "purge" as const,
                     path: relative(projectRoot, file),
-                    bytesBefore: Buffer.byteLength(content, 'utf8'),
+                    bytesBefore: Buffer.byteLength(content, "utf8"),
                     bytesAfter: 0,
                     sha256Before: sha256(content),
                     sha256After: null,
@@ -328,72 +328,72 @@ export function purgeArtifacts(
         }
     } catch (error) {
         return {
-            kind: 'partial_failure',
+            kind: "partial_failure",
             removedPaths,
             reason: `Purge failed: ${error instanceof Error ? error.message : String(error)}`,
         };
     }
-    return { kind: 'success', removedPaths };
+    return { kind: "success", removedPaths };
 }
 
 export function createScopedWriter(options: ScopedWriterOptions): ScopedWriter {
     const projectRoot = resolve(options.projectRoot);
     const auditPath = join(
         projectRoot,
-        '.pi',
-        'artifacts',
-        '.audit',
+        ".pi",
+        "artifacts",
+        ".audit",
         `${options.actor.runId}.jsonl`,
     );
     const appendAudit =
         options.appendAudit ??
         ((path: string, event: ScopedWriteAuditEvent) => {
             mkdirSync(dirname(path), { recursive: true });
-            appendFileSync(path, `${JSON.stringify(event)}\n`, 'utf8');
+            appendFileSync(path, `${JSON.stringify(event)}\n`, "utf8");
         });
 
     function mutate(
         input:
-            | (ScopedCreateInput & { readonly operation: 'create' })
-            | (ScopedEditInput & { readonly operation: 'edit' }),
+            | (ScopedCreateInput & { readonly operation: "create" })
+            | (ScopedEditInput & { readonly operation: "edit" }),
     ): ScopedWriteResult {
         const { operation } = input;
         if (!options.policy.operations.includes(operation)) {
             return {
-                kind: 'rejected',
+                kind: "rejected",
                 reason: `Operation '${operation}' is not allowed by policy.`,
             };
         }
         const resolved = validatePath(projectRoot, options.policy, input.path);
-        if ('kind' in resolved) return resolved;
+        if ("kind" in resolved) return resolved;
         const policyRoot = resolve(projectRoot, options.policy.root);
         if (hasSymlinkInExistingPath(policyRoot, resolved.absolutePath)) {
             return {
-                kind: 'rejected',
-                reason: 'Symlinks are not allowed in scoped paths.',
+                kind: "rejected",
+                reason: "Symlinks are not allowed in scoped paths.",
             };
         }
 
         const existed = existsSync(resolved.absolutePath);
-        let before = '';
+        let before = "";
         if (existed) {
             if (lstatSync(resolved.absolutePath).isSymbolicLink()) {
                 return {
-                    kind: 'rejected',
-                    reason: 'Symlink targets are not allowed.',
+                    kind: "rejected",
+                    reason: "Symlink targets are not allowed.",
                 };
             }
-            before = readFileSync(resolved.absolutePath, 'utf8');
+            before = readFileSync(resolved.absolutePath, "utf8");
         }
-        if (operation === 'create' && existed) {
+        if (operation === "create" && existed) {
             return {
-                kind: 'rejected',
-                reason: 'Create target already exists.',
+                kind: "rejected",
+                reason: "Create target already exists.",
             };
         }
 
         let after: string;
-        if (input.operation === 'create') {
+        if (input.operation === "create") {
             after = input.content;
         } else {
             after = before;
@@ -401,20 +401,20 @@ export function createScopedWriter(options: ScopedWriterOptions): ScopedWriter {
                 const matches = countMatches(after, edit.oldText);
                 if (matches !== 1) {
                     return {
-                        kind: 'rejected',
+                        kind: "rejected",
                         reason:
                             matches === 0
-                                ? 'Edit text was not found.'
+                                ? "Edit text was not found."
                                 : `Edit text matches ${matches} locations.`,
                     };
                 }
                 after = after.replace(edit.oldText, edit.newText);
             }
         }
-        if (Buffer.byteLength(after, 'utf8') > options.policy.maxBytes) {
+        if (Buffer.byteLength(after, "utf8") > options.policy.maxBytes) {
             return {
-                kind: 'rejected',
-                reason: 'Content exceeds the policy size limit.',
+                kind: "rejected",
+                reason: "Content exceeds the policy size limit.",
             };
         }
 
@@ -422,7 +422,7 @@ export function createScopedWriter(options: ScopedWriterOptions): ScopedWriter {
             atomicWrite(resolved.absolutePath, after);
         } catch (error) {
             return {
-                kind: 'rejected',
+                kind: "rejected",
                 reason: `Write failed: ${error instanceof Error ? error.message : String(error)}`,
             };
         }
@@ -437,8 +437,8 @@ export function createScopedWriter(options: ScopedWriterOptions): ScopedWriter {
             policy: options.policy.id,
             operation,
             path: resolved.relativePath,
-            bytesBefore: Buffer.byteLength(before, 'utf8'),
-            bytesAfter: Buffer.byteLength(after, 'utf8'),
+            bytesBefore: Buffer.byteLength(before, "utf8"),
+            bytesAfter: Buffer.byteLength(after, "utf8"),
             sha256Before: existed ? sha256(before) : null,
             sha256After: sha256(after),
         };
@@ -446,20 +446,20 @@ export function createScopedWriter(options: ScopedWriterOptions): ScopedWriter {
             appendAudit(auditPath, event);
         } catch (error) {
             return {
-                kind: 'partial_failure',
+                kind: "partial_failure",
                 path: resolved.relativePath,
                 reason: `Artifact was written but audit failed: ${error instanceof Error ? error.message : String(error)}`,
             };
         }
-        return { kind: 'success', path: resolved.relativePath, auditPath };
+        return { kind: "success", path: resolved.relativePath, auditPath };
     }
 
     return {
         create(input) {
-            return mutate({ ...input, operation: 'create' });
+            return mutate({ ...input, operation: "create" });
         },
         edit(input) {
-            return mutate({ ...input, operation: 'edit' });
+            return mutate({ ...input, operation: "edit" });
         },
     };
 }

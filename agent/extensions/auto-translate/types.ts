@@ -23,14 +23,14 @@ export interface RuntimeState {
 }
 
 /** Widget render mode: translated text replaces input (send) or popup-only (display). */
-export type StatusRenderMode = 'send' | 'display';
+export type StatusRenderMode = "send" | "display";
 
 /** Default config when no source provides a value. */
 export const DEFAULT_CONFIG: TranslateConfig = {
     model: undefined,
-    defaultTargetLanguage: 'en',
+    defaultTargetLanguage: "en",
     languages: {
-        en: 'English',
+        en: "English",
     },
 };
 

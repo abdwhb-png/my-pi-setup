@@ -722,8 +722,8 @@ describe("aggregateGroups", () => {
     expect(result.rows[0].observedCompression.compressedCount).toBe(1);
     expect(result.rows[0].observedCompression.skippedCount).toBe(1);
     expect(result.rows[0].observedCompression.failedCount).toBe(0);
-    expect(result.rows[0].observedCompression.originalBytes).toBe(1500);
-    expect(result.rows[0].observedCompression.finalBytes).toBe(700); // 200 + 500
+    expect(result.rows[0].observedCompression.originalChars).toBe(1500);
+    expect(result.rows[0].observedCompression.finalChars).toBe(700); // 200 + 500
     expect(result.rows[0].observedCompression.savedBytes).toBe(800);
     // Global ratio: 800/1500 = ~53.33%
     expect(result.rows[0].observedCompression.savingsPct).toBeCloseTo(53.33, 1);
@@ -749,8 +749,8 @@ describe("aggregateGroups", () => {
     expect(result.rows[0].observedCompression.compressedCount).toBe(0);
     expect(result.rows[0].observedCompression.skippedCount).toBe(0);
     expect(result.rows[0].observedCompression.failedCount).toBe(0);
-    expect(result.rows[0].observedCompression.originalBytes).toBe(500);
-    expect(result.rows[0].observedCompression.finalBytes).toBe(500);
+    expect(result.rows[0].observedCompression.originalChars).toBe(500);
+    expect(result.rows[0].observedCompression.finalChars).toBe(500);
     expect(result.rows[0].observedCompression.savedBytes).toBe(0);
     expect(result.rows[0].observedCompression.savingsPct).toBe(0);
   });
@@ -801,8 +801,8 @@ describe("exportJson", () => {
             compressedCount: 1,
             skippedCount: 0,
             failedCount: 0,
-            originalBytes: 1000,
-            finalBytes: 200,
+            originalChars: 1000,
+            finalChars: 200,
             savedBytes: 800,
             savingsPct: 80,
           },
@@ -867,8 +867,8 @@ describe("exportCsv", () => {
             compressedCount: 1,
             skippedCount: 0,
             failedCount: 0,
-            originalBytes: 1000,
-            finalBytes: 200,
+            originalChars: 1000,
+            finalChars: 200,
             savedBytes: 800,
             savingsPct: 80,
           },
@@ -896,7 +896,7 @@ describe("exportCsv", () => {
           runCount: 0, turnCount: 0, toolCallCount: 0, toolErrorCount: 0,
           sessionDurationMs: 0, runDurationMs: 0, turnDurationMs: 0,
           inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, cost: 0,
-          observedCompression: { compressedCount: 0, skippedCount: 0, failedCount: 0, originalBytes: 0, finalBytes: 0, savedBytes: 0, savingsPct: 0 },
+          observedCompression: { compressedCount: 0, skippedCount: 0, failedCount: 0, originalChars: 0, finalChars: 0, savedBytes: 0, savingsPct: 0 },
         },
       ],
     };
@@ -1221,7 +1221,7 @@ describe("defect: exportJson not truly sorted and not versioned", () => {
           cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 1500, cost: 0.01,
           observedCompression: {
             compressedCount: 1, skippedCount: 0, failedCount: 0,
-            originalBytes: 1000, finalBytes: 200, savedBytes: 800, savingsPct: 80,
+            originalChars: 1000, finalChars: 200, savedBytes: 800, savingsPct: 80,
           },
         },
       ],
@@ -1672,8 +1672,8 @@ describe("turnDurationMs aggregation", () => {
             compressedCount: 0,
             skippedCount: 0,
             failedCount: 0,
-            originalBytes: 0,
-            finalBytes: 0,
+            originalChars: 0,
+            finalChars: 0,
             savedBytes: 0,
             savingsPct: 0,
           },
@@ -1719,8 +1719,8 @@ describe("turnDurationMs aggregation", () => {
             compressedCount: 0,
             skippedCount: 0,
             failedCount: 0,
-            originalBytes: 0,
-            finalBytes: 0,
+            originalChars: 0,
+            finalChars: 0,
             savedBytes: 0,
             savingsPct: 0,
           },

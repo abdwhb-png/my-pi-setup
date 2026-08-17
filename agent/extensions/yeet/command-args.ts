@@ -1,6 +1,6 @@
-import { expandHomePath } from '../_shared/home-path.ts';
+import { expandHomePath } from "../_shared/home-path.ts";
 
-export { expandHomePath } from '../_shared/home-path.ts';
+export { expandHomePath } from "../_shared/home-path.ts";
 
 export interface YeetCommandArgs {
     cwd: string;
@@ -11,7 +11,7 @@ export interface YeetCommandArgs {
 
 function tokenizeArgs(args: string): string[] {
     const tokens: string[] = [];
-    let current = '';
+    let current = "";
     let quote: '"' | "'" | null = null;
 
     for (const character of args.trim()) {
@@ -23,7 +23,7 @@ function tokenizeArgs(args: string): string[] {
         }
         if (/\s/.test(character) && quote === null) {
             if (current) tokens.push(current);
-            current = '';
+            current = "";
             continue;
         }
         current += character;
@@ -44,32 +44,32 @@ export function parseYeetCommandArgs(
 
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
-        if (token === '--go') {
+        if (token === "--go") {
             autoApprove = true;
             continue;
         }
-        if (token === '--cwd') {
+        if (token === "--cwd") {
             const value = tokens[index + 1];
-            if (!value || value.startsWith('--')) {
+            if (!value || value.startsWith("--")) {
                 return {
                     cwd,
                     autoApprove,
-                    instructions: instructions.join(' '),
-                    error: '--cwd requires a path',
+                    instructions: instructions.join(" "),
+                    error: "--cwd requires a path",
                 };
             }
             cwd = expandHomePath(value);
             index += 1;
             continue;
         }
-        if (token.startsWith('--cwd=')) {
-            const value = token.slice('--cwd='.length);
+        if (token.startsWith("--cwd=")) {
+            const value = token.slice("--cwd=".length);
             if (!value) {
                 return {
                     cwd,
                     autoApprove,
-                    instructions: instructions.join(' '),
-                    error: '--cwd requires a path',
+                    instructions: instructions.join(" "),
+                    error: "--cwd requires a path",
                 };
             }
             cwd = expandHomePath(value);
@@ -81,6 +81,6 @@ export function parseYeetCommandArgs(
     return {
         cwd,
         autoApprove,
-        instructions: instructions.join(' '),
+        instructions: instructions.join(" "),
     };
 }

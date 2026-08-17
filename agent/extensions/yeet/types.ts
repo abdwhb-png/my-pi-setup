@@ -23,7 +23,7 @@ export interface CommitPlanResult {
 
 export interface CommitPlanSessionState {
     files: { path: string; selected: boolean }[];
-    focus: 'message' | 'files';
+    focus: "message" | "files";
     /** File list cursor (index into files array) */
     fileCursorIndex: number;
     /** Current commit message text being edited */

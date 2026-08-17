@@ -37,6 +37,14 @@ export interface CompressionDetails {
     savedBytes: number;
     savedPct: number;
     archivePath?: string;
+    /** UTF-8 byte length of the original output (truthful byte metric). */
+    originalUtf8Bytes?: number;
+    /** UTF-8 byte length of the compressed output (truthful byte metric). */
+    compressedUtf8Bytes?: number;
+    /** Conservative local token estimate of the original output. */
+    estimatedTokensBefore?: number;
+    /** Conservative local token estimate of the compressed output. */
+    estimatedTokensAfter?: number;
 }
 
 export interface CompressionEventBase {
@@ -56,6 +64,14 @@ export interface CompressionEventBase {
     tokenizer?: string;
     /** Native engine metrics normalized by the adapter, when present. */
     nativeMetrics?: CompressionBackendMetrics;
+    /** UTF-8 byte length of the original output. */
+    originalUtf8Bytes?: number;
+    /** UTF-8 byte length of the compressed output. */
+    compressedUtf8Bytes?: number;
+    /** Conservative local token estimate of the original output. */
+    estimatedTokensBefore?: number;
+    /** Conservative local token estimate of the compressed output. */
+    estimatedTokensAfter?: number;
 }
 
 export interface CompressionCompressedEvent extends CompressionEventBase {

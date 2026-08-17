@@ -5,19 +5,19 @@
  * them as Pi tools via `pi.registerTool()`.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve, isAbsolute, relative, extname } from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { existsSync, readFileSync } from "node:fs";
+import { resolve, isAbsolute, relative, extname } from "node:path";
+import { Type } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     loadPlannotatorConfig,
     resolvePlanFileDir,
-} from '@plannotator/pi-extension/config.js';
-import { getActiveRole } from '../_shared/pi-roles.ts';
-import { createScopedWriter, type ScopedWriteActor } from './core.ts';
+} from "@plannotator/pi-extension/config.js";
+import { getActiveRole } from "../_shared/pi-roles.ts";
+import { createScopedWriter, type ScopedWriteActor } from "./core.ts";
 
 // ── Types ──
 
@@ -44,13 +44,13 @@ export interface EditResult {
 export type PlanWriteActor = ScopedWriteActor;
 
 const DEFAULT_PLAN_ACTOR: PlanWriteActor = {
-    agent: 'plan-tools',
-    role: 'plan',
-    runId: 'unattributed',
+    agent: "plan-tools",
+    role: "plan",
+    runId: "unattributed",
 };
 
 function planWriteActor(ctx: ExtensionContext): PlanWriteActor {
-    const role = getActiveRole(ctx.sessionManager.getEntries())?.name ?? 'plan';
+    const role = getActiveRole(ctx.sessionManager.getEntries())?.name ?? "plan";
     return { agent: role, role, runId: ctx.sessionManager.getSessionId() };
 }
 
@@ -58,12 +58,12 @@ function scopedPlanWriter(cwd: string, planDir: string, actor: PlanWriteActor) {
     return createScopedWriter({
         projectRoot: cwd,
         policy: {
-            id: 'plan-v1',
+            id: "plan-v1",
             root: planDir,
-            allowedExtensions: ['.md', '.mdx'],
-            operations: ['create', 'edit'],
+            allowedExtensions: [".md", ".mdx"],
+            operations: ["create", "edit"],
             maxBytes: 1_048_576,
-            auditNamespace: 'plans',
+            auditNamespace: "plans",
             allowNestedDirectories: true,
         },
         actor,
@@ -96,20 +96,20 @@ export function resolvePlanPath(
 
     const trimmed = rawPath.trim();
     if (!trimmed) {
-        return { resolved: null, error: 'Path must not be empty.' };
+        return { resolved: null, error: "Path must not be empty." };
     }
 
     // Reject non-markdown extensions (plan files only)
     const ext = extname(trimmed).toLowerCase();
-    if (ext !== '.md' && ext !== '.mdx') {
+    if (ext !== ".md" && ext !== ".mdx") {
         return {
             resolved: null,
-            error: `Plan files must be markdown (.md or .mdx). Got: ${ext || '(no extension)'}`,
+            error: `Plan files must be markdown (.md or .mdx). Got: ${ext || "(no extension)"}`,
         };
     }
 
     // Reject .. traversals
-    if (trimmed.includes('..')) {
+    if (trimmed.includes("..")) {
         return {
             resolved: null,
             error: `Path must be inside the plan directory: ${trimmed}`,
@@ -127,7 +127,7 @@ export function resolvePlanPath(
 
     // Verify absolute paths are inside plan dir
     const rel = relative(planDirResolved, resolvedPath);
-    if (rel.startsWith('..') || isAbsolute(rel)) {
+    if (rel.startsWith("..") || isAbsolute(rel)) {
         return {
             resolved: null,
             error: `Path must be inside the plan directory (${planDir.trim()}): ${trimmed}`,
@@ -154,28 +154,28 @@ export function writePlan(
 ): WriteResult {
     const resolved = resolvePlanPath(rawPath, cwd, planDir);
     if (resolved.error) {
-        return { message: '', error: resolved.error };
+        return { message: "", error: resolved.error };
     }
 
     const writer = scopedPlanWriter(cwd, planDir!, actor);
     const scopedPath = relative(resolve(cwd, planDir!), resolved.resolved!);
     const existing = existsSync(resolved.resolved!)
-        ? readFileSync(resolved.resolved!, 'utf-8')
+        ? readFileSync(resolved.resolved!, "utf-8")
         : undefined;
     const result =
         existing === undefined
-            ? writer.create({ path: scopedPath, content, tool: 'write_plan' })
+            ? writer.create({ path: scopedPath, content, tool: "write_plan" })
             : writer.edit({
                   path: scopedPath,
                   edits: [{ oldText: existing, newText: content }],
-                  tool: 'write_plan',
+                  tool: "write_plan",
               });
-    if (result.kind !== 'success') {
-        return { message: '', error: result.reason };
+    if (result.kind !== "success") {
+        return { message: "", error: result.reason };
     }
 
     return {
-        message: `Successfully wrote ${Buffer.byteLength(content, 'utf-8')} bytes to ${rawPath}`,
+        message: `Successfully wrote ${Buffer.byteLength(content, "utf-8")} bytes to ${rawPath}`,
         error: null,
     };
 }
@@ -197,32 +197,32 @@ export function editPlan(
 ): EditResult {
     const resolved = resolvePlanPath(rawPath, cwd, planDir);
     if (resolved.error) {
-        return { message: '', error: resolved.error };
+        return { message: "", error: resolved.error };
     }
 
     if (!existsSync(resolved.resolved!)) {
-        return { message: '', error: `File not found: ${rawPath}` };
+        return { message: "", error: `File not found: ${rawPath}` };
     }
 
     const result = scopedPlanWriter(cwd, planDir!, actor).edit({
         path: relative(resolve(cwd, planDir!), resolved.resolved!),
         edits,
-        tool: 'edit_plan',
+        tool: "edit_plan",
     });
-    if (result.kind !== 'success') {
-        if (result.reason === 'Edit text was not found.') {
+    if (result.kind !== "success") {
+        if (result.reason === "Edit text was not found.") {
             return {
-                message: '',
+                message: "",
                 error: `Could not find match for oldText in ${rawPath}.`,
             };
         }
-        if (result.reason.startsWith('Edit text matches ')) {
+        if (result.reason.startsWith("Edit text matches ")) {
             return {
-                message: '',
-                error: result.reason.replace('Edit text', 'oldText'),
+                message: "",
+                error: result.reason.replace("Edit text", "oldText"),
             };
         }
-        return { message: '', error: result.reason };
+        return { message: "", error: result.reason };
     }
 
     return {
@@ -237,7 +237,7 @@ const writePlanSchema = Type.Object({
             "Path to the plan file, relative to the configured plan directory (for example 'my-plan.md' or 'features/auth.md').",
     }),
     content: Type.String({
-        description: 'Complete Markdown content to write to the plan file.',
+        description: "Complete Markdown content to write to the plan file.",
     }),
 });
 
@@ -249,19 +249,19 @@ const editPlanSchema = Type.Object({
     edits: Type.Array(
         Type.Object({
             oldText: Type.String({
-                description: 'Exact text to replace; it must be unique.',
+                description: "Exact text to replace; it must be unique.",
             }),
-            newText: Type.String({ description: 'Replacement text.' }),
+            newText: Type.String({ description: "Replacement text." }),
         }),
     ),
 });
 
 export function registerPlanTools(pi: ExtensionAPI): void {
     pi.registerTool({
-        name: 'write_plan',
-        label: 'Write Plan',
+        name: "write_plan",
+        label: "Write Plan",
         description:
-            'Write a Markdown plan inside the planFileDir configured by Plannotator.',
+            "Write a Markdown plan inside the planFileDir configured by Plannotator.",
         parameters: writePlanSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
             const config = loadPlannotatorConfig(ctx.cwd);
@@ -274,7 +274,7 @@ export function registerPlanTools(pi: ExtensionAPI): void {
             );
             return {
                 content: [
-                    { type: 'text', text: result.error ?? result.message },
+                    { type: "text", text: result.error ?? result.message },
                 ],
                 details: result,
                 isError: result.error !== null,
@@ -283,10 +283,10 @@ export function registerPlanTools(pi: ExtensionAPI): void {
     });
 
     pi.registerTool({
-        name: 'edit_plan',
-        label: 'Edit Plan',
+        name: "edit_plan",
+        label: "Edit Plan",
         description:
-            'Edit a Markdown plan inside the planFileDir configured by Plannotator using exact replacement.',
+            "Edit a Markdown plan inside the planFileDir configured by Plannotator using exact replacement.",
         parameters: editPlanSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
             const config = loadPlannotatorConfig(ctx.cwd);
@@ -299,7 +299,7 @@ export function registerPlanTools(pi: ExtensionAPI): void {
             );
             return {
                 content: [
-                    { type: 'text', text: result.error ?? result.message },
+                    { type: "text", text: result.error ?? result.message },
                 ],
                 details: result,
                 isError: result.error !== null,

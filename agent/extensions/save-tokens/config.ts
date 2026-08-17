@@ -65,7 +65,8 @@ export interface CompressorConfig {
     showStatus?: boolean;
     showWidget?: boolean;
     archiveOriginal?: boolean;
-    capFallbackBytes?: number;
+    capFallbackTokens?: number;
+    maxFallbackBytes?: number;
     routingStrategy?: "edgee" | "benchmark";
     summaryGranularity?: "none" | "turn" | "agent" | "all";
     enabled?: boolean;
@@ -239,8 +240,10 @@ function normalizeCompressor(raw: object): CompressorConfig | undefined {
     if (typeof r.showWidget === "boolean") out.showWidget = r.showWidget;
     if (typeof r.archiveOriginal === "boolean")
         out.archiveOriginal = r.archiveOriginal;
-    if (typeof r.capFallbackBytes === "number")
-        out.capFallbackBytes = r.capFallbackBytes;
+    if (typeof r.capFallbackTokens === "number")
+        out.capFallbackTokens = r.capFallbackTokens;
+    if (typeof r.maxFallbackBytes === "number")
+        out.maxFallbackBytes = r.maxFallbackBytes;
     if (r.routingStrategy === "edgee" || r.routingStrategy === "benchmark")
         out.routingStrategy = r.routingStrategy;
     if (

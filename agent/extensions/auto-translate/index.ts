@@ -10,15 +10,15 @@
  * `_shared/config-loader.ts`.
  */
 
-import { complete } from '@earendil-works/pi-ai/compat';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
-import { registerCommands } from './commands.ts';
-import { loadTranslateConfig } from './config.ts';
-import { createState, buildStatusText, icon } from './state.ts';
-import { translate } from './translator.ts';
-import type { TranslateConfig } from './types.ts';
-import { createTranslateWidget } from './widget.ts';
+import { complete } from "@earendil-works/pi-ai/compat";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { registerCommands } from "./commands.ts";
+import { loadTranslateConfig } from "./config.ts";
+import { createState, buildStatusText, icon } from "./state.ts";
+import { translate } from "./translator.ts";
+import type { TranslateConfig } from "./types.ts";
+import { createTranslateWidget } from "./widget.ts";
 
 /** Resolve the effective model spec: configured model, else the active session model. */
 function effectiveModel(
@@ -47,34 +47,34 @@ export default function (pi: ExtensionAPI): void {
 
     registerCommands(pi, { state, config, refresh });
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         refresh(ctx);
     });
 
-    pi.on('session_shutdown', async (_event, ctx) => {
+    pi.on("session_shutdown", async (_event, ctx) => {
         widget.remove(ctx);
     });
 
-    pi.on('input', async (event, ctx) => {
+    pi.on("input", async (event, ctx) => {
         // Never translate our own injected or extension-routed messages.
-        if (event.source === 'extension') return { action: 'continue' };
-        if (!state.enabled) return { action: 'continue' };
+        if (event.source === "extension") return { action: "continue" };
+        if (!state.enabled) return { action: "continue" };
         const text = event.text?.trim();
-        if (!text) return { action: 'continue' };
+        if (!text) return { action: "continue" };
 
         const targetName = config.languages[state.target] ?? state.target;
         const modelSpec = effectiveModel(config, ctx.model);
         if (!modelSpec) {
             ctx.ui.notify(
-                'auto-translate: no model configured (set translate.model in settings.json)',
-                'warning',
+                "auto-translate: no model configured (set translate.model in settings.json)",
+                "warning",
             );
-            return { action: 'continue' };
+            return { action: "continue" };
         }
 
         ctx.ui.setStatus(
-            'auto-translate',
-            ctx.ui.theme.fg('accent', `${icon} translating…`),
+            "auto-translate",
+            ctx.ui.theme.fg("accent", `${icon} translating…`),
         );
         let translated: string | null;
         try {
@@ -86,17 +86,17 @@ export default function (pi: ExtensionAPI): void {
                 ctx,
             );
         } finally {
-            ctx.ui.setStatus('auto-translate', undefined);
+            ctx.ui.setStatus("auto-translate", undefined);
         }
 
         // Pass through if translation failed or text was already the target language.
         if (translated == null || translated === text)
-            return { action: 'continue' };
+            return { action: "continue" };
 
         if (state.sendEnabled) {
-            return { action: 'transform', text: translated };
+            return { action: "transform", text: translated };
         }
-        ctx.ui.notify(`[${state.target}] ${translated}`, 'info');
-        return { action: 'continue' };
+        ctx.ui.notify(`[${state.target}] ${translated}`, "info");
+        return { action: "continue" };
     });
 }

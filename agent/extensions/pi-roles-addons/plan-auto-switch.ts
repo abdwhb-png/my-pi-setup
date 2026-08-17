@@ -21,36 +21,36 @@
 import type {
     ExtensionAPI,
     ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     findUnprocessedSwitchRequest,
     getDefaultRole,
     writeRoleSwitchRequest,
-} from '../_shared/pi-roles';
+} from "../_shared/pi-roles";
 import {
     createLatestIdleTaskScheduler,
     queueWhenIdle,
     type IdleTaskScheduler,
-} from '../_shared/queue-when-idle';
+} from "../_shared/queue-when-idle";
 
 /** Custom entry type emitted by plannotator-bridge on plan approval. */
-const PLAN_APPROVED_ENTRY_TYPE = 'plannotator:plan-approved';
+const PLAN_APPROVED_ENTRY_TYPE = "plannotator:plan-approved";
 
 /**
  * Processed marker used by this extension AND the main plannotator.
  * Using the same marker prevents both from firing on the same approval.
  */
 export const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED =
-    'plannotator-autoexecute-processed';
+    "plannotator-autoexecute-processed";
 
 /**
  * Legacy marker — kept exported for backward-compatible dedup in
  * `findUnprocessedPlanApproval`. New entries use the shared marker above.
  */
-export const PROCESSED_MARKER_PREFIX = 'plan-auto-switch:processed';
+export const PROCESSED_MARKER_PREFIX = "plan-auto-switch:processed";
 
-const APPROVED_PLAN_CONTINUATION = 'Continue with the approved plan.';
-const PLAN_APPROVED_SWITCH_REASON = 'plannotator:plan-approved';
+const APPROVED_PLAN_CONTINUATION = "Continue with the approved plan.";
+const PLAN_APPROVED_SWITCH_REASON = "plannotator:plan-approved";
 
 /**
  * Start a fresh top-level prompt after the current agent run becomes idle.
@@ -60,7 +60,7 @@ const PLAN_APPROVED_SWITCH_REASON = 'plannotator:plan-approved';
  * Bare `sendUserMessage` is correct only after Pi clears its active run.
  */
 export function queueApprovedPlanContinuation(
-    pi: Pick<ExtensionAPI, 'sendUserMessage'>,
+    pi: Pick<ExtensionAPI, "sendUserMessage">,
     isIdle: () => boolean = () => true,
     schedule?: IdleTaskScheduler,
 ): void {
@@ -104,7 +104,7 @@ export function findUnprocessedPlanApproval(
         const e = entries[i];
         if (
             !e ||
-            e.type !== 'custom' ||
+            e.type !== "custom" ||
             e.customType !== PLAN_APPROVED_ENTRY_TYPE
         )
             continue;
@@ -116,7 +116,7 @@ export function findUnprocessedPlanApproval(
         const processed = entries.slice(i + 1).some(
             (p) =>
                 p &&
-                p.type === 'custom' &&
+                p.type === "custom" &&
                 (p.customType === PROCESSED_MARKER_PREFIX ||
                     p.customType === PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED) &&
                 // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- pi entry data is unknown
@@ -174,7 +174,7 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
         );
     };
 
-    pi.on('turn_end', async (_event, ctx) => {
+    pi.on("turn_end", async (_event, ctx) => {
         let entries;
         try {
             entries = ctx.sessionManager.getEntries();
@@ -200,11 +200,11 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
         });
     });
 
-    pi.on('agent_end', (_event, ctx) => {
+    pi.on("agent_end", (_event, ctx) => {
         reconcileApprovedPlanSwitch(ctx);
     });
 
-    pi.on('session_start', (_event, ctx) => {
+    pi.on("session_start", (_event, ctx) => {
         reconcileApprovedPlanSwitch(ctx);
     });
 }

@@ -51,7 +51,7 @@ function isProfile(value: unknown): value is Profile {
     );
 }
 
-const UNSAFE_MAP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const UNSAFE_MAP_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 function assertSafeMapKey(key: string, field: string): void {
     if (UNSAFE_MAP_KEYS.has(key)) {
@@ -127,13 +127,13 @@ function parseStringMap(
 
 function parseAcceptedTaskIds(value: unknown): readonly string[] {
     if (!Array.isArray(value)) {
-        throw new Error('Invalid review progress acceptedTaskIds.');
+        throw new Error("Invalid review progress acceptedTaskIds.");
     }
     const acceptedTaskIds: string[] = [];
     const seen = new Set<string>();
     for (const taskId of value) {
-        if (typeof taskId !== 'string' || !taskId || seen.has(taskId)) {
-            throw new Error('Invalid review progress acceptedTaskIds.');
+        if (typeof taskId !== "string" || !taskId || seen.has(taskId)) {
+            throw new Error("Invalid review progress acceptedTaskIds.");
         }
         seen.add(taskId);
         acceptedTaskIds.push(taskId);
@@ -144,9 +144,9 @@ function parseAcceptedTaskIds(value: unknown): readonly string[] {
 function parseReviewProgressState(value: unknown): ManifestReviewProgressState {
     if (
         !isPlainRecord(value) ||
-        !hasExactlyKeys(value, ['acceptedTaskIds', 'decision'])
+        !hasExactlyKeys(value, ["acceptedTaskIds", "decision"])
     ) {
-        throw new Error('Invalid review progress state.');
+        throw new Error("Invalid review progress state.");
     }
     return {
         acceptedTaskIds: parseAcceptedTaskIds(value.acceptedTaskIds),
@@ -217,12 +217,12 @@ export function parseReviewProgress(value: unknown): ManifestReviewProgressV1 {
         );
     }
     if (
-        typeof value.manifestId !== 'string' ||
+        typeof value.manifestId !== "string" ||
         !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value.manifestId)
     ) {
         throw new Error("Invalid review progress manifestId.");
     }
-    if (typeof value.revision !== 'number') {
+    if (typeof value.revision !== "number") {
         throw new Error("Invalid review progress revision.");
     }
     const revision = value.revision;
@@ -280,7 +280,9 @@ export function normalizeReviewProgressState(
         "justification",
     );
     const accepted = new Set(parsed.acceptedTaskIds);
-    const copyTaskMap = <T>(values: Readonly<Record<string, T>>): Record<string, T> => {
+    const copyTaskMap = <T>(
+        values: Readonly<Record<string, T>>,
+    ): Record<string, T> => {
         const result: Record<string, T> = {};
         for (const task of draft.tasks) {
             if (Object.hasOwn(values, task.id)) {

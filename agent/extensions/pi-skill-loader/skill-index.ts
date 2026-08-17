@@ -1,14 +1,14 @@
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 
 export interface SkillEntry {
-  /** Skill name without the "skill:" prefix */
-  name: string;
-  /** Description from SKILL.md frontmatter */
-  description: string;
-  /** Absolute path to the SKILL.md file */
-  path: string;
-  /** Source scope: "user" | "project" */
-  source: string;
+    /** Skill name without the "skill:" prefix */
+    name: string;
+    /** Description from SKILL.md frontmatter */
+    description: string;
+    /** Absolute path to the SKILL.md file */
+    path: string;
+    /** Source scope: "user" | "project" */
+    source: string;
 }
 
 /**
@@ -16,14 +16,16 @@ export interface SkillEntry {
  * Filters commands with source === "skill" and strips the "skill:" prefix.
  */
 export function buildSkillList(commands: SlashCommandInfo[]): SkillEntry[] {
-  return commands
-    .filter((c) => c.source === "skill")
-    .map((c) => ({
-      name: c.name.startsWith("skill:") ? c.name.slice("skill:".length) : c.name,
-      description: c.description ?? "",
-      path: c.sourceInfo?.path ?? "",
-      source: c.sourceInfo?.source ?? "unknown",
-    }));
+    return commands
+        .filter((c) => c.source === "skill")
+        .map((c) => ({
+            name: c.name.startsWith("skill:")
+                ? c.name.slice("skill:".length)
+                : c.name,
+            description: c.description ?? "",
+            path: c.sourceInfo?.path ?? "",
+            source: c.sourceInfo?.source ?? "unknown",
+        }));
 }
 
 /**
@@ -31,30 +33,33 @@ export function buildSkillList(commands: SlashCommandInfo[]): SkillEntry[] {
  * Case-insensitive substring match. Ranks name matches above description matches.
  * Returns top 20 results.
  */
-export function searchSkills(skills: SkillEntry[], query: string): SkillEntry[] {
-  if (!query.trim()) {
-    return skills.slice(0, 20);
-  }
+export function searchSkills(
+    skills: SkillEntry[],
+    query: string,
+): SkillEntry[] {
+    if (!query.trim()) {
+        return skills.slice(0, 20);
+    }
 
-  const lowerQuery = query.toLowerCase();
+    const lowerQuery = query.toLowerCase();
 
-  const scored = skills
-    .map((skill) => {
-      const nameLower = skill.name.toLowerCase();
-      const descLower = skill.description.toLowerCase();
+    const scored = skills
+        .map((skill) => {
+            const nameLower = skill.name.toLowerCase();
+            const descLower = skill.description.toLowerCase();
 
-      // Score: 2 points for name match, 1 point for description match
-      let score = 0;
-      if (nameLower.includes(lowerQuery)) score += 2;
-      if (descLower.includes(lowerQuery)) score += 1;
+            // Score: 2 points for name match, 1 point for description match
+            let score = 0;
+            if (nameLower.includes(lowerQuery)) score += 2;
+            if (descLower.includes(lowerQuery)) score += 1;
 
-      return { skill, score };
-    })
-    .filter(({ score }) => score > 0)
-    .toSorted((a, b) => b.score - a.score)
-    .map(({ skill }) => skill);
+            return { skill, score };
+        })
+        .filter(({ score }) => score > 0)
+        .toSorted((a, b) => b.score - a.score)
+        .map(({ skill }) => skill);
 
-  return scored.slice(0, 20);
+    return scored.slice(0, 20);
 }
 
 /**
@@ -62,9 +67,9 @@ export function searchSkills(skills: SkillEntry[], query: string): SkillEntry[] 
  * Returns null if not found.
  */
 export function findSkill(
-  skills: SkillEntry[],
-  name: string,
+    skills: SkillEntry[],
+    name: string,
 ): SkillEntry | null {
-  const lowerName = name.toLowerCase();
-  return skills.find((s) => s.name.toLowerCase() === lowerName) ?? null;
+    const lowerName = name.toLowerCase();
+    return skills.find((s) => s.name.toLowerCase() === lowerName) ?? null;
 }

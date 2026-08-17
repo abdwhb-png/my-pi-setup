@@ -1,15 +1,15 @@
 import {
     getAgentDir,
     type ExtensionAPI,
-} from '@earendil-works/pi-coding-agent';
-import { SddActivityStore } from './activity-store.ts';
-import { openSddLive } from './activity-ui.ts';
-import { DelegationClient } from './delegation-client.ts';
-import { registerSddExtension, type SddRuntime } from './extension-tools.ts';
-import { openManifestReview } from './review-ui.ts';
-import { SddStore } from './store.ts';
-import { SddWorkflow } from './workflow.ts';
-import { GitWorkspaceManager } from './workspace.ts';
+} from "@earendil-works/pi-coding-agent";
+import { SddActivityStore } from "./activity-store.ts";
+import { openSddLive } from "./activity-ui.ts";
+import { DelegationClient } from "./delegation-client.ts";
+import { registerSddExtension, type SddRuntime } from "./extension-tools.ts";
+import { openManifestReview } from "./review-ui.ts";
+import { SddStore } from "./store.ts";
+import { SddWorkflow } from "./workflow.ts";
+import { GitWorkspaceManager } from "./workspace.ts";
 
 export {
     collectRunStatuses,
@@ -17,7 +17,7 @@ export {
     shouldContinueAfterReconcile,
     type LegacyQueuedRun,
     type SddRuntime,
-} from './extension-tools.ts';
+} from "./extension-tools.ts";
 
 export function createRuntime(
     pi: ExtensionAPI,
@@ -32,7 +32,7 @@ export function createRuntime(
         delegation,
         (runId) => {
             const manifest = store.loadManifest(runId);
-            return manifest?.state === 'approved' ? manifest : null;
+            return manifest?.state === "approved" ? manifest : null;
         },
         activity,
         workspace,

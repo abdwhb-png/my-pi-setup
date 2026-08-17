@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from "node:crypto";
 import {
     appendFileSync,
     existsSync,
@@ -11,21 +11,21 @@ import {
     rmdirSync,
     unlinkSync,
     writeFileSync,
-} from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
+} from "node:fs";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
     approvalDecisionDigest,
     type ApprovedManifest,
     type DraftManifest,
-} from './manifest.ts';
+} from "./manifest.ts";
 import {
     normalizeReviewProgressState,
     parseReviewProgress,
     type ManifestReviewProgressState,
     type ManifestReviewProgressV1,
-} from './review-progress.ts';
-import type { RunEvent, RunSnapshot } from './state-machine.ts';
+} from "./review-progress.ts";
+import type { RunEvent, RunSnapshot } from "./state-machine.ts";
 
 type StoredManifest = DraftManifest | ApprovedManifest;
 
@@ -45,7 +45,7 @@ export class ReviewProgressConflictError extends Error {
         super(
             `Review progress revision conflict: expected ${expectedRevision}, received ${receivedRevision}.`,
         );
-        this.name = 'ReviewProgressConflictError';
+        this.name = "ReviewProgressConflictError";
         this.expectedRevision = expectedRevision;
         this.receivedRevision = receivedRevision;
     }
@@ -75,9 +75,9 @@ interface ObservedLock {
 
 function canonicalJson(value: unknown): string {
     if (Array.isArray(value)) {
-        return `[${value.map(canonicalJson).join(',')}]`;
+        return `[${value.map(canonicalJson).join(",")}]`;
     }
-    if (value && typeof value === 'object') {
+    if (value && typeof value === "object") {
         return `{${Object.entries(value)
             .filter(([, entry]) => entry !== undefined)
             .toSorted(([left], [right]) =>
@@ -87,9 +87,9 @@ function canonicalJson(value: unknown): string {
                 ([key, entry]) =>
                     `${JSON.stringify(key)}:${canonicalJson(entry)}`,
             )
-            .join(',')}}`;
+            .join(",")}}`;
     }
-    return JSON.stringify(value) ?? 'null';
+    return JSON.stringify(value) ?? "null";
 }
 
 function approvalIdentity(manifest: ApprovedManifest): string {
@@ -105,14 +105,14 @@ function approvalIdentity(manifest: ApprovedManifest): string {
 }
 
 export function snapshotDigest(snapshot: RunSnapshot): string {
-    return createHash('sha256').update(canonicalJson(snapshot)).digest('hex');
+    return createHash("sha256").update(canonicalJson(snapshot)).digest("hex");
 }
 
 function hasErrorCode(error: unknown, code: string): boolean {
     return (
         !!error &&
-        typeof error === 'object' &&
-        'code' in error &&
+        typeof error === "object" &&
+        "code" in error &&
         error.code === code
     );
 }
@@ -120,20 +120,20 @@ function hasErrorCode(error: unknown, code: string): boolean {
 function readLock(lockPath: string): ObservedLock | null {
     try {
         const stats = lstatSync(lockPath);
-        const owner: unknown = JSON.parse(readFileSync(lockPath, 'utf8'));
+        const owner: unknown = JSON.parse(readFileSync(lockPath, "utf8"));
         if (
             !owner ||
-            typeof owner !== 'object' ||
-            !('pid' in owner) ||
-            !('createdAt' in owner) ||
-            !('nonce' in owner) ||
+            typeof owner !== "object" ||
+            !("pid" in owner) ||
+            !("createdAt" in owner) ||
+            !("nonce" in owner) ||
             !Number.isInteger(owner.pid) ||
-            typeof owner.pid !== 'number' ||
+            typeof owner.pid !== "number" ||
             owner.pid <= 0 ||
-            typeof owner.createdAt !== 'string' ||
+            typeof owner.createdAt !== "string" ||
             !owner.createdAt ||
             Number.isNaN(Date.parse(owner.createdAt)) ||
-            typeof owner.nonce !== 'string' ||
+            typeof owner.nonce !== "string" ||
             !/^[A-Za-z0-9_-]+$/.test(owner.nonce)
         ) {
             return null;
@@ -159,7 +159,7 @@ function hasDeadOwner(lock: ObservedLock): boolean {
         process.kill(lock.owner.pid, 0);
         return false;
     } catch (error) {
-        return hasErrorCode(error, 'ESRCH');
+        return hasErrorCode(error, "ESRCH");
     }
 }
 
@@ -182,10 +182,12 @@ function assertNoSymlink(path: string, pathForError: string): void {
     try {
         const stats = lstatSync(path);
         if (stats.isSymbolicLink()) {
-            throw new Error(`Refusing review operation through symbolic link: ${pathForError}.`);
+            throw new Error(
+                `Refusing review operation through symbolic link: ${pathForError}.`,
+            );
         }
     } catch (error) {
-        if (!hasErrorCode(error, 'ENOENT')) throw error;
+        if (!hasErrorCode(error, "ENOENT")) throw error;
     }
 }
 
@@ -196,10 +198,10 @@ export class SddStore {
     private readonly sddRoot: string;
 
     constructor(agentDir: string = getAgentDir()) {
-        this.root = resolve(agentDir, '.sdd', 'runs');
-        this.manifestRoot = resolve(agentDir, '.sdd', 'manifests');
-        this.sddRoot = resolve(agentDir, '.sdd');
-        this.reviewRoot = resolve(agentDir, '.sdd', 'reviews');
+        this.root = resolve(agentDir, ".sdd", "runs");
+        this.manifestRoot = resolve(agentDir, ".sdd", "manifests");
+        this.sddRoot = resolve(agentDir, ".sdd");
+        this.reviewRoot = resolve(agentDir, ".sdd", "reviews");
     }
 
     create(snapshot: RunSnapshot): void {
@@ -222,15 +224,15 @@ export class SddStore {
     }
 
     load(runId: string): RunSnapshot | null {
-        const path = join(this.runDir(runId), 'snapshot.json');
+        const path = join(this.runDir(runId), "snapshot.json");
         if (!existsSync(path)) return null;
-        return JSON.parse(readFileSync(path, 'utf8'));
+        return JSON.parse(readFileSync(path, "utf8"));
     }
 
     save(snapshot: RunSnapshot): void {
         const runDir = this.runDir(snapshot.runId);
-        const path = join(runDir, 'snapshot.json');
-        const ticketDir = join(runDir, 'snapshot.lock-tickets');
+        const path = join(runDir, "snapshot.json");
+        const ticketDir = join(runDir, "snapshot.lock-tickets");
         mkdirSync(runDir, { recursive: true });
         const ticket = this.acquireTicket(ticketDir);
 
@@ -285,7 +287,7 @@ export class SddStore {
         )) {
             if (
                 !entry.isDirectory() ||
-                !existsSync(join(this.root, entry.name, 'snapshot.json'))
+                !existsSync(join(this.root, entry.name, "snapshot.json"))
             ) {
                 continue;
             }
@@ -299,7 +301,7 @@ export class SddStore {
         const runDir = this.runDir(record.runId);
         mkdirSync(runDir, { recursive: true });
         appendFileSync(
-            join(runDir, 'transitions.jsonl'),
+            join(runDir, "transitions.jsonl"),
             `${JSON.stringify({
                 revision: record.revision,
                 event: record.event,
@@ -312,7 +314,7 @@ export class SddStore {
     loadManifest(manifestId: string): StoredManifest | null {
         const path = this.manifestPath(manifestId);
         if (!existsSync(path)) return null;
-        return JSON.parse(readFileSync(path, 'utf8'));
+        return JSON.parse(readFileSync(path, "utf8"));
     }
 
     createManifest(manifest: DraftManifest): DraftManifest {
@@ -320,7 +322,7 @@ export class SddStore {
         const ticket = this.acquireManifestTicket(manifest.manifestId);
         try {
             const current = this.loadManifest(manifest.manifestId);
-            if (current?.state === 'approved') {
+            if (current?.state === "approved") {
                 throw new Error(
                     `Manifest ${manifest.manifestId} is already approved.`,
                 );
@@ -349,7 +351,7 @@ export class SddStore {
             expectedDraft.manifestId !== approved.manifestId ||
             approved.manifestId !== initialSnapshot.runId
         ) {
-            throw new Error('Manifest approval IDs do not match.');
+            throw new Error("Manifest approval IDs do not match.");
         }
         this.manifestPath(approved.manifestId);
         const ticket = this.acquireManifestTicket(approved.manifestId);
@@ -358,7 +360,7 @@ export class SddStore {
             if (!current) {
                 throw new Error(`Manifest not found: ${approved.manifestId}.`);
             }
-            if (current.state === 'approved') {
+            if (current.state === "approved") {
                 if (approvalIdentity(current) !== approvalIdentity(approved)) {
                     throw new Error(
                         `Manifest approval conflict: ${approved.manifestId}.`,
@@ -438,7 +440,7 @@ export class SddStore {
             if (!manifest) {
                 throw new Error(`Manifest not found: ${manifestId}.`);
             }
-            if (manifest.state !== 'awaiting_approval') {
+            if (manifest.state !== "awaiting_approval") {
                 throw new Error(
                     `Review progress can only be saved while awaiting approval: ${manifestId}.`,
                 );
@@ -449,10 +451,7 @@ export class SddStore {
                 manifestId,
             );
             if (!current && expectedRevision !== 0) {
-                throw new ReviewProgressConflictError(
-                    0,
-                    expectedRevision,
-                );
+                throw new ReviewProgressConflictError(0, expectedRevision);
             }
             if (current && current.revision !== expectedRevision) {
                 throw new ReviewProgressConflictError(
@@ -512,8 +511,8 @@ export class SddStore {
     ): ManifestReviewProgressV1 | null {
         const manifestState: string = manifest.state;
         if (
-            manifestState !== 'awaiting_approval' &&
-            manifestState !== 'approved'
+            manifestState !== "awaiting_approval" &&
+            manifestState !== "approved"
         ) {
             throw new Error(
                 `Invalid manifest state for review progress: ${manifestState}.`,
@@ -521,9 +520,7 @@ export class SddStore {
         }
         const path = this.reviewPath(manifestId);
         if (!existsSync(path)) return null;
-        const raw = parseReviewProgress(
-            JSON.parse(readFileSync(path, 'utf8')),
-        );
+        const raw = parseReviewProgress(JSON.parse(readFileSync(path, "utf8")));
         if (raw.manifestId !== manifestId) {
             throw new Error(
                 `Invalid review progress manifestId: expected ${manifestId}, received ${raw.manifestId}.`,
@@ -543,7 +540,7 @@ export class SddStore {
 
     private attemptReviewCleanup(manifestId: string): ReviewCleanupResult {
         try {
-            assertNoSymlink(this.reviewRoot, '.sdd/reviews');
+            assertNoSymlink(this.reviewRoot, ".sdd/reviews");
             assertNoSymlink(
                 this.reviewPath(manifestId),
                 `.sdd/reviews/${manifestId}.json`,
@@ -553,9 +550,8 @@ export class SddStore {
         } catch (error) {
             return {
                 reviewCleanupPending: true,
-                reviewCleanupError: error instanceof Error
-                    ? error.message
-                    : String(error),
+                reviewCleanupError:
+                    error instanceof Error ? error.message : String(error),
             };
         }
     }
@@ -568,7 +564,7 @@ export class SddStore {
             unlinkSync(path);
             return true;
         } catch (error) {
-            if (hasErrorCode(error, 'ENOENT')) return false;
+            if (hasErrorCode(error, "ENOENT")) return false;
             throw error;
         }
     }
@@ -581,7 +577,7 @@ export class SddStore {
             writeFileSync(
                 temporaryPath,
                 `${JSON.stringify(manifest, null, 2)}\n`,
-                { flag: 'wx' },
+                { flag: "wx" },
             );
             renameSync(temporaryPath, path);
         } finally {
@@ -596,10 +592,10 @@ export class SddStore {
     listManifests(): StoredManifest[] {
         if (!existsSync(this.manifestRoot)) return [];
         return readdirSync(this.manifestRoot)
-            .filter((name) => name.endsWith('.json'))
+            .filter((name) => name.endsWith(".json"))
             .toSorted()
             .map((name) =>
-                JSON.parse(readFileSync(join(this.manifestRoot, name), 'utf8')),
+                JSON.parse(readFileSync(join(this.manifestRoot, name), "utf8")),
             );
     }
 
@@ -615,7 +611,7 @@ export class SddStore {
             unlinkSync(path);
             return true;
         } catch (error) {
-            if (hasErrorCode(error, 'ENOENT')) return false;
+            if (hasErrorCode(error, "ENOENT")) return false;
             throw error;
         } finally {
             this.releaseManifestTicket(ticket);
@@ -632,7 +628,7 @@ export class SddStore {
     private releaseManifestTicket(ticket: ObservedLock): void {
         this.releaseTicket(ticket);
         try {
-            rmdirSync(resolve(ticket.path, '..'));
+            rmdirSync(resolve(ticket.path, ".."));
         } catch {
             // Concurrent or dead tickets intentionally keep the directory.
         }
@@ -647,9 +643,9 @@ export class SddStore {
             );
         }
         const runDir = this.runDir(expected.runId);
-        unlinkSync(join(runDir, 'snapshot.json'));
+        unlinkSync(join(runDir, "snapshot.json"));
         try {
-            rmdirSync(join(runDir, 'snapshot.lock-tickets'));
+            rmdirSync(join(runDir, "snapshot.lock-tickets"));
         } catch {
             // create() normally removes its ticket directory.
         }
@@ -669,11 +665,11 @@ export class SddStore {
         const candidate = join(ticketDir, `.${process.pid}.${nonce}.candidate`);
         const ticketPath = join(
             ticketDir,
-            `${String(ticketNumber).padStart(6, '0')}.lock`,
+            `${String(ticketNumber).padStart(6, "0")}.lock`,
         );
         let published: ObservedLock | undefined;
         try {
-            writeFileSync(candidate, JSON.stringify(owner), { flag: 'wx' });
+            writeFileSync(candidate, JSON.stringify(owner), { flag: "wx" });
             const stats = lstatSync(candidate);
             linkSync(candidate, ticketPath);
             published = {
@@ -708,7 +704,7 @@ export class SddStore {
             try {
                 ticket = this.publishTicket(ticketDir, next);
             } catch (error) {
-                if (hasErrorCode(error, 'EEXIST')) continue;
+                if (hasErrorCode(error, "EEXIST")) continue;
                 throw error;
             }
             try {
@@ -719,7 +715,7 @@ export class SddStore {
                 throw error;
             }
         }
-        throw new Error('Snapshot ticket acquisition contention.');
+        throw new Error("Snapshot ticket acquisition contention.");
     }
 
     private assertLowerTickets(
@@ -749,7 +745,7 @@ export class SddStore {
             unlinkSync(expected.path);
             return true;
         } catch (error) {
-            if (hasErrorCode(error, 'ENOENT')) return false;
+            if (hasErrorCode(error, "ENOENT")) return false;
             throw error;
         }
     }
@@ -762,7 +758,7 @@ export class SddStore {
         const relativePath = relative(this.root, resolved);
         if (
             !relativePath ||
-            relativePath === '..' ||
+            relativePath === ".." ||
             relativePath.startsWith(`..${sep}`) ||
             isAbsolute(relativePath)
         ) {
@@ -781,7 +777,7 @@ export class SddStore {
         const relativePath = relative(this.manifestRoot, resolved);
         if (
             !relativePath ||
-            relativePath === '..' ||
+            relativePath === ".." ||
             relativePath.startsWith(`..${sep}`) ||
             isAbsolute(relativePath)
         ) {
@@ -802,7 +798,7 @@ export class SddStore {
         const relativePath = relative(this.reviewRoot, resolved);
         if (
             !relativePath ||
-            relativePath === '..' ||
+            relativePath === ".." ||
             relativePath.startsWith(`..${sep}`) ||
             isAbsolute(relativePath)
         ) {
@@ -814,13 +810,16 @@ export class SddStore {
     }
 
     private assertNoReviewBoundaries(manifestId: string): void {
-        assertNoSymlink(this.sddRoot, '.sdd');
-        assertNoSymlink(this.manifestRoot, '.sdd/manifests');
-        assertNoSymlink(this.manifestPath(manifestId), `.sdd/manifests/${manifestId}.json`);
-        assertNoSymlink(this.reviewRoot, '.sdd/reviews');
+        assertNoSymlink(this.sddRoot, ".sdd");
+        assertNoSymlink(this.manifestRoot, ".sdd/manifests");
+        assertNoSymlink(
+            this.manifestPath(manifestId),
+            `.sdd/manifests/${manifestId}.json`,
+        );
+        assertNoSymlink(this.reviewRoot, ".sdd/reviews");
         assertNoSymlink(
             this.reviewPath(manifestId),
-            join('.sdd', 'reviews', `${manifestId}.json`),
+            join(".sdd", "reviews", `${manifestId}.json`),
         );
     }
 }

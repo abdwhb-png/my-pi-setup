@@ -4,13 +4,13 @@
  * Pure helper — takes a minimal slice of ExtensionAPI so it is fully
  * unit-testable without the pi runtime.
  */
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import type { SafeBashMode } from './config.ts';
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { SafeBashMode } from "./config.ts";
 
 /** Minimal API surface applyMode needs. */
 export type ToolControl = Pick<
     ExtensionAPI,
-    'getActiveTools' | 'setActiveTools'
+    "getActiveTools" | "setActiveTools"
 >;
 
 /**
@@ -21,12 +21,12 @@ export type ToolControl = Pick<
  * - "coexist": leave the tool list untouched (both bash + safe_bash available).
  */
 export function applyMode(api: ToolControl, mode: SafeBashMode): void {
-    if (mode !== 'replace') return;
+    if (mode !== "replace") return;
 
     const active = api.getActiveTools();
-    if (!active.includes('bash')) return;
+    if (!active.includes("bash")) return;
 
-    api.setActiveTools(active.filter((tool) => tool !== 'bash'));
+    api.setActiveTools(active.filter((tool) => tool !== "bash"));
 }
 
 /**
@@ -43,7 +43,7 @@ export function shouldBlockBashCall(
     toolName: string,
     mode: SafeBashMode,
 ): boolean {
-    return mode === 'replace' && toolName === 'bash';
+    return mode === "replace" && toolName === "bash";
 }
 
 /**
@@ -56,7 +56,7 @@ export function shouldBlockBashCall(
  */
 export function restoreBash(api: ToolControl): boolean {
     const active = api.getActiveTools();
-    if (active.includes('bash')) return false;
-    api.setActiveTools([...active, 'bash']);
+    if (active.includes("bash")) return false;
+    api.setActiveTools([...active, "bash"]);
     return true;
 }

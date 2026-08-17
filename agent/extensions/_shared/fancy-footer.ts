@@ -1,9 +1,12 @@
-import type { ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+    ExtensionContext,
+    ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import type { FancyFooterWidgetContribution } from "pi-fancy-footer/api";
 import {
-  contributeFancyFooterWidgets,
-  requestFancyFooterWidgetDiscovery,
-  requestFancyFooterRefresh,
+    contributeFancyFooterWidgets,
+    requestFancyFooterWidgetDiscovery,
+    requestFancyFooterRefresh,
 } from "pi-fancy-footer/api";
 
 // ── Bridge to pi-fancy-footer/api/metrics ────────────────────────────────
@@ -13,9 +16,9 @@ import {
 // entry point, only this file needs updating.
 
 export {
-  collectSessionUsageMetrics as getSessionUsageMetrics,
-  type SessionUsageMetrics,
-  type UsageSnapshot,
+    collectSessionUsageMetrics as getSessionUsageMetrics,
+    type SessionUsageMetrics,
+    type UsageSnapshot,
 } from "pi-fancy-footer/api/metrics";
 
 // ── Extension status snapshot API ────────────────────────────────────────
@@ -25,25 +28,25 @@ export {
 // the above-editor widget after every render.
 
 export {
-  getExtensionStatusesSnapshot as getFancyFooterExtensionStatusesSnapshot,
-  subscribeExtensionStatusesSnapshot as subscribeFancyFooterExtensionStatuses,
-  publishExtensionStatusesSnapshot,
-  FANCY_FOOTER_EXTENSION_STATUSES_SNAPSHOT_EVENT,
-  type FancyFooterExtensionStatusSnapshot,
-  type FancyFooterExtensionStatusesListener,
+    getExtensionStatusesSnapshot as getFancyFooterExtensionStatusesSnapshot,
+    subscribeExtensionStatusesSnapshot as subscribeFancyFooterExtensionStatuses,
+    publishExtensionStatusesSnapshot,
+    FANCY_FOOTER_EXTENSION_STATUSES_SNAPSHOT_EVENT,
+    type FancyFooterExtensionStatusSnapshot,
+    type FancyFooterExtensionStatusesListener,
 } from "pi-fancy-footer/api";
 
 export interface WidgetHandle {
-  /** Whether fancy-footer is active. If false, use update(_, text) and remove() for fallback. */
-  readonly active: boolean;
-  /**
-   * Refresh the widget display.
-   * - fancy-footer mode: the render closure provides text automatically.
-   * - fallback mode: pass the text to display, or null/undefined to hide.
-   */
-  update(ctx: ExtensionContext, fallbackText?: string | null): void;
-  /** Hide/remove the widget (only needed in fallback mode). */
-  remove(ctx: ExtensionContext): void;
+    /** Whether fancy-footer is active. If false, use update(_, text) and remove() for fallback. */
+    readonly active: boolean;
+    /**
+     * Refresh the widget display.
+     * - fancy-footer mode: the render closure provides text automatically.
+     * - fallback mode: pass the text to display, or null/undefined to hide.
+     */
+    update(ctx: ExtensionContext, fallbackText?: string | null): void;
+    /** Hide/remove the widget (only needed in fallback mode). */
+    remove(ctx: ExtensionContext): void;
 }
 
 /**
@@ -59,42 +62,47 @@ export interface WidgetHandle {
 const MAX_ORDER = 64;
 
 export function createWidget(
-  pi: ExtensionAPI,
-  def: FancyFooterWidgetContribution,
+    pi: ExtensionAPI,
+    def: FancyFooterWidgetContribution,
 ): WidgetHandle {
-  const safeDef: FancyFooterWidgetContribution = {
-    ...def,
-    order: def.order !== undefined ? Math.min(def.order, MAX_ORDER) : undefined,
-  };
+    const safeDef: FancyFooterWidgetContribution = {
+        ...def,
+        order:
+            def.order !== undefined
+                ? Math.min(def.order, MAX_ORDER)
+                : undefined,
+    };
 
-  let isActive = false;
+    let isActive = false;
 
-  try {
-    contributeFancyFooterWidgets(pi, safeDef);
-    requestFancyFooterWidgetDiscovery(pi);
-    isActive = true;
-  } catch {
-    // pi-fancy-footer not installed — widget will use fallback path
-  }
+    try {
+        contributeFancyFooterWidgets(pi, safeDef);
+        requestFancyFooterWidgetDiscovery(pi);
+        isActive = true;
+    } catch {
+        // pi-fancy-footer not installed — widget will use fallback path
+    }
 
-  return {
-    get active() {
-      return isActive;
-    },
+    return {
+        get active() {
+            return isActive;
+        },
 
-    update(ctx: ExtensionContext, fallbackText?: string | null): void {
-      if (isActive) {
-        requestFancyFooterRefresh(pi);
-      } else if (ctx.hasUI) {
-        ctx.ui.setWidget(def.id, fallbackText ? [fallbackText] : undefined);
-      }
-    },
+        update(ctx: ExtensionContext, fallbackText?: string | null): void {
+            if (isActive) {
+                requestFancyFooterRefresh(pi);
+            } else if (ctx.hasUI) {
+                ctx.ui.setWidget(
+                    def.id,
+                    fallbackText ? [fallbackText] : undefined,
+                );
+            }
+        },
 
-    remove(ctx: ExtensionContext): void {
-      if (!isActive && ctx.hasUI) {
-        ctx.ui.setWidget(def.id, undefined);
-      }
-    },
-  };
+        remove(ctx: ExtensionContext): void {
+            if (!isActive && ctx.hasUI) {
+                ctx.ui.setWidget(def.id, undefined);
+            }
+        },
+    };
 }
-

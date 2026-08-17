@@ -10,71 +10,71 @@
  *   /caveman config   Open settings dialog (default level, status bar toggle)
  */
 
-import { readFileSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFileSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type {
     ExtensionAPI,
     ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     getAgentDir,
     getSettingsListTheme,
     loadSkillsFromDir,
     stripFrontmatter,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     Container,
     type SettingItem,
     SettingsList,
     Text,
-} from '@earendil-works/pi-tui';
-import { loadCavemanConfig } from './config';
-import { SAVE_TOKENS_CAVEMAN_DEFAULT_LEVEL_ENV } from './subagent-profile.ts';
+} from "@earendil-works/pi-tui";
+import { loadCavemanConfig } from "./config";
+import { SAVE_TOKENS_CAVEMAN_DEFAULT_LEVEL_ENV } from "./subagent-profile.ts";
 
 // ---------------------------------------------------------------------------
 // Levels
 // ---------------------------------------------------------------------------
 
 const LEVELS = [
-    'off',
-    'lite',
-    'full',
-    'ultra',
-    'wenyan-lite',
-    'wenyan-full',
-    'wenyan-ultra',
-    'micro',
+    "off",
+    "lite",
+    "full",
+    "ultra",
+    "wenyan-lite",
+    "wenyan-full",
+    "wenyan-ultra",
+    "micro",
 ] as const;
 export { LEVELS };
 const CAVEMAN_LEVELS = new Set<string>(LEVELS);
-const STOP_ALIASES = new Set(['off', 'stop', 'quit']);
+const STOP_ALIASES = new Set(["off", "stop", "quit"]);
 type Level = (typeof LEVELS)[number];
 
 const CAVEMAN_COMMAND_OPTIONS = [
-    { value: 'lite', label: 'lite', description: 'Professional, no fluff' },
-    { value: 'full', label: 'full', description: 'Classic caveman' },
-    { value: 'ultra', label: 'ultra', description: 'Maximum compression' },
+    { value: "lite", label: "lite", description: "Professional, no fluff" },
+    { value: "full", label: "full", description: "Classic caveman" },
+    { value: "ultra", label: "ultra", description: "Maximum compression" },
     {
-        value: 'wenyan-lite',
-        label: 'wenyan-lite',
-        description: 'Semi-classical Chinese',
+        value: "wenyan-lite",
+        label: "wenyan-lite",
+        description: "Semi-classical Chinese",
     },
-    { value: 'wenyan-full', label: 'wenyan-full', description: 'Full 文言文' },
+    { value: "wenyan-full", label: "wenyan-full", description: "Full 文言文" },
     {
-        value: 'wenyan-ultra',
-        label: 'wenyan-ultra',
-        description: 'Extreme 文言文',
+        value: "wenyan-ultra",
+        label: "wenyan-ultra",
+        description: "Extreme 文言文",
     },
     {
-        value: 'micro',
-        label: 'micro',
-        description: 'Experimental prompt-minimized mode',
+        value: "micro",
+        label: "micro",
+        description: "Experimental prompt-minimized mode",
     },
-    { value: 'off', label: 'off', description: 'Disable caveman mode' },
-    { value: 'stop', label: 'stop', description: 'Disable caveman mode' },
-    { value: 'quit', label: 'quit', description: 'Disable caveman mode' },
-    { value: 'config', label: 'config', description: 'Open settings dialog' },
+    { value: "off", label: "off", description: "Disable caveman mode" },
+    { value: "stop", label: "stop", description: "Disable caveman mode" },
+    { value: "quit", label: "quit", description: "Disable caveman mode" },
+    { value: "config", label: "config", description: "Open settings dialog" },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -87,25 +87,25 @@ interface CavemanSettings {
 }
 
 const DEFAULT_SETTINGS: CavemanSettings = {
-    defaultLevel: 'full',
+    defaultLevel: "full",
     showStatus: true,
 };
 let saveSettingsQueue: Promise<void> = Promise.resolve();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function saveCavemanSettings(
     updates: Partial<CavemanSettings>,
 ): Promise<void> {
     const agentDir = getAgentDir();
-    const settingsPath = join(agentDir, 'settings.json');
+    const settingsPath = join(agentDir, "settings.json");
 
     saveSettingsQueue = saveSettingsQueue.then(async () => {
         let settings: Record<string, unknown> = {};
         try {
-            const raw = await readFile(settingsPath, 'utf8');
+            const raw = await readFile(settingsPath, "utf8");
             const parsed: unknown = JSON.parse(raw);
             if (isRecord(parsed)) settings = parsed;
         } catch {
@@ -127,8 +127,8 @@ async function saveCavemanSettings(
 
         await writeFile(
             settingsPath,
-            JSON.stringify(settings, null, 2) + '\n',
-            'utf8',
+            JSON.stringify(settings, null, 2) + "\n",
+            "utf8",
         );
     });
 
@@ -150,12 +150,12 @@ class AnimationTimer {
     handle?: ReturnType<typeof setInterval>;
 }
 
-const R = '\x1b[38;5;196m'; // red
-const O = '\x1b[38;5;208m'; // orange
-const Y = '\x1b[38;5;220m'; // yellow
-const W = '\x1b[38;5;230m'; // white-hot
-const E = '\x1b[38;5;52m'; // ember (dark red)
-const X = '\x1b[0m'; // reset
+const R = "\x1b[38;5;196m"; // red
+const O = "\x1b[38;5;208m"; // orange
+const Y = "\x1b[38;5;220m"; // yellow
+const W = "\x1b[38;5;230m"; // white-hot
+const E = "\x1b[38;5;52m"; // ember (dark red)
+const X = "\x1b[0m"; // reset
 
 const FIRE_FRAMES = [
     `${R}⠠${O}⠄${X}`,
@@ -168,14 +168,14 @@ const FIRE_FRAMES = [
     `${E}⠔${R}⠂${X}`,
 ];
 
-const ANIMATIONS: Record<Exclude<Level, 'off'>, Animation> = {
-    lite: { frames: FIRE_FRAMES, label: 'LITE', interval: 300 },
-    full: { frames: FIRE_FRAMES, label: 'FULL', interval: 200 },
-    ultra: { frames: FIRE_FRAMES, label: 'ULTRA', interval: 100 },
-    'wenyan-lite': { frames: FIRE_FRAMES, label: '文言', interval: 300 },
-    'wenyan-full': { frames: FIRE_FRAMES, label: '文言文', interval: 200 },
-    'wenyan-ultra': { frames: FIRE_FRAMES, label: '文言文極', interval: 100 },
-    micro: { frames: FIRE_FRAMES, label: 'MICRO', interval: 120 },
+const ANIMATIONS: Record<Exclude<Level, "off">, Animation> = {
+    lite: { frames: FIRE_FRAMES, label: "LITE", interval: 300 },
+    full: { frames: FIRE_FRAMES, label: "FULL", interval: 200 },
+    ultra: { frames: FIRE_FRAMES, label: "ULTRA", interval: 100 },
+    "wenyan-lite": { frames: FIRE_FRAMES, label: "文言", interval: 300 },
+    "wenyan-full": { frames: FIRE_FRAMES, label: "文言文", interval: 200 },
+    "wenyan-ultra": { frames: FIRE_FRAMES, label: "文言文極", interval: 100 },
+    micro: { frames: FIRE_FRAMES, label: "MICRO", interval: 120 },
 };
 
 // ---------------------------------------------------------------------------
@@ -213,15 +213,15 @@ export function loadCavemanSkillBody(): string | undefined {
 
     try {
         const { skills } = loadSkillsFromDir({
-            dir: join(getAgentDir(), 'skills'),
-            source: 'user',
+            dir: join(getAgentDir(), "skills"),
+            source: "user",
         });
-        const skill = skills.find((s) => s.name === 'caveman');
+        const skill = skills.find((s) => s.name === "caveman");
         if (!skill) {
             cachedSkillBody = undefined;
             return undefined;
         }
-        const raw = readFileSync(skill.filePath, 'utf8');
+        const raw = readFileSync(skill.filePath, "utf8");
         cachedSkillBody = stripFrontmatter(raw).trim();
         return cachedSkillBody;
     } catch {
@@ -248,10 +248,10 @@ export function resetCavemanCacheForTests(): void {
  */
 export function buildCavemanPrompt(level: string): string | null {
     // off → never inject
-    if (level === 'off') return null;
+    if (level === "off") return null;
 
     // micro is not documented by the canonical skill → use the local prompt
-    if (level === 'micro') {
+    if (level === "micro") {
         return MICRO_PROMPT;
     }
 
@@ -273,8 +273,8 @@ function isKnownCavemanLevel(value: string): value is Level {
 }
 
 /** Type guard: narrow a runtime string to a valid Caveman level. */
-function isCavemanLevel(value: string): value is Exclude<Level, 'off'> {
-    return isKnownCavemanLevel(value) && value !== 'off';
+function isCavemanLevel(value: string): value is Exclude<Level, "off"> {
+    return isKnownCavemanLevel(value) && value !== "off";
 }
 
 /**
@@ -316,7 +316,7 @@ const CAVEMAN_LEVEL_RE = /ACTIVE LEVEL:\s*([\w-]+)/i;
  *          marker is absent (level off or no Caveman injection active).
  */
 export function detectCavemanLevel(systemPrompt: string): string | null {
-    if (typeof systemPrompt !== 'string') return null;
+    if (typeof systemPrompt !== "string") return null;
     const match = systemPrompt.match(CAVEMAN_LEVEL_RE);
     return match ? match[1]!.toLowerCase() : null;
 }
@@ -326,7 +326,7 @@ export function detectCavemanLevel(systemPrompt: string): string | null {
 // ---------------------------------------------------------------------------
 
 export default function caveman(pi: ExtensionAPI) {
-    let level: Level = 'off';
+    let level: Level = "off";
     let settings: CavemanSettings = { ...DEFAULT_SETTINGS };
     const timer = new AnimationTimer();
     let frameIndex = 0;
@@ -340,10 +340,10 @@ export default function caveman(pi: ExtensionAPI) {
         if (cfg.defaultLevel && LEVELS.includes(cfg.defaultLevel as Level)) {
             settings.defaultLevel = cfg.defaultLevel as Level;
         }
-        if (typeof cfg.showStatus === 'boolean') {
+        if (typeof cfg.showStatus === "boolean") {
             settings.showStatus = cfg.showStatus;
         }
-        if (level === 'off' && settings.defaultLevel !== 'off') {
+        if (level === "off" && settings.defaultLevel !== "off") {
             level = settings.defaultLevel;
         }
     }
@@ -358,23 +358,23 @@ export default function caveman(pi: ExtensionAPI) {
         frameIndex = 0;
     }
 
-    function syncStatus(ctx: Pick<ExtensionContext, 'ui'>) {
+    function syncStatus(ctx: Pick<ExtensionContext, "ui">) {
         stopAnimation();
         const theme = ctx.ui.theme;
 
-        if (level === 'off' || !settings.showStatus) {
-            ctx.ui.setStatus('caveman', '');
+        if (level === "off" || !settings.showStatus) {
+            ctx.ui.setStatus("caveman", "");
             return;
         }
 
         const anim = ANIMATIONS[level];
         const setFrame = (frame: string) => {
             ctx.ui.setStatus(
-                'caveman',
+                "caveman",
                 frame +
-                    ' ' +
-                    theme.fg('muted', 'caveman level: ') +
-                    theme.fg('text', anim.label),
+                    " " +
+                    theme.fg("muted", "caveman level: ") +
+                    theme.fg("text", anim.label),
             );
         };
 
@@ -397,47 +397,47 @@ export default function caveman(pi: ExtensionAPI) {
 
     // -- Restore state on session load --
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         ensureConfigLoaded();
 
         // Check for session-level override first (resuming a session)
         let sessionLevel: Level | null = null;
         for (const entry of ctx.sessionManager.getEntries()) {
             if (
-                entry.type === 'custom' &&
-                entry.customType === 'caveman-level'
+                entry.type === "custom" &&
+                entry.customType === "caveman-level"
             ) {
                 sessionLevel = (entry.data as { level: Level })?.level ?? null;
             }
         }
 
         level = resolveCavemanInitialLevel(sessionLevel, settings.defaultLevel);
-        if (sessionLevel === null && level !== 'off') {
+        if (sessionLevel === null && level !== "off") {
             // New session — persist the effective default (profile or config).
-            pi.appendEntry('caveman-level', { level });
+            pi.appendEntry("caveman-level", { level });
         }
 
         syncStatus(ctx);
     });
 
-    pi.on('agent_start', async (_event, ctx) => {
+    pi.on("agent_start", async (_event, ctx) => {
         isActive = true;
         syncStatus(ctx);
     });
 
-    pi.on('agent_end', async (_event, ctx) => {
+    pi.on("agent_end", async (_event, ctx) => {
         isActive = false;
         syncStatus(ctx);
     });
 
-    pi.on('session_shutdown', async () => {
+    pi.on("session_shutdown", async () => {
         stopAnimation();
         isActive = false;
     });
 
     // -- /caveman command --
 
-    pi.registerCommand('caveman', {
+    pi.registerCommand("caveman", {
         description:
             "Toggle caveman mode, set level, use stop/off/quit to disable, or 'config' to open settings",
         getArgumentCompletions: (prefix: string) => {
@@ -451,33 +451,33 @@ export default function caveman(pi: ExtensionAPI) {
             const arg = args?.trim().toLowerCase();
 
             // Open config dialog
-            if (arg === 'config') {
+            if (arg === "config") {
                 await openConfig(ctx);
                 return;
             }
 
             if (!arg) {
-                level = level === 'off' ? 'full' : 'off';
+                level = level === "off" ? "full" : "off";
             } else if (STOP_ALIASES.has(arg)) {
-                level = 'off';
+                level = "off";
             } else if (LEVELS.includes(arg as Level)) {
                 level = arg as Level;
             } else {
                 ctx.ui.notify(
-                    `Unknown: "${arg}". Use: ${LEVELS.join(', ')}, stop, quit, or config`,
-                    'error',
+                    `Unknown: "${arg}". Use: ${LEVELS.join(", ")}, stop, quit, or config`,
+                    "error",
                 );
                 return;
             }
 
-            pi.appendEntry('caveman-level', { level });
+            pi.appendEntry("caveman-level", { level });
             syncStatus(ctx);
 
             ctx.ui.notify(
-                level === 'off'
-                    ? 'Caveman mode off.'
+                level === "off"
+                    ? "Caveman mode off."
                     : `Caveman: ${ANIMATIONS[level].label}`,
-                'info',
+                "info",
             );
         },
     });
@@ -490,50 +490,50 @@ export default function caveman(pi: ExtensionAPI) {
         await ctx.ui.custom((_tui, theme, _kb, done) => {
             const items: SettingItem[] = [
                 {
-                    id: 'defaultLevel',
-                    label: 'Default level for new sessions',
+                    id: "defaultLevel",
+                    label: "Default level for new sessions",
                     currentValue: settings.defaultLevel,
                     values: [...LEVELS],
                 },
                 {
-                    id: 'showStatus',
-                    label: 'Show animated status bar',
-                    currentValue: settings.showStatus ? 'on' : 'off',
-                    values: ['on', 'off'],
+                    id: "showStatus",
+                    label: "Show animated status bar",
+                    currentValue: settings.showStatus ? "on" : "off",
+                    values: ["on", "off"],
                 },
             ];
 
             const container = new Container();
             container.addChild(
                 new Text(
-                    theme.fg('accent', theme.bold(' Caveman Config')),
+                    theme.fg("accent", theme.bold(" Caveman Config")),
                     0,
                     0,
                 ),
             );
             container.addChild(
-                new Text(theme.fg('dim', ' Saved to settings.json'), 0, 0),
+                new Text(theme.fg("dim", " Saved to settings.json"), 0, 0),
             );
             container.addChild(
                 new Text(
                     theme.fg(
-                        'dim',
-                        ' Default level applies to future sessions.',
+                        "dim",
+                        " Default level applies to future sessions.",
                     ),
                     0,
                     0,
                 ),
             );
-            container.addChild(new Text('', 0, 0));
+            container.addChild(new Text("", 0, 0));
 
             const applySettingChange = (id: string, newValue: string) => {
                 if (
-                    id === 'defaultLevel' &&
+                    id === "defaultLevel" &&
                     LEVELS.includes(newValue as Level)
                 ) {
                     settings.defaultLevel = newValue as Level;
-                } else if (id === 'showStatus') {
-                    settings.showStatus = newValue === 'on';
+                } else if (id === "showStatus") {
+                    settings.showStatus = newValue === "on";
                 }
                 void saveCavemanSettings({
                     defaultLevel: settings.defaultLevel,
@@ -554,8 +554,8 @@ export default function caveman(pi: ExtensionAPI) {
             container.addChild(
                 new Text(
                     theme.fg(
-                        'dim',
-                        ' ←→/hl/tab change • ↑↓/jk move • esc close',
+                        "dim",
+                        " ←→/hl/tab change • ↑↓/jk move • esc close",
                     ),
                     0,
                     0,
@@ -583,21 +583,21 @@ export default function caveman(pi: ExtensionAPI) {
                 render: (w: number) => container.render(w),
                 invalidate: () => container.invalidate(),
                 handleInput: (data: string) => {
-                    if (data === 'j') data = '\u001b[B';
-                    else if (data === 'k') data = '\u001b[A';
-                    else if (data === 'h') {
+                    if (data === "j") data = "\u001b[B";
+                    else if (data === "k") data = "\u001b[A";
+                    else if (data === "h") {
                         cycleSelectedValue(-1);
                         _tui.requestRender();
                         return;
                     } else if (
-                        data === 'l' ||
-                        data === '\u001b[C' ||
-                        data === '\t'
+                        data === "l" ||
+                        data === "\u001b[C" ||
+                        data === "\t"
                     ) {
                         cycleSelectedValue(1);
                         _tui.requestRender();
                         return;
-                    } else if (data === '\u001b[D') {
+                    } else if (data === "\u001b[D") {
                         cycleSelectedValue(-1);
                         _tui.requestRender();
                         return;
@@ -612,7 +612,7 @@ export default function caveman(pi: ExtensionAPI) {
 
     // -- Inject caveman rules into system prompt --
 
-    pi.on('before_agent_start', async (event) => {
+    pi.on("before_agent_start", async (event) => {
         ensureConfigLoaded();
         const injection = buildCavemanPrompt(level);
         if (!injection) return;

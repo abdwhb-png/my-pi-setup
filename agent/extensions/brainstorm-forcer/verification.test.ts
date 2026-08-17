@@ -76,7 +76,7 @@ describe("verification routing policy", () => {
             "performance-reviewer",
         ]);
         for (const agent of [
-            "expert-reviewer",
+            "code-reviewer",
             "reviewer",
             "worker",
             "oracle",
@@ -235,7 +235,7 @@ describe("verification chain payload — installed schema contract", () => {
         expect(serialized).not.toContain('"outputMode"');
     });
 
-    it("never emits expert-reviewer, reviewer, worker, or oracle in generated steps", () => {
+    it("never emits code-reviewer, reviewer, worker, or oracle in generated steps", () => {
         const { chain } = buildVerificationChain({
             runId: "run-1",
             claims: [
@@ -248,7 +248,7 @@ describe("verification chain payload — installed schema contract", () => {
         });
         const serialized = JSON.stringify(chain);
         for (const forbidden of [
-            "expert-reviewer",
+            "code-reviewer",
             '"reviewer"',
             "worker",
             "oracle",

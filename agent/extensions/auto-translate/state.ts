@@ -8,13 +8,13 @@ import type {
     RuntimeState,
     StatusRenderMode,
     TranslateConfig,
-} from './types.ts';
+} from "./types.ts";
 
 /** Fallback target code when the configured default is missing from `languages`. */
-const FALLBACK_TARGET = 'en';
+const FALLBACK_TARGET = "en";
 
-export const icon = '🌐';
-export const offIcon = '🚫';
+export const icon = "🌐";
+export const offIcon = "🚫";
 
 /** Create a fresh runtime state object from config defaults. */
 export function createState(config: TranslateConfig): RuntimeState {
@@ -41,7 +41,7 @@ export function buildStatusRenderText(
     return `${icon}translate → ${name} | ${mode}`;
 }
 
-export const offText = `${icon}translate: off`
+export const offText = `${icon}translate: off`;
 
 /** Render the fancy-footer status text for the current state. */
 export function buildStatusText(
@@ -50,6 +50,6 @@ export function buildStatusText(
 ): string {
     if (!state.enabled) return offText;
     const name = config.languages[state.target] ?? state.target;
-    const mode: StatusRenderMode = state.sendEnabled ? 'send' : 'display';
+    const mode: StatusRenderMode = state.sendEnabled ? "send" : "display";
     return buildStatusRenderText(name, mode);
 }

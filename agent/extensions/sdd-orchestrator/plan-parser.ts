@@ -1,12 +1,12 @@
-import { posix } from 'node:path';
-import { Type } from '@sinclair/typebox';
-import { Value } from '@sinclair/typebox/value';
-import type { ParsedPlan } from './types.ts';
+import { posix } from "node:path";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
+import type { ParsedPlan } from "./types.ts";
 
 const TASK_HEADING = /^### Task ([1-9][0-9]*):[ \t]+(.+)$/gm;
 
 const NonBlankText = (maxLength: number) =>
-    Type.String({ minLength: 1, maxLength, pattern: '\\S' });
+    Type.String({ minLength: 1, maxLength, pattern: "\\S" });
 
 const ValidationCommandSchema = Type.Object(
     {
@@ -30,14 +30,14 @@ const BrowserScenarioSchema = Type.Object(
 );
 
 function canonicalizeProjectFile(file: string, taskId: string): string {
-    const portable = file.trim().replaceAll('\\', '/');
+    const portable = file.trim().replaceAll("\\", "/");
     const canonical = posix.normalize(portable);
     if (
         !portable ||
         posix.isAbsolute(canonical) ||
         /^[A-Za-z]:\//.test(portable) ||
-        canonical === '..' ||
-        canonical.startsWith('../')
+        canonical === ".." ||
+        canonical.startsWith("../")
     ) {
         throw new Error(
             `${taskId} file ${JSON.stringify(file)} must stay within the project root.`,
@@ -48,12 +48,14 @@ function canonicalizeProjectFile(file: string, taskId: string): string {
 
 const MetadataSchema = Type.Object(
     {
-        id: Type.String({ pattern: '^task-[1-9][0-9]*$' }),
-        dependsOn: Type.Array(Type.String({ pattern: '^task-[1-9][0-9]*$' })),
+        id: Type.String({ pattern: "^task-[1-9][0-9]*$" }),
+        dependsOn: Type.Array(Type.String({ pattern: "^task-[1-9][0-9]*$" })),
         files: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
         verify: Type.Array(ValidationCommandSchema, { minItems: 1 }),
         qa: Type.Optional(Type.Array(ValidationCommandSchema, { minItems: 1 })),
-        browser: Type.Optional(Type.Array(BrowserScenarioSchema, { minItems: 1 })),
+        browser: Type.Optional(
+            Type.Array(BrowserScenarioSchema, { minItems: 1 }),
+        ),
     },
     { additionalProperties: false },
 );
@@ -80,12 +82,12 @@ export function parseSddPlan(content: string): ParsedPlan {
     const titleMatches = [...content.matchAll(/^#[ \t]+(.+)$/gm)];
     const title = titleMatches[0]?.[1].trim();
     if (titleMatches.length !== 1 || !title)
-        throw new Error('SDD plan requires one level-one title.');
+        throw new Error("SDD plan requires one level-one title.");
 
     const matches = [...content.matchAll(TASK_HEADING)];
     if (matches.length === 0) {
         throw new Error(
-            'SDD plan requires at least one exact ### Task N: Title heading.',
+            "SDD plan requires at least one exact ### Task N: Title heading.",
         );
     }
 
@@ -93,7 +95,7 @@ export function parseSddPlan(content: string): ParsedPlan {
         const ordinal = Number(match[1]);
         if (ordinal !== index + 1) {
             throw new Error(
-                'Task headings must be contiguous and ordered from 1.',
+                "Task headings must be contiguous and ordered from 1.",
             );
         }
 
@@ -120,12 +122,12 @@ export function parseSddPlan(content: string): ParsedPlan {
         if (!Value.Check(MetadataSchema, metadata)) {
             const errors = [...Value.Errors(MetadataSchema, metadata)]
                 .map((error) => error.message)
-                .join('; ');
+                .join("; ");
             throw new Error(`Task ${ordinal} metadata is invalid: ${errors}`);
         }
-        assertUniqueIds(metadata.id, ordinal, 'verify', metadata.verify);
-        assertUniqueIds(metadata.id, ordinal, 'qa', metadata.qa);
-        assertUniqueIds(metadata.id, ordinal, 'browser', metadata.browser);
+        assertUniqueIds(metadata.id, ordinal, "verify", metadata.verify);
+        assertUniqueIds(metadata.id, ordinal, "qa", metadata.qa);
+        assertUniqueIds(metadata.id, ordinal, "browser", metadata.browser);
         if (metadata.id !== `task-${ordinal}`) {
             throw new Error(
                 `Task ${ordinal} metadata id must be task-${ordinal}.`,

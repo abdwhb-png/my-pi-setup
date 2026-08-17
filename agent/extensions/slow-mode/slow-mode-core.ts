@@ -6,10 +6,10 @@
  * Mirrors the pattern established by `extensions/diff/core.ts`.
  */
 
-import { relative, resolve } from 'node:path';
-import type { SettingsManager } from '@earendil-works/pi-coding-agent';
-import { loadExtensionConfig } from '../_shared/config-loader.ts';
-import { normalizeBooleanMap } from '../_shared/settings.ts';
+import { relative, resolve } from "node:path";
+import type { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
+import { normalizeBooleanMap } from "../_shared/settings.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,9 +19,9 @@ import { normalizeBooleanMap } from '../_shared/settings.ts';
  * Edit operation in a diff: keep, insert, or delete a line.
  */
 export type Edit =
-    | { type: 'keep'; line: string }
-    | { type: 'insert'; line: string }
-    | { type: 'delete'; line: string };
+    | { type: "keep"; line: string }
+    | { type: "insert"; line: string }
+    | { type: "delete"; line: string };
 
 /**
  * A hunk in a unified diff.
@@ -130,18 +130,18 @@ export function myersDiff(oldLines: string[], newLines: string[]): Edit[] {
         while (x > prevX && y > prevY) {
             x--;
             y--;
-            edits.push({ type: 'keep', line: oldLines[x] });
+            edits.push({ type: "keep", line: oldLines[x] });
         }
 
         if (d > 0) {
             if (x === prevX) {
                 // Vertical move: insert from new
                 y--;
-                edits.push({ type: 'insert', line: newLines[y] });
+                edits.push({ type: "insert", line: newLines[y] });
             } else {
                 // Horizontal move: delete from old
                 x--;
-                edits.push({ type: 'delete', line: oldLines[x] });
+                edits.push({ type: "delete", line: oldLines[x] });
             }
         }
     }
@@ -166,7 +166,7 @@ export function buildHunks(edits: Edit[], contextLines: number): Hunk[] {
     // Find indices of all change operations (insert or delete)
     const changeIndices: number[] = [];
     for (let i = 0; i < edits.length; i++) {
-        if (edits[i].type !== 'keep') {
+        if (edits[i].type !== "keep") {
             changeIndices.push(i);
         }
     }
@@ -206,25 +206,25 @@ export function buildHunks(edits: Edit[], contextLines: number): Hunk[] {
         let oldLine = 1;
         let newLine = 1;
         for (let i = 0; i < hunkStart; i++) {
-            if (edits[i].type === 'keep' || edits[i].type === 'delete')
+            if (edits[i].type === "keep" || edits[i].type === "delete")
                 oldLine++;
-            if (edits[i].type === 'keep' || edits[i].type === 'insert')
+            if (edits[i].type === "keep" || edits[i].type === "insert")
                 newLine++;
         }
 
         for (let i = hunkStart; i <= hunkEnd; i++) {
             const edit = edits[i];
             switch (edit.type) {
-                case 'keep':
+                case "keep":
                     lines.push(` ${edit.line}`);
                     oldCount++;
                     newCount++;
                     break;
-                case 'delete':
+                case "delete":
                     lines.push(`-${edit.line}`);
                     oldCount++;
                     break;
-                case 'insert':
+                case "insert":
                     lines.push(`+${edit.line}`);
                     newCount++;
                     break;
@@ -264,8 +264,8 @@ export function generateUnifiedDiff(
     newText: string,
     contextLines = 3,
 ): string {
-    const oldLines = oldText.split('\n');
-    const newLines = newText.split('\n');
+    const oldLines = oldText.split("\n");
+    const newLines = newText.split("\n");
     const edits = myersDiff(oldLines, newLines);
     const hunks = buildHunks(edits, contextLines);
 
@@ -282,7 +282,7 @@ export function generateUnifiedDiff(
         }
     }
 
-    return out.join('\n');
+    return out.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -339,8 +339,8 @@ export function extractEditText(
 
     if (edits && Array.isArray(edits) && edits.length > 0) {
         return {
-            oldText: edits.map((e) => e.oldText).join('\n'),
-            newText: edits.map((e) => e.newText).join('\n'),
+            oldText: edits.map((e) => e.oldText).join("\n"),
+            newText: edits.map((e) => e.newText).join("\n"),
         };
     }
 
@@ -383,13 +383,13 @@ export function autoAcceptKey(
     toolName: string,
     params: Record<string, unknown>,
 ): string | null {
-    if (toolName === 'bash' || toolName === 'safe_bash') {
+    if (toolName === "bash" || toolName === "safe_bash") {
         const command = params.command;
-        return typeof command === 'string' ? command : null;
+        return typeof command === "string" ? command : null;
     }
-    if (toolName === 'write' || toolName === 'edit') {
+    if (toolName === "write" || toolName === "edit") {
         const path = params.path;
-        return typeof path === 'string' ? path : null;
+        return typeof path === "string" ? path : null;
     }
     // Generic: serialize params as key so auto-accept works per-param-set
     return JSON.stringify(params);
@@ -456,8 +456,8 @@ export function loadSlowModeConfig(
         normalize: normalizeBooleanMap,
         sources: [
             {
-                settingsKey: 'slowMode',
-                legacyFilename: 'slow-mode.json',
+                settingsKey: "slowMode",
+                legacyFilename: "slow-mode.json",
                 cumulative: true,
             },
         ],

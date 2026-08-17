@@ -1,11 +1,11 @@
-import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import type {
     ExtensionAPI,
     SlashCommandInfo,
-} from '@earendil-works/pi-coding-agent';
-import { parseFrontmatter } from '@earendil-works/pi-coding-agent';
-import { isThinkingLevel } from '../_shared/thinking.ts';
+} from "@earendil-works/pi-coding-agent";
+import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { isThinkingLevel } from "../_shared/thinking.ts";
 
 /**
  * Detect if the input starts with a slash command.
@@ -16,7 +16,7 @@ function parseSlashCommand(
 ): { name: string; rest: string } | null {
     const match = text.match(/^\/(\S+)(?:\s+(.*))?$/s);
     if (!match) return null;
-    return { name: match[1], rest: match[2] ?? '' };
+    return { name: match[1], rest: match[2] ?? "" };
 }
 
 /**
@@ -26,7 +26,7 @@ function findPromptCommand(
     commands: SlashCommandInfo[],
     name: string,
 ): SlashCommandInfo | undefined {
-    return commands.find((cmd) => cmd.source === 'prompt' && cmd.name === name);
+    return commands.find((cmd) => cmd.source === "prompt" && cmd.name === name);
 }
 
 /**
@@ -37,7 +37,7 @@ function applyPromptThinking(
     command: SlashCommandInfo,
 ): void {
     try {
-        const raw = readFileSync(command.sourceInfo.path, 'utf-8');
+        const raw = readFileSync(command.sourceInfo.path, "utf-8");
         const { frontmatter } = parseFrontmatter<{ thinking?: unknown }>(raw);
         if (
             frontmatter.thinking !== undefined &&
@@ -58,15 +58,15 @@ function applyPromptThinking(
  *   registerPromptThinking(pi);
  */
 export function registerPromptThinking(pi: ExtensionAPI): void {
-    pi.on('input', async (event) => {
+    pi.on("input", async (event) => {
         const parsed = parseSlashCommand(event.text);
-        if (!parsed) return { action: 'continue' as const };
+        if (!parsed) return { action: "continue" as const };
 
         const commands = pi.getCommands();
         const promptCommand = findPromptCommand(commands, parsed.name);
-        if (!promptCommand) return { action: 'continue' as const };
+        if (!promptCommand) return { action: "continue" as const };
 
         applyPromptThinking(pi, promptCommand);
-        return { action: 'continue' as const };
+        return { action: "continue" as const };
     });
 }

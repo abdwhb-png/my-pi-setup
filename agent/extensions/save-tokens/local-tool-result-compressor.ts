@@ -158,7 +158,7 @@ export default function localToolResultCompressor(
     const backendFailureReason = configDiagnostics.some(
         (diagnostic) => diagnostic.id === "invalid_backend",
     )
-        ? "invalid_backend" as const
+        ? ("invalid_backend" as const)
         : undefined;
     const widget = createWidget(pi, {
         id: WIDGET_ID,
@@ -210,7 +210,8 @@ export default function localToolResultCompressor(
             archiveOriginal: config.archiveOriginal
                 ? archiveOriginalToolResult
                 : undefined,
-            capFallbackBytes: config.capFallbackBytes,
+            capFallbackTokens: config.capFallbackTokens,
+            maxFallbackBytes: config.maxFallbackBytes,
             routingStrategy: config.routingStrategy,
             enabled: config.enabled,
             excludeTools: config.excludeTools,

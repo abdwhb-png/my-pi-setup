@@ -1,4 +1,4 @@
-export const PROFILES = ['direct', 'light', 'standard', 'critical'] as const;
+export const PROFILES = ["direct", "light", "standard", "critical"] as const;
 export type Profile = (typeof PROFILES)[number];
 
 export interface VerifyCommand {

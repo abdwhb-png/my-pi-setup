@@ -115,10 +115,13 @@ export interface CompressionAggregate {
   compressedCount: number;
   skippedCount: number;
   failedCount: number;
-  originalBytes: number;
-  finalBytes: number;
+  /** Sum of original output UTF-16 code units (chars) across observed results. */
+  originalChars: number;
+  /** Sum of final output UTF-16 code units (chars) across observed results. */
+  finalChars: number;
+  /** Char-derived savings (historical name retained; NOT bytes). */
   savedBytes: number;
-  /** Global ratio: savedBytes / originalBytes * 100, or 0 if no bytes. */
+  /** Global ratio: savedBytes / originalChars * 100, or 0 if no chars. */
   savingsPct: number;
 }
 
@@ -521,8 +524,8 @@ function emptyRow(key: string): AggregateRow {
       compressedCount: 0,
       skippedCount: 0,
       failedCount: 0,
-      originalBytes: 0,
-      finalBytes: 0,
+      originalChars: 0,
+      finalChars: 0,
       savedBytes: 0,
       savingsPct: 0,
     },
@@ -617,8 +620,8 @@ export function aggregateGroups(annotated: AnnotatedEvent[]): { rows: AggregateR
         const cd = ftr.compressionDetails;
         if (cd) {
           const comp = row.observedCompression;
-          comp.originalBytes += cd.originalLength;
-          comp.finalBytes += cd.compressedLength;
+          comp.originalChars += cd.originalLength;
+          comp.finalChars += cd.compressedLength;
           comp.savedBytes += cd.savedBytes;
           switch (cd.kind) {
             case "compressed":
@@ -636,8 +639,8 @@ export function aggregateGroups(annotated: AnnotatedEvent[]): { rows: AggregateR
           // No compression details observed — count contentLength as both
           // original and final (no compression effect observed)
           const comp = row.observedCompression;
-          comp.originalBytes += ftr.contentLength;
-          comp.finalBytes += ftr.contentLength;
+          comp.originalChars += ftr.contentLength;
+          comp.finalChars += ftr.contentLength;
         }
         break;
       }
@@ -659,8 +662,8 @@ export function aggregateGroups(annotated: AnnotatedEvent[]): { rows: AggregateR
 
     // Global savings ratio (not average of percentages)
     const comp = row.observedCompression;
-    if (comp.originalBytes > 0) {
-      comp.savingsPct = (comp.savedBytes / comp.originalBytes) * 100;
+    if (comp.originalChars > 0) {
+      comp.savingsPct = (comp.savedBytes / comp.originalChars) * 100;
     }
   }
 
@@ -695,8 +698,8 @@ const CSV_COLUMNS: Array<{ key: CsvColumnKey; label: string }> = [
   { key: "compression.compressedCount", label: "compression_compressedCount" },
   { key: "compression.skippedCount", label: "compression_skippedCount" },
   { key: "compression.failedCount", label: "compression_failedCount" },
-  { key: "compression.originalBytes", label: "compression_originalBytes" },
-  { key: "compression.finalBytes", label: "compression_finalBytes" },
+  { key: "compression.originalChars", label: "compression_originalChars" },
+  { key: "compression.finalChars", label: "compression_finalChars" },
   { key: "compression.savedBytes", label: "compression_savedBytes" },
   { key: "compression.savingsPct", label: "compression_savingsPct" },
 ];
@@ -779,8 +782,8 @@ export function exportCsv(result: AnalyticsResult): string {
       "compression.compressedCount": row.observedCompression.compressedCount,
       "compression.skippedCount": row.observedCompression.skippedCount,
       "compression.failedCount": row.observedCompression.failedCount,
-      "compression.originalBytes": row.observedCompression.originalBytes,
-      "compression.finalBytes": row.observedCompression.finalBytes,
+      "compression.originalChars": row.observedCompression.originalChars,
+      "compression.finalChars": row.observedCompression.finalChars,
       "compression.savedBytes": row.observedCompression.savedBytes,
       "compression.savingsPct": row.observedCompression.savingsPct,
     };

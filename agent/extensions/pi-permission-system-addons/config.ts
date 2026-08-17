@@ -5,9 +5,9 @@ import {
     renameSync,
     unlinkSync,
     writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
-import { loadExtensionConfig } from '../_shared/config-loader.ts';
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
 
 export interface AddonConfig {
     inherit: Record<string, string>;
@@ -16,16 +16,16 @@ export interface AddonConfig {
 export class AddonConfigError extends Error {
     constructor(message: string) {
         super(`[pi-permission-system-addons] ${message}`);
-        this.name = 'AddonConfigError';
+        this.name = "AddonConfigError";
     }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function getUpstreamConfigPath(agentDir: string): string {
-    return join(agentDir, 'extensions', 'pi-permission-system', 'config.json');
+    return join(agentDir, "extensions", "pi-permission-system", "config.json");
 }
 
 function readUpstreamConfig(agentDir: string): Record<string, unknown> {
@@ -33,9 +33,9 @@ function readUpstreamConfig(agentDir: string): Record<string, unknown> {
     if (!existsSync(configPath)) return {};
 
     try {
-        const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'));
+        const parsed: unknown = JSON.parse(readFileSync(configPath, "utf-8"));
         if (!isRecord(parsed)) {
-            throw new Error('config root must be an object');
+            throw new Error("config root must be an object");
         }
         return parsed;
     } catch (error) {
@@ -63,7 +63,7 @@ export function writeUpstreamYoloMode(
         writeFileSync(
             tmpPath,
             `${JSON.stringify(updated, null, 4)}\n`,
-            'utf-8',
+            "utf-8",
         );
         renameSync(tmpPath, configPath);
     } catch (error) {
@@ -86,7 +86,7 @@ function normalize(raw: unknown): Partial<AddonConfig> {
     if (isRecord(inheritRaw)) {
         const inherit: Record<string, string> = {};
         for (const [tool, surface] of Object.entries(inheritRaw)) {
-            if (typeof surface === 'string' && surface.length > 0) {
+            if (typeof surface === "string" && surface.length > 0) {
                 inherit[tool] = surface;
             }
         }
@@ -100,7 +100,7 @@ export function loadConfig(cwd: string, agentDir?: string): AddonConfig {
     return loadExtensionConfig(cwd, {
         defaults: { inherit: {} },
         normalize,
-        sources: [{ legacyFilename: 'pi-permission-system-addons.json' }],
+        sources: [{ legacyFilename: "pi-permission-system-addons.json" }],
         agentDir,
     });
 }

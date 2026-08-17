@@ -18,11 +18,11 @@
  * `prompts` setting are found by Pi but invisible to this extension.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, extname, join, resolve } from 'node:path';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { readFrontmatter, writeRoleSwitchRequest } from '../_shared/pi-roles';
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, extname, join, resolve } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readFrontmatter, writeRoleSwitchRequest } from "../_shared/pi-roles";
 
 // ── Constants ──
 
@@ -30,10 +30,10 @@ import { readFrontmatter, writeRoleSwitchRequest } from '../_shared/pi-roles';
 const SLASH_COMMAND_RE = /^\s*\/([a-zA-Z0-9_-]+)/;
 
 /** Supported prompt file extensions, tried in order. */
-const PROMPT_EXTENSIONS = ['.md', '.mdx'];
+const PROMPT_EXTENSIONS = [".md", ".mdx"];
 
 /** Settings file name. */
-const SETTINGS_FILE = 'settings.json';
+const SETTINGS_FILE = "settings.json";
 
 // ── Pure helpers (exported for tests) ──
 
@@ -55,15 +55,15 @@ export function loadPromptPathsFromSettings(
 
     for (const settingsPath of [
         join(agentDir, SETTINGS_FILE),
-        resolve(cwd, '.pi', SETTINGS_FILE),
+        resolve(cwd, ".pi", SETTINGS_FILE),
     ]) {
         try {
             if (!existsSync(settingsPath)) continue;
-            const raw = readFileSync(settingsPath, 'utf-8');
+            const raw = readFileSync(settingsPath, "utf-8");
             const parsed = JSON.parse(raw) as Record<string, unknown>;
             if (Array.isArray(parsed.prompts)) {
                 for (const p of parsed.prompts) {
-                    if (typeof p === 'string' && p.trim()) {
+                    if (typeof p === "string" && p.trim()) {
                         paths.push(p.trim());
                     }
                 }
@@ -95,8 +95,8 @@ export function resolvePromptFile(
 ): string | null {
     // 1 & 2: Standard directories
     const candidates = [
-        join(agentDir, 'prompts'),
-        resolve(cwd, '.pi', 'prompts'),
+        join(agentDir, "prompts"),
+        resolve(cwd, ".pi", "prompts"),
     ];
 
     for (const dir of candidates) {
@@ -135,10 +135,10 @@ export function resolvePromptFile(
 // ── Extension entry point ──
 
 export default function promptRoleSwitch(pi: ExtensionAPI): void {
-    const agentDir = join(homedir(), '.pi', 'agent');
+    const agentDir = join(homedir(), ".pi", "agent");
 
-    pi.on('input', async (event, ctx) => {
-        const m = (event.text ?? '').match(SLASH_COMMAND_RE);
+    pi.on("input", async (event, ctx) => {
+        const m = (event.text ?? "").match(SLASH_COMMAND_RE);
         if (!m) return;
 
         const name = m[1];
@@ -154,7 +154,7 @@ export default function promptRoleSwitch(pi: ExtensionAPI): void {
         if (!frontmatter) return;
 
         const role = frontmatter?.role;
-        if (typeof role !== 'string' || !role.trim()) return;
+        if (typeof role !== "string" || !role.trim()) return;
 
         writeRoleSwitchRequest(pi, {
             targetRole: role.trim(),

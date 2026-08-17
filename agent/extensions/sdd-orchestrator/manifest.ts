@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
-import type { Assessment, TaskAssessment } from './assessment.ts';
-import { classifyTask, effectiveProfile } from './classification.ts';
-import type { SddConfig } from './config.ts';
+import { createHash } from "node:crypto";
+import type { Assessment, TaskAssessment } from "./assessment.ts";
+import { classifyTask, effectiveProfile } from "./classification.ts";
+import type { SddConfig } from "./config.ts";
 import {
     PROFILES,
     type ParsedPlan,
@@ -9,7 +9,7 @@ import {
     type VerifyCommand,
     type QaCommand,
     type BrowserScenario,
-} from './types.ts';
+} from "./types.ts";
 
 export interface ProfileBudget {
     readonly initialWorkers: number;
@@ -25,7 +25,7 @@ export interface DraftManifestTask {
     readonly recommendedProfile: Profile;
     readonly effectiveProfile: Profile;
     readonly classificationRules: readonly string[];
-    readonly signals: readonly TaskAssessment['signals'][number][];
+    readonly signals: readonly TaskAssessment["signals"][number][];
     readonly dependencies: readonly string[];
     readonly files: readonly string[];
     readonly verify: readonly VerifyCommand[];
@@ -39,7 +39,7 @@ export interface DraftManifest {
     readonly manifestId: string;
     readonly manifestVersion: 1;
     readonly ruleSetVersion: 1;
-    readonly state: 'awaiting_approval';
+    readonly state: "awaiting_approval";
     readonly planTitle: string;
     readonly planPath: string;
     readonly sourceDigest: string;
@@ -70,8 +70,8 @@ export interface ManifestDecision {
 
 export type ApprovedManifestTask = DraftManifestTask;
 
-export type ApprovedManifest = Omit<DraftManifest, 'state' | 'tasks'> & {
-    readonly state: 'approved';
+export type ApprovedManifest = Omit<DraftManifest, "state" | "tasks"> & {
+    readonly state: "approved";
     readonly tasks: readonly ApprovedManifestTask[];
     readonly decision: ManifestDecision;
     readonly approvalDigest: string;
@@ -105,12 +105,12 @@ const PROFILE_BUDGETS: Record<Profile, Readonly<ProfileBudget>> = {
 };
 
 const SHARED_CONTRACT_SIGNALS = [
-    'shared_infrastructure',
-    'pi_core_behavior',
-    'inter_extension_protocol',
+    "shared_infrastructure",
+    "pi_core_behavior",
+    "inter_extension_protocol",
 ] as const;
 
-const CROSS_MODULE_SIGNALS = ['multi_module', 'external_integration'] as const;
+const CROSS_MODULE_SIGNALS = ["multi_module", "external_integration"] as const;
 
 export function budgetsFor(profile: Profile): ProfileBudget {
     return PROFILE_BUDGETS[profile];
@@ -118,9 +118,9 @@ export function budgetsFor(profile: Profile): ProfileBudget {
 
 function canonicalJson(value: unknown): string {
     if (Array.isArray(value)) {
-        return `[${value.map(canonicalJson).join(',')}]`;
+        return `[${value.map(canonicalJson).join(",")}]`;
     }
-    if (value && typeof value === 'object') {
+    if (value && typeof value === "object") {
         return `{${Object.entries(value)
             .filter(([, entry]) => entry !== undefined)
             .toSorted(([left], [right]) =>
@@ -130,13 +130,13 @@ function canonicalJson(value: unknown): string {
                 ([key, entry]) =>
                     `${JSON.stringify(key)}:${canonicalJson(entry)}`,
             )
-            .join(',')}}`;
+            .join(",")}}`;
     }
     return JSON.stringify(value);
 }
 
 function digest(value: string): string {
-    return createHash('sha256').update(value).digest('hex');
+    return createHash("sha256").update(value).digest("hex");
 }
 
 export function approvalDecisionDigest(decision: ManifestDecision): string {
@@ -145,7 +145,7 @@ export function approvalDecisionDigest(decision: ManifestDecision): string {
 }
 
 function deepFreeze<T>(value: T): T {
-    if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    if (value && typeof value === "object" && !Object.isFrozen(value)) {
         for (const child of Object.values(value)) deepFreeze(child);
         Object.freeze(value);
     }
@@ -154,7 +154,7 @@ function deepFreeze<T>(value: T): T {
 
 function isProfile(value: unknown): value is Profile {
     return (
-        typeof value === 'string' &&
+        typeof value === "string" &&
         PROFILES.some((profile) => profile === value)
     );
 }
@@ -177,7 +177,7 @@ function canRunInParallel(
     task: {
         dependencies: readonly string[];
         files: readonly string[];
-        signals: readonly TaskAssessment['signals'][number][];
+        signals: readonly TaskAssessment["signals"][number][];
     },
     fileOwners: ReadonlyMap<string, ReadonlySet<string>>,
     parallelismEnabled: boolean,
@@ -193,10 +193,10 @@ function canRunInParallel(
 function requiresFinalIntegrationReview(
     tasks: ReadonlyArray<{
         effectiveProfile: Profile;
-        signals: readonly TaskAssessment['signals'][number][];
+        signals: readonly TaskAssessment["signals"][number][];
     }>,
 ): boolean {
-    if (tasks.some((task) => task.effectiveProfile === 'critical')) return true;
+    if (tasks.some((task) => task.effectiveProfile === "critical")) return true;
     if (
         tasks.filter((task) =>
             SHARED_CONTRACT_SIGNALS.some((signal) =>
@@ -220,7 +220,12 @@ export interface LaunchPreview {
     readonly maximumLaunches: number;
 }
 
-function countValidationLaunches(tasks: ReadonlyArray<{ qa?: readonly QaCommand[]; browser?: readonly BrowserScenario[] }>): {
+function countValidationLaunches(
+    tasks: ReadonlyArray<{
+        qa?: readonly QaCommand[];
+        browser?: readonly BrowserScenario[];
+    }>,
+): {
     readonly qaLaunches: number;
     readonly browserLaunches: number;
     readonly validationLaunches: number;
@@ -257,7 +262,9 @@ export function calculateLaunchPreview(
         browserLaunches: validation.browserLaunches,
         validationLaunches: validation.validationLaunches,
         maximumLaunches:
-            profileLaunches + validation.validationLaunches + (finalIntegrationReview ? 1 : 0),
+            profileLaunches +
+            validation.validationLaunches +
+            (finalIntegrationReview ? 1 : 0),
     };
 }
 
@@ -285,7 +292,7 @@ function validateAssessmentTaskIds(
         ...unknown.map((id) => `unknown ${id}`),
     ];
     if (issues.length) {
-        throw new Error(`Assessment task IDs mismatch: ${issues.join('; ')}.`);
+        throw new Error(`Assessment task IDs mismatch: ${issues.join("; ")}.`);
     }
 }
 
@@ -303,7 +310,7 @@ function validateDependencies(parsedPlan: ParsedPlan): void {
             const cycleStart = path.indexOf(taskId);
             throw new Error(
                 `Dependency cycle: ${[...path.slice(cycleStart), taskId].join(
-                    ' -> ',
+                    " -> ",
                 )}.`,
             );
         }
@@ -381,7 +388,7 @@ export function compileManifest(input: {
     const data = {
         manifestVersion: 1 as const,
         ruleSetVersion: 1 as const,
-        state: 'awaiting_approval' as const,
+        state: "awaiting_approval" as const,
         planTitle: input.parsedPlan.title,
         planPath: input.planPath,
         sourceDigest: digest(input.planContent),
@@ -402,13 +409,13 @@ export function applyApproval(
     currentPlanContent: string,
 ): ApprovedManifest {
     if (digest(currentPlanContent) !== draft.sourceDigest) {
-        throw new Error('Source plan changed after manifest compilation.');
+        throw new Error("Source plan changed after manifest compilation.");
     }
     if (!decision.approvedBy.trim()) {
-        throw new Error('approvedBy must be non-empty.');
+        throw new Error("approvedBy must be non-empty.");
     }
     if (!decision.approvedAt.trim()) {
-        throw new Error('approvedAt must be non-empty.');
+        throw new Error("approvedAt must be non-empty.");
     }
     if (!isProfile(decision.globalProfile)) {
         throw new Error(`Invalid profile: ${String(decision.globalProfile)}.`);
@@ -443,8 +450,8 @@ export function applyApproval(
         const profile =
             decision.taskOverrides[task.id] ?? decision.globalProfile;
         if (
-            task.recommendedProfile === 'critical' &&
-            (profile === 'light' || profile === 'direct')
+            task.recommendedProfile === "critical" &&
+            (profile === "light" || profile === "direct")
         ) {
             if (!decision.criticalDowngradeConfirmations[task.id]) {
                 throw new Error(
@@ -512,7 +519,7 @@ export function applyApproval(
         manifestId: draft.manifestId,
         manifestVersion: draft.manifestVersion,
         ruleSetVersion: draft.ruleSetVersion,
-        state: 'approved' as const,
+        state: "approved" as const,
         planTitle: draft.planTitle,
         planPath: draft.planPath,
         sourceDigest: draft.sourceDigest,

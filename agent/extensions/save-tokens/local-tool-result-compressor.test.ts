@@ -10,6 +10,7 @@ import {
   chooseCompressionRoute,
   shouldNotifyCompressionSummary,
 } from "./local-tool-result-compressor";
+import { estimateTokens } from "./tool-results/token-estimator";
 import { getLocalCompressorConfig } from "./config-runtime";
 import {
   createCompressionMetrics,
@@ -391,6 +392,11 @@ describe("createToolResultHandler", () => {
           compressedLength: "trimmed".length,
           savedBytes: "very long output".length - "trimmed".length,
           savedPct: Math.round((("very long output".length - "trimmed".length) / "very long output".length) * 100),
+          originalUtf8Bytes: "very long output".length,
+          compressedUtf8Bytes: "trimmed".length,
+          // 17 ASCII chars -> ceil(17 / 3) = 6; 7 ASCII chars -> ceil(7 / 3) = 3.
+          estimatedTokensBefore: 6,
+          estimatedTokensAfter: 3,
         },
       },
     });
@@ -438,7 +444,7 @@ describe("createToolResultHandler", () => {
     const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
-      capFallbackBytes: 240,
+      capFallbackTokens: 80,
       archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-cap1.txt"),
     });
     const source = ["HEAD", ...Array.from({ length: 120 }, (_, index) => `line-${index}`), "TAIL"].join("\n");
@@ -470,7 +476,7 @@ describe("createToolResultHandler", () => {
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       routingStrategy: "benchmark",
-      capFallbackBytes: 260,
+      capFallbackTokens: 87,
       archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-grep1.txt"),
     });
     const source = ["HEAD", ...Array.from({ length: 100 }, (_, index) => `src/file.ts:${index}: noise`), "src/config.ts:999: model routing error", "TAIL"].join("\n");
@@ -541,7 +547,9 @@ describe("createToolResultHandler", () => {
     } as any, TEST_MODEL);
 
     expect(Buffer.byteLength(source, "utf8")).toBeGreaterThan(4096);
-    expect(source.length).toBeLessThan(8192);
+    // Below the default find cap budget (DEFAULT_FIND_CAP_TOKENS = 2700),
+    // so the listing stays intact and no cap/archive path is taken.
+    expect(estimateTokens(source)).toBeLessThanOrEqual(2700);
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(result).toBeUndefined();
   });
@@ -552,7 +560,7 @@ describe("createToolResultHandler", () => {
       fetchImpl,
       baseUrl: "http://127.0.0.1:8787",
       minBytesByGroup: { shell: 4096, read: 8192, search: 10000 },
-      capFallbackBytes: 2000,
+      capFallbackTokens: 667,
       archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-find3.txt"),
     });
     const source = Array.from({ length: 180 }, (_, index) => `/repo/generated/file-${index}.txt`).join("\n");
@@ -861,7 +869,7 @@ describe("grouped thresholds and result integrity", () => {
         Promise.resolve(Response.json({}, { status: 200 })),
       ),
       routingStrategy: "benchmark",
-      capFallbackBytes: 8,
+      capFallbackTokens: 3,
       archiveOriginal: mock(async () => {
         throw new Error("archive unavailable");
       }),
@@ -991,7 +999,7 @@ describe("extension registration", () => {
       localToolResultCompressor(pi, {
         ...TEST_CONFIG,
         archiveOriginal: false,
-        capFallbackBytes: 8,
+        capFallbackTokens: 3,
         routingStrategy: "edgee",
       });
       const ctx = createMockContext() as any;
@@ -1689,11 +1697,12 @@ describe("audit-aware compression policy", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildEscapeHatchNote", () => {
-  it("produces the unified format with original length and archive path", async () => {
+  it("produces the unified format with code-point chars, estimated tokens, and archive path", async () => {
     const { buildEscapeHatchNote } = await import("./tool-results/core");
-    const note = buildEscapeHatchNote(50000, "/tmp/pi-archive/result.txt");
+    // 50000 code points of "a" -> ceil(50000 / 3) = 16667 estimated tokens.
+    const note = buildEscapeHatchNote("a".repeat(50000), "/tmp/pi-archive/result.txt");
     expect(note).toBe(
-      "\n\n... (compressed, 50000 chars total) — run read /tmp/pi-archive/result.txt for full output",
+      "\n\n... (compressed, 50000 chars ≈ 16667 tokens) — run read /tmp/pi-archive/result.txt for full output",
     );
   });
 });
@@ -1759,7 +1768,7 @@ describe("aggregate header integration", () => {
       ),
       baseUrl: "http://127.0.0.1:8320",
       routingStrategy: "benchmark",
-      capFallbackBytes: 500,
+      capFallbackTokens: 167,
       aggregates: true,
       archiveOriginal: mock(async () => "/tmp/pi-archive/bash-out.txt"),
     });
@@ -1811,7 +1820,7 @@ describe("error cap behavior", () => {
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       capErrors: true,
-      capFallbackBytes: 500,
+      capFallbackTokens: 167,
       archiveOriginal: mock(async () => "/tmp/pi-archive/err.txt"),
     });
     const errorText = Array.from({ length: 200 }, (_, i) => `error line ${i}`).join("\n");
@@ -1840,7 +1849,7 @@ describe("error cap behavior", () => {
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       capErrors: true,
-      capFallbackBytes: 500,
+      capFallbackTokens: 167,
       archiveOriginal: mock(async () => "/tmp/pi-archive/err.txt"),
     });
     const result = await handler({
@@ -1863,7 +1872,7 @@ describe("error cap behavior", () => {
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       capErrors: false,
-      capFallbackBytes: 10,
+      capFallbackTokens: 4,
       archiveOriginal: mock(async () => "/tmp/pi-archive/err.txt"),
     });
     const result = await handler({
@@ -1886,7 +1895,7 @@ describe("error cap behavior", () => {
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
       capErrors: true,
-      capFallbackBytes: 10,
+      capFallbackTokens: 4,
       archiveOriginal: undefined,
     });
     const result = await handler({
@@ -1900,7 +1909,7 @@ describe("error cap behavior", () => {
     expect(result).toBeUndefined();
   });
 
-  it("uses default cap size when capFallbackBytes is not configured", async () => {
+  it("uses default cap size when capFallbackTokens is not configured", async () => {
     const fetchImpl = mock(() =>
       Promise.resolve(Response.json({ compressed_output: "no" }, { status: 200 })),
     );
@@ -1910,7 +1919,7 @@ describe("error cap behavior", () => {
       capErrors: true,
       archiveOriginal: mock(async () => "/tmp/pi-archive/err-default.txt"),
     });
-    // 20000 chars — well above DEFAULT_ERROR_CAP_BYTES (8192)
+    // 20000 chars — well above DEFAULT_ERROR_CAP_TOKENS (2700)
     const errorText = "x".repeat(20000);
     const result = await handler({
       toolName: "bash",
@@ -1985,7 +1994,7 @@ describe("empty-state guard", () => {
       ),
       baseUrl: "http://127.0.0.1:8320",
       routingStrategy: "benchmark",
-      capFallbackBytes: 300,
+      capFallbackTokens: 100,
       aggregates: true,
       archiveOriginal: mock(async () => "/tmp/pi-archive/guard.txt"),
     });

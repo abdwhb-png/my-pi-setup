@@ -1,5 +1,5 @@
-import { readFile, realpath } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { readFile, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import {
     dirname,
     extname,
@@ -8,25 +8,25 @@ import {
     relative,
     resolve,
     sep,
-} from 'node:path';
+} from "node:path";
 import {
     getAgentDir,
     type ExtensionAPI,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 
 type LinkEvent =
-    | { kind: 'inline'; destination: string }
-    | { kind: 'reference'; identifier: string };
+    | { kind: "inline"; destination: string }
+    | { kind: "reference"; identifier: string };
 
 export function resolveLocalMarkdownDestination(
     destination: string,
     sourceFilePath: string,
 ): string | null {
-    const target = destination.trim().replace(/^<|>$/g, '');
+    const target = destination.trim().replace(/^<|>$/g, "");
     if (
         !target ||
         /^[a-z][a-z\d+.-]*:/i.test(target) ||
-        target.startsWith('//')
+        target.startsWith("//")
     ) {
         return null;
     }
@@ -34,7 +34,7 @@ export function resolveLocalMarkdownDestination(
     const pathWithoutFragment = target.split(/[?#]/, 1)[0];
     if (
         !pathWithoutFragment ||
-        !['.md', '.markdown'].includes(
+        ![".md", ".markdown"].includes(
             extname(pathWithoutFragment).toLowerCase(),
         )
     ) {
@@ -43,10 +43,10 @@ export function resolveLocalMarkdownDestination(
 
     return isAbsolute(pathWithoutFragment)
         ? resolve(pathWithoutFragment)
-        : resolve(sourceFilePath, '..', pathWithoutFragment);
+        : resolve(sourceFilePath, "..", pathWithoutFragment);
 }
 
-export type MarkdownLinksScope = 'all' | 'context';
+export type MarkdownLinksScope = "all" | "context";
 
 export interface MarkdownLinksConfig {
     scope: MarkdownLinksScope;
@@ -56,21 +56,21 @@ export interface MarkdownLinksConfig {
 }
 
 const DEFAULT_CONFIG: MarkdownLinksConfig = {
-    scope: 'all',
+    scope: "all",
     maxDepth: 10,
     maxBytes: 500_000,
-    allowedRoots: ['$cwd', '$agentDir', '$agentDir/..', '$contextDirs'],
+    allowedRoots: ["$cwd", "$agentDir", "$agentDir/..", "$contextDirs"],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function readSettings(
     filePath: string,
 ): Promise<Record<string, unknown>> {
     try {
-        const parsed: unknown = JSON.parse(await readFile(filePath, 'utf8'));
+        const parsed: unknown = JSON.parse(await readFile(filePath, "utf8"));
         return isRecord(parsed) ? parsed : {};
     } catch {
         return {};
@@ -85,7 +85,7 @@ function getMarkdownLinksSettings(
 }
 
 function validNonNegativeNumber(value: unknown, fallback: number): number {
-    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
         ? value
         : fallback;
 }
@@ -109,13 +109,13 @@ export function expandAllowedRoots(
         homeDir = homedir(),
     } = options;
     return patterns.flatMap((pattern) => {
-        if (pattern === '$cwd') return [resolve(cwd)];
-        if (pattern === '$agentDir') return [resolve(agentDir)];
-        if (pattern === '$agentDir/..') return [resolve(agentDir, '..')];
-        if (pattern === '$contextDirs')
+        if (pattern === "$cwd") return [resolve(cwd)];
+        if (pattern === "$agentDir") return [resolve(agentDir)];
+        if (pattern === "$agentDir/..") return [resolve(agentDir, "..")];
+        if (pattern === "$contextDirs")
             return contextDirs.map((dir) => resolve(dir));
-        if (pattern === '~') return [resolve(homeDir)];
-        if (pattern.startsWith('~/'))
+        if (pattern === "~") return [resolve(homeDir)];
+        if (pattern.startsWith("~/"))
             return [resolve(homeDir, pattern.slice(2))];
         return [resolve(pattern)];
     });
@@ -127,22 +127,22 @@ export async function loadMarkdownLinksConfig(
     projectTrusted = true,
 ): Promise<MarkdownLinksConfig> {
     const globalSettings = getMarkdownLinksSettings(
-        await readSettings(join(agentDir, 'settings.json')),
+        await readSettings(join(agentDir, "settings.json")),
     );
     const projectSettings = projectTrusted
         ? getMarkdownLinksSettings(
-              await readSettings(join(cwd, '.pi', 'settings.json')),
+              await readSettings(join(cwd, ".pi", "settings.json")),
           )
         : {};
     const merged = { ...globalSettings, ...projectSettings };
     const scope =
-        merged.scope === 'context' || merged.scope === 'all'
+        merged.scope === "context" || merged.scope === "all"
             ? merged.scope
             : DEFAULT_CONFIG.scope;
     const allowedRoots =
         Array.isArray(merged.allowedRoots) &&
         merged.allowedRoots.every(
-            (root): root is string => typeof root === 'string',
+            (root): root is string => typeof root === "string",
         )
             ? merged.allowedRoots
             : DEFAULT_CONFIG.allowedRoots;
@@ -178,7 +178,7 @@ async function readOptionalFile(
     filePath: string,
 ): Promise<MarkdownRoot | null> {
     try {
-        return { path: filePath, content: await readFile(filePath, 'utf8') };
+        return { path: filePath, content: await readFile(filePath, "utf8") };
     } catch {
         return null;
     }
@@ -187,11 +187,11 @@ async function readOptionalFile(
 async function discoverSystemRoot(
     cwd: string,
     agentDir: string,
-    fileName: 'SYSTEM.md' | 'APPEND_SYSTEM.md',
+    fileName: "SYSTEM.md" | "APPEND_SYSTEM.md",
     trusted: boolean,
 ): Promise<MarkdownRoot | null> {
     const projectRoot = trusted
-        ? await readOptionalFile(join(cwd, '.pi', fileName))
+        ? await readOptionalFile(join(cwd, ".pi", fileName))
         : null;
     return projectRoot ?? readOptionalFile(join(agentDir, fileName));
 }
@@ -200,11 +200,11 @@ export async function discoverMarkdownRoots(
     options: DiscoverMarkdownRootsOptions,
 ): Promise<MarkdownRoot[]> {
     const roots = [...options.contextFiles];
-    if (options.scope === 'context') return roots;
+    if (options.scope === "context") return roots;
 
     const seen = new Set(roots.map((root) => resolve(root.path)));
     const discoveredRoots = await Promise.all(
-        (['SYSTEM.md', 'APPEND_SYSTEM.md'] as const).map((fileName) =>
+        (["SYSTEM.md", "APPEND_SYSTEM.md"] as const).map((fileName) =>
             discoverSystemRoot(
                 options.cwd,
                 options.agentDir,
@@ -251,8 +251,8 @@ async function canonicalize(filePath: string): Promise<string> {
 function isWithinRoot(candidate: string, root: string): boolean {
     const pathRelative = relative(root, candidate);
     return (
-        pathRelative === '' ||
-        (!pathRelative.startsWith('..') && !pathRelative.includes(`..${sep}`))
+        pathRelative === "" ||
+        (!pathRelative.startsWith("..") && !pathRelative.includes(`..${sep}`))
     );
 }
 
@@ -312,13 +312,13 @@ export async function resolveLinkedMarkdownFiles(
             try {
                 // Sequential resolution preserves source order and global byte limits.
                 // oxlint-disable-next-line no-await-in-loop
-                linkedContent = await readFile(canonicalLinkedPath, 'utf8');
+                linkedContent = await readFile(canonicalLinkedPath, "utf8");
             } catch {
                 skipped.push(`${destination}: file unavailable`);
                 continue;
             }
 
-            const bytes = Buffer.byteLength(linkedContent, 'utf8');
+            const bytes = Buffer.byteLength(linkedContent, "utf8");
             if (totalBytes + bytes > maxBytes) {
                 skipped.push(`${destination}: size limit exceeded`);
                 continue;
@@ -342,7 +342,7 @@ export async function resolveLinkedMarkdownFiles(
 }
 
 function normalizeIdentifier(identifier: string): string {
-    return identifier.trim().replace(/\s+/g, ' ').toLowerCase();
+    return identifier.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 interface ScanSnapshot {
@@ -360,7 +360,7 @@ export default function markdownLinksExtension(pi: ExtensionAPI): void {
     let agentDir = getAgentDir();
     let lastScan: ScanSnapshot | null = null;
 
-    pi.on('session_start', async (_event, context) => {
+    pi.on("session_start", async (_event, context) => {
         agentDir = getAgentDir();
         config = await loadMarkdownLinksConfig(
             context.cwd,
@@ -370,17 +370,17 @@ export default function markdownLinksExtension(pi: ExtensionAPI): void {
         lastScan = null;
     });
 
-    pi.registerCommand('markdown-links:status', {
-        description: 'Show Markdown link expansion status',
+    pi.registerCommand("markdown-links:status", {
+        description: "Show Markdown link expansion status",
         handler: (_args, context) =>
             Promise.resolve().then(() => {
                 if (!lastScan) {
-                    context.ui.notify('No scan data yet.', 'info');
+                    context.ui.notify("No scan data yet.", "info");
                     return;
                 }
 
                 const lines = [
-                    '**pi-markdown-links**',
+                    "**pi-markdown-links**",
                     `scope: ${lastScan.config.scope}`,
                     `maxDepth: ${lastScan.config.maxDepth}`,
                     `maxBytes: ${lastScan.config.maxBytes}`,
@@ -393,11 +393,11 @@ export default function markdownLinksExtension(pi: ExtensionAPI): void {
                         `skipped: ${lastScan.result.skipped.length}`,
                     );
                 }
-                context.ui.notify(lines.join('\n'), 'info');
+                context.ui.notify(lines.join("\n"), "info");
             }),
     });
 
-    pi.on('before_agent_start', async (event, context) => {
+    pi.on("before_agent_start", async (event, context) => {
         const contextFiles = event.systemPromptOptions.contextFiles ?? [];
         if (contextFiles.length === 0) return undefined;
 
@@ -405,7 +405,7 @@ export default function markdownLinksExtension(pi: ExtensionAPI): void {
             cwd: event.systemPromptOptions.cwd,
             agentDir,
             trusted:
-                typeof context.isProjectTrusted === 'function' &&
+                typeof context.isProjectTrusted === "function" &&
                 context.isProjectTrusted(),
             scope: config.scope,
             contextFiles,
@@ -431,7 +431,7 @@ export default function markdownLinksExtension(pi: ExtensionAPI): void {
                     ({ path, content }) =>
                         `<project_instructions path="${path}">\n${content}\n</project_instructions>`,
                 )
-                .join('\n\n');
+                .join("\n\n");
             return {
                 systemPrompt: `${event.systemPrompt}\n\nAdditional Markdown files included by links:\n\n${sections}`,
             };
@@ -445,17 +445,17 @@ export default function markdownLinksExtension(pi: ExtensionAPI): void {
 }
 
 export async function extractMarkdownLinks(source: string): Promise<string[]> {
-    const { defineMdastPlugin, markdownToHtml } = await import('satteri');
+    const { defineMdastPlugin, markdownToHtml } = await import("satteri");
     const events: LinkEvent[] = [];
     const definitions = new Map<string, string>();
 
     const collector = defineMdastPlugin({
-        name: 'pi-markdown-links-collector',
+        name: "pi-markdown-links-collector",
         link(node) {
-            events.push({ kind: 'inline', destination: node.url });
+            events.push({ kind: "inline", destination: node.url });
         },
         linkReference(node) {
-            events.push({ kind: 'reference', identifier: node.identifier });
+            events.push({ kind: "reference", identifier: node.identifier });
         },
         definition(node) {
             definitions.set(normalizeIdentifier(node.identifier), node.url);
@@ -465,7 +465,7 @@ export async function extractMarkdownLinks(source: string): Promise<string[]> {
     markdownToHtml(source, { mdastPlugins: [collector] });
 
     return events.flatMap((event) => {
-        if (event.kind === 'inline') return [event.destination];
+        if (event.kind === "inline") return [event.destination];
         const destination = definitions.get(
             normalizeIdentifier(event.identifier),
         );

@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { getAgentDir, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ export interface ConfigSource {
      *
      * Inner order (global → project) is always preserved within each layer.
      */
-    cumulativeWinner?: 'settings' | 'legacy';
+    cumulativeWinner?: "settings" | "legacy";
 }
 
 /** Options for loadExtensionConfig. */
@@ -78,7 +78,7 @@ function readJsonFile<T>(
 ): Partial<T> {
     if (!existsSync(path)) return {};
     try {
-        const raw = JSON.parse(readFileSync(path, 'utf-8'));
+        const raw = JSON.parse(readFileSync(path, "utf-8"));
         return normalize(raw);
     } catch {
         return {};
@@ -127,7 +127,7 @@ function loadLayersFromLegacy<T>(
     const global = readJsonFile(globalPath, normalize);
     if (!projectLocal) return [global];
 
-    const projectPath = join(cwd, '.pi', filename);
+    const projectPath = join(cwd, ".pi", filename);
     const project = readJsonFile(projectPath, normalize);
     return [global, project];
 }
@@ -198,7 +198,7 @@ export function loadExtensionConfig<T>(
             // Winner loads last so it overrides per-key. Inner order
             // (global → project) preserved within each layer.
             layers =
-                src.cumulativeWinner === 'legacy'
+                src.cumulativeWinner === "legacy"
                     ? [...settingsLayers, ...legacyLayers]
                     : [...legacyLayers, ...settingsLayers];
         } else {

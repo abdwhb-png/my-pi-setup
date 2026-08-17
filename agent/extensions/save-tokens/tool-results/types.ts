@@ -88,6 +88,14 @@ export type CompressionObservation = {
     nativeMetrics?: CompressionBackendMetrics;
     /** Tokenizer family selected by the engine registry, when factual (Task 10). */
     tokenizer?: string;
+    /** UTF-8 byte length of the original tool output. */
+    originalUtf8Bytes?: number;
+    /** UTF-8 byte length of the compressed/replaced output. */
+    compressedUtf8Bytes?: number;
+    /** Conservative local token estimate of the original output. */
+    estimatedTokensBefore?: number;
+    /** Conservative local token estimate of the compressed output. */
+    estimatedTokensAfter?: number;
 };
 
 export type CompressionMetricObservation = {
@@ -122,7 +130,8 @@ export interface LocalCompressorConfig {
     showStatus: boolean;
     showWidget: boolean;
     archiveOriginal: boolean;
-    capFallbackBytes?: number;
+    capFallbackTokens?: number;
+    maxFallbackBytes?: number;
     routingStrategy: "edgee" | "benchmark";
     summaryGranularity: "none" | "turn" | "agent" | "all";
     enabled: boolean;
@@ -153,7 +162,10 @@ export interface ToolResultHandlerOptions {
     backendVersion?: string;
     onObservation?: (event: CompressionObservation) => void;
     archiveOriginal?: (input: ArchiveOriginalInput) => Promise<string | null>;
-    capFallbackBytes?: number;
+    /** Cap budget in estimated tokens (primary policy unit). */
+    capFallbackTokens?: number;
+    /** Hard safety ceiling on the capped result, in UTF-8 bytes. */
+    maxFallbackBytes?: number;
     routingStrategy?: "edgee" | "benchmark";
     enabled?: boolean;
     excludeTools?: string[];

@@ -311,7 +311,7 @@ describe('Task 10 observation protocol', () => {
             aggregates: false,
             capErrors: false,
             routingStrategy: 'benchmark',
-            capFallbackBytes: 64,
+            capFallbackTokens: 21,
             archiveOriginal: async () => '/tmp/archive/cap-only.txt',
             onObservation: (event) => observations.push(event),
         });

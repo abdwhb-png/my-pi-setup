@@ -65,7 +65,8 @@ export interface ResolvedCompressorConfig {
     showStatus: boolean;
     showWidget: boolean;
     archiveOriginal: boolean;
-    capFallbackBytes?: number;
+    capFallbackTokens?: number;
+    maxFallbackBytes?: number;
     summaryGranularity: "none" | "turn" | "agent" | "all";
     enabled: boolean;
     excludeTools: string[];
@@ -172,8 +173,12 @@ export function resolveCompressorConfig(
         showStatus: cfg.showStatus ?? false,
         showWidget: cfg.showWidget ?? true,
         archiveOriginal: cfg.archiveOriginal ?? true,
-        ...(typeof cfg.capFallbackBytes === "number" && cfg.capFallbackBytes > 0
-            ? { capFallbackBytes: cfg.capFallbackBytes }
+        ...(typeof cfg.capFallbackTokens === "number" &&
+        cfg.capFallbackTokens > 0
+            ? { capFallbackTokens: cfg.capFallbackTokens }
+            : {}),
+        ...(typeof cfg.maxFallbackBytes === "number" && cfg.maxFallbackBytes > 0
+            ? { maxFallbackBytes: cfg.maxFallbackBytes }
             : {}),
         summaryGranularity: cfg.summaryGranularity ?? "all",
         enabled: cfg.enabled ?? true,
@@ -239,8 +244,12 @@ export function getLocalCompressorConfig(
         showStatus: cfg.showStatus ?? false,
         showWidget: cfg.showWidget ?? true,
         archiveOriginal: cfg.archiveOriginal ?? true,
-        ...(typeof cfg.capFallbackBytes === "number" && cfg.capFallbackBytes > 0
-            ? { capFallbackBytes: cfg.capFallbackBytes }
+        ...(typeof cfg.capFallbackTokens === "number" &&
+        cfg.capFallbackTokens > 0
+            ? { capFallbackTokens: cfg.capFallbackTokens }
+            : {}),
+        ...(typeof cfg.maxFallbackBytes === "number" && cfg.maxFallbackBytes > 0
+            ? { maxFallbackBytes: cfg.maxFallbackBytes }
             : {}),
         routingStrategy: cfg.routingStrategy ?? "edgee",
         summaryGranularity: cfg.summaryGranularity ?? "all",

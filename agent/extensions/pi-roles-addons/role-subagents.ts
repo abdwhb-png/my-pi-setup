@@ -14,12 +14,12 @@
 import type {
     ExtensionAPI,
     ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 import {
     getActiveRole,
     parseCommaList,
     readFrontmatter,
-} from '../_shared/pi-roles';
+} from "../_shared/pi-roles";
 
 /** Cache: role path → allowed subagent names (null = unrestricted). */
 const subagentCache = new Map<string, string[] | null>();
@@ -41,7 +41,7 @@ function getAllowedSubagents(rolePath: string): string[] | null {
 
 function getTargetAgent(input: Record<string, unknown>): string | undefined {
     const agent = input.agent;
-    return typeof agent === 'string' ? agent : undefined;
+    return typeof agent === "string" ? agent : undefined;
 }
 
 function handleToolCall(
@@ -49,7 +49,7 @@ function handleToolCall(
     ctx: ExtensionContext,
 ): { block?: boolean; reason?: string } | undefined {
     // Only intercept subagent tool
-    if (event.toolName !== 'subagent') return undefined;
+    if (event.toolName !== "subagent") return undefined;
 
     // Get active role
     let entries;
@@ -73,7 +73,7 @@ function handleToolCall(
         return {
             block: true,
             reason:
-                `Role "${activeRole.name}" only allows subagents: ${allowed.join(', ')}. ` +
+                `Role "${activeRole.name}" only allows subagents: ${allowed.join(", ")}. ` +
                 `"${targetAgent}" is not allowed.`,
         };
     }
@@ -82,7 +82,7 @@ function handleToolCall(
 }
 
 export default function roleSubagents(pi: ExtensionAPI): void {
-    pi.on('tool_call', async (event, ctx) => {
+    pi.on("tool_call", async (event, ctx) => {
         const result = handleToolCall(
             event as { toolName: string; input: Record<string, unknown> },
             ctx,

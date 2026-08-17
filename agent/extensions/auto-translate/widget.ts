@@ -6,13 +6,13 @@
  * fallback to `ctx.ui.setWidget` otherwise.
  */
 
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     createWidget as createFancyWidget,
     type WidgetHandle,
-} from '../_shared/fancy-footer.ts';
+} from "../_shared/fancy-footer.ts";
 
-export const WIDGET_ID = 'auto-translate';
+export const WIDGET_ID = "auto-translate";
 
 /**
  * Register the translate status widget.
@@ -26,11 +26,11 @@ export function createTranslateWidget(
 ): WidgetHandle {
     return createFancyWidget(pi, {
         id: WIDGET_ID,
-        label: 'Auto-Translate',
-        description: 'Shows translation target, on/off, and send/display mode.',
+        label: "Auto-Translate",
+        description: "Shows translation target, on/off, and send/display mode.",
         row: 0,
         order: 64,
-        align: 'right',
+        align: "right",
         render: () => getStatus(),
     });
 }

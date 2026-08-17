@@ -9,12 +9,12 @@
  *   5. Telemetry AFTER — final tool_result observer (post-compression) + lifecycle
  */
 
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import caveman from './caveman.ts';
-import localToolResultCompressor from './local-tool-result-compressor.ts';
-import ponytail from './ponytail.ts';
-import { createSaveTokensTelemetry } from './telemetry/controller.ts';
-import { registerTelemetryCommands } from './telemetry/commands.ts';
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import caveman from "./caveman.ts";
+import localToolResultCompressor from "./local-tool-result-compressor.ts";
+import ponytail from "./ponytail.ts";
+import { registerTelemetryCommands } from "./telemetry/commands.ts";
+import { createSaveTokensTelemetry } from "./telemetry/controller.ts";
 
 export default function saveTokens(pi: ExtensionAPI) {
     const telemetry = createSaveTokensTelemetry(pi);

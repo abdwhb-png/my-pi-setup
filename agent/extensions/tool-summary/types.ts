@@ -25,4 +25,4 @@ export const DEFAULT_CONFIG: ToolSummaryConfig = {
 };
 
 /** Extension state key in settings.json. */
-export const SETTINGS_KEY = 'toolSummary';
+export const SETTINGS_KEY = "toolSummary";

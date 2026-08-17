@@ -7,6 +7,11 @@ import type {
     CompressionSkippedReason,
 } from "../../_shared/compression-protocol";
 import { buildAggregateHeader } from "./aggregates";
+import {
+    countCodePoints,
+    countUtf8Bytes,
+    estimateTokens,
+} from "./token-estimator";
 import type {
     ArchiveOriginalInput,
     ToolResultHandlerOptions,
@@ -17,11 +22,11 @@ import type {
 
 type CompressionRoute = "edgee" | "cap";
 
-/** Default cap target for large error outputs when capFallbackBytes is not set. */
-const DEFAULT_ERROR_CAP_BYTES = 8192;
+/** Default cap budget (estimated tokens) for large error outputs when capFallbackTokens is not set. */
+const DEFAULT_ERROR_CAP_TOKENS = 2700;
 
-/** Default deterministic cap for path listings that semantic compression corrupts. */
-const DEFAULT_FIND_CAP_BYTES = 8192;
+/** Default deterministic cap budget (estimated tokens) for path listings that semantic compression corrupts. */
+const DEFAULT_FIND_CAP_TOKENS = 2700;
 
 /**
  * §3 AXI — Unified escape hatch note for compressed results.
@@ -31,10 +36,12 @@ const DEFAULT_FIND_CAP_BYTES = 8192;
  * is worth a follow-up call.
  */
 export function buildEscapeHatchNote(
-    originalLength: number,
+    text: string,
     archivePath: string,
 ): string {
-    return `\n\n... (compressed, ${originalLength} chars total) — run read ${archivePath} for full output`;
+    const chars = countCodePoints(text);
+    const tokens = estimateTokens(text);
+    return `\n\n... (compressed, ${chars} chars ≈ ${tokens} tokens) — run read ${archivePath} for full output`;
 }
 
 export function chooseCompressionRoute(input: {
@@ -194,13 +201,60 @@ function mergedDetails(
         : { originalDetails: original, compression };
 }
 
-function headTailCap(text: string, targetLength: number): string {
-    if (text.length <= targetLength) return text;
-    const marker = `\n... [${text.length - targetLength} chars omitted by head/tail cap] ...\n`;
-    const room = Math.max(0, targetLength - marker.length);
-    const head = Math.floor(room / 2);
-    const tail = room - head;
-    return text.slice(0, head) + marker + text.slice(text.length - tail);
+const HEAD_TAIL_OMISSION_MARKER = "\n... [omitted by head/tail cap] ...\n";
+
+/**
+ * Deterministic head/tail capping expressed as an estimated-token budget.
+ *
+ * Unlike the legacy character-based cap, this:
+ *  - never splits a Unicode surrogate pair (cuts on whole lines, iterates by
+ *    code point),
+ *  - enforces the budget by re-estimating the rendered result and trimming
+ *    the heavier side until it fits,
+ *  - treats `maxBytes` (UTF-8) as a secondary hard safety guard.
+ *
+ * Returns the original text unchanged when it already fits both the token
+ * budget and the byte guard.
+ */
+export function headTailCapTokens(
+    text: string,
+    budgetTokens: number,
+    maxBytes?: number,
+): string {
+    if (budgetTokens <= 0) return text;
+    if (
+        estimateTokens(text) <= budgetTokens &&
+        (maxBytes === undefined || countUtf8Bytes(text) <= maxBytes)
+    ) {
+        return text;
+    }
+
+    const lines = text.split("\n");
+    const maxLines = lines.length;
+    let headCount = Math.ceil(maxLines / 2);
+    let tailCount = maxLines - headCount;
+
+    const build = (head: number, tail: number): string => {
+        const headLines = lines.slice(0, head);
+        const tailLines = lines.slice(maxLines - tail);
+        return [...headLines, HEAD_TAIL_OMISSION_MARKER, ...tailLines].join(
+            "\n",
+        );
+    };
+
+    const overBudget = (candidate: string): boolean => {
+        if (estimateTokens(candidate) > budgetTokens) return true;
+        return maxBytes !== undefined && countUtf8Bytes(candidate) > maxBytes;
+    };
+
+    let result = build(headCount, tailCount);
+    while (overBudget(result) && (headCount > 0 || tailCount > 0)) {
+        if (headCount >= tailCount && headCount > 0) headCount -= 1;
+        else if (tailCount > 0) tailCount -= 1;
+        else break;
+        result = build(headCount, tailCount);
+    }
+    return result;
 }
 
 /**
@@ -233,26 +287,36 @@ async function maybeCreateArchivedCap(
         "backend" | "backendVersion" | "tokenizer"
     >,
 ) {
-    const targetBytes = options?.capFallbackBytes;
-    if (
-        !targetBytes ||
-        targetBytes <= 0 ||
-        text.length <= targetBytes ||
-        !options?.archiveOriginal
-    )
+    const targetTokens = options?.capFallbackTokens;
+    const maxBytes = options?.maxFallbackBytes;
+    if (!targetTokens || targetTokens <= 0 || !options?.archiveOriginal)
         return null;
+    if (
+        estimateTokens(text) <= targetTokens &&
+        (maxBytes === undefined || countUtf8Bytes(text) <= maxBytes)
+    ) {
+        return null;
+    }
     const archivePath = await options.archiveOriginal(
         archiveInput(event, subject, text),
     );
     if (!archivePath) throw new Error("archive did not return a path");
-    const note = buildEscapeHatchNote(text.length, archivePath);
+    const note = buildEscapeHatchNote(text, archivePath);
     const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : "";
-    const capped = headTailCap(
-        text,
-        Math.max(0, targetBytes - note.length - prefix.length),
+    const cappedBudget = Math.max(
+        1,
+        targetTokens - estimateTokens(note) - estimateTokens(prefix),
     );
+    const cappedMaxBytes =
+        maxBytes === undefined
+            ? undefined
+            : Math.max(
+                  0,
+                  maxBytes - countUtf8Bytes(note) - countUtf8Bytes(prefix),
+              );
+    const capped = headTailCapTokens(text, cappedBudget, cappedMaxBytes);
     const outputText = `${prefix}${capped}${note}`;
-    if (outputText.length >= text.length) return null;
+    if (estimateTokens(outputText) >= estimateTokens(text)) return null;
     const originalLength = text.length;
     const compressedLength = outputText.length;
     const savedBytes = Math.max(0, originalLength - compressedLength);
@@ -267,6 +331,10 @@ async function maybeCreateArchivedCap(
         toolName: event.toolName,
         originalLength,
         compressedLength,
+        originalUtf8Bytes: countUtf8Bytes(text),
+        compressedUtf8Bytes: countUtf8Bytes(outputText),
+        estimatedTokensBefore: estimateTokens(text),
+        estimatedTokensAfter: estimateTokens(outputText),
         subject,
         archivePath,
         ...meta,
@@ -277,6 +345,10 @@ async function maybeCreateArchivedCap(
         compressedLength,
         savedBytes,
         savedPct,
+        originalUtf8Bytes: countUtf8Bytes(text),
+        compressedUtf8Bytes: countUtf8Bytes(outputText),
+        estimatedTokensBefore: estimateTokens(text),
+        estimatedTokensAfter: estimateTokens(outputText),
         archivePath,
     } satisfies CompressionDetails;
     return {
@@ -379,14 +451,14 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
             const aggregatePrefix = aggregates
                 ? buildAggregateHeader(event.toolName, event.input, text)
                 : null;
-            const errorCapBytes =
-                options?.capFallbackBytes ?? DEFAULT_ERROR_CAP_BYTES;
+            const errorCapTokens =
+                options?.capFallbackTokens ?? DEFAULT_ERROR_CAP_TOKENS;
             try {
                 const capped = await maybeCreateArchivedCap(
                     text,
                     event,
                     subject,
-                    { ...options, capFallbackBytes: errorCapBytes },
+                    { ...options, capFallbackTokens: errorCapTokens },
                     aggregatePrefix,
                     meta,
                 );
@@ -574,7 +646,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                 throw new Error("archive did not return a path");
             }
             const archiveNote = archivePath
-                ? buildEscapeHatchNote(originalLength, archivePath)
+                ? buildEscapeHatchNote(text, archivePath)
                 : "";
             const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : "";
             const outputText = `${prefix}${result.output}${archiveNote}`;
@@ -611,6 +683,10 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                 toolName: event.toolName,
                 originalLength,
                 compressedLength: finalCompressedLength,
+                originalUtf8Bytes: countUtf8Bytes(text),
+                compressedUtf8Bytes: countUtf8Bytes(outputText),
+                estimatedTokensBefore: estimateTokens(text),
+                estimatedTokensAfter: estimateTokens(outputText),
                 subject,
                 archivePath: archivePath ?? undefined,
                 ...callMeta,
@@ -622,6 +698,10 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                 compressedLength: finalCompressedLength,
                 savedBytes,
                 savedPct,
+                originalUtf8Bytes: countUtf8Bytes(text),
+                compressedUtf8Bytes: countUtf8Bytes(outputText),
+                estimatedTokensBefore: estimateTokens(text),
+                estimatedTokensAfter: estimateTokens(outputText),
                 ...(archivePath ? { archivePath } : {}),
             } satisfies CompressionDetails;
             return {
@@ -654,10 +734,10 @@ function inputCapOptions(
     toolName: string,
     options: ToolResultHandlerOptions | undefined,
 ): ToolResultHandlerOptions | undefined {
-    if (toolName !== "find" || options?.capFallbackBytes !== undefined) {
+    if (toolName !== "find" || options?.capFallbackTokens !== undefined) {
         return options;
     }
-    return { ...options, capFallbackBytes: DEFAULT_FIND_CAP_BYTES };
+    return { ...options, capFallbackTokens: DEFAULT_FIND_CAP_TOKENS };
 }
 
 /**

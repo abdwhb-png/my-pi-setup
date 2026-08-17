@@ -1,28 +1,28 @@
-import { createHash } from 'node:crypto';
-import type { Review } from './prompts.ts';
-import type { Profile } from './types.ts';
+import { createHash } from "node:crypto";
+import type { Review } from "./prompts.ts";
+import type { Profile } from "./types.ts";
 
 export type RunState =
-    | 'draft'
-    | 'assessed'
-    | 'awaiting_approval'
-    | 'approved'
-    | 'running'
-    | 'needs_input'
-    | 'failed'
-    | 'cancelled'
-    | 'completed';
+    | "draft"
+    | "assessed"
+    | "awaiting_approval"
+    | "approved"
+    | "running"
+    | "needs_input"
+    | "failed"
+    | "cancelled"
+    | "completed";
 
 export type TaskState =
-    | 'pending'
-    | 'awaiting_direct_agent'
-    | 'implementing'
-    | 'reviewing'
-    | 'fixing'
-    | 'verified'
-    | 'needs_input'
-    | 'failed'
-    | 'cancelled';
+    | "pending"
+    | "awaiting_direct_agent"
+    | "implementing"
+    | "reviewing"
+    | "fixing"
+    | "verified"
+    | "needs_input"
+    | "failed"
+    | "cancelled";
 
 export interface TaskSnapshot {
     id: string;
@@ -43,17 +43,17 @@ export interface DelegationTerminalResponse {
     version: 1;
     requestId: string;
     status:
-        | 'completed'
-        | 'failed'
-        | 'timed_out'
-        | 'cancelled'
-        | 'interrupted'
-        | 'turn_budget_exhausted'
-        | 'tool_budget_exhausted'
-        | 'structured_output_failed'
-        | 'acceptance_failed'
-        | 'invalid_request'
-        | 'unavailable_context';
+        | "completed"
+        | "failed"
+        | "timed_out"
+        | "cancelled"
+        | "interrupted"
+        | "turn_budget_exhausted"
+        | "tool_budget_exhausted"
+        | "structured_output_failed"
+        | "acceptance_failed"
+        | "invalid_request"
+        | "unavailable_context";
     error?: string;
     runId?: string;
     childIndex?: number;
@@ -65,24 +65,24 @@ export interface DelegationTerminalResponse {
     sessionFile?: string;
     acceptance?: {
         status:
-            | 'pending'
-            | 'not-required'
-            | 'claimed'
-            | 'attested'
-            | 'checked'
-            | 'verified'
-            | 'review-required'
-            | 'reviewed'
-            | 'accepted'
-            | 'rejected';
+            | "pending"
+            | "not-required"
+            | "claimed"
+            | "attested"
+            | "checked"
+            | "verified"
+            | "review-required"
+            | "reviewed"
+            | "accepted"
+            | "rejected";
         evidenceStatus:
-            | 'pending'
-            | 'not-required'
-            | 'claimed'
-            | 'attested'
-            | 'checked'
-            | 'verified'
-            | 'rejected';
+            | "pending"
+            | "not-required"
+            | "claimed"
+            | "attested"
+            | "checked"
+            | "verified"
+            | "rejected";
         explicit: boolean;
     };
     turns?: number;
@@ -101,22 +101,22 @@ export interface DirectEvidence {
 }
 
 export const RECOVERY_STAGES = [
-    'worker',
-    'correction',
-    'combined',
-    'spec',
-    'quality',
+    "worker",
+    "correction",
+    "combined",
+    "spec",
+    "quality",
 ] as const;
 export type RecoveryStage = (typeof RECOVERY_STAGES)[number];
 
 function isRecoveryReviewStage(
     stage: RecoveryStage,
-): stage is Extract<RecoveryStage, Review['stage']> {
-    return stage === 'combined' || stage === 'spec' || stage === 'quality';
+): stage is Extract<RecoveryStage, Review["stage"]> {
+    return stage === "combined" || stage === "spec" || stage === "quality";
 }
 
 export interface RecoveryAttestation {
-    action: 'attest';
+    action: "attest";
     confirmation: true;
     authorizedBy: string;
     requestId: string;
@@ -124,12 +124,12 @@ export interface RecoveryAttestation {
 }
 
 export interface RecoveryChoice {
-    action: 'attest';
+    action: "attest";
     confirmation: true;
     authorizedBy: string;
     requestId: string;
     stage: RecoveryStage;
-    priorReason: 'uncertain_foreground_delegation';
+    priorReason: "uncertain_foreground_delegation";
     evidence: DirectEvidence;
     digest: string;
 }
@@ -152,7 +152,7 @@ export function recoveryAttestationDigest(
             residualRisks: [...evidence.residualRisks],
         },
     });
-    return createHash('sha256').update(canonicalBinding).digest('hex');
+    return createHash("sha256").update(canonicalBinding).digest("hex");
 }
 
 export interface PlannedDelegation {
@@ -165,12 +165,12 @@ export interface PlannedDelegation {
 }
 
 export interface IsolatedWorkspace {
-    readonly mode: 'isolated';
+    readonly mode: "isolated";
     readonly sourceRoot: string;
     readonly baseCommit: string;
     readonly worktreePath: string;
     readonly delivery: {
-        readonly status: 'pending' | 'applied';
+        readonly status: "pending" | "applied";
         readonly patchDigest?: string;
         readonly appliedAt?: string;
     };
@@ -201,109 +201,109 @@ export interface RunSnapshot {
 
 export type RunEvent =
     | {
-          type: 'run-transition';
+          type: "run-transition";
           expectedRevision: number;
           to: RunState;
       }
     | {
-          type: 'task-transition';
+          type: "task-transition";
           expectedRevision: number;
           taskId: string;
           to: TaskState;
       }
     | ({
-          type: 'delegation-planned';
+          type: "delegation-planned";
           expectedRevision: number;
       } & PlannedDelegation)
     | {
-          type: 'delegation-response-recorded';
+          type: "delegation-response-recorded";
           expectedRevision: number;
           taskId: string;
           response: DelegationTerminalResponse;
       }
     | {
-          type: 'cancellation-requested';
+          type: "cancellation-requested";
           expectedRevision: number;
           requestedAt: string;
           requestIds: string[];
       }
     | {
-          type: 'review-recorded';
+          type: "review-recorded";
           expectedRevision: number;
           taskId: string;
           requestId: string;
           review: Review;
       }
     | {
-          type: 'review-applied';
+          type: "review-applied";
           expectedRevision: number;
           taskId: string;
           requestId: string;
       }
     | {
-          type: 'delegation-response-applied';
+          type: "delegation-response-applied";
           expectedRevision: number;
           taskId: string;
           requestId: string;
       }
     | {
-          type: 'integration-delegation-planned';
+          type: "integration-delegation-planned";
           expectedRevision: number;
           delegation: PlannedDelegation;
       }
     | {
-          type: 'integration-delegation-response-recorded';
+          type: "integration-delegation-response-recorded";
           expectedRevision: number;
           response: DelegationTerminalResponse;
       }
     | {
-          type: 'integration-review-recorded';
+          type: "integration-review-recorded";
           expectedRevision: number;
           requestId: string;
           review: Review;
       }
     | {
-          type: 'integration-review-applied';
+          type: "integration-review-applied";
           expectedRevision: number;
           requestId: string;
       }
     | {
-          type: 'direct-evidence-recorded';
+          type: "direct-evidence-recorded";
           expectedRevision: number;
           taskId: string;
           evidence: DirectEvidence;
       }
     | {
-          type: 'recovery-attestation-applied';
+          type: "recovery-attestation-applied";
           expectedRevision: number;
           taskId: string;
           profile: Profile;
           choice: RecoveryChoice;
       }
     | {
-          type: 'terminal-reason-recorded';
+          type: "terminal-reason-recorded";
           expectedRevision: number;
           taskId: string;
           reason: string;
       }
     | {
-          type: 'run-terminal-reason-recorded';
+          type: "run-terminal-reason-recorded";
           expectedRevision: number;
           reason: string;
       }
     | {
-          type: 'workspace-delivery-applied';
+          type: "workspace-delivery-applied";
           expectedRevision: number;
           patchDigest: string;
           appliedAt: string;
       };
 
 const RUN_TRANSITIONS: Record<RunState, readonly RunState[]> = {
-    draft: ['assessed'],
-    assessed: ['awaiting_approval'],
-    awaiting_approval: ['approved'],
-    approved: ['running'],
-    running: ['needs_input', 'failed', 'cancelled', 'completed'],
+    draft: ["assessed"],
+    assessed: ["awaiting_approval"],
+    awaiting_approval: ["approved"],
+    approved: ["running"],
+    running: ["needs_input", "failed", "cancelled", "completed"],
     needs_input: [],
     failed: [],
     cancelled: [],
@@ -311,11 +311,11 @@ const RUN_TRANSITIONS: Record<RunState, readonly RunState[]> = {
 };
 
 const TASK_TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
-    pending: ['implementing', 'awaiting_direct_agent'],
-    awaiting_direct_agent: ['verified', 'needs_input', 'failed', 'cancelled'],
-    implementing: ['reviewing', 'needs_input', 'failed', 'cancelled'],
-    reviewing: ['fixing', 'verified', 'needs_input', 'failed', 'cancelled'],
-    fixing: ['reviewing', 'needs_input', 'failed', 'cancelled'],
+    pending: ["implementing", "awaiting_direct_agent"],
+    awaiting_direct_agent: ["verified", "needs_input", "failed", "cancelled"],
+    implementing: ["reviewing", "needs_input", "failed", "cancelled"],
+    reviewing: ["fixing", "verified", "needs_input", "failed", "cancelled"],
+    fixing: ["reviewing", "needs_input", "failed", "cancelled"],
     verified: [],
     needs_input: [],
     failed: [],
@@ -326,7 +326,7 @@ export function transition(
     snapshot: RunSnapshot,
     event: RunEvent,
 ): RunSnapshot {
-    if (event.type === 'delegation-response-recorded') {
+    if (event.type === "delegation-response-recorded") {
         const existing =
             snapshot.tasks[event.taskId]?.terminalResponses?.[
                 event.response.requestId
@@ -340,17 +340,17 @@ export function transition(
             return snapshot;
         }
     }
-    if (event.type === 'cancellation-requested' && snapshot.cancellation) {
+    if (event.type === "cancellation-requested" && snapshot.cancellation) {
         if (
             snapshot.cancellation.requestedAt !== event.requestedAt ||
             JSON.stringify(snapshot.cancellation.requestIds) !==
                 JSON.stringify(event.requestIds)
         ) {
-            throw new Error('Cancellation intent conflict.');
+            throw new Error("Cancellation intent conflict.");
         }
         return snapshot;
     }
-    if (event.type === 'review-recorded') {
+    if (event.type === "review-recorded") {
         const existing =
             snapshot.tasks[event.taskId]?.reviewResults?.[event.requestId];
         if (existing) {
@@ -361,7 +361,7 @@ export function transition(
         }
     }
     if (
-        event.type === 'review-applied' &&
+        event.type === "review-applied" &&
         snapshot.tasks[event.taskId]?.appliedReviewRequestIds?.includes(
             event.requestId,
         )
@@ -369,7 +369,7 @@ export function transition(
         return snapshot;
     }
     if (
-        event.type === 'delegation-response-applied' &&
+        event.type === "delegation-response-applied" &&
         snapshot.tasks[event.taskId]?.appliedResponseRequestIds?.includes(
             event.requestId,
         )
@@ -377,62 +377,62 @@ export function transition(
         return snapshot;
     }
     if (
-        event.type === 'integration-delegation-planned' &&
+        event.type === "integration-delegation-planned" &&
         snapshot.integrationReview?.plannedDelegation
     ) {
         const existing = snapshot.integrationReview.plannedDelegation;
         if (JSON.stringify(existing) !== JSON.stringify(event.delegation)) {
-            throw new Error('Integration delegation plan conflict.');
+            throw new Error("Integration delegation plan conflict.");
         }
         return snapshot;
     }
     if (
-        event.type === 'integration-delegation-response-recorded' &&
+        event.type === "integration-delegation-response-recorded" &&
         snapshot.integrationReview?.terminalResponse
     ) {
         if (
             JSON.stringify(snapshot.integrationReview.terminalResponse) !==
             JSON.stringify(event.response)
         ) {
-            throw new Error('Integration terminal response conflict.');
+            throw new Error("Integration terminal response conflict.");
         }
         return snapshot;
     }
     if (
-        event.type === 'integration-review-recorded' &&
+        event.type === "integration-review-recorded" &&
         snapshot.integrationReview?.review
     ) {
         if (
             JSON.stringify(snapshot.integrationReview.review) !==
             JSON.stringify(event.review)
         ) {
-            throw new Error('Integration review conflict.');
+            throw new Error("Integration review conflict.");
         }
         return snapshot;
     }
     if (
-        event.type === 'integration-review-applied' &&
+        event.type === "integration-review-applied" &&
         snapshot.integrationReview?.applied
     ) {
         return snapshot;
     }
     if (
-        event.type === 'run-terminal-reason-recorded' &&
+        event.type === "run-terminal-reason-recorded" &&
         snapshot.terminalReason === event.reason
     ) {
         return snapshot;
     }
-    if (event.type === 'workspace-delivery-applied') {
+    if (event.type === "workspace-delivery-applied") {
         const delivery = snapshot.workspace?.delivery;
-        if (delivery?.status === 'applied') {
+        if (delivery?.status === "applied") {
             if (delivery.patchDigest !== event.patchDigest) {
-                throw new Error('SDD workspace delivery digest conflict.');
+                throw new Error("SDD workspace delivery digest conflict.");
             }
             return snapshot;
         }
     }
     if (
-        event.type === 'recovery-attestation-applied' &&
+        event.type === "recovery-attestation-applied" &&
         snapshot.tasks[event.taskId]?.recoveryChoice
     ) {
         const existing = snapshot.tasks[event.taskId]?.recoveryChoice;
@@ -442,7 +442,7 @@ export function transition(
         return snapshot;
     }
     if (
-        event.type === 'delegation-planned' &&
+        event.type === "delegation-planned" &&
         snapshot.consumedIdempotencyKeys.includes(event.idempotencyKey)
     ) {
         const planned = snapshot.plannedDelegations[event.idempotencyKey];
@@ -465,7 +465,7 @@ export function transition(
         );
     }
 
-    if (event.type === 'run-transition') {
+    if (event.type === "run-transition") {
         if (!RUN_TRANSITIONS[snapshot.state].includes(event.to)) {
             throw new Error(
                 `Illegal run transition: ${snapshot.state} -> ${event.to}.`,
@@ -478,7 +478,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'run-terminal-reason-recorded') {
+    if (event.type === "run-terminal-reason-recorded") {
         return {
             ...snapshot,
             revision: snapshot.revision + 1,
@@ -486,12 +486,15 @@ export function transition(
         };
     }
 
-    if (event.type === 'workspace-delivery-applied') {
-        if (snapshot.state !== 'completed') {
-            throw new Error('SDD workspace delivery requires a completed run.');
+    if (event.type === "workspace-delivery-applied") {
+        if (snapshot.state !== "completed") {
+            throw new Error("SDD workspace delivery requires a completed run.");
         }
-        if (!snapshot.workspace || snapshot.workspace.delivery.status !== 'pending') {
-            throw new Error('SDD workspace delivery is not pending.');
+        if (
+            !snapshot.workspace ||
+            snapshot.workspace.delivery.status !== "pending"
+        ) {
+            throw new Error("SDD workspace delivery is not pending.");
         }
         return {
             ...snapshot,
@@ -499,7 +502,7 @@ export function transition(
             workspace: {
                 ...snapshot.workspace,
                 delivery: {
-                    status: 'applied',
+                    status: "applied",
                     patchDigest: event.patchDigest,
                     appliedAt: event.appliedAt,
                 },
@@ -507,7 +510,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'review-applied') {
+    if (event.type === "review-applied") {
         const task = snapshot.tasks[event.taskId];
         if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
         if (!task.reviewResults?.[event.requestId]) {
@@ -529,7 +532,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'delegation-response-applied') {
+    if (event.type === "delegation-response-applied") {
         const task = snapshot.tasks[event.taskId];
         if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
         if (!task.terminalResponses?.[event.requestId]) {
@@ -551,9 +554,9 @@ export function transition(
         };
     }
 
-    if (event.type === 'integration-delegation-planned') {
+    if (event.type === "integration-delegation-planned") {
         if (snapshot.integrationReview?.launches) {
-            throw new Error('Integration review launch ceiling reached.');
+            throw new Error("Integration review launch ceiling reached.");
         }
         return {
             ...snapshot,
@@ -566,7 +569,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'integration-delegation-response-recorded') {
+    if (event.type === "integration-delegation-response-recorded") {
         const integration = snapshot.integrationReview;
         if (
             !integration?.plannedDelegation ||
@@ -588,12 +591,12 @@ export function transition(
         };
     }
 
-    if (event.type === 'integration-review-recorded') {
+    if (event.type === "integration-review-recorded") {
         const integration = snapshot.integrationReview;
         if (
             !integration?.terminalResponse ||
             integration.terminalResponse.requestId !== event.requestId ||
-            !event.review.taskId.startsWith('manifest:')
+            !event.review.taskId.startsWith("manifest:")
         ) {
             throw new Error(`Integration review mismatch: ${event.requestId}.`);
         }
@@ -604,7 +607,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'integration-review-applied') {
+    if (event.type === "integration-review-applied") {
         const integration = snapshot.integrationReview;
         if (
             !integration?.review ||
@@ -619,7 +622,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'task-transition') {
+    if (event.type === "task-transition") {
         const task = snapshot.tasks[event.taskId];
         if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
         if (!TASK_TRANSITIONS[task.state].includes(event.to)) {
@@ -637,7 +640,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'delegation-response-recorded') {
+    if (event.type === "delegation-response-recorded") {
         const task = snapshot.tasks[event.taskId];
         if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
         const planned = Object.values(snapshot.plannedDelegations).find(
@@ -667,7 +670,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'cancellation-requested') {
+    if (event.type === "cancellation-requested") {
         return {
             ...snapshot,
             revision: snapshot.revision + 1,
@@ -678,7 +681,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'review-recorded') {
+    if (event.type === "review-recorded") {
         const task = snapshot.tasks[event.taskId];
         if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
         if (event.review.taskId !== event.taskId) {
@@ -700,7 +703,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'direct-evidence-recorded') {
+    if (event.type === "direct-evidence-recorded") {
         const task = snapshot.tasks[event.taskId];
         if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
         return {
@@ -713,12 +716,12 @@ export function transition(
         };
     }
 
-    if (event.type === 'recovery-attestation-applied') {
+    if (event.type === "recovery-attestation-applied") {
         const task = snapshot.tasks[event.taskId];
         if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
         if (
-            snapshot.state !== 'needs_input' ||
-            task.state !== 'needs_input' ||
+            snapshot.state !== "needs_input" ||
+            task.state !== "needs_input" ||
             task.terminalReason !== event.choice.priorReason
         ) {
             throw new Error(
@@ -746,27 +749,27 @@ export function transition(
             );
         }
         const validStage =
-            (event.profile === 'light' && event.choice.stage === 'worker') ||
-            (event.profile === 'standard' &&
-                (event.choice.stage === 'worker' ||
-                    event.choice.stage === 'correction' ||
-                    event.choice.stage === 'combined')) ||
-            (event.profile === 'critical' &&
-                (event.choice.stage === 'worker' ||
-                    event.choice.stage === 'correction' ||
-                    event.choice.stage === 'spec' ||
-                    event.choice.stage === 'quality'));
+            (event.profile === "light" && event.choice.stage === "worker") ||
+            (event.profile === "standard" &&
+                (event.choice.stage === "worker" ||
+                    event.choice.stage === "correction" ||
+                    event.choice.stage === "combined")) ||
+            (event.profile === "critical" &&
+                (event.choice.stage === "worker" ||
+                    event.choice.stage === "correction" ||
+                    event.choice.stage === "spec" ||
+                    event.choice.stage === "quality"));
         if (!validStage) {
             throw new Error(
                 `Recovery stage ${event.choice.stage} is invalid for ${event.profile}.`,
             );
         }
         const taskState: TaskState =
-            event.choice.stage === 'combined' ||
-            event.choice.stage === 'quality' ||
-            event.profile === 'light'
-                ? 'verified'
-                : 'reviewing';
+            event.choice.stage === "combined" ||
+            event.choice.stage === "quality" ||
+            event.profile === "light"
+                ? "verified"
+                : "reviewing";
         const recoveryEvidence = [
             `Recovery attested by ${event.choice.authorizedBy}; binding ${event.choice.digest}.`,
         ];
@@ -776,7 +779,7 @@ export function transition(
                 version: 1,
                 taskId: event.taskId,
                 stage: event.choice.stage,
-                verdict: 'pass',
+                verdict: "pass",
                 findings: [],
                 evidence: recoveryEvidence,
             };
@@ -784,20 +787,20 @@ export function transition(
         const response: DelegationTerminalResponse = {
             version: 1,
             requestId: event.choice.requestId,
-            status: 'completed',
+            status: "completed",
             output: review
                 ? JSON.stringify(review)
                 : `Recovery attested by ${event.choice.authorizedBy}; binding ${event.choice.digest}.`,
             acceptance: {
-                status: 'accepted',
-                evidenceStatus: 'verified',
+                status: "accepted",
+                evidenceStatus: "verified",
                 explicit: true,
             },
         };
         return {
             ...snapshot,
             revision: snapshot.revision + 1,
-            state: 'running',
+            state: "running",
             terminalReason: undefined,
             tasks: {
                 ...snapshot.tasks,
@@ -836,7 +839,7 @@ export function transition(
         };
     }
 
-    if (event.type === 'terminal-reason-recorded') {
+    if (event.type === "terminal-reason-recorded") {
         const task = snapshot.tasks[event.taskId];
         if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
         return {

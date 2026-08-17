@@ -5,18 +5,18 @@ import {
     rmSync,
     statSync,
     writeFileSync,
-} from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type {
     ExtensionAPI,
     ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+} from "@earendil-works/pi-coding-agent";
 
-const CONFIG_FILENAME = 'model-thinking.json';
+const CONFIG_FILENAME = "model-thinking.json";
 
-import { isThinkingLevel, THINKING_LEVELS } from '../_shared/thinking.ts';
+import { isThinkingLevel, THINKING_LEVELS } from "../_shared/thinking.ts";
 
 interface ModelThinkingConfig {
     models?: Record<string, ThinkingLevel>;
@@ -34,7 +34,7 @@ let activeModelKey: string | undefined;
 let lastProgrammaticSet: { modelKey: string; level: ThinkingLevel } | undefined;
 
 function configPath(): string {
-    return join(homedir(), '.pi', 'agent', CONFIG_FILENAME);
+    return join(homedir(), ".pi", "agent", CONFIG_FILENAME);
 }
 
 function fileStamp(path: string): string | undefined {
@@ -66,7 +66,7 @@ function loadConfig(): ModelThinkingConfig {
     }
 
     try {
-        const raw = readFileSync(path, 'utf8');
+        const raw = readFileSync(path, "utf8");
         cachedConfig = normalizeConfig(JSON.parse(raw));
         return cachedConfig;
     } catch {
@@ -79,24 +79,24 @@ function saveConfig(config: ModelThinkingConfig): void {
     const path = configPath();
     try {
         mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, JSON.stringify(config, null, 2) + '\n', 'utf8');
+        writeFileSync(path, JSON.stringify(config, null, 2) + "\n", "utf8");
         cachedConfig = config;
         cachedPath = path;
         cachedStamp = fileStamp(path);
     } catch (error) {
-        console.error('[pi-model-thinking] failed to save config:', error);
+        console.error("[pi-model-thinking] failed to save config:", error);
     }
 }
 
 function normalizeConfig(value: unknown): ModelThinkingConfig {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     const input = value as Record<string, unknown>;
 
     const normalizeRecord = (
         key: string,
     ): Record<string, ThinkingLevel> | undefined => {
         const raw = input[key];
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        if (!raw || typeof raw !== "object" || Array.isArray(raw))
             return undefined;
         const result: Record<string, ThinkingLevel> = {};
         for (const [k, v] of Object.entries(raw)) {
@@ -106,8 +106,8 @@ function normalizeConfig(value: unknown): ModelThinkingConfig {
     };
 
     return {
-        models: normalizeRecord('models'),
-        providers: normalizeRecord('providers'),
+        models: normalizeRecord("models"),
+        providers: normalizeRecord("providers"),
     };
 }
 
@@ -141,7 +141,7 @@ function isManaged(ctx: ExtensionContext): boolean {
     return resolveThinkingLevel(ctx) !== undefined;
 }
 
-function modelKey(model: NonNullable<ExtensionContext['model']>): string {
+function modelKey(model: NonNullable<ExtensionContext["model"]>): string {
     return `${model.provider}/${model.id}`;
 }
 
@@ -164,7 +164,7 @@ function applyModelThinking(
     // handler will run AFTER this function returns, and we need it to still match.
 
     if (after !== before && !silent) {
-        ctx.ui.notify(`Thinking: ${before} → ${after}`, 'info');
+        ctx.ui.notify(`Thinking: ${before} → ${after}`, "info");
     }
 }
 
@@ -205,17 +205,17 @@ function getArgumentCompletions(prefix: string) {
         ...THINKING_LEVELS.map((value) => ({
             value,
             label: value,
-            description: 'Set current model thinking level',
+            description: "Set current model thinking level",
         })),
         {
-            value: '--show',
-            label: '--show',
-            description: 'Show current thinking state',
+            value: "--show",
+            label: "--show",
+            description: "Show current thinking state",
         },
         {
-            value: '--reset',
-            label: '--reset',
-            description: 'Clear remembered thinking levels',
+            value: "--reset",
+            label: "--reset",
+            description: "Clear remembered thinking levels",
         },
     ];
     const filtered = options.filter((option) =>
@@ -227,14 +227,14 @@ function getArgumentCompletions(prefix: string) {
 function showUsage(ctx: ExtensionContext): void {
     ctx.ui.notify(
         [
-            'Usage:',
-            '  /model-thinking <mode>',
-            '  /model-thinking --show',
-            '  /model-thinking --reset',
-            '',
-            `Modes: ${THINKING_LEVELS.join(', ')}`,
-        ].join('\n'),
-        'info',
+            "Usage:",
+            "  /model-thinking <mode>",
+            "  /model-thinking --show",
+            "  /model-thinking --reset",
+            "",
+            `Modes: ${THINKING_LEVELS.join(", ")}`,
+        ].join("\n"),
+        "info",
     );
 }
 
@@ -245,21 +245,21 @@ function showStatus(pi: ExtensionAPI, ctx: ExtensionContext): void {
     const level = resolveThinkingLevel(ctx);
 
     const lines: string[] = [];
-    lines.push(`model: ${currentKey ?? 'none'}`);
-    lines.push(`managed: ${managed ? 'yes' : 'no'}`);
+    lines.push(`model: ${currentKey ?? "none"}`);
+    lines.push(`managed: ${managed ? "yes" : "no"}`);
     lines.push(`file: ${configPath()}`);
 
     if (managed) {
         lines.push(`resolved: ${level}`);
         lines.push(`current: ${pi.getThinkingLevel()}`);
     } else {
-        lines.push('resolved: none — pi handles this model natively');
+        lines.push("resolved: none — pi handles this model natively");
         lines.push(`current: ${pi.getThinkingLevel()}`);
     }
 
-    const message = lines.join('\n');
+    const message = lines.join("\n");
     if (ctx.hasUI) {
-        ctx.ui.notify(message, managed ? 'info' : 'warning');
+        ctx.ui.notify(message, managed ? "info" : "warning");
     } else {
         console.log(message);
     }
@@ -273,10 +273,10 @@ function resetConfig(ctx: ExtensionContext): void {
             cachedConfig = {};
             cachedPath = undefined;
             cachedStamp = undefined;
-            ctx.ui.notify('Model-thinking config cleared.', 'info');
+            ctx.ui.notify("Model-thinking config cleared.", "info");
             return;
         } catch {
-            ctx.ui.notify('Failed to clear config file.', 'error');
+            ctx.ui.notify("Failed to clear config file.", "error");
             return;
         }
     }
@@ -284,7 +284,7 @@ function resetConfig(ctx: ExtensionContext): void {
     cachedConfig = {};
     cachedPath = undefined;
     cachedStamp = undefined;
-    ctx.ui.notify('No config file to clear.', 'info');
+    ctx.ui.notify("No config file to clear.", "info");
 }
 
 function setModelThinking(
@@ -294,32 +294,32 @@ function setModelThinking(
 ): void {
     const model = ctx.model;
     if (!model) {
-        ctx.ui.notify('No active model.', 'warning');
+        ctx.ui.notify("No active model.", "warning");
         return;
     }
 
     updateConfigForModel(ctx, level);
     lastProgrammaticSet = { modelKey: modelKey(model), level };
     pi.setThinkingLevel(level);
-    ctx.ui.notify(`Thinking for ${modelKey(model)} set to ${level}.`, 'info');
+    ctx.ui.notify(`Thinking for ${modelKey(model)} set to ${level}.`, "info");
 }
 
 export default function modelThinkingExtension(pi: ExtensionAPI) {
-    pi.on('model_select', async (event, ctx) => {
+    pi.on("model_select", async (event, ctx) => {
         activeModelKey = modelKey(event.model);
 
-        const silent = event.source === 'restore';
+        const silent = event.source === "restore";
         applyModelThinking(pi, ctx, silent);
     });
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         if (ctx.model) {
             activeModelKey = modelKey(ctx.model);
             applyModelThinking(pi, ctx, true);
         }
     });
 
-    pi.on('thinking_level_select', async (event, ctx) => {
+    pi.on("thinking_level_select", async (event, ctx) => {
         if (!ctx.model) return;
 
         const currentKey = modelKey(ctx.model);
@@ -346,24 +346,24 @@ export default function modelThinkingExtension(pi: ExtensionAPI) {
         updateConfigForModel(ctx, event.level);
     });
 
-    pi.registerCommand('model-thinking', {
+    pi.registerCommand("model-thinking", {
         description:
-            'Set model-specific thinking levels (/model-thinking <mode>|--show|--reset)',
+            "Set model-specific thinking levels (/model-thinking <mode>|--show|--reset)",
         getArgumentCompletions,
         handler: async (args, ctx) => {
-            const cmd = args?.trim() ?? '';
+            const cmd = args?.trim() ?? "";
 
             if (!cmd) {
                 showUsage(ctx);
                 return;
             }
 
-            if (cmd === '--show') {
+            if (cmd === "--show") {
                 showStatus(pi, ctx);
                 return;
             }
 
-            if (cmd === '--reset') {
+            if (cmd === "--reset") {
                 resetConfig(ctx);
                 return;
             }
@@ -373,7 +373,7 @@ export default function modelThinkingExtension(pi: ExtensionAPI) {
                 return;
             }
 
-            ctx.ui.notify(`Unknown model-thinking argument: ${cmd}`, 'warning');
+            ctx.ui.notify(`Unknown model-thinking argument: ${cmd}`, "warning");
         },
     });
 }

@@ -8,16 +8,16 @@
  *   2. legacy file tool-summary.json (global -> project) — fallback only
  */
 
-import { loadExtensionConfig } from '../_shared/config-loader.ts';
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
 import {
     DEFAULT_CONFIG,
     type ToolSummaryConfig,
     SETTINGS_KEY,
-} from './types.ts';
+} from "./types.ts";
 
 /** Type guard: a plain object (not an array). */
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Normalize raw JSON into a partial config, dropping invalid fields. */
@@ -28,7 +28,7 @@ export function normalizeConfig(raw: unknown): Partial<ToolSummaryConfig> {
 
     if (Array.isArray(raw.tools)) {
         result.tools = raw.tools.filter(
-            (t): t is string => typeof t === 'string' && t.length > 0,
+            (t): t is string => typeof t === "string" && t.length > 0,
         );
     }
 
@@ -59,7 +59,7 @@ export function loadToolSummaryConfig(
         sources: [
             {
                 settingsKey: SETTINGS_KEY,
-                legacyFilename: 'tool-summary.json',
+                legacyFilename: "tool-summary.json",
                 projectLocal: true,
             },
         ],

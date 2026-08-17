@@ -1,19 +1,19 @@
-import { loadExtensionConfig } from '../_shared/config-loader.ts';
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
 
 const AGENT_KEYS = [
-    'assessor',
-    'quickWorker',
-    'worker',
-    'qaTester',
-    'browserTester',
-    'combinedReviewer',
-    'specReviewer',
-    'qualityReviewer',
+    "assessor",
+    "quickWorker",
+    "worker",
+    "qaTester",
+    "browserTester",
+    "combinedReviewer",
+    "specReviewer",
+    "qualityReviewer",
 ] as const;
 type AgentKey = (typeof AGENT_KEYS)[number];
-type ValidationAgentKey = 'qaTester' | 'browserTester';
+type ValidationAgentKey = "qaTester" | "browserTester";
 type CoreAgentKey = Exclude<AgentKey, ValidationAgentKey>;
-const TIMEOUT_KEYS = ['assessor', 'worker', 'reviewer'] as const;
+const TIMEOUT_KEYS = ["assessor", "worker", "reviewer"] as const;
 type TimeoutKey = (typeof TIMEOUT_KEYS)[number];
 
 export interface SddConfig {
@@ -26,23 +26,23 @@ export interface SddConfig {
 }
 
 interface ConfigLayer {
-    agents: Partial<SddConfig['agents']>;
-    models: SddConfig['models'];
-    timeoutsMs: Partial<SddConfig['timeoutsMs']>;
+    agents: Partial<SddConfig["agents"]>;
+    models: SddConfig["models"];
+    timeoutsMs: Partial<SddConfig["timeoutsMs"]>;
     maxConcurrentWriters: number;
     structuredOutputRetries: number;
 }
 
 const DEFAULT_CONFIG: SddConfig = {
     agents: {
-        assessor: 'orchestration-assessor',
-        quickWorker: 'quick-worker',
-        worker: 'sdd-worker',
-        qaTester: 'sdd-qa-tester',
-        browserTester: 'browser-tester',
-        combinedReviewer: 'sdd-combined-reviewer',
-        specReviewer: 'sdd-spec-reviewer',
-        qualityReviewer: 'sdd-quality-reviewer',
+        assessor: "orchestration-assessor",
+        quickWorker: "quick-worker",
+        worker: "sdd-worker",
+        qaTester: "sdd-qa-tester",
+        browserTester: "browser-tester",
+        combinedReviewer: "sdd-combined-reviewer",
+        specReviewer: "sdd-spec-reviewer",
+        qualityReviewer: "sdd-quality-reviewer",
     },
     models: {},
     timeoutsMs: {
@@ -55,7 +55,7 @@ const DEFAULT_CONFIG: SddConfig = {
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isIntegerInRange(
@@ -64,7 +64,7 @@ function isIntegerInRange(
     maximum: number,
 ): value is number {
     return (
-        typeof value === 'number' &&
+        typeof value === "number" &&
         Number.isInteger(value) &&
         value >= minimum &&
         value <= maximum
@@ -76,27 +76,27 @@ function normalizeConfig(raw: unknown): Partial<ConfigLayer> {
     const normalized: Partial<ConfigLayer> = {};
 
     if (isRecord(raw.agents)) {
-        const agents: ConfigLayer['agents'] = {};
+        const agents: ConfigLayer["agents"] = {};
         for (const key of AGENT_KEYS) {
             const value = raw.agents[key];
-            if (typeof value === 'string' && value.trim()) {
+            if (typeof value === "string" && value.trim()) {
                 agents[key] = value.trim();
             }
         }
         if (Object.keys(agents).length) normalized.agents = agents;
     }
     if (isRecord(raw.models)) {
-        const models: ConfigLayer['models'] = {};
+        const models: ConfigLayer["models"] = {};
         for (const key of AGENT_KEYS) {
             const value = raw.models[key];
-            if (typeof value === 'string' && value.trim()) {
+            if (typeof value === "string" && value.trim()) {
                 models[key] = value.trim();
             }
         }
         if (Object.keys(models).length) normalized.models = models;
     }
     if (isRecord(raw.timeoutsMs)) {
-        const timeoutsMs: ConfigLayer['timeoutsMs'] = {};
+        const timeoutsMs: ConfigLayer["timeoutsMs"] = {};
         for (const key of TIMEOUT_KEYS) {
             const value = raw.timeoutsMs[key];
             if (isIntegerInRange(value, 1, Number.MAX_SAFE_INTEGER)) {
@@ -134,7 +134,7 @@ export function loadSddConfig(cwd: string, agentDir?: string): SddConfig {
         defaults: DEFAULT_CONFIG,
         normalize: normalizeConfig,
         merge: mergeConfig,
-        sources: [{ settingsKey: 'sddOrchestrator' }],
+        sources: [{ settingsKey: "sddOrchestrator" }],
         agentDir,
     });
     return {

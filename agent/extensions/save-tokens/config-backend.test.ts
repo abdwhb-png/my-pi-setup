@@ -326,7 +326,8 @@ describe('resolveCompressorConfig', () => {
             showStatus: true,
             showWidget: false,
             archiveOriginal: false,
-            capFallbackBytes: 5000,
+            capFallbackTokens: 1700,
+            maxFallbackBytes: 48000,
             summaryGranularity: 'turn',
             minBytes: 1024,
             minBytesByGroup: { shell: 2048 },
@@ -339,7 +340,7 @@ describe('resolveCompressorConfig', () => {
         expect(result.showStatus).toBe(true);
         expect(result.showWidget).toBe(false);
         expect(result.archiveOriginal).toBe(false);
-        expect(result.capFallbackBytes).toBe(5000);
+        expect(result.capFallbackTokens).toBe(1700);
         expect(result.summaryGranularity).toBe('turn');
         expect(result.aggregates).toBe(false);
         expect(result.capErrors).toBe(false);

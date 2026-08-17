@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export interface GetSettingsOptions {
     path?: string;
@@ -26,14 +26,14 @@ export function getSettingsValue<T>(
     options?: GetSettingsOptions,
 ): T {
     const settingsPath =
-        options?.path ?? join(DEFAULT_AGENT_DIR, 'settings.json');
+        options?.path ?? join(DEFAULT_AGENT_DIR, "settings.json");
 
     if (!existsSync(settingsPath)) {
         return defaultValue;
     }
 
     try {
-        const raw = readFileSync(settingsPath, 'utf-8');
+        const raw = readFileSync(settingsPath, "utf-8");
         const parsed = JSON.parse(raw) as SettingsObject;
         const value = getNestedValue(parsed, keyPath);
         return (value ?? defaultValue) as T;
@@ -56,12 +56,12 @@ export type BooleanMap = Record<string, boolean>;
  * @returns Filtered {@link BooleanMap}; empty object on any invalid input
  */
 export function normalizeBooleanMap(raw: unknown): BooleanMap {
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
         return {};
     }
     const result: BooleanMap = {};
     for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-        if (typeof value === 'boolean') {
+        if (typeof value === "boolean") {
             result[key] = value;
         }
     }
@@ -77,12 +77,12 @@ function getNestedValue(
     obj: SettingsObject,
     path: string,
 ): SettingsPrimitive | SettingsObject | SettingsObject[] | undefined {
-    const parts = path.split('.');
+    const parts = path.split(".");
     let current: SettingsPrimitive | SettingsObject | SettingsObject[] = obj;
 
     for (const part of parts) {
         if (
-            typeof current !== 'object' ||
+            typeof current !== "object" ||
             current === null ||
             Array.isArray(current)
         ) {

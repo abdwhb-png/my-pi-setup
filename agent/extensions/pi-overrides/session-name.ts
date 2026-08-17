@@ -4,18 +4,18 @@ export function compactPromptSessionName(
     input: string,
     promptNames: ReadonlySet<string>,
 ): string | undefined {
-    if (!input.startsWith('/')) return undefined;
+    if (!input.startsWith("/")) return undefined;
     if (input.length < 2) return undefined;
 
-    const firstSpace = input.indexOf(' ', 1);
+    const firstSpace = input.indexOf(" ", 1);
     const commandName =
         firstSpace === -1 ? input.slice(1) : input.slice(1, firstSpace);
 
     if (commandName.length === 0) return undefined;
     if (!promptNames.has(commandName)) return undefined;
 
-    const remainder = firstSpace === -1 ? '' : input.slice(firstSpace);
-    if (remainder.trim() === '') {
+    const remainder = firstSpace === -1 ? "" : input.slice(firstSpace);
+    if (remainder.trim() === "") {
         return `/prompt:${commandName}`;
     }
     return `/prompt:${commandName}${remainder}`;
@@ -34,6 +34,6 @@ export function compactSkillSessionName(text: string): string | undefined {
 
     if (names.length === 0) return undefined;
 
-    const command = `/skill:${names.join(',')}`;
+    const command = `/skill:${names.join(",")}`;
     return remaining ? `${command} ${remaining}` : command;
 }

@@ -12,18 +12,18 @@ export {
     type ActiveRoleState,
     type RoleSwitchRequest,
     type SwitchProcessedPayload,
-} from 'pi-roles/api';
+} from "pi-roles/api";
 
-import { readFileSync } from 'node:fs';
-import { parseFrontmatter } from '@earendil-works/pi-coding-agent';
-import { findLatestActiveRoleState, type ActiveRoleState } from 'pi-roles/api';
-import { getSettingsValue, type GetSettingsOptions } from './settings';
+import { readFileSync } from "node:fs";
+import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { findLatestActiveRoleState, type ActiveRoleState } from "pi-roles/api";
+import { getSettingsValue, type GetSettingsOptions } from "./settings";
 
 // ── Shared helpers for pi-roles addons ──
 
 /** Resolve the configured pi-roles default through one shared fallback. */
 export function getDefaultRole(options?: GetSettingsOptions): string {
-    return getSettingsValue('pi-roles.defaultRole', 'pi-agent', options);
+    return getSettingsValue("pi-roles.defaultRole", "pi-agent", options);
 }
 
 /**
@@ -34,7 +34,7 @@ export function readFrontmatter<
     T extends Record<string, unknown> = Record<string, unknown>,
 >(path: string): T | null {
     try {
-        const raw = readFileSync(path, 'utf-8');
+        const raw = readFileSync(path, "utf-8");
         const { frontmatter } = parseFrontmatter<T>(raw);
         return frontmatter;
     } catch {
@@ -64,7 +64,7 @@ export function getActiveRole(
 export function parseCommaList(raw: string | undefined): string[] {
     if (!raw || !raw.trim()) return [];
     return raw
-        .split(',')
+        .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
 }

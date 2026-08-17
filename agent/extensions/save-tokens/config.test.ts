@@ -43,7 +43,8 @@ describe('config loader', () => {
             normalizeConfig({
                 compressor: {
                     archiveOriginal: true,
-                    capFallbackBytes: 12000,
+                    capFallbackTokens: 4000,
+                    maxFallbackBytes: 48000,
                     routingStrategy: 'benchmark',
                     summaryGranularity: 'agent',
                     ignored: 'nope',
@@ -52,7 +53,8 @@ describe('config loader', () => {
         ).toEqual({
             compressor: {
                 archiveOriginal: true,
-                capFallbackBytes: 12000,
+                capFallbackTokens: 4000,
+                maxFallbackBytes: 48000,
                 routingStrategy: 'benchmark',
                 summaryGranularity: 'agent',
             },
@@ -64,7 +66,7 @@ describe('config loader', () => {
             normalizeConfig({
                 compressor: {
                     archiveOriginal: 'yes',
-                    capFallbackBytes: '12000',
+                    capFallbackTokens: '4000',
                     routingStrategy: 'headroom',
                     summaryGranularity: 'session',
                 },
