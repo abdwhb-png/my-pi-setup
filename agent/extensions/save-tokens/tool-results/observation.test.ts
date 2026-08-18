@@ -53,7 +53,7 @@ function handlerFor(
     return createToolResultHandler({
         backend,
         backendVersion: options?.backendVersion,
-        minBytesByGroup: { shell: 0, read: 0, search: 0 },
+        minTokensByGroup: { shell: 0, read: 0, search: 0 },
         enabled: true,
         excludeTools: [],
         aggregates: false,
@@ -208,7 +208,7 @@ describe('Task 10 observation protocol', () => {
         const handler = createToolResultHandler({
             backend: null,
             backendFailureReason: 'invalid_backend',
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             onObservation: (event) => observations.push(event),
         });
 
@@ -232,7 +232,7 @@ describe('Task 10 observation protocol', () => {
         const handler = createToolResultHandler({
             backend: null,
             backendFailureReason: 'invalid_backend',
-            minBytesByGroup: { shell: 1024, read: 1024, search: 1024 },
+            minTokensByGroup: { shell: 10, read: 10, search: 10 },
             onObservation: (event) => observations.push(event),
         });
 
@@ -305,13 +305,13 @@ describe('Task 10 observation protocol', () => {
                 },
             },
             backendVersion: HEADROOM_PIN,
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             enabled: true,
             excludeTools: [],
             aggregates: false,
             capErrors: false,
             routingStrategy: 'benchmark',
-            capFallbackTokens: 21,
+            capFallbackTokens: 100,
             archiveOriginal: async () => '/tmp/archive/cap-only.txt',
             onObservation: (event) => observations.push(event),
         });

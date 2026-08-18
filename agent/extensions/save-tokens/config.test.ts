@@ -218,7 +218,7 @@ describe('telemetry config loader', () => {
     });
 });
 
-describe('compressor enabled/excludeTools/minBytes', () => {
+describe('compressor enabled/excludeTools/minTokensByGroup', () => {
     it('defaults enabled to true', () => {
         const cfg = loadCompressorConfig();
         expect(cfg.enabled).toBe(true);
@@ -227,11 +227,6 @@ describe('compressor enabled/excludeTools/minBytes', () => {
     it('defaults excludeTools to empty array', () => {
         const cfg = loadCompressorConfig();
         expect(cfg.excludeTools).toEqual([]);
-    });
-
-    it('does not inject a legacy minBytes default', () => {
-        const cfg = loadCompressorConfig();
-        expect(cfg.minBytes).toBeUndefined();
     });
 
     it('defaults raw archiving to enabled', () => {
@@ -243,7 +238,7 @@ describe('compressor enabled/excludeTools/minBytes', () => {
         expect(
             normalizeConfig({
                 compressor: {
-                    minBytesByGroup: {
+                    minTokensByGroup: {
                         shell: 4096,
                         read: 8192,
                         search: 0,
@@ -256,7 +251,7 @@ describe('compressor enabled/excludeTools/minBytes', () => {
             }),
         ).toEqual({
             compressor: {
-                minBytesByGroup: {
+                minTokensByGroup: {
                     shell: 4096,
                     read: 8192,
                     search: 0,
@@ -273,7 +268,7 @@ describe('compressor enabled/excludeTools/minBytes', () => {
         expect(
             normalizeConfig({
                 compressor: {
-                    minBytesByGroup: { shell: 4096, typo: 1 },
+                    minTokensByGroup: { shell: 4096, typo: 1 },
                 },
             }),
         ).toEqual({});
@@ -283,7 +278,7 @@ describe('compressor enabled/excludeTools/minBytes', () => {
         expect(
             normalizeConfig({
                 compressor: {
-                    minBytesByGroup: { shell: -1, read: 1.5 },
+                    minTokensByGroup: { shell: -1, read: 1.5 },
                     archiveRetention: { maxAgeDays: 0, maxBytes: Infinity },
                 },
             }),
@@ -310,54 +305,10 @@ describe('compressor enabled/excludeTools/minBytes', () => {
         });
     });
 
-    it('normalizes minBytes: 500', () => {
-        expect(
-            normalizeConfig({
-                compressor: { minBytes: 500 },
-            }),
-        ).toEqual({
-            compressor: { minBytes: 500 },
-        });
-    });
-
-    it('accepts minBytes: 0 as valid', () => {
-        expect(
-            normalizeConfig({
-                compressor: { minBytes: 0 },
-            }),
-        ).toEqual({
-            compressor: { minBytes: 0 },
-        });
-    });
-
     it('rejects non-boolean enabled', () => {
         expect(
             normalizeConfig({
                 compressor: { enabled: 'yes' },
-            }),
-        ).toEqual({});
-    });
-
-    it('rejects negative minBytes', () => {
-        expect(
-            normalizeConfig({
-                compressor: { minBytes: -1 },
-            }),
-        ).toEqual({});
-    });
-
-    it('rejects float minBytes', () => {
-        expect(
-            normalizeConfig({
-                compressor: { minBytes: 1.5 },
-            }),
-        ).toEqual({});
-    });
-
-    it('rejects non-finite minBytes (Infinity)', () => {
-        expect(
-            normalizeConfig({
-                compressor: { minBytes: Infinity },
             }),
         ).toEqual({});
     });

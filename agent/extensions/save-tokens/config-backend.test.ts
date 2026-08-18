@@ -329,8 +329,7 @@ describe('resolveCompressorConfig', () => {
             capFallbackTokens: 1700,
             maxFallbackBytes: 48000,
             summaryGranularity: 'turn',
-            minBytes: 1024,
-            minBytesByGroup: { shell: 2048 },
+            minTokensByGroup: { shell: 2048 },
             archiveRetention: { maxAgeDays: 7 },
             aggregates: false,
             capErrors: false,
@@ -344,6 +343,27 @@ describe('resolveCompressorConfig', () => {
         expect(result.summaryGranularity).toBe('turn');
         expect(result.aggregates).toBe(false);
         expect(result.capErrors).toBe(false);
+        expect(result.minTokensByGroup.shell).toBe(2048);
+    });
+
+    it('defaults minTokensByGroup to the benchmarked 1400/2700/1400', () => {
+        const result = resolveCompressorConfig({});
+        expect(result.minTokensByGroup).toEqual({
+            shell: 1400,
+            read: 2700,
+            search: 1400,
+        });
+    });
+
+    it('prefers minTokensByGroup per group over the default', () => {
+        const result = resolveCompressorConfig({
+            minTokensByGroup: { shell: 100 },
+        });
+        expect(result.minTokensByGroup).toEqual({
+            shell: 100,
+            read: 2700,
+            search: 1400,
+        });
     });
 });
 

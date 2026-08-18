@@ -42,7 +42,7 @@ const TEST_MODEL: CompressorModel = {
 };
 
 const TEST_CONFIG = {
-  minBytesByGroup: { shell: 0, read: 0, search: 0 },
+  minTokensByGroup: { shell: 0, read: 0, search: 0 },
   archiveOriginal: false,
   aggregates: false,
   capErrors: false,
@@ -50,8 +50,7 @@ const TEST_CONFIG = {
 
 function createTestToolResultHandler(options: TestHandlerOptions = {}) {
   const { baseUrl: _baseUrl, fetchImpl, ...handlerOptions } = options;
-  const hasExplicitThreshold =
-    options.minBytes !== undefined || options.minBytesByGroup !== undefined;
+  const hasExplicitThreshold = options.minTokensByGroup !== undefined;
 
   // Convert fetchImpl to a mock CompressionBackend
   let mockBackend: CompressionBackend | null = null;
@@ -86,7 +85,7 @@ function createTestToolResultHandler(options: TestHandlerOptions = {}) {
     backend: mockBackend,
     ...(hasExplicitThreshold
       ? {}
-      : { minBytesByGroup: { shell: 0, read: 0, search: 0 } }),
+      : { minTokensByGroup: { shell: 0, read: 0, search: 0 } }),
     aggregates: false,
     capErrors: false,
     ...handlerOptions,
@@ -205,7 +204,7 @@ describe("getLocalCompressorConfig", () => {
   it("reads env with sane defaults and showStatus disabled", () => {
     delete process.env.EDGEE_COMPRESSOR_BASE_URL;
     delete process.env.EDGEE_COMPRESSOR_AGENT;
-    expect(getLocalCompressorConfig()).toEqual({
+    expect(getLocalCompressorConfig()).toMatchObject({
       baseUrl: "http://127.0.0.1:8320",
       agent: "claude",
       timeoutMs: 800,
@@ -220,10 +219,10 @@ describe("getLocalCompressorConfig", () => {
       summaryGranularity: "all",
       enabled: true,
       excludeTools: [],
-      minBytesByGroup: {
-        shell: 4096,
-        read: 8192,
-        search: 4096,
+      minTokensByGroup: {
+        shell: 1400,
+        read: 2700,
+        search: 1400,
       },
       aggregates: true,
       capErrors: true,
@@ -559,7 +558,7 @@ describe("createToolResultHandler", () => {
     const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8787",
-      minBytesByGroup: { shell: 4096, read: 8192, search: 10000 },
+      minTokensByGroup: { shell: 4096, read: 8192, search: 10000 },
       capFallbackTokens: 667,
       archiveOriginal: mock(async () => "/tmp/pi-tool-results/full-find3.txt"),
     });
@@ -741,7 +740,7 @@ describe("createToolResultHandler", () => {
     const backend = createRecordingBackend("trimmed");
     const handler = createToolResultHandler({
       backend,
-      minBytesByGroup: { shell: 0, read: 0, search: 0 },
+      minTokensByGroup: { shell: 0, read: 0, search: 0 },
       aggregates: false,
       capErrors: false,
     });
@@ -768,22 +767,20 @@ describe("grouped thresholds and result integrity", () => {
     const backend = createRecordingBackend("x");
     const handler = createToolResultHandler({
       backend,
-      minBytesByGroup: { shell: 4, read: 6, search: 5 },
+      minTokensByGroup: { shell: 2, read: 3, search: 2 },
       aggregates: false,
       capErrors: false,
     });
 
-    // UTF-8 byte boundaries: "é" is 2 bytes, "a" is 1 byte.
+    // estimateTokens for ordinary ASCII is ceil(chars / 3):
+    // "aaa" → 1, "aaaaaa" → 2, "aaaaaaaaa" → 3.
     const cases = [
-      ["bash", "é", false],
-      ["bash", "éé", true],
-      ["bash", "ééa", true],
-      ["read", "ééa", false],
-      ["read", "ééé", true],
-      ["read", "éééa", true],
-      ["grep", "éé", false],
-      ["grep", "ééa", true],
-      ["grep", "ééaa", true],
+      ["bash", "aaa", false],
+      ["bash", "aaaaaa", true],
+      ["read", "aaaaaa", false],
+      ["read", "aaaaaaaaa", true],
+      ["grep", "aaa", false],
+      ["grep", "aaaaaa", true],
     ] as const;
 
     for (const [toolName, text, eligible] of cases) {
@@ -791,7 +788,7 @@ describe("grouped thresholds and result integrity", () => {
       await handler(
         toolResultEvent({
           toolName,
-          toolCallId: `${toolName}-${Buffer.byteLength(text, "utf8")}`,
+          toolCallId: `${toolName}-${text.length}`,
           input: {},
           text,
         }),
@@ -1413,7 +1410,7 @@ describe("extension registration", () => {
   });
 });
 
-describe("compressor enabled/excludeTools/minBytes bypass", () => {
+describe("compressor enabled/excludeTools/threshold bypass", () => {
   it("bypasses compression silently when enabled is false", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
     const observations: unknown[] = [];
@@ -1467,13 +1464,13 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("bypasses compression silently for output below minBytes", async () => {
+  it("bypasses compression silently for output below the token threshold", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "trimmed" }, { status: 200 })));
     const observations: unknown[] = [];
     const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
-      minBytes: 100,
+      minTokensByGroup: { shell: 10, read: 10, search: 10 },
       onObservation: (event) => observations.push(event),
     });
 
@@ -1501,12 +1498,12 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("measures minBytes using UTF-8 bytes", async () => {
+  it("measures the threshold using estimated tokens, not UTF-8 bytes", async () => {
     const fetchImpl = mock(() => Promise.resolve(Response.json({ compressed_output: "x" }, { status: 200 })));
     const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
-      minBytes: 4,
+      minTokensByGroup: { shell: 2, read: 2, search: 2 },
     });
 
     const result = await handler({
@@ -1518,8 +1515,10 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
       details: undefined,
     } as any, TEST_MODEL);
 
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(result).toBeDefined();
+    // "éé" is 4 UTF-8 bytes but only 2 ordinary code points → 1 estimated
+    // token, below the 2-token threshold, so it stays intact.
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
   });
 
   it("includes enabled, exclusions, and grouped thresholds in config defaults", () => {
@@ -1528,10 +1527,10 @@ describe("compressor enabled/excludeTools/minBytes bypass", () => {
     const cfg = getLocalCompressorConfig();
     expect(cfg.enabled).toBe(true);
     expect(cfg.excludeTools).toEqual([]);
-    expect(cfg.minBytesByGroup).toEqual({
-      shell: 4096,
-      read: 8192,
-      search: 4096,
+    expect(cfg.minTokensByGroup).toEqual({
+      shell: 1400,
+      read: 2700,
+      search: 1400,
     });
     expect(cfg.aggregates).toBe(true);
     expect(cfg.capErrors).toBe(true);
@@ -1964,14 +1963,14 @@ describe("empty-state guard", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("passes output below minBytes through intact without aggregate", async () => {
+  it("passes output below the threshold through intact without aggregate", async () => {
     const fetchImpl = mock(() =>
       Promise.resolve(Response.json({ compressed_output: "x" }, { status: 200 })),
     );
     const handler = createTestToolResultHandler({
       fetchImpl,
       baseUrl: "http://127.0.0.1:8320",
-      minBytesByGroup: { shell: 100, read: 100, search: 100 },
+      minTokensByGroup: { shell: 100, read: 100, search: 100 },
       aggregates: true,
       capErrors: true,
     });

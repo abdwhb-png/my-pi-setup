@@ -49,11 +49,32 @@ archive the complete original before replacement.
 
 The deterministic cap is expressed as an **estimated-token budget**
 (`capFallbackTokens`, default `2700`), not a character count. The estimator is
-Unicode-safe: it prices dense CJK/Kana/Hangul scripts at 1.5 code points per
-token, astral emoji at one token each, and everything else at 3 code points per
-token, iterating by code point so surrogate pairs are never split.
-`maxFallbackBytes` (default `48000`) is a secondary hard guard on the rendered
-result's UTF-8 byte length. Configure either under `saveTokens.compressor`.
+Unicode-safe and calibrated to be conservative (≥) against `cl100k_base`: it
+prices dense CJK/Kana/Hangul scripts at 0.8 code points per token, emoji and
+symbols (BMP + astral) at two tokens each, and everything else at 3 code points
+per token, iterating by code point so surrogate pairs are never split. See
+`benchmarks/reports/token-calibration.md` for the calibration. A known residual:
+digit/punctuation-dense logs are under-counted by ~14% (a separate, smaller
+gap). `maxFallbackBytes` (default `48000`) is a secondary hard guard on the
+rendered result's UTF-8 byte length. Configure either under
+`saveTokens.compressor`.
+
+### Input threshold
+
+Whether a tool result is large enough to be worth compressing is also decided in
+**estimated tokens**, not bytes, so CJK/emoji content triggers compression on the
+same footing as ASCII:
+
+- `minTokensByGroup` (`shell`/`read`/`search`, default `1400 / 2700 / 1400`)
+  is the primary threshold. A result is compressed only when its estimated token
+  count reaches the group's threshold.
+- The legacy byte thresholds (`minBytesByGroup` and the global `minBytes`) have
+  been **removed** (breaking) — use `minTokensByGroup` instead.
+
+The defaults were calibrated against real `tiktoken` counts — see
+`benchmarks/reports/token-calibration.md`. The token threshold collapses the
+~10× byte-based cross-script spread to <2×. `bytes` remain only a transport
+safety guard (`maxFallbackBytes`), never a policy decision.
 
 ## Switching Backends
 

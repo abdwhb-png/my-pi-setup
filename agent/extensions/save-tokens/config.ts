@@ -71,9 +71,8 @@ export interface CompressorConfig {
     summaryGranularity?: "none" | "turn" | "agent" | "all";
     enabled?: boolean;
     excludeTools?: string[];
-    /** Legacy global threshold; group values take precedence. */
-    minBytes?: number;
-    minBytesByGroup?: Partial<CompressionThresholds>;
+    /** Input threshold, in estimated tokens, per compression group. */
+    minTokensByGroup?: Partial<CompressionThresholds>;
     archiveRetention?: Partial<ArchiveRetentionConfig>;
     aggregates?: boolean;
     capErrors?: boolean;
@@ -264,9 +263,8 @@ function normalizeCompressor(raw: object): CompressorConfig | undefined {
             ),
         ];
     }
-    if (isNonNegativeInteger(r.minBytes)) out.minBytes = r.minBytes;
-    const minBytesByGroup = normalizeThresholds(r.minBytesByGroup);
-    if (minBytesByGroup) out.minBytesByGroup = minBytesByGroup;
+    const minTokensByGroup = normalizeThresholds(r.minTokensByGroup);
+    if (minTokensByGroup) out.minTokensByGroup = minTokensByGroup;
     const archiveRetention = normalizeArchiveRetention(r.archiveRetention);
     if (archiveRetention) out.archiveRetention = archiveRetention;
     if (typeof r.aggregates === "boolean") out.aggregates = r.aggregates;
@@ -374,9 +372,9 @@ export function mergeConfig(
 ): SaveTokensConfig {
     const baseCompressor = base.compressor ?? {};
     const overrideCompressor = overrides.compressor ?? {};
-    const minBytesByGroup = {
-        ...baseCompressor.minBytesByGroup,
-        ...overrideCompressor.minBytesByGroup,
+    const minTokensByGroup = {
+        ...baseCompressor.minTokensByGroup,
+        ...overrideCompressor.minTokensByGroup,
     };
     const archiveRetention = {
         ...baseCompressor.archiveRetention,
@@ -401,7 +399,9 @@ export function mergeConfig(
         "invalidBackend" in overrideCompressor
             ? { invalidBackend: overrideCompressor.invalidBackend }
             : {}),
-        ...(Object.keys(minBytesByGroup).length > 0 ? { minBytesByGroup } : {}),
+        ...(Object.keys(minTokensByGroup).length > 0
+            ? { minTokensByGroup }
+            : {}),
         ...(Object.keys(archiveRetention).length > 0
             ? { archiveRetention }
             : {}),

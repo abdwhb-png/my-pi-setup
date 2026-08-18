@@ -8,9 +8,11 @@ import type {
 } from "../../_shared/compression-protocol";
 import { buildAggregateHeader } from "./aggregates";
 import {
+    belowMinTokens,
     countCodePoints,
     countUtf8Bytes,
     estimateTokens,
+    fitsTokenBudget,
 } from "./token-estimator";
 import type {
     ArchiveOriginalInput,
@@ -215,6 +217,11 @@ const HEAD_TAIL_OMISSION_MARKER = "\n... [omitted by head/tail cap] ...\n";
  *
  * Returns the original text unchanged when it already fits both the token
  * budget and the byte guard.
+ *
+ * Precondition: the budget must exceed the omission marker's own size. When it
+ * does not, the only possible result is the marker itself (best effort) and the
+ * budget cannot be strictly honored. `maybeCreateArchivedCap` guards this
+ * before calling.
  */
 export function headTailCapTokens(
     text: string,
@@ -222,10 +229,7 @@ export function headTailCapTokens(
     maxBytes?: number,
 ): string {
     if (budgetTokens <= 0) return text;
-    if (
-        estimateTokens(text) <= budgetTokens &&
-        (maxBytes === undefined || countUtf8Bytes(text) <= maxBytes)
-    ) {
+    if (fitsTokenBudget(text, budgetTokens, maxBytes)) {
         return text;
     }
 
@@ -242,10 +246,8 @@ export function headTailCapTokens(
         );
     };
 
-    const overBudget = (candidate: string): boolean => {
-        if (estimateTokens(candidate) > budgetTokens) return true;
-        return maxBytes !== undefined && countUtf8Bytes(candidate) > maxBytes;
-    };
+    const overBudget = (candidate: string): boolean =>
+        !fitsTokenBudget(candidate, budgetTokens, maxBytes);
 
     let result = build(headCount, tailCount);
     while (overBudget(result) && (headCount > 0 || tailCount > 0)) {
@@ -291,10 +293,7 @@ async function maybeCreateArchivedCap(
     const maxBytes = options?.maxFallbackBytes;
     if (!targetTokens || targetTokens <= 0 || !options?.archiveOriginal)
         return null;
-    if (
-        estimateTokens(text) <= targetTokens &&
-        (maxBytes === undefined || countUtf8Bytes(text) <= maxBytes)
-    ) {
+    if (fitsTokenBudget(text, targetTokens, maxBytes)) {
         return null;
     }
     const archivePath = await options.archiveOriginal(
@@ -303,6 +302,23 @@ async function maybeCreateArchivedCap(
     if (!archivePath) throw new Error("archive did not return a path");
     const note = buildEscapeHatchNote(text, archivePath);
     const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : "";
+    // The omission marker is always present in a trimmed result. If the
+    // mandatory overhead (note + prefix + marker) already exceeds the budget
+    // or byte guard, capping cannot satisfy its guarantee — fail open.
+    const overheadTokens =
+        estimateTokens(note) +
+        estimateTokens(prefix) +
+        estimateTokens(HEAD_TAIL_OMISSION_MARKER);
+    const overheadBytes =
+        countUtf8Bytes(note) +
+        countUtf8Bytes(prefix) +
+        countUtf8Bytes(HEAD_TAIL_OMISSION_MARKER);
+    if (
+        overheadTokens > targetTokens ||
+        (maxBytes !== undefined && overheadBytes > maxBytes)
+    ) {
+        return null;
+    }
     const cappedBudget = Math.max(
         1,
         targetTokens - estimateTokens(note) - estimateTokens(prefix),
@@ -365,16 +381,11 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
     const excludedTools = new Set(options?.excludeTools ?? []);
     const aggregates = options?.aggregates ?? true;
     const capErrors = options?.capErrors ?? true;
-    const legacyMinBytes = options?.minBytes;
-    const minBytesByGroup =
-        options?.minBytesByGroup ??
-        (legacyMinBytes === undefined
-            ? { shell: 0, read: 0, search: 0 }
-            : {
-                  shell: legacyMinBytes,
-                  read: legacyMinBytes,
-                  search: legacyMinBytes,
-              });
+    const minTokensByGroup = options?.minTokensByGroup ?? {
+        shell: 0,
+        read: 0,
+        search: 0,
+    };
 
     return async (
         event: ToolResultEvent,
@@ -400,6 +411,11 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
         const meta = observationMeta(backend, backendVersion);
 
         if (event.toolName === "find" && !event.isError) {
+            // Non-errored `find` listings bypass the semantic backend and the
+            // input threshold, going straight to the deterministic cap.
+            // Errored `find` results are intentionally NOT special-cased: they
+            // are handled by the generic error path below, so a small `find`
+            // error is left intact rather than archived.
             const text = extractCompressibleText(event.content);
             if (!text) return;
             const aggregatePrefix = aggregates
@@ -426,8 +442,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                 const text = extractCompressibleText(event.content);
                 if (!text) return;
                 if (!ctx) return;
-                if (Buffer.byteLength(text, "utf8") < minBytesByGroup[ctx])
-                    return;
+                if (belowMinTokens(text, minTokensByGroup[ctx])) return;
                 options.onObservation?.({
                     kind: "failed",
                     toolCallId: event.toolCallId,
@@ -447,7 +462,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
             const text = extractCompressibleText(event.content);
             if (!text) return;
             if (!ctx) return;
-            if (Buffer.byteLength(text, "utf8") < minBytesByGroup[ctx]) return;
+            if (belowMinTokens(text, minTokensByGroup[ctx])) return;
             const aggregatePrefix = aggregates
                 ? buildAggregateHeader(event.toolName, event.input, text)
                 : null;
@@ -484,7 +499,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
             return;
         }
         if (!ctx) return;
-        if (Buffer.byteLength(text, "utf8") < minBytesByGroup[ctx]) return;
+        if (belowMinTokens(text, minTokensByGroup[ctx])) return;
 
         const aggregatePrefix = aggregates
             ? buildAggregateHeader(event.toolName, event.input, text)

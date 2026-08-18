@@ -136,7 +136,8 @@ export interface LocalCompressorConfig {
     summaryGranularity: "none" | "turn" | "agent" | "all";
     enabled: boolean;
     excludeTools: string[];
-    minBytesByGroup: CompressionThresholds;
+    /** Input threshold, in estimated tokens, per compression group. */
+    minTokensByGroup: CompressionThresholds;
     archiveRetention: ArchiveRetentionConfig;
     aggregates: boolean;
     capErrors: boolean;
@@ -169,8 +170,8 @@ export interface ToolResultHandlerOptions {
     routingStrategy?: "edgee" | "benchmark";
     enabled?: boolean;
     excludeTools?: string[];
-    minBytes?: number;
-    minBytesByGroup?: CompressionThresholds;
+    /** Input threshold, in estimated tokens, per compression group. */
+    minTokensByGroup?: CompressionThresholds;
     aggregates?: boolean;
     capErrors?: boolean;
 }

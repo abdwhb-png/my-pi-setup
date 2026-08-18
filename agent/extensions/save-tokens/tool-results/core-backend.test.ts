@@ -82,7 +82,7 @@ describe('createToolResultHandler with backend', () => {
 
         const handler = createToolResultHandler({
             backend: mockBackend,
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             enabled: true,
             excludeTools: [],
             archiveOriginal: undefined,
@@ -125,7 +125,7 @@ describe('createToolResultHandler with backend', () => {
 
         const handler = createToolResultHandler({
             backend: mockBackend,
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             enabled: true,
             excludeTools: [],
             archiveOriginal: undefined,
@@ -155,7 +155,7 @@ describe('createToolResultHandler with backend', () => {
         // When backend is null, compression should be skipped entirely
         const handler = createToolResultHandler({
             backend: null,
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             enabled: true,
             excludeTools: [],
             archiveOriginal: undefined,
@@ -191,7 +191,7 @@ describe('createToolResultHandler with backend', () => {
 
         const handler = createToolResultHandler({
             backend: mockBackend,
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             enabled: true,
             excludeTools: [],
             archiveOriginal: undefined,
@@ -249,7 +249,7 @@ function classifyHandler(
             id: 'headroom' as const,
             compress: () => Promise.resolve(result),
         },
-        minBytesByGroup: { shell: 0, read: 0, search: 0 },
+        minTokensByGroup: { shell: 0, read: 0, search: 0 },
         enabled: true,
         excludeTools: [],
         aggregates: false,
@@ -384,7 +384,7 @@ describe('backend reason classification', () => {
                 compress: () =>
                     Promise.resolve({ output: null, reason: 'timeout' }),
             },
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             capFallbackTokens: 100,
             archiveOriginal: () => Promise.resolve('/tmp/archive/cap.txt'),
             aggregates: false,
@@ -431,7 +431,7 @@ describe('backend reason classification', () => {
                 id: 'headroom' as const,
                 compress: () => Promise.resolve({ output: 'trimmed result' }),
             },
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             archiveOriginal: () =>
                 Promise.resolve('/tmp/archive/final-size.txt'),
             aggregates: true,
@@ -523,7 +523,7 @@ describe('model propagation per tool_result', () => {
 
         const handler = createToolResultHandler({
             backend: mockBackend,
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             enabled: true,
             excludeTools: [],
             aggregates: false,
@@ -590,7 +590,7 @@ describe('model propagation per tool_result', () => {
 
         const handler = createToolResultHandler({
             backend: headroomBackend,
-            minBytesByGroup: { shell: 0, read: 0, search: 0 },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
             enabled: true,
             excludeTools: [],
             aggregates: false,
@@ -611,5 +611,180 @@ describe('model propagation per tool_result', () => {
 
         expect(headroomCalls).toBe(1);
         expect(edgeeCalls).toBe(0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// minTokensByGroup — token-based input threshold across scripts
+// ---------------------------------------------------------------------------
+
+describe('minTokensByGroup token threshold', () => {
+    function recordingHandler(minTokensByGroup: {
+        shell: number;
+        read: number;
+        search: number;
+    }) {
+        let calls = 0;
+        const backend = {
+            id: 'headroom' as const,
+            compress: async () => {
+                calls += 1;
+                return { output: 'short' };
+            },
+        };
+        const handler = createToolResultHandler({
+            backend,
+            minTokensByGroup,
+            aggregates: false,
+            capErrors: false,
+        });
+        return { handler, callCount: () => calls };
+    }
+
+    const event = (toolName: string, text: string): ToolResultEvent => ({
+        type: 'tool_result',
+        toolCallId: `t-${toolName}`,
+        toolName,
+        content: [{ type: 'text' as const, text }],
+        isError: false,
+        input: {},
+        details: undefined,
+    });
+
+    const MODEL = {
+        provider: 'anthropic',
+        id: 'claude-sonnet-4-6',
+        contextWindow: 200000,
+    };
+
+    it('gates ASCII output by estimated tokens', async () => {
+        const { handler, callCount } = recordingHandler({
+            shell: 4,
+            read: 4,
+            search: 4,
+        });
+        // "hello world" = 11 ordinary code points → ceil(11/3) = 4 → eligible
+        await handler(event('bash', 'hello world'), MODEL);
+        // "abc" = 3 code points → 1 token → below threshold
+        await handler(event('bash', 'abc'), MODEL);
+        expect(callCount()).toBe(1);
+    });
+
+    it('gates dense CJK by the same token budget, not byte length', async () => {
+        const { handler, callCount } = recordingHandler({
+            shell: 4,
+            read: 4,
+            search: 4,
+        });
+        // 4 CJK code points → ceil(4 / 0.8) = 5 → eligible (5 ≥ 4)
+        await handler(event('bash', '你好世界'), MODEL);
+        // 2 CJK code points → ceil(2 / 0.8) = 3 → below threshold (3 < 4)
+        await handler(event('bash', '你好'), MODEL);
+        expect(callCount()).toBe(1);
+    });
+
+    it('gates astral emoji without splitting surrogate pairs', async () => {
+        const { handler, callCount } = recordingHandler({
+            shell: 3,
+            read: 3,
+            search: 3,
+        });
+        // 2 emoji → 4 tokens → eligible (4 ≥ 3)
+        await handler(event('bash', '😀😀'), MODEL);
+        // 1 emoji → 2 tokens → below threshold (2 < 3)
+        await handler(event('bash', '😀'), MODEL);
+        expect(callCount()).toBe(1);
+    });
+
+    it('gates latin accented text as ordinary code points', async () => {
+        const { handler, callCount } = recordingHandler({
+            shell: 2,
+            read: 2,
+            search: 2,
+        });
+        // "café" = 4 ordinary code points → ceil(4/3) = 2 → eligible
+        await handler(event('bash', 'café'), MODEL);
+        // "caf" = 3 code points → 1 token → below threshold
+        await handler(event('bash', 'caf'), MODEL);
+        expect(callCount()).toBe(1);
+    });
+
+    it('uses the group threshold for the tool, not a global value', async () => {
+        const { handler, callCount } = recordingHandler({
+            shell: 2,
+            read: 3,
+            search: 3,
+        });
+        // "aaaaaa" = 6 chars → 2 tokens: eligible for shell (2 ≥ 2), below read (2 < 3)
+        await handler(event('bash', 'aaaaaa'), MODEL);
+        await handler(event('read', 'aaaaaa'), MODEL);
+        expect(callCount()).toBe(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// cap overhead — fail open when the fixed overhead alone exceeds the budget
+// ---------------------------------------------------------------------------
+
+describe('cap overhead fail-open', () => {
+    const MODEL = {
+        provider: 'anthropic',
+        id: 'claude-sonnet-4-6',
+        contextWindow: 200000,
+    };
+
+    it('fails open instead of emitting a cap whose fixed overhead exceeds the budget', async () => {
+        const handler = createToolResultHandler({
+            backend: null,
+            archiveOriginal: async () => '/tmp/archive/tiny.txt',
+            capFallbackTokens: 10,
+            aggregates: false,
+            capErrors: false,
+        });
+
+        const text = Array.from({ length: 200 }, (_, i) => `line-${i}`).join(
+            '\n',
+        );
+        const event: ToolResultEvent = {
+            type: 'tool_result',
+            toolCallId: 'tiny-cap',
+            toolName: 'find',
+            content: [{ type: 'text' as const, text }],
+            isError: false,
+            input: { path: '/repo' },
+            details: undefined,
+        };
+
+        const result = await handler(event, MODEL, undefined);
+        // The escape-hatch note + omission marker alone exceed 10 tokens, so
+        // the cap cannot satisfy its budget — the original is preserved.
+        expect(result).toBeUndefined();
+    });
+
+    it('still caps when the overhead fits the budget', async () => {
+        const handler = createToolResultHandler({
+            backend: null,
+            archiveOriginal: async () => '/tmp/archive/ok.txt',
+            capFallbackTokens: 200,
+            aggregates: false,
+            capErrors: false,
+        });
+
+        const text = Array.from({ length: 400 }, (_, i) => `line-${i}`).join(
+            '\n',
+        );
+        const event: ToolResultEvent = {
+            type: 'tool_result',
+            toolCallId: 'ok-cap',
+            toolName: 'find',
+            content: [{ type: 'text' as const, text }],
+            isError: false,
+            input: { path: '/repo' },
+            details: undefined,
+        };
+
+        const result = await handler(event, MODEL, undefined);
+        expect(result).toBeDefined();
+        expect(result?.content[0]?.text).toContain('omitted by head/tail cap');
     });
 });

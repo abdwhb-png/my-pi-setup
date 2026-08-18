@@ -1,0 +1,3 @@
+# Python tokenizer helper artifacts
+__pycache__/
+*.pyc

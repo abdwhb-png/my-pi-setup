@@ -25,15 +25,35 @@ const ENV_PREFIXES: Record<CompressionBackendId, string> = {
 };
 
 const DEFAULT_AGENT = "claude";
-const DEFAULT_MIN_BYTES_BY_GROUP: CompressionThresholds = {
-    shell: 4096,
-    read: 8192,
-    search: 4096,
+/**
+ * Default input thresholds, in estimated tokens. Calibrated against tiktoken
+ * (see `benchmarks/reports/token-calibration.md`): the old byte defaults
+ * (4096/8192/4096) ÷3 round to 1365/2731/1365 → 1400/2700/1400.
+ */
+const DEFAULT_MIN_TOKENS_BY_GROUP: CompressionThresholds = {
+    shell: 1400,
+    read: 2700,
+    search: 1400,
 };
 const DEFAULT_ARCHIVE_RETENTION: ArchiveRetentionConfig = {
     maxAgeDays: 30,
     maxBytes: 1_073_741_824,
 };
+
+/**
+ * Resolve the input-threshold token budget per compression group.
+ *
+ * An explicit `minTokensByGroup` value wins per group; otherwise the
+ * calibrated `DEFAULT_MIN_TOKENS_BY_GROUP` applies.
+ */
+function resolveMinTokensByGroup(cfg: CompressorConfig): CompressionThresholds {
+    return {
+        shell: cfg.minTokensByGroup?.shell ?? DEFAULT_MIN_TOKENS_BY_GROUP.shell,
+        read: cfg.minTokensByGroup?.read ?? DEFAULT_MIN_TOKENS_BY_GROUP.read,
+        search:
+            cfg.minTokensByGroup?.search ?? DEFAULT_MIN_TOKENS_BY_GROUP.search,
+    };
+}
 
 const VALID_BACKENDS: ReadonlySet<string> = new Set(["headroom", "edgee"]);
 
@@ -70,7 +90,7 @@ export interface ResolvedCompressorConfig {
     summaryGranularity: "none" | "turn" | "agent" | "all";
     enabled: boolean;
     excludeTools: string[];
-    minBytesByGroup: CompressionThresholds;
+    minTokensByGroup: CompressionThresholds;
     archiveRetention: ArchiveRetentionConfig;
     aggregates: boolean;
     capErrors: boolean;
@@ -163,8 +183,6 @@ export function resolveCompressorConfig(
     };
 
     // --- policy fields ---
-    const legacyMinBytes = cfg.minBytes;
-
     return {
         backend,
         backendConfig,
@@ -183,20 +201,7 @@ export function resolveCompressorConfig(
         summaryGranularity: cfg.summaryGranularity ?? "all",
         enabled: cfg.enabled ?? true,
         excludeTools: cfg.excludeTools ?? [],
-        minBytesByGroup: {
-            shell:
-                cfg.minBytesByGroup?.shell ??
-                legacyMinBytes ??
-                DEFAULT_MIN_BYTES_BY_GROUP.shell,
-            read:
-                cfg.minBytesByGroup?.read ??
-                legacyMinBytes ??
-                DEFAULT_MIN_BYTES_BY_GROUP.read,
-            search:
-                cfg.minBytesByGroup?.search ??
-                legacyMinBytes ??
-                DEFAULT_MIN_BYTES_BY_GROUP.search,
-        },
+        minTokensByGroup: resolveMinTokensByGroup(cfg),
         archiveRetention: {
             maxAgeDays:
                 cfg.archiveRetention?.maxAgeDays ??
@@ -233,7 +238,6 @@ export function getLocalCompressorConfig(
         ? Number(timeoutRaw)
         : (cfg.timeoutMs ?? BACKEND_DEFAULTS.edgee.timeoutMs);
     // oxlint-enable
-    const legacyMinBytes = cfg.minBytes;
 
     return {
         baseUrl,
@@ -255,20 +259,7 @@ export function getLocalCompressorConfig(
         summaryGranularity: cfg.summaryGranularity ?? "all",
         enabled: cfg.enabled ?? true,
         excludeTools: cfg.excludeTools ?? [],
-        minBytesByGroup: {
-            shell:
-                cfg.minBytesByGroup?.shell ??
-                legacyMinBytes ??
-                DEFAULT_MIN_BYTES_BY_GROUP.shell,
-            read:
-                cfg.minBytesByGroup?.read ??
-                legacyMinBytes ??
-                DEFAULT_MIN_BYTES_BY_GROUP.read,
-            search:
-                cfg.minBytesByGroup?.search ??
-                legacyMinBytes ??
-                DEFAULT_MIN_BYTES_BY_GROUP.search,
-        },
+        minTokensByGroup: resolveMinTokensByGroup(cfg),
         archiveRetention: {
             maxAgeDays:
                 cfg.archiveRetention?.maxAgeDays ??

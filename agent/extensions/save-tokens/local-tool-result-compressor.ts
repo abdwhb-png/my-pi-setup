@@ -121,9 +121,9 @@ export default function localToolResultCompressor(
         return {
             ...loaded,
             ...configOverride,
-            minBytesByGroup: {
-                ...loaded.minBytesByGroup,
-                ...configOverride.minBytesByGroup,
+            minTokensByGroup: {
+                ...loaded.minTokensByGroup,
+                ...configOverride.minTokensByGroup,
             },
             archiveRetention: {
                 ...loaded.archiveRetention,
@@ -215,7 +215,7 @@ export default function localToolResultCompressor(
             routingStrategy: config.routingStrategy,
             enabled: config.enabled,
             excludeTools: config.excludeTools,
-            minBytesByGroup: config.minBytesByGroup,
+            minTokensByGroup: config.minTokensByGroup,
             aggregates: config.aggregates,
             capErrors: config.capErrors,
             onObservation: handleObservation,

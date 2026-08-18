@@ -1,0 +1,123 @@
+{
+  "rows": [
+    {
+      "name": "ascii_code_ts",
+      "category": "ascii_code",
+      "utf8Bytes": 66689,
+      "estimateTokens": 22230,
+      "cl100k": 16800,
+      "o200k": 16800,
+      "estimatePerByte": 0.33333833165889426,
+      "cl100kPerByte": 0.25191560827122916,
+      "o200kPerByte": 0.25191560827122916,
+      "estimateOverCl100k": 1.3232142857142857,
+      "estimateOverO200k": 1.3232142857142857
+    },
+    {
+      "name": "latin_prose_en",
+      "category": "latin_prose",
+      "utf8Bytes": 11219,
+      "estimateTokens": 3740,
+      "cl100k": 1800,
+      "o200k": 1800,
+      "estimatePerByte": 0.3333630448346555,
+      "cl100kPerByte": 0.16044210713967377,
+      "o200kPerByte": 0.16044210713967377,
+      "estimateOverCl100k": 2.077777777777778,
+      "estimateOverO200k": 2.077777777777778
+    },
+    {
+      "name": "latin_prose_fr",
+      "category": "latin_prose",
+      "utf8Bytes": 9599,
+      "estimateTokens": 3140,
+      "cl100k": 1920,
+      "o200k": 1620,
+      "estimatePerByte": 0.32711740806333994,
+      "cl100kPerByte": 0.2000208355036983,
+      "o200kPerByte": 0.16876757995624544,
+      "estimateOverCl100k": 1.6354166666666667,
+      "estimateOverO200k": 1.9382716049382716
+    },
+    {
+      "name": "cjk_zh",
+      "category": "cjk",
+      "utf8Bytes": 34499,
+      "estimateTokens": 14350,
+      "cl100k": 12600,
+      "o200k": 8400,
+      "estimatePerByte": 0.4159540856256703,
+      "cl100kPerByte": 0.3652279776225398,
+      "o200kPerByte": 0.24348531841502652,
+      "estimateOverCl100k": 1.1388888888888888,
+      "estimateOverO200k": 1.7083333333333333
+    },
+    {
+      "name": "emoji_heavy",
+      "category": "emoji",
+      "utf8Bytes": 6869,
+      "estimateTokens": 2823,
+      "cl100k": 2479,
+      "o200k": 2159,
+      "estimatePerByte": 0.4109768525258407,
+      "cl100kPerByte": 0.36089678264667346,
+      "o200kPerByte": 0.314310671131169,
+      "estimateOverCl100k": 1.1387656313029448,
+      "estimateOverO200k": 1.3075497915701715
+    },
+    {
+      "name": "mixed_code_cjk_emoji",
+      "category": "mixed",
+      "utf8Bytes": 7309,
+      "estimateTokens": 2717,
+      "cl100k": 2519,
+      "o200k": 2160,
+      "estimatePerByte": 0.37173347927213024,
+      "cl100kPerByte": 0.34464359009440415,
+      "o200kPerByte": 0.2955260637570119,
+      "estimateOverCl100k": 1.0786026200873362,
+      "estimateOverO200k": 1.2578703703703704
+    },
+    {
+      "name": "json_output",
+      "category": "json",
+      "utf8Bytes": 15599,
+      "estimateTokens": 5200,
+      "cl100k": 4861,
+      "o200k": 4861,
+      "estimatePerByte": 0.3333547022245016,
+      "cl100kPerByte": 0.31162253990640426,
+      "o200kPerByte": 0.31162253990640426,
+      "estimateOverCl100k": 1.0697387368854145,
+      "estimateOverO200k": 1.0697387368854145
+    },
+    {
+      "name": "logs_mixed",
+      "category": "logs",
+      "utf8Bytes": 16445,
+      "estimateTokens": 5482,
+      "cl100k": 6357,
+      "o200k": 6357,
+      "estimatePerByte": 0.3333536029188203,
+      "cl100kPerByte": 0.3865612648221344,
+      "o200kPerByte": 0.3865612648221344,
+      "estimateOverCl100k": 0.862356457448482,
+      "estimateOverO200k": 0.862356457448482
+    },
+    {
+      "name": "find_listing",
+      "category": "find_listing",
+      "utf8Bytes": 32289,
+      "estimateTokens": 10763,
+      "cl100k": 7599,
+      "o200k": 7199,
+      "estimatePerByte": 0.3333333333333333,
+      "cl100kPerByte": 0.23534330576976678,
+      "o200kPerByte": 0.2229551859766484,
+      "estimateOverCl100k": 1.4163705750756679,
+      "estimateOverO200k": 1.4950687595499375
+    }
+  ],
+  "cl100kPerByte": 0.2907415568640582,
+  "o200kPerByte": 0.2617318154861714
+}

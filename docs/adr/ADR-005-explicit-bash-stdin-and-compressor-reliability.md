@@ -1,5 +1,12 @@
 # ADR-005: Use Explicit Bash Stdin and Recoverable Compression
 
+> **Superseded (2026-08-18)**: the per-group byte thresholds described in §3
+> (`minBytesByGroup`, `minBytes`) are **removed**. Input thresholds are now
+> expressed in estimated tokens via `minTokensByGroup` (defaults
+> `shell: 1400 / read: 2700 / search: 1400`). Bytes survive only as the
+> transport safety guard `maxFallbackBytes`. See `README.COMPRESSION.md` and
+> `benchmarks/reports/token-calibration.md`.
+
 ## Status
 
 Accepted
