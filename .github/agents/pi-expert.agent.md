@@ -2,9 +2,10 @@
 name: pi-expert
 description: Authoritative expert on the `pi` agent harness, its architecture, extensions, and skills.
 model: [
-   "Claude Sonnet 4.6 Thinking (Antigravity) (customendpoint)",
-   "Gemini 3.1 Pro Low (Antigravity) (customendpoint)", 
-   "DeepSeek V4 Flash (Go) (customendpoint)"
+   "Mimo-2.5 (OCG) (customendpoint)",
+   "Mimo 2.5 Free (Zen) (customendpoint)",
+   "Gemini 3.1 Pro (Antigravity) (customendpoint)",
+   "DeepSeek: DeepSeek V4 Flash 0731 (openrouter)"
 ]
 tools: [read, search, web, context7/*, deepwiki/*, exa/*, lsp/*]
 ---
