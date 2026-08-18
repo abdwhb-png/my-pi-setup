@@ -7,19 +7,21 @@
  * (ordinary /3, dense /0.8, symbol *2) are grounded in a real tokenizer
  * instead of guessed.
  *
- * Ground truth is produced by `tokenize.py` (headroom venv interpreter, which
- * already depends on `tiktoken>=0.5.0`). The interpreter is resolved from
- * `TIKTOKEN_PY`, defaulting to the checked-in headroom venv.
+ * Ground truth is produced by an inline tiktoken snippet run through the
+ * Python interpreter named by the `TIKTOKEN_PY` environment variable (any
+ * Python with `tiktoken` installed works — e.g. the headroom venv at
+ * `projects/shared-services/compression/headroom/headroom-source/.venv/bin/python`).
+ * No Python source file is committed to this repository.
  *
  * Run (from anywhere; cwd only affects the report path):
- *   bun benchmarks/token-calibration.ts
+ *   TIKTOKEN_PY=…/headroom/.venv/bin/python bun benchmarks/token-calibration.ts
  *
  * Outputs: `benchmarks/reports/token-calibration.md` (+ `.json`).
  */
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
     estimateTokens,
@@ -29,10 +31,17 @@ import {
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const reportsDir = join(scriptDir, "reports");
 
-const DEFAULT_PYTHON = resolve(
-    scriptDir,
-    "../../../../../projects/shared-services/compression/headroom/headroom-source/.venv/bin/python",
-);
+/**
+ * Single-line tiktoken counter executed via `python -c`. Reads a JSON array
+ * of strings on stdin, prints a JSON array of `{cl100k, o200k}` counts. Kept
+ * inline so no `.py` file is committed to this TypeScript repository.
+ */
+const TIKTOKEN_SCRIPT =
+    "import json,sys,tiktoken\n" +
+    "cl=tiktoken.get_encoding('cl100k_base')\n" +
+    "o=tiktoken.get_encoding('o200k_base')\n" +
+    "data=json.load(sys.stdin)\n" +
+    "print(json.dumps([{'cl100k':len(cl.encode(t)),'o200k':len(o.encode(t))} for t in data]))";
 
 interface Fixture {
     name: string;
@@ -165,10 +174,15 @@ function realTokenCounts(texts: string[]): {
     cl100k: number[];
     o200k: number[];
 } {
-    const python = process.env.TIKTOKEN_PY ?? DEFAULT_PYTHON;
-    const payload = JSON.stringify(texts);
-    const raw = execFileSync(python, [join(scriptDir, "tiktokenize.py")], {
-        input: payload,
+    const python = process.env.TIKTOKEN_PY?.trim();
+    if (!python) {
+        throw new Error(
+            "TIKTOKEN_PY must point to a Python interpreter with tiktoken installed " +
+                "(e.g. projects/shared-services/compression/headroom/headroom-source/.venv/bin/python)",
+        );
+    }
+    const raw = execFileSync(python, ["-c", TIKTOKEN_SCRIPT], {
+        input: JSON.stringify(texts),
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
     });
