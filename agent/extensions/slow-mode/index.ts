@@ -28,6 +28,11 @@ import {
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { isDangerous } from "../_shared/bash/guard";
 import { createWidget } from "../_shared/fancy-footer.ts";
+import {
+    loadMcpConfig,
+    loadMetadataCache,
+} from "../_shared/mcp-tools/loader.ts";
+import { resolveMcpToolReferences } from "../_shared/mcp-tools/resolver.ts";
 import { createUiColors } from "../_shared/ui/ui-colors.ts";
 import {
     resolvePath,
@@ -58,10 +63,31 @@ export default function slowMode(pi: ExtensionAPI) {
     /** Per-tool slow-mode config. Map key = tool name, value = slow mode active for this tool. */
     let toolConfig = new Map<string, boolean>();
 
+    /** Build an MCP `mcp:` reference resolver bound to the merged config cache. */
+    function buildMcpResolver(): (ref: string) => string[] {
+        let config: ReturnType<typeof loadMcpConfig> = null;
+        let cache: ReturnType<typeof loadMetadataCache> = null;
+        try {
+            config = loadMcpConfig();
+            cache = loadMetadataCache();
+        } catch {
+            // Fall through to a no-op resolver if config/cache cannot be read.
+        }
+        return (ref: string): string[] => {
+            if (!ref.startsWith("mcp:")) return [ref];
+            if (!config) return [];
+            return resolveMcpToolReferences([ref], config, cache).names;
+        };
+    }
+
     /** Reload the slow-mode tool config from disk. */
     function reloadToolConfig(): SlowModeConfigResult {
         const raw = loadSlowModeConfig();
-        const result = validateSlowModeConfig(raw, pi.getActiveTools());
+        const result = validateSlowModeConfig(
+            raw,
+            pi.getActiveTools(),
+            buildMcpResolver(),
+        );
         toolConfig = result.tools;
         return result;
     }

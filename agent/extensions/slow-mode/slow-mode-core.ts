@@ -472,19 +472,39 @@ export function loadSlowModeConfig(
  * Returns only tools that exist in `activeTools`. Adds warnings for
  * any config entries that reference non-existent tools.
  *
+ * When `resolveMcp` is provided, an `mcp:`-prefixed key is resolved to its
+ * concrete tool names and kept if ANY resolved name is active.
+ *
  * @param config - The raw config from loadSlowModeConfig()
  * @param activeTools - Current active tool names from pi.getActiveTools()
+ * @param resolveMcp - Optional MCP reference resolver (shared mcp-tools helper)
  * @returns Filtered config and warnings
  */
 export function validateSlowModeConfig(
     config: SlowModeConfig,
     activeTools: string[],
+    resolveMcp?: (ref: string) => string[],
 ): SlowModeConfigResult {
     const activeSet = new Set(activeTools);
     const tools = new Map<string, boolean>();
     const warnings: string[] = [];
 
     for (const [toolName, enabled] of Object.entries(config)) {
+        if (toolName.startsWith("mcp:") && resolveMcp) {
+            // MCP reference — resolve to concrete names; keep if any is active.
+            const resolved = resolveMcp(toolName);
+            const activeResolved = resolved.filter((name) =>
+                activeSet.has(name),
+            );
+            if (activeResolved.length > 0) {
+                for (const name of activeResolved) tools.set(name, enabled);
+            } else {
+                warnings.push(
+                    `Tool "${toolName}" in slow-mode config does not exist and will be ignored`,
+                );
+            }
+            continue;
+        }
         if (!activeSet.has(toolName)) {
             warnings.push(
                 `Tool "${toolName}" in slow-mode config does not exist and will be ignored`,

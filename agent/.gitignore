@@ -17,6 +17,8 @@ settings.json.*
 mcp-*/
 mcp-*
 mcp.json
+!extensions/_shared/mcp-tools/
+!extensions/_shared/mcp-tools/**
 git/
 
 extensions/oc.ts

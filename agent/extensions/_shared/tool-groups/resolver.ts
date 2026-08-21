@@ -4,7 +4,7 @@ import {
     type ToolGroupDiagnostic,
     type ToolGroupDiagnosticCode,
     type ResolveToolAliasesResult,
-} from './types.ts';
+} from "./types.ts";
 
 /**
  * Expand `*` / `?` glob pattern against a set of candidate names.
@@ -13,12 +13,12 @@ import {
  */
 function globMatch(pattern: string, candidates: string[]): string[] {
     const regexStr =
-        '^' +
+        "^" +
         pattern
-            .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-            .replace(/\*/g, '.*')
-            .replace(/\?/g, '.') +
-        '$';
+            .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+            .replace(/\*/g, ".*")
+            .replace(/\?/g, ".") +
+        "$";
     const re = new RegExp(regexStr);
     return candidates.filter(
         (c) => !c.startsWith(TOOL_GROUP_PREFIX) && re.test(c),
@@ -27,7 +27,7 @@ function globMatch(pattern: string, candidates: string[]): string[] {
 
 /** Check if a string is a glob pattern (contains * or ?). */
 function isGlob(value: string): boolean {
-    return value.includes('*') || value.includes('?');
+    return value.includes("*") || value.includes("?");
 }
 
 /**
@@ -38,6 +38,8 @@ function isGlob(value: string): boolean {
  * - `@group` references expand to their member lists (depth-first).
  * - `*` / `?` globs match against `availableNames` (excluding @-prefixed aliases).
  * - Group members follow the same dispatch: @group, globs, or exact name validation.
+ * - `mcp:` references (when `resolveMcp` is provided) expand to concrete tool
+ *   names; those names are validated against `availableNames` like any other tool.
  *
  * Resolution preserves first-occurrence order and deduplicates.
  * Invalid references and cycles emit diagnostics and are excluded from output.
@@ -47,6 +49,7 @@ export function resolveToolAliases(
     activeNames: string[],
     availableNames: string[],
     groups: Record<string, string[]>,
+    resolveMcp?: (ref: string) => string[],
 ): ResolveToolAliasesResult {
     const names: string[] = [];
     const seen = new Set<string>();
@@ -70,9 +73,9 @@ export function resolveToolAliases(
 
         const messages: Record<ToolGroupDiagnosticCode, string> = {
             cycle: `Cycle detected: ${extra ?? member}`,
-            'missing-group': `Group not found: ${member}`,
-            'unknown-tool': `Unknown tool: ${member}`,
-            'unmatched-pattern': `No tools match pattern: ${member}`,
+            "missing-group": `Group not found: ${member}`,
+            "unknown-tool": `Unknown tool: ${member}`,
+            "unmatched-pattern": `No tools match pattern: ${member}`,
         };
         diagnostics.push({ code, group, member, message: messages[code] });
     }
@@ -100,10 +103,25 @@ export function resolveToolAliases(
             expandGroup(member, chain);
         } else if (isGlob(member)) {
             expandGlobInGroup(member, originGroup);
+        } else if (member.startsWith("mcp:") && resolveMcp) {
+            // MCP reference — expand to concrete names via the resolver, then
+            // validate each against the available registry like any other tool.
+            const resolved = resolveMcp(member);
+            if (resolved.length === 0) {
+                emitDiag("unknown-tool", member, originGroup);
+                return;
+            }
+            for (const name of resolved) {
+                if (!availableNames.includes(name)) {
+                    emitDiag("unknown-tool", name, originGroup);
+                    continue;
+                }
+                addName(name);
+            }
         } else {
             // Exact name — validate against available names
             if (!availableNames.includes(member)) {
-                emitDiag('unknown-tool', member, originGroup);
+                emitDiag("unknown-tool", member, originGroup);
                 return;
             }
             addName(member);
@@ -119,9 +137,9 @@ export function resolveToolAliases(
             const cycleStart = chain.indexOf(bare);
             const cycleChain =
                 cycleStart >= 0
-                    ? [...chain.slice(cycleStart), bare].join(' -> ')
-                    : [...chain, bare].join(' -> ');
-            emitDiag('cycle', alias, bare, cycleChain);
+                    ? [...chain.slice(cycleStart), bare].join(" -> ")
+                    : [...chain, bare].join(" -> ");
+            emitDiag("cycle", alias, bare, cycleChain);
             return;
         }
 
@@ -129,7 +147,7 @@ export function resolveToolAliases(
 
         const groupMembers = groups[bare];
         if (!groupMembers) {
-            emitDiag('missing-group', alias, bare);
+            emitDiag("missing-group", alias, bare);
             return;
         }
 
@@ -144,7 +162,7 @@ export function resolveToolAliases(
     function expandGlobInGroup(pattern: string, originGroup: string): void {
         const matched = globMatch(pattern, availableNames);
         if (matched.length === 0) {
-            emitDiag('unmatched-pattern', pattern, originGroup);
+            emitDiag("unmatched-pattern", pattern, originGroup);
             return;
         }
         for (const m of matched) {
@@ -157,10 +175,23 @@ export function resolveToolAliases(
         if (item.startsWith(TOOL_GROUP_PREFIX)) {
             expandGroup(item, []);
         } else if (isGlob(item)) {
-            expandGlobInGroup(item, '<active>');
+            expandGlobInGroup(item, "<active>");
+        } else if (item.startsWith("mcp:") && resolveMcp) {
+            const resolved = resolveMcp(item);
+            if (resolved.length === 0) {
+                emitDiag("unknown-tool", item, "<active>");
+                continue;
+            }
+            for (const name of resolved) {
+                if (!availableNames.includes(name)) {
+                    emitDiag("unknown-tool", name, "<active>");
+                    continue;
+                }
+                addName(name);
+            }
         } else {
             if (!availableNames.includes(item)) {
-                emitDiag('unknown-tool', item, '<active>');
+                emitDiag("unknown-tool", item, "<active>");
                 continue;
             }
             addName(item);

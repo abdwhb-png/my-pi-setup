@@ -5,6 +5,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import {
+    loadMcpConfig,
+    loadMetadataCache,
+} from "../_shared/mcp-tools/loader.ts";
+import { resolveMcpToolReferences } from "../_shared/mcp-tools/resolver.ts";
 import { loadToolGroupsConfig } from "../_shared/tool-groups/config.ts";
 import { isToolGroupsPackageLast } from "../_shared/tool-groups/package-order.ts";
 import { resolveToolAliases } from "../_shared/tool-groups/resolver.ts";
@@ -65,6 +70,28 @@ function checkToolGroupsPackageOrder(cwd: string): void {
     }
 }
 
+/**
+ * Build an MCP `mcp:` reference resolver bound to the merged config cache.
+ * Returns a function that maps a single `mcp:` reference to concrete tool
+ * names, or [] when unresolvable. Non-mcp refs pass through unchanged.
+ */
+function buildMcpResolver(cwd: string): (ref: string) => string[] {
+    let config: ReturnType<typeof loadMcpConfig> = null;
+    let cache: ReturnType<typeof loadMetadataCache> = null;
+    try {
+        config = loadMcpConfig(cwd);
+        cache = loadMetadataCache();
+    } catch {
+        // Fall through to a no-op resolver if config/cache cannot be read.
+    }
+    return (ref: string): string[] => {
+        if (!ref.startsWith("mcp:")) return [ref];
+        if (!config) return [];
+        const result = resolveMcpToolReferences([ref], config, cache);
+        return result.names;
+    };
+}
+
 export function createToolGroupsExtension(
     loadConfig: (cwd: string) => ToolGroupsConfig = loadToolGroupsConfig,
     loadRequestedTools: () => string[] | undefined = loadRequestedToolsFromEnv,
@@ -77,6 +104,7 @@ export function createToolGroupsExtension(
         const config = loadConfig(cwd);
         const groups = config.groups;
         const requestedTools = loadRequestedTools();
+        const resolveMcp = buildMcpResolver(cwd);
 
         if (Object.keys(groups).length === 0 && !requestedTools?.length) {
             return;
@@ -130,12 +158,14 @@ export function createToolGroupsExtension(
                 pi.getActiveTools(),
                 allToolNames,
                 groups,
+                resolveMcp,
             );
             const allowedNames = new Set(currentlyAllowed.names);
             const requested = resolveToolAliases(
                 requestedTools,
                 allToolNames,
                 groups,
+                resolveMcp,
             );
 
             pi.setActiveTools(
@@ -157,7 +187,12 @@ export function createToolGroupsExtension(
             }
 
             const allToolNames = pi.getAllTools().map((t) => t.name);
-            const result = resolveToolAliases(active, allToolNames, groups);
+            const result = resolveToolAliases(
+                active,
+                allToolNames,
+                groups,
+                resolveMcp,
+            );
 
             pi.setActiveTools(result.names);
 
