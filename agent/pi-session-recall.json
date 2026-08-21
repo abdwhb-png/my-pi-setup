@@ -1,16 +1,16 @@
 {
     "queryModel": {
         "provider": "cpa",
-        "id": "ocg/go-deepseek-v4-flash"
+        "id": "ocg/go-mimo-v2.5"
     },
     "fallback-models": [
         {
             "provider": "cpa",
-            "id": "ocz/deepseek-v4-flash-free"
+            "id": "gemini-3.7-flash"
         },
         {
             "provider": "cpa",
-            "id": "gemini-3.7-flash"
+            "id": "ocz/deepseek-v4-flash-free"
         }
     ]
 }

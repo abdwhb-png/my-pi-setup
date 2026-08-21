@@ -9,6 +9,9 @@ agent/settings.json
 .zed
 node_modules
 
+# Local rollback snapshots must remain available but never enter a commit.
+/migration-backups/
+
 exa-usage.json
 web-search.json
 **/pi-session-**.html

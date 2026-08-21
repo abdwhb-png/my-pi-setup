@@ -121,6 +121,7 @@ function getGoogleOAuthCredentials(options: { agentDir?: string } = {}): {
 async function exchangeGoogleCode(
 	code: string,
 	redirectUri: string,
+	signal?: AbortSignal,
 ): Promise<GoogleTokenResponse> {
 	const { clientId, clientSecret } = getGoogleOAuthCredentials();
 	const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
@@ -133,6 +134,7 @@ async function exchangeGoogleCode(
 			code,
 			redirect_uri: redirectUri,
 		}),
+		signal,
 	});
 
 	if (!response.ok) {
@@ -146,6 +148,7 @@ async function exchangeGoogleCode(
 
 async function refreshGoogleToken(
 	refreshToken: string,
+	signal?: AbortSignal,
 ): Promise<GoogleTokenResponse> {
 	const { clientId, clientSecret } = getGoogleOAuthCredentials();
 	const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
@@ -157,6 +160,7 @@ async function refreshGoogleToken(
 			client_secret: clientSecret,
 			refresh_token: refreshToken,
 		}),
+		signal,
 	});
 
 	if (!response.ok) {
@@ -168,9 +172,13 @@ async function refreshGoogleToken(
 	return readGoogleTokenResponse(response, "refresh", false);
 }
 
-async function fetchGoogleUserInfo(accessToken: string): Promise<string> {
+async function fetchGoogleUserInfo(
+	accessToken: string,
+	signal?: AbortSignal,
+): Promise<string> {
 	const response = await fetch(GOOGLE_USERINFO_ENDPOINT, {
 		headers: { Authorization: `Bearer ${accessToken}` },
+		signal,
 	});
 
 	if (!response.ok) {

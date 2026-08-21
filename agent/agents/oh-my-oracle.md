@@ -2,7 +2,7 @@
 name: oh-my-oracle
 description: 'Strategic technical advisor. Provides high-level architectural guidance, codebase analysis, and complex problem-solving (READ-ONLY).'
 model: openai-codex/gpt-5.6-sol
-thinking: xhigh
+thinking: high
 systemPromptMode: replace
 defaultContext: fresh
 skills: improve-codebase-architecture, systems-thinking

@@ -33,7 +33,12 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
-import type { Model, Api, Message } from "@earendil-works/pi-ai";
+import type {
+    Model,
+    Api,
+    Message,
+    ProviderHeaders,
+} from "@earendil-works/pi-ai";
 import { complete } from "@earendil-works/pi-ai/compat";
 import type {
     ExtensionAPI,
@@ -135,14 +140,12 @@ function resolveQueryModelCandidates(ctx: ExtensionContext): Model<Api>[] {
     return candidates;
 }
 
-async function resolveAuthedQueryModel(
-    ctx: ExtensionContext,
-): Promise<
+async function resolveAuthedQueryModel(ctx: ExtensionContext): Promise<
     | {
           ok: true;
           model: Model<Api>;
           apiKey?: string;
-          headers?: Record<string, string>;
+          headers?: ProviderHeaders;
       }
     | { ok: false; error: string }
 > {

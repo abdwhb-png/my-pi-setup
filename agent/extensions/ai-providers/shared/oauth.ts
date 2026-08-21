@@ -64,8 +64,10 @@ export function createApiKeyOAuth(config: ApiKeyAuthConfig) {
 
 		async refreshToken(
 			credentials: OAuthCredentials,
+			signal: AbortSignal,
 		): Promise<OAuthCredentials> {
 			// For API keys, refresh is a no-op — just return the existing credentials
+			signal.throwIfAborted();
 			return credentials;
 		},
 
@@ -113,11 +115,15 @@ export function getGoogleAccessToken(credentials: OAuthCredentials): string {
  */
 export async function refreshGoogleAccessToken(
 	credentials: OAuthCredentials,
+	signal?: AbortSignal,
 ): Promise<OAuthCredentials> {
 	if (!isFactoryCredentials(credentials) || !credentials.googleRefreshToken) {
 		return credentials;
 	}
-	const tokenResp = await refreshGoogleToken(credentials.googleRefreshToken);
+	const tokenResp = await refreshGoogleToken(
+		credentials.googleRefreshToken,
+		signal,
+	);
 	return {
 		...credentials,
 		googleAccessToken: tokenResp.access_token,
@@ -194,8 +200,15 @@ export function createFactoryOAuth(config: {
 				throw new Error("No authorization code received");
 			}
 
-			const tokenResp = await exchangeGoogleCode(code, redirectUri);
-			const email = await fetchGoogleUserInfo(tokenResp.access_token);
+			const tokenResp = await exchangeGoogleCode(
+				code,
+				redirectUri,
+				callbacks.signal,
+			);
+			const email = await fetchGoogleUserInfo(
+				tokenResp.access_token,
+				callbacks.signal,
+			);
 
 			// Phase 2: Get Factory API key
 			const apiKey = await callbacks.onPrompt({
@@ -225,10 +238,12 @@ export function createFactoryOAuth(config: {
 
 		async refreshToken(
 			credentials: OAuthCredentials,
+			signal: AbortSignal,
 		): Promise<OAuthCredentials> {
+			signal.throwIfAborted();
 			// Refresh Google token if present
 			if (isFactoryCredentials(credentials) && credentials.googleRefreshToken) {
-				return refreshGoogleAccessToken(credentials);
+				return refreshGoogleAccessToken(credentials, signal);
 			}
 			// For API-key-only creds, no-op
 			return credentials;

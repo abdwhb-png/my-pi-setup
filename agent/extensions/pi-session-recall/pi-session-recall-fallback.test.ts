@@ -111,7 +111,11 @@ describe("pi-session-recall fallback models", () => {
         getApiKeyAndHeaders: mock(async (model: any) =>
           model === primary
             ? { ok: false, error: "missing primary auth" }
-            : { ok: true, apiKey: "key", headers: {} },
+            : {
+                ok: true,
+                apiKey: "key",
+                headers: { "x-provider-header": null },
+              },
         ),
       },
     } as any;
@@ -128,7 +132,10 @@ describe("pi-session-recall fallback models", () => {
     expect(completeMock).toHaveBeenCalledWith(
       fallback,
       expect.anything(),
-      expect.objectContaining({ apiKey: "key" }),
+      expect.objectContaining({
+        apiKey: "key",
+        headers: { "x-provider-header": null },
+      }),
     );
     expect(result.content[0].text).toContain("Answered by good (fallback)");
   });

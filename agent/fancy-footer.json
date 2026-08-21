@@ -71,10 +71,6 @@
         "session-status-bar.cost": {
             "row": 1
         },
-        "local-compressor": {
-            "row": 1,
-            "placement": "aboveEditor"
-        },
         "git-status-widget": {
             "row": 1,
             "align": "left",
@@ -104,16 +100,19 @@
         "pi-glm-tweaks.status": {
             "row": 1
         },
+        "local-compressor": {
+            "row": 1,
+            "placement": "aboveEditor"
+        },
+        "auto-translate": {
+            "row": 1,
+            "align": "right",
+            "placement": "aboveEditor"
+        },
         "brainstorm-forcer": {
             "row": 2,
             "placement": "aboveEditor",
             "align": "left"
-        },
-        "auto-translate": {
-            "row": 2,
-            "position": 0,
-            "align": "left",
-            "placement": "aboveEditor"
         },
         "codex-fast-mode": {
             "enabled": true,

@@ -2,6 +2,7 @@
 name: atlas-orchestrator
 description: Orchestrates the execution of a work plan by delegating tasks to specialized subagents, coordinating their efforts, and verifying their outputs until all tasks are completed and the Final Verification Wave is passed.
 tools: '@inspect, @lens, @ctx, @docs, @memory-consult, safe_bash, todo, ask_user_question, subagent'
+subagents: 'scout, researcher, reviewer, worker, quick-worker, code-reviewer, architect, test-engineer, plan-reviewer, oracle'
 ---
 
 <identity>

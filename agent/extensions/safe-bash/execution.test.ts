@@ -37,6 +37,10 @@ function registerExtension(): RegisteredTool {
 const context = {
     cwd: '/tmp',
     hasUI: false,
+    sessionManager: {
+        getSessionId: () => 'safe-bash-test-session',
+        getSessionFile: () => undefined,
+    },
     ui: {},
 } as ExtensionContext;
 
