@@ -5,11 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import {
-    loadMcpConfig,
-    loadMetadataCache,
-} from "../_shared/mcp-tools/loader.ts";
-import { resolveMcpToolReferences } from "../_shared/mcp-tools/resolver.ts";
+import { createMcpRefResolver } from "pi-mcp-adapter";
 import { loadToolGroupsConfig } from "../_shared/tool-groups/config.ts";
 import { isToolGroupsPackageLast } from "../_shared/tool-groups/package-order.ts";
 import { resolveToolAliases } from "../_shared/tool-groups/resolver.ts";
@@ -76,20 +72,7 @@ function checkToolGroupsPackageOrder(cwd: string): void {
  * names, or [] when unresolvable. Non-mcp refs pass through unchanged.
  */
 function buildMcpResolver(cwd: string): (ref: string) => string[] {
-    let config: ReturnType<typeof loadMcpConfig> = null;
-    let cache: ReturnType<typeof loadMetadataCache> = null;
-    try {
-        config = loadMcpConfig(cwd);
-        cache = loadMetadataCache();
-    } catch {
-        // Fall through to a no-op resolver if config/cache cannot be read.
-    }
-    return (ref: string): string[] => {
-        if (!ref.startsWith("mcp:")) return [ref];
-        if (!config) return [];
-        const result = resolveMcpToolReferences([ref], config, cache);
-        return result.names;
-    };
+    return createMcpRefResolver(cwd);
 }
 
 export function createToolGroupsExtension(

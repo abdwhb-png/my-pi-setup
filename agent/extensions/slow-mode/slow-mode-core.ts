@@ -477,7 +477,7 @@ export function loadSlowModeConfig(
  *
  * @param config - The raw config from loadSlowModeConfig()
  * @param activeTools - Current active tool names from pi.getActiveTools()
- * @param resolveMcp - Optional MCP reference resolver (shared mcp-tools helper)
+ * @param resolveMcp - Optional MCP reference resolver (pi-mcp-adapter createMcpRefResolver)
  * @returns Filtered config and warnings
  */
 export function validateSlowModeConfig(
