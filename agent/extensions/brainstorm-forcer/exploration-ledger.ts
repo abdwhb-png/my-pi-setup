@@ -362,7 +362,7 @@ function isReviewerMetadata(value: unknown): boolean {
 
 const VERIFIER_AGENTS = new Set([
     "pi-expert",
-    "scout",
+    "brainstorm-code-scout",
     "factual-researcher",
     "performance-reviewer",
 ]);

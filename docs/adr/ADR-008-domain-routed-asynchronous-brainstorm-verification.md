@@ -20,10 +20,10 @@ could choose or misconfigure the reviewer chain, verification was synchronous,
 and a manual review-submission step separated child output from ownership and
 scope validation. It also did not provide durable pending-run recovery.
 
-The installed pi-subagents version is verified as 0.37.2. It provides public
-launch preflight, capability ceilings, an in-process RPC v1 surface for
-`ping`/async `spawn`/`status`, an advertised async-completion event, FleetView,
-and machine-readable lifecycle artifacts.
+The original implementation was verified against pi-subagents 0.37.2. The
+0.50 migration preserves this ADR's closed-routing and ownership decision while
+replacing its removed transport and lifecycle surfaces with the public
+structured-delegation contract described below.
 
 Exploring also needs a strict final order. A user choice made before the claims
 or verification it is supposed to compare is not informed provenance. A blocked
@@ -57,12 +57,12 @@ policy selection to the LLM and duplicate security and validation logic.
 Every new claim supplies a closed `verificationDomain` and
 `architectureImpact`. Routing is fixed:
 
-| Domain        | Verifier               |
-| ------------- | ---------------------- |
-| `pi`          | `pi-expert`            |
-| `local-code`  | `scout`                |
-| `external`    | `factual-researcher`   |
-| `performance` | `performance-reviewer` |
+| Domain        | Verifier                |
+| ------------- | ----------------------- |
+| `pi`          | `pi-expert`             |
+| `local-code`  | `brainstorm-code-scout` |
+| `external`    | `factual-researcher`    |
+| `performance` | `performance-reviewer`  |
 
 `code-reviewer` and generic `reviewer` are intentionally excluded from new
 brainstorming routes. `worker`, `oracle`, and arbitrary agent names are also
@@ -75,7 +75,7 @@ verification chain is built only by the shared deterministic verification
 module. Verifier evidence descriptors use the ledger's already-sanitized source
 references.
 
-### Read-only asynchronous execution
+### 0.50 protocol
 
 Register a session-scoped capability ceiling with an exact read-only tool-name
 allowlist. Provider extensions remain loadable only so allowlisted
@@ -85,27 +85,31 @@ execution, and nested subagent execution remain unavailable.
 Before spawning, derive the stable unique agent sequence from the selected
 chain. Public preflight checks exactly those verifiers and adds `architect` only
 when the selected chain contains that step. An unavailable unused agent cannot
-block another domain.
+block another domain. The local-code route is the dedicated unambiguous
+`brainstorm-code-scout`, never a bare `scout` name.
 
-Use pi-subagents RPC v1 with bounded timeouts and listener cleanup. `ping`
-advertises the completion event name; existing listeners rebind if that name is
-not the default. Spawn is top-level async with fresh context and clarification
-disabled. The children are fresh, read-only verification workers whose results
-remain secondary evidence.
+Use `pi-subagents/delegation` for top-level fresh structured requests and
+correlate terminal responses by the exact `{ requestId, ownerRunId, nodeId }`
+tuple. The coordinator owns bounded cleanup and validates the structured output
+before it can affect the ledger. The package `external-runs` projection is the
+Fleet-visible source of the owned run; Brainstorm context, `/brainstorm status`,
+and its widget render the same pending ownership state.
 
-The package's FleetView and status surfaces show the async run. Brainstorm
-context, `/brainstorm status`, and its widget show the owned run as pending.
-Persist the run ID, trusted package-returned async directory, owner session,
-brainstorm run, selected claims, and exact expected agent/output/group/claim/
-evidence scope.
+Persist only the owner session, brainstorm run, selected claims, and exact
+expected agent/output/group/claim/evidence scope. A terminal verifier result is
+first written as a durable commit keyed by `verificationRunId`; it then writes
+the generated `EV-*`/`RV-*` records and the cleared pending snapshot. Reload
+replays an incomplete commit idempotently by record ID, so a write interruption
+cannot leave a durable verifier `EV-*` without its matching `RV-*` or detach
+the pending run from recovery.
 
-On session reload, call RPC status but do not parse its human-readable text.
-Then validate the package-owned lifecycle artifact beneath the canonical
-pi-subagents temporary hierarchy. A queued or running artifact remains pending.
-An owned terminal artifact passes through the same strict terminal parser as a
-live completion event. Missing, malformed, escaped, or symlinked lifecycle
-artifacts fail closed. Owned terminal processing is idempotent, so reload and a
-later duplicate completion event cannot emit records twice.
+### Historical protocol note
+
+The pre-0.50 implementation used the removed RPC v1 `ping`/async
+`spawn`/`status` transport and package lifecycle artifacts. Those mechanics are
+historical rationale only: they are not part of the active protocol and must not
+be reintroduced. FleetView remains an optional presentation preference; the
+active ownership projection is `external-runs`.
 
 ### Structured result and ledger policy
 
@@ -192,7 +196,8 @@ bypass the deterministic route and read-only ceiling.
 ### Parse async status or completion prose
 
 Rejected because prose is not a machine contract. Exact structured output and
-package lifecycle artifacts provide deterministic ownership and scope checks.
+the structured-delegation ownership tuple, terminal commit, and reload recovery
+provide deterministic ownership and scope checks.
 
 ### Write an incomplete Exploring revision with blockers
 
@@ -210,8 +215,8 @@ claims, not execution machinery. Selected-only preflight avoids coupling
 unrelated routes.
 
 Pending state and reload reconciliation add lifecycle validation work. The
-system deliberately fails closed when ownership, structure, scope, or package
-artifacts cannot be proven.
+system deliberately fails closed when ownership, structure, scope, or terminal
+commit recovery cannot be proven.
 
 The ledger preserves both successful and unsuccessful attempts without adding a
 new record family. Legacy ADR-007 reviewer records remain readable, while all

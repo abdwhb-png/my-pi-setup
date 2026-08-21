@@ -74,25 +74,14 @@ Follow this order:
 
    Verification is required for a critical empirical claim, contradictory
    evidence, `architectureImpact: true`, or an approved waiver. The tool owns
-   the closed route, optional architect scope, fresh read-only async execution,
-   and EV/RV audit. Do not use `subagent` to create a run, choose an agent, or
-   construct a verification chain.
-8. Wait while verification is pending. `subagent_wait.timeoutMs` is only an
-   upper bound: nonterminal, latched `needs_attention` may return immediately.
-   Follow the semantic injected status and `/brainstorm status` rather than raw
-   EV/CL/RV counts.
-
-   Use at most one exact owned `subagent_wait`, then inspect exact owned
-   `status`. If needed, issue at most one `steer` with exact `id`, non-empty
-   `message`, and optional in-range `index`. When its typed result is pending or
-   routed, do not wait again, steer again, resume, interrupt, stop, or relaunch.
-   Only status remains available while the same run awaits exact terminal
-   completion. If none arrives, request explicit manual intervention.
-
-   Never parse status prose, infer that the model/provider is broken, select a
-   fallback agent, use `runId`/`dir`, target another run, request fleet or
-   transcript views, or supply spawn/execution fields. Control results and
-   `subagent_wait` are lifecycle state, not `EV-*` evidence.
+   the closed route, optional architect scope, fresh read-only structured
+   delegation, and EV/RV audit. Do not call `subagent` or `subagent_wait`
+   directly and never construct legacy `chain`, `tasks`, or `parallel` payloads.
+8. Wait while verification is pending. Follow the semantic injected status and
+   `/brainstorm status` rather than raw EV/CL/RV counts. If the owned run must
+   be cancelled, use `/brainstorm stop`; it cancels the exact active attempt
+   tuples before clearing state. FleetView is observational and cannot control
+   this coordinator.
 9. Do not call `ask_user_question` while verification is pending. First process
    terminal completion into the required `RV-*` audit; only then ask the final
    choice. Exact structured verifier success also creates secondary `EV-*`.
@@ -117,7 +106,7 @@ Closed verification routes:
 | `verificationDomain` | Verifier |
 | --- | --- |
 | `pi` | `pi-expert` |
-| `local-code` | `scout` |
+| `local-code` | `brainstorm-code-scout` |
 | `external` | `factual-researcher` |
 | `performance` | `performance-reviewer` |
 

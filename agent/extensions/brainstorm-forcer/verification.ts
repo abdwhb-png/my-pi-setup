@@ -1,23 +1,9 @@
 /**
- * Deterministic verification chain builder and read-only policy.
+ * Deterministic structured-delegation plan and read-only policy.
  *
- * Pure module: route selection, claim grouping, strict output schemas,
- * chain payload assembly, and completion validators. No RPC, no extension
- * hooks, no pi runtime imports — T3 wraps the produced payload with the
- * `subagent` tool (async spawn, top-level `context: "fresh"`) and applies
- * {@link buildVerifierCapabilityCeiling}.
- *
- * Contract-verified against installed pi-subagents 0.37.2
- * (`src/extension/schemas.ts`):
- *   - `ChainItem` and `ParallelTaskSchema` declare `additionalProperties: false`
- *     with NO `context` key. `context` lives only on top-level `SubagentParams`.
- *     → steps must NOT carry `context`; T3 sets it at spawn time.
- *   - Read-only / reviewer runs OMIT `acceptance` (package docs: "For
- *     reviewer/read-only calls, omit acceptance.").
- *   - `output` / `outputMode` are file-artifact fields, not required for
- *     structured output (`outputSchema` presence alone forces structured output).
- *   - A contract test in verification.test.ts validates every generated step
- *     against the REAL installed schemas via `typebox/value` `Value.Check`.
+ * Pure module: route selection, claim grouping, strict result schemas,
+ * node-plan assembly, and completion validators. The runtime coordinator owns
+ * the 0.50 `{requestId, ownerRunId, nodeId}` attempt identities.
  *
  * Capability-ceiling policy: `denyExtensions: false` + exact `allowedTools`.
  * Keeping extensions loadable preserves web/docs provider tools
@@ -65,7 +51,7 @@ export const ARCHITECTURAL_STATUSES = [
  */
 export const VERIFICATION_ROUTING = Object.freeze({
     pi: "pi-expert",
-    "local-code": "scout",
+    "local-code": "brainstorm-code-scout",
     external: "factual-researcher",
     performance: "performance-reviewer",
 }) as Readonly<Record<VerificationDomain, string>>;
@@ -77,7 +63,7 @@ export const VERIFICATION_ROUTING = Object.freeze({
  */
 export const VERIFIER_AGENT_ALLOWLIST = Object.freeze([
     "pi-expert",
-    "scout",
+    "brainstorm-code-scout",
     "factual-researcher",
     "performance-reviewer",
 ]);
@@ -230,35 +216,16 @@ export interface VerificationGroup {
     readonly evidenceIds: readonly string[];
 }
 
-/**
- * A verifier chain step. Only fields the installed `ParallelTaskSchema`
- * accepts: NO `context`, NO `output`/`outputMode`. `acceptance: false` prevents
- * pi-subagents from appending a competing prose acceptance contract when the
- * step already has a strict `outputSchema`. T3 wraps the whole chain with
- * top-level `{ context: "fresh", async: true }`.
- */
-interface VerifierChainStep {
+export interface VerificationPlanNode {
+    readonly role: "verifier" | "architect";
     readonly agent: string;
     readonly task: string;
-    readonly as: string;
-    readonly outputSchema: Readonly<Record<string, unknown>>;
-    readonly acceptance: false;
+    readonly outputName: string;
+    readonly schema: Readonly<Record<string, unknown>>;
 }
 
-interface ArchitectChainStep {
-    readonly agent: "architect";
-    readonly task: string;
-    readonly as: string;
-    readonly outputSchema: Readonly<Record<string, unknown>>;
-    readonly acceptance: false;
-}
-
-type VerificationChainStep =
-    | { readonly parallel: readonly VerifierChainStep[] }
-    | ArchitectChainStep;
-
-export interface VerificationChainPayload {
-    readonly chain: readonly VerificationChainStep[];
+export interface VerificationPlan {
+    readonly nodes: readonly VerificationPlanNode[];
 }
 
 /** Expected claim/evidence scope an architect completion must match exactly. */
@@ -278,7 +245,7 @@ export type ArchitectCompletionResult = Readonly<
 >;
 
 /**
- * Structurally compatible with pi-subagents 0.37.2 `SubagentCapabilityCeiling`.
+ * Structurally compatible with pi-subagents 0.50 `SubagentCapabilityCeiling`.
  * `denyExtensions: false` keeps ambient/configured/MCP provider extensions
  * loadable (required by factual-research routes); `allowedTools` restricts
  * which tool NAMES the child may call.
@@ -361,12 +328,8 @@ function verifierStepName(
     domain: VerificationDomain,
     outcome: VerificationOutcome,
 ): string {
-    // Identifier-safe: pi-subagents 0.37.2 rejects any `as` (named output) that
-    // fails SAFE_OUTPUT_NAME_PATTERN `/^[A-Za-z_][A-Za-z0-9_]*$/` at spawn time
-    // (src/runs/shared/chain-outputs.ts validateChainOutputBindings). A hyphen
-    // separator — or the hyphen inside `local-code` — is rejected, so dashes are
-    // normalized to underscores. Keeps the architect task's `{outputs.<name>}`
-    // references correlated (they read from this same function).
+    // Keep node ids identifier-safe and stable for correlation and readable
+    // architect placeholders.
     return `verify_${domain.replaceAll("-", "_")}_${outcome}`;
 }
 
@@ -521,33 +484,18 @@ export function groupVerificationClaims(
         });
 }
 
-/**
- * Build the deterministic verification chain payload (pure — T3 adds the
- * top-level `context: "fresh"` + `async: true` at RPC spawn time).
- *
- * Shape (each step validates against installed `ChainItem`/`ParallelTaskSchema`):
- *   chain[0] = parallel fan-out of one verifier per non-empty
- *              `(domain, outcome)` group, each with a strict
- *              {@link VERIFIER_OUTPUT_SCHEMA} and a named output.
- *   chain[1] = optional advisory {@link ARCHITECT_AGENT} step, present only
- *              when `architectureImpact === true`, following the verifiers.
- */
-export function buildVerificationChain(
+/** Build the deterministic node plan consumed by the 0.50 coordinator. */
+export function buildVerificationPlan(
     input: VerificationBuildInput,
-): VerificationChainPayload {
+): VerificationPlan {
     const groups = groupVerificationClaims(input.claims);
-    const parallel: VerifierChainStep[] = groups.map((group) => ({
+    const nodes: VerificationPlanNode[] = groups.map((group) => ({
+        role: "verifier",
         agent: group.agent,
         task: renderVerifierTask(group),
-        as: verifierStepName(group.domain, group.outcome),
-        outputSchema: VERIFIER_OUTPUT_SCHEMA,
-        acceptance: false,
+        outputName: verifierStepName(group.domain, group.outcome),
+        schema: VERIFIER_OUTPUT_SCHEMA,
     }));
-
-    const chain: VerificationChainStep[] = [];
-    if (parallel.length > 0) {
-        chain.push({ parallel });
-    }
 
     if (input.architectureImpact === true) {
         const architectureScope = input.architectureScope ?? {
@@ -561,7 +509,8 @@ export function buildVerificationChain(
         ).filter((descriptor) =>
             architectureScope.evidenceIds.includes(descriptor.id),
         );
-        chain.push({
+        nodes.push({
+            role: "architect",
             agent: ARCHITECT_AGENT,
             task: architectTask(
                 groups.map((group) =>
@@ -570,16 +519,12 @@ export function buildVerificationChain(
                 architectureScope,
                 architectureEvidence,
             ),
-            // Identifier-safe: must match SAFE_OUTPUT_NAME_PATTERN (see note in
-            // verifierStepName). The hyphen form `architect-advisory` is rejected
-            // by the spawn-time output-name validator.
-            as: "architect_advisory",
-            outputSchema: ARCHITECT_OUTPUT_SCHEMA,
-            acceptance: false,
+            outputName: "architect_advisory",
+            schema: ARCHITECT_OUTPUT_SCHEMA,
         });
     }
 
-    return { chain };
+    return { nodes };
 }
 
 /**

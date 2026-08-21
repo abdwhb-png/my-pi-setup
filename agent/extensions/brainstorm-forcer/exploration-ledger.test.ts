@@ -867,7 +867,7 @@ describe("exploration ledger", () => {
             verificationRunId: "async-owned",
             verifiers: [
                 {
-                    agent: "scout",
+                    agent: "brainstorm-code-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claim.id],
@@ -895,7 +895,7 @@ describe("exploration ledger", () => {
             verificationRunId: "async-newer",
             verifiers: [
                 {
-                    agent: "scout",
+                    agent: "brainstorm-code-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claim.id],
@@ -1910,7 +1910,7 @@ describe("exploration ledger", () => {
             verificationRunId: "async-owned",
             verifiers: [
                 {
-                    agent: "scout",
+                    agent: "brainstorm-code-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claim.id],
@@ -1929,7 +1929,7 @@ describe("exploration ledger", () => {
                     sourceRefs: ["~/runtime.ts"],
                     verifier: {
                         role: "verifier",
-                        agent: "scout",
+                        agent: "brainstorm-code-scout",
                         context: "fresh",
                         exitCode: 0,
                         verificationRunId: "async-owned",
@@ -1950,7 +1950,7 @@ describe("exploration ledger", () => {
                     audit: {
                         status: "success",
                         verificationRunId: "async-owned",
-                        agent: "scout",
+                        agent: "brainstorm-code-scout",
                         outputName: "verify_local_code_supported",
                     },
                 },
@@ -2001,7 +2001,7 @@ describe("exploration ledger", () => {
             },
             verifiers: [
                 {
-                    agent: "scout",
+                    agent: "brainstorm-code-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claim.id],
@@ -2116,7 +2116,7 @@ describe("exploration ledger", () => {
             },
             verifiers: [
                 {
-                    agent: "scout",
+                    agent: "brainstorm-code-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [architectureClaim.id, ordinaryClaim.id],
@@ -2196,7 +2196,7 @@ describe("exploration ledger", () => {
                     summary: "Pi claim supported.",
                 },
                 {
-                    agent: "scout",
+                    agent: "brainstorm-code-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claims[1]!.claim.id],
@@ -2280,7 +2280,7 @@ describe("exploration ledger", () => {
                 reason: `Terminal ${failureKind}.`,
                 groups: [
                     {
-                        agent: "scout",
+                        agent: "brainstorm-code-scout",
                         outputName: "verify_local_code_supported",
                         claimIds: [claim.id],
                         evidenceIds: [direct.id],
@@ -2337,7 +2337,7 @@ describe("exploration ledger", () => {
             reason: "Owner mismatch.",
             groups: [
                 {
-                    agent: "scout",
+                    agent: "brainstorm-code-scout",
                     outputName: "verify_local_code_supported",
                     claimIds: [claim.id],
                     evidenceIds: [direct.id],
@@ -2507,7 +2507,7 @@ describe("exploration ledger", () => {
                 reason: "Claim scope changed while verification was pending.",
                 groups: [
                     {
-                        agent: "scout",
+                        agent: "brainstorm-code-scout",
                         outputName: "verify_local_code_supported",
                         claimIds: [original.id],
                         evidenceIds: [direct.id],

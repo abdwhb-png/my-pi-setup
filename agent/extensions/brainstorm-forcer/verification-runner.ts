@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { isAbsolute } from "node:path";
+import type { SubagentDelegationRequest } from "pi-subagents/delegation";
 import {
-    basename,
-    dirname,
-    isAbsolute,
-    join,
-    resolve as resolvePath,
-    sep,
-} from "node:path";
+    registerExternalRun,
+    unregisterExternalRun,
+} from "pi-subagents/external-runs";
+import {
+    DelegationClient,
+    DelegationDeadlineError,
+    type DelegationClientOptions,
+} from "../_shared/subagents/delegation-client";
 import {
     ARCHITECT_AGENT,
     VERIFICATION_DOMAINS,
@@ -16,31 +17,19 @@ import {
     VERIFIER_AGENT_ALLOWLIST,
     type VerificationDomain,
     type VerificationOutcome,
+    type VerificationPlanNode,
 } from "./verification";
-
-export const SUBAGENT_RPC_PROTOCOL_VERSION = 1 as const;
-export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
-export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
-export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
-
-type RpcMethod = "ping" | "spawn" | "status" | "stop";
 
 export interface EventBusLike {
     on(event: string, handler: (data: unknown) => void): (() => void) | void;
     emit(event: string, data: unknown): void;
 }
 
-type VerificationSpawnInput = Readonly<{
-    chain: readonly unknown[];
-}>;
-
 type PendingVerificationStepBase = Readonly<{
     outputName: string;
     agent: string;
     claimIds: readonly string[];
     evidenceIds: readonly string[];
-    resultIndex: number;
-    chainStepIndex: number;
 }>;
 
 export type PendingVerificationStep = Readonly<
@@ -49,31 +38,18 @@ export type PendingVerificationStep = Readonly<
           domain: VerificationDomain;
           outcome: VerificationOutcome;
       })
-    | (PendingVerificationStepBase & {
-          role: "architect";
-      })
+    | (PendingVerificationStepBase & { role: "architect" })
 >;
 
-export type PendingVerificationRecovery = Readonly<{
-    waitUsed?: boolean;
-    steerAttempted?: boolean;
-    steering?: Readonly<{
-        requestId: string;
-        state: "pending";
-        targetIndexes: readonly number[];
-    }>;
-}>;
-
+/** Durable metadata only. Active foreground attempts live in one extension context. */
 export type PendingVerificationRun = Readonly<{
     runId: string;
-    asyncDir: string;
     ownerSessionId: string;
     ownerSessionFile: string;
     brainstormRunId: string;
     claimIds: readonly string[];
     startedAt: string;
     expectedSteps: readonly PendingVerificationStep[];
-    recovery?: PendingVerificationRecovery;
 }>;
 
 export type OwnedTerminalCompletion =
@@ -90,26 +66,10 @@ export type OwnedTerminalCompletion =
           failedAdvisoryOutputName?: string;
       };
 
-type PendingCall = {
-    reject(error: Error): void;
-    cleanup(): void;
-};
-
-type CompletionSubscription = {
-    handler(data: unknown): void;
-    unsubscribe(): void;
-};
-
 function record(value: unknown): Record<string, unknown> | undefined {
     return value !== null && typeof value === "object" && !Array.isArray(value)
         ? (value as Record<string, unknown>)
         : undefined;
-}
-
-function text(value: unknown, field: string): string {
-    if (typeof value !== "string" || !value.trim())
-        throw new Error(`Malformed subagent RPC reply: ${field} is required.`);
-    return value;
 }
 
 function strings(value: unknown, pattern?: RegExp): value is readonly string[] {
@@ -128,44 +88,6 @@ function unique(values: readonly string[]): boolean {
     return new Set(values).size === values.length;
 }
 
-const ASYNC_RUNS_DIRNAME = "async-subagent-runs";
-const TEMP_SCOPE_PATTERN = /^pi-subagents-[A-Za-z0-9._-]+$/;
-
-function hasTrustedAsyncDirShape(asyncDir: string, runId: string): boolean {
-    if (
-        !isAbsolute(asyncDir) ||
-        asyncDir.split(sep).includes("..") ||
-        basename(asyncDir) !== runId
-    )
-        return false;
-    const asyncRoot = dirname(resolvePath(asyncDir));
-    const scopeRoot = dirname(asyncRoot);
-    return (
-        basename(asyncRoot) === ASYNC_RUNS_DIRNAME &&
-        TEMP_SCOPE_PATTERN.test(basename(scopeRoot)) &&
-        dirname(scopeRoot) === resolvePath(tmpdir())
-    );
-}
-
-function canonicalNonSymlinkDirectory(path: string): string | undefined {
-    const directory = lstatSync(path);
-    return directory.isDirectory() && !directory.isSymbolicLink()
-        ? realpathSync(path)
-        : undefined;
-}
-
-function stableJson(value: unknown): string {
-    if (Array.isArray(value))
-        return `[${value.map((item) => stableJson(item)).join(",")}]`;
-    const object = record(value);
-    if (object)
-        return `{${Object.entries(object)
-            .toSorted(([left], [right]) => left.localeCompare(right))
-            .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-            .join(",")}}`;
-    return JSON.stringify(value);
-}
-
 export function isPendingVerificationRun(
     value: unknown,
 ): value is PendingVerificationRun {
@@ -174,8 +96,6 @@ export function isPendingVerificationRun(
         !pending ||
         typeof pending.runId !== "string" ||
         !pending.runId.trim() ||
-        typeof pending.asyncDir !== "string" ||
-        !hasTrustedAsyncDirShape(pending.asyncDir, pending.runId) ||
         typeof pending.ownerSessionId !== "string" ||
         !pending.ownerSessionId.trim() ||
         typeof pending.ownerSessionFile !== "string" ||
@@ -189,596 +109,360 @@ export function isPendingVerificationRun(
         !unique(pending.claimIds) ||
         !Array.isArray(pending.expectedSteps) ||
         pending.expectedSteps.length === 0
-    )
+    ) {
         return false;
-
-    const expectedStepCount = pending.expectedSteps.length;
-    const recovery = record(pending.recovery);
-    if (pending.recovery !== undefined) {
-        if (
-            !recovery ||
-            (recovery.waitUsed !== undefined &&
-                typeof recovery.waitUsed !== "boolean") ||
-            (recovery.steerAttempted !== undefined &&
-                typeof recovery.steerAttempted !== "boolean")
-        )
-            return false;
-        if (
-            (recovery.steerAttempted === true) !==
-            (recovery.steering !== undefined)
-        )
-            return false;
-        if (recovery.steering !== undefined) {
-            const steering = record(recovery.steering);
-            if (
-                !steering ||
-                typeof steering.requestId !== "string" ||
-                !steering.requestId.trim() ||
-                steering.state !== "pending" ||
-                !Array.isArray(steering.targetIndexes) ||
-                steering.targetIndexes.length === 0 ||
-                !steering.targetIndexes.every(
-                    (index) =>
-                        Number.isSafeInteger(index) &&
-                        Number(index) >= 0 &&
-                        Number(index) < expectedStepCount,
-                ) ||
-                new Set(steering.targetIndexes).size !==
-                    steering.targetIndexes.length
-            )
-                return false;
-        }
     }
+    const claimIds = pending.claimIds;
 
     const outputNames = new Set<string>();
-    const pendingClaimIds = pending.claimIds;
     let architectCount = 0;
-    for (const [stepPosition, rawStep] of pending.expectedSteps.entries()) {
+    for (const rawStep of pending.expectedSteps) {
         const step = record(rawStep);
         if (
             !step ||
             typeof step.outputName !== "string" ||
             !step.outputName.trim() ||
             outputNames.has(step.outputName) ||
+            typeof step.agent !== "string" ||
             !strings(step.claimIds, /^CL-\d+$/) ||
             step.claimIds.length === 0 ||
             !unique(step.claimIds) ||
-            !step.claimIds.every((id) => pendingClaimIds.includes(id)) ||
+            !step.claimIds.every((id) => claimIds.includes(id)) ||
             !strings(step.evidenceIds, /^EV-\d+$/) ||
-            !unique(step.evidenceIds) ||
-            step.resultIndex !== stepPosition ||
-            !Number.isSafeInteger(step.chainStepIndex) ||
-            Number(step.chainStepIndex) < 0
-        )
+            !unique(step.evidenceIds)
+        ) {
             return false;
+        }
         outputNames.add(step.outputName);
         if (step.role === "verifier") {
             if (
-                typeof step.agent !== "string" ||
                 !VERIFIER_AGENT_ALLOWLIST.includes(step.agent) ||
                 !VERIFICATION_DOMAINS.includes(
                     step.domain as VerificationDomain,
                 ) ||
                 !VERIFICATION_OUTCOMES.includes(
                     step.outcome as VerificationOutcome,
-                ) ||
-                step.chainStepIndex !== 0
-            )
+                )
+            ) {
                 return false;
+            }
             continue;
         }
-        if (
-            step.role !== "architect" ||
-            step.agent !== ARCHITECT_AGENT ||
-            step.chainStepIndex !== 1
-        )
+        if (step.role !== "architect" || step.agent !== ARCHITECT_AGENT) {
             return false;
+        }
         architectCount += 1;
     }
     return architectCount <= 1;
 }
 
-function terminalFailure(
-    failureKind: "failed" | "malformed" | "timeout",
-    reason: string,
-): Extract<OwnedTerminalCompletion, { kind: "failure" }> {
-    return { kind: "failure", failureKind, reason };
+export type VerificationDelegationNode = VerificationPlanNode;
+
+export type VerificationCoordinatorInput = Readonly<{
+    ownerRunId: string;
+    sessionId: string;
+    /** Fleet indexes current sessions by their persisted session-file path. */
+    sessionFile: string;
+    cwd: string;
+    label: string;
+    nodes: readonly VerificationDelegationNode[];
+}>;
+
+export type VerificationCoordinatorCompletion = Readonly<{
+    runId: string;
+    terminal: Exclude<OwnedTerminalCompletion, { kind: "unrelated" }>;
+}>;
+
+type CoordinatorRun = {
+    input: VerificationCoordinatorInput;
+    externalRunSessionId: string;
+    state: "running" | "completed" | "failed" | "stopped";
+    activeRequestIds: Set<string>;
+    terminal?: Exclude<OwnedTerminalCompletion, { kind: "unrelated" }>;
+};
+
+const TERMINAL_RUN_CACHE_LIMIT = 32;
+
+/** Matches pi-subagents' documented 30-minute foreground default, explicitly. */
+const VERIFICATION_CHILD_TIMEOUT_MS = 30 * 60 * 1_000;
+/** Lets the child publish its terminal event before local recovery owns cleanup. */
+const VERIFICATION_DEADLINE_GRACE_MS = 5_000;
+
+export type VerificationCoordinatorDependencies = Readonly<{
+    registerExternalRun?: typeof registerExternalRun;
+    unregisterExternalRun?: typeof unregisterExternalRun;
+    /** Test seam; production uses the bounded child timeout above. */
+    childTimeoutMs?: number;
+    /** Test seam; must retain a positive local grace beyond the child timeout. */
+    deadlineGraceMs?: number;
+    /** Test seam for a deterministic DelegationClient deadline signal. */
+    createDeadlineSignal?: DelegationClientOptions["createDeadlineSignal"];
+}>;
+
+function structuredResult(response: {
+    result?:
+        | { kind: "text"; text: string }
+        | { kind: "structured"; value: unknown };
+}): unknown {
+    return response.result?.kind === "structured"
+        ? response.result.value
+        : undefined;
 }
 
-export function parseOwnedTerminalCompletion(
-    value: unknown,
-    pending: PendingVerificationRun,
-): OwnedTerminalCompletion {
-    const completion = record(value);
-    if (!completion || completion.runId !== pending.runId)
-        return { kind: "unrelated" };
-    if (completion.sessionId !== pending.ownerSessionFile)
-        return { kind: "unrelated" };
-    if (completion.timedOut === true)
-        return terminalFailure(
-            "timeout",
-            typeof completion.error === "string"
-                ? completion.error
-                : "Verification run timed out.",
+function renderDependentTask(
+    task: string,
+    outputs: Readonly<Record<string, unknown>>,
+): string {
+    let rendered = task;
+    for (const [name, value] of Object.entries(outputs)) {
+        rendered = rendered.replaceAll(
+            `{outputs.${name}}`,
+            JSON.stringify(value),
         );
-    if (
-        completion.success !== true ||
-        completion.state !== "complete" ||
-        completion.exitCode !== 0
-    )
-        return terminalFailure(
-            "failed",
-            typeof completion.error === "string"
-                ? completion.error
-                : "Verification run did not complete successfully.",
-        );
-
-    if (
-        !Array.isArray(completion.results) ||
-        completion.results.length !== pending.expectedSteps.length
-    )
-        return terminalFailure(
-            "malformed",
-            "Completion result count does not match the expected verification steps.",
-        );
-    const outputs = record(completion.outputs);
-    if (!outputs)
-        return terminalFailure(
-            "malformed",
-            "Completion named outputs are missing.",
-        );
-    const expectedOutputNames = pending.expectedSteps.map(
-        (step) => step.outputName,
-    );
-    if (
-        stableJson(Object.keys(outputs).toSorted()) !==
-        stableJson([...expectedOutputNames].toSorted())
-    )
-        return terminalFailure(
-            "malformed",
-            "Completion named output set does not match the expected verification groups.",
-        );
-
-    const structuredOutputs: Record<string, unknown> = {};
-    for (const expected of pending.expectedSteps) {
-        const result = record(completion.results[expected.resultIndex]);
-        const output = record(outputs[expected.outputName]);
-        if (
-            !result ||
-            result.agent !== expected.agent ||
-            result.context !== "fresh" ||
-            result.status !== "completed" ||
-            result.success !== true ||
-            result.structuredOutput === undefined
-        )
-            return terminalFailure(
-                "malformed",
-                `Completion result ${expected.resultIndex} does not match expected agent ${expected.agent}.`,
-            );
-        if (
-            !output ||
-            output.agent !== expected.agent ||
-            output.stepIndex !== expected.chainStepIndex ||
-            output.structured === undefined ||
-            stableJson(output.structured) !==
-                stableJson(result.structuredOutput)
-        )
-            return terminalFailure(
-                "malformed",
-                `Completion named output ${expected.outputName} does not match result ${expected.resultIndex}.`,
-            );
-        structuredOutputs[expected.outputName] = result.structuredOutput;
     }
-    return { kind: "complete", structuredOutputs };
+    return rendered;
 }
 
-export function readOwnedTerminalStatusArtifact(
-    pending: PendingVerificationRun,
-):
-    | Exclude<OwnedTerminalCompletion, { kind: "unrelated" }>
-    | { kind: "pending" } {
-    const malformed = (reason: string) =>
-        terminalFailure(
-            "malformed",
-            `Invalid verification status artifact: ${reason}`,
-        );
-    if (!isPendingVerificationRun(pending))
-        return malformed("pending ownership metadata is invalid.");
-
-    const expectedDir = resolvePath(pending.asyncDir);
-    const asyncRoot = dirname(expectedDir);
-    const scopeRoot = dirname(asyncRoot);
-    const tempRoot = resolvePath(tmpdir());
-    const statusPath = join(expectedDir, "status.json");
-    try {
-        const canonicalTempRoot = canonicalNonSymlinkDirectory(tempRoot);
-        const canonicalScopeRoot = canonicalNonSymlinkDirectory(scopeRoot);
-        const canonicalAsyncRoot = canonicalNonSymlinkDirectory(asyncRoot);
-        const canonicalDir = canonicalNonSymlinkDirectory(expectedDir);
-        if (
-            !canonicalTempRoot ||
-            !canonicalScopeRoot ||
-            !canonicalAsyncRoot ||
-            !canonicalDir ||
-            dirname(canonicalScopeRoot) !== canonicalTempRoot ||
-            dirname(canonicalAsyncRoot) !== canonicalScopeRoot ||
-            dirname(canonicalDir) !== canonicalAsyncRoot
-        )
-            return malformed(
-                "asyncDir is outside the trusted package temp hierarchy.",
-            );
-        const statusFile = lstatSync(statusPath);
-        if (
-            !statusFile.isFile() ||
-            statusFile.isSymbolicLink() ||
-            statusFile.size > 2 * 1024 * 1024
-        )
-            return malformed("status.json is not a bounded regular file.");
-        if (dirname(realpathSync(statusPath)) !== canonicalDir)
-            return malformed("status.json escapes its asyncDir.");
-
-        const status = record(JSON.parse(readFileSync(statusPath, "utf8")));
-        if (
-            !status ||
-            status.lifecycleArtifactVersion !== 3 ||
-            status.runId !== pending.runId ||
-            status.sessionId !== pending.ownerSessionFile ||
-            status.mode !== "chain" ||
-            !Array.isArray(status.steps) ||
-            status.steps.length !== pending.expectedSteps.length
-        )
-            return malformed(
-                "lifecycle ownership or step metadata does not match.",
-            );
-
-        const steps = status.steps.map(record);
-        if (
-            steps.some((step, index) => {
-                const expected = pending.expectedSteps[index];
-                return (
-                    !step ||
-                    !expected ||
-                    step.agent !== expected.agent ||
-                    step.context !== "fresh" ||
-                    step.outputName !== expected.outputName
-                );
-            })
-        )
-            return malformed("persisted step identity does not match.");
-
-        if (status.state === "queued" || status.state === "running")
-            return { kind: "pending" };
-        if (
-            !["complete", "failed", "paused", "stopped"].includes(
-                String(status.state),
-            )
-        )
-            return malformed("lifecycle state is unsupported.");
-
-        const completedStructuredOutputs: Record<string, unknown> = {};
-        const namedOutputs = record(status.outputs);
-        for (const [index, expected] of pending.expectedSteps.entries()) {
-            if (expected.role !== "verifier") continue;
-            const step = steps[index];
-            const output = namedOutputs
-                ? record(namedOutputs[expected.outputName])
-                : undefined;
-            if (
-                step?.exitCode === 0 &&
-                (step.status === "complete" || step.status === "completed") &&
-                step.structuredOutput !== undefined &&
-                output?.agent === expected.agent &&
-                output.stepIndex === expected.chainStepIndex &&
-                output.structured !== undefined &&
-                stableJson(output.structured) ===
-                    stableJson(step.structuredOutput)
-            )
-                completedStructuredOutputs[expected.outputName] =
-                    step.structuredOutput;
-        }
-
-        const architectEntries = pending.expectedSteps.flatMap(
-            (expected, index) =>
-                expected.role === "architect"
-                    ? [{ expected, step: steps[index] }]
-                    : [],
-        );
-        const failedAdvisoryOutputName =
-            status.state === "failed" &&
-            architectEntries.length === 1 &&
-            Object.keys(completedStructuredOutputs).length ===
-                pending.expectedSteps.filter((step) => step.role === "verifier")
-                    .length &&
-            architectEntries[0].step?.status === "failed" &&
-            typeof architectEntries[0].step?.exitCode === "number" &&
-            architectEntries[0].step.exitCode !== 0 &&
-            architectEntries[0].step?.structuredOutput === undefined &&
-            record(namedOutputs?.[architectEntries[0].expected.outputName])
-                ?.structured === undefined
-                ? architectEntries[0].expected.outputName
-                : undefined;
-
-        const completion = parseOwnedTerminalCompletion(
-            {
-                runId: status.runId,
-                sessionId: status.sessionId,
-                success: status.state === "complete",
-                state: status.state,
-                exitCode: status.state === "complete" ? 0 : 1,
-                ...(status.timedOut === true ? { timedOut: true } : {}),
-                ...(typeof status.error === "string"
-                    ? { error: status.error }
-                    : {}),
-                results: steps.map((step) => ({
-                    agent: step!.agent,
-                    context: step!.context,
-                    status:
-                        step!.status === "complete"
-                            ? "completed"
-                            : step!.status,
-                    success:
-                        step!.exitCode === 0 &&
-                        (step!.status === "complete" ||
-                            step!.status === "completed"),
-                    exitCode: step!.exitCode,
-                    structuredOutput: step!.structuredOutput,
-                })),
-                outputs: status.outputs,
+/** Runs Brainstorm leaves through the public 0.50 structured delegation API. */
+export function createVerificationCoordinator(
+    events: EventBusLike,
+    dependencies: VerificationCoordinatorDependencies = {},
+) {
+    const registerFleetRun =
+        dependencies.registerExternalRun ?? registerExternalRun;
+    const unregisterFleetRun =
+        dependencies.unregisterExternalRun ?? unregisterExternalRun;
+    const childTimeoutMs =
+        dependencies.childTimeoutMs ?? VERIFICATION_CHILD_TIMEOUT_MS;
+    const deadlineGraceMs =
+        dependencies.deadlineGraceMs ?? VERIFICATION_DEADLINE_GRACE_MS;
+    const client = new DelegationClient(
+        {
+            on(event, handler) {
+                return events.on(event, handler) ?? (() => undefined);
             },
-            pending,
-        );
-        if (completion.kind === "unrelated")
-            return malformed("terminal ownership does not match.");
-        return completion.kind === "failure" &&
-            Object.keys(completedStructuredOutputs).length > 0
-            ? {
-                  ...completion,
-                  completedStructuredOutputs,
-                  ...(failedAdvisoryOutputName
-                      ? { failedAdvisoryOutputName }
-                      : {}),
-              }
-            : completion;
-    } catch (error) {
-        return malformed(
-            error instanceof Error ? error.message : String(error),
-        );
-    }
-}
-
-export function createVerificationRpcClient(events: EventBusLike) {
-    const pendingCalls = new Set<PendingCall>();
-    const completionSubscriptions = new Set<CompletionSubscription>();
-    let completionEvent = SUBAGENT_ASYNC_COMPLETE_EVENT;
+            emit(event, data) {
+                events.emit(event, data);
+            },
+        },
+        {
+            createDeadlineSignal: dependencies.createDeadlineSignal,
+        },
+    );
+    const runs = new Map<string, CoordinatorRun>();
+    const completionHandlers = new Set<
+        (completion: VerificationCoordinatorCompletion) => void
+    >();
+    const terminalRunIds: string[] = [];
     let disposed = false;
 
-    function bindCompletion(subscription: CompletionSubscription): void {
-        const registered = events.on(completionEvent, (data) =>
-            subscription.handler(data),
-        );
-        subscription.unsubscribe =
-            typeof registered === "function" ? registered : () => undefined;
+    function retainTerminalRun(runId: string): void {
+        terminalRunIds.push(runId);
+        while (terminalRunIds.length > TERMINAL_RUN_CACHE_LIMIT) {
+            const expiredRunId = terminalRunIds.shift();
+            if (expiredRunId) runs.delete(expiredRunId);
+        }
     }
 
-    function call(
-        method: RpcMethod,
-        params: unknown,
-        timeoutMs: number,
+    function publishCompletion(
+        runId: string,
+        terminal: Exclude<OwnedTerminalCompletion, { kind: "unrelated" }>,
+    ): void {
+        const run = runs.get(runId);
+        if (!run || run.terminal) return;
+        run.terminal = terminal;
+        run.state = terminal.kind === "complete" ? "completed" : "failed";
+        unregisterFleetRun(run.externalRunSessionId, runId);
+        retainTerminalRun(runId);
+        for (const handler of completionHandlers) handler({ runId, terminal });
+    }
+
+    async function runNode(
+        runId: string,
+        node: VerificationDelegationNode,
+        cwd: string,
+        outputs: Readonly<Record<string, unknown>>,
     ): Promise<unknown> {
-        if (disposed)
-            return Promise.reject(
-                new Error("Verification RPC client is disposed."),
-            );
-        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
-            return Promise.reject(
-                new Error("Verification RPC timeout must be positive."),
-            );
+        const run = runs.get(runId);
+        if (!run || run.state !== "running") {
+            throw new Error(`Verification run ${runId} is not active.`);
+        }
+        const requestId = `${runId}:${node.outputName}:${randomUUID()}`;
+        const request: SubagentDelegationRequest = {
+            requestId,
+            ownerRunId: runId,
+            nodeId: node.outputName,
+            agent: node.agent,
+            task: renderDependentTask(node.task, outputs),
+            context: "fresh",
+            cwd,
+            artifacts: true,
+            timeoutMs: childTimeoutMs,
+            result: { kind: "structured", schema: node.schema },
+        };
+        run.activeRequestIds.add(requestId);
+        try {
+            const response = await client.run(request, {
+                deadlineMs: childTimeoutMs + deadlineGraceMs,
+            });
+            const value = structuredResult(response);
+            if (response.status !== "completed" || value === undefined) {
+                const error = new Error(
+                    response.error ??
+                        `Delegation ${requestId} ended with ${response.status}.`,
+                );
+                Object.assign(error, { delegationStatus: response.status });
+                throw error;
+            }
+            return value;
+        } finally {
+            run.activeRequestIds.delete(requestId);
+        }
+    }
 
-        const requestId = randomUUID();
-        const replyEvent = `${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${requestId}`;
-        return new Promise((resolve, reject) => {
-            let unsubscribe: (() => void) | undefined;
-            let cancelTimer: () => void = () => undefined;
-            const pending: PendingCall = {
-                reject,
-                cleanup: () => {
-                    cancelTimer();
-                    unsubscribe?.();
-                    pendingCalls.delete(pending);
-                },
-            };
-            const finish = (
-                outcome:
-                    | { ok: true; value: unknown }
-                    | { ok: false; error: Error },
-            ) => {
-                pending.cleanup();
-                if (outcome.ok) resolve(outcome.value);
-                else reject(outcome.error);
-            };
-
-            const registered = events.on(replyEvent, (raw) => {
-                const reply = record(raw);
-                if (!reply)
-                    return finish({
-                        ok: false,
-                        error: new Error(
-                            "Malformed subagent RPC reply: expected an object.",
-                        ),
-                    });
-                if (reply.version !== SUBAGENT_RPC_PROTOCOL_VERSION)
-                    return finish({
-                        ok: false,
-                        error: new Error(
-                            "Malformed subagent RPC reply: unsupported version.",
-                        ),
-                    });
-                if (reply.requestId !== requestId)
-                    return finish({
-                        ok: false,
-                        error: new Error(
-                            "Malformed subagent RPC reply: requestId mismatch.",
-                        ),
-                    });
-                if (reply.method !== method)
-                    return finish({
-                        ok: false,
-                        error: new Error(
-                            "Malformed subagent RPC reply: method mismatch.",
-                        ),
-                    });
-                if (reply.success === false) {
-                    const error = record(reply.error);
-                    return finish({
-                        ok: false,
-                        error: new Error(
-                            typeof error?.message === "string"
-                                ? error.message
-                                : "Subagent RPC request failed.",
-                        ),
-                    });
+    async function execute(runId: string): Promise<void> {
+        const run = runs.get(runId);
+        if (!run) return;
+        const verifierNodes = run.input.nodes.filter(
+            (node) => node.role === "verifier",
+        );
+        const architectNodes = run.input.nodes.filter(
+            (node) => node.role === "architect",
+        );
+        const outputs: Record<string, unknown> = {};
+        try {
+            const settled = await Promise.allSettled(
+                verifierNodes.map(async (node) => ({
+                    node,
+                    value: await runNode(runId, node, run.input.cwd, outputs),
+                })),
+            );
+            for (const item of settled) {
+                if (item.status === "fulfilled") {
+                    outputs[item.value.node.outputName] = item.value.value;
                 }
-                if (reply.success !== true)
-                    return finish({
-                        ok: false,
-                        error: new Error(
-                            "Malformed subagent RPC reply: success is required.",
-                        ),
-                    });
-                return finish({ ok: true, value: reply.data });
-            });
-            unsubscribe =
-                typeof registered === "function" ? registered : undefined;
-            const timer = setTimeout(
-                () =>
-                    finish({
-                        ok: false,
-                        error: new Error(
-                            `Subagent RPC ${method} timed out after ${timeoutMs}ms.`,
-                        ),
-                    }),
-                timeoutMs,
+            }
+            const rejected = settled.find(
+                (item): item is PromiseRejectedResult =>
+                    item.status === "rejected",
             );
-            cancelTimer = () => clearTimeout(timer);
-            pendingCalls.add(pending);
-            events.emit(SUBAGENT_RPC_REQUEST_EVENT, {
-                version: SUBAGENT_RPC_PROTOCOL_VERSION,
-                requestId,
-                method,
-                ...(params === undefined ? {} : { params }),
-                source: { extension: "brainstorm-forcer" },
+            if (rejected) throw rejected.reason;
+
+            for (const node of architectNodes) {
+                outputs[node.outputName] = await runNode(
+                    runId,
+                    node,
+                    run.input.cwd,
+                    outputs,
+                );
+            }
+            if (run.state === "running") {
+                publishCompletion(runId, {
+                    kind: "complete",
+                    structuredOutputs: outputs,
+                });
+            }
+        } catch (error) {
+            if (run.state !== "running") return;
+            const reason =
+                error instanceof Error ? error.message : String(error);
+            const delegationStatus =
+                error instanceof Error && "delegationStatus" in error
+                    ? String(error.delegationStatus)
+                    : undefined;
+            const failedArchitect = architectNodes.find(
+                (node) => !Object.hasOwn(outputs, node.outputName),
+            );
+            publishCompletion(runId, {
+                kind: "failure",
+                failureKind:
+                    error instanceof DelegationDeadlineError ||
+                    delegationStatus === "timed_out"
+                        ? "timeout"
+                        : "failed",
+                reason,
+                ...(Object.keys(outputs).length > 0
+                    ? { completedStructuredOutputs: outputs }
+                    : {}),
+                ...(failedArchitect &&
+                Object.keys(outputs).length === verifierNodes.length
+                    ? { failedAdvisoryOutputName: failedArchitect.outputName }
+                    : {}),
             });
-        });
+        }
+    }
+
+    function stop(runId: string): boolean {
+        const run = runs.get(runId);
+        if (!run || run.state !== "running") return false;
+        run.state = "stopped";
+        const activeRequestIds = [...run.activeRequestIds];
+        run.activeRequestIds.clear();
+        for (const requestId of activeRequestIds)
+            client.cancelAndDetach(requestId);
+        unregisterFleetRun(run.externalRunSessionId, runId);
+        retainTerminalRun(runId);
+        return true;
     }
 
     return {
-        async ping(timeoutMs: number) {
-            const data = record(await call("ping", undefined, timeoutMs));
-            const methods = data?.methods;
-            const eventNames = record(data?.events);
-            if (
-                data?.version !== SUBAGENT_RPC_PROTOCOL_VERSION ||
-                !Array.isArray(methods) ||
-                !methods.every((method) => typeof method === "string") ||
-                !["ping", "spawn", "status"].every((method) =>
-                    methods.includes(method),
-                ) ||
-                eventNames?.replyPrefix !== SUBAGENT_RPC_REPLY_EVENT_PREFIX
-            )
-                throw new Error(
-                    "Malformed subagent RPC ping response for protocol v1.",
-                );
-            const advertisedCompletionEvent = text(
-                eventNames.asyncComplete,
-                "events.asyncComplete",
-            );
-            if (advertisedCompletionEvent !== completionEvent) {
-                completionEvent = advertisedCompletionEvent;
-                for (const subscription of completionSubscriptions) {
-                    subscription.unsubscribe();
-                    bindCompletion(subscription);
-                }
-            }
-            const session = record(data.session);
-            return {
-                methods: [...methods] as string[],
-                ...(typeof session?.sessionId === "string"
-                    ? { sessionId: session.sessionId }
-                    : {}),
-                ...(typeof session?.sessionFile === "string"
-                    ? { sessionFile: session.sessionFile }
-                    : {}),
-                asyncCompleteEvent: completionEvent,
-            };
-        },
-        async spawn(input: VerificationSpawnInput, timeoutMs: number) {
-            const data = record(
-                await call(
-                    "spawn",
-                    {
-                        chain: input.chain,
-                        async: true,
-                        context: "fresh",
-                        clarify: false,
-                    },
-                    timeoutMs,
-                ),
-            );
-            const details = record(data?.details);
-            const runId = text(details?.runId, "details.runId");
-            const asyncDir = text(details?.asyncDir, "details.asyncDir");
-            return {
-                runId,
-                asyncDir,
-            };
-        },
-        async stop(runId: string, timeoutMs: number) {
-            const data = record(
-                await call("stop", { runId: text(runId, "runId") }, timeoutMs),
-            );
-            if (
-                data?.runId !== runId ||
-                data.state !== "stopping" ||
-                typeof data.message !== "string"
-            )
-                throw new Error("Malformed subagent RPC stop response.");
-        },
-        async status(runId: string, timeoutMs: number) {
-            const data = record(
-                await call(
-                    "status",
-                    { runId: text(runId, "runId") },
-                    timeoutMs,
-                ),
-            );
-            if (typeof data?.text !== "string" || !record(data.details))
-                throw new Error("Malformed subagent RPC status response.");
-            return { text: data.text, details: data.details };
-        },
-        onAsyncComplete(handler: (data: unknown) => void): () => void {
+        start(input: VerificationCoordinatorInput) {
             if (disposed)
-                throw new Error("Verification RPC client is disposed.");
-            const subscription: CompletionSubscription = {
-                handler,
-                unsubscribe: () => undefined,
+                throw new Error("Verification coordinator is disposed.");
+            if (!input.nodes.length)
+                throw new Error("Verification requires at least one node.");
+            if (!isAbsolute(input.sessionFile))
+                throw new Error(
+                    "Verification requires an absolute persisted session file.",
+                );
+            const runId = `verification-${randomUUID()}`;
+            const run: CoordinatorRun = {
+                input,
+                externalRunSessionId: input.sessionFile,
+                state: "running",
+                activeRequestIds: new Set(),
             };
-            bindCompletion(subscription);
-            completionSubscriptions.add(subscription);
-            return () => {
-                subscription.unsubscribe();
-                completionSubscriptions.delete(subscription);
-            };
+            registerFleetRun({
+                id: runId,
+                sessionId: run.externalRunSessionId,
+                source: "brainstorm-forcer",
+                label: input.label,
+                state: "running",
+                startedAt: Date.now(),
+                currentAction: `Running ${input.nodes.length} verification node(s)`,
+            });
+            runs.set(runId, run);
+            void execute(runId);
+            return { runId };
+        },
+        stop,
+        status(runId: string) {
+            const run = runs.get(runId);
+            return run
+                ? {
+                      state: run.state,
+                      activeRequests: run.activeRequestIds.size,
+                      terminal: run.terminal,
+                  }
+                : undefined;
+        },
+        onComplete(
+            handler: (completion: VerificationCoordinatorCompletion) => void,
+        ): () => void {
+            completionHandlers.add(handler);
+            return () => completionHandlers.delete(handler);
         },
         dispose(): void {
             if (disposed) return;
             disposed = true;
-            for (const pending of pendingCalls) {
-                pending.cleanup();
-                pending.reject(new Error("Verification RPC client disposed."));
+            for (const [runId, run] of runs) {
+                if (run.state === "running") stop(runId);
+                unregisterFleetRun(run.externalRunSessionId, runId);
             }
-            for (const subscription of completionSubscriptions)
-                subscription.unsubscribe();
-            completionSubscriptions.clear();
+            runs.clear();
+            terminalRunIds.length = 0;
+            completionHandlers.clear();
+            client.dispose();
         },
     };
 }
