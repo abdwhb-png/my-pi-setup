@@ -38,7 +38,7 @@ export function createRuntime(
         activity,
         workspace,
         undefined,
-        createSddAgentGate(pi),
+        createSddAgentGate(),
     );
     return {
         agentDir,

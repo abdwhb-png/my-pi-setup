@@ -28,10 +28,7 @@ import {
 } from "pi-subagents/capability-ceiling";
 import { Type } from "typebox";
 import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
-import {
-    isAgentRuntimeRegistered,
-    registerWorkflowAgents,
-} from "../_shared/subagents/workflow-agents";
+import { registerWorkflowAgents } from "../_shared/subagents/workflow-agents";
 import { createUiColors } from "../_shared/ui/ui-colors";
 import { createBrainstormArtifactStore } from "./artifacts";
 import { getBrainstormAgentEntry } from "./brainstorm-agents";
@@ -506,7 +503,6 @@ export async function preflightVerifierAgents(
     sessionId: string,
     cwd: string,
     agents: readonly string[],
-    isRuntimeRegistered?: (agent: string) => boolean,
 ): Promise<
     ReadonlyArray<{
         agent: string;
@@ -536,14 +532,6 @@ export async function preflightVerifierAgents(
         }));
     const results = await Promise.all(
         agents.map(async (agent) => {
-            if (isRuntimeRegistered?.(agent)) {
-                // Runtime-registered workflow agents resolve through the
-                // runtime registry at dispatch, not static discovery. Bypass
-                // the static `discoverAgents` preflight for these (the
-                // orchestrator owns their definition); keep the strict gate
-                // for every genuinely unknown or statically-defined agent.
-                return { agent, ok: true };
-            }
             try {
                 const result = await resolveSubagentLaunchContract({
                     agent,
@@ -612,12 +600,7 @@ export default function brainstormForcer(
     const processingRunIds = new Set<string>();
     const ceilingManager = createCapabilityCeilingManager();
     const verificationCoordinator = createVerificationCoordinator(pi.events);
-    const runPreflight =
-        dependencies.preflight ??
-        ((sessionId: string, cwd: string, agents: readonly string[]) =>
-            preflightVerifierAgents(sessionId, cwd, agents, (agent) =>
-                isAgentRuntimeRegistered(pi, agent),
-            ));
+    const runPreflight = dependencies.preflight ?? preflightVerifierAgents;
     const unsubscribeCompletion = verificationCoordinator.onComplete((data) => {
         const dispatchedPending = pendingVerification;
         const dispatchedContext = activeContext;
@@ -2534,7 +2517,7 @@ export default function brainstormForcer(
         ceilingManager.register(ctx.sessionManager.getSessionId() ?? "");
         localCodeVerifierDispose?.();
         const localCodeScout = getBrainstormAgentEntry("brainstorm-code-scout");
-        localCodeVerifierDispose = registerWorkflowAgents(pi, [
+        localCodeVerifierDispose = registerWorkflowAgents([
             localCodeScout!,
         ]).dispose;
         refreshGroups();

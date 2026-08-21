@@ -1,156 +1,68 @@
-import { describe, it, expect, mock, afterEach } from "bun:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { describe, it, expect, afterEach, beforeEach } from "bun:test";
+import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-const registeredCalls: Array<{
-    name: string;
-    definition: Record<string, unknown>;
-    dispose: () => void;
-}> = [];
-let disposeCount = 0;
+let agentDir: string;
+let previousAgentDir: string | undefined;
 
-mock.module("pi-subagents/agents", () => ({
-    registerAgent: (input: { name: string; definition?: Record<string, unknown> }) => {
-        const registration = {
-            name: input.name,
-            definition: input.definition ?? {},
-            dispose: () => {
-                disposeCount += 1;
-            },
-        };
-        registeredCalls.push(registration);
-        return registration;
-    },
-}));
+beforeEach(() => {
+    agentDir = mkdtempSync(join(tmpdir(), "workflow-agents-"));
+    previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+});
 
-const { registerWorkflowAgents, isAgentRuntimeRegistered } = await import(
+afterEach(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    rmSync(agentDir, { recursive: true, force: true });
+});
+
+const { registerWorkflowAgents, isWorkflowAgentActive } = await import(
     "./workflow-agents.ts"
 );
 
-function mockPi(): ExtensionAPI {
-    return { events: {}, ui: {} } as unknown as ExtensionAPI;
+function agentFile(name: string): string {
+    return join(agentDir, "agents", `${name}.md`);
 }
 
-afterEach(() => {
-    registeredCalls.length = 0;
-    disposeCount = 0;
-});
-
 describe("registerWorkflowAgents", () => {
-    it("registers each entry through the public registerAgent", () => {
-        const pi = mockPi();
-        const handle = registerWorkflowAgents(pi, [
-            { name: "brainstorm-code-scout", definition: { description: "d", systemPrompt: "s" } },
+    it("writes each entry's markdown to the shared agent dir", () => {
+        const handle = registerWorkflowAgents([
+            { name: "brainstorm-code-scout", markdown: "---\nname: brainstorm-code-scout\n---\nbody" },
         ]);
-        expect(registeredCalls.map((call) => call.name)).toEqual([
-            "brainstorm-code-scout",
-        ]);
-        handle.dispose();
-        expect(disposeCount).toBe(1);
-    });
-
-    it("marks runtime-registered agents as registered", () => {
-        const pi = mockPi();
-        const handle = registerWorkflowAgents(pi, [
-            { name: "sdd-worker", definition: { description: "d", systemPrompt: "s" } },
-        ]);
-        expect(isAgentRuntimeRegistered(pi, "sdd-worker")).toBe(true);
+        expect(existsSync(agentFile("brainstorm-code-scout"))).toBe(true);
+        expect(readFileSync(agentFile("brainstorm-code-scout"), "utf8")).toContain(
+            "name: brainstorm-code-scout",
+        );
         handle.dispose();
     });
 
-    it("unregisters after dispose", () => {
-        const pi = mockPi();
-        const handle = registerWorkflowAgents(pi, [
-            { name: "sdd-spec-reviewer", definition: { description: "d", systemPrompt: "s" } },
+    it("removes the file after dispose", () => {
+        const handle = registerWorkflowAgents([
+            { name: "sdd-worker", markdown: "---\nname: sdd-worker\n---\nbody" },
         ]);
-        expect(isAgentRuntimeRegistered(pi, "sdd-spec-reviewer")).toBe(true);
+        expect(isWorkflowAgentActive("sdd-worker")).toBe(true);
         handle.dispose();
-        expect(isAgentRuntimeRegistered(pi, "sdd-spec-reviewer")).toBe(false);
+        expect(isWorkflowAgentActive("sdd-worker")).toBe(false);
     });
 
-    it("is idempotent: re-registering does not double-register or double-dispose", () => {
-        const pi = mockPi();
-        const first = registerWorkflowAgents(pi, [
-            { name: "sdd-worker", definition: { description: "d", systemPrompt: "s" } },
+    it("isWorkflowAgentActive reflects file presence", () => {
+        expect(isWorkflowAgentActive("unknown-agent")).toBe(false);
+        const handle = registerWorkflowAgents([
+            { name: "sdd-spec-reviewer", markdown: "---\nname: sdd-spec-reviewer\n---\nbody" },
         ]);
-        const second = registerWorkflowAgents(pi, [
-            { name: "sdd-worker", definition: { description: "d", systemPrompt: "s" } },
-        ]);
-        expect(registeredCalls.filter((call) => call.name === "sdd-worker")).toHaveLength(1);
-        first.dispose();
-        second.dispose();
-    });
-
-    it("tracks per-pi instances independently", () => {
-        const piA = mockPi();
-        const piB = mockPi();
-        const handleA = registerWorkflowAgents(piA, [
-            { name: "sdd-worker", definition: { description: "d", systemPrompt: "s" } },
-        ]);
-        registerWorkflowAgents(piB, [
-            { name: "sdd-spec-reviewer", definition: { description: "d", systemPrompt: "s" } },
-        ]);
-        expect(isAgentRuntimeRegistered(piA, "sdd-worker")).toBe(true);
-        expect(isAgentRuntimeRegistered(piA, "sdd-spec-reviewer")).toBe(false);
-        expect(isAgentRuntimeRegistered(piB, "sdd-spec-reviewer")).toBe(true);
-        handleA.dispose();
-        expect(isAgentRuntimeRegistered(piA, "sdd-worker")).toBe(false);
-    });
-
-    it("applies settings.json agentOverrides to the runtime definition before register", () => {
-        const pi = mockPi();
-        const overrides = {
-            "sdd-worker": {
-                model: "cpa/override-model",
-                fallbackModels: ["cpa/ocg/go-deepseek-v4-pro"],
-            },
-        };
-        const handle = registerWorkflowAgents(pi, [
-            { name: "sdd-worker", definition: { description: "d", systemPrompt: "s" } },
-        ], { overrides });
-        const call = registeredCalls.find((c) => c.name === "sdd-worker")!;
-        expect(call.definition.model).toBe("cpa/override-model");
-        expect(call.definition.fallbackModels).toEqual(["cpa/ocg/go-deepseek-v4-pro"]);
-        expect(call.definition.description).toBe("d"); // base kept
+        expect(isWorkflowAgentActive("sdd-spec-reviewer")).toBe(true);
         handle.dispose();
+        expect(isWorkflowAgentActive("sdd-spec-reviewer")).toBe(false);
     });
 
-    it("keeps base definition intact when the agent has no settings override", () => {
-        const pi = mockPi();
-        const handle = registerWorkflowAgents(pi, [
-            { name: "sdd-worker", definition: { description: "d", systemPrompt: "s" } },
-        ], { overrides: {} });
-        const call = registeredCalls.find((c) => c.name === "sdd-worker")!;
-        expect(call.definition.model).toBeUndefined();
-        expect(call.definition.description).toBe("d");
+    it("dispose is idempotent", () => {
+        const handle = registerWorkflowAgents([
+            { name: "sdd-worker", markdown: "---\nname: sdd-worker\n---\nbody" },
+        ]);
         handle.dispose();
-    });
-
-    it("maps settings turnBudget to the runtime defaultTurnBudget field", () => {
-        const pi = mockPi();
-        const handle = registerWorkflowAgents(pi, [
-            { name: "sdd-worker", definition: { description: "d", systemPrompt: "s" } },
-        ], {
-            overrides: {
-                "sdd-worker": {
-                    turnBudget: { maxTurns: 20, graceTurns: 2 },
-                },
-            },
-        });
-        const call = registeredCalls.find((c) => c.name === "sdd-worker")!;
-        expect(call.definition.defaultTurnBudget).toEqual({
-            maxTurns: 20,
-            graceTurns: 2,
-        });
-        expect(call.definition).not.toHaveProperty("turnBudget");
         handle.dispose();
-    });
-
-    it("does not mutate the caller's base definition object", () => {
-        const pi = mockPi();
-        const base = { description: "d", systemPrompt: "s" };
-        registerWorkflowAgents(pi, [{ name: "sdd-worker", definition: base }], {
-            overrides: { "sdd-worker": { model: "cpa/x" } },
-        });
-        expect(base).toEqual({ description: "d", systemPrompt: "s" });
+        expect(isWorkflowAgentActive("sdd-worker")).toBe(false);
     });
 });

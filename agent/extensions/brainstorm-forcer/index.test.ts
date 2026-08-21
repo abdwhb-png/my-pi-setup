@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { Value } from "typebox/value";
 import { resolveSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
 import { snapshotExternalRuns } from "pi-subagents/external-runs";
+import { getBrainstormAgentEntry } from "./brainstorm-agents";
 
 const {
   default: brainstormForcer,
@@ -261,6 +262,10 @@ describe("brainstorm-forcer redesign", () => {
       join(agentsDir, "code-analysis.scout.md"),
       "---\nname: scout\npackage: code-analysis\ndescription: Colliding project scout\ntools: '@inspect'\n---\n",
     );
+    await writeFile(
+      join(agentsDir, "brainstorm-code-scout.md"),
+      getBrainstormAgentEntry("brainstorm-code-scout")!.markdown,
+    );
     manager.register(sessionId);
     try {
       const { resolveSubagentLaunchContract } = await import("pi-subagents/preflight");
@@ -276,9 +281,7 @@ describe("brainstorm-forcer redesign", () => {
         message: expect.stringContaining("Ambiguous agent name 'scout'"),
       });
       await expect(
-        preflightVerifierAgents(sessionId, root, ["brainstorm-code-scout"], (agent) =>
-          agent === "brainstorm-code-scout",
-        ),
+        preflightVerifierAgents(sessionId, root, ["brainstorm-code-scout"]),
       ).resolves.toEqual([
         expect.objectContaining({ agent: "brainstorm-code-scout", ok: true }),
       ]);

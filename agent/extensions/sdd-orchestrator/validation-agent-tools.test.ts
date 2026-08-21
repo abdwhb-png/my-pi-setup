@@ -14,16 +14,12 @@ test('validation agents can persist reports without general file-write authority
         ['sdd-qa-tester', 'qa-result.json'],
         ['browser-tester', 'browser-result.json'],
     ] as const) {
-        // sdd-qa-tester now lives in the runtime definition set (the static .md
+        // sdd-qa-tester now lives in the runtime markdown set (the static .md
         // was removed); browser-tester stays a static file.
         const entry =
             name === 'sdd-qa-tester' ? getSddAgentEntry(name) : undefined;
-        const agent = entry
-            ? entry.definition.systemPrompt ?? ''
-            : readAgent(name);
-        const tools = entry
-            ? (entry.definition.tools ?? []).join(', ')
-            : (agent.match(/^tools:\s*(.+)$/m)?.[1] ?? '');
+        const agent = entry ? entry.markdown : readAgent(name);
+        const tools = agent.match(/^tools:\s*(.+)$/m)?.[1] ?? '';
 
         expect(tools).toContain('write_report');
         expect(tools).not.toMatch(/(^|,\s*)(write|edit|edit_report)(,|$)/);

@@ -593,7 +593,7 @@ describe('read-only agent contracts', () => {
     const readRuntimeAgent = (name: string) => {
         const entry = getSddAgentEntry(name);
         if (!entry) throw new Error(`Runtime agent not found: ${name}`);
-        return entry.definition;
+        return entry.markdown;
     };
 
     test('defines the assessor as a fresh read-only JSON-only role', () => {
@@ -626,60 +626,55 @@ describe('read-only agent contracts', () => {
         } as const;
 
         for (const [name, focus] of Object.entries(contracts)) {
-            const definition = readRuntimeAgent(name);
-            const sys = definition.systemPrompt ?? '';
-            expect(definition.tools).toContain('safe_bash');
-            expect(definition.defaultContext).toBe('fresh');
-            expect(definition.acceptanceRole).toBe('read-only');
-            expect(definition.completionGuard).toBe(false);
-            expect(definition.thinking).toBe('high');
-            expect(sys).toContain(focus);
-            expect(sys).toContain('Never edit');
-            expect(sys).toContain(
+            const md = readRuntimeAgent(name);
+            expect(md).toContain(`name: ${name}`);
+            expect(md).toContain('safe_bash');
+            expect(md).toContain('defaultContext: fresh');
+            expect(md).toContain('acceptanceRole: read-only');
+            expect(md).toContain('completionGuard: false');
+            expect(md).toContain('thinking: high');
+            expect(md).toContain(focus);
+            expect(md).toContain('Never edit');
+            expect(md).toContain(
                 'safe_bash only for inspection and approved test commands',
             );
-            expect(sys).toContain('ReviewSchema JSON only');
-            expect(sys).toContain('Evidence must be non-empty.');
-            expect(sys).toContain(
+            expect(md).toContain('ReviewSchema JSON only');
+            expect(md).toContain('Evidence must be non-empty.');
+            expect(md).toContain(
                 'A pass verdict must not include critical or important findings.',
             );
-            expect(sys).toContain(
+            expect(md).toContain(
                 'changes_required and blocked verdicts must include at least one finding.',
             );
-            expect(sys).toContain(
+            expect(md).toContain(
                 'For blocked, the finding must explain the block.',
             );
         }
     });
 
     test('defines sdd-qa-tester as a fresh medium read-only JSON-only role', () => {
-        const definition = readRuntimeAgent('sdd-qa-tester');
-        const sys = definition.systemPrompt ?? '';
+        const md = readRuntimeAgent('sdd-qa-tester');
 
-        expect(definition.description).toBe('SDD QA execution tester (NO-IMPLEMENTATION)');
-        expect(definition.tools).toEqual([
-            '@inspect',
-            '@lens-inspect',
-            'safe_bash',
-            'write_report',
-        ]);
-        expect(definition.thinking).toBe('medium');
-        expect(definition.systemPromptMode).toBe('replace');
-        expect(definition.inheritProjectContext).toBe(true);
-        expect(definition.inheritSkills).toBe(false);
-        expect(definition.defaultContext).toBe('fresh');
-        expect(definition.acceptanceRole).toBe('read-only');
-        expect(definition.completionGuard).toBe(false);
-        expect(sys).toContain('version-1 JSON only');
-        expect(sys).toContain('Never edit files');
-        expect(sys).toContain('Never launch other agents');
-        expect(sys).toContain('Do not use intercom');
-        expect(sys).toContain(
+        expect(md).toContain('name: sdd-qa-tester');
+        expect(md).toContain('description: SDD QA execution tester (NO-IMPLEMENTATION)');
+        expect(md).toContain("tools: '@inspect, @lens-inspect, safe_bash, write_report'");
+        expect(md).toContain('thinking: medium');
+        expect(md).toContain('systemPromptMode: replace');
+        expect(md).toContain('inheritProjectContext: true');
+        expect(md).toContain('inheritSkills: false');
+        expect(md).toContain('defaultContext: fresh');
+        expect(md).toContain('acceptanceRole: read-only');
+        expect(md).toContain('completionGuard: false');
+        expect(md).toContain('version-1 JSON only');
+        expect(md).toContain('Never edit files');
+        expect(md).toContain('Never launch other agents');
+        expect(md).toContain('Do not use intercom');
+        expect(md).toContain(
             'Persist the final JSON payload with `write_report` at `qa-result.json`.',
         );
-        expect(sys).not.toContain('contact_supervisor');
-        expect(sys).not.toContain('skills:');
-        expect(sys).toContain('Use only the listed tools.');
+        expect(md).not.toContain('contact_supervisor');
+        expect(md).not.toContain('skills:');
+        expect(md).toContain('Use only the listed tools.');
     });
 
     test('defines browser-tester as a fresh medium AXI-first read-only role', () => {
@@ -731,7 +726,7 @@ describe('read-only agent contracts', () => {
         });
         const definition = getSddAgentEntry('sdd-combined-reviewer');
         if (!definition) throw new Error('sdd-combined-reviewer not in runtime set');
-        const sys = definition.definition.systemPrompt ?? '';
+        const sys = definition.markdown;
 
         expect(request.agent).toBe('sdd-combined-reviewer');
         expect(request.task).toContain('Review stage: integration');
@@ -763,18 +758,17 @@ describe('writer agent contracts', () => {
     test('defines sdd-worker as a high-thinking autonomous SDD writer', () => {
         const definition = getSddAgentEntry('sdd-worker');
         if (!definition) throw new Error('sdd-worker not in runtime set');
-        const agent = definition.definition;
-        const sys = agent.systemPrompt ?? '';
+        const md = definition.markdown;
 
-        expect(agent.thinking).toBe('high');
-        expect(agent.inheritProjectContext).toBe(true);
-        expect(agent.defaultContext).toBe('fresh');
-        expect(agent.acceptanceRole).toBe('writer');
-        expect(agent.tools).toContain('@implement');
-        expect(agent.model).toBeDefined();
-        expect(sys).not.toContain('contact_supervisor');
-        expect(sys).toContain('RED-GREEN-REFACTOR');
-        expect(sys).toContain('BLOCKED:');
+        expect(md).toContain('name: sdd-worker');
+        expect(md).toContain('thinking: high');
+        expect(md).toContain('inheritProjectContext: true');
+        expect(md).toContain('defaultContext: fresh');
+        expect(md).toContain('acceptanceRole: writer');
+        expect(md).toContain('@implement');
+        expect(md).not.toContain('contact_supervisor');
+        expect(md).toContain('RED-GREEN-REFACTOR');
+        expect(md).toContain('BLOCKED:');
     });
 
     test('configures quick-worker and sdd-worker without the legacy override', () => {

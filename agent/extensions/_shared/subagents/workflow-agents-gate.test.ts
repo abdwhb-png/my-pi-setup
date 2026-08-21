@@ -1,88 +1,66 @@
-import { describe, it, expect, mock, afterEach } from "bun:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { describe, it, expect, afterEach, beforeEach } from "bun:test";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-const registeredCalls: Array<{ name: string; dispose: () => void }> = [];
-let disposeCount = 0;
+let agentDir: string;
+let previousAgentDir: string | undefined;
 
-mock.module("pi-subagents/agents", () => ({
-    registerAgent: (input: { name: string }) => {
-        const registration = {
-            name: input.name,
-            dispose: () => {
-                disposeCount += 1;
-            },
-        };
-        registeredCalls.push(registration);
-        return registration;
-    },
-}));
+beforeEach(() => {
+    agentDir = mkdtempSync(join(tmpdir(), "workflow-agents-gate-"));
+    previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+});
+
+afterEach(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    rmSync(agentDir, { recursive: true, force: true });
+});
 
 const { createWorkflowAgentGate } = await import("./workflow-agents.ts");
 
-function mockPi(): ExtensionAPI {
-    return { events: {}, ui: {} } as unknown as ExtensionAPI;
+function agentFile(name: string): string {
+    return join(agentDir, "agents", `${name}.md`);
 }
 
-afterEach(() => {
-    registeredCalls.length = 0;
-    disposeCount = 0;
-});
-
-const ENTRY = { name: "sdd-worker", definition: { description: "d", systemPrompt: "s" } };
-const ENTRY_2 = { name: "sdd-spec-reviewer", definition: { description: "d", systemPrompt: "s" } };
+const ENTRY = { name: "sdd-worker", markdown: "---\nname: sdd-worker\n---\nbody" };
+const ENTRY_2 = { name: "sdd-spec-reviewer", markdown: "---\nname: sdd-spec-reviewer\n---\nbody" };
 
 describe("createWorkflowAgentGate", () => {
-    it("registers on first acquire and disposes on matching release", () => {
-        const pi = mockPi();
-        const gate = createWorkflowAgentGate(pi, [ENTRY]);
+    it("writes on first acquire and removes on matching release", () => {
+        const gate = createWorkflowAgentGate([ENTRY]);
         gate.acquire();
-        expect(registeredCalls.map((call) => call.name)).toEqual(["sdd-worker"]);
+        expect(existsSync(agentFile("sdd-worker"))).toBe(true);
         gate.release();
-        expect(disposeCount).toBe(1);
+        expect(existsSync(agentFile("sdd-worker"))).toBe(false);
     });
 
-    it("holds registration while any run is active (refcount)", () => {
-        const pi = mockPi();
-        const gate = createWorkflowAgentGate(pi, [ENTRY, ENTRY_2]);
+    it("holds files while any run is active (refcount)", () => {
+        const gate = createWorkflowAgentGate([ENTRY, ENTRY_2]);
         gate.acquire();
         gate.acquire();
-        expect(registeredCalls.map((call) => call.name)).toEqual([
-            "sdd-worker",
-            "sdd-spec-reviewer",
-        ]);
+        expect(existsSync(agentFile("sdd-worker"))).toBe(true);
+        expect(existsSync(agentFile("sdd-spec-reviewer"))).toBe(true);
         gate.release();
-        expect(disposeCount).toBe(0); // one run still active
+        expect(existsSync(agentFile("sdd-worker"))).toBe(true); // one run still active
         gate.release();
-        expect(disposeCount).toBe(2);
+        expect(existsSync(agentFile("sdd-worker"))).toBe(false);
+        expect(existsSync(agentFile("sdd-spec-reviewer"))).toBe(false);
     });
 
-    it("does not re-register on overlapping acquire", () => {
-        const pi = mockPi();
-        const gate = createWorkflowAgentGate(pi, [ENTRY]);
+    it("does not rewrite on overlapping acquire", () => {
+        const gate = createWorkflowAgentGate([ENTRY]);
         gate.acquire();
         gate.acquire();
-        expect(registeredCalls.filter((call) => call.name === "sdd-worker")).toHaveLength(1);
         gate.release();
         gate.release();
-        expect(disposeCount).toBe(1);
+        expect(existsSync(agentFile("sdd-worker"))).toBe(false);
     });
 
     it("is a no-op when no run has ever acquired", () => {
-        const pi = mockPi();
-        const gate = createWorkflowAgentGate(pi, [ENTRY]);
+        const gate = createWorkflowAgentGate([ENTRY]);
         gate.release();
-        expect(registeredCalls).toHaveLength(0);
-        expect(disposeCount).toBe(0);
-    });
-
-    it("tracks per-pi instances independently", () => {
-        const gateA = createWorkflowAgentGate(mockPi(), [ENTRY]);
-        const gateB = createWorkflowAgentGate(mockPi(), [ENTRY_2]);
-        gateA.acquire();
-        gateB.acquire();
-        gateA.release();
-        expect(disposeCount).toBe(1); // only gateA's agent disposed
-        gateB.release();
-        expect(disposeCount).toBe(2);
+        expect(existsSync(agentFile("sdd-worker"))).toBe(false);
     });
 });

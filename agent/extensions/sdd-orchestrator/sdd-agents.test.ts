@@ -1,27 +1,29 @@
-import { describe, expect, it, mock, afterEach } from "bun:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, afterEach, beforeEach } from "bun:test";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-const registeredNames: string[] = [];
-let disposeCount = 0;
+let agentDir: string;
+let previousAgentDir: string | undefined;
 
-mock.module("pi-subagents/agents", () => ({
-    registerAgent: (input: { name: string }) => {
-        registeredNames.push(input.name);
-        return { dispose: () => (disposeCount += 1) };
-    },
-}));
+beforeEach(() => {
+    agentDir = mkdtempSync(join(tmpdir(), "sdd-agents-"));
+    previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+});
+
+afterEach(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    rmSync(agentDir, { recursive: true, force: true });
+});
 
 const { createSddAgentGate, getSddAgentEntry, getSddAgentEntries } =
     await import("./sdd-agents.ts");
 
-function mockPi(): ExtensionAPI {
-    return { events: {}, ui: {} } as unknown as ExtensionAPI;
+function agentFile(name: string): string {
+    return join(agentDir, "agents", `${name}.md`);
 }
-
-afterEach(() => {
-    registeredNames.length = 0;
-    disposeCount = 0;
-});
 
 describe("sdd-agents", () => {
     it("defines exactly the five task-execution agents, not assessor/orchestrator", () => {
@@ -37,21 +39,44 @@ describe("sdd-agents", () => {
         expect(getSddAgentEntry("sdd-orchestrator")).toBeUndefined();
     });
 
-    it("registers all five on acquire and disposes on matching release", () => {
-        const gate = createSddAgentGate(mockPi());
-        gate.acquire();
-        expect(registeredNames).toHaveLength(5);
-        gate.release();
-        expect(disposeCount).toBe(5);
+    it("each entry carries a full markdown definition with its name", () => {
+        for (const entry of getSddAgentEntries()) {
+            expect(entry.markdown).toContain(`name: ${entry.name}`);
+            expect(entry.markdown).toContain("---");
+        }
     });
 
-    it("holds registration across overlapping runs (refcount)", () => {
-        const gate = createSddAgentGate(mockPi());
+    it("writes all five on acquire and removes them on release", () => {
+        const gate = createSddAgentGate();
+        gate.acquire();
+        for (const name of [
+            "sdd-worker",
+            "sdd-combined-reviewer",
+            "sdd-spec-reviewer",
+            "sdd-quality-reviewer",
+            "sdd-qa-tester",
+        ]) {
+            expect(existsSync(agentFile(name))).toBe(true);
+        }
+        gate.release();
+        for (const name of [
+            "sdd-worker",
+            "sdd-combined-reviewer",
+            "sdd-spec-reviewer",
+            "sdd-quality-reviewer",
+            "sdd-qa-tester",
+        ]) {
+            expect(existsSync(agentFile(name))).toBe(false);
+        }
+    });
+
+    it("holds files across overlapping runs (refcount)", () => {
+        const gate = createSddAgentGate();
         gate.acquire();
         gate.acquire();
         gate.release();
-        expect(disposeCount).toBe(0);
+        expect(existsSync(agentFile("sdd-worker"))).toBe(true); // one run still active
         gate.release();
-        expect(disposeCount).toBe(5);
+        expect(existsSync(agentFile("sdd-worker"))).toBe(false);
     });
 });
