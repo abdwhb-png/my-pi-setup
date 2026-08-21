@@ -31,8 +31,7 @@ interface HeadroomResponse {
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8787";
 const DEFAULT_TIMEOUT_MS = 5_000;
-const defaultFetch: FetchLike = (input, init) =>
-    globalThis.fetch(input, init) as Promise<Response>;
+const defaultFetch: FetchLike = (input, init) => globalThis.fetch(input, init);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -233,6 +232,29 @@ export class HeadroomBackend implements CompressionBackend {
         } finally {
             clearTimeout(timeout);
             signal?.removeEventListener("abort", forwardAbort);
+        }
+    }
+
+    /**
+     * Reachability probe for the health poller. The relay accepts only
+     * `POST /v1/compress` and rejects every other path with 4xx, so any HTTP
+     * response proves the service is up; a network error or timeout is down.
+     */
+    async ping(): Promise<boolean> {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+        try {
+            const response: Response = await this.fetchImpl(
+                `${this.baseUrl}/`,
+                { method: "GET", signal: controller.signal },
+            );
+            // Drain the body so the socket does not linger in the pool.
+            await response.text().catch(() => "");
+            return true;
+        } catch {
+            return false;
+        } finally {
+            clearTimeout(timeout);
         }
     }
 }

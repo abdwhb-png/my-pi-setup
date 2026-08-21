@@ -187,4 +187,29 @@ export class EdgeeBackend implements CompressionBackend {
             signal?.removeEventListener("abort", abortFromCaller);
         }
     }
+
+    /**
+     * Reachability probe for the health poller. Any HTTP response proves the
+     * service is up; a network error or timeout is down.
+     */
+    async ping(): Promise<boolean> {
+        const controller = new AbortController();
+        const timer = setTimeout(
+            () => controller.abort(),
+            this.config.timeoutMs,
+        );
+        try {
+            const response: Response = await this.fetchImpl(
+                `${this.config.baseUrl.replace(/\/$/, "")}/`,
+                { method: "GET", signal: controller.signal },
+            );
+            // Drain the body so the socket does not linger in the pool.
+            await response.text().catch(() => "");
+            return true;
+        } catch {
+            return false;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
 }

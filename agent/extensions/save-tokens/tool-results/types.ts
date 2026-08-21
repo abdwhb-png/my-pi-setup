@@ -50,6 +50,13 @@ export interface CompressionBackend {
         request: CompressionBackendRequest,
         signal?: AbortSignal,
     ): Promise<CompressionBackendResult>;
+    /**
+     * Optional reachability probe used by the health poller. Any HTTP response
+     * (even a 4xx from a relay that rejects non-compress paths) means the
+     * service is up; network errors and timeouts mean down. Backends that do
+     * not implement it are treated as "unknown" by the health poller.
+     */
+    ping?(): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------

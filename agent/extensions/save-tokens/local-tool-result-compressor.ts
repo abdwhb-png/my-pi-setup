@@ -39,6 +39,11 @@ import {
     isCompressibleToolName,
 } from "./tool-results/core";
 import {
+    createHealthPoller,
+    type HealthPoller,
+    type HealthState,
+} from "./tool-results/health";
+import {
     createCompressionMetrics,
     createCompressionMetricsFromEvents,
     formatDetailedStats,
@@ -137,6 +142,10 @@ export default function localToolResultCompressor(
     let widgetText = "";
     let pendingTurnEvents: CompressionObservation[] = [];
     let pendingAgentEvents: CompressionObservation[] = [];
+    // Backend health, polled while a session is active. "unknown" until the
+    // first probe resolves; the widget renders as before for unknown/up.
+    let health: HealthState = "unknown";
+    let healthPoller: HealthPoller | null = null;
     // Per-session warning dedupe, reset on session_start.
     const warningDedupe = createWarningDeduplicator();
 
@@ -190,6 +199,7 @@ export default function localToolResultCompressor(
             latestCtx,
             snapshot,
             engine,
+            health,
             widget,
             setWidgetText,
             config.showStatus,
@@ -255,11 +265,43 @@ export default function localToolResultCompressor(
             latestCtx,
             metrics.snapshot(),
             engine,
+            health,
             widget,
             setWidgetText,
             config.showStatus,
             config.showWidget,
         );
+
+        // Start backend health polling once per session. The first probe runs
+        // immediately, then every 30s until session_shutdown.
+        const pingBackend = backend?.ping
+            ? backend.ping.bind(backend)
+            : undefined;
+        if (pingBackend && !healthPoller) {
+            healthPoller = createHealthPoller({
+                ping: () => pingBackend(),
+                onHealthChange: (next) => {
+                    health = next;
+                    updateUi(
+                        latestCtx,
+                        metrics.snapshot(),
+                        engine,
+                        health,
+                        widget,
+                        setWidgetText,
+                        config.showStatus,
+                        config.showWidget,
+                    );
+                    if (next === "down") {
+                        const message =
+                            "compressor service offline — keeping original output";
+                        if (latestCtx?.hasUI)
+                            latestCtx.ui.notify(message, "warning");
+                        else console.warn(message);
+                    }
+                },
+            });
+        }
     });
 
     // §7 AXI — Inject archive convention into system prompt at agent start.
@@ -323,6 +365,7 @@ export default function localToolResultCompressor(
                     latestCtx,
                     metrics.snapshot(),
                     engine,
+                    health,
                     widget,
                     setWidgetText,
                     config.showStatus,
@@ -348,6 +391,8 @@ export default function localToolResultCompressor(
     });
 
     pi.on("session_shutdown", async () => {
+        healthPoller?.stop();
+        healthPoller = null;
         if (latestCtx?.hasUI) {
             latestCtx.ui.setStatus(STATUS_ID, undefined);
             widget.remove(latestCtx);

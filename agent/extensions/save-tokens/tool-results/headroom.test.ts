@@ -208,4 +208,43 @@ describe('HeadroomBackend', () => {
         expect(result.output).toBeNull();
         expect(result.reason).toBe('aborted');
     });
+
+    // Health probe: reachability only. Any HTTP response (even a 4xx from the
+    // relay rejecting non-compress paths) proves the service is up.
+    describe('ping', () => {
+        test('reports up for any HTTP response, including a 4xx rejection path', async () => {
+            const fixture = fetchWith({}, 404);
+            const backend = new HeadroomBackend({ baseUrl: 'http://127.0.0.1:8787/', fetchImpl: fixture.fetch });
+
+            await expect(backend.ping()).resolves.toBe(true);
+            expect(fixture.calls).toHaveLength(1);
+            expect(fixture.calls[0].url).toBe('http://127.0.0.1:8787/');
+            expect(fixture.calls[0].method).toBe('GET');
+        });
+
+        test('reports up when a 2xx response arrives', async () => {
+            const fixture = fetchWith({}, 200);
+            const backend = new HeadroomBackend({ fetchImpl: fixture.fetch });
+
+            await expect(backend.ping()).resolves.toBe(true);
+        });
+
+        test('reports down on connection rejection', async () => {
+            const fetchImpl: FetchLike = async () => {
+                throw new Error('connection refused');
+            };
+            const backend = new HeadroomBackend({ fetchImpl });
+
+            await expect(backend.ping()).resolves.toBe(false);
+        });
+
+        test('reports down on timeout', async () => {
+            const fetchImpl: FetchLike = async (_input, init) => await new Promise((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+            });
+            const backend = new HeadroomBackend({ fetchImpl, timeoutMs: 1 });
+
+            await expect(backend.ping()).resolves.toBe(false);
+        });
+    });
 });

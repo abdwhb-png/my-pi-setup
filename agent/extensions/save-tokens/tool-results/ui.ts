@@ -2,6 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { icon } from "../../_shared/compression-render";
 import type { WidgetHandle } from "../../_shared/fancy-footer";
 import { createUiColors } from "../../_shared/ui/ui-colors";
+import type { HealthState } from "./health";
 import {
     formatSavedBytes,
     formatStatsStatus,
@@ -43,6 +44,7 @@ export function updateUi(
     ctx: ExtensionContext | null,
     snapshot: CompressionSnapshot,
     engine: string,
+    health: HealthState,
     widget: WidgetHandle | null,
     setWidgetText: (text: string) => void,
     showStatus: boolean,
@@ -56,11 +58,13 @@ export function updateUi(
 
     if (showStatus) {
         const statusText =
-            snapshot.failed > 0
-                ? colors.warning(status)
-                : snapshot.compressed > 0
-                  ? colors.success(status)
-                  : colors.subtle(status);
+            health === "down"
+                ? colors.warning(`${status} • offline`)
+                : snapshot.failed > 0
+                  ? colors.warning(status)
+                  : snapshot.compressed > 0
+                    ? colors.success(status)
+                    : colors.subtle(status);
         ctx.ui.setStatus(STATUS_ID, statusText);
     } else {
         ctx.ui.setStatus(STATUS_ID, "");
@@ -68,15 +72,17 @@ export function updateUi(
 
     if (showWidget) {
         const lineOne = `${icon} • ${lines[0] ?? "compressor"}`;
-        const lineTwo = lines[1] ?? "";
+        const lineTwo = health === "down" ? "offline" : (lines[1] ?? "");
         const widgetText = [
             event?.kind === "failed"
                 ? colors.danger(lineOne)
                 : colors.primary(lineOne),
             colors.separator(" │ "),
-            snapshot.failed > 0
-                ? colors.warning(lineTwo)
-                : colors.meta(lineTwo),
+            health === "down"
+                ? colors.danger(lineTwo)
+                : snapshot.failed > 0
+                  ? colors.warning(lineTwo)
+                  : colors.meta(lineTwo),
         ].join("");
         setWidgetText(widgetText);
         widget?.update(ctx, widgetText);

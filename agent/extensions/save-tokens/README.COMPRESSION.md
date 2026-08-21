@@ -10,22 +10,22 @@ Set `saveTokens.compressor.backend` in `~/.pi/agent/settings.json` or
 
 ```json
 {
-  "saveTokens": {
-    "compressor": {
-      "backend": "headroom",
-      "archiveOriginal": true,
-      "backends": {
-        "headroom": {
-          "baseUrl": "http://127.0.0.1:8787",
-          "timeoutMs": 1000
-        },
-        "edgee": {
-          "baseUrl": "http://127.0.0.1:8320",
-          "timeoutMs": 800
+    "saveTokens": {
+        "compressor": {
+            "backend": "headroom",
+            "archiveOriginal": true,
+            "backends": {
+                "headroom": {
+                    "baseUrl": "http://127.0.0.1:8787",
+                    "timeoutMs": 1000
+                },
+                "edgee": {
+                    "baseUrl": "http://127.0.0.1:8320",
+                    "timeoutMs": 800
+                }
+            }
         }
-      }
     }
-  }
 }
 ```
 
@@ -90,6 +90,18 @@ docker compose --profile headroom up -d --wait
 
 Pi never builds, starts, or switches Docker services. See the compression
 service README for image builds, health checks, egress verification, and gates.
+
+### Backend health indicator
+
+The compressor widget/status shows `offline` (danger color) in the second
+line when the selected backend is unreachable, instead of the neutral
+`no calls yet` state. Reachability is probed once at `session_start` and then
+every 30s until `session_shutdown`; a probe succeeds on any HTTP response
+(the headroom relay only accepts `POST /v1/compress`, so a 4xx still counts as
+up) and fails on a connection error or timeout. A transition to `offline`
+emits a single warning notification. When the backend is up, the widget
+renders exactly as before. Compression stays fail-open: this only surfaces the
+state earlier than the first failed call.
 
 ## Failure And Local Data
 

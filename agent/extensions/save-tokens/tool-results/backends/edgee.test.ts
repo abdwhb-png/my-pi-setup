@@ -225,4 +225,52 @@ describe('EdgeeBackend', () => {
             ).compress(request),
         ).resolves.toEqual({ output: null, reason: 'timeout' });
     });
+
+    // Health probe: reachability only. Any HTTP response proves the service is up.
+    describe('ping', () => {
+        it('reports up for any HTTP response, including non-2xx', async () => {
+            let input: string | URL | Request | undefined;
+            const fetchImpl: FetchLike = async (requestInput) => {
+                input = requestInput;
+                return new Response('', { status: 405 });
+            };
+
+            await expect(
+                new EdgeeBackend(
+                    { baseUrl: 'http://edgee.test/', timeoutMs: 100 },
+                    fetchImpl,
+                ).ping(),
+            ).resolves.toBe(true);
+            expect(input).toBe('http://edgee.test/');
+        });
+
+        it('reports down on connection rejection', async () => {
+            const fetchImpl: FetchLike = async () => {
+                throw new Error('connection refused');
+            };
+
+            await expect(
+                new EdgeeBackend(
+                    { baseUrl: 'http://edgee.test', timeoutMs: 100 },
+                    fetchImpl,
+                ).ping(),
+            ).resolves.toBe(false);
+        });
+
+        it('reports down on timeout', async () => {
+            const fetchImpl: FetchLike = async (_input, init) =>
+                new Promise<Response>((_, reject) => {
+                    init?.signal?.addEventListener('abort', () =>
+                        reject(new DOMException('Aborted', 'AbortError')),
+                    );
+                });
+
+            await expect(
+                new EdgeeBackend(
+                    { baseUrl: 'http://edgee.test', timeoutMs: 1 },
+                    fetchImpl,
+                ).ping(),
+            ).resolves.toBe(false);
+        });
+    });
 });
