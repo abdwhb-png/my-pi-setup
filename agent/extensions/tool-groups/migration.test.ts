@@ -246,6 +246,17 @@ function validateProtectedBoundaries(
 }
 
 describe('tool-groups configuration invariants', () => {
+    it('documents tool groups as the preferred maintainable configuration', () => {
+        const instructions = readFileSync(
+            join(agentDir(), '..', 'AGENTS.md'),
+            'utf8',
+        );
+
+        expect(instructions).toContain('Prefer existing tool groups');
+        expect(instructions).toContain('agent/tool-groups.json');
+        expect(instructions).toContain('exact least-privilege allowlist');
+    });
+
     it('keeps the tool-groups package last', () => {
         const packages = readSettings().packages;
         expect(Array.isArray(packages)).toBe(true);
