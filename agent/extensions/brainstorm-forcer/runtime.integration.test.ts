@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 
-import { describe, expect, it } from "bun:test";
+import { beforeEach, afterEach, describe, expect, it } from "bun:test";
 import type {
   ExtensionAPI,
   SessionManager,
@@ -338,6 +338,30 @@ function installHarnessStreamCompatibility(session: {
 
 if (process.env[HARNESS_RUNTIME_ENV] === "1") {
   describe("brainstorm-forcer runtime policy", () => {
+    let integrationAgentDir: string | undefined;
+    let previousIntegrationAgentDir: string | undefined;
+
+    // The deep runtime tests run inside the spawned subprocess and call
+    // startPhase (via /brainstorm arm), which writes the workflow `.md` into
+    // getAgentDir()/agents. Isolate PI_CODING_AGENT_DIR for every deep test so
+    // the real ~/.pi/agent/agents is never polluted.
+    beforeEach(async () => {
+      integrationAgentDir = await mkdtemp(join(tmpdir(), "brainstorm-runtime-iso-"));
+      await mkdir(join(integrationAgentDir, "agents"), { recursive: true });
+      previousIntegrationAgentDir = process.env.PI_CODING_AGENT_DIR;
+      process.env.PI_CODING_AGENT_DIR = integrationAgentDir;
+    });
+
+    afterEach(async () => {
+      if (previousIntegrationAgentDir === undefined)
+        delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousIntegrationAgentDir;
+      if (integrationAgentDir) {
+        await rm(integrationAgentDir, { recursive: true, force: true });
+      }
+      integrationAgentDir = undefined;
+    });
+
     it("blocks a pending-verification question through the real Pi tool pipeline", async () => {
       const harnessPackage = ["@abdwhb-png", "pi-test-harness"].join("/");
       const [{ default: brainstormForcer }, harness] = await Promise.all([

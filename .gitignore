@@ -14,6 +14,7 @@ node_modules
 
 exa-usage.json
 web-search.json
+web-search-cache/
 **/pi-session-**.html
 .pi-lens/
 .pi-subagents/

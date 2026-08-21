@@ -1,19 +1,12 @@
 /// <reference types="bun" />
 
-import { describe, expect, it, mock } from "bun:test";
+import { beforeEach, afterEach, describe, expect, it, mock } from "bun:test";
 import {
   SessionManager,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
@@ -246,6 +239,26 @@ async function enterPendingLocalCodeVerification(
 }
 
 describe("brainstorm-forcer redesign", () => {
+  let isolatedAgentDir: string | undefined;
+  let previousAgentDirEnv: string | undefined;
+
+  beforeEach(async () => {
+    isolatedAgentDir = await mkdtemp(join(tmpdir(), "brainstorm-agents-iso-"));
+    await mkdir(join(isolatedAgentDir, "agents"), { recursive: true });
+    previousAgentDirEnv = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+  });
+
+  afterEach(async () => {
+    if (previousAgentDirEnv === undefined)
+      delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDirEnv;
+    if (isolatedAgentDir) {
+      await rm(isolatedAgentDir, { recursive: true, force: true });
+    }
+    isolatedAgentDir = undefined;
+  });
+
   it("rejects preflight agent names outside the verifier allowlist", async () => {
     await expect(
       preflightVerifierAgents("test-session", process.cwd(), ["worker"]),
