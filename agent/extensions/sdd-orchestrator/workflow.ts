@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { SubagentDelegationResponse } from "pi-subagents/delegation";
 import { resolveRuntimePath } from "../_shared/home-path.ts";
+import { redactValue } from "../_shared/redaction.ts";
 import { loadSddConfig } from "./config.ts";
 import type { DelegationClient } from "./delegation-client.ts";
+import {
+    delegationOutput,
+    type SddDelegationResponse,
+} from "./delegation-contract.ts";
 import type { ApprovedManifest, ApprovedManifestTask } from "./manifest.ts";
 import {
     buildCorrectionRequest,
@@ -22,9 +26,19 @@ import {
     type RecoveryChoice,
     type RunEvent,
     type RunSnapshot,
+    type TaskSnapshot,
     type TaskState,
+    type TaskVerification,
+    type VerificationCommandEvidence,
 } from "./state-machine.ts";
 import { snapshotDigest, type SddStore } from "./store.ts";
+import {
+    ChildProcessVerificationRunner,
+    DEFAULT_VERIFY_TIMEOUT_MS,
+    MAX_VERIFY_OUTPUT_BYTES,
+    type VerificationRunResult,
+    type VerificationRunner,
+} from "./verification.ts";
 import type {
     SddDelegationActivityContext,
     SddWorkflowObserver,
@@ -37,12 +51,17 @@ export type ManifestResolver = (
     runId: string,
 ) => ApprovedManifest | null | undefined;
 
-function accepted(response: SubagentDelegationResponse): boolean {
+function accepted(response: SddDelegationResponse): boolean {
     return (
         response.status === "completed" &&
-        (response.acceptance?.status === "verified" ||
-            response.acceptance?.status === "accepted")
+        Boolean(delegationOutput(response)?.trim())
     );
+}
+
+function persistedStatus(value: unknown): unknown {
+    return value && typeof value === "object"
+        ? Object.getOwnPropertyDescriptor(value, "status")?.value
+        : undefined;
 }
 
 const SHARED_CONTRACT_SIGNALS = [
@@ -50,6 +69,12 @@ const SHARED_CONTRACT_SIGNALS = [
     "pi_core_behavior",
     "inter_extension_protocol",
 ] as const;
+
+const EMPTY_OUTPUT_SHA256 = createHash("sha256").update("").digest("hex");
+const INVALID_OUTPUT_PREVIEW = "Invalid verification runner output.";
+const INVALID_OUTPUT_SHA256 = createHash("sha256")
+    .update(INVALID_OUTPUT_PREVIEW)
+    .digest("hex");
 
 function filesOverlap(
     left: ApprovedManifestTask,
@@ -125,6 +150,10 @@ export function selectRunnableBatch(
 export class SddWorkflow {
     private readonly activeRuns = new Map<string, Promise<RunSnapshot>>();
     private readonly sourceCwds = new Map<string, string>();
+    private readonly verificationControllers = new Map<
+        string,
+        AbortController
+    >();
 
     constructor(
         private readonly store: WorkflowStore,
@@ -132,6 +161,7 @@ export class SddWorkflow {
         private readonly loadManifest: ManifestResolver,
         private readonly observer?: SddWorkflowObserver,
         private readonly workspace?: SddWorkspaceExecution,
+        private readonly verificationRunner: VerificationRunner = new ChildProcessVerificationRunner(),
     ) {}
 
     run(
@@ -148,6 +178,8 @@ export class SddWorkflow {
         signal?.addEventListener("abort", onAbort, { once: true });
         if (signal?.aborted) onAbort();
         this.sourceCwds.set(runId, ctx.cwd);
+        const verificationController = new AbortController();
+        this.verificationControllers.set(runId, verificationController);
         const execution = this.runExclusive(runId, ctx);
         this.activeRuns.set(runId, execution);
         const release = () => {
@@ -155,6 +187,12 @@ export class SddWorkflow {
             if (this.activeRuns.get(runId) === execution) {
                 this.activeRuns.delete(runId);
                 this.sourceCwds.delete(runId);
+                if (
+                    this.verificationControllers.get(runId) ===
+                    verificationController
+                ) {
+                    this.verificationControllers.delete(runId);
+                }
             }
         };
         void execution.then(release, release);
@@ -206,7 +244,7 @@ export class SddWorkflow {
                 : this.finishRun(runId, "cancelled");
         }
 
-        snapshot = this.reconcile(runId);
+        snapshot = this.reconcile(runId, ctx.cwd);
         if (snapshot.state !== "running") return snapshot;
 
         const config = loadSddConfig(ctx.cwd);
@@ -229,12 +267,38 @@ export class SddWorkflow {
             }
             const batch = selectRunnableBatch(manifest, snapshot);
             if (batch.length === 0) break;
+            // Every writer in a parallel batch must settle before a local
+            // verification observes the shared isolated worktree.
             // oxlint-disable-next-line no-await-in-loop -- dependency batches must finish before the next batch is selected.
-            await Promise.all(
-                batch.map((task) =>
-                    this.runTask(runId, executionCwd, config, task),
-                ),
+            const implementations = await Promise.all(
+                batch.map(async (task) => ({
+                    task,
+                    response: await this.launchInitialImplementation(
+                        runId,
+                        executionCwd,
+                        config,
+                        task,
+                    ),
+                })),
             );
+            // Verifications and any correction writers are serialized after
+            // the batch barrier, so they see an immobile worktree.
+            for (const { task, response } of implementations) {
+                if (
+                    !response ||
+                    this.requireSnapshot(runId).state !== "running"
+                ) {
+                    continue;
+                }
+                // oxlint-disable-next-line no-await-in-loop -- local proof and subsequent reviews are ordered per task after all writers settle.
+                await this.finishImplementedTask(
+                    runId,
+                    executionCwd,
+                    config,
+                    task,
+                    response,
+                );
+            }
             if (batch[0]?.effectiveProfile === "direct") break;
         }
 
@@ -252,35 +316,56 @@ export class SddWorkflow {
         return snapshot;
     }
 
-    private async runTask(
+    private async launchInitialImplementation(
         runId: string,
         cwd: string,
         config: ReturnType<typeof loadSddConfig>,
         task: ApprovedManifestTask,
-    ): Promise<RunSnapshot> {
+    ): Promise<SddDelegationResponse | undefined> {
         if (task.effectiveProfile === "direct") {
-            return this.taskTransition(runId, task.id, "awaiting_direct_agent");
+            this.taskTransition(runId, task.id, "awaiting_direct_agent");
+            return undefined;
         }
 
         this.taskTransition(runId, task.id, "implementing");
-        let implementationResponse = await this.launch(
+        const implementationResponse = await this.launch(
             runId,
             task,
             "worker",
             1,
             buildWorkerRequest({
                 requestId: `${runId}:${task.id}:worker:1`,
+                ownerRunId: runId,
+                nodeId: `${task.id}:worker`,
                 cwd,
                 config,
                 task,
             }),
         );
         if (!accepted(implementationResponse)) {
-            return this.settleFailedResponse(
+            this.settleFailedResponse(runId, task.id, implementationResponse);
+            return undefined;
+        }
+        return implementationResponse;
+    }
+
+    private async finishImplementedTask(
+        runId: string,
+        cwd: string,
+        config: ReturnType<typeof loadSddConfig>,
+        task: ApprovedManifestTask,
+        initialImplementationResponse: SddDelegationResponse,
+    ): Promise<RunSnapshot> {
+        let implementationResponse = initialImplementationResponse;
+        if (
+            !(await this.verifyImplementation(
                 runId,
-                task.id,
+                cwd,
+                task,
                 implementationResponse,
-            );
+            ))
+        ) {
+            return this.requireSnapshot(runId);
         }
         this.taskTransition(runId, task.id, "reviewing");
         if (task.effectiveProfile === "light") {
@@ -395,6 +480,15 @@ export class SddWorkflow {
                             implementationResponse,
                         );
                     }
+                    if (
+                        !this.hasPassedVerification(
+                            runId,
+                            task.id,
+                            implementationResponse.requestId,
+                        )
+                    ) {
+                        return this.requireSnapshot(runId);
+                    }
                 }
             }
             return this.taskTransition(runId, task.id, "verified");
@@ -486,6 +580,15 @@ export class SddWorkflow {
                     implementationResponse,
                 );
             }
+            if (
+                !this.hasPassedVerification(
+                    runId,
+                    task.id,
+                    implementationResponse.requestId,
+                )
+            ) {
+                return this.requireSnapshot(runId);
+            }
         }
         return this.requireSnapshot(runId);
     }
@@ -499,7 +602,7 @@ export class SddWorkflow {
     private latestImplementationResponse(
         runId: string,
         taskId: string,
-    ): SubagentDelegationResponse {
+    ): SddDelegationResponse {
         const snapshot = this.requireSnapshot(runId);
         const planned = Object.values(snapshot.plannedDelegations).findLast(
             (delegation) =>
@@ -599,7 +702,15 @@ export class SddWorkflow {
                     implementationResponse,
                 );
             }
-            this.taskTransition(runId, task.id, "reviewing");
+            if (
+                !this.hasPassedVerification(
+                    runId,
+                    task.id,
+                    implementationResponse.requestId,
+                )
+            ) {
+                return this.requireSnapshot(runId);
+            }
         }
         plans = this.taskDelegations(runId, task.id);
         let reviewAttempt = plans.filter(
@@ -688,6 +799,15 @@ export class SddWorkflow {
                     implementationResponse,
                 );
             }
+            if (
+                !this.hasPassedVerification(
+                    runId,
+                    task.id,
+                    implementationResponse.requestId,
+                )
+            ) {
+                return this.requireSnapshot(runId);
+            }
         }
         return this.requireSnapshot(runId);
     }
@@ -739,7 +859,15 @@ export class SddWorkflow {
                     implementationResponse,
                 );
             }
-            this.taskTransition(runId, task.id, "reviewing");
+            if (
+                !this.hasPassedVerification(
+                    runId,
+                    task.id,
+                    implementationResponse.requestId,
+                )
+            ) {
+                return this.requireSnapshot(runId);
+            }
         }
         plans = this.taskDelegations(runId, task.id);
         let reviewerAttempts = plans.filter((delegation) =>
@@ -852,6 +980,15 @@ export class SddWorkflow {
                         task.id,
                         implementationResponse,
                     );
+                }
+                if (
+                    !this.hasPassedVerification(
+                        runId,
+                        task.id,
+                        implementationResponse.requestId,
+                    )
+                ) {
+                    return this.requireSnapshot(runId);
                 }
             }
         }
@@ -1014,16 +1151,44 @@ export class SddWorkflow {
         };
     }
 
-    reconcile(runId: string): RunSnapshot {
+    reconcile(runId: string, sourceCwd?: string): RunSnapshot {
         const manifest = this.requireManifest(runId);
         let snapshot = this.requireSnapshot(runId);
         this.validateSnapshot(snapshot, manifest);
         if (snapshot.state !== "running") return snapshot;
+        let verificationCwd: string | undefined;
+        try {
+            verificationCwd = sourceCwd
+                ? this.executionCwd(snapshot, sourceCwd)
+                : undefined;
+        } catch {
+            // A proof cannot be trusted when its isolated execution directory
+            // cannot be resolved. The per-task recovery path fails closed.
+            verificationCwd = undefined;
+        }
 
         for (const task of manifest.tasks) {
             snapshot = this.requireSnapshot(runId);
             const taskSnapshot = snapshot.tasks[task.id];
             if (!taskSnapshot) continue;
+            const plannedDelegations = Object.values(
+                snapshot.plannedDelegations,
+            ).filter((delegation) => delegation.taskId === task.id);
+            const proofFailure = this.recoveredImplementationProofFailure(
+                task,
+                taskSnapshot,
+                plannedDelegations,
+                verificationCwd,
+            );
+            if (proofFailure) {
+                this.failTask(
+                    runId,
+                    task.id,
+                    proofFailure.reason,
+                    proofFailure.state,
+                );
+                continue;
+            }
             if (
                 ["verified", "needs_input", "failed", "cancelled"].includes(
                     taskSnapshot.state,
@@ -1031,9 +1196,6 @@ export class SddWorkflow {
             ) {
                 continue;
             }
-            const plannedDelegations = Object.values(
-                snapshot.plannedDelegations,
-            ).filter((delegation) => delegation.taskId === task.id);
             if (
                 taskSnapshot.state === "implementing" &&
                 plannedDelegations.length === 0
@@ -1064,10 +1226,16 @@ export class SddWorkflow {
                 const response =
                     currentTask?.terminalResponses?.[planned.requestId];
                 if (!currentTask || !response) continue;
+                const implementationStage =
+                    planned.stage === "worker" ||
+                    planned.stage === "correction";
                 if (
+                    implementationStage &&
                     currentTask.appliedResponseRequestIds?.includes(
                         planned.requestId,
-                    )
+                    ) &&
+                    currentTask.verificationResults?.[planned.requestId]
+                        ?.status === "passed"
                 ) {
                     continue;
                 }
@@ -1094,6 +1262,37 @@ export class SddWorkflow {
                         ) {
                             this.settleFailedResponse(runId, task.id, response);
                         }
+                        break;
+                    }
+                    const verification =
+                        currentTask.verificationResults?.[planned.requestId];
+                    if (!verification) {
+                        this.failTask(
+                            runId,
+                            task.id,
+                            "verification_missing_after_recovery",
+                            "needs_input",
+                        );
+                        break;
+                    }
+                    if (
+                        !this.isCanonicalPassedVerification(
+                            task,
+                            planned.requestId,
+                            verificationCwd,
+                            verification,
+                        )
+                    ) {
+                        this.failTask(
+                            runId,
+                            task.id,
+                            this.verificationStatus(verification) === "passed"
+                                ? "verification_evidence_invalid_after_recovery"
+                                : this.verificationFailureReason(verification),
+                            this.verificationStatus(verification) === "passed"
+                                ? "needs_input"
+                                : "failed",
+                        );
                         break;
                     }
                     if (
@@ -1131,6 +1330,16 @@ export class SddWorkflow {
                         planned.requestId,
                     )
                 ) {
+                    const appliedReview =
+                        currentTask.reviewResults?.[planned.requestId];
+                    if (
+                        (planned.stage === "combined" ||
+                            planned.stage === "quality") &&
+                        appliedReview?.verdict === "pass" &&
+                        currentTask.state === "reviewing"
+                    ) {
+                        this.taskTransition(runId, task.id, "verified");
+                    }
                     this.markResponseApplied(runId, task.id, planned.requestId);
                     continue;
                 }
@@ -1297,6 +1506,7 @@ export class SddWorkflow {
             requestedAt: new Date().toISOString(),
             requestIds,
         });
+        this.verificationControllers.get(runId)?.abort();
         for (const requestId of requestIds) {
             this.delegation.cancel(requestId);
         }
@@ -1459,6 +1669,8 @@ export class SddWorkflow {
         const task = this.integrationTask(manifest, snapshot);
         const request = buildReviewRequest({
             requestId,
+            ownerRunId: runId,
+            nodeId: "manifest:integration",
             logicalJobId: `${runId}:manifest:integration`,
             cwd,
             config,
@@ -1536,7 +1748,7 @@ export class SddWorkflow {
         if (!review) {
             try {
                 review = parseReviewResponse(
-                    response.output ?? "",
+                    delegationOutput(response) ?? "",
                     `manifest:${manifest.manifestId}`,
                     "integration",
                 );
@@ -1666,7 +1878,7 @@ export class SddWorkflow {
 
     private observeFinished(
         context: SddDelegationActivityContext,
-        response: SubagentDelegationResponse,
+        response: SddDelegationResponse,
     ): void {
         try {
             this.observer?.onDelegationFinished?.(context, response);
@@ -1739,7 +1951,7 @@ export class SddWorkflow {
     private recordResponse(
         runId: string,
         taskId: string,
-        response: SubagentDelegationResponse,
+        response: SddDelegationResponse,
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
         return this.persist(runId, {
@@ -1756,7 +1968,7 @@ export class SddWorkflow {
         stage: string,
         attempt: number,
         request: Parameters<WorkflowDelegation["run"]>[0],
-    ): Promise<SubagentDelegationResponse> {
+    ): Promise<SddDelegationResponse> {
         const snapshot = this.requireSnapshot(runId);
         if (snapshot.cancellation) {
             this.finishRun(runId, "cancelled");
@@ -1801,10 +2013,10 @@ export class SddWorkflow {
         task: ApprovedManifestTask,
         stage: ReviewStage,
         firstAttempt: number,
-        implementationResponse: SubagentDelegationResponse,
+        implementationResponse: SddDelegationResponse,
         remainingReviewerAttempts: number,
     ): Promise<{
-        response: SubagentDelegationResponse;
+        response: SddDelegationResponse;
         review?: Review;
         attempts: number;
     }> {
@@ -1825,6 +2037,8 @@ export class SddWorkflow {
                 attempt,
                 buildReviewRequest({
                     requestId: `${runId}:${task.id}:${stage}:${attempt}`,
+                    ownerRunId: runId,
+                    nodeId: `${task.id}:${stage}`,
                     logicalJobId: `${runId}:${task.id}:${stage}`,
                     cwd,
                     config,
@@ -1865,7 +2079,7 @@ export class SddWorkflow {
                 attempt: 1,
                 validationError:
                     error instanceof Error ? error.message : String(error),
-                originalOutput: response.output ?? "",
+                originalOutput: delegationOutput(response) ?? "",
                 remainingReviewerAttempts: remainingReviewerAttempts - 1,
                 remainingLaunches,
             });
@@ -1892,11 +2106,11 @@ export class SddWorkflow {
     private parseAndRecordReview(
         runId: string,
         taskId: string,
-        response: SubagentDelegationResponse,
+        response: SddDelegationResponse,
         stage: ReviewStage,
     ): Review {
         const review = parseReviewResponse(
-            response.output ?? "",
+            delegationOutput(response) ?? "",
             taskId,
             stage,
         );
@@ -1943,10 +2157,12 @@ export class SddWorkflow {
     private settleFailedResponse(
         runId: string,
         taskId: string,
-        response: SubagentDelegationResponse,
+        response: SddDelegationResponse,
     ): RunSnapshot {
         const snapshot = this.requireSnapshot(runId);
-        if (/^BLOCKED:\s+\S/.test(response.output?.trimStart() ?? "")) {
+        if (
+            /^BLOCKED:\s+\S/.test(delegationOutput(response)?.trimStart() ?? "")
+        ) {
             this.failTask(runId, taskId, "worker_blocked", "needs_input");
             return this.finishRun(runId, "needs_input");
         }
@@ -1990,11 +2206,11 @@ export class SddWorkflow {
         cwd: string,
         config: ReturnType<typeof loadSddConfig>,
         task: ApprovedManifestTask,
-        priorResponse: SubagentDelegationResponse,
+        priorResponse: SddDelegationResponse,
         review: Review,
         correction: number,
         rejectingRequestId: string,
-    ): Promise<SubagentDelegationResponse> {
+    ): Promise<SddDelegationResponse> {
         this.taskTransition(runId, task.id, "fixing");
         this.markReviewApplied(runId, task.id, rejectingRequestId);
         return this.launchCorrection(
@@ -2013,10 +2229,10 @@ export class SddWorkflow {
         cwd: string,
         config: ReturnType<typeof loadSddConfig>,
         task: ApprovedManifestTask,
-        priorResponse: SubagentDelegationResponse,
+        priorResponse: SddDelegationResponse,
         review: Review,
         correction: number,
-    ): Promise<SubagentDelegationResponse> {
+    ): Promise<SddDelegationResponse> {
         const response = await this.launch(
             runId,
             task,
@@ -2024,6 +2240,8 @@ export class SddWorkflow {
             correction,
             buildCorrectionRequest({
                 requestId: `${runId}:${task.id}:correction:${correction}`,
+                ownerRunId: runId,
+                nodeId: `${task.id}:correction`,
                 cwd,
                 config,
                 task,
@@ -2036,10 +2254,374 @@ export class SddWorkflow {
             }),
         );
         if (accepted(response)) {
+            if (
+                !(await this.verifyImplementation(runId, cwd, task, response))
+            ) {
+                return response;
+            }
             this.taskTransition(runId, task.id, "reviewing");
             this.markResponseApplied(runId, task.id, response.requestId);
         }
         return response;
+    }
+
+    private hasPassedVerification(
+        runId: string,
+        taskId: string,
+        responseRequestId: string,
+    ): boolean {
+        return (
+            this.requireSnapshot(runId).tasks[taskId]?.verificationResults?.[
+                responseRequestId
+            ]?.status === "passed"
+        );
+    }
+
+    /**
+     * Recovery consumes durable proof; it never executes a command again. The
+     * proof therefore has to be a byte-for-byte contract match for the active
+     * manifest and isolated execution directory rather than merely an
+     * aggregate `passed` flag.
+     */
+    private recoveredImplementationProofFailure(
+        task: ApprovedManifestTask,
+        taskSnapshot: TaskSnapshot,
+        plannedDelegations: readonly RunSnapshot["plannedDelegations"][string][],
+        cwd: string | undefined,
+    ): { reason: string; state: "needs_input" | "failed" } | undefined {
+        if (
+            task.effectiveProfile !== "direct" &&
+            taskSnapshot.recoveryChoice &&
+            (taskSnapshot.state === "reviewing" ||
+                taskSnapshot.state === "verified") &&
+            !plannedDelegations.some(
+                (planned) =>
+                    planned.stage === "worker" ||
+                    planned.stage === "correction",
+            )
+        ) {
+            return {
+                reason: "verification_missing_after_recovery",
+                state: "needs_input",
+            };
+        }
+        for (const planned of plannedDelegations) {
+            if (planned.stage !== "worker" && planned.stage !== "correction") {
+                continue;
+            }
+            const requiresProof =
+                taskSnapshot.state === "verified" ||
+                taskSnapshot.state === "reviewing" ||
+                taskSnapshot.appliedResponseRequestIds?.includes(
+                    planned.requestId,
+                );
+            if (!requiresProof) continue;
+            const response =
+                taskSnapshot.terminalResponses?.[planned.requestId];
+            const verification =
+                taskSnapshot.verificationResults?.[planned.requestId];
+            if (!response || !accepted(response) || !verification) {
+                return {
+                    reason: "verification_missing_after_recovery",
+                    state: "needs_input",
+                };
+            }
+            if (
+                !this.isCanonicalPassedVerification(
+                    task,
+                    planned.requestId,
+                    cwd,
+                    verification,
+                )
+            ) {
+                const status = this.verificationStatus(verification);
+                return {
+                    reason:
+                        status === "passed"
+                            ? "verification_evidence_invalid_after_recovery"
+                            : this.verificationFailureReason(verification),
+                    state: status === "passed" ? "needs_input" : "failed",
+                };
+            }
+        }
+        return undefined;
+    }
+
+    private verificationStatus(
+        verification: unknown,
+    ): "passed" | "failed" | undefined {
+        if (!verification || typeof verification !== "object") return undefined;
+        const status = (verification as { status?: unknown }).status;
+        return status === "passed" || status === "failed" ? status : undefined;
+    }
+
+    private isCanonicalPassedVerification(
+        task: ApprovedManifestTask,
+        responseRequestId: string,
+        cwd: string | undefined,
+        verification: unknown,
+    ): boolean {
+        if (!verification || typeof verification !== "object") return false;
+        const candidate = verification as Partial<TaskVerification>;
+        const commands = candidate.commands;
+        if (
+            !cwd ||
+            task.verify.length === 0 ||
+            candidate.responseRequestId !== responseRequestId ||
+            candidate.status !== "passed" ||
+            !Array.isArray(commands) ||
+            commands.length !== task.verify.length ||
+            (task.verify.length > 0 && commands.length === 0)
+        ) {
+            return false;
+        }
+        return task.verify.every((expected, index) => {
+            const command = commands[index];
+            if (!command || typeof command !== "object") return false;
+            const timeoutMs = expected.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS;
+            return (
+                command.id === expected.id &&
+                command.command === expected.command &&
+                command.cwd === cwd &&
+                command.timeoutMs === timeoutMs &&
+                command.status === "completed" &&
+                command.exitCode === 0 &&
+                (command.signal === undefined || command.signal === null) &&
+                !Object.hasOwn(command, "output") &&
+                typeof command.outputPreview === "string" &&
+                Buffer.byteLength(command.outputPreview) <=
+                    MAX_VERIFY_OUTPUT_BYTES &&
+                typeof command.outputSha256 === "string" &&
+                /^[a-f0-9]{64}$/.test(command.outputSha256) &&
+                typeof command.outputLength === "number" &&
+                Number.isSafeInteger(command.outputLength) &&
+                command.outputLength >= 0 &&
+                typeof command.truncated === "boolean" &&
+                command.truncated ===
+                    command.outputLength > MAX_VERIFY_OUTPUT_BYTES
+            );
+        });
+    }
+
+    private async verifyImplementation(
+        runId: string,
+        cwd: string,
+        task: ApprovedManifestTask,
+        response: SddDelegationResponse,
+    ): Promise<boolean> {
+        const existing =
+            this.requireSnapshot(runId).tasks[task.id]?.verificationResults?.[
+                response.requestId
+            ];
+        if (existing) return existing.status === "passed";
+
+        const commands: VerificationCommandEvidence[] = task.verify.map(
+            (command) => ({
+                id: command.id,
+                command: command.command,
+                cwd,
+                timeoutMs: command.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS,
+                status: "not_run",
+                exitCode: null,
+                ...this.emptyVerificationOutputEvidence(),
+                truncated: false,
+            }),
+        );
+        for (const [index, command] of task.verify.entries()) {
+            const timeoutMs = command.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS;
+            let result: unknown;
+            try {
+                // oxlint-disable-next-line no-await-in-loop -- approved verification commands preserve manifest order and stop on the first failure.
+                result = await this.verificationRunner.run({
+                    command,
+                    cwd,
+                    timeoutMs,
+                    signal:
+                        this.verificationControllers.get(runId)?.signal ??
+                        new AbortController().signal,
+                });
+            } catch {
+                // Runner exceptions have no verified full-stream metadata, so
+                // fail closed instead of persisting their potentially secret text.
+                result = undefined;
+            }
+            const evidence = this.verificationEvidence(
+                command,
+                cwd,
+                timeoutMs,
+                result,
+            );
+            commands[index] = evidence;
+            if (evidence.status !== "completed") break;
+        }
+        const verification: TaskVerification = {
+            responseRequestId: response.requestId,
+            status:
+                commands.length > 0 &&
+                commands.every((command) => command.status === "completed")
+                    ? "passed"
+                    : "failed",
+            commands,
+        };
+        this.persist(runId, {
+            type: "verification-recorded",
+            expectedRevision: this.requireSnapshot(runId).revision,
+            taskId: task.id,
+            verification,
+        });
+        if (verification.status === "passed") return true;
+
+        const cancelled =
+            this.requireSnapshot(runId).cancellation !== undefined;
+        this.failTask(
+            runId,
+            task.id,
+            cancelled
+                ? "cancelled"
+                : this.verificationFailureReason(verification),
+            cancelled ? "cancelled" : "failed",
+        );
+        this.finishRun(runId, cancelled ? "cancelled" : "failed");
+        return false;
+    }
+
+    private verificationEvidence(
+        command: ApprovedManifestTask["verify"][number],
+        cwd: string,
+        timeoutMs: number,
+        result: unknown,
+    ): VerificationCommandEvidence {
+        const fallback = {
+            id: command.id,
+            command: command.command,
+            cwd,
+            timeoutMs,
+            exitCode: null,
+            ...this.invalidVerificationOutputEvidence(),
+            truncated: false,
+        } as const;
+        if (!result || typeof result !== "object") {
+            return { ...fallback, status: "invalid_output" };
+        }
+        const candidate = result as Partial<VerificationRunResult>;
+        if (
+            (candidate.status !== "completed" &&
+                candidate.status !== "failed" &&
+                candidate.status !== "timed_out" &&
+                candidate.status !== "signaled") ||
+            (candidate.exitCode !== null &&
+                typeof candidate.exitCode !== "number") ||
+            (candidate.signal !== undefined && candidate.signal !== null) ||
+            typeof candidate.output !== "string" ||
+            typeof candidate.outputSha256 !== "string" ||
+            !/^[a-f0-9]{64}$/.test(candidate.outputSha256) ||
+            typeof candidate.outputBytes !== "number" ||
+            !Number.isSafeInteger(candidate.outputBytes) ||
+            candidate.outputBytes < Buffer.byteLength(candidate.output) ||
+            candidate.truncated !==
+                candidate.outputBytes > MAX_VERIFY_OUTPUT_BYTES ||
+            typeof candidate.truncated !== "boolean"
+        ) {
+            return { ...fallback, status: "invalid_output" };
+        }
+        if (
+            candidate.outputBytes > MAX_VERIFY_OUTPUT_BYTES &&
+            Buffer.byteLength(candidate.output) > MAX_VERIFY_OUTPUT_BYTES
+        ) {
+            return { ...fallback, status: "invalid_output" };
+        }
+        const outputEvidence = this.verificationOutputEvidence(
+            candidate.output,
+            candidate.outputSha256,
+            candidate.outputBytes,
+        );
+        const status =
+            candidate.status === "timed_out"
+                ? "timed_out"
+                : candidate.status === "signaled"
+                  ? "signaled"
+                  : candidate.status !== "completed" || candidate.exitCode !== 0
+                    ? "failed"
+                    : "completed";
+        return {
+            id: command.id,
+            command: command.command,
+            cwd,
+            timeoutMs,
+            status,
+            exitCode: candidate.exitCode,
+            ...(candidate.signal === null ? { signal: null } : {}),
+            ...outputEvidence,
+            truncated: candidate.truncated,
+        };
+    }
+
+    private verificationOutputEvidence(
+        outputPreview: string,
+        outputSha256: string,
+        outputLength: number,
+    ): Pick<
+        VerificationCommandEvidence,
+        "outputPreview" | "outputSha256" | "outputLength"
+    > {
+        const redacted = redactValue(outputPreview, {
+            maxStringLength: MAX_VERIFY_OUTPUT_BYTES - 3,
+        }).value;
+        const redactedOutputPreview =
+            typeof redacted === "string"
+                ? redacted.slice(0, MAX_VERIFY_OUTPUT_BYTES)
+                : "[UNAVAILABLE]";
+        return {
+            outputPreview: redactedOutputPreview,
+            outputSha256,
+            outputLength,
+        };
+    }
+
+    private emptyVerificationOutputEvidence(): Pick<
+        VerificationCommandEvidence,
+        "outputPreview" | "outputSha256" | "outputLength"
+    > {
+        return {
+            outputPreview: "",
+            outputSha256: EMPTY_OUTPUT_SHA256,
+            outputLength: 0,
+        };
+    }
+
+    private invalidVerificationOutputEvidence(): Pick<
+        VerificationCommandEvidence,
+        "outputPreview" | "outputSha256" | "outputLength"
+    > {
+        return {
+            outputPreview: INVALID_OUTPUT_PREVIEW,
+            outputSha256: INVALID_OUTPUT_SHA256,
+            outputLength: Buffer.byteLength(INVALID_OUTPUT_PREVIEW),
+        };
+    }
+
+    private verificationFailureReason(verification: unknown): string {
+        if (!verification || typeof verification !== "object") {
+            return "verification_evidence_invalid_after_recovery";
+        }
+        const commands = (verification as { commands?: unknown }).commands;
+        if (!Array.isArray(commands))
+            return "verification_evidence_invalid_after_recovery";
+        const failedIndex = commands.findIndex(
+            (command) => persistedStatus(command) !== "completed",
+        );
+        if (failedIndex < 0) return "verification_failed";
+        const failed = commands[failedIndex];
+        if (!failed || typeof failed !== "object") {
+            return "verification_evidence_invalid_after_recovery";
+        }
+        const status = persistedStatus(failed);
+        if (status === "timed_out") return "verification_timed_out";
+        if (status === "signaled") return "verification_signaled";
+        if (status === "invalid_output") {
+            return "verification_invalid_output";
+        }
+        return "verification_failed";
     }
 
     private failTask(

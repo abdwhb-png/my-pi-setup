@@ -10,11 +10,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
-    SubagentDelegationRequest,
-    SubagentDelegationResponse,
-} from 'pi-subagents/delegation';
+    SddDelegationRequest as SubagentDelegationRequest,
+    SddDelegationResponse as SubagentDelegationResponse,
+} from './delegation-contract.ts';
 import type { ApprovedManifest, ApprovedManifestTask } from './manifest.ts';
-import type { RunEvent, RunSnapshot } from './state-machine.ts';
+import type { RunEvent, RunSnapshot, TaskVerification } from './state-machine.ts';
 import type { TransitionRecord } from './store.ts';
 import type { DelegationRunOptions } from './delegation-client.ts';
 import type {
@@ -26,8 +26,13 @@ import {
     SddWorkflow,
     selectRunnableBatch,
 } from './workflow.ts';
+import {
+    MAX_VERIFY_OUTPUT_CHARS,
+    type VerificationRunResult,
+    type VerificationRunner,
+} from './verification.ts';
 
-const context = { cwd: '/repo' } as ExtensionContext;
+const context = { cwd: process.cwd() } as ExtensionContext;
 
 function manifest(profile: 'direct' | 'light' | 'standard' | 'critical'):
     ApprovedManifest {
@@ -62,7 +67,7 @@ function manifest(profile: 'direct' | 'light' | 'standard' | 'critical'):
                 signals: ['isolated_scope'],
                 dependencies: [],
                 files: ['src/one.ts'],
-                verify: [{ id: 'test', command: 'bun test one.test.ts' }],
+                verify: [{ id: 'test', command: 'true' }],
                 budgets: {
                     initialWorkers: profile === 'direct' ? 0 : 1,
                     correctionWorkers:
@@ -155,6 +160,49 @@ class QueueDelegationClient {
     }
 }
 
+function verificationResult(
+    output: string,
+    overrides: Partial<VerificationRunResult> = {},
+): VerificationRunResult {
+    const outputBytes = Buffer.byteLength(output);
+    return {
+        status: 'completed',
+        exitCode: 0,
+        output,
+        outputSha256: createHash('sha256').update(output).digest('hex'),
+        outputBytes,
+        truncated: outputBytes > MAX_VERIFY_OUTPUT_CHARS,
+        ...overrides,
+    };
+}
+
+const successfulVerificationRunner = {
+    async run() {
+        return verificationResult('pass');
+    },
+};
+
+function persistedPassedVerification(responseRequestId: string) {
+    return {
+        responseRequestId,
+        status: 'passed' as const,
+        commands: [
+            {
+                id: 'test',
+                command: 'true',
+                cwd: process.cwd(),
+                timeoutMs: 600_000,
+                status: 'completed' as const,
+                exitCode: 0,
+                outputPreview: 'pass',
+                outputSha256: createHash('sha256').update('pass').digest('hex'),
+                outputLength: 4,
+                truncated: false,
+            },
+        ],
+    };
+}
+
 test('Light persists implementation and response before verifying one worker', async () => {
     const approved = manifest('light');
     const store = new MemoryStore(snapshot(1));
@@ -192,7 +240,7 @@ test('Light persists implementation and response before verifying one worker', a
     expect(client.requests[0]).toMatchObject({
         requestId: 'run-1:task-1:worker:1',
         context: 'fresh',
-        cwd: '/repo',
+        cwd: process.cwd(),
     });
     expect(result.state).toBe('completed');
     expect(result.tasks['task-1']).toMatchObject({
@@ -212,6 +260,80 @@ test('Light persists implementation and response before verifying one worker', a
     expect(verifiedSave).toBeGreaterThan(responseSave);
 });
 
+test('parallel writers settle as a batch before any local verification begins', async () => {
+    const base = manifest('light');
+    const first = {
+        ...base.tasks[0]!,
+        id: 'first',
+        files: ['src/first.ts'],
+        parallelEligible: true,
+    };
+    const second = {
+        ...base.tasks[0]!,
+        id: 'second',
+        files: ['src/second.ts'],
+        parallelEligible: true,
+    };
+    const approved = {
+        ...base,
+        parallelismEnabled: true,
+        tasks: [first, second],
+    };
+    const initial = snapshot(1);
+    initial.tasks = {
+        first: { id: 'first', state: 'pending', launches: 0, maxLaunches: 1 },
+        second: { id: 'second', state: 'pending', launches: 0, maxLaunches: 1 },
+    };
+    let releaseSecond: (() => void) | undefined;
+    let signalSecondStarted: (() => void) | undefined;
+    const secondIsRunning = new Promise<void>((resolve) => {
+        signalSecondStarted = resolve;
+    });
+    const verificationCalls: string[] = [];
+    const client = {
+        cancel() {},
+        run(request: SubagentDelegationRequest) {
+            if (request.requestId.includes(':second:')) {
+                signalSecondStarted?.();
+                return new Promise<SubagentDelegationResponse>((resolve) => {
+                    releaseSecond = () =>
+                        resolve({
+                            ...workerResponse('second complete'),
+                            requestId: request.requestId,
+                        });
+                });
+            }
+            return Promise.resolve({
+                ...workerResponse('first complete'),
+                requestId: request.requestId,
+            });
+        },
+    };
+    const workflow = new SddWorkflow(
+        new MemoryStore(initial),
+        client,
+        () => approved,
+        undefined,
+        undefined,
+        {
+            async run(input: { command: { id: string } }) {
+                verificationCalls.push(input.command.id);
+                return verificationResult('pass');
+            },
+        },
+    );
+
+    const running = workflow.run('run-1', context);
+    await secondIsRunning;
+    await Promise.resolve();
+    const callsWhileSecondWrites = [...verificationCalls];
+    releaseSecond?.();
+    const completed = await running;
+    expect(completed.state).toBe('completed');
+    expect(callsWhileSecondWrites).toEqual([]);
+    expect(verificationCalls).toEqual(['test', 'test']);
+});
+
 test('an isolated snapshot routes delegated workers through its recorded worktree', async () => {
     const approved = manifest('light');
     const initial = snapshot(1);
@@ -226,7 +348,7 @@ test('an isolated snapshot routes delegated workers through its recorded worktre
     const client = new QueueDelegationClient([workerResponse('implemented')]);
     const workspace = {
         resolveExecutionCwd(recorded: RunSnapshot['workspace'], sourceCwd: string) {
-            expect(sourceCwd).toBe('/repo');
+            expect(sourceCwd).toBe(process.cwd());
             expect(recorded).toEqual(initial.workspace);
             return '/isolated/run-1';
         },
@@ -238,6 +360,7 @@ test('an isolated snapshot routes delegated workers through its recorded worktre
         () => approved,
         undefined,
         workspace,
+        successfulVerificationRunner,
     ).run('run-1', context);
 
     expect(result.state).toBe('completed');
@@ -268,6 +391,7 @@ test('an unavailable isolated worktree leaves the run needs_input without delega
         () => approved,
         undefined,
         workspace,
+        successfulVerificationRunner,
     ).run('run-1', context);
 
     expect(client.requests).toHaveLength(0);
@@ -335,6 +459,7 @@ test('an existing isolated run with mixed Direct and delegated tasks fails close
         () => approved,
         undefined,
         workspace,
+        successfulVerificationRunner,
     ).run('run-1', context);
 
     expect(client.requests).toHaveLength(0);
@@ -371,6 +496,7 @@ test('an isolated worktree is the cwd for workers, corrections, reviewers, and i
             return '/isolated/run-1';
         },
     };
+    const verificationCwds: string[] = [];
 
     const result = await new SddWorkflow(
         store,
@@ -378,6 +504,12 @@ test('an isolated worktree is the cwd for workers, corrections, reviewers, and i
         () => approved,
         undefined,
         workspace,
+        {
+            async run(input: { cwd: string }) {
+                verificationCwds.push(input.cwd);
+                return verificationResult('pass');
+            },
+        },
     ).run('run-1', context);
 
     expect(result.state).toBe('completed');
@@ -385,6 +517,7 @@ test('an isolated worktree is the cwd for workers, corrections, reviewers, and i
     expect(client.requests.every((request) => request.cwd === '/isolated/run-1')).toBe(
         true,
     );
+    expect(verificationCwds).toEqual(['/isolated/run-1', '/isolated/run-1']);
 });
 
 test('records delivery only after an isolated run completed', () => {
@@ -701,6 +834,872 @@ function workerResponse(output: string): SubagentDelegationResponse {
             explicit: true,
         },
     };
+}
+
+function textDoneResponse(): SubagentDelegationResponse {
+    return {
+        version: 1,
+        requestId: 'replaced-by-fake',
+        status: 'completed',
+        result: { kind: 'text', text: 'done' },
+    };
+}
+
+test('Light fails closed when a completed text response has no successful local verification', async () => {
+    const approved = manifest('light');
+    const store = new MemoryStore(snapshot(1));
+    const calls: Array<{
+        command: { id: string; command: string };
+        cwd: string;
+        timeoutMs: number;
+    }> = [];
+    const verificationRunner = {
+        async run(input: (typeof calls)[number]) {
+            calls.push(input);
+            return verificationResult('1 failing test', { exitCode: 1 });
+        },
+    };
+    const result = await new SddWorkflow(
+        store,
+        new QueueDelegationClient([textDoneResponse()]),
+        () => approved,
+        undefined,
+        undefined,
+        verificationRunner,
+    ).run('run-1', context);
+
+    expect(calls).toMatchObject([
+        {
+            command: { id: 'test', command: 'true' },
+            cwd: process.cwd(),
+            timeoutMs: 600_000,
+        },
+    ]);
+    expect(result).toMatchObject({
+        state: 'failed',
+        tasks: {
+            'task-1': { state: 'failed', terminalReason: 'verification_failed' },
+        },
+    });
+    expect(result.tasks['task-1'].state).not.toBe('verified');
+});
+
+test('Light persists only redacted bounded local verification evidence before it becomes verified', async () => {
+    const approved = manifest('light');
+    const store = new MemoryStore(snapshot(1));
+    const verificationRunner = {
+        async run() {
+            return verificationResult('Bearer top-secret-token');
+        },
+    };
+    const result = await new SddWorkflow(
+        store,
+        new QueueDelegationClient([textDoneResponse()]),
+        () => approved,
+        undefined,
+        undefined,
+        verificationRunner,
+    ).run('run-1', context);
+
+    const verification = result.tasks['task-1'].verificationResults?.[
+        'run-1:task-1:worker:1'
+    ];
+    expect(result.tasks['task-1'].state).toBe('verified');
+    expect(verification).toMatchObject({ status: 'passed' });
+    expect(verification?.commands).toHaveLength(1);
+    expect(verification?.commands[0]).toMatchObject({
+        outputPreview: '[REDACTED]',
+        outputLength: Buffer.byteLength('Bearer top-secret-token'),
+        outputSha256: createHash('sha256')
+            .update('Bearer top-secret-token')
+            .digest('hex'),
+    });
+    expect(JSON.stringify(store.current)).not.toContain('Bearer top-secret-token');
+    expect(JSON.stringify(store.saves)).not.toContain('Bearer top-secret-token');
+    expect(JSON.stringify(store.events)).not.toContain('Bearer top-secret-token');
+    expect(store.events.some((event) => event.type === 'verification-recorded')).toBe(
+        true,
+    );
+});
+
+test('Light persists runner-provided full-stream digests without retaining distinct secret suffixes', async () => {
+    const approved = manifest('light');
+    const task = approved.tasks[0]!;
+    const prefix = 'x'.repeat(MAX_VERIFY_OUTPUT_CHARS);
+    const firstRaw = `${prefix}Bearer first-secret-suffix`;
+    const secondRaw = `${prefix}Bearer second-secret-suffix`;
+    const first = {
+        ...verificationResult(prefix, {
+            outputSha256: createHash('sha256').update(firstRaw).digest('hex'),
+            outputBytes: Buffer.byteLength(firstRaw),
+            truncated: true,
+        }),
+    };
+    const second = {
+        ...verificationResult(prefix, {
+            outputSha256: createHash('sha256').update(secondRaw).digest('hex'),
+            outputBytes: Buffer.byteLength(secondRaw),
+            truncated: true,
+        }),
+    };
+    const withTwoCommands: ApprovedManifest = {
+        ...approved,
+        tasks: [
+            {
+                ...task,
+                verify: [
+                    task.verify[0]!,
+                    { id: 'second', command: 'second-command' },
+                ],
+            },
+        ],
+    };
+    const store = new MemoryStore(snapshot(1));
+    let calls = 0;
+    const result = await new SddWorkflow(
+        store,
+        new QueueDelegationClient([textDoneResponse()]),
+        () => withTwoCommands,
+        undefined,
+        undefined,
+        {
+            async run() {
+                calls += 1;
+                return calls === 1 ? first : second;
+            },
+        },
+    ).run('run-1', context);
+
+    const commands = result.tasks['task-1'].verificationResults?.[
+        'run-1:task-1:worker:1'
+    ]?.commands;
+    expect(result.tasks['task-1'].state).toBe('verified');
+    expect(commands).toHaveLength(2);
+    expect(commands?.[0]?.outputPreview).toBe(commands?.[1]?.outputPreview);
+    expect(commands?.[0]?.outputPreview.length).toBeLessThanOrEqual(
+        MAX_VERIFY_OUTPUT_CHARS,
+    );
+    expect(commands?.map((command) => command.outputSha256)).toEqual([
+        createHash('sha256').update(firstRaw).digest('hex'),
+        createHash('sha256').update(secondRaw).digest('hex'),
+    ]);
+    expect(commands?.map((command) => command.outputLength)).toEqual([
+        Buffer.byteLength(firstRaw),
+        Buffer.byteLength(secondRaw),
+    ]);
+    expect(JSON.stringify(store.current)).not.toContain('first-secret-suffix');
+    expect(JSON.stringify(store.events)).not.toContain('second-secret-suffix');
+});
+
+test('Light persists a byte-bounded UTF-8 preview without invalidating complete-stream evidence', async () => {
+    const approved = manifest('light');
+    const prefix = 'x'.repeat(MAX_VERIFY_OUTPUT_CHARS - 1);
+    const raw = `${prefix}éBearer unicode-secret-suffix`;
+    const store = new MemoryStore(snapshot(1));
+    const result = await new SddWorkflow(
+        store,
+        new QueueDelegationClient([textDoneResponse()]),
+        () => approved,
+        undefined,
+        undefined,
+        {
+            async run() {
+                return verificationResult(prefix, {
+                    outputSha256: createHash('sha256').update(raw).digest('hex'),
+                    outputBytes: Buffer.byteLength(raw),
+                    truncated: true,
+                });
+            },
+        },
+    ).run('run-1', context);
+
+    const command = result.tasks['task-1'].verificationResults?.[
+        'run-1:task-1:worker:1'
+    ]?.commands[0];
+    expect(result.tasks['task-1'].state).toBe('verified');
+    expect(command).toMatchObject({
+        outputSha256: createHash('sha256').update(raw).digest('hex'),
+        outputLength: Buffer.byteLength(raw),
+        truncated: true,
+    });
+    expect(command?.outputPreview).not.toContain('\uFFFD');
+    expect(Buffer.byteLength(command?.outputPreview ?? '')).toBeLessThanOrEqual(
+        MAX_VERIFY_OUTPUT_CHARS,
+    );
+    expect(JSON.stringify(store.current)).not.toContain('unicode-secret-suffix');
+    expect(JSON.stringify(store.events)).not.toContain('unicode-secret-suffix');
+});
+
+test('Light records a local verification timeout and never becomes verified', async () => {
+    const approved = manifest('light');
+    const store = new MemoryStore(snapshot(1));
+    const verificationRunner = {
+        async run() {
+            return verificationResult('timed out', {
+                status: 'timed_out',
+                exitCode: null,
+            });
+        },
+    };
+    const result = await new SddWorkflow(
+        store,
+        new QueueDelegationClient([textDoneResponse()]),
+        () => approved,
+        undefined,
+        undefined,
+        verificationRunner,
+    ).run('run-1', context);
+
+    expect(result).toMatchObject({
+        state: 'failed',
+        tasks: {
+            'task-1': {
+                state: 'failed',
+                terminalReason: 'verification_timed_out',
+            },
+        },
+    });
+});
+
+for (const signal of [false, 'SIGTERM'] as const) {
+    test(`Light rejects an invalid verification runner signal shape: ${String(signal)}`, async () => {
+        const result = await new SddWorkflow(
+            new MemoryStore(snapshot(1)),
+            new QueueDelegationClient([textDoneResponse()]),
+            () => manifest('light'),
+            undefined,
+            undefined,
+            {
+                async run() {
+                    return {
+                        status: 'completed' as const,
+                        exitCode: 0,
+                        signal,
+                        output: 'pass',
+                        truncated: false,
+                    };
+                },
+            } as unknown as VerificationRunner,
+        ).run('run-1', context);
+
+        expect(result.tasks['task-1']).toMatchObject({
+            state: 'failed',
+            terminalReason: 'verification_invalid_output',
+        });
+    });
+}
+
+test('Light never verifies when no approved local verification command can run', async () => {
+    const approved = manifest('light');
+    const task = approved.tasks[0]!;
+    const withoutVerify: ApprovedManifest = {
+        ...approved,
+        tasks: [{ ...task, verify: [] }],
+    };
+    const store = new MemoryStore(snapshot(1));
+    let calls = 0;
+    const verificationRunner = {
+        async run() {
+            calls += 1;
+            return verificationResult('unused');
+        },
+    };
+
+    const result = await new SddWorkflow(
+        store,
+        new QueueDelegationClient([textDoneResponse()]),
+        () => withoutVerify,
+        undefined,
+        undefined,
+        verificationRunner,
+    ).run('run-1', context);
+
+    expect(calls).toBe(0);
+    expect(result.tasks['task-1']).toMatchObject({
+        state: 'failed',
+        terminalReason: 'verification_failed',
+    });
+});
+
+test('Standard reruns approved local verification after its correction without adding reviewers', async () => {
+    const approved = manifest('standard');
+    const store = new MemoryStore(snapshot(4));
+    const verificationInputs: Array<{ id: string; cwd: string }> = [];
+    const verificationRunner = {
+        async run(input: { command: { id: string }; cwd: string }) {
+            verificationInputs.push({ id: input.command.id, cwd: input.cwd });
+            return verificationResult('pass');
+        },
+    };
+    const client = new QueueDelegationClient([
+        textDoneResponse(),
+        reviewResponse('combined', 'changes_required'),
+        textDoneResponse(),
+        reviewResponse('combined', 'pass'),
+    ]);
+    const result = await new SddWorkflow(
+        store,
+        client,
+        () => approved,
+        undefined,
+        undefined,
+        verificationRunner,
+    ).run('run-1', context);
+
+    expect(verificationInputs).toEqual([
+        { id: 'test', cwd: process.cwd() },
+        { id: 'test', cwd: process.cwd() },
+    ]);
+    expect(client.requests.map((request) => request.requestId)).toEqual([
+        'run-1:task-1:worker:1',
+        'run-1:task-1:combined:1',
+        'run-1:task-1:correction:1',
+        'run-1:task-1:combined:2',
+    ]);
+    expect(result.tasks['task-1'].verificationResults).toMatchObject({
+        'run-1:task-1:worker:1': { status: 'passed' },
+        'run-1:task-1:correction:1': { status: 'passed' },
+    });
+});
+
+test('recovery applies persisted local verification without rerunning it', () => {
+    const response = {
+        ...textDoneResponse(),
+        requestId: 'run-1:task-1:worker:1',
+    };
+    const initial = plannedLightSnapshot(response);
+    initial.tasks['task-1'].state = 'reviewing';
+    initial.tasks['task-1'].verificationResults = {
+        [response.requestId]: {
+            responseRequestId: response.requestId,
+            status: 'passed',
+            commands: [
+                {
+                    id: 'test',
+                    command: 'true',
+                    cwd: process.cwd(),
+                    timeoutMs: 600_000,
+                    status: 'completed',
+                    exitCode: 0,
+                    outputPreview: 'pass',
+                    outputSha256: createHash('sha256').update('pass').digest('hex'),
+                    outputLength: 4,
+                    truncated: false,
+                },
+            ],
+        },
+    };
+    const store = new MemoryStore(initial);
+    let calls = 0;
+    const verificationRunner = {
+        async run() {
+            calls += 1;
+            throw new Error('verification must not rerun after durable recovery');
+        },
+    };
+
+    const result = new SddWorkflow(
+        store,
+        new QueueDelegationClient([]),
+        () => manifest('light'),
+        undefined,
+        undefined,
+        verificationRunner,
+    ).reconcile('run-1', process.cwd());
+
+    expect(calls).toBe(0);
+    expect(result.tasks['task-1'].state).toBe('verified');
+});
+
+test('recovery fails closed when persisted verification uses a non-canonical command result', () => {
+    const response = {
+        ...textDoneResponse(),
+        requestId: 'run-1:task-1:worker:1',
+    };
+    const initial = plannedLightSnapshot(response);
+    initial.tasks['task-1'].verificationResults![response.requestId] = {
+        ...persistedPassedVerification(response.requestId),
+        commands: [
+            {
+                ...persistedPassedVerification(response.requestId).commands[0]!,
+                status: 'not_run',
+            },
+        ],
+    };
+    let calls = 0;
+    const result = new SddWorkflow(
+        new MemoryStore(initial),
+        new QueueDelegationClient([]),
+        () => manifest('light'),
+        undefined,
+        undefined,
+        { async run() { calls += 1; throw new Error('must not rerun'); } },
+    ).reconcile('run-1', process.cwd());
+
+    expect(calls).toBe(0);
+    expect(result.tasks['task-1']).toMatchObject({
+        state: 'needs_input',
+        terminalReason: 'verification_evidence_invalid_after_recovery',
+    });
+});
+
+test('recovery requires the exact durable verification command contract without rerunning', () => {
+    const requestId = 'run-1:task-1:worker:1';
+    const valid = persistedPassedVerification(requestId);
+    const cases: Array<{ name: string; verification: TaskVerification }> = [
+        {
+            name: 'response request id',
+            verification: { ...valid, responseRequestId: 'other-request' },
+        },
+        { name: 'empty commands', verification: { ...valid, commands: [] } },
+        {
+            name: 'command text',
+            verification: {
+                ...valid,
+                commands: [{ ...valid.commands[0]!, command: 'false' }],
+            },
+        },
+        {
+            name: 'command cwd',
+            verification: {
+                ...valid,
+                commands: [{ ...valid.commands[0]!, cwd: '/wrong-cwd' }],
+            },
+        },
+        {
+            name: 'command timeout',
+            verification: {
+                ...valid,
+                commands: [{ ...valid.commands[0]!, timeoutMs: 1 }],
+            },
+        },
+        {
+            name: 'exit code',
+            verification: {
+                ...valid,
+                commands: [{ ...valid.commands[0]!, exitCode: 1 }],
+            },
+        },
+        {
+            name: 'incoherent truncation',
+            verification: {
+                ...valid,
+                commands: [{ ...valid.commands[0]!, truncated: true }],
+            },
+        },
+        {
+            name: 'raw output field',
+            verification: {
+                ...valid,
+                commands: [
+                    {
+                        ...valid.commands[0]!,
+                        output: 'Bearer raw-token-must-not-persist',
+                    },
+                ],
+            } as unknown as TaskVerification,
+        },
+        {
+            name: 'unbounded output length without truncation',
+            verification: {
+                ...valid,
+                commands: [
+                    {
+                        ...valid.commands[0]!,
+                        outputLength: 16_385,
+                    },
+                ],
+            },
+        },
+        {
+            name: 'malformed full-stream digest',
+            verification: {
+                ...valid,
+                commands: [
+                    { ...valid.commands[0]!, outputSha256: 'not-a-sha256' },
+                ],
+            },
+        },
+        {
+            name: 'negative full-stream byte length',
+            verification: {
+                ...valid,
+                commands: [{ ...valid.commands[0]!, outputLength: -1 }],
+            },
+        },
+    ];
+
+    for (const { name, verification } of cases) {
+        const initial = plannedLightSnapshot({
+            ...textDoneResponse(),
+            requestId,
+        });
+        initial.tasks['task-1'].verificationResults = { [requestId]: verification };
+        let calls = 0;
+        const result = new SddWorkflow(
+            new MemoryStore(initial),
+            new QueueDelegationClient([]),
+            () => manifest('light'),
+            undefined,
+            undefined,
+            { async run() { calls += 1; throw new Error('must not rerun'); } },
+        ).reconcile('run-1', process.cwd());
+
+        expect(calls, name).toBe(0);
+        expect(result.tasks['task-1']).toMatchObject({
+            state: 'needs_input',
+            terminalReason: 'verification_evidence_invalid_after_recovery',
+        });
+    }
+});
+
+test('reconcile fails closed before completing a delegated Light task marked verified without proof', () => {
+    const requestId = 'run-1:task-1:worker:1';
+    const initial = plannedLightSnapshot({
+        ...textDoneResponse(),
+        requestId,
+    });
+    initial.tasks['task-1'].state = 'verified';
+    initial.tasks['task-1'].verificationResults = undefined;
+
+    const result = new SddWorkflow(
+        new MemoryStore(initial),
+        new QueueDelegationClient([]),
+        () => manifest('light'),
+    ).reconcile('run-1', process.cwd());
+
+    expect(result).toMatchObject({
+        state: 'needs_input',
+        tasks: {
+            'task-1': {
+                state: 'needs_input',
+                terminalReason: 'verification_missing_after_recovery',
+            },
+        },
+    });
+});
+
+test('reconcile rejects applied passed evidence with commands empty without looping', async () => {
+    const requestId = 'run-1:task-1:worker:1';
+    const initial = plannedLightSnapshot({
+        ...textDoneResponse(),
+        requestId,
+    });
+    initial.tasks['task-1'].appliedResponseRequestIds = [requestId];
+    initial.tasks['task-1'].verificationResults = {
+        [requestId]: {
+            ...persistedPassedVerification(requestId),
+            commands: [],
+        },
+    };
+    const workflow = new SddWorkflow(
+        new MemoryStore(initial),
+        new QueueDelegationClient([]),
+        () => manifest('light'),
+    );
+
+    const result = await Promise.race([
+        workflow.run('run-1', context),
+        Bun.sleep(250).then(() => {
+            throw new Error('reconcile looped on malformed applied verification evidence');
+        }),
+    ]);
+
+    expect(result).toMatchObject({
+        state: 'needs_input',
+        tasks: {
+            'task-1': {
+                state: 'needs_input',
+                terminalReason: 'verification_evidence_invalid_after_recovery',
+            },
+        },
+    });
+});
+
+test('reconcile fails closed instead of throwing for commands null', () => {
+    const requestId = 'run-1:task-1:worker:1';
+    const initial = plannedLightSnapshot({
+        ...textDoneResponse(),
+        requestId,
+    });
+    initial.tasks['task-1'].verificationResults = {
+        [requestId]: {
+            ...persistedPassedVerification(requestId),
+            commands: null,
+        } as unknown as TaskVerification,
+    };
+    const workflow = new SddWorkflow(
+        new MemoryStore(initial),
+        new QueueDelegationClient([]),
+        () => manifest('light'),
+    );
+
+    expect(() => workflow.reconcile('run-1', process.cwd())).not.toThrow();
+    expect(workflow.reconcile('run-1', process.cwd()).tasks['task-1']).toMatchObject({
+        state: 'needs_input',
+        terminalReason: 'verification_evidence_invalid_after_recovery',
+    });
+});
+
+test('reconcile fails closed instead of throwing for failed evidence commands null entries', () => {
+    const requestId = 'run-1:task-1:worker:1';
+    const initial = plannedLightSnapshot({
+        ...textDoneResponse(),
+        requestId,
+    });
+    initial.tasks['task-1'].appliedResponseRequestIds = [requestId];
+    initial.tasks['task-1'].verificationResults = {
+        [requestId]: {
+            ...persistedPassedVerification(requestId),
+            status: 'failed',
+            commands: [null],
+        } as unknown as TaskVerification,
+    };
+    const workflow = new SddWorkflow(
+        new MemoryStore(initial),
+        new QueueDelegationClient([]),
+        () => manifest('light'),
+    );
+
+    expect(() => workflow.reconcile('run-1', process.cwd())).not.toThrow();
+    expect(workflow.reconcile('run-1', process.cwd()).tasks['task-1']).toMatchObject({
+        state: 'failed',
+        terminalReason: 'verification_evidence_invalid_after_recovery',
+    });
+});
+
+test('reconcile rejects persisted empty evidence when the manifest has no approved verify command', () => {
+    const requestId = 'run-1:task-1:worker:1';
+    const approved = manifest('light');
+    const noVerify: ApprovedManifest = {
+        ...approved,
+        tasks: [{ ...approved.tasks[0]!, verify: [] }],
+    };
+    const initial = plannedLightSnapshot({
+        ...textDoneResponse(),
+        requestId,
+    });
+    initial.tasks['task-1'].verificationResults = {
+        [requestId]: {
+            responseRequestId: requestId,
+            status: 'passed',
+            commands: [],
+        },
+    };
+    const result = new SddWorkflow(
+        new MemoryStore(initial),
+        new QueueDelegationClient([]),
+        () => noVerify,
+    ).reconcile('run-1', process.cwd());
+
+    expect(result).toMatchObject({
+        state: 'needs_input',
+        tasks: {
+            'task-1': {
+                state: 'needs_input',
+                terminalReason: 'verification_evidence_invalid_after_recovery',
+            },
+        },
+    });
+});
+
+test('Light recovery attestation never manufactures verification or completion', async () => {
+    const requestId = 'run-1:task-1:worker:1';
+    const initial = snapshot(1);
+    initial.state = 'needs_input';
+    initial.terminalReason = 'uncertain_foreground_delegation';
+    initial.tasks['task-1'] = {
+        id: 'task-1',
+        state: 'needs_input',
+        launches: 1,
+        maxLaunches: 1,
+        activeRequestId: requestId,
+        terminalReason: 'uncertain_foreground_delegation',
+    };
+    initial.consumedIdempotencyKeys = [requestId];
+    initial.plannedDelegations = {
+        [requestId]: {
+            idempotencyKey: requestId,
+            taskId: 'task-1',
+            requestId,
+            stage: 'worker',
+            attempt: 1,
+            plannedAt: '2026-07-21T12:00:00.000Z',
+        },
+    };
+    const workflow = new SddWorkflow(
+        new MemoryStore(initial),
+        new QueueDelegationClient([]),
+        () => manifest('light'),
+    );
+    const evidence = {
+        changedFiles: ['src/one.ts'],
+        tests: ['src/one.test.ts'],
+        commands: ['bun test src/one.test.ts'],
+        validationOutput: '1 pass, 0 fail',
+        residualRisks: ['worker response was uncertain'],
+    };
+    const attested = workflow.completeDirect('run-1', 'task-1', evidence, '', {
+        action: 'attest',
+        confirmation: true,
+        authorizedBy: 'operator',
+        requestId,
+        stage: 'worker',
+    });
+
+    expect(attested.tasks['task-1']).toMatchObject({ state: 'reviewing' });
+    expect(attested.tasks['task-1'].verificationResults).toBeUndefined();
+    const result = await workflow.run('run-1', context);
+    expect(result).toMatchObject({
+        state: 'needs_input',
+        tasks: {
+            'task-1': {
+                state: 'needs_input',
+                terminalReason: 'verification_missing_after_recovery',
+            },
+        },
+    });
+});
+
+for (const profile of ['standard', 'critical'] as const) {
+    test(`${profile} consumes a canonical-worker recovery review without rerunning a reviewer`, async () => {
+        const initial =
+            profile === 'standard'
+                ? persistedReviewSnapshot('standard', 'combined', 'pass')
+                : persistedReviewSnapshot('critical', 'spec', 'pass');
+        const workerId = 'run-1:task-1:worker:1';
+        const reviewId =
+            profile === 'standard'
+                ? 'run-1:task-1:combined:1'
+                : 'run-1:task-1:quality:1';
+        initial.state = 'needs_input';
+        initial.terminalReason = 'uncertain_foreground_delegation';
+        initial.tasks['task-1'] = {
+            ...initial.tasks['task-1']!,
+            state: 'needs_input',
+            activeRequestId: reviewId,
+            terminalReason: 'uncertain_foreground_delegation',
+            ...(profile === 'standard'
+                ? {
+                      terminalResponses: {
+                          [workerId]: initial.tasks['task-1']!.terminalResponses![workerId]!,
+                      },
+                      reviewResults: undefined,
+                      appliedReviewRequestIds: undefined,
+                  }
+                : {
+                      appliedResponseRequestIds: [workerId],
+                      appliedReviewRequestIds: ['run-1:task-1:spec:1'],
+                  }),
+        };
+        if (profile === 'critical') {
+            initial.consumedIdempotencyKeys.push(reviewId);
+            initial.plannedDelegations[reviewId] = {
+                idempotencyKey: reviewId,
+                taskId: 'task-1',
+                requestId: reviewId,
+                stage: 'quality',
+                attempt: 1,
+                plannedAt: '2026-07-21T12:02:00.000Z',
+            };
+        }
+        const client = new QueueDelegationClient([]);
+        const workflow = new SddWorkflow(
+            new MemoryStore(initial),
+            client,
+            () => manifest(profile),
+        );
+        const evidence = {
+            changedFiles: ['src/one.ts'],
+            tests: ['src/one.test.ts'],
+            commands: ['bun test src/one.test.ts'],
+            validationOutput: '1 pass, 0 fail',
+            residualRisks: ['review response was uncertain'],
+        };
+
+        const attested = workflow.completeDirect('run-1', 'task-1', evidence, '', {
+            action: 'attest',
+            confirmation: true,
+            authorizedBy: 'operator',
+            requestId: reviewId,
+            stage: profile === 'standard' ? 'combined' : 'quality',
+        });
+        expect(attested.tasks['task-1']?.state).toBe('reviewing');
+        expect(attested.tasks['task-1']?.appliedReviewRequestIds).toContain(reviewId);
+        expect(attested.tasks['task-1']?.reviewResults?.[reviewId]).toMatchObject({
+            verdict: 'pass',
+        });
+
+        const completed = await workflow.run('run-1', context);
+        expect(client.requests).toHaveLength(0);
+        expect(completed).toMatchObject({
+            state: 'completed',
+            tasks: { 'task-1': { state: 'verified' } },
+        });
+    });
+}
+
+for (const profile of ['standard', 'critical'] as const) {
+    test(`${profile} resumes a crash before correction dispatch without a duplicate reviewing transition`, async () => {
+        const approved = manifest(profile);
+        const stage = profile === 'standard' ? 'combined' : 'spec';
+        const initial = persistedReviewSnapshot(profile, stage, 'changes_required');
+        const client = new QueueDelegationClient([
+            textDoneResponse(),
+            reviewResponse(stage, 'pass'),
+            ...(profile === 'critical' ? [reviewResponse('quality', 'pass')] : []),
+        ]);
+
+        const result = await new SddWorkflow(
+            new MemoryStore(initial),
+            client,
+            () => approved,
+            undefined,
+            undefined,
+            successfulVerificationRunner,
+        ).run('run-1', context);
+
+        expect(client.requests.map((request) => request.requestId)).toEqual(
+            profile === 'standard'
+                ? ['run-1:task-1:correction:1', 'run-1:task-1:combined:2']
+                : [
+                      'run-1:task-1:correction:1',
+                      'run-1:task-1:spec:2',
+                      'run-1:task-1:quality:1',
+                  ],
+        );
+        expect(result.tasks['task-1'].state).toBe('verified');
+    });
+
+    test(`${profile} fails closed when its resumed correction verification fails`, async () => {
+        const approved = manifest(profile);
+        const stage = profile === 'standard' ? 'combined' : 'spec';
+        const initial = persistedReviewSnapshot(profile, stage, 'changes_required');
+        const client = new QueueDelegationClient([textDoneResponse()]);
+
+        const result = await new SddWorkflow(
+            new MemoryStore(initial),
+            client,
+            () => approved,
+            undefined,
+            undefined,
+            {
+                async run() {
+                    return verificationResult('failing correction verification', {
+                        exitCode: 1,
+                    });
+                },
+            },
+        ).run('run-1', context);
+
+        expect(client.requests.map((request) => request.requestId)).toEqual([
+            'run-1:task-1:correction:1',
+        ]);
+        expect(result.tasks['task-1']).toMatchObject({
+            state: 'failed',
+            terminalReason: 'verification_failed',
+        });
+    });
 }
 
 function reviewResponse(
@@ -1323,12 +2322,15 @@ test('uncertain recovery requires an exact typed attestation and applies it atom
     ).toHaveLength(1);
 
     const completed = await workflow.run('run-1', context);
-    expect(client.requests.map((request) => request.requestId)).toEqual([
-        'run-1:task-1:combined:1',
-    ]);
+    expect(client.requests).toHaveLength(0);
     expect(completed).toMatchObject({
-        state: 'completed',
-        tasks: { 'task-1': { state: 'verified', launches: 2 } },
+        state: 'needs_input',
+        tasks: {
+            'task-1': {
+                state: 'needs_input',
+                terminalReason: 'verification_missing_after_recovery',
+            },
+        },
     });
 });
 
@@ -1410,10 +2412,11 @@ test('Critical specification attestation continues at quality instead of verifyi
     });
 
     const completed = await workflow.run('run-1', context);
-    expect(client.requests.map((request) => request.requestId)).toEqual([
-        'run-1:task-1:quality:1',
-    ]);
-    expect(completed.state).toBe('completed');
+    expect(client.requests).toHaveLength(0);
+    expect(completed.tasks['task-1']).toMatchObject({
+        state: 'needs_input',
+        terminalReason: 'verification_missing_after_recovery',
+    });
 });
 
 test('correction attestation reruns the rejecting Standard review', async () => {
@@ -1516,10 +2519,11 @@ test('correction attestation reruns the rejecting Standard review', async () => 
     });
 
     const completed = await workflow.run('run-1', context);
-    expect(client.requests.map((request) => request.requestId)).toEqual([
-        'run-1:task-1:combined:2',
-    ]);
-    expect(completed.state).toBe('completed');
+    expect(client.requests).toHaveLength(0);
+    expect(completed.tasks['task-1']).toMatchObject({
+        state: 'needs_input',
+        terminalReason: 'verification_missing_after_recovery',
+    });
 });
 
 test('recovery retry after atomic save and after continuation never duplicates launches', async () => {
@@ -1587,8 +2591,8 @@ test('recovery retry after atomic save and after continuation never duplicates l
         ).revision,
     ).toBe(revisionAfterSave);
     const completed = await afterSaveRestart.run('run-1', context);
-    expect(completed.state).toBe('completed');
-    expect(client.requests).toHaveLength(1);
+    expect(completed.state).toBe('needs_input');
+    expect(client.requests).toHaveLength(0);
 
     const afterContinuationRestart = new SddWorkflow(
         store,
@@ -1605,7 +2609,7 @@ test('recovery retry after atomic save and after continuation never duplicates l
     expect((await afterContinuationRestart.run('run-1', context)).revision).toBe(
         retried.revision,
     );
-    expect(client.requests).toHaveLength(1);
+    expect(client.requests).toHaveLength(0);
     expect(
         store.events.filter(
             (event) => event.type === 'recovery-attestation-applied',
@@ -1915,7 +2919,12 @@ function plannedLightSnapshot(
                 launches: 1,
                 maxLaunches: 1,
                 ...(response
-                    ? { terminalResponses: { [requestId]: response } }
+                    ? {
+                          terminalResponses: { [requestId]: response },
+                          verificationResults: {
+                              [requestId]: persistedPassedVerification(requestId),
+                          },
+                      }
                     : { activeRequestId: requestId }),
             },
         },
@@ -1939,7 +2948,7 @@ test('reconcile never relaunches an unterminated foreground delegation', () => {
     const client = new QueueDelegationClient([]);
     const workflow = new SddWorkflow(store, client, () => approved);
 
-    const reconciled = workflow.reconcile('run-1');
+    const reconciled = workflow.reconcile('run-1', process.cwd());
 
     expect(client.requests).toHaveLength(0);
     expect(reconciled).toMatchObject({
@@ -1963,7 +2972,7 @@ test('reconcile advances a persisted accepted Light response without delegation'
     const client = new QueueDelegationClient([]);
     const workflow = new SddWorkflow(store, client, () => approved);
 
-    const reconciled = workflow.reconcile('run-1');
+    const reconciled = workflow.reconcile('run-1', process.cwd());
 
     expect(client.requests).toHaveLength(0);
     expect(reconciled).toMatchObject({
@@ -1987,7 +2996,7 @@ test('reconcile completes Light after a crash between reviewing and its response
         store,
         client,
         () => approved,
-    ).reconcile('run-1');
+    ).reconcile('run-1', process.cwd());
 
     expect(client.requests).toHaveLength(0);
     expect(reconciled).toMatchObject({
@@ -2029,6 +3038,9 @@ function persistedReviewSnapshot(
                         requestId: workerId,
                     },
                     [reviewId]: reviewTerminal,
+                },
+                verificationResults: {
+                    [workerId]: persistedPassedVerification(workerId),
                 },
                 reviewResults: {
                     [reviewId]: JSON.parse(reviewTerminal.output ?? ''),
@@ -2099,6 +3111,8 @@ test('run resumes after a persisted accepted correction without repeating it', a
         ...workerResponse('persisted correction'),
         requestId: correctionId,
     };
+    initial.tasks['task-1'].verificationResults![correctionId] =
+        persistedPassedVerification(correctionId);
     initial.consumedIdempotencyKeys.push(correctionId);
     initial.plannedDelegations[correctionId] = {
         idempotencyKey: correctionId,
@@ -2143,6 +3157,8 @@ test('repeated restart never reapplies an old Standard rejection after correctio
         ...workerResponse('persisted correction'),
         requestId: correctionId,
     };
+    initial.tasks['task-1'].verificationResults![correctionId] =
+        persistedPassedVerification(correctionId);
     initial.consumedIdempotencyKeys.push(correctionId);
     initial.plannedDelegations[correctionId] = {
         idempotencyKey: correctionId,
@@ -2156,8 +3172,8 @@ test('repeated restart never reapplies an old Standard rejection after correctio
     const client = new QueueDelegationClient([]);
     const workflow = new SddWorkflow(store, client, () => approved);
 
-    const first = workflow.reconcile('run-1');
-    const second = workflow.reconcile('run-1');
+    const first = workflow.reconcile('run-1', process.cwd());
+    const second = workflow.reconcile('run-1', process.cwd());
 
     expect(client.requests).toHaveLength(0);
     expect(first.tasks['task-1']).toMatchObject({
@@ -2206,7 +3222,7 @@ test('reconcile skips an obsolete malformed review when its repair is persisted'
         store,
         client,
         () => approved,
-    ).reconcile('run-1');
+    ).reconcile('run-1', process.cwd());
 
     expect(client.requests).toHaveLength(0);
     expect(reconciled).toMatchObject({
@@ -2249,7 +3265,7 @@ test('reconcile completes a crash-interrupted terminal task without reapplying i
         () => approved,
     );
 
-    const reconciled = workflow.reconcile('run-1');
+    const reconciled = workflow.reconcile('run-1', process.cwd());
 
     expect(reconciled).toMatchObject({
         state: 'failed',
@@ -2305,7 +3321,7 @@ test('reconcile rejects a repaired Standard rejection with no review capacity', 
         store,
         client,
         () => approved,
-    ).reconcile('run-1');
+    ).reconcile('run-1', process.cwd());
 
     expect(client.requests).toHaveLength(0);
     expect(reconciled).toMatchObject({
@@ -2338,7 +3354,7 @@ test('persisted exhausted malformed review fails like the live path', () => {
         store,
         client,
         () => approved,
-    ).reconcile('run-1');
+    ).reconcile('run-1', process.cwd());
 
     expect(client.requests).toHaveLength(0);
     expect(reconciled).toMatchObject({
@@ -2389,8 +3405,8 @@ test('reconcile applies persisted changes once without calling delegation', () =
     const client = new QueueDelegationClient([]);
     const workflow = new SddWorkflow(store, client, () => approved);
 
-    const first = workflow.reconcile('run-1');
-    const second = workflow.reconcile('run-1');
+    const first = workflow.reconcile('run-1', process.cwd());
+    const second = workflow.reconcile('run-1', process.cwd());
 
     expect(client.requests).toHaveLength(0);
     expect(first.tasks['task-1']).toMatchObject({
@@ -2707,10 +3723,15 @@ test('workflow observation follows durable persistence for worker, reviewer, cor
             options?: DelegationRunOptions,
         ) {
             events.push(`run:${request.requestId}`);
-            options?.onStarted?.({ version: 1, requestId: request.requestId });
-            options?.onUpdate?.({
-                version: 1,
+            options?.onStarted?.({
                 requestId: request.requestId,
+                ownerRunId: request.ownerRunId,
+                nodeId: request.nodeId,
+            });
+            options?.onUpdate?.({
+                requestId: request.requestId,
+                ownerRunId: request.ownerRunId,
+                nodeId: request.nodeId,
                 currentTool: 'read',
             });
             const response = responses.shift();

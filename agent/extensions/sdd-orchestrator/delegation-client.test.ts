@@ -40,12 +40,14 @@ class FakeEventBus implements EventBus {
 
 function request(requestId: string): SubagentDelegationRequest {
     return {
-        version: 1,
         requestId,
+        ownerRunId: "owner-1",
+        nodeId: `node-${requestId}`,
         agent: 'worker',
         task: `Implement ${requestId}`,
         context: 'fresh',
         cwd: '/workspace',
+        result: { kind: 'text' },
     };
 }
 
@@ -53,7 +55,15 @@ function response(
     requestId: string,
     status: SubagentDelegationResponse['status'] = 'completed',
 ): SubagentDelegationResponse {
-    return { version: 1, requestId, status };
+    return {
+        requestId,
+        ownerRunId: "owner-1",
+        nodeId: `node-${requestId}`,
+        status,
+        ...(status === 'completed'
+            ? { result: { kind: 'text', text: 'done' } }
+            : {}),
+    } as SubagentDelegationResponse;
 }
 
 test('emits a request and resolves only its correlated response', async () => {
@@ -130,7 +140,11 @@ test('emits cancellation once and waits for a terminal response', async () => {
     ).toEqual([
         {
             channel: SUBAGENT_DELEGATION_CANCEL_EVENT,
-            data: { version: 1, requestId: 'req-1' },
+            data: {
+                requestId: 'req-1',
+                ownerRunId: 'owner-1',
+                nodeId: 'node-req-1',
+            },
         },
     ]);
     await Promise.resolve();
@@ -139,6 +153,44 @@ test('emits cancellation once and waits for a terminal response', async () => {
     const cancelled = response('req-1', 'cancelled');
     events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, cancelled);
     await expect(pending).resolves.toEqual(cancelled);
+});
+
+test('cancels one structured 0.50 attempt with its exact ownership tuple', async () => {
+    const events = new FakeEventBus();
+    const client = new DelegationClient(events);
+    const structuredRequest = {
+        requestId: 'req-structured',
+        ownerRunId: 'sdd-run-1',
+        nodeId: 'task-1:worker',
+        agent: 'worker',
+        task: 'Implement task 1',
+        context: 'fresh',
+        cwd: '/workspace',
+        result: { kind: 'text' },
+    } as unknown as SubagentDelegationRequest;
+    const pending = client.run(structuredRequest).catch(() => undefined);
+
+    client.cancel('req-structured');
+
+    try {
+        expect(
+            events.emitted.filter(
+                ({ channel }) => channel === SUBAGENT_DELEGATION_CANCEL_EVENT,
+            ),
+        ).toEqual([
+            {
+                channel: SUBAGENT_DELEGATION_CANCEL_EVENT,
+                data: {
+                    requestId: 'req-structured',
+                    ownerRunId: 'sdd-run-1',
+                    nodeId: 'task-1:worker',
+                },
+            },
+        ]);
+    } finally {
+        client.dispose();
+        await pending;
+    }
 });
 
 test('cancels before requesting an already-aborted run', async () => {
@@ -157,7 +209,11 @@ test('cancels before requesting an already-aborted run', async () => {
     expect(events.emitted.slice(0, 2)).toEqual([
         {
             channel: SUBAGENT_DELEGATION_CANCEL_EVENT,
-            data: { version: 1, requestId: 'req-1' },
+            data: {
+                requestId: 'req-1',
+                ownerRunId: 'owner-1',
+                nodeId: 'node-req-1',
+            },
         },
         {
             channel: SUBAGENT_DELEGATION_REQUEST_EVENT,
@@ -185,6 +241,7 @@ test('settles every terminal status and ignores malformed terminal payloads', as
         'acceptance_failed',
         'invalid_request',
         'unavailable_context',
+        'duplicate_node',
     ] as const satisfies ReadonlyArray<SubagentDelegationResponse['status']>;
 
     for (const [index, status] of statuses.entries()) {
@@ -205,9 +262,9 @@ test('settles every terminal status and ignores malformed terminal payloads', as
         settled = true;
     });
     const malformed = [
-        { version: 1, requestId: 'req-malformed', status: 'running' },
-        { version: 2, requestId: 'req-malformed', status: 'completed' },
-        { version: 1, requestId: 'req-malformed' },
+        { requestId: 'req-malformed', status: 'running' },
+        { requestId: 'req-malformed', status: 'completed' },
+        { requestId: 'req-malformed' },
     ];
 
     for (const payload of malformed) {
@@ -229,28 +286,22 @@ test('ignores malformed response optionals and sanitizes a valid response', asyn
         settled = true;
     });
     const base = {
-        version: 1,
         requestId: 'req-1',
+        ownerRunId: 'owner-1',
+        nodeId: 'node-req-1',
         status: 'completed',
     } as const;
     const malformed = [
         { ...base, error: 1 },
         { ...base, runId: 1 },
-        { ...base, childIndex: '0' },
         { ...base, agent: 1 },
         { ...base, model: 1 },
+        { ...base, thinking: 1 },
         { ...base, exitCode: '0' },
-        { ...base, output: 1 },
-        { ...base, outputPath: 1 },
-        { ...base, sessionFile: 1 },
-        { ...base, acceptance: null },
-        { ...base, acceptance: { status: 'unknown', explicit: true } },
-        { ...base, acceptance: { status: 'verified', explicit: 'yes' } },
-        { ...base, turns: '1' },
-        { ...base, toolCount: '1' },
-        { ...base, durationMs: '1' },
-        { ...base, tokens: '1' },
-        { ...base, warnings: ['ok', 1] },
+        { ...base, launchContractDigest: 1 },
+        { ...base, result: { kind: 'text', text: 1 } },
+        { ...base, result: { kind: 'unknown' } },
+        { ...base, usage: { input: 1 } },
     ];
 
     for (const payload of malformed) {
@@ -263,46 +314,101 @@ test('ignores malformed response optionals and sanitizes a valid response', asyn
         ...base,
         error: 'none',
         runId: 'run-1',
-        childIndex: 0,
         agent: 'worker',
         model: 'model-1',
+        thinking: 'high',
         exitCode: 0,
-        output: 'done',
-        outputPath: '/tmp/output',
-        sessionFile: '/tmp/session.jsonl',
-        acceptance: {
-            status: 'verified',
-            evidenceStatus: 'verified',
-            explicit: true,
+        launchContractDigest: 'sha256:digest',
+        result: {
+            kind: 'structured',
+            value: { verdict: 'pass' },
         },
-        turns: 1,
-        toolCount: 2,
-        durationMs: 3,
-        tokens: 4,
-        warnings: ['warning'],
+        usage: {
+            input: 1,
+            output: 2,
+            cacheRead: 3,
+            cacheWrite: 4,
+            cost: 0,
+            turns: 5,
+            toolCalls: 6,
+            durationMs: 7,
+        },
         extra: true,
     } satisfies SubagentDelegationResponse & { extra: boolean };
-    const { extra: _, ...sanitized } = valid;
 
     events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, valid);
-    await expect(pending).resolves.toEqual(sanitized);
+    await expect(pending).resolves.toEqual({
+        requestId: 'req-1',
+        ownerRunId: 'owner-1',
+        nodeId: 'node-req-1',
+        status: 'completed',
+        error: 'none',
+        runId: 'run-1',
+        agent: 'worker',
+        model: 'model-1',
+        thinking: 'high',
+        exitCode: 0,
+        launchContractDigest: 'sha256:digest',
+        result: { kind: 'structured', value: { verdict: 'pass' } },
+        usage: valid.usage,
+    });
 });
 
-test('accepts the public review-required acceptance status', async () => {
+test('correlates an invalid request response with its available identity', async () => {
     const events = new FakeEventBus();
     const client = new DelegationClient(events);
     const pending = client.run(request('req-review'));
     const terminal = {
-        version: 1,
         requestId: 'req-review',
-        status: 'completed',
-        acceptance: {
-            status: 'review-required',
-            evidenceStatus: 'verified',
-            explicit: true,
-        },
+        ownerRunId: 'owner-1',
+        nodeId: 'node-req-review',
+        status: 'invalid_request',
+        error: 'malformed request',
     } as const;
 
+    events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, terminal);
+    await expect(pending).resolves.toEqual(terminal);
+});
+
+test('requires the complete ownership tuple before resolving a local request', async () => {
+    const events = new FakeEventBus();
+    const client = new DelegationClient(events);
+    let settled = false;
+    const pending = client.run(request('req-correlation')).finally(() => {
+        settled = true;
+    });
+
+    for (const terminal of [
+        {
+            requestId: 'req-correlation',
+            status: 'invalid_request',
+            error: 'owner was not parsed',
+        },
+        {
+            requestId: 'req-correlation',
+            ownerRunId: 'owner-1',
+            status: 'invalid_request',
+            error: 'node was not parsed',
+        },
+        {
+            requestId: 'req-correlation',
+            ownerRunId: 'other-owner',
+            nodeId: 'node-req-correlation',
+            status: 'failed',
+        },
+        {
+            requestId: 'req-correlation',
+            ownerRunId: 'owner-1',
+            nodeId: 'other-node',
+            status: 'failed',
+        },
+    ]) {
+        events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, terminal);
+        await Promise.resolve();
+        expect(settled).toBe(false);
+    }
+
+    const terminal = response('req-correlation');
     events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, terminal);
     await expect(pending).resolves.toEqual(terminal);
 });
@@ -320,7 +426,11 @@ test('rejects at its hard deadline and ignores a late response', async () => {
     ).toEqual([
         {
             channel: SUBAGENT_DELEGATION_CANCEL_EVENT,
-            data: { version: 1, requestId: 'req-1' },
+            data: {
+                requestId: 'req-1',
+                ownerRunId: 'owner-1',
+                nodeId: 'node-req-1',
+            },
         },
     ]);
 
@@ -375,21 +485,25 @@ test('correlates started and update callbacks to the active request', async () =
     });
 
     events.emit(SUBAGENT_DELEGATION_STARTED_EVENT, {
-        version: 1,
         requestId: 'req-2',
+        ownerRunId: 'owner-1',
+        nodeId: 'node-req-2',
     });
     events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, {
-        version: 1,
         requestId: 'req-2',
+        ownerRunId: 'owner-1',
+        nodeId: 'node-req-2',
         recentOutput: 'wrong',
     });
     events.emit(SUBAGENT_DELEGATION_STARTED_EVENT, {
-        version: 1,
         requestId: 'req-1',
+        ownerRunId: 'owner-1',
+        nodeId: 'node-req-1',
     });
     events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, {
-        version: 1,
         requestId: 'req-1',
+        ownerRunId: 'owner-1',
+        nodeId: 'node-req-1',
         recentOutput: 'working',
     });
 
@@ -399,8 +513,9 @@ test('correlates started and update callbacks to the active request', async () =
     events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, response('req-1'));
     await pending;
     events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, {
-        version: 1,
         requestId: 'req-1',
+        ownerRunId: 'owner-1',
+        nodeId: 'node-req-1',
         recentOutput: 'late',
     });
     expect(updates).toEqual(['working']);
@@ -415,12 +530,16 @@ test('ignores malformed started and update payloads and sanitizes valid updates'
         onStarted: (event) => started.push(event),
         onUpdate: (event) => updates.push(event),
     });
-    const base = { version: 1, requestId: 'req-1' };
+    const base = {
+        requestId: 'req-1',
+        ownerRunId: 'owner-1',
+        nodeId: 'node-req-1',
+    };
 
     for (const payload of [
         null,
-        { ...base, version: 2 },
-        { version: 1, requestId: '   ' },
+        { ...base, ownerRunId: 'foreign-owner' },
+        { requestId: '   ', ownerRunId: 'owner-1', nodeId: 'node-req-1' },
     ]) {
         events.emit(SUBAGENT_DELEGATION_STARTED_EVENT, payload);
     }
@@ -525,7 +644,10 @@ test('a terminal response clears its hard deadline', async () => {
 });
 
 test('uses only the public pi-subagents delegation boundary', () => {
-    const source = readFileSync(new URL('./delegation-client.ts', import.meta.url), 'utf8');
+    const source = readFileSync(
+        new URL('../_shared/subagents/delegation-client.ts', import.meta.url),
+        'utf8',
+    );
 
     expect(source).toMatch(/from ["']pi-subagents\/delegation["']/);
     expect(source).not.toContain('/src/');

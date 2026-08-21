@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type {
-  SubagentDelegationResponse,
-  SubagentDelegationUpdate,
-} from "pi-subagents/delegation";
+  SddDelegationResponse as SubagentDelegationResponse,
+  SddDelegationStarted,
+  SddDelegationUpdate as SubagentDelegationUpdate,
+} from "./delegation-contract.ts";
 
 import type { ApprovedManifest } from "./manifest";
 import type { RunSnapshot } from "./state-machine";
@@ -87,12 +88,23 @@ function context(
   };
 }
 
+function started(requestId: string): SddDelegationStarted {
+  return { requestId, ownerRunId: "run-1", nodeId: requestId };
+}
+
+function update(
+  requestId: string,
+  fields: Omit<SubagentDelegationUpdate, "requestId" | "ownerRunId" | "nodeId">,
+): SubagentDelegationUpdate {
+  return { ...started(requestId), ...fields };
+}
+
 describe("SddActivityStore", () => {
   it("registers a live manifest and merges durable snapshots with live activity", () => {
     const store = new SddActivityStore({ now: () => Date.parse("2026-08-02T10:01:00Z") });
     store.trackRun(manifest(), snapshot(), { live: true });
     store.onDelegationPrepared(context());
-    store.onDelegationStarted(context(), { version: 1, requestId: "task-1:worker:1" });
+    store.onDelegationStarted(context(), started("task-1:worker:1"));
     store.onSnapshot({
       ...snapshot(),
       revision: 2,
@@ -114,17 +126,13 @@ describe("SddActivityStore", () => {
     store.trackRun(manifest(), snapshot(), { live: true });
     store.onDelegationPrepared(context());
 
-    const mismatched: SubagentDelegationUpdate = {
-      version: 1,
-      requestId: "other-request",
+    const mismatched = update("other-request", {
       currentTool: "write",
-    };
+    });
     store.onDelegationUpdate(context(), mismatched);
     expect(store.getRun("run-1")?.tasks[0]?.delegations[0]?.currentTool).toBeUndefined();
 
-    store.onDelegationUpdate(context(), {
-      version: 1,
-      requestId: context().requestId,
+    store.onDelegationUpdate(context(), update(context().requestId, {
       currentTool: "exec",
       currentToolArgs: '{"token":"secret","cmd":"bun test"}',
       recentTools: Array.from({ length: 10 }, (_, index) => ({
@@ -135,20 +143,20 @@ describe("SddActivityStore", () => {
       model: "model-b",
       durationMs: 1500,
       tokens: 42,
-    });
+    }));
     const response: SubagentDelegationResponse = {
       version: 1,
       requestId: context().requestId,
+      ownerRunId: "run-1",
+      nodeId: context().requestId,
       status: "completed",
-      output: "done",
+      result: { kind: "text", text: "done" },
       agent: "quick-worker",
     };
     store.onDelegationFinished(context(), response);
-    store.onDelegationUpdate(context(), {
-      version: 1,
-      requestId: context().requestId,
+    store.onDelegationUpdate(context(), update(context().requestId, {
       currentTool: "stale",
-    });
+    }));
 
     const activity = store.getRun("run-1")?.tasks[0]?.delegations[0];
     expect(activity?.phase).toBe("terminal");
@@ -168,10 +176,10 @@ describe("SddActivityStore", () => {
     const second = context("task-2");
     store.onDelegationPrepared(first);
     store.onDelegationPrepared(second);
-    store.onDelegationUpdate(first, { version: 1, requestId: first.requestId, currentTool: "edit" });
-    store.onDelegationUpdate(second, { version: 1, requestId: "wrong", currentTool: "ignored" });
+    store.onDelegationUpdate(first, update(first.requestId, { currentTool: "edit" }));
+    store.onDelegationUpdate(second, update("wrong", { currentTool: "ignored" }));
     unsubscribe();
-    store.onDelegationStarted(second, { version: 1, requestId: second.requestId });
+    store.onDelegationStarted(second, started(second.requestId));
 
     expect(notifications).toBe(3);
     expect(store.getRun("run-1")?.tasks.map((task) => task.delegations.length)).toEqual([1, 1]);

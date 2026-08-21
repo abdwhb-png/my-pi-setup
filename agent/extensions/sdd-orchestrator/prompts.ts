@@ -1,17 +1,19 @@
 import { type Static, Type } from "@sinclair/typebox";
-import type {
-    SubagentDelegationAcceptanceConfig,
-    SubagentDelegationRequest,
-    SubagentDelegationResponse,
-} from "pi-subagents/delegation";
 import { AssessmentSchema, type Assessment } from "./assessment.ts";
 import type { SddConfig } from "./config.ts";
+import {
+    delegationOutput,
+    type SddDelegationRequest,
+    type SddDelegationResponse,
+} from "./delegation-contract.ts";
 import type { ApprovedManifestTask } from "./manifest.ts";
 import { parseStrictJson } from "./schemas.ts";
 import type { ParsedPlan } from "./types.ts";
 
 interface WorkerRequestInput {
     requestId: string;
+    ownerRunId: string;
+    nodeId: string;
     cwd: string;
     config: SddConfig;
     task: ApprovedManifestTask;
@@ -58,7 +60,7 @@ export type ReviewStage = Review["stage"];
 export type ReviewFinding = Review["findings"][number];
 
 interface CorrectionRequestInput extends WorkerRequestInput {
-    priorResponse: SubagentDelegationResponse;
+    priorResponse: SddDelegationResponse;
     findings: readonly ReviewFinding[];
     reportedChangedFiles: readonly string[];
     reportedCommandResults: readonly string[];
@@ -67,6 +69,8 @@ interface CorrectionRequestInput extends WorkerRequestInput {
 
 interface AssessmentRequestInput {
     requestId: string;
+    ownerRunId: string;
+    nodeId: string;
     logicalJobId: string;
     cwd: string;
     config: SddConfig;
@@ -77,12 +81,14 @@ interface AssessmentRequestInput {
 
 interface ReviewRequestInput {
     requestId: string;
+    ownerRunId: string;
+    nodeId: string;
     logicalJobId: string;
     cwd: string;
     config: SddConfig;
     task: ApprovedManifestTask;
     stage: ReviewStage;
-    implementationResponse: SubagentDelegationResponse;
+    implementationResponse: SddDelegationResponse;
     repair?: ReviewOutputRepair;
 }
 
@@ -95,31 +101,6 @@ interface StructuredOutputRepair {
 interface ReviewOutputRepair extends StructuredOutputRepair {
     remainingReviewerAttempts: number;
     remainingLaunches: number;
-}
-
-const WORKER_EVIDENCE = [
-    "changed-files",
-    "tests-added",
-    "commands-run",
-    "validation-output",
-    "residual-risks",
-] as const;
-
-function workerAcceptance(
-    task: ApprovedManifestTask,
-): SubagentDelegationAcceptanceConfig {
-    return {
-        level: "verified",
-        criteria: [
-            {
-                id: task.id,
-                must: task.description,
-                severity: "required",
-            },
-        ],
-        evidence: [...WORKER_EVIDENCE],
-        verify: task.verify.map((command) => ({ ...command })),
-    };
 }
 
 function approvedTaskContract(task: ApprovedManifestTask): string {
@@ -171,14 +152,15 @@ function assertRepairWithinLimit(
 
 export function buildWorkerRequest(
     input: WorkerRequestInput,
-): SubagentDelegationRequest {
+): SddDelegationRequest {
     const agent =
         input.task.effectiveProfile === "light"
             ? input.config.agents.quickWorker
             : input.config.agents.worker;
     return {
-        version: 1,
         requestId: input.requestId,
+        ownerRunId: input.ownerRunId,
+        nodeId: input.nodeId,
         agent,
         task: [
             "Implement the following approved task and no other scope.",
@@ -194,18 +176,19 @@ export function buildWorkerRequest(
             ? {}
             : { model: input.config.models.worker }),
         timeoutMs: input.config.timeoutsMs.worker,
-        acceptance: workerAcceptance(input.task),
         artifacts: true,
+        result: { kind: "text" },
     };
 }
 
 export function buildAssessmentRequest(
     input: AssessmentRequestInput,
-): SubagentDelegationRequest {
+): SddDelegationRequest {
     assertRepairWithinLimit(input.repair, input.config);
     return {
-        version: 1,
         requestId: input.requestId,
+        ownerRunId: input.ownerRunId,
+        nodeId: input.nodeId,
         agent: input.config.agents.assessor,
         task: [
             "Assess the compiled SDD plan as a read-only complexity and risk assessor.",
@@ -226,8 +209,8 @@ export function buildAssessmentRequest(
             ? {}
             : { model: input.config.models.assessor }),
         timeoutMs: input.config.timeoutsMs.assessor,
-        acceptance: false,
         artifacts: true,
+        result: { kind: "structured", schema: AssessmentSchema },
     };
 }
 
@@ -250,7 +233,7 @@ const REVIEW_FOCUS: Record<ReviewStage, string> = {
 
 export function buildReviewRequest(
     input: ReviewRequestInput,
-): SubagentDelegationRequest {
+): SddDelegationRequest {
     assertRepairWithinLimit(input.repair, input.config);
     if (
         input.repair &&
@@ -262,14 +245,13 @@ export function buildReviewRequest(
         );
     }
     const agentKey = REVIEW_AGENT[input.stage];
-    const implementationEvidence = input.implementationResponse.output
-        ? `Implementation output:\n${input.implementationResponse.output}`
-        : `Implementation outputPath: ${
-              input.implementationResponse.outputPath ?? "(not reported)"
-          }`;
+    const implementationEvidence = delegationOutput(
+        input.implementationResponse,
+    );
     return {
-        version: 1,
         requestId: input.requestId,
+        ownerRunId: input.ownerRunId,
+        nodeId: input.nodeId,
         agent: input.config.agents[agentKey],
         task: [
             "Read-only review. Never edit files.",
@@ -279,13 +261,7 @@ export function buildReviewRequest(
             "",
             approvedTaskContract(input.task),
             "",
-            implementationEvidence,
-            `Implementation outputPath: ${
-                input.implementationResponse.outputPath ?? "(not reported)"
-            }`,
-            `Implementation sessionFile (evidence only): ${
-                input.implementationResponse.sessionFile ?? "(not reported)"
-            }`,
+            `Implementation result:\n${implementationEvidence ?? "(not reported)"}`,
             `Required schema: ${JSON.stringify(ReviewSchema)}`,
             "",
             "Evidence must be non-empty.",
@@ -306,18 +282,16 @@ export function buildReviewRequest(
             ? {}
             : { model: input.config.models[agentKey] }),
         timeoutMs: input.config.timeoutsMs.reviewer,
-        acceptance: false,
         artifacts: true,
+        result: { kind: "structured", schema: ReviewSchema },
     };
 }
 
 export function buildCorrectionRequest(
     input: CorrectionRequestInput,
-): SubagentDelegationRequest {
+): SddDelegationRequest {
     const request = buildWorkerRequest(input);
-    const priorOutput = input.priorResponse.output
-        ? `Prior response output:\n${input.priorResponse.output}`
-        : `Prior response outputPath: ${input.priorResponse.outputPath ?? "(not reported)"}`;
+    const priorOutput = delegationOutput(input.priorResponse);
     return {
         ...request,
         task: [
@@ -325,10 +299,7 @@ export function buildCorrectionRequest(
             "",
             approvedTaskContract(input.task),
             "",
-            priorOutput,
-            `Prior sessionFile (evidence only; never resume it): ${
-                input.priorResponse.sessionFile ?? "(not reported)"
-            }`,
+            `Prior response output:\n${priorOutput ?? "(not reported)"}`,
             `Schema-validated findings: ${JSON.stringify(input.findings)}`,
             `Changed files already reported: ${JSON.stringify(
                 input.reportedChangedFiles,

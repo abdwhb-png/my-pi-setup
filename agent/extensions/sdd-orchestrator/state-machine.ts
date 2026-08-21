@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { SddDelegationResponse } from "./delegation-contract.ts";
 import type { Review } from "./prompts.ts";
 import type { Profile } from "./types.ts";
 
@@ -35,62 +36,41 @@ export interface TaskSnapshot {
     reviewResults?: Record<string, Review>;
     appliedReviewRequestIds?: string[];
     directEvidence?: DirectEvidence;
+    verificationResults?: Record<string, TaskVerification>;
     recoveryChoice?: RecoveryChoice;
     terminalReason?: string;
 }
 
-export interface DelegationTerminalResponse {
-    version: 1;
-    requestId: string;
-    status:
+export interface VerificationCommandEvidence {
+    readonly id: string;
+    readonly command: string;
+    readonly cwd: string;
+    readonly timeoutMs: number;
+    readonly status:
         | "completed"
         | "failed"
         | "timed_out"
-        | "cancelled"
-        | "interrupted"
-        | "turn_budget_exhausted"
-        | "tool_budget_exhausted"
-        | "structured_output_failed"
-        | "acceptance_failed"
-        | "invalid_request"
-        | "unavailable_context";
-    error?: string;
-    runId?: string;
-    childIndex?: number;
-    agent?: string;
-    model?: string;
-    exitCode?: number;
-    output?: string;
-    outputPath?: string;
-    sessionFile?: string;
-    acceptance?: {
-        status:
-            | "pending"
-            | "not-required"
-            | "claimed"
-            | "attested"
-            | "checked"
-            | "verified"
-            | "review-required"
-            | "reviewed"
-            | "accepted"
-            | "rejected";
-        evidenceStatus:
-            | "pending"
-            | "not-required"
-            | "claimed"
-            | "attested"
-            | "checked"
-            | "verified"
-            | "rejected";
-        explicit: boolean;
-    };
-    turns?: number;
-    toolCount?: number;
-    durationMs?: number;
-    tokens?: number;
-    warnings?: string[];
+        | "signaled"
+        | "invalid_output"
+        | "not_run";
+    readonly exitCode: number | null;
+    readonly signal?: null;
+    /** Redacted, bounded preview. Raw command output is never persisted. */
+    readonly outputPreview: string;
+    /** SHA-256 of the raw runner output, retained for durable correlation. */
+    readonly outputSha256: string;
+    /** Total raw stdout/stderr byte length before redaction. */
+    readonly outputLength: number;
+    readonly truncated: boolean;
 }
+
+export interface TaskVerification {
+    readonly responseRequestId: string;
+    readonly status: "passed" | "failed";
+    readonly commands: readonly VerificationCommandEvidence[];
+}
+
+export type DelegationTerminalResponse = SddDelegationResponse;
 
 export interface DirectEvidence {
     changedFiles: readonly string[];
@@ -274,6 +254,12 @@ export type RunEvent =
           evidence: DirectEvidence;
       }
     | {
+          type: "verification-recorded";
+          expectedRevision: number;
+          taskId: string;
+          verification: TaskVerification;
+      }
+    | {
           type: "recovery-attestation-applied";
           expectedRevision: number;
           taskId: string;
@@ -316,7 +302,9 @@ const TASK_TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
     implementing: ["reviewing", "needs_input", "failed", "cancelled"],
     reviewing: ["fixing", "verified", "needs_input", "failed", "cancelled"],
     fixing: ["reviewing", "needs_input", "failed", "cancelled"],
-    verified: [],
+    // A persisted delegated verification may be revoked only when recovery
+    // detects that its mandatory local proof is absent or corrupt.
+    verified: ["needs_input", "failed"],
     needs_input: [],
     failed: [],
     cancelled: [],
@@ -356,6 +344,22 @@ export function transition(
         if (existing) {
             if (JSON.stringify(existing) !== JSON.stringify(event.review)) {
                 throw new Error(`Review result conflict: ${event.requestId}.`);
+            }
+            return snapshot;
+        }
+    }
+    if (event.type === "verification-recorded") {
+        const existing =
+            snapshot.tasks[event.taskId]?.verificationResults?.[
+                event.verification.responseRequestId
+            ];
+        if (existing) {
+            if (
+                JSON.stringify(existing) !== JSON.stringify(event.verification)
+            ) {
+                throw new Error(
+                    `Verification result conflict: ${event.verification.responseRequestId}.`,
+                );
             }
             return snapshot;
         }
@@ -716,6 +720,31 @@ export function transition(
         };
     }
 
+    if (event.type === "verification-recorded") {
+        const task = snapshot.tasks[event.taskId];
+        if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
+        if (!task.terminalResponses?.[event.verification.responseRequestId]) {
+            throw new Error(
+                `Verification response is not persisted: ${event.verification.responseRequestId}.`,
+            );
+        }
+        return {
+            ...snapshot,
+            revision: snapshot.revision + 1,
+            tasks: {
+                ...snapshot.tasks,
+                [event.taskId]: {
+                    ...task,
+                    verificationResults: {
+                        ...task.verificationResults,
+                        [event.verification.responseRequestId]:
+                            event.verification,
+                    },
+                },
+            },
+        };
+    }
+
     if (event.type === "recovery-attestation-applied") {
         const task = snapshot.tasks[event.taskId];
         if (!task) throw new Error(`Unknown task: ${event.taskId}.`);
@@ -764,12 +793,11 @@ export function transition(
                 `Recovery stage ${event.choice.stage} is invalid for ${event.profile}.`,
             );
         }
-        const taskState: TaskState =
-            event.choice.stage === "combined" ||
-            event.choice.stage === "quality" ||
-            event.profile === "light"
-                ? "verified"
-                : "reviewing";
+        // An attestation records operator evidence about an uncertain child; it
+        // is never a substitute for the local task.verify proof required to
+        // reach verified. Reconciliation will either consume canonical proof
+        // or return the task to needs_input.
+        const taskState: TaskState = "reviewing";
         const recoveryEvidence = [
             `Recovery attested by ${event.choice.authorizedBy}; binding ${event.choice.digest}.`,
         ];

@@ -10,10 +10,12 @@ import {
     SUBAGENT_DELEGATION_RESPONSE_EVENT,
     SUBAGENT_DELEGATION_STARTED_EVENT,
     SUBAGENT_DELEGATION_UPDATE_EVENT,
-    type SubagentDelegationRequest,
-    type SubagentDelegationResponse,
 } from 'pi-subagents/delegation';
 import type { SddConfig } from './config.ts';
+import type {
+    SddDelegationRequest as SubagentDelegationRequest,
+    SddDelegationResponse,
+} from './delegation-contract.ts';
 import { DelegationClient, type EventBus } from './delegation-client.ts';
 import type { ApprovedManifest, DraftManifest } from './manifest.ts';
 import { registerSddExtension } from './index.ts';
@@ -59,9 +61,60 @@ function testWorkspace() {
     };
 }
 
+function persistedPassedVerification(responseRequestId: string, cwd: string) {
+    return {
+        responseRequestId,
+        status: 'passed' as const,
+        commands: [
+            {
+                id: 'test',
+                command: 'true',
+                cwd,
+                timeoutMs: 600_000,
+                status: 'completed' as const,
+                exitCode: 0,
+                outputPreview: 'pass',
+                outputSha256: createHash('sha256').update('pass').digest('hex'),
+                outputLength: 4,
+                truncated: false,
+            },
+        ],
+    };
+}
+
+const successfulVerificationRunner = {
+    async run() {
+        return {
+            status: 'completed' as const,
+            exitCode: 0,
+            output: 'pass',
+            outputSha256: createHash('sha256').update('pass').digest('hex'),
+            outputBytes: 4,
+            truncated: false,
+        };
+    },
+};
+
 type ResponseFactory = (
     request: SubagentDelegationRequest,
-) => SubagentDelegationResponse;
+) => SddDelegationResponse;
+
+function normalizeResponse(
+    request: SubagentDelegationRequest,
+    response: SddDelegationResponse,
+): SddDelegationResponse {
+    const result =
+        response.result ??
+        (response.output === undefined
+            ? undefined
+            : { kind: 'text' as const, text: response.output });
+    return {
+        ...response,
+        ownerRunId: response.ownerRunId ?? request.ownerRunId,
+        nodeId: response.nodeId ?? request.nodeId,
+        ...(result ? { result } : {}),
+    };
+}
 
 class ScriptedEventBus implements EventBus {
     readonly requests: SubagentDelegationRequest[] = [];
@@ -87,7 +140,10 @@ class ScriptedEventBus implements EventBus {
         );
         if (index < 0) throw new Error(`Request is not held: ${requestId}.`);
         const [request] = this.heldRequests.splice(index, 1);
-        this.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, response(request!));
+        this.emit(
+            SUBAGENT_DELEGATION_RESPONSE_EVENT,
+            normalizeResponse(request!, response(request!)),
+        );
     }
 
     on(channel: string, handler: (data: unknown) => void): () => void {
@@ -112,19 +168,24 @@ class ScriptedEventBus implements EventBus {
             throw new Error(`No response scripted for ${request.agent}.`);
         }
         this.emit(SUBAGENT_DELEGATION_STARTED_EVENT, {
-            version: 1,
             requestId: request.requestId,
+            ownerRunId: request.ownerRunId,
+            nodeId: request.nodeId,
         });
         this.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, {
-            version: 1,
             requestId: request.requestId,
+            ownerRunId: request.ownerRunId,
+            nodeId: request.nodeId,
             currentTool: 'read',
         });
         if (response === null) {
             this.heldRequests.push(request);
             return;
         }
-        this.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, response(request));
+        this.emit(
+            SUBAGENT_DELEGATION_RESPONSE_EVENT,
+            normalizeResponse(request, response(request)),
+        );
     }
 }
 
@@ -298,7 +359,7 @@ function plan(taskId: string): string {
 ### Task 1: Direct task
 
 ~~~sdd-task
-{"id":"${taskId}","dependsOn":[],"files":["src/${taskId}.ts"],"verify":[{"id":"test","command":"bun test ${taskId}"}]}
+{"id":"${taskId}","dependsOn":[],"files":["src/${taskId}.ts"],"verify":[{"id":"test","command":"true"}]}
 ~~~
 
 Implement the direct task.
@@ -336,7 +397,7 @@ function approvedStandardManifest(
                 signals: ['public_contract'],
                 dependencies: [],
                 files: ['src/task-1.ts'],
-                verify: [{ id: 'test', command: 'bun test task-1' }],
+                verify: [{ id: 'test', command: 'true' }],
                 budgets: {
                     initialWorkers: 1,
                     correctionWorkers: 1,
@@ -383,7 +444,7 @@ function dependencyPlan(): string {
 ### Task 1: Root one
 
 ~~~sdd-task
-{"id":"task-1","dependsOn":[],"files":["src/root-1.ts"],"verify":[{"id":"test-1","command":"bun test root-1"}]}
+{"id":"task-1","dependsOn":[],"files":["src/root-1.ts"],"verify":[{"id":"test-1","command":"true"}]}
 ~~~
 
 Implement root one.
@@ -391,7 +452,7 @@ Implement root one.
 ### Task 2: Root two
 
 ~~~sdd-task
-{"id":"task-2","dependsOn":[],"files":["src/root-2.ts"],"verify":[{"id":"test-2","command":"bun test root-2"}]}
+{"id":"task-2","dependsOn":[],"files":["src/root-2.ts"],"verify":[{"id":"test-2","command":"true"}]}
 ~~~
 
 Implement root two.
@@ -399,7 +460,7 @@ Implement root two.
 ### Task 3: Dependent
 
 ~~~sdd-task
-{"id":"task-3","dependsOn":["task-1","task-2"],"files":["src/dependent.ts"],"verify":[{"id":"test-3","command":"bun test dependent"}]}
+{"id":"task-3","dependsOn":["task-1","task-2"],"files":["src/dependent.ts"],"verify":[{"id":"test-3","command":"true"}]}
 ~~~
 
 Implement the dependent task.
@@ -473,7 +534,7 @@ function legacyShapePlan(): string {
                     verify: [
                         {
                             id: `test-${ordinal}`,
-                            command: `bun test task-${ordinal}`,
+                            command: 'true',
                         },
                     ],
                 }),
@@ -565,7 +626,7 @@ async function runProfile(
         const workflow = new SddWorkflow(store, delegation, (runId) => {
             const manifest = store.loadManifest(runId);
             return manifest?.state === 'approved' ? manifest : null;
-        }, undefined, workspace);
+        }, undefined, workspace, successfulVerificationRunner);
         const pi = createFakePi();
         registerSddExtension(pi.api as never, {
             agentDir,
@@ -623,7 +684,7 @@ test('Direct uses no execution child and completes only after exact evidence', a
         const workflow = new SddWorkflow(store, delegation, (runId) => {
             const manifest = store.loadManifest(runId);
             return manifest?.state === 'approved' ? manifest : null;
-        });
+        }, undefined, undefined, successfulVerificationRunner);
         const pi = createFakePi();
         registerSddExtension(pi.api as never, {
             agentDir,
@@ -709,49 +770,35 @@ test('Direct uses no execution child and completes only after exact evidence', a
     }
 });
 
-test('Light, Standard, and Critical honor their exact correction-path ceilings', async () => {
-    const light = await runProfile(
-        'light',
-        ['isolated_scope', 'clear_requirements', 'existing_test_pattern'],
-        [acceptedWorker('light implementation')],
-    );
-    expect(light.snapshot).toMatchObject({
-        state: 'completed',
-        tasks: {
-            'task-1': { state: 'verified', launches: 1, maxLaunches: 1 },
-        },
-    });
-    expect(light.requests.slice(1).map((request) => request.agent)).toEqual([
-        'quick-worker',
-    ]);
-
-    const standard = await runProfile(
-        'standard',
-        ['public_contract'],
-        [
+const profileCeilingCases = [
+    {
+        profile: 'light' as const,
+        signals: ['isolated_scope', 'clear_requirements', 'existing_test_pattern'],
+        executions: () => [acceptedWorker('light implementation')],
+        launches: 1,
+        agents: ['quick-worker'],
+    },
+    {
+        profile: 'standard' as const,
+        signals: ['public_contract'],
+        executions: () => [
             acceptedWorker('initial implementation'),
             review('task-1', 'combined', 'changes_required'),
             acceptedWorker('corrected implementation'),
             review('task-1', 'combined', 'pass'),
         ],
-    );
-    expect(standard.snapshot).toMatchObject({
-        state: 'completed',
-        tasks: {
-            'task-1': { state: 'verified', launches: 4, maxLaunches: 4 },
-        },
-    });
-    expect(standard.requests.slice(1).map((request) => request.agent)).toEqual([
-        'sdd-worker',
-        'sdd-combined-reviewer',
-        'sdd-worker',
-        'sdd-combined-reviewer',
-    ]);
-
-    const critical = await runProfile(
-        'critical',
-        ['concurrency_or_processes'],
-        [
+        launches: 4,
+        agents: [
+            'sdd-worker',
+            'sdd-combined-reviewer',
+            'sdd-worker',
+            'sdd-combined-reviewer',
+        ],
+    },
+    {
+        profile: 'critical' as const,
+        signals: ['concurrency_or_processes'],
+        executions: () => [
             acceptedWorker('initial implementation'),
             review('task-1', 'spec', 'changes_required'),
             acceptedWorker('spec correction'),
@@ -761,24 +808,45 @@ test('Light, Standard, and Critical honor their exact correction-path ceilings',
             review('task-1', 'quality', 'pass'),
             integrationPass(),
         ],
-    );
-    expect(critical.snapshot).toMatchObject({
-        state: 'completed',
-        tasks: {
-            'task-1': { state: 'verified', launches: 7, maxLaunches: 7 },
-        },
-    });
-    expect(critical.requests.slice(1).map((request) => request.agent)).toEqual([
-        'sdd-worker',
-        'sdd-spec-reviewer',
-        'sdd-worker',
-        'sdd-spec-reviewer',
-        'sdd-quality-reviewer',
-        'sdd-worker',
-        'sdd-quality-reviewer',
-        'sdd-combined-reviewer',
-    ]);
-}, 15_000);
+        launches: 7,
+        agents: [
+            'sdd-worker',
+            'sdd-spec-reviewer',
+            'sdd-worker',
+            'sdd-spec-reviewer',
+            'sdd-quality-reviewer',
+            'sdd-worker',
+            'sdd-quality-reviewer',
+            'sdd-combined-reviewer',
+        ],
+    },
+];
+
+for (const profileCase of profileCeilingCases) {
+    test(`${profileCase.profile} honors its exact correction-path ceiling`, async () => {
+        const result = await runProfile(
+            profileCase.profile,
+            profileCase.signals,
+            profileCase.executions(),
+        );
+        expect(result.snapshot).toMatchObject({
+            state: 'completed',
+            tasks: {
+                'task-1': {
+                    state: 'verified',
+                    launches: profileCase.launches,
+                    maxLaunches: profileCase.launches,
+                },
+            },
+        });
+        expect(result.requests.slice(1).map((request) => request.agent)).toEqual(
+            profileCase.agents,
+        );
+    // The Critical path launches eight serialized public-boundary requests;
+    // under repeated isolated load it measured 5.2s, while Light/Standard stay
+    // on Bun's default 5s guard.
+    }, profileCase.profile === 'critical' ? 10_000 : undefined);
+}
 
 test('worker and reviewer restart boundaries require explicit public-tool attestation', async () => {
     for (const boundary of ['worker', 'reviewer'] as const) {
@@ -821,7 +889,7 @@ test('worker and reviewer restart boundaries require explicit public-tool attest
                         signals: ['public_contract'],
                         dependencies: [],
                         files: ['src/task-1.ts'],
-                        verify: [{ id: 'test', command: 'bun test task-1' }],
+                        verify: [{ id: 'test', command: 'true' }],
                         budgets: {
                             initialWorkers: 1,
                             correctionWorkers: 1,
@@ -926,9 +994,6 @@ test('worker and reviewer restart boundaries require explicit public-tool attest
             ).rejects.toThrow('Recovery attestation is required.');
             expect(store.load(runId)?.state).toBe('needs_input');
 
-            if (boundary === 'worker') {
-                events.enqueue(review('task-1', 'combined', 'pass'));
-            }
             const result = await execute(
                 pi.tools,
                 'sdd_direct_complete',
@@ -944,28 +1009,40 @@ test('worker and reviewer restart boundaries require explicit public-tool attest
                 },
                 ctx,
             );
-            expect((result.details as { snapshot: RunSnapshot }).snapshot).toMatchObject({
-                state: 'completed',
-                tasks: {
-                    'task-1': {
-                        state: 'verified',
-                        recoveryChoice: {
-                            action: 'attest',
-                            confirmation: true,
-                            authorizedBy: 'operator',
-                            requestId,
-                            stage:
-                                boundary === 'worker' ? 'worker' : 'combined',
-                            priorReason: 'uncertain_foreground_delegation',
-                        },
-                    },
-                },
-            });
-            expect(events.requests.map((request) => request.requestId)).toEqual(
+            const recovered = (result.details as { snapshot: RunSnapshot })
+                .snapshot;
+            expect(recovered).toMatchObject(
                 boundary === 'worker'
-                    ? [`${runId}:task-1:combined:1`]
-                    : [],
+                    ? {
+                          state: 'needs_input',
+                          tasks: {
+                              'task-1': {
+                                  state: 'needs_input',
+                                  terminalReason:
+                                      'verification_missing_after_recovery',
+                              },
+                          },
+                      }
+                    : {
+                          state: 'needs_input',
+                          tasks: {
+                              'task-1': {
+                                  state: 'needs_input',
+                                  terminalReason:
+                                      'verification_missing_after_recovery',
+                              },
+                          },
+                      },
             );
+            expect(recovered.tasks['task-1']?.recoveryChoice).toMatchObject({
+                action: 'attest',
+                confirmation: true,
+                authorizedBy: 'operator',
+                requestId,
+                stage: boundary === 'worker' ? 'worker' : 'combined',
+                priorReason: 'uncertain_foreground_delegation',
+            });
+            expect(events.requests).toHaveLength(0);
         } finally {
             delegation.dispose();
             rmSync(agentDir, { recursive: true, force: true });
@@ -1023,7 +1100,6 @@ test('public recovery retries survive injected crashes after atomic save and con
                     },
                 },
             });
-            events.enqueue(review('task-1', 'combined', 'pass'));
             const workflow = new SddWorkflow(store, delegation, () => approved);
             const crashingPi = createFakePi();
             let injected = false;
@@ -1097,12 +1173,16 @@ test('public recovery retries survive injected crashes after atomic save and con
                 params,
                 ctx,
             );
-            expect((result.details as { snapshot: RunSnapshot }).snapshot.state).toBe(
-                'completed',
-            );
-            expect(events.requests.map((request) => request.requestId)).toEqual([
-                `${runId}:task-1:combined:1`,
-            ]);
+            expect((result.details as { snapshot: RunSnapshot }).snapshot).toMatchObject({
+                state: 'needs_input',
+                tasks: {
+                    'task-1': {
+                        state: 'needs_input',
+                        terminalReason: 'verification_missing_after_recovery',
+                    },
+                },
+            });
+            expect(events.requests).toHaveLength(0);
             expect(store.load(runId)?.revision).toBe(
                 (result.details as { snapshot: RunSnapshot }).snapshot.revision,
             );
@@ -1143,13 +1223,18 @@ test('persisted terminal restart continues exactly once from the next transition
                     maxLaunches: 4,
                     terminalResponses: {
                         [workerId]: acceptedWorker('persisted implementation')({
-                            version: 1,
                             requestId: workerId,
+                            ownerRunId: runId,
+                            nodeId: 'task-1:worker',
                             agent: 'worker',
                             task: 'persisted',
                             context: 'fresh',
                             cwd,
+                            result: { kind: 'text' },
                         }),
+                    },
+                    verificationResults: {
+                        [workerId]: persistedPassedVerification(workerId, cwd),
                     },
                 },
             },
@@ -1243,13 +1328,18 @@ test('post-apply pre-run restart continues from the durable reconciled snapshot'
                     maxLaunches: 4,
                     terminalResponses: {
                         [workerId]: acceptedWorker('persisted implementation')({
-                            version: 1,
                             requestId: workerId,
+                            ownerRunId: runId,
+                            nodeId: 'task-1:worker',
                             agent: 'worker',
                             task: 'persisted',
                             context: 'fresh',
                             cwd,
+                            result: { kind: 'text' },
                         }),
+                    },
+                    verificationResults: {
+                        [workerId]: persistedPassedVerification(workerId, cwd),
                     },
                     appliedResponseRequestIds: [workerId],
                 },
@@ -1295,7 +1385,7 @@ test('post-apply pre-run restart continues from the durable reconciled snapshot'
     }
 });
 
-test('review JSON repair stays inside Standard ceiling and terminal statuses fail closed', async () => {
+test('review JSON repair stays inside the Standard ceiling', async () => {
     const repaired = await runProfile(
         'standard',
         ['public_contract'],
@@ -1320,11 +1410,14 @@ test('review JSON repair stays inside Standard ceiling and terminal statuses fai
         'Return only corrected JSON',
     );
 
-    for (const status of [
-        'unavailable_context',
-        'timed_out',
-        'acceptance_failed',
-    ] as const) {
+});
+
+for (const status of [
+    'unavailable_context',
+    'timed_out',
+    'acceptance_failed',
+] as const) {
+    test(`Light ${status} terminal status fails closed`, async () => {
         const result = await runProfile(
             'light',
             ['isolated_scope', 'clear_requirements', 'existing_test_pattern'],
@@ -1343,8 +1436,8 @@ test('review JSON repair stays inside Standard ceiling and terminal statuses fai
                 },
             },
         });
-    }
-}, 15_000);
+    });
+}
 
 test('an exact worker BLOCKED result pauses the run for user input', async () => {
     const result = await runProfile(
@@ -1430,8 +1523,8 @@ test('assessor gets one repair and plan drift blocks public approval', async () 
     }
 });
 
-test('Critical downgrade gates only Light and Direct and persists the decision', async () => {
-    for (const target of ['standard', 'light', 'direct'] as const) {
+for (const target of ['standard', 'light', 'direct'] as const) {
+    test(`Critical downgrade to ${target} persists its exact decision`, async () => {
         const agentDir = mkdtempSync(join(tmpdir(), `sdd-${target}-agent-`));
         const cwd = mkdtempSync(join(tmpdir(), `sdd-${target}-cwd-`));
         const events = new ScriptedEventBus();
@@ -1452,7 +1545,7 @@ test('Critical downgrade gates only Light and Direct and persists the decision',
             const workflow = new SddWorkflow(store, delegation, (runId) => {
                 const manifest = store.loadManifest(runId);
                 return manifest?.state === 'approved' ? manifest : null;
-            }, undefined, workspace);
+            }, undefined, workspace, successfulVerificationRunner);
             const pi = createFakePi();
             registerSddExtension(pi.api as never, {
                 agentDir,
@@ -1562,11 +1655,11 @@ test('Critical downgrade gates only Light and Direct and persists the decision',
             rmSync(agentDir, { recursive: true, force: true });
             rmSync(cwd, { recursive: true, force: true });
         }
-    }
-});
+    });
+}
 
-test('two disjoint roots overlap only with approval and gate their dependent task', async () => {
-    for (const parallelismEnabled of [true, false]) {
+for (const parallelismEnabled of [true, false]) {
+    test(`disjoint roots ${parallelismEnabled ? 'overlap' : 'serialize'} by approval`, async () => {
         const agentDir = mkdtempSync(join(tmpdir(), 'sdd-parallel-agent-'));
         const cwd = mkdtempSync(join(tmpdir(), 'sdd-parallel-cwd-'));
         const events = new ScriptedEventBus();
@@ -1583,7 +1676,7 @@ test('two disjoint roots overlap only with approval and gate their dependent tas
             const workflow = new SddWorkflow(store, delegation, (runId) => {
                 const manifest = store.loadManifest(runId);
                 return manifest?.state === 'approved' ? manifest : null;
-            }, undefined, workspace);
+            }, undefined, workspace, successfulVerificationRunner);
             const pi = createFakePi();
             registerSddExtension(pi.api as never, {
                 agentDir,
@@ -1666,8 +1759,8 @@ test('two disjoint roots overlap only with approval and gate their dependent tas
             rmSync(agentDir, { recursive: true, force: true });
             rmSync(cwd, { recursive: true, force: true });
         }
-    }
-});
+    });
+}
 
 test('duplicate and late terminal responses cannot change a cancelled public run', async () => {
     const agentDir = mkdtempSync(join(tmpdir(), 'sdd-cancel-agent-'));
@@ -1694,7 +1787,7 @@ test('duplicate and late terminal responses cannot change a cancelled public run
         const workflow = new SddWorkflow(store, delegation, (runId) => {
             const manifest = store.loadManifest(runId);
             return manifest?.state === 'approved' ? manifest : null;
-        }, undefined, workspace);
+        }, undefined, workspace, successfulVerificationRunner);
         const pi = createFakePi();
         registerSddExtension(pi.api as never, {
             agentDir,
@@ -1771,7 +1864,7 @@ test('eight-task legacy shape previews exactly 36 launches without a polling age
         const workflow = new SddWorkflow(store, delegation, (runId) => {
             const manifest = store.loadManifest(runId);
             return manifest?.state === 'approved' ? manifest : null;
-        });
+        }, undefined, undefined, successfulVerificationRunner);
         const pi = createFakePi();
         registerSddExtension(pi.api as never, {
             agentDir,

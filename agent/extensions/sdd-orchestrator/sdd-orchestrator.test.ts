@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
-import type { SubagentDelegationResponse } from 'pi-subagents/delegation';
+import type { SddDelegationResponse as SubagentDelegationResponse } from './delegation-contract.ts';
 import type { SddConfig } from './config.ts';
 import { SddActivityStore } from './activity-store.ts';
 import {
@@ -1569,12 +1569,14 @@ test('session shutdown and reload dispose delegation listeners and pending work'
         delegation: client,
     });
     const pending = client.run({
-        version: 1,
         requestId: 'shutdown-request',
+        ownerRunId: 'shutdown-run',
+        nodeId: 'shutdown-node',
         agent: 'worker',
         task: 'Wait for shutdown.',
         context: 'fresh',
         cwd,
+        result: { kind: 'text' },
     });
     const settled = pending.catch((error: unknown) => error);
     const shutdown = pi.handlers.get('session_shutdown')?.[0];
@@ -1758,12 +1760,11 @@ test('targeted status and result expose task, review, and acceptance evidence to
                 requestId: 'worker-1',
                 status: 'completed',
                 runId: 'child-1',
-                error: 'integration guard failed: expected isolated workspace',
-                acceptance: {
-                    status: 'verified',
-                    evidenceStatus: 'verified',
-                    explicit: true,
+                result: {
+                    kind: 'text',
+                    text: 'Implementation completed.',
                 },
+                error: 'integration guard failed: expected isolated workspace',
             },
         },
     };
@@ -1792,7 +1793,7 @@ test('targeted status and result expose task, review, and acceptance evidence to
             'task-1/combined: pass, findings 0, evidence 1',
         );
         expect(output).toContain(
-            'task-1: completed, acceptance verified, child child-1',
+            'task-1: completed, result text, child child-1',
         );
         expect(output).toContain(
             'error integration guard failed: expected isolated workspace',

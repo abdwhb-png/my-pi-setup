@@ -1,9 +1,11 @@
-import type {
-    SubagentDelegationResponse,
-    SubagentDelegationUpdate,
-} from "pi-subagents/delegation";
-
 import { sanitizeDisplayText } from "../_shared/redaction";
+import {
+    delegationOutput,
+    delegationUsage,
+    type SddDelegationResponse,
+    type SddDelegationStarted,
+    type SddDelegationUpdate,
+} from "./delegation-contract.ts";
 import type { ApprovedManifest } from "./manifest";
 import type { RunSnapshot, RunState, TaskState } from "./state-machine";
 import type {
@@ -25,7 +27,7 @@ export interface SddDelegationActivity {
     readonly agent: string;
     readonly model?: string;
     readonly phase: SddActivityPhase;
-    readonly status?: SubagentDelegationResponse["status"];
+    readonly status?: SddDelegationResponse["status"];
     readonly currentTool?: SddActivityTool;
     readonly recentTools: readonly SddActivityTool[];
     readonly recentOutputLines: readonly string[];
@@ -61,7 +63,7 @@ interface MutableDelegationActivity {
     agent: string;
     model?: string;
     phase: SddActivityPhase;
-    status?: SubagentDelegationResponse["status"];
+    status?: SddDelegationResponse["status"];
     currentTool?: SddActivityTool;
     recentTools: SddActivityTool[];
     recentOutputLines: string[];
@@ -117,7 +119,7 @@ function integrationState(snapshot: RunSnapshot): TaskState {
 }
 
 function sanitizedTools(
-    tools: SubagentDelegationUpdate["recentTools"],
+    tools: SddDelegationUpdate["recentTools"],
 ): SddActivityTool[] {
     const unique = new Map<string, SddActivityTool>();
     for (const tool of tools ?? []) {
@@ -279,7 +281,7 @@ export class SddActivityStore implements SddWorkflowObserver {
 
     onDelegationStarted(
         context: SddDelegationActivityContext,
-        event: Pick<SubagentDelegationResponse, "version" | "requestId">,
+        event: SddDelegationStarted,
     ): void {
         const activity = this.resolveActivity(context, event.requestId);
         if (!activity || activity.phase === "terminal") return;
@@ -290,7 +292,7 @@ export class SddActivityStore implements SddWorkflowObserver {
 
     onDelegationUpdate(
         context: SddDelegationActivityContext,
-        event: SubagentDelegationUpdate,
+        event: SddDelegationUpdate,
     ): void {
         const activity = this.resolveActivity(context, event.requestId);
         if (!activity || activity.phase === "terminal") return;
@@ -321,7 +323,7 @@ export class SddActivityStore implements SddWorkflowObserver {
 
     onDelegationFinished(
         context: SddDelegationActivityContext,
-        response: SubagentDelegationResponse,
+        response: SddDelegationResponse,
     ): void {
         const activity = this.resolveActivity(context, response.requestId);
         if (!activity || activity.phase === "terminal") return;
@@ -331,14 +333,16 @@ export class SddActivityStore implements SddWorkflowObserver {
             activity.agent = sanitizeDisplayText(response.agent);
         if (response.model)
             activity.model = sanitizeDisplayText(response.model);
-        if (response.durationMs !== undefined)
-            activity.durationMs = response.durationMs;
-        if (response.tokens !== undefined) activity.tokens = response.tokens;
-        if (response.toolCount !== undefined)
-            activity.toolCount = response.toolCount;
+        const usage = delegationUsage(response);
+        if (usage.durationMs !== undefined)
+            activity.durationMs = usage.durationMs;
+        if (usage.tokens !== undefined) activity.tokens = usage.tokens;
+        if (usage.toolCount !== undefined) activity.toolCount = usage.toolCount;
         activity.recentOutputLines = [
             ...activity.recentOutputLines,
-            ...sanitizedOutputLines(response.output ?? response.error),
+            ...sanitizedOutputLines(
+                delegationOutput(response) ?? response.error,
+            ),
         ].slice(-5);
         this.notify();
     }

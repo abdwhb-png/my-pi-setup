@@ -1,14 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
-import type { SubagentDelegationResponse } from 'pi-subagents/delegation';
 import type { Assessment } from './assessment.ts';
 import type { SddConfig } from './config.ts';
+import type { SddDelegationResponse } from './delegation-contract.ts';
 import type { ApprovedManifestTask } from './manifest.ts';
 import {
     buildAssessmentRequest,
-    buildBrowserRequest,
     buildCorrectionRequest,
-    buildQaRequest,
     buildReviewRequest,
     buildWorkerRequest,
     parseAssessmentResponse,
@@ -87,41 +85,28 @@ describe('buildWorkerRequest', () => {
     test('builds the bounded approved TDD task contract', () => {
         const request = buildWorkerRequest({
             requestId: 'run-1:task-6:worker:1',
+            ownerRunId: 'run-1',
+            nodeId: 'task-6:worker',
             cwd: '/repo',
             config,
             task: approvedTask,
         });
 
         expect(request).toMatchObject({
-            version: 1,
             requestId: 'run-1:task-6:worker:1',
+            ownerRunId: 'run-1',
+            nodeId: 'task-6:worker',
             agent: 'sdd-worker',
             model: 'worker-model',
             context: 'fresh',
             cwd: '/repo',
             timeoutMs: 2_700_000,
             artifacts: true,
-            acceptance: {
-                level: 'verified',
-                evidence: [
-                    'changed-files',
-                    'tests-added',
-                    'commands-run',
-                    'validation-output',
-                    'residual-risks',
-                ],
-                verify: approvedTask.verify,
-            },
+            result: { kind: 'text' },
         });
         expect(request).not.toHaveProperty('turnBudget');
         expect(request).not.toHaveProperty('toolBudget');
-        expect(request.acceptance).toHaveProperty('criteria', [
-            {
-                id: 'task-6',
-                must: approvedTask.description,
-                severity: 'required',
-            },
-        ]);
+        expect(request).not.toHaveProperty('acceptance');
         expect(request.task).toContain('Task ID: task-6');
         expect(request.task).toContain(approvedTask.description);
         for (const file of approvedTask.files) expect(request.task).toContain(file);
@@ -132,6 +117,8 @@ describe('buildWorkerRequest', () => {
     test('routes Light tasks to the quick worker', () => {
         const request = buildWorkerRequest({
             requestId: 'run-1:task-6:worker:1',
+            ownerRunId: 'run-1',
+            nodeId: 'task-6:worker',
             cwd: '/repo',
             config,
             task: { ...approvedTask, effectiveProfile: 'light' },
@@ -142,46 +129,9 @@ describe('buildWorkerRequest', () => {
     });
 });
 
-test('builds bounded QA and AXI-first browser validation requests', () => {
-    const task = {
-        ...approvedTask,
-        qa: [{ id: 'a11y', command: 'bun run test:a11y profile' }],
-        browser: [
-            {
-                id: 'save-profile',
-                baseUrl: 'http://app.local',
-                preconditions: ['Demo account exists'],
-                steps: ['Open profile', 'Save'],
-                expected: ['Success message'],
-            },
-        ],
-    };
-    const qa = buildQaRequest({
-        requestId: 'run-1:task-6:qa:1',
-        cwd: '/repo',
-        config,
-        task,
-    });
-    const browser = buildBrowserRequest({
-        requestId: 'run-1:browser:1',
-        cwd: '/repo',
-        config,
-        tasks: [task],
-        artifactDir: '/tmp/sdd-artifacts/run-1',
-        session: 'sdd-run-1-browser',
-    });
-
-    expect(qa.agent).toBe('sdd-qa-tester');
-    expect(qa.task).toContain('bun run test:a11y profile');
-    expect(browser.agent).toBe('browser-tester');
-    expect(browser.task).toContain('AXI-first');
-    expect(browser.task).toContain('sdd-run-1-browser');
-    expect(browser.task).toContain('/tmp/sdd-artifacts/run-1');
-});
-
 describe('buildCorrectionRequest', () => {
     test('starts a fresh bounded correction from explicit prior evidence', () => {
-        const response: SubagentDelegationResponse = {
+        const response: SddDelegationResponse = {
             version: 1,
             requestId: 'run-1:task-6:worker:1',
             status: 'completed',
@@ -201,6 +151,8 @@ describe('buildCorrectionRequest', () => {
 
         const request = buildCorrectionRequest({
             requestId: 'run-1:task-6:correction:1',
+            ownerRunId: 'run-1',
+            nodeId: 'task-6:correction',
             cwd: '/repo',
             config,
             task: approvedTask,
@@ -216,9 +168,7 @@ describe('buildCorrectionRequest', () => {
         expect(request).not.toHaveProperty('toolBudget');
         expect(request.task).toContain(approvedTask.description);
         expect(request.task).toContain(response.output!);
-        expect(request.task).toContain(response.sessionFile!);
-        expect(request.task).toContain('evidence only');
-        expect(request.task).toContain('never resume');
+        expect(request.task).not.toContain('sessionFile');
         expect(request.task).toContain(JSON.stringify(findings));
         expect(request.task).toContain('src/prompts.test.ts');
         expect(request.task).toContain('prompt-tests: pass');
@@ -474,6 +424,8 @@ describe('read-only request builders', () => {
     test('builds a fresh assessor request for the exact parsed tasks', () => {
         const request = buildAssessmentRequest({
             requestId: 'run-1:assessment:1',
+            ownerRunId: 'run-1:assessment',
+            nodeId: 'assessment',
             logicalJobId: 'run-1:assessment',
             cwd: '/repo',
             config,
@@ -482,15 +434,16 @@ describe('read-only request builders', () => {
         });
 
         expect(request).toMatchObject({
-            version: 1,
             requestId: 'run-1:assessment:1',
+            ownerRunId: 'run-1:assessment',
+            nodeId: 'assessment',
             agent: 'orchestration-assessor',
             model: 'assessor-model',
             context: 'fresh',
             cwd: '/repo',
             timeoutMs: 600_000,
-            acceptance: false,
             artifacts: true,
+            result: { kind: 'structured' },
         });
         expect(request).not.toHaveProperty('turnBudget');
         expect(request).not.toHaveProperty('toolBudget');
@@ -503,6 +456,8 @@ describe('read-only request builders', () => {
     test('builds a fresh read-only reviewer request for its exact stage', () => {
         const request = buildReviewRequest({
             requestId: 'run-1:task-6:spec:1',
+            ownerRunId: 'run-1',
+            nodeId: 'task-6:spec',
             logicalJobId: 'run-1:task-6:spec',
             cwd: '/repo',
             config,
@@ -518,15 +473,16 @@ describe('read-only request builders', () => {
         });
 
         expect(request).toMatchObject({
-            version: 1,
             requestId: 'run-1:task-6:spec:1',
+            ownerRunId: 'run-1',
+            nodeId: 'task-6:spec',
             agent: 'sdd-spec-reviewer',
             model: 'spec-model',
             context: 'fresh',
             cwd: '/repo',
             timeoutMs: 900_000,
-            acceptance: false,
             artifacts: true,
+            result: { kind: 'structured' },
         });
         expect(request).not.toHaveProperty('turnBudget');
         expect(request).not.toHaveProperty('toolBudget');
@@ -558,6 +514,8 @@ describe('read-only request builders', () => {
         };
         const assessmentRequest = buildAssessmentRequest({
             requestId: 'run-1:assessment:repair:1',
+            ownerRunId: 'run-1:assessment',
+            nodeId: 'assessment',
             logicalJobId: 'run-1:assessment',
             cwd: '/repo',
             config,
@@ -575,6 +533,8 @@ describe('read-only request builders', () => {
         expect(() =>
             buildAssessmentRequest({
                 requestId: 'run-1:assessment:repair:2',
+                ownerRunId: 'run-1:assessment',
+                nodeId: 'assessment',
                 logicalJobId: 'run-1:assessment',
                 cwd: '/repo',
                 config,
@@ -586,6 +546,8 @@ describe('read-only request builders', () => {
 
         const reviewInput = {
             requestId: 'run-1:task-6:spec:repair:1',
+            ownerRunId: 'run-1',
+            nodeId: 'task-6:spec',
             logicalJobId: 'run-1:task-6:spec',
             cwd: '/repo',
             config,
@@ -660,9 +622,7 @@ describe('read-only agent contracts', () => {
         for (const [name, focus] of Object.entries(contracts)) {
             const agent = readAgent(name);
             expect(agent).toContain(`name: ${name}`);
-            expect(agent).toContain(
-                "tools: '@inspect, @lens-inspect, safe_bash'",
-            );
+            expect(agent).toContain('@inspect, @lens-inspect, safe_bash');
             expect(agent).toContain('defaultContext: fresh');
             expect(agent).toContain('acceptanceRole: read-only');
             expect(agent).toContain('completionGuard: false');
@@ -689,7 +649,7 @@ describe('read-only agent contracts', () => {
         const agent = readAgent('sdd-qa-tester');
 
         expect(agent).toContain('name: sdd-qa-tester');
-        expect(agent).toContain('description: Read-only QA execution tester');
+        expect(agent).toContain('description: SDD QA execution tester (NO-IMPLEMENTATION)');
         expect(agent).toContain(
             "tools: '@inspect, @lens-inspect, safe_bash, write_report'",
         );
@@ -709,7 +669,7 @@ describe('read-only agent contracts', () => {
         );
         expect(agent).not.toContain('contact_supervisor');
         expect(agent).not.toContain('skills:');
-        expect(agent).toContain('only as listed');
+        expect(agent).toContain('Use only the listed tools.');
     });
 
     test('defines browser-tester as a fresh medium AXI-first read-only role', () => {
@@ -717,9 +677,7 @@ describe('read-only agent contracts', () => {
 
         expect(agent).toContain('name: browser-tester');
         expect(agent).toContain('description: Read-only browser validation tester');
-        expect(agent).toContain(
-            "tools: '@inspect, safe_bash, write_report'",
-        );
+        expect(agent).toContain('@inspect, safe_bash, write_report, contact_supervisor');
         expect(agent).toContain('skills: chrome-devtools-axi, agent-browser');
         expect(agent).toContain('thinking: medium');
         expect(agent).toContain('systemPromptMode: replace');
@@ -740,13 +698,15 @@ describe('read-only agent contracts', () => {
         );
         expect(agent).toContain('No prose');
         expect(agent).toContain('Do not edit');
-        expect(agent).not.toContain('contact_supervisor');
+        expect(agent).toContain('contact_supervisor');
         expect(agent).not.toContain('@lens-inspect');
     });
 
     test('lets the combined reviewer return the supplied integration stage', () => {
         const request = buildReviewRequest({
             requestId: 'run-1:integration:1',
+            ownerRunId: 'run-1',
+            nodeId: 'manifest:integration',
             logicalJobId: 'run-1:integration',
             cwd: '/repo',
             config,
@@ -779,9 +739,7 @@ describe('writer agent contracts', () => {
         expect(agent).toContain('thinking: medium');
         expect(agent).toContain('inheritProjectContext: true');
         expect(agent).toContain('defaultContext: fresh');
-        expect(agent).toContain(
-            'turnBudget: {"maxTurns":16,"graceTurns":4}',
-        );
+        expect(agent).toContain('turnBudget: { "maxTurns": 20, "graceTurns": 5 }');
         expect(agent).toContain('acceptanceRole: writer');
         expect(agent).not.toContain('contact_supervisor');
         expect(agent).toContain('DONE:');

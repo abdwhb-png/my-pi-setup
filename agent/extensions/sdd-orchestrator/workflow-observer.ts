@@ -1,8 +1,8 @@
 import type {
-    SubagentDelegationResponse,
-    SubagentDelegationUpdate,
-} from "pi-subagents/delegation";
-
+    SddDelegationResponse,
+    SddDelegationStarted,
+    SddDelegationUpdate,
+} from "./delegation-contract.ts";
 import type { RunSnapshot } from "./state-machine";
 
 export interface SddDelegationActivityContext {
@@ -20,14 +20,14 @@ export interface SddWorkflowObserver {
     onDelegationPrepared?(context: SddDelegationActivityContext): void;
     onDelegationStarted?(
         context: SddDelegationActivityContext,
-        event: Pick<SubagentDelegationResponse, "version" | "requestId">,
+        event: SddDelegationStarted,
     ): void;
     onDelegationUpdate?(
         context: SddDelegationActivityContext,
-        event: SubagentDelegationUpdate,
+        event: SddDelegationUpdate,
     ): void;
     onDelegationFinished?(
         context: SddDelegationActivityContext,
-        response: SubagentDelegationResponse,
+        response: SddDelegationResponse,
     ): void;
 }

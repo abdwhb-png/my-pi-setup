@@ -26,6 +26,7 @@ import {
 } from "./assessment-cache.ts";
 import { loadSddConfig, type SddConfig } from "./config.ts";
 import type { DelegationClient } from "./delegation-client.ts";
+import { delegationOutput } from "./delegation-contract.ts";
 import {
     applyApproval,
     approvalDecisionDigest,
@@ -566,6 +567,8 @@ async function assess(
             ) {
                 const request = buildAssessmentRequest({
                     requestId: `${logicalJobId}:${attempt + 1}`,
+                    ownerRunId: logicalJobId,
+                    nodeId: "assessment",
                     logicalJobId,
                     cwd: ctx.cwd,
                     config,
@@ -602,21 +605,16 @@ async function assess(
                     onStarted: progressHooks.onStarted,
                     onUpdate: progressHooks.onUpdate,
                 });
-                if (
-                    response.status !== "completed" ||
-                    response.output === undefined
-                ) {
+                const output = delegationOutput(response);
+                if (response.status !== "completed" || output === undefined) {
                     throw new Error(
                         `Assessment delegation failed: ${response.status}${response.error ? `: ${response.error}` : ""}.`,
                     );
                 }
                 try {
-                    return parseAssessmentResponse(
-                        response.output,
-                        expectedTaskIds,
-                    );
+                    return parseAssessmentResponse(output, expectedTaskIds);
                 } catch (error) {
-                    originalOutput = response.output;
+                    originalOutput = output;
                     validationError =
                         error instanceof Error ? error.message : String(error);
                     if (attempt === config.structuredOutputRetries) throw error;
@@ -964,9 +962,8 @@ function observeRun(
     const blockedOutput = Object.values(snapshot.tasks)
         .filter((task) => task.terminalReason === "worker_blocked")
         .flatMap((task) => Object.values(task.terminalResponses ?? {}))
-        .findLast((response) =>
-            /^BLOCKED:\s+\S/.test(response.output?.trimStart() ?? ""),
-        )?.output;
+        .map((response) => delegationOutput(response))
+        .findLast((output) => /^BLOCKED:\s+\S/.test(output?.trimStart() ?? ""));
     return {
         manifest,
         snapshot,
@@ -1030,10 +1027,9 @@ function observeRun(
                     requestId: response.requestId,
                     status: response.status,
                     childRunId: response.runId,
-                    acceptance: response.acceptance,
                     error: response.error,
-                    outputPath: response.outputPath,
-                    sessionFile: response.sessionFile,
+                    resultKind: response.result?.kind,
+                    usage: response.usage,
                 }),
             ),
         ),
@@ -1119,11 +1115,11 @@ export function renderRunObservation(
                       `- ${review.taskId}/${review.stage}: ${verdictColor(theme, review.verdict, review.verdict)}, findings ${review.findings.length}, evidence ${review.evidence.length}`,
               )
             : ["- none"]),
-        "acceptance:",
+        "delegation results:",
         ...(observation.acceptanceEvidence.length
             ? observation.acceptanceEvidence.map(
                   (evidence) =>
-                      `- ${evidence.taskId}: ${evidence.status}, acceptance ${evidence.acceptance?.status ?? "not_reported"}, child ${evidence.childRunId ?? "not_reported"}${evidence.error ? `, error ${boundedDisplay(evidence.error)}` : ""}`,
+                      `- ${evidence.taskId}: ${evidence.status}, result ${evidence.resultKind ?? "not_reported"}, child ${evidence.childRunId ?? "not_reported"}${evidence.error ? `, error ${boundedDisplay(evidence.error)}` : ""}`,
               )
             : ["- none"]),
     ];
@@ -1637,7 +1633,10 @@ export function registerSddExtension(
             ) {
                 continue;
             }
-            const reconciled = runtime.workflow.reconcile(snapshot.runId);
+            const reconciled = runtime.workflow.reconcile(
+                snapshot.runId,
+                ctx.cwd,
+            );
             const manifest = runtime.store.loadManifest(snapshot.runId);
             if (manifest?.state === "approved") {
                 liveUi.track(ctx, manifest, reconciled, true);
