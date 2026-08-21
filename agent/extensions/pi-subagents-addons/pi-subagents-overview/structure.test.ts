@@ -3,12 +3,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import registerSubagentsAddons from '../index.ts';
+import { resolvePiSubagentsPackageRoot } from './package-path';
 
 const EXTENSIONS_DIR = path.resolve(import.meta.dir, '..', '..');
 const ADDONS_DIR = path.resolve(import.meta.dir, '..');
 
 describe('pi-subagents-addons discovery contract', () => {
-    it('loads the overview once through the sole aggregate entrypoint', () => {
+    it('keeps the disabled overview behind the sole aggregate entrypoint', () => {
         const commands: string[] = [];
         const renderers: string[] = [];
         const pi = {
@@ -20,9 +21,8 @@ describe('pi-subagents-addons discovery contract', () => {
 
         registerSubagentsAddons(pi);
 
-        expect(commands.filter((name) => name === 'subagents-overview')).toHaveLength(1);
-        expect(commands.filter((name) => name === 'subagent-view')).toHaveLength(1);
-        expect(renderers.filter((name) => name === 'pi-subagents-overview')).toHaveLength(1);
+        expect(commands).toEqual([]);
+        expect(renderers).toEqual([]);
 
         const manifest = JSON.parse(
             fs.readFileSync(path.join(ADDONS_DIR, 'package.json'), 'utf8'),
@@ -34,25 +34,27 @@ describe('pi-subagents-addons discovery contract', () => {
     });
 
     it('uses the Pi-managed pi-subagents version exposing fleetStatus', () => {
-        const npmDir = path.resolve(EXTENSIONS_DIR, '..', 'npm');
-        const manifest = JSON.parse(
-            fs.readFileSync(path.join(npmDir, 'package.json'), 'utf8'),
-        ) as { dependencies?: Record<string, string> };
+        const agentDir = path.resolve(EXTENSIONS_DIR, '..');
+        const packageRoot = resolvePiSubagentsPackageRoot();
+        const settings = JSON.parse(
+            fs.readFileSync(path.join(agentDir, 'settings.json'), 'utf8'),
+        ) as { packages?: string[] };
         const installed = JSON.parse(
             fs.readFileSync(
-                path.join(npmDir, 'node_modules', 'pi-subagents', 'package.json'),
+                path.join(packageRoot, 'package.json'),
                 'utf8',
             ),
         ) as { version?: string };
-        const readme = fs.readFileSync(
-            path.join(npmDir, 'node_modules', 'pi-subagents', 'README.md'),
+        const extensionApi = fs.readFileSync(
+            path.join(packageRoot, 'docs', 'extension-api.md'),
             'utf8',
         );
-        const requestedRange = manifest.dependencies?.['pi-subagents'];
 
-        expect(requestedRange).toBeDefined();
+        expect(settings.packages).toContain(
+            'git:github.com/abdwhb-png/pi-subagents@compat/pi-084',
+        );
         expect(installed.version).toBeDefined();
-        expect(Bun.semver.satisfies(installed.version!, requestedRange!)).toBe(true);
-        expect(readme).toContain('ping.capabilities.fleetStatus');
+        expect(installed.version).toBe('0.53.0');
+        expect(extensionApi).toContain('ping.capabilities.fleetStatus');
     });
 });

@@ -10,6 +10,7 @@ import type {
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { resolveToolAliases } from '../../_shared/tool-groups/resolver';
 import registerSubagentsOverview from './index';
+import { resolvePiSubagentsPackageRoot } from './package-path';
 import { AgentDetailView, icon, SubagentsOverviewView } from './ui';
 
 const HOME = homedir();
@@ -321,20 +322,13 @@ describe('pi-subagents-overview', () => {
         const builtinNames = [
             'scout',
             'researcher',
-            'planner',
             'worker',
             'reviewer',
-            'context-builder',
             'oracle',
             'delegate',
         ];
         const BUILTIN_AGENTS_DIR = path.join(
-            HOME,
-            '.pi',
-            'agent',
-            'npm',
-            'node_modules',
-            'pi-subagents',
+            resolvePiSubagentsPackageRoot(),
             'agents',
         );
 
@@ -395,12 +389,7 @@ describe('pi-subagents-overview', () => {
             const overrideCount = Object.keys(overrides).length;
 
             const BUILTIN_AGENTS_DIR = path.join(
-                HOME,
-                '.pi',
-                'agent',
-                'npm',
-                'node_modules',
-                'pi-subagents',
+                resolvePiSubagentsPackageRoot(),
                 'agents',
             );
             const builtinCount = fs

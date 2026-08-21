@@ -32,6 +32,7 @@ import { createWidget } from "../../_shared/fancy-footer";
 import type { AsyncLiveRun, LiveRunSnapshot } from "./fleet-store.ts";
 import { SubagentsLiveRuntime } from "./live-runtime.ts";
 import { hasVisibleLiveRuns, renderLiveWidget } from "./live-ui.ts";
+import { resolvePiSubagentsPackageRoot } from "./package-path.ts";
 import {
     icon,
     SubagentsOverviewView,
@@ -79,15 +80,7 @@ interface AgentOverride {
 const HOME = homedir();
 const SETTINGS_PATH = path.join(HOME, ".pi", "agent", "settings.json");
 const USER_AGENTS_DIR = path.join(HOME, ".pi", "agent", "agents");
-const BUILTIN_AGENTS_DIR = path.join(
-    HOME,
-    ".pi",
-    "agent",
-    "npm",
-    "node_modules",
-    "pi-subagents",
-    "agents",
-);
+const BUILTIN_AGENTS_DIR = path.join(resolvePiSubagentsPackageRoot(), "agents");
 const SKILLS_DIR = path.join(HOME, ".agents", "skills");
 
 // ── Frontmatter Parsing ────────────────────────────────

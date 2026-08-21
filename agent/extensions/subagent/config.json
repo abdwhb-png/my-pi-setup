@@ -1,5 +1,5 @@
 {
-    "fleetView": false,
+    "fleetView": true,
     "asyncWidget": false,
     "intercomBridge": {
         "mode": "fork-only"
