@@ -176,6 +176,7 @@ export function savePlan(
 export function readPlan(
     cwd: string,
     topic: string,
+    version?: number,
 ): { content: string; version: number } | undefined {
     const slug = slugify(topic);
     const plansRoot = join(cwd, PLAN_ROOT);
@@ -197,18 +198,24 @@ export function readPlan(
     const manifest = readManifestSafe(manifestPath);
     if (!manifest || manifest.versions.length === 0) return undefined;
 
-    const latestEntry = manifest.versions[manifest.versions.length - 1];
+    const targetEntry =
+        version != null
+            ? manifest.versions.find((v) => v.version === version)
+            : manifest.versions[manifest.versions.length - 1];
+
+    if (!targetEntry) return undefined;
+
     const versionPath = join(
         plansRoot,
         matchingDir,
-        versionFileName(latestEntry.version),
+        versionFileName(targetEntry.version),
     );
 
     if (!existsSync(versionPath)) return undefined;
 
     return {
         content: readFileSync(versionPath, "utf8"),
-        version: latestEntry.version,
+        version: targetEntry.version,
     };
 }
 
