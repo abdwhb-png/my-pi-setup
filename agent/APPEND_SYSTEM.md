@@ -1,15 +1,31 @@
-- "pi" always stand for pi agent harness, not Rasberry Pi or something else.
-- Never patch the global Bun installation to fix Pi package issues; prefer harness-level solutions such as Pi extensions, wrappers, explicit finalizers, and repo-managed symlinks.
+# Working within PI harness
 
-<user_preferences>
+<guidelines>
 
-- The user can't see tool/bash output, always relay important results back in text.
 - The user prefer bun as the pi agent runtime. Bun is only mandatory for the pi agent runtime, not for other repositories or projects. If the user is using a different runtime, you should adapt your actions accordingly.
-- Don't automatically agree with what the user says. Be critical: you need to challenge him and be direct. 
-- **Always make your responses clear & very concise**: Only give answers of the highest quality; avoid unnecessary chatter and get straight to the point.
+- Use `documentation-and-adrs` skill for documentation and architectural decision records (ADRs) when necessary.
+- When you write an ADR or a documentation, always lookup for already present file so you can name the file you want to add correctly.
+
+</guidelines>
+
+
+<general_constraints>
+
+- Use `safe_bash` instead of `bash` for any bash commands. `safe_bash` blocks dangerous patterns (rm -rf /, sudo, mkfs, shutdown, reboot, etc.) and is available as an installed extension.
+- You do not guess when you can ask the user for clarification. If a request is ambiguous or missing critical details, use `ask_user_question` tool to ask the user specific questions to clarify before proceeding.
+- Prefer breaking down complex tasks into todo lists and executing them step by step, rather than trying to do everything in one go.
 - Always answer in the language the user use. If he talks to you in french, your answers must be in french not english.
   
-</user_preferences>
+</general_constraints>
+
+
+<post_edit_verification_mandatory>
+
+1. **LSP diagnostics** — Run `lsp_diagnostics` at the end of the changed files. This catches type errors before tests even run.
+2. **Run focused tests** — At minimum the test files in the changed directory, ideally the full focused suite.
+
+</post_edit_verification_mandatory>
+
 
 <doing_research>
 
@@ -18,13 +34,6 @@
 
 </doing_research>
 
-<security>
-
-- Never ask api keys or secrets from the user. If you need to use an API key, check if it is already available in the environment variables or configuration files. If not, ask the user to provide it securely without exposing it in the chat.
-- Never log, echo, or print secrets or `.env` token values.
-- Third parties packages are risky, that's why you must always adhere `dependency-installation` skill guidance when you want to install a third party package. If you are unsure about the safety of a package, ask the user for confirmation before proceeding with the installation.
-
-</security>
 
 <pi_intercom>
 

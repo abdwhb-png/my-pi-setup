@@ -1,46 +1,42 @@
-# .pi/agent/AGENTS.md
+# User Indications
 
-**Consider everything you know false until it is factually verified with supporting evidence.** You do not speculate, and you do not assume. You must always verify your assumptions, and if you cannot verify them, you must notify it.
+## General Instructions
 
-<general-constraints>
+- User prefer clear and concise communication. You must always follow the `concise-communication` skill instructions when communicating with the user. Avoid unnecessary chatter and get straight to the point.
+- Always follow `dependency-installation` skill instructions when installing new dependencies. Do not skip steps or make assumptions about the environment.
+- Never, absoluetly never spawn a subagent with a different model from the predefined agent models list unless explicit asked to do so by the user.
+- **Do not use sdd for implémentation unless directly instructed**: Spawn subagents without asking for confirmation only for exploration, research and video analysis.
 
-- You must always provide factual and accurate information. If you are unsure about something, search for reliable sources before providing an answer.
-- You do not guess when you can ask the user for clarification. If a request is ambiguous or missing critical details, use `ask_user_question` tool to ask the user specific questions to clarify before proceeding.
-- Always use `context7` mcp coupled with `deepwiki` mcp when you need library/API documentation, code generation, setup or configuration steps without having to explicitly ask.
-- Prefer breaking down complex tasks into todo lists and executing them step by step, rather than trying to do everything in one go.
-- Use `documentation-and-adrs` skill for documentation and architectural decision records (ADRs) when necessary.
-- When you write an ADR or a documentation, always lookup for already present file so you can name the file you want to add correctly.
-- Use the `factual-research` skill for factual research or delegate to researcher subagent when necessary.
-- Use `safe_bash` instead of `bash` for any bash commands. `safe_bash` blocks dangerous patterns (rm -rf /, sudo, mkfs, shutdown, reboot, etc.) and is available as an installed extension.
-- For Pi package debugging, always verify which concrete package root is actually resolved at runtime (`node_modules`, git clone, local path) before trusting an E2E result.
+## Stack preferences
 
-</general-constraints>
+These preferences are just preferences and must only be considered when choice is possible and a stack is not yet established in a project.
 
+- Typescript (version 7+ for performance) over simple JS/MJS. Always prefer strict type based coding.
+- Vite (version 8+ for performance)
 
 # Coding Instructions
 
 ## Working in typescript
 
 - when adding a package to a project add it with an install command, instead of manually editing the package json
-- run check/format/lint commands when your done making a change. if they don't exist, suggest making them for the project you're in
-- avoid running `dev` or `build` commands. if you really need to, ask first
+- Run check/format/lint commands when your done making a change. if they don't exist, suggest making them for the project you're in
+- Avoid running `build` commands like `npm run build` for each changes. Only build after a very substantial change to verify that the build succeeds.
 
 ## TDD
 
-**Test Driven Development (TDD) is mandatory for any code changes.** Follow the TDD cycle: Write a failing test → Write minimal code to pass the test → Refactor → Run the test suite to confirm all tests pass (follow `tdd` skill).
+**Test Driven Development (TDD) is mandatory for any production behavior change, bug fix, domain rule, or workflow transition.** Follow the TDD cycle: Write a failing test → Write minimal code to pass the test → Refactor → Run the test suite to confirm all tests pass (follow `tdd` skill).
+
+Documentation-only edits do not require a failing automated test. Pure tooling or configuration changes still require an executable before-and-after validation when feasible. If a production change genuinely cannot begin with an automated failing test, stop and obtain explicit user approval for the exception.
 
 ### Red-Green-Refactor
 
-- Always follow the `tdd` skill: RED (failing test) → GREEN (minimal code) → REFACTOR.
-- **NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST.**
-- Write one minimal test showing what should happen. Watch it fail for the right reason. Then write the minimal code to make it pass.
+Follow the `tdd` skill: RED (failing test) → GREEN (minimal code) → REFACTOR.
+Write one minimal test showing what should happen. Watch it fail for the right reason. Then write the minimal code to make it pass.
 
-## Post-edit verification (MANDATORY after every edit)
-
-1. **LSP diagnostics** — Run `lsp_diagnostics` at the end of the changed files. This catches type errors before tests even run.
-2. **Run focused tests** — At minimum the test files in the changed directory, ideally the full focused suite.
-
-These 2 steps MUST execute in Phase 3 (Verification) after all code changes. If a file has no test that imports it, that's a gap — add an import test.
+- Write one minimal test through the public boundary that should own the behavior.
+- Import the real production module. Mock only nondeterministic or external boundaries.
+- Observe the test fail for the expected missing behavior before changing production code.
+- Implement only what the failing test requires; never weaken a correct assertion to obtain green.
 
 ### Anti-Patterns (prohibited)
 
@@ -49,7 +45,9 @@ These 2 steps MUST execute in Phase 3 (Verification) after all code changes. If 
 3. **Testing pure helpers in isolation without testing the module that exports them** — The helpers are only useful if the consuming module loads correctly. Always have at least one test that imports the full module.
 4. **Detaching methods from class instances** (`const f = obj.method; f()`) — In TypeScript, class methods lose `this` when detached. Always call methods directly (`obj.method()`) or use arrow-function class fields. Tests must explicitly verify this pattern if a public API returns a method reference.
 
+## Security and Safety
 
-## Important Notes
-- Always follow `dependency-installation` skill instructions when installing new dependencies. Do not skip steps or make assumptions about the environment.
+- Never ask api keys or secrets from the user. If you need to use an API key, check if it is already available in the environment variables or configuration files. If not, ask the user to provide it securely without exposing it in the chat.
+- Never log, echo, or print secrets or `.env` token values.
+- Third parties packages are risky, that's why you must always adhere `dependency-installation` skill guidance when you want to install a third party package. If you are unsure about the safety of a package, ask the user for confirmation before proceeding with the installation.
 

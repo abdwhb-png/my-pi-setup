@@ -13,6 +13,8 @@ In order to help me at the best of your ability I never want you to guess anythi
 
 Any modifications you need to make should take into account that an LLM is not reliable, and it's better to use skills and tools that work programmatically rather than only relying on the LLM's judgment.
 
+**Consider everything you know false until it is factually verified with supporting evidence.** You do not speculate, and you do not assume. You must always verify your assumptions, and if you cannot verify them, you must notify it.
+
 ## Context about pi
 
 Always refer to the [ABOUT-PI.md](./docs/ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
@@ -26,12 +28,15 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 
 ## General Instructions
 
+- "pi" always stand for pi agent harness, not Rasberry Pi or something else.
+- Never patch the global Bun installation to fix Pi package issues; prefer harness-level solutions such as Pi extensions, wrappers, explicit finalizers, and repo-managed symlinks.
 - Always use `pi-extensions` skill for pi packages and extensions development.
 - Use the `pi-cli` skill for any questions regarding the `pi` command-line interface, flags, and automation.
 - Always provide factual and accurate information. If you are unsure about something, search for reliable sources before taking action or providing an answer.
+- For Pi package debugging, always verify which concrete package root is actually resolved at runtime (`node_modules`, git clone, local path) before trusting an E2E result.
 - **Portable home paths:** Persist and document paths under the user home as `~/…`; expand them with `homedir()` before filesystem or child-process I/O. Never hardcode `/home/<user>` in tracked files. Tests must use `homedir()` or disposable fixtures, never the real home directory.
 - **TUI keyboard input:** In `Component.handleInput()`, recognize every key supported by `@earendil-works/pi-tui` with `matchesKey()` and `Key` instead of comparing raw terminal strings or escape sequences. This applies to navigation, dismissal, and printable shortcuts (`Esc`, arrows, Page Up/Down, `q`, `j`, etc.). A raw comparison is allowed only when the installed Pi TUI API cannot represent the input; document that exception and test it explicitly. Any key that mutates visible component state must also call `tui.requestRender()`. Regression tests must exercise both legacy terminal sequences and Kitty CSI-u encodings for special/navigation keys and assert the observable render or close result.
-- When working with subagents, consider the agent/settings.json model setup as the source of truth for model configuration unless a model is factually unavailable in the harness.
+- When working on pi-subagents config, consider the agent/settings.json model setup as the source of truth for model configuration unless a model is factually unavailable in the harness.
 
 **NEVER SPECULATE ON PI TYPES**: Always refer to the pi types in the harness or in the pi packages. Never assume a type or a property exists without verifying it in the codebase. That ensure you always import the correct types or built a specific type for your needs based on pi's actual types. If you cannot find the type, ask `pi-expert` for clarification.
 
@@ -42,7 +47,6 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
   - Each project lives in its own subfolder, for example `~/projects/pi-integrations/my-extension/`.
   - Each subfolder is intended to become an independent Git repository.
   - The root of `pi-integrations` only holds the coordination layer (README, conventions, indexes, shared templates, and submodule entries).
-
 - `~/projects/shared-services/`: Infrastructure and infrastructure-adjacent services shared across projects (CLIProxy for model providers, compression benchmarks and services, dev-services compose files, community forks like `pi-lens`). Each subfolder is an independent concern and should not be mixed with pi-harness agent logic.
 
 **Notes:**
@@ -54,7 +58,7 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 - Do not mix multiple independent projects in the same subfolder.
 - When integrating a project into the pi harness, prefer a clear import path from its own repository rather than copying code into `~/.pi/agent/`.
 
-## ⚠️ Mandatory Workflow — Any Code Changes
+## Mandatory Workflow — Any Code Changes
 
 You must follow these 3 phases **in order**, without skipping any. Each phase contains checklist steps. You only move on to the next phase when all the steps in the current phase are completed.
 
@@ -100,6 +104,7 @@ Absolute rule: **no production line without a test that fails first.**
 - Use `oxlint` (check oxlint skill) for linting (e.g. `bun run lint` or `bunx oxlint`).
 - Avoid duplicating code. If you find yourself copying and pasting, consider refactoring to create reusable functions or modules.
 - Avoid running `dev` or `build` commands. If you really need to, ask first.
+- Some skills like `pi-extensions` and `pi-cli` are under ~/.pi/agent/skills so consider that folder as well when you are looking for skills.
 
 **Important** Remember to avoid duplication, that's the most common source of silent errors and maintenance issues. Always prefer importing real modules over copying code.
 
