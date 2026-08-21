@@ -21,7 +21,8 @@ import {
     Text,
 } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { createUiColors } from "../_shared/ui/ui-colors.js";
+import { createWidget } from "./_shared/fancy-footer.js";
+import { createUiColors } from "./_shared/ui/ui-colors.js";
 
 type LoopMode = "tests" | "custom" | "self";
 
@@ -39,6 +40,8 @@ const LOOP_PRESETS = [
     { value: "custom", label: "Until custom condition", description: "" },
     { value: "self", label: "Self driven (agent decides)", description: "" },
 ] as const;
+
+const icon = "∞";
 
 const LOOP_STATE_ENTRY = "loop-state";
 
@@ -159,20 +162,13 @@ function getCompactionInstructions(mode: LoopMode, condition?: string): string {
     return `Loop active. Breakout condition: ${conditionText}. Preserve this loop state and breakout condition in the summary.`;
 }
 
-function updateStatus(ctx: ExtensionContext, state: LoopStateData): void {
-    if (!ctx.hasUI) return;
-    if (!state.active || !state.mode) {
-        ctx.ui.setWidget("loop", undefined);
-        return;
-    }
+function buildStatusText(state: LoopStateData): string {
     const loopCount = state.loopCount ?? 0;
     const turnText = `(turn ${loopCount})`;
     const summary = state.summary?.trim();
-    const text = summary
-        ? `Loop active: ${summary} ${turnText}`
-        : `Loop active ${turnText}`;
-    const colors = createUiColors(ctx.ui.theme);
-    ctx.ui.setWidget("loop", [colors.primary(text)]);
+    return summary
+        ? `${icon}Loop active: ${summary} ${turnText}`
+        : `${icon}Loop active ${turnText}`;
 }
 
 async function loadState(ctx: ExtensionContext): Promise<LoopStateData> {
@@ -196,6 +192,29 @@ async function loadState(ctx: ExtensionContext): Promise<LoopStateData> {
 
 export default function loopExtension(pi: ExtensionAPI): void {
     let loopState: LoopStateData = { active: false };
+
+    const widget = createWidget(pi, {
+        id: "loop",
+        label: "Loop",
+        description: "Shows the active /until loop breakout condition.",
+        order: 20,
+        align: "right",
+        visible: () => loopState.active && !!loopState.mode,
+        render: (rctx) => {
+            const colors = createUiColors(rctx.theme);
+            return colors.primary(buildStatusText(loopState));
+        },
+    });
+
+    function updateStatus(ctx: ExtensionContext, state: LoopStateData): void {
+        if (!ctx.hasUI) return;
+        if (!state.active || !state.mode) {
+            widget.remove(ctx);
+            return;
+        }
+        const colors = createUiColors(ctx.ui.theme);
+        widget.update(ctx, colors.primary(buildStatusText(state)));
+    }
 
     function persistState(state: LoopStateData): void {
         pi.appendEntry(LOOP_STATE_ENTRY, state);

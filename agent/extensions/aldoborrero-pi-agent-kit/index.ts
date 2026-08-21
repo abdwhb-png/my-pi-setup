@@ -11,9 +11,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import btw from "./btw.ts";
-import until from "./until.ts";
 
 export default function aldoborreroExtensions(pi: ExtensionAPI) {
     btw(pi);
-    until(pi);
 }
