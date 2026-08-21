@@ -7,6 +7,7 @@ import { openSddLive } from "./activity-ui.ts";
 import { DelegationClient } from "./delegation-client.ts";
 import { registerSddExtension, type SddRuntime } from "./extension-tools.ts";
 import { openManifestReview } from "./review-ui.ts";
+import { createSddAgentGate } from "./sdd-agents.ts";
 import { SddStore } from "./store.ts";
 import { SddWorkflow } from "./workflow.ts";
 import { GitWorkspaceManager } from "./workspace.ts";
@@ -36,6 +37,8 @@ export function createRuntime(
         },
         activity,
         workspace,
+        undefined,
+        createSddAgentGate(pi),
     );
     return {
         agentDir,

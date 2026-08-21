@@ -3796,3 +3796,54 @@ test('observer failures never fail or cancel the workflow', async () => {
 
     expect(result.state).toBe('completed');
 });
+
+test('acquires the agent gate on run and releases it on terminal completion', async () => {
+    const approved = { ...manifest('light'), planPath: import.meta.path };
+    const store = new MemoryStore(snapshot(1));
+    const client = new QueueDelegationClient([
+        workerResponse('implemented'),
+        reviewResponse('combined', 'pass'),
+    ]);
+    const calls: string[] = [];
+    const gate = {
+        acquire: () => calls.push('acquire'),
+        release: () => calls.push('release'),
+    };
+
+    const result = await new SddWorkflow(
+        store,
+        client,
+        () => approved,
+        undefined,
+        undefined,
+        undefined,
+        gate,
+    ).run('run-1', context);
+
+    expect(result.state).toBe('completed');
+    expect(calls).toEqual(['acquire', 'release']);
+});
+
+test('releases the agent gate on a failed/cancelled run', async () => {
+    const approved = { ...manifest('light'), sourceDigest: '0'.repeat(64) };
+    const store = new MemoryStore(snapshot(1));
+    const client = new QueueDelegationClient([]);
+    const calls: string[] = [];
+    const gate = {
+        acquire: () => calls.push('acquire'),
+        release: () => calls.push('release'),
+    };
+
+    const result = await new SddWorkflow(
+        store,
+        client,
+        () => approved,
+        undefined,
+        undefined,
+        undefined,
+        gate,
+    ).run('run-1', context);
+
+    expect(result.state).toBe('needs_input');
+    expect(calls).toEqual(['acquire', 'release']);
+});

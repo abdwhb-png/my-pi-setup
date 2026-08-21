@@ -1,3 +1,5 @@
+/// <reference types="bun" />
+
 import { describe, expect, it } from "bun:test";
 import type {
   ExtensionAPI,
@@ -683,10 +685,6 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         }),
       );
       await mkdir(join(isolatedAgentDir, "agents"), { recursive: true });
-      await writeFile(
-        join(isolatedAgentDir, "agents", "brainstorm-code-scout.md"),
-        "---\nname: brainstorm-code-scout\ndescription: Dedicated local code verifier\ntools: '@inspect, @lens'\nthinking: high\nsystemPromptMode: replace\ninheritProjectContext: true\ninheritSkills: false\ndefaultContext: fresh\nacceptanceRole: read-only\n---\nVerify cited local code without modifying it.\n",
-      );
       await mkdir(join(cwd, ".pi", "agents"), { recursive: true });
       await writeFile(
         join(cwd, ".pi", "agents", "code-analysis.scout.md"),

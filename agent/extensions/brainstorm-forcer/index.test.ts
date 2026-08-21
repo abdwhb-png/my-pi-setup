@@ -1,3 +1,5 @@
+/// <reference types="bun" />
+
 import { describe, expect, it, mock } from "bun:test";
 import {
   SessionManager,
@@ -9,7 +11,6 @@ import {
   mkdtemp,
   readFile,
   readdir,
-  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -275,7 +276,9 @@ describe("brainstorm-forcer redesign", () => {
         message: expect.stringContaining("Ambiguous agent name 'scout'"),
       });
       await expect(
-        preflightVerifierAgents(sessionId, root, ["brainstorm-code-scout"]),
+        preflightVerifierAgents(sessionId, root, ["brainstorm-code-scout"], (agent) =>
+          agent === "brainstorm-code-scout",
+        ),
       ).resolves.toEqual([
         expect.objectContaining({ agent: "brainstorm-code-scout", ok: true }),
       ]);

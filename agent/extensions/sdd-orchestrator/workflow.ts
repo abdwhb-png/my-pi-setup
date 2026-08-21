@@ -162,6 +162,7 @@ export class SddWorkflow {
         private readonly observer?: SddWorkflowObserver,
         private readonly workspace?: SddWorkspaceExecution,
         private readonly verificationRunner: VerificationRunner = new ChildProcessVerificationRunner(),
+        private readonly agentGate?: { acquire(): void; release(): void },
     ) {}
 
     run(
@@ -181,8 +182,12 @@ export class SddWorkflow {
         const verificationController = new AbortController();
         this.verificationControllers.set(runId, verificationController);
         const execution = this.runExclusive(runId, ctx);
+        const gateAcquired = this.agentGate
+            ? (this.agentGate.acquire(), true)
+            : false;
         this.activeRuns.set(runId, execution);
         const release = () => {
+            if (gateAcquired) this.agentGate?.release();
             signal?.removeEventListener("abort", onAbort);
             if (this.activeRuns.get(runId) === execution) {
                 this.activeRuns.delete(runId);

@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { getSddAgentEntry } from './sdd-agents.ts';
 
 function readAgent(name: string): string {
     return readFileSync(
@@ -13,8 +14,16 @@ test('validation agents can persist reports without general file-write authority
         ['sdd-qa-tester', 'qa-result.json'],
         ['browser-tester', 'browser-result.json'],
     ] as const) {
-        const agent = readAgent(name);
-        const tools = agent.match(/^tools:\s*(.+)$/m)?.[1] ?? '';
+        // sdd-qa-tester now lives in the runtime definition set (the static .md
+        // was removed); browser-tester stays a static file.
+        const entry =
+            name === 'sdd-qa-tester' ? getSddAgentEntry(name) : undefined;
+        const agent = entry
+            ? entry.definition.systemPrompt ?? ''
+            : readAgent(name);
+        const tools = entry
+            ? (entry.definition.tools ?? []).join(', ')
+            : (agent.match(/^tools:\s*(.+)$/m)?.[1] ?? '');
 
         expect(tools).toContain('write_report');
         expect(tools).not.toMatch(/(^|,\s*)(write|edit|edit_report)(,|$)/);

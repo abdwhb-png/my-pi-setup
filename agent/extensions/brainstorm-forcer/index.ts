@@ -28,8 +28,13 @@ import {
 } from "pi-subagents/capability-ceiling";
 import { Type } from "typebox";
 import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
+import {
+    isAgentRuntimeRegistered,
+    registerWorkflowAgents,
+} from "../_shared/subagents/workflow-agents";
 import { createUiColors } from "../_shared/ui/ui-colors";
 import { createBrainstormArtifactStore } from "./artifacts";
+import { getBrainstormAgentEntry } from "./brainstorm-agents";
 import {
     createExplorationLedger,
     isExplorationRecord,
@@ -123,6 +128,7 @@ const SESSION_KEY = "brainstorm-forcer";
 const LEDGER_SESSION_KEY = "brainstorm-forcer-ledger";
 const TERMINAL_COMMIT_SESSION_KEY = "brainstorm-forcer-terminal-commit";
 const WIDGET_ID = "brainstorm-forcer";
+
 const DEFAULT_REJECTION_REASON =
     "Refine the current phase: investigate remaining gaps, validate assumptions, go deeper, revise its artifact, then request transition again.";
 
@@ -500,6 +506,7 @@ export async function preflightVerifierAgents(
     sessionId: string,
     cwd: string,
     agents: readonly string[],
+    isRuntimeRegistered?: (agent: string) => boolean,
 ): Promise<
     ReadonlyArray<{
         agent: string;
@@ -529,6 +536,14 @@ export async function preflightVerifierAgents(
         }));
     const results = await Promise.all(
         agents.map(async (agent) => {
+            if (isRuntimeRegistered?.(agent)) {
+                // Runtime-registered workflow agents resolve through the
+                // runtime registry at dispatch, not static discovery. Bypass
+                // the static `discoverAgents` preflight for these (the
+                // orchestrator owns their definition); keep the strict gate
+                // for every genuinely unknown or statically-defined agent.
+                return { agent, ok: true };
+            }
             try {
                 const result = await resolveSubagentLaunchContract({
                     agent,
@@ -592,11 +607,17 @@ export default function brainstormForcer(
     let lastTerminalRunId: string | null = null;
     let activeContext: ExtensionContext | null = null;
     let launchInProgress = false;
+    let localCodeVerifierDispose: (() => void) | null = null;
     const earlyCompletionEvents: VerificationCoordinatorCompletion[] = [];
     const processingRunIds = new Set<string>();
     const ceilingManager = createCapabilityCeilingManager();
     const verificationCoordinator = createVerificationCoordinator(pi.events);
-    const runPreflight = dependencies.preflight ?? preflightVerifierAgents;
+    const runPreflight =
+        dependencies.preflight ??
+        ((sessionId: string, cwd: string, agents: readonly string[]) =>
+            preflightVerifierAgents(sessionId, cwd, agents, (agent) =>
+                isAgentRuntimeRegistered(pi, agent),
+            ));
     const unsubscribeCompletion = verificationCoordinator.onComplete((data) => {
         const dispatchedPending = pendingVerification;
         const dispatchedContext = activeContext;
@@ -2161,6 +2182,8 @@ export default function brainstormForcer(
         lastTerminalRunId = null;
         processingRunIds.clear();
         earlyCompletionEvents.length = 0;
+        localCodeVerifierDispose?.();
+        localCodeVerifierDispose = null;
         ceilingManager.dispose();
         refreshGroups();
     }
@@ -2509,6 +2532,11 @@ export default function brainstormForcer(
         artifacts = {};
         explorationLedger = createExplorationLedger({ runId });
         ceilingManager.register(ctx.sessionManager.getSessionId() ?? "");
+        localCodeVerifierDispose?.();
+        const localCodeScout = getBrainstormAgentEntry("brainstorm-code-scout");
+        localCodeVerifierDispose = registerWorkflowAgents(pi, [
+            localCodeScout!,
+        ]).dispose;
         refreshGroups();
         saveState(ctx);
         ctx.ui.notify(
