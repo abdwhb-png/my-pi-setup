@@ -28,7 +28,7 @@ Cycle through these phases based on user input. This is iterative, not linear. I
 
 Explore the codebase to gather context, analogous existing features to use as implementation templates, and potential blockers or ambiguities. When the task spans multiple independent areas (e.g., frontend + backend, different features, separate repos).
 
-Update the plan with your findings and persist the complete current snapshot with `session_plan` action `save`.
+Update the plan with your findings and persist the complete current snapshot with `session_plan` action `save`, passing a stable, descriptive `topic` that you will reuse for read/clear/history on this plan.
 
 ## 2. Alignment
 
@@ -54,13 +54,13 @@ The plan should reflect:
 - Reference decisions from the discussion
 - Leave no ambiguity
 
-Persist the comprehensive plan with `session_plan` action `save`, passing the complete Markdown document, then show the scannable plan to the user for review. You MUST show the plan to the user; persistence is not a substitute for presenting it.
+Persist the comprehensive plan with `session_plan` action `save`, passing the complete Markdown document and the same `topic` used in earlier saves, then show the scannable plan to the user for review. You MUST show the plan to the user; persistence is not a substitute for presenting it.
 
 ## 4. Refinement
 
 On user input after showing the plan:
 
-- Changes requested → call `session_plan` action `read` when the current plan is no longer in context, revise it, persist the complete updated snapshot with action `save`, and present it again
+- Changes requested → call `session_plan` action `read` with the same `topic` used at save when the current plan is no longer in context, revise it, persist the complete updated snapshot with action `save` (same topic), and present it again
 - Questions asked → clarify, or use `ask_user_question` for follow-ups
 - Alternatives wanted → loop back to **Discovery** with new subagent
 - Approval given → acknowledge, the user can now use handoff buttons

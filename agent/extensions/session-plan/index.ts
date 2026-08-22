@@ -79,12 +79,13 @@ export default function sessionPlanExtension(pi: ExtensionAPI): void {
         name: "session_plan",
         label: "Session Plan",
         description:
-            "Versioned Markdown plans stored by topic in {cwd}/.pi/session-plans/. Actions: save (create new version), read (get content), clear (delete all), history (list versions).",
+            "Versioned Markdown plans stored by topic in {cwd}/.pi/session-plans/. Actions: save (create new version), read (get content by version), clear (delete all versions), history (list versions). topic is required for read, clear, and history; read defaults to the latest version unless version is given. Each save appends a new version and never overwrites.",
         promptSnippet: "Versioned planning documents by topic",
         promptGuidelines: [
-            "Use save with the complete plan whenever the plan changes. Each save creates a new version.",
-            "Use read with topic to get the latest version, or pass version for a specific one.",
-            "Use history with topic to see all versions available.",
+            "Pass a stable, descriptive topic when saving a plan, then reuse that exact topic for read, clear, and history of the same plan.",
+            "Use save with the complete plan whenever the plan changes. Each save appends a new version rather than overwriting.",
+            "Use read with topic to get the latest version; pass version to read a specific one. Omit version to get the latest.",
+            "Use history with topic to see all available versions with timestamps, useful when the latest version is no longer in context.",
         ],
         parameters: SessionPlanParams,
         executionMode: "sequential",
