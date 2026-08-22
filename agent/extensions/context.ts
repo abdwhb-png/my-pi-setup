@@ -13,6 +13,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type {
+    BeforeAgentStartEvent,
+    BeforeAgentStartEventResult,
     ExtensionAPI,
     ExtensionCommandContext,
     ExtensionContext,
@@ -97,8 +99,15 @@ async function readFileIfExists(
 
 async function loadProjectContextFiles(
     cwd: string,
-): Promise<Array<{ path: string; tokens: number; bytes: number }>> {
-    const out: Array<{ path: string; tokens: number; bytes: number }> = [];
+): Promise<
+    Array<{ path: string; tokens: number; bytes: number; content: string }>
+> {
+    const out: Array<{
+        path: string;
+        tokens: number;
+        bytes: number;
+        content: string;
+    }> = [];
     const seen = new Set<string>();
 
     const loadFromDir = async (dir: string) => {
@@ -114,6 +123,7 @@ async function loadProjectContextFiles(
                     path: f.path,
                     tokens: estimateTokens(f.content),
                     bytes: f.bytes,
+                    content: f.content,
                 });
                 // pi loads at most one of those per dir
                 return;
@@ -331,6 +341,47 @@ export function calculateExtensionFiles(commands: any[]): string[] {
             return suffix;
         })
         .toSorted((a, b) => a.localeCompare(b));
+}
+
+/** Marker used to detect and avoid double-appending the tools list. Matches the heading Pi's default branch emits. */
+export const TOOLS_LIST_HEADING = "Available tools:";
+
+export function buildToolsListSnippet(
+    tools: Array<{ name: string; description?: string }>,
+): string {
+    const lines = tools
+        .filter((t) => t.name && t.description)
+        .map((t) => `- ${t.name}: ${t.description!.trim().split(/\r?\n/)[0]}`);
+    if (lines.length === 0) return `${TOOLS_LIST_HEADING}\n(none)`;
+    return `${TOOLS_LIST_HEADING}\n${lines.join("\n")}`;
+}
+
+/**
+ * Append the tools list to a system prompt when a SYSTEM.md override is set.
+ *
+ * Idempotent: if the tools heading is already present — from this handler or
+ * Pi's default branch — the prompt is returned unchanged so chained
+ * `before_agent_start` handlers do not stack duplicates.
+ */
+export function appendToolsListPrompt(
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string }>,
+): string {
+    if (systemPrompt.includes(TOOLS_LIST_HEADING)) {
+        return systemPrompt;
+    }
+    return `${systemPrompt}\n\n${buildToolsListSnippet(tools)}`;
+}
+
+export function buildContextSendMessage(
+    files: Array<{ path: string; content: string }>,
+): string {
+    if (files.length === 0) return "";
+    const blocks = files.map(
+        (f) =>
+            `<project_instructions path="${f.path}">\n${f.content}\n</project_instructions>`,
+    );
+    return `Read and follow these project instruction files. They take precedence for this repository.\n\n${blocks.join("\n\n")}\n`;
 }
 
 type ContextViewData = {
@@ -624,6 +675,34 @@ export default function contextExtension(pi: ExtensionAPI) {
         }
     });
 
+    pi.on(
+        "before_agent_start",
+        (
+            event: BeforeAgentStartEvent,
+            _ctx: ExtensionContext,
+        ): BeforeAgentStartEventResult | undefined => {
+            // With a SYSTEM.md override, pi's default branch is skipped: it emits
+            // skills + AGENTS files but NOT the tools list. Without an override the
+            // default branch already lists tools, so skip to avoid duplication.
+            if (!event.systemPromptOptions.customPrompt) return undefined;
+
+            const activeToolNames = pi.getActiveTools();
+            const toolInfoByName = new Map(
+                pi.getAllTools().map((t) => [t.name, t] as const),
+            );
+            const tools = activeToolNames
+                .map((name) => ({
+                    name,
+                    description: toolInfoByName.get(name)?.description ?? "",
+                }))
+                .filter((t) => t.name);
+
+            return {
+                systemPrompt: appendToolsListPrompt(event.systemPrompt, tools),
+            };
+        },
+    );
+
     pi.registerCommand("context", {
         description: "Show loaded context overview",
         handler: async (_args, ctx: ExtensionCommandContext) => {
@@ -757,6 +836,38 @@ export default function contextExtension(pi: ExtensionAPI) {
             await ctx.ui.custom<void>((tui, theme, _kb, done) => {
                 return new ContextView(tui, theme, viewData, done);
             });
+        },
+    });
+
+    pi.registerCommand("context-send", {
+        description:
+            "Inject applied AGENTS.md/CLAUDE.md contents into the conversation",
+        handler: async (_args, ctx: ExtensionCommandContext) => {
+            const files = await loadProjectContextFiles(ctx.cwd);
+            if (files.length === 0) {
+                pi.sendMessage(
+                    {
+                        customType: "context-send",
+                        content:
+                            "No applied AGENTS.md/CLAUDE.md context files found for this session.",
+                        display: true,
+                    },
+                    { triggerTurn: false },
+                );
+                return;
+            }
+
+            const content = buildContextSendMessage(
+                files.map((f) => ({ path: f.path, content: f.content })),
+            );
+            pi.sendMessage(
+                {
+                    customType: "context-send",
+                    content,
+                    display: true,
+                },
+                { triggerTurn: true },
+            );
         },
     });
 }

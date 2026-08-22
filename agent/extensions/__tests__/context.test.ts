@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'bun:test';
 import {
+    appendToolsListPrompt,
+    buildContextSendMessage,
+    buildToolsListSnippet,
     calculateExtensionFiles,
     getSkillPathFromCommand,
+    TOOLS_LIST_HEADING,
 } from '../context.ts';
 
 describe('calculateExtensionFiles', () => {
@@ -155,6 +159,118 @@ describe('calculateExtensionFiles', () => {
             'pi-hypa/dist/src/index.ts',
             'pi-roles/dist/src/index.ts',
         ]);
+    });
+});
+
+describe('buildToolsListSnippet', () => {
+    it('should render one line per tool with description', () => {
+        const tools = [
+            { name: 'read', description: 'Read files from disk' },
+            { name: 'bash', description: 'Run shell commands' },
+        ];
+        const result = buildToolsListSnippet(tools);
+        expect(result).toBe(
+            'Available tools:\n- read: Read files from disk\n- bash: Run shell commands',
+        );
+    });
+
+    it('should skip tools without a description', () => {
+        const tools = [
+            { name: 'read', description: 'Read files from disk' },
+            { name: 'secret-tool' },
+        ];
+        const result = buildToolsListSnippet(tools);
+        expect(result).toBe('Available tools:\n- read: Read files from disk');
+    });
+
+    it('should render (none) when no tools have descriptions', () => {
+        const result = buildToolsListSnippet([]);
+        expect(result).toBe('Available tools:\n(none)');
+    });
+
+    it('should collapse multi-line descriptions to first line', () => {
+        const tools = [
+            { name: 'bash', description: 'Run commands\nsecond line' },
+        ];
+        const result = buildToolsListSnippet(tools);
+        expect(result).toBe('Available tools:\n- bash: Run commands');
+    });
+});
+
+describe('appendToolsListPrompt', () => {
+    it('should append the tools block to a prompt', () => {
+        const result = appendToolsListPrompt(
+            'base prompt',
+            [{ name: 'read', description: 'Read files' }],
+        );
+        expect(result).toBe(
+            'base prompt\n\nAvailable tools:\n- read: Read files',
+        );
+    });
+
+    it('should be idempotent and not double-append when heading already present', () => {
+        const once = appendToolsListPrompt(
+            'base prompt',
+            [{ name: 'read', description: 'Read files' }],
+        );
+        expect(appendToolsListPrompt(once, [{ name: 'bash', description: 'Run commands' }])).toBe(once);
+    });
+
+    it('should append nothing for tools without descriptions', () => {
+        const result = appendToolsListPrompt('base prompt', [{ name: 'x' }]);
+        expect(result).toBe('base prompt\n\nAvailable tools:\n(none)');
+    });
+
+    it('should skip when the default-branch tools heading is already present', () => {
+        const defaultPrompt =
+            'header\nAvailable tools:\n- read: Read files\nGuidelines:';
+        const result = appendToolsListPrompt(
+            defaultPrompt,
+            [{ name: 'bash', description: 'Run commands' }],
+        );
+        expect(result).toBe(defaultPrompt);
+    });
+});
+
+describe('buildContextSendMessage', () => {
+    it('should render a directive plus one fenced block per file', () => {
+        const files = [
+            {
+                path: '/home/user/.pi/agent/AGENTS.md',
+                content: '# Rules\n- be concise',
+            },
+            {
+                path: '/home/user/.pi/proj/AGENTS.md',
+                content: '# Proj\n- use bun',
+            },
+        ];
+        const result = buildContextSendMessage(files);
+        expect(result).toContain('Read and follow');
+        expect(result).toBe(
+            'Read and follow these project instruction files. They take precedence for this repository.\n\n<project_instructions path="/home/user/.pi/agent/AGENTS.md">\n# Rules\n- be concise\n</project_instructions>\n\n<project_instructions path="/home/user/.pi/proj/AGENTS.md">\n# Proj\n- use bun\n</project_instructions>\n',
+        );
+    });
+
+    it('should return empty string when no files', () => {
+        expect(buildContextSendMessage([])).toBe('');
+    });
+
+    it('should preserve file order', () => {
+        const files = [
+            {
+                path: '/a/AGENTS.md',
+                content: 'first',
+            },
+            {
+                path: '/b/AGENTS.md',
+                content: 'second',
+            },
+        ];
+        const result = buildContextSendMessage(files);
+        const firstIdx = result.indexOf('first');
+        const secondIdx = result.indexOf('second');
+        expect(firstIdx).toBeGreaterThan(-1);
+        expect(secondIdx).toBeGreaterThan(firstIdx);
     });
 });
 
