@@ -162,6 +162,12 @@ function contextWithEntries(
                     customType: type,
                     data,
                 })),
+            getBranch: () =>
+                entries.map(({ type, data }) => ({
+                    type: 'custom' as const,
+                    customType: type,
+                    data,
+                })),
         },
     } as unknown as ExtensionContext;
 }
@@ -171,6 +177,16 @@ function fakePi() {
     const commands = new Map<string, any>();
     const entries: Array<{ type: string; data: unknown }> = [];
     const handlers = new Map<string, Function[]>();
+    let activeToolNames: string[] = [
+        'sdd_prepare',
+        'sdd_submit',
+        'sdd_approve',
+        'sdd_status',
+        'sdd_result',
+        'sdd_apply',
+        'sdd_cancel',
+        'sdd_direct_complete',
+    ];
     return {
         api: {
             on(event: string, handler: Function) {
@@ -187,12 +203,17 @@ function fakePi() {
             appendEntry(type: string, data: unknown) {
                 entries.push({ type, data });
             },
+            getActiveTools: () => [...activeToolNames],
+            setActiveTools: (names: string[]) => {
+                activeToolNames = [...names];
+            },
             events: { on: mock(), emit: mock() },
         },
         tools,
         commands,
         entries,
         handlers,
+        getActiveToolNames: () => [...activeToolNames],
     };
 }
 
@@ -445,7 +466,11 @@ test('registers exactly eight tools and one command from a thin index', () => {
         'sdd_cancel',
         'sdd_direct_complete',
     ]);
-    expect([...pi.commands.keys()]).toEqual(['sdd-review', 'sdd-live']);
+    expect([...pi.commands.keys()]).toEqual([
+        'sdd',
+        'sdd-review',
+        'sdd-live',
+    ]);
     for (const tool of pi.tools.values()) {
         expect(tool.parameters.additionalProperties).toBe(false);
     }
@@ -2743,4 +2768,156 @@ test('terminal live widget lingers five seconds and shutdown clears UI before de
     } finally {
         vi.useRealTimers();
     }
+});
+
+test('sdd command rejects an unknown verb', async () => {
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+    const cmd = pi.commands.get('sdd');
+    await expect(cmd.handler('bogus', context())).rejects.toThrow(
+        'Unknown /sdd verb',
+    );
+});
+
+test('sdd stop releases the sdd lease and hides sdd_* tools', async () => {
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+    const cmd = pi.commands.get('sdd');
+
+    await cmd.handler('stop', context());
+    expect(pi.getActiveToolNames().some((t) => t.startsWith('sdd_'))).toBe(
+        false,
+    );
+    expect(pi.entries.at(-1)).toEqual({
+        type: 'sdd:visibility',
+        data: { active: false },
+    });
+});
+
+test('sdd resume persists current-session visibility', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'resume-run';
+    store.create(snapshot(runId, 'needs_input'));
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+    const cmd = pi.commands.get('sdd');
+
+    await cmd.handler(`resume ${runId}`, context());
+
+    expect(pi.entries.at(-1)).toEqual({
+        type: 'sdd:visibility',
+        data: { active: true },
+    });
+    await cmd.handler('stop', context());
+});
+
+test('sdd resume with an unknown run id errors', async () => {
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+    const cmd = pi.commands.get('sdd');
+
+    await expect(cmd.handler('resume missing', context())).rejects.toThrow(
+        'SDD run not found: missing',
+    );
+});
+
+test('tool_call gate blocks sdd_prepare when no sdd lease is active', async () => {
+    const store = new SddStore(agentDir);
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+    const gate = pi.handlers.get('tool_call')?.[0];
+
+    const result = await gate!(
+        { toolName: 'sdd_prepare', input: {} },
+        context(),
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain('/sdd start');
+});
+
+test('tool_call gate allows an actionable run with an explicit runId', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'actionable-run';
+    store.create(snapshot(runId, 'running'));
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+    const gate = pi.handlers.get('tool_call')?.[0];
+
+    const result = await gate!(
+        { toolName: 'sdd_status', input: { runId } },
+        context(),
+    );
+    expect(result).toBeUndefined();
+});
+
+test('tool_call gate blocks a non-actionable run', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'done-run';
+    store.create(snapshot(runId, 'completed'));
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+    const gate = pi.handlers.get('tool_call')?.[0];
+
+    const result = await gate!(
+        { toolName: 'sdd_status', input: { runId } },
+        context(),
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain(`/sdd resume ${runId}`);
+});
+
+test('session_start hides sdd tools without a current-session marker even when a durable run is actionable', async () => {
+    const store = new SddStore(agentDir);
+    store.create(snapshot('unrelated-actionable-run', 'needs_input'));
+    const pi = fakePi();
+    registerSddExtension(pi.api as never, runtime(store));
+    const start = pi.handlers.get('session_start')?.[0];
+
+    await start!({ type: 'session_start', reason: 'reload' }, context());
+
+    expect(pi.getActiveToolNames().some((t) => t.startsWith('sdd_'))).toBe(
+        false,
+    );
+});
+
+test('session_start re-exposes the sdd lease from the current-session marker', async () => {
+    const store = new SddStore(agentDir);
+    const runId = 'delivery-pending-run';
+    // Completed but isolated with delivery still pending → needs sdd_apply.
+    store.create({
+        runId,
+        revision: 0,
+        state: 'completed',
+        tasks: {},
+        consumedIdempotencyKeys: [],
+        plannedDelegations: {},
+        workspace: {
+            mode: 'isolated',
+            sourceRoot: cwd,
+            baseCommit: 'a'.repeat(40),
+            worktreePath: join(tmpdir(), `sdd-wt-${runId}`),
+            delivery: { status: 'pending' },
+        },
+    });
+    const pi = fakePi();
+    // Start with sdd out of the active set, as if the lease was dropped.
+    pi.api.setActiveTools(
+        pi.getActiveToolNames().filter((t) => !t.startsWith('sdd_')),
+    );
+    registerSddExtension(pi.api as never, runtime(store));
+    const start = pi.handlers.get('session_start')?.[0];
+
+    await start!(
+        { type: 'session_start', reason: 'reload' },
+        contextWithEntries([
+            { type: 'sdd:visibility', data: { active: true } },
+        ]),
+    );
+
+    expect(pi.getActiveToolNames().some((t) => t.startsWith('sdd_'))).toBe(
+        true,
+    );
 });

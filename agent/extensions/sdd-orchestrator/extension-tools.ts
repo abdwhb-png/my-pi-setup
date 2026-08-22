@@ -12,6 +12,7 @@ import {
     resolveRuntimePath,
     toPortableHomePath,
 } from "../_shared/home-path.ts";
+import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import type { SddActivityStore } from "./activity-store.ts";
 import {
     openSddLive,
@@ -48,6 +49,7 @@ import {
     openManifestReview,
     type ReviewProgressStorage,
 } from "./review-ui.ts";
+import { isSddActionable } from "./sdd-actionable.ts";
 import {
     RECOVERY_STAGES,
     type DirectEvidence,
@@ -119,6 +121,30 @@ export interface SddRuntime {
 
 const LIVE_WIDGET_ID = "sdd-orchestrator-live";
 const TERMINAL_WIDGET_LINGER_MS = 5_000;
+const SDD_VISIBILITY_SESSION_KEY = "sdd:visibility";
+
+function isSddVisibleInSession(ctx: ExtensionContext): boolean {
+    const entries = ctx.sessionManager?.getBranch?.() ?? [];
+    for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i];
+        if (
+            entry.type === "custom" &&
+            entry.customType === SDD_VISIBILITY_SESSION_KEY
+        ) {
+            return Boolean(
+                entry.data &&
+                typeof entry.data === "object" &&
+                !Array.isArray(entry.data) &&
+                Object.fromEntries(Object.entries(entry.data)).active === true,
+            );
+        }
+    }
+    return false;
+}
+
+function persistSddVisibility(pi: ExtensionAPI, active: boolean): void {
+    pi.appendEntry(SDD_VISIBILITY_SESSION_KEY, { active });
+}
 
 interface SddLiveUiCoordinator {
     track(
@@ -1134,6 +1160,21 @@ export function renderRunObservation(
     return lines.join("\n");
 }
 
+/**
+ * Member tool names of the sdd workflow group.
+ * Kept in sync with the `sdd_*` tools registered in this file.
+ */
+export const SDD_WORKFLOW_TOOLS = [
+    "sdd_prepare",
+    "sdd_submit",
+    "sdd_approve",
+    "sdd_status",
+    "sdd_result",
+    "sdd_apply",
+    "sdd_cancel",
+    "sdd_direct_complete",
+] as const;
+
 export function registerSddExtension(
     pi: ExtensionAPI,
     runtime: SddRuntime,
@@ -1495,6 +1536,114 @@ export function registerSddExtension(
         },
     });
 
+    pi.registerCommand("sdd", {
+        description:
+            "SDD workflow. /sdd start <planPath> [profile] begins; /sdd stop hides workflow tools; /sdd resume <runId> re-exposes them.",
+        getArgumentCompletions: (prefix: string) => {
+            const trimmed = prefix.trimStart().toLowerCase();
+            const base = [
+                {
+                    value: "start",
+                    label: "start",
+                    description: "Start an SDD run from a plan file",
+                },
+                {
+                    value: "stop",
+                    label: "stop",
+                    description: "Stop/hide the SDD workflow tools",
+                },
+                {
+                    value: "resume",
+                    label: "resume",
+                    description:
+                        "Re-expose SDD workflow tools for a durable run",
+                },
+            ];
+            if (!trimmed) return base;
+            return base.filter((item) => item.value.startsWith(trimmed));
+        },
+        async handler(args, ctx) {
+            const [verb, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+
+            if (verb === "stop") {
+                getSharedVisibilityBroker().deactivateWorkflow(pi, "sdd");
+                persistSddVisibility(pi, false);
+                ctx.ui.notify("SDD workflow tools hidden.", "info");
+                return;
+            }
+
+            if (verb === "resume") {
+                const runId = rest[0];
+                const target = runId
+                    ? runtime.store.load(runId)
+                    : runtime.store.list().find((s) => s.state !== "completed");
+                if (runId && !target) {
+                    throw new Error(`SDD run not found: ${runId}.`);
+                }
+                const result = getSharedVisibilityBroker().activateWorkflow(
+                    pi,
+                    "sdd",
+                );
+                if (!result.ok) {
+                    throw new Error(
+                        `Cannot resume SDD: ${result.error ?? "workflow conflict"}.`,
+                    );
+                }
+                persistSddVisibility(pi, true);
+                ctx.ui.notify(
+                    target
+                        ? `SDD workflow resumed for ${target.runId}.`
+                        : "SDD workflow tools exposed.",
+                    "info",
+                );
+                return;
+            }
+
+            if (verb === "start") {
+                const planPathInput = rest[0];
+                if (!planPathInput) {
+                    throw new Error("Usage: /sdd start <planPath> [profile]");
+                }
+                const profileRaw = rest[1] ?? "standard";
+                if (!PROFILES.includes(profileRaw as Profile)) {
+                    throw new Error(
+                        `Unknown profile "${profileRaw}". Valid: ${PROFILES.join(", ")}.`,
+                    );
+                }
+                const lease = getSharedVisibilityBroker().activateWorkflow(
+                    pi,
+                    "sdd",
+                );
+                if (!lease.ok) {
+                    throw new Error(
+                        `Cannot start SDD: ${lease.error ?? "workflow conflict"}.`,
+                    );
+                }
+                persistSddVisibility(pi, true);
+                try {
+                    await prepare(
+                        pi,
+                        runtime,
+                        ctx,
+                        planPathInput,
+                        profileRaw as Profile,
+                        recordedApprovalEntries,
+                        liveUi,
+                    );
+                    return;
+                } catch (error) {
+                    getSharedVisibilityBroker().deactivateWorkflow(pi, "sdd");
+                    persistSddVisibility(pi, false);
+                    throw error;
+                }
+            }
+
+            throw new Error(
+                `Unknown /sdd verb "${verb ?? ""}". Use start | stop | resume.`,
+            );
+        },
+    });
+
     pi.registerCommand("sdd-review", {
         description: "Review a stored SDD manifest in one native overlay.",
         async handler(args, ctx) {
@@ -1614,6 +1763,48 @@ export function registerSddExtension(
         },
     });
 
+    pi.on("tool_call", async (event, ctx) => {
+        // Hard enforcement (visibility is not enforcement): a sdd_* call must
+        // not run unless an actionable/resumed/command-started SDD run owns the
+        // session. Without this, stale model context could invoke hidden tools.
+        if (event.toolName.startsWith("sdd_")) {
+            const broker = getSharedVisibilityBroker();
+            const leaseActive = broker.getActiveWorkflow(pi) === "sdd";
+
+            // sdd_prepare is the entry command; require the /sdd start gate.
+            if (event.toolName === "sdd_prepare") {
+                if (!leaseActive) {
+                    return {
+                        block: true,
+                        reason: `Use /sdd start <planPath> to begin an SDD run before calling sdd_prepare.`,
+                    };
+                }
+                return undefined;
+            }
+
+            // For run-scoped tools, allow when the referenced run is actionable
+            // even if the lease is currently inactive (a /sdd resume path).
+            const input = event.input as Record<string, unknown> | undefined;
+            const runId =
+                typeof input?.runId === "string" ? input.runId : undefined;
+            if (runId) {
+                const snap = runtime.store.load(runId);
+                if (snap && isSddActionable(snap)) {
+                    return undefined;
+                }
+            }
+
+            if (leaseActive) return undefined;
+
+            return {
+                block: true,
+                reason: runId
+                    ? `SDD run ${runId} is not actionable. Use /sdd resume ${runId} to re-expose it.`
+                    : `No active SDD workflow. Use /sdd start <plan.md> or /sdd resume <runId>.`,
+            };
+        }
+    });
+
     pi.on("session_start", async (event, ctx) => {
         // Delegated Pi children share the controller's agent directory but must
         // not passively reconcile runs that are still owned by that controller.
@@ -1624,6 +1815,15 @@ export function registerSddExtension(
             event.reason !== "resume"
         ) {
             return;
+        }
+        // Durable runs are global to the agent directory, but visibility is
+        // session-scoped. Only explicit /sdd start or /sdd resume markers in
+        // this session may restore the lease after reload.
+        const visibilityBroker = getSharedVisibilityBroker();
+        if (isSddVisibleInSession(ctx)) {
+            visibilityBroker.activateWorkflow(pi, "sdd");
+        } else {
+            visibilityBroker.deactivateWorkflow(pi, "sdd");
         }
         for (const snapshot of runtime.store.list()) {
             if (
@@ -1664,4 +1864,10 @@ export function registerSddExtension(
         liveUi.dispose(ctx);
         runtime.delegation.dispose();
     });
+
+    // Register the sdd workflow group so the visibility broker can expose
+    // these tools only while an actionable SDD run owns the session.
+    getSharedVisibilityBroker().registerWorkflowGroup("sdd", [
+        ...SDD_WORKFLOW_TOOLS,
+    ]);
 }

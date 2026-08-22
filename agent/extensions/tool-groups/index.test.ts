@@ -343,4 +343,27 @@ describe('tool-groups extension', () => {
             console.warn = origWarn;
         }
     });
+
+    it('strips a workflow member from the active set on before_agent_start when no lease is held', async () => {
+        const wfMember = 'tool_groups_wf_strip_test';
+        const { getSharedVisibilityBroker } = await import(
+            '../_shared/tool-groups/broker.ts',
+        );
+        // Unique group so it never collides with brainstorm/sdd registered by
+        // other suites in the same process.
+        getSharedVisibilityBroker().registerWorkflowGroup('tool-groups-wf-test', [
+            wfMember,
+        ]);
+
+        const pi = makeMockPi(['read', wfMember]);
+        const factory = createToolGroupsExtension(() => ({
+            groups: { read: ['read'] },
+        }));
+        factory(pi as never);
+
+        const handler = pi._handlers.get('before_agent_start')!;
+        handler({ type: 'before_agent_start' }, makeMockCtx());
+
+        expect(pi.getActiveTools()).not.toContain(wfMember);
+    });
 });

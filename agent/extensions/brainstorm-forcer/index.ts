@@ -29,6 +29,7 @@ import {
 import { Type } from "typebox";
 import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
 import { registerWorkflowAgents } from "../_shared/subagents/workflow-agents";
+import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import { createUiColors } from "../_shared/ui/ui-colors";
 import { createBrainstormArtifactStore } from "./artifacts";
 import { getBrainstormAgentEntry } from "./brainstorm-agents";
@@ -566,6 +567,22 @@ export type BrainstormForcerDependencies = Readonly<{
         agents: readonly string[],
     ) => Promise<PreflightResult>;
 }>;
+
+/**
+ * Member tool names of the brainstorm workflow group.
+ * Kept in sync with the `brainstorm_*` tools registered in this file.
+ */
+export const BRAINSTORM_WORKFLOW_TOOLS = [
+    "brainstorm_submit_discovery",
+    "brainstorm_submit_understanding",
+    "brainstorm_record_claim",
+    "brainstorm_run_verification",
+    "brainstorm_request_waiver",
+    "brainstorm_submit_exploring",
+    "brainstorm_submit_presenting",
+    "brainstorm_submit_design",
+    "brainstorm_transition",
+] as const;
 
 export default function brainstormForcer(
     pi: ExtensionAPI,
@@ -2169,6 +2186,9 @@ export default function brainstormForcer(
         localCodeVerifierDispose = null;
         ceilingManager.dispose();
         refreshGroups();
+        // Release the workflow lease so the brainstorm tools leave the active
+        // set (visibility is broker-owned; execution gating is separate).
+        getSharedVisibilityBroker().deactivateWorkflow(pi, "brainstorm");
     }
 
     function nextPhase(phase: Phase): Phase | null {
@@ -2480,6 +2500,10 @@ export default function brainstormForcer(
                 }
             }
             ceilingManager.register(ctx.sessionManager.getSessionId() ?? "");
+            // Re-acquire the workflow lease after restoring an active phase
+            // (resetState at the top released it). Without this, a reloaded
+            // session would resume with brainstorm tools hidden.
+            ensureBrainstormLease(ctx);
         }
     }
 
@@ -2500,11 +2524,32 @@ export default function brainstormForcer(
         );
     }
 
+    /**
+     * Acquire the brainstorm workflow lease via the visibility broker, telling
+     * the user when another exclusive workflow (e.g. SDD) holds the session.
+     * Returns true when the lease is held (or was already held).
+     */
+    function ensureBrainstormLease(ctx: ExtensionContext): boolean {
+        const result = getSharedVisibilityBroker().activateWorkflow(
+            pi,
+            "brainstorm",
+        );
+        if (!result.ok) {
+            ctx.ui.notify(
+                `Cannot start brainstorm: ${result.error ?? "workflow conflict"}.`,
+                "error",
+            );
+            return false;
+        }
+        return true;
+    }
+
     function startPhase(
         topicText: string,
         ctx: ExtensionContext,
         immediate: boolean,
     ): void {
+        if (!ensureBrainstormLease(ctx)) return;
         activeContext = ctx;
         activePhase = "discovery";
         topic = { raw: topicText, display: summarizeTopicForUi(topicText) };
@@ -2983,7 +3028,19 @@ export default function brainstormForcer(
     });
 
     pi.on("tool_call", async (event, ctx) => {
-        if (!activePhase) return;
+        // Stale-context defence: without an active phase, a brainstorm_* tool
+        // must not run even if the model recalls it from history. The group is
+        // stripped from the active set by the broker, but visibility is not
+        // enforcement, so block here too.
+        if (!activePhase) {
+            if (event.toolName.startsWith("brainstorm_")) {
+                return {
+                    block: true,
+                    reason: `Use /brainstorm <topic> to start a brainstorm before calling ${event.toolName}.`,
+                };
+            }
+            return;
+        }
         if (
             canUseTool(
                 activePhase,
@@ -3136,4 +3193,10 @@ export default function brainstormForcer(
             },
         };
     });
+
+    // Register the brainstorm workflow group so the visibility broker can
+    // expose these tools only while a brainstorm run is active.
+    getSharedVisibilityBroker().registerWorkflowGroup("brainstorm", [
+        ...BRAINSTORM_WORKFLOW_TOOLS,
+    ]);
 }

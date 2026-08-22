@@ -65,7 +65,14 @@ describe('sdd-orchestrator real Pi runtime boundary', () => {
         const session = await createTestSession({
             cwd,
             extensionFactories: [
-                (pi: ExtensionAPI) => registerSddExtension(pi, runtime),
+                (pi: ExtensionAPI) => {
+                    // Simulate an explicit /sdd start|resume marker before the
+                    // SDD session_start handler reconciles visibility.
+                    pi.on('session_start', () => {
+                        pi.appendEntry('sdd:visibility', { active: true });
+                    });
+                    registerSddExtension(pi, runtime);
+                },
             ],
         });
         sessions.push(session);

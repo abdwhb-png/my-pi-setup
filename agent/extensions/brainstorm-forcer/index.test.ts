@@ -39,6 +39,15 @@ function createMockAPI(sessionManager?: SessionManager) {
   const renderers = new Map<string, any>();
   const sentUserMessages: Array<{ content: unknown; options?: unknown }> = [];
   const sentMessages: Array<{ message: unknown; options?: unknown }> = [];
+  let activeToolNames = [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "bash",
+    "write",
+    "edit",
+  ];
   const eventListeners = new Map<string, Set<(data: unknown) => void>>();
   const events = {
     on(event: string, handler: (data: unknown) => void) {
@@ -85,6 +94,10 @@ function createMockAPI(sessionManager?: SessionManager) {
     registerMessageRenderer: (customType: string, renderer: any) => renderers.set(customType, renderer),
     sendUserMessage: (content: unknown, options?: unknown) => sentUserMessages.push({ content, options }),
     sendMessage: (message: unknown, options?: unknown) => sentMessages.push({ message, options }),
+    getActiveTools: () => [...activeToolNames],
+    setActiveTools: (names: string[]) => {
+      activeToolNames = [...names];
+    },
     getAllTools: () => [
       ...toolInfo,
       ...[...tools.values()].map((tool) => ({
@@ -3323,6 +3336,72 @@ describe("brainstorm-forcer redesign", () => {
     expect(
       resolveSubagentCapabilityCeiling("lifecycle-test-session"),
     ).toBeUndefined();
+  });
+
+  it("takes the brainstorm workflow lease on start, exposing brainstorm_* tools", async () => {
+    const { pi, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    const before = pi.getActiveTools();
+    expect(before.some((t) => t.startsWith("brainstorm_"))).toBe(false);
+
+    await commands.get("brainstorm")!.handler("Arming topic", ctx);
+
+    const after = pi.getActiveTools();
+    expect(after.some((t) => t.startsWith("brainstorm_"))).toBe(true);
+  });
+
+  it("releases the brainstorm workflow lease on stop", async () => {
+    const { pi, commands } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("Arming topic", ctx);
+    expect(pi.getActiveTools().some((t) => t.startsWith("brainstorm_"))).toBe(
+      true,
+    );
+
+    await commands.get("brainstorm")!.handler("stop", ctx);
+
+    expect(pi.getActiveTools().some((t) => t.startsWith("brainstorm_"))).toBe(
+      false,
+    );
+  });
+
+  it("blocks a stale brainstorm_* call when no active phase", async () => {
+    const { pi, handlers } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+
+    const result = await handlers
+      .get("tool_call")!({ toolName: "brainstorm_submit_discovery" }, ctx);
+
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain("/brainstorm");
+  });
+
+  it("re-acquires the brainstorm lease when restoring a persisted phase", async () => {
+    const { pi, handlers, commands } = createMockAPI();
+    const persisted: Array<{
+      type: string;
+      customType?: string;
+      data?: unknown;
+    }> = [
+      {
+        type: "custom",
+        customType: "brainstorm-forcer",
+        data: { active: true, phase: "discovery", topic: "Persisted topic" },
+      },
+    ];
+    const ctx = createMockContext(persisted);
+    brainstormForcer(pi);
+
+    await handlers.get("session_start")!({ reason: "startup" }, ctx);
+
+    expect(pi.getActiveTools().some((t) => t.startsWith("brainstorm_"))).toBe(
+      true,
+    );
+    // Sanity: the phase was actually restored.
+    expect((await commands.get("brainstorm")!.handler("status", ctx))).toBeUndefined();
   });
 
 });

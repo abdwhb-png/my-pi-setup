@@ -6,6 +6,7 @@ import type {
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { createMcpRefResolver } from "pi-mcp-adapter";
+import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import { loadToolGroupsConfig } from "../_shared/tool-groups/config.ts";
 import { isToolGroupsPackageLast } from "../_shared/tool-groups/package-order.ts";
 import { resolveToolAliases } from "../_shared/tool-groups/resolver.ts";
@@ -151,9 +152,16 @@ export function createToolGroupsExtension(
                 resolveMcp,
             );
 
-            pi.setActiveTools(
-                requested.names.filter((name) => allowedNames.has(name)),
+            const candidates = requested.names.filter((name) =>
+                allowedNames.has(name),
             );
+            // Workflow-group members are only visible while their workflow owns
+            // the session; the broker strips them otherwise (sole chokepoint).
+            const reconciled = getSharedVisibilityBroker().reconcileWithLease(
+                pi,
+                candidates,
+            );
+            pi.setActiveTools(reconciled);
             reportDiagnostics(requested.diagnostics, ctx);
         }
 
@@ -177,14 +185,40 @@ export function createToolGroupsExtension(
                 resolveMcp,
             );
 
-            pi.setActiveTools(result.names);
+            const reconciled = getSharedVisibilityBroker().reconcileWithLease(
+                pi,
+                result.names,
+            );
+            pi.setActiveTools(reconciled);
 
             reportDiagnostics(result.diagnostics, ctx);
+        }
+
+        /**
+         * Workflow visibility guard that runs unconditionally, not just when the
+         * active set holds @aliases. Strips workflow-group members (brainstorm_*,
+         * sdd_*) unless their workflow holds the lease. Without this, those tools
+         * stay in the active list after a reload because no alias is present to
+         * trigger expandAliases.
+         */
+        function reconcileWorkflowVisibility(): void {
+            const active = pi.getActiveTools();
+            const reconciled = getSharedVisibilityBroker().reconcileWithLease(
+                pi,
+                active,
+            );
+            if (
+                reconciled.length !== active.length ||
+                reconciled.some((n, i) => n !== active[i])
+            ) {
+                pi.setActiveTools(reconciled);
+            }
         }
 
         pi.on("session_start", (event, ctx) => {
             applyRequestedTools(ctx);
             expandAliases(event, ctx);
+            reconcileWorkflowVisibility();
             checkToolGroupsPackageOrder(cwd);
         });
 
@@ -195,6 +229,7 @@ export function createToolGroupsExtension(
 
         pi.on("before_agent_start", (event, ctx) => {
             expandAliases(event, ctx);
+            reconcileWorkflowVisibility();
         });
     };
 }
