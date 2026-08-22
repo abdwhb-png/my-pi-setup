@@ -3,11 +3,14 @@ import {
   formatTokenCount,
   formatUsdCompact,
   renderBranch,
+  buildContextContent,
   renderContext,
   renderCost,
   renderCwd,
   renderModel,
   renderSessionName,
+  buildTokenContent,
+  renderTokenCounts,
     shortenMiddle,
   renderPrefix,
   type StatusBarState,
@@ -45,6 +48,7 @@ function makeState(over: Partial<StatusBarState> = {}): StatusBarState {
     model: { id: "claude-sonnet-4", provider: "anthropic" as never },
     session: { name: "my-session" },
     cost: { totalUsd: 0.42 },
+    tokens: { input: 1234, output: 340 },
     ...over,
   };
 }
@@ -119,7 +123,7 @@ describe("segment renderers", () => {
 
   it("renderContext builds percent + tokens/window", () => {
     const out = renderContext(makeState(), 80, colors);
-    expect(out).toBe("9% 18k/200k");
+    expect(out).toBe(buildContextContent(9, 18000, 200000, colors));
   });
 
   it("renderCost formats usd compact", () => {
@@ -133,5 +137,10 @@ describe("segment renderers", () => {
   it("renderModel handles missing provider", () => {
     const state = makeState({ model: { id: "x", provider: undefined } });
     expect(renderModel(state, 40, colors)).toBe("(no-provider) x");
+  });
+
+  it("renderTokenCounts renders only output when input is zero", () => {
+    const state = makeState({ tokens: { input: 0, output: 340 } });
+    expect(renderTokenCounts(state, 40, colors)).toBe(buildTokenContent(0, 340, colors));
   });
 });

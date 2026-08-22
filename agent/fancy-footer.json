@@ -9,19 +9,19 @@
         "model": {
             "enabled": true,
             "align": "right",
-            "row": 0,
+            "row": 1,
             "position": 1
         },
         "thinking": {
             "enabled": true,
             "row": 0,
-            "position": 2,
+            "position": 1,
             "align": "right"
         },
         "total-cost": {
             "enabled": true,
             "align": "right",
-            "row": 0,
+            "row": 1,
             "position": 4
         },
         "context-capacity": {
@@ -58,11 +58,9 @@
         }
     },
     "extensionWidgets": {
-        "session-status-bar": {
-            "row": 0
-        },
         "session-status-bar.model": {
-            "row": 1
+            "row": 0,
+            "position": 0
         },
         "session-status-bar.context": {
             "row": 0,
@@ -71,7 +69,11 @@
         "session-status-bar.cost": {
             "row": 1
         },
+        "session-status-bar.tokens": {
+            "row": 1
+        },
         "git-status-widget": {
+            "enabled": true,
             "row": 1,
             "align": "left",
             "position": 0

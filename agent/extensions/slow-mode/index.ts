@@ -26,9 +26,9 @@ import {
     createEditTool,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { createMcpRefResolver } from "pi-mcp-adapter";
 import { isDangerous } from "../_shared/bash/guard";
 import { createWidget } from "../_shared/fancy-footer.ts";
-import { createMcpRefResolver } from "pi-mcp-adapter";
 import { createUiColors } from "../_shared/ui/ui-colors.ts";
 import {
     resolvePath,

@@ -13,6 +13,7 @@ export interface StatusBarState {
     model: { id: string; provider?: string };
     session: { name?: string };
     cost: { totalUsd: number };
+    tokens: { input: number; output: number };
 }
 
 export type StatusBarColors = UiColorsCreation;
@@ -75,23 +76,29 @@ export function renderSessionName(
     return colors.meta(`${renderPrefix}${shortenMiddle(name, maxName)}`);
 }
 
+export const buildContextContent = (percent: number, tokens: number, window: number, colors: StatusBarColors) => {
+    const pct = `${Math.round(percent)}%`;
+    const icon = `${percent < 20 ? "🪫" : "🔋"}`;
+    return (
+        icon +
+        colors.pressure(
+            formatTokenCount(tokens),
+            percent
+        ) +
+        colors.separator("/") +
+        colors.primary(formatTokenCount(window)) +
+        colors.meta("(") +
+        colors.meta(pct) +
+        colors.meta(")")
+    );
+}
+
 export function renderContext(
     state: StatusBarState,
     _availableWidth: number,
     colors: StatusBarColors,
 ): string {
-    const pct = `${Math.round(state.context.percent)}%`;
-    return (
-        "🔋" +
-        colors.pressure(pct, state.context.percent) +
-        " " +
-        colors.pressure(
-            formatTokenCount(state.context.tokens),
-            state.context.percent,
-        ) +
-        colors.separator("/") +
-        colors.primary(formatTokenCount(state.context.window))
-    );
+    return buildContextContent(state.context.percent, state.context.tokens, state.context.window, colors);
 }
 
 export function renderCost(
@@ -100,6 +107,24 @@ export function renderCost(
     colors: StatusBarColors,
 ): string {
     return colors.meta(formatUsdCompact(state.cost.totalUsd, colors));
+}
+
+export const buildTokenContent = (input: number, output: number, colors: StatusBarColors): string => {
+    return (
+        colors.primary("⬆") +
+        colors.muted(formatTokenCount(output)) +
+        colors.separator("/") +
+        colors.model("⬇") +
+        colors.muted(formatTokenCount(input))
+    );
+};
+
+export function renderTokenCounts(
+    state: StatusBarState,
+    _availableWidth: number,
+    colors: StatusBarColors,
+): string {
+    return buildTokenContent(state.tokens.input, state.tokens.output, colors);
 }
 
 export function renderModel(

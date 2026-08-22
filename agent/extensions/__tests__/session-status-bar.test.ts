@@ -56,7 +56,7 @@ describe("session-status-bar extension wiring", () => {
     expect(typeof sessionFactory).toBe("function");
   });
 
-  it("registers six positioned widgets with correct align + order", async () => {
+  it("registers seven positioned widgets with correct align + order", async () => {
     widgetDefs.length = 0;
     const { pi, handlers } = createMockPi();
     sessionFactory(pi);
@@ -66,18 +66,20 @@ describe("session-status-bar extension wiring", () => {
     }
     await Promise.resolve();
 
-    expect(widgetDefs).toHaveLength(6);
+    expect(widgetDefs).toHaveLength(7);
 
     const byId = new Map(widgetDefs.map((w) => [w.id, w]));
     expect(byId.get("session-status-bar.cwd")?.align).toBe("left");
     expect(byId.get("session-status-bar.branch")?.align).toBe("left");
     expect(byId.get("session-status-bar.session")?.align).toBe("left");
     expect(byId.get("session-status-bar.context")?.align).toBe("right");
+    expect(byId.get("session-status-bar.tokens")?.align).toBe("right");
     expect(byId.get("session-status-bar.cost")?.align).toBe("right");
     expect(byId.get("session-status-bar.model")?.align).toBe("right");
 
     expect(byId.get("session-status-bar.session")?.order).toBe(2);
-    expect(byId.get("session-status-bar.model")?.order).toBe(2);
+    expect(byId.get("session-status-bar.tokens")?.order).toBe(1);
+    expect(byId.get("session-status-bar.model")?.order).toBe(3);
 
     for (const w of widgetDefs) {
       expect(w.placement).toBe("belowEditor");

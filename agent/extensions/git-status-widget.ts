@@ -9,6 +9,8 @@ import { createUiColors } from "./_shared/ui/ui-colors";
 
 const WIDGET_ID = "git-status-widget";
 const UPDATE_INTERVAL_MS = 2_000;
+const BRANCH_ICON = "🌿";
+const UNSTAGED_ICON = "✏️";
 
 let widgetText: string | null = null;
 
@@ -29,7 +31,7 @@ async function refreshWidgetText(
         const colors = createUiColors(theme);
 
         const fileLabel = unstagedCount === 1 ? "file" : "files";
-        return ` ${colors.primary(branch)} · ${colors.warning(`${unstagedCount} unstaged ${fileLabel}`)}`;
+        return `${BRANCH_ICON}${colors.primary(branch)} · ${UNSTAGED_ICON}${colors.warning(`${unstagedCount} ${fileLabel}`)}`;
     } catch {
         return null;
     }

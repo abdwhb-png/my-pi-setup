@@ -1,9 +1,9 @@
 /**
  * Session Status Bar Extension
  *
- * Renders a compact session status line as six independently-positioned
+ * Renders a compact session status line as seven independently-positioned
  * pi-fancy-footer widgets: cwd / branch / session-name on the left,
- * context / cost / model on the right. The footer's layout engine handles
+ * context / tokens / cost / model on the right. The footer's layout engine handles
  * alignment and spacing; this extension only builds state and declares where
  * each segment sits (align + order + placement).
  *
@@ -35,6 +35,7 @@ import {
     renderBranch,
     renderSessionName,
     renderContext,
+    renderTokenCounts,
     renderCost,
     renderModel,
 } from "./_shared/status-segments";
@@ -47,6 +48,7 @@ const MAX_BRANCH_WIDTH = 18;
 type StatusBarConfig = {
     enabled: boolean;
     showContext: boolean;
+    showTokenCounts: boolean;
     showCost: boolean;
     showModel: boolean;
     showCwd: boolean;
@@ -58,6 +60,7 @@ type StatusBarConfig = {
 const DEFAULT_CONFIG: StatusBarConfig = {
     enabled: true,
     showContext: true,
+    showTokenCounts: true,
     showCost: true,
     showModel: true,
     showCwd: true,
@@ -111,10 +114,18 @@ const SEGMENTS: readonly SegmentDef[] = [
         render: renderContext,
     },
     {
+        id: `${WIDGET_ID}.tokens`,
+        label: "Tokens",
+        align: "right",
+        order: 1,
+        show: (c) => c.showTokenCounts,
+        render: renderTokenCounts,
+    },
+    {
         id: `${WIDGET_ID}.cost`,
         label: "Cost",
         align: "right",
-        order: 1,
+        order: 2,
         show: (c) => c.showCost,
         render: renderCost,
     },
@@ -122,7 +133,7 @@ const SEGMENTS: readonly SegmentDef[] = [
         id: `${WIDGET_ID}.model`,
         label: "Model",
         align: "right",
-        order: 2,
+        order: 3,
         show: (c) => c.showModel,
         render: renderModel,
     },
@@ -166,11 +177,12 @@ function buildState(
         0,
     );
 
-    const contextTokens = lastMessage?.usage
-        ? lastMessage.usage.input +
-          lastMessage.usage.output +
-          lastMessage.usage.cacheRead +
-          lastMessage.usage.cacheWrite
+    const lastUsage = lastMessage?.usage;
+    const contextTokens = lastUsage
+        ? lastUsage.input +
+          lastUsage.output +
+          lastUsage.cacheRead +
+          lastUsage.cacheWrite
         : 0;
     const contextWindow = ctx.model?.contextWindow || 0;
     const percent =
@@ -193,6 +205,10 @@ function buildState(
         },
         session: { name: ctx.sessionManager.getSessionName() },
         cost: { totalUsd },
+        tokens: {
+            input: lastUsage?.input ?? 0,
+            output: lastUsage?.output ?? 0,
+        },
     };
 }
 
@@ -232,6 +248,10 @@ function tryBuildStateFromBridge(
             },
             session: { name: ctx.sessionManager.getSessionName() },
             cost: { totalUsd: metrics.totalCost },
+            tokens: {
+                input: metrics.latest?.input ?? 0,
+                output: metrics.latest?.output ?? 0,
+            },
         };
     } catch {
         return undefined;
