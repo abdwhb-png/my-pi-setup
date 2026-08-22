@@ -172,9 +172,18 @@ function buildState(
         .filter((m) => m.role === "assistant" && m.stopReason !== "aborted");
 
     const lastMessage = messages[messages.length - 1];
-    const totalUsd = messages.reduce(
-        (sum, m) => sum + (m.usage?.cost?.total ?? 0),
-        0,
+    const totals = messages.reduce(
+        (sum, message) => {
+            const usage = message.usage;
+            return {
+                input: sum.input + (usage?.input ?? 0),
+                output: sum.output + (usage?.output ?? 0),
+                cacheRead: sum.cacheRead + (usage?.cacheRead ?? 0),
+                cacheWrite: sum.cacheWrite + (usage?.cacheWrite ?? 0),
+                cost: sum.cost + (usage?.cost?.total ?? 0),
+            };
+        },
+        { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
     );
 
     const lastUsage = lastMessage?.usage;
@@ -204,10 +213,12 @@ function buildState(
             provider: ctx.model?.provider,
         },
         session: { name: ctx.sessionManager.getSessionName() },
-        cost: { totalUsd },
+        cost: { totalUsd: totals.cost },
         tokens: {
-            input: lastUsage?.input ?? 0,
-            output: lastUsage?.output ?? 0,
+            input: totals.input,
+            output: totals.output,
+            cacheRead: totals.cacheRead,
+            cacheWrite: totals.cacheWrite,
         },
     };
 }
@@ -249,8 +260,10 @@ function tryBuildStateFromBridge(
             session: { name: ctx.sessionManager.getSessionName() },
             cost: { totalUsd: metrics.totalCost },
             tokens: {
-                input: metrics.latest?.input ?? 0,
-                output: metrics.latest?.output ?? 0,
+                input: metrics.total.input,
+                output: metrics.total.output,
+                cacheRead: metrics.total.cacheRead,
+                cacheWrite: metrics.total.cacheWrite,
             },
         };
     } catch {

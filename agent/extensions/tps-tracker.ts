@@ -23,7 +23,7 @@ export default function (pi: ExtensionAPI) {
     let estimatedStreamedTokens = 0;
     /** Cumulative official output tokens across all assistant messages in this agent run. */
     let totalOutputTokens = 0;
-    /** Input tokens of the current agent run (= `usage.input` of the last assistant message). */
+    /** Cumulative official input tokens across all assistant messages in this agent run. */
     let totalInputTokens = 0;
     /** Cumulative time (ms) spent actually streaming output deltas (excludes tool execution and first-token latency). */
     let totalStreamMs = 0;
@@ -91,6 +91,8 @@ export default function (pi: ExtensionAPI) {
         if (event.message.role !== "assistant") return;
 
         const messageTokens = event.message.usage.output;
+        totalInputTokens += event.message.usage.input || 0;
+
         const timingStart = streamStart ?? messageStart;
         if (!timingStart || messageTokens <= 0) {
             messageStart = null;
@@ -100,7 +102,6 @@ export default function (pi: ExtensionAPI) {
         }
 
         totalOutputTokens += messageTokens;
-        totalInputTokens = event.message.usage.input || totalInputTokens;
         totalStreamMs += Math.max(0, Date.now() - timingStart);
 
         messageStart = null;

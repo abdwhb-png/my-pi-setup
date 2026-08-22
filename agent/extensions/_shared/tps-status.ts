@@ -9,7 +9,7 @@ import { buildTokenContent } from "./status-segments.ts";
 import type { StatusBarColors } from "./status-segments.ts";
 
 export interface TpsState {
-    /** Input tokens of the current agent run (= `usage.input` of the last message). */
+    /** Input tokens for the rendered scope: live message or cumulative agent run. */
     input: number;
     /** Output tokens of the current agent run (cumulative `usage.output`). */
     output: number;
@@ -27,7 +27,7 @@ function durLabel(colors: StatusBarColors, elapsedMs: number): string {
 
 /**
  * Live-rendered footer status shown while the model is streaming:
- * `⬇ in / ⬆ out · tps tok/s (dur)`.
+ * `tps tok/s · in↓ input · out↑ output · (dur)`.
  */
 export function buildTpsStatus(
     state: TpsState,
@@ -44,7 +44,7 @@ export function buildTpsStatus(
 
 /**
  * Final agent-end summary (TpsSummaryEvent text):
- * `✓ tps tok/s · in / out · in Xs streaming`.
+ * `tps tok/s · in↓ input · out↑ output · in Xs streaming`.
  */
 export function buildTpsSummary(
     state: TpsState,

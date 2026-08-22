@@ -9,6 +9,7 @@ import {
   renderCwd,
   renderModel,
   renderSessionName,
+  buildSessionTokenContent,
   buildTokenContent,
   renderTokenCounts,
     shortenMiddle,
@@ -48,7 +49,7 @@ function makeState(over: Partial<StatusBarState> = {}): StatusBarState {
     model: { id: "claude-sonnet-4", provider: "anthropic" as never },
     session: { name: "my-session" },
     cost: { totalUsd: 0.42 },
-    tokens: { input: 1234, output: 340 },
+    tokens: { input: 1234, output: 340, cacheRead: 20, cacheWrite: 8 },
     ...over,
   };
 }
@@ -139,8 +140,19 @@ describe("segment renderers", () => {
     expect(renderModel(state, 40, colors)).toBe("(no-provider) x");
   });
 
-  it("renderTokenCounts renders only output when input is zero", () => {
-    const state = makeState({ tokens: { input: 0, output: 340 } });
-    expect(renderTokenCounts(state, 40, colors)).toBe(buildTokenContent(0, 340, colors));
+  it("buildTokenContent labels input and output with their directions", () => {
+    expect(buildTokenContent(1234, 340, colors)).toBe("in↓ 1.2k · out↑ 340");
+  });
+
+  it("renderTokenCounts renders session totals with cache read and write", () => {
+    const state = makeState({
+      tokens: { input: 1234, output: 340, cacheRead: 20, cacheWrite: 8 },
+    });
+    expect(renderTokenCounts(state, 40, colors)).toBe(
+      buildSessionTokenContent(1234, 340, 20, 8, colors),
+    );
+    expect(renderTokenCounts(state, 40, colors)).toBe(
+      "Σ in↓ 1.2k · out↑ 340 · cache R 20 · W 8",
+    );
   });
 });

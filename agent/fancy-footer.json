@@ -21,7 +21,7 @@
         "total-cost": {
             "enabled": true,
             "align": "right",
-            "row": 1,
+            "row": 0,
             "position": 4
         },
         "context-capacity": {
@@ -71,6 +71,10 @@
         },
         "session-status-bar.tokens": {
             "row": 1
+        },
+        "session-status-bar.session": {
+            "row": 2,
+            "align": "right"
         },
         "git-status-widget": {
             "enabled": true,

@@ -22,8 +22,7 @@ describe("tps-status renderers", () => {
   describe("buildTpsStatus", () => {
     it("renders in/out tokens, tps and elapsed", () => {
       const out = buildTpsStatus({ input: 1500, output: 3200, tps: 42, elapsedMs: 76_000 }, colors);
-      expect(out).toContain("⬇");
-      expect(out).toContain("⬆");
+      expect(out).toContain("in↓ 1.5k · out↑ 3.2k");
       expect(out).toContain("1.5k");
       expect(out).toContain("3.2k");
       expect(out).toContain("42 tok/s");
@@ -34,8 +33,7 @@ describe("tps-status renderers", () => {
   describe("buildTpsSummary", () => {
     it("renders the final summary with in, out, tps and duration", () => {
       const out = buildTpsSummary({ input: 900, output: 512, tps: 12, elapsedMs: 42_000 }, colors);
-      expect(out).toContain("900");
-      expect(out).toContain("512");
+      expect(out).toContain("in↓ 900 · out↑ 512");
       expect(out).toContain("12 tok/s");
       expect(out).toContain("42.0s");
     });

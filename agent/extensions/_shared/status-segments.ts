@@ -7,8 +7,8 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { UiColorsCreation } from "./ui/ui-colors";
 
-const ARROW_DOWN = "⬇";
-const ARROW_UP = "⬆";
+const ARROW_DOWN = "↓";
+const ARROW_UP = "↑";
 
 export interface StatusBarState {
     workspace: { shortCwd: string; shortBranch: string };
@@ -16,7 +16,12 @@ export interface StatusBarState {
     model: { id: string; provider?: string };
     session: { name?: string };
     cost: { totalUsd: number };
-    tokens: { input: number; output: number };
+    tokens: {
+        input: number;
+        output: number;
+        cacheRead: number;
+        cacheWrite: number;
+    };
 }
 
 export type StatusBarColors = UiColorsCreation;
@@ -79,29 +84,36 @@ export function renderSessionName(
     return colors.meta(`${renderPrefix}${shortenMiddle(name, maxName)}`);
 }
 
-export const buildContextContent = (percent: number, tokens: number, window: number, colors: StatusBarColors) => {
+export const buildContextContent = (
+    percent: number,
+    tokens: number,
+    window: number,
+    colors: StatusBarColors,
+) => {
     const pct = `${Math.round(percent)}%`;
-    const icon = `${percent < 20 ? "🪫" : "🔋"}`;
+    const icon = percent > 80 ? "🪫" : "🔋";
     return (
         icon +
-        colors.pressure(
-            formatTokenCount(tokens),
-            percent
-        ) +
+        colors.pressure(formatTokenCount(tokens), percent) +
         colors.separator("/") +
         colors.primary(formatTokenCount(window)) +
         colors.meta("(") +
         colors.meta(pct) +
         colors.meta(")")
     );
-}
+};
 
 export function renderContext(
     state: StatusBarState,
     _availableWidth: number,
     colors: StatusBarColors,
 ): string {
-    return buildContextContent(state.context.percent, state.context.tokens, state.context.window, colors);
+    return buildContextContent(
+        state.context.percent,
+        state.context.tokens,
+        state.context.window,
+        colors,
+    );
 }
 
 export function renderCost(
@@ -112,13 +124,38 @@ export function renderCost(
     return colors.meta(formatUsdCompact(state.cost.totalUsd, colors));
 }
 
-export const buildTokenContent = (input: number, output: number, colors: StatusBarColors): string => {
+export const buildTokenContent = (
+    input: number,
+    output: number,
+    colors: StatusBarColors,
+): string => {
     return (
-        colors.primary(ARROW_UP) +
-        colors.muted(formatTokenCount(output)) +
-        colors.separator("/") +
-        colors.model(ARROW_DOWN) +
-        colors.muted(formatTokenCount(input))
+        colors.primary(`in${ARROW_DOWN}`) +
+        " " +
+        colors.muted(formatTokenCount(input)) +
+        colors.separator(" · ") +
+        colors.model(`out${ARROW_UP}`) +
+        " " +
+        colors.muted(formatTokenCount(output))
+    );
+};
+
+export const buildSessionTokenContent = (
+    input: number,
+    output: number,
+    cacheRead: number,
+    cacheWrite: number,
+    colors: StatusBarColors,
+): string => {
+    return (
+        colors.meta("Σ ") +
+        buildTokenContent(input, output, colors) +
+        colors.separator(" · ") +
+        colors.subtle("cache R ") +
+        colors.muted(formatTokenCount(cacheRead)) +
+        colors.separator(" · ") +
+        colors.subtle("W ") +
+        colors.muted(formatTokenCount(cacheWrite))
     );
 };
 
@@ -127,7 +164,14 @@ export function renderTokenCounts(
     _availableWidth: number,
     colors: StatusBarColors,
 ): string {
-    return buildTokenContent(state.tokens.input, state.tokens.output, colors);
+    const { input, output, cacheRead, cacheWrite } = state.tokens;
+    return buildSessionTokenContent(
+        input,
+        output,
+        cacheRead,
+        cacheWrite,
+        colors,
+    );
 }
 
 export function renderModel(
