@@ -2,14 +2,9 @@
     "groups": {
         "inspect": ["read", "grep", "find", "ls"],
         "web": ["web_search", "fetch_content", "get_search_content"],
-        "docs": ["mcp:context7", "mcp:deepwiki"],
-        "review": ["@inspect", "@docs", "@web", "memory_search"],
-        "review-max": [
-            "@review",
-            "@lens",
-            "@report-write",
-            "intercom",
-            "contact_supervisor"
+        "docs": [
+            "mcp:context7",
+            "mcp:deepwiki"
         ],
         "memory-consult": [
             "pi_session_find",
@@ -46,6 +41,23 @@
         "ctx": [
             "@ctx-inspect",
             "@ctx-exec"
+        ],
+        "subagents": [
+            "subagent",
+            "subagent_supervisor",
+            "subagent_wait"
+        ],
+        "review": [
+            "@inspect",
+            "@docs",
+            "@web",
+            "memory_search"
+        ],
+        "review-max": [
+            "@review",
+            "@lens",
+            "@report-write",
+            "intercom"
         ]
     }
 }

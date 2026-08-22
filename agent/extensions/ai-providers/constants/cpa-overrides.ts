@@ -114,5 +114,17 @@ export const OVERRIDE_TABLES: Record<
                 cacheWrite: 0,
             },
         },
+        "gpt-5.6-luna": {
+            contextWindow: 258000,
+            maxTokens: 128_000,
+        },
+        "gpt-5.6-terra": {
+            contextWindow: 258000,
+            maxTokens: 128_000,
+        },
+        "gpt-5.6-sol": {
+            contextWindow: 258000,
+            maxTokens: 128_000,
+        }
     }, // end table "go"
 };
