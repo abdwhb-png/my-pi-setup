@@ -18,8 +18,7 @@ import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { ModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { getModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { resolveCpaModelsDevRefs } from "../../_shared/models-dev/mapping";
-import { loadAiProvidersConfig } from "../config.ts";
-import { OVERRIDE_TABLES } from "../constants/cpa-overrides";
+import { loadAiProvidersConfig, type CpaMetadataRule } from "../config.ts";
 import {
     STATIC_FALLBACK_MODELS,
     NO_DEV_ROLE_COMPAT,
@@ -30,6 +29,10 @@ import {
 export interface CpaModelEntry {
     id: string;
     owned_by: string;
+    contextLength?: number;
+    maxCompletionTokens?: number;
+    thinkingLevels?: string[];
+    inputModalities?: Array<"text" | "image">;
 }
 
 export interface CpaCatalogResult {
@@ -105,6 +108,10 @@ export async function fetchCpaModelIds(
                 created?: number;
                 object?: string;
                 owned_by?: string;
+                context_length?: number;
+                max_completion_tokens?: number;
+                thinking?: { levels?: string[] };
+                supportedInputModalities?: string[];
             }>;
         };
         if (!json.data || !Array.isArray(json.data)) {
@@ -112,10 +119,45 @@ export async function fetchCpaModelIds(
             return [];
         }
 
-        return json.data.map((m) => ({
-            id: String(m.id ?? ""),
-            owned_by: String(m.owned_by ?? "unknown"),
-        }));
+        return json.data.map((m) => {
+            const contextLength =
+                typeof m.context_length === "number" &&
+                Number.isInteger(m.context_length) &&
+                m.context_length > 0
+                    ? m.context_length
+                    : undefined;
+            const maxCompletionTokens =
+                typeof m.max_completion_tokens === "number" &&
+                Number.isInteger(m.max_completion_tokens) &&
+                m.max_completion_tokens > 0
+                    ? m.max_completion_tokens
+                    : undefined;
+            const thinkingLevels = Array.isArray(m.thinking?.levels)
+                ? m.thinking.levels.filter(
+                      (level) => typeof level === "string" && level.length > 0,
+                  )
+                : undefined;
+            const inputModalities = Array.isArray(m.supportedInputModalities)
+                ? m.supportedInputModalities.filter(
+                      (modality) => modality === "text" || modality === "image",
+                  )
+                : undefined;
+
+            return {
+                id: m.id ?? "",
+                owned_by: m.owned_by ?? "unknown",
+                contextLength,
+                maxCompletionTokens,
+                thinkingLevels:
+                    thinkingLevels && thinkingLevels.length > 0
+                        ? thinkingLevels
+                        : undefined,
+                inputModalities:
+                    inputModalities && inputModalities.length > 0
+                        ? inputModalities
+                        : undefined,
+            };
+        });
     } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
             console.warn("[cpa-models] CPA /v1/models fetch timed out");
@@ -281,7 +323,48 @@ export function familyDefaults(
     return {};
 }
 
-// ── Step 1d: Provider-specific overrides ──
+function matchesGlob(pattern: string, value: string): boolean {
+    let patternIndex = 0;
+    let valueIndex = 0;
+    let starIndex = -1;
+    let starValueIndex = 0;
+
+    while (valueIndex < value.length) {
+        if (
+            pattern[patternIndex] === "?" ||
+            pattern[patternIndex] === value[valueIndex]
+        ) {
+            patternIndex++;
+            valueIndex++;
+        } else if (pattern[patternIndex] === "*") {
+            starIndex = patternIndex++;
+            starValueIndex = valueIndex;
+        } else if (starIndex >= 0) {
+            patternIndex = starIndex + 1;
+            valueIndex = ++starValueIndex;
+        } else {
+            return false;
+        }
+    }
+
+    while (pattern[patternIndex] === "*") patternIndex++;
+    return patternIndex === pattern.length;
+}
+
+function isExactRule(rule: CpaMetadataRule): boolean {
+    return !rule.match.id.includes("*") && !rule.match.id.includes("?");
+}
+
+function matchesMetadataRule(
+    rule: CpaMetadataRule,
+    modelId: string,
+    ownedBy: string,
+): boolean {
+    return (
+        matchesGlob(rule.match.id, modelId) &&
+        (rule.match.ownedBy === undefined || rule.match.ownedBy === ownedBy)
+    );
+}
 
 // ── Helper: format model name for display ──
 
@@ -350,8 +433,8 @@ function formatModelName(id: string, ownedBy: string): string {
 export function enrichModel(
     entry: CpaModelEntry,
     catalog: CpaCatalogLookup,
-    overridePrefixes: Record<string, string> = loadAiProvidersConfig().cpa
-        .overridePrefixes ?? { ocg: "go" },
+    metadataRules: readonly CpaMetadataRule[] = loadAiProvidersConfig().cpa
+        .metadataRules ?? [],
 ): ProviderModelConfig | null {
     const modelId = entry.id;
     const ownedBy = entry.owned_by;
@@ -413,34 +496,55 @@ export function enrichModel(
         }
     }
 
-    // ── Layer 5: Prefix-driven alias overrides ──
-    // Config-gated: `overridePrefixes` maps a model-id prefix to an
-    // OVERRIDE_TABLES key (default { ocg: "go" }). Dispatches on the
-    // model-id prefix instead of the provider display name, so adding or
-    // renaming a provider in cliproxy needs no code change here — only a
-    // config entry pointing at the right table. Overrides apply last and win
-    // over conflicting catalog values; missing override fields preserve the
-    // catalog/fallback values.
-    const slashIdx = modelId.indexOf("/");
-    const prefix = slashIdx > 0 ? modelId.slice(0, slashIdx) : null;
-    const tableName = prefix ? overridePrefixes[prefix] : undefined;
-    const aliasKey = tableName ? modelId.slice(slashIdx + 1) : null;
-    const override =
-        tableName && aliasKey
-            ? OVERRIDE_TABLES[tableName]?.[aliasKey]
-            : undefined;
+    // ── Layer 5: CPA runtime metadata ──
+    // CPA exposes exact route metadata for some providers, including bare
+    // Codex model ids. Missing or invalid metadata stays undefined during
+    // parsing, so it never replaces a catalog or fallback value.
+    if (entry.contextLength !== undefined) contextWindow = entry.contextLength;
+    if (entry.maxCompletionTokens !== undefined)
+        maxTokens = entry.maxCompletionTokens;
+    if (entry.thinkingLevels !== undefined) reasoning = true;
+    if (entry.inputModalities !== undefined) {
+        input = entry.inputModalities.includes("image")
+            ? ["text", "image"]
+            : ["text"];
+    }
 
-    if (override?.contextWindow) contextWindow = override.contextWindow;
-    if (override?.maxTokens) maxTokens = override.maxTokens;
-    if (override?.reasoning !== undefined) reasoning = override.reasoning;
-    if (override?.cost) {
-        cost = {
-            ...genericCost,
-            input: override.cost.input ?? cost.input,
-            output: override.cost.output ?? cost.output,
-            cacheRead: override.cost.cacheRead ?? cost.cacheRead,
-            cacheWrite: override.cost.cacheWrite ?? cost.cacheWrite,
-        };
+    // ── Layer 6: Local metadata rules ──
+    // Patterns run in declaration order, then exact IDs. Local config is the
+    // final authority while rules that omit a field preserve CPA/catalog data.
+    const matchingRules = [
+        ...metadataRules.filter(
+            (rule) =>
+                !isExactRule(rule) &&
+                matchesMetadataRule(rule, modelId, ownedBy),
+        ),
+        ...metadataRules.filter(
+            (rule) =>
+                isExactRule(rule) &&
+                matchesMetadataRule(rule, modelId, ownedBy),
+        ),
+    ];
+    for (const rule of matchingRules) {
+        const { metadata } = rule;
+        if (metadata.contextWindow !== undefined) {
+            contextWindow = metadata.contextWindow;
+        }
+        if (metadata.maxTokens !== undefined) maxTokens = metadata.maxTokens;
+        if (metadata.reasoning !== undefined) reasoning = metadata.reasoning;
+        if (metadata.input !== undefined) input = metadata.input;
+        if (metadata.cost) {
+            if (metadata.cost.input !== undefined)
+                cost.input = metadata.cost.input;
+            if (metadata.cost.output !== undefined)
+                cost.output = metadata.cost.output;
+            if (metadata.cost.cacheRead !== undefined) {
+                cost.cacheRead = metadata.cost.cacheRead;
+            }
+            if (metadata.cost.cacheWrite !== undefined) {
+                cost.cacheWrite = metadata.cost.cacheWrite;
+            }
+        }
     }
 
     return {
@@ -464,6 +568,8 @@ export interface BuildCpaModelsOptions {
      * default catalog never triggers a network request from this function.
      */
     catalog?: CpaCatalogLookup;
+    /** Injected local rules keep enrichment tests independent of user config. */
+    metadataRules?: readonly CpaMetadataRule[];
 }
 
 export async function buildCpaModels(
@@ -485,9 +591,13 @@ export async function buildCpaModels(
 
     // 3. Enrich each entry against the shared catalog (in-memory lookup)
     const catalog = options?.catalog ?? getModelsDevCatalog();
+    const metadataRules =
+        options?.metadataRules ??
+        loadAiProvidersConfig().cpa.metadataRules ??
+        [];
     const models: ProviderModelConfig[] = [];
     for (const entry of entries) {
-        const model = enrichModel(entry, catalog);
+        const model = enrichModel(entry, catalog, metadataRules);
         if (model) models.push(model);
     }
 

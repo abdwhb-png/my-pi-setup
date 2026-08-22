@@ -1,225 +1,205 @@
-/**
- * ai-providers config loader
- *
- * Config files (merged, project takes precedence):
- * - ~/.pi/agent/settings.json under key "aiProviders" (global)
- * - <cwd>/.pi/settings.json under key "aiProviders" (project-local)
- * - legacy fallback: ~/.pi/agent/ai-providers.json and <cwd>/.pi/ai-providers.json
- *
- * Example .pi/settings.json:
- * {
- *   "aiProviders": {
- *     "providers": {
- *       "factory-ai": false
- *     },
- *     "cpa": {
- *       "refreshTtlMs": 30000
- *     }
- *   }
- * }
- */
+/** ai-providers dedicated configuration loader. */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
+
+// oxlint-disable-next-line typescript/no-restricted-types -- config-loader passes untrusted JSON as unknown.
+type UntrustedJson = unknown;
+
+export interface CpaMetadataRule {
+    match: {
+        id: string;
+        ownedBy?: string;
+    };
+    metadata: {
+        contextWindow?: number;
+        maxTokens?: number;
+        reasoning?: boolean;
+        input?: Array<"text" | "image">;
+        cost?: Partial<ProviderModelConfig["cost"]>;
+    };
+}
 
 export interface AiProvidersConfig {
     providers: Record<string, boolean>;
     widgets: Record<string, boolean>;
     maxVisibleRows?: number;
     cpa: {
-        /**
-         * Refresh TTL for the CPA catalog guard. Always resolved to a positive
-         * number by mergeAiProvidersConfig (defaults to 30_000ms).
-         */
+        /** Refresh TTL for the CPA catalog guard. Defaults to 30 seconds. */
         refreshTtlMs?: number;
-        /**
-         * When true, suppresses catalog drift warnings (new/missing CPA models
-         * vs the static fallback list). Defaults to false.
-         */
+        /** Suppresses CPA catalog drift warnings when true. */
         silentCatalogDiff?: boolean;
-        /**
-         * Model-id prefixes whose models should consult the named override
-         * tables during enrichment. Maps a CPA model-id prefix to an
-         * `OVERRIDE_TABLES` key, e.g. `{ "ocg": "go" }` → models like
-         * `cpa/ocg/go-glm-5.2` consult `OVERRIDE_TABLES.go`. Defaults to
-         * `{ ocg: "go" }`. Adding/renaming a provider in cliproxy only needs
-         * an entry here (pointing at the right table); adding a whole new
-         * family also needs a new entry in `OVERRIDE_TABLES`. A project
-         * setting replaces (does not merge) the global map.
-         */
-        overridePrefixes?: Record<string, string>;
+        /** Local metadata rules. Globs apply before exact model IDs. */
+        metadataRules?: CpaMetadataRule[];
     };
 }
 
 const DEFAULT_CONFIG: AiProvidersConfig = {
     providers: {},
     widgets: {},
-    cpa: { refreshTtlMs: 30_000, overridePrefixes: { ocg: "go" } },
+    cpa: { refreshTtlMs: 30_000, metadataRules: [] },
 };
 
-function normalizeBooleanMap(raw: unknown): Record<string, boolean> {
-    if (!raw || typeof raw !== "object") return {};
+function isRecord(
+    value: UntrustedJson,
+): value is Record<string, UntrustedJson> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeBooleanMap(raw: UntrustedJson): Record<string, boolean> {
+    if (!isRecord(raw)) return {};
     const result: Record<string, boolean> = {};
     for (const [key, value] of Object.entries(raw)) {
-        if (typeof value === "boolean") {
-            result[key] = value;
-        }
+        if (typeof value === "boolean") result[key] = value;
     }
     return result;
 }
 
-export function normalizeAiProvidersConfig(
-    raw: unknown,
-): Partial<AiProvidersConfig> {
-    if (!raw || typeof raw !== "object") return {};
-    const value = raw as Record<string, unknown>;
-    const rawCpa =
-        value.cpa && typeof value.cpa === "object"
-            ? (value.cpa as Record<string, unknown>)
-            : {};
-
-    const config: Partial<AiProvidersConfig> = {
-        providers: normalizeBooleanMap(value.providers),
-        widgets: normalizeBooleanMap(value.widgets),
-    };
-
-    const cpaPartial: {
-        refreshTtlMs?: number;
-        silentCatalogDiff?: boolean;
-        overridePrefixes?: Record<string, string>;
-    } = {};
-    if (
-        typeof rawCpa.refreshTtlMs === "number" &&
-        Number.isFinite(rawCpa.refreshTtlMs) &&
-        rawCpa.refreshTtlMs > 0
-    ) {
-        cpaPartial.refreshTtlMs = rawCpa.refreshTtlMs;
-    }
-    if (typeof rawCpa.silentCatalogDiff === "boolean") {
-        cpaPartial.silentCatalogDiff = rawCpa.silentCatalogDiff;
-    }
-    if (
-        rawCpa.overridePrefixes &&
-        typeof rawCpa.overridePrefixes === "object" &&
-        !Array.isArray(rawCpa.overridePrefixes)
-    ) {
-        const prefixes: Record<string, string> = {};
-        for (const [k, v] of Object.entries(
-            rawCpa.overridePrefixes as Record<string, unknown>,
-        )) {
-            if (
-                typeof k === "string" &&
-                k.length > 0 &&
-                typeof v === "string" &&
-                v.length > 0
-            ) {
-                prefixes[k] = v;
-            }
-        }
-        if (Object.keys(prefixes).length > 0) {
-            cpaPartial.overridePrefixes = prefixes;
-        }
-    }
-    if (Object.keys(cpaPartial).length > 0) {
-        config.cpa = cpaPartial;
-    }
-
-    if (typeof value.maxVisibleRows === "number") {
-        config.maxVisibleRows = value.maxVisibleRows;
-    }
-
-    return config;
+function isPositiveInteger(value: UntrustedJson): value is number {
+    return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
-function readLegacyConfig(path: string): Partial<AiProvidersConfig> {
-    if (!existsSync(path)) return {};
-    try {
-        return normalizeAiProvidersConfig(
-            JSON.parse(readFileSync(path, "utf-8")),
-        );
-    } catch {
-        return {};
+function normalizeInput(
+    raw: UntrustedJson,
+): Array<"text" | "image"> | undefined {
+    if (!Array.isArray(raw) || raw.length === 0) return undefined;
+    if (!raw.every((item) => item === "text" || item === "image")) {
+        return undefined;
     }
+    if (!raw.includes("text")) return undefined;
+    return raw.includes("image") ? ["text", "image"] : ["text"];
+}
+
+function normalizeCost(
+    raw: UntrustedJson,
+): Partial<ProviderModelConfig["cost"]> | undefined {
+    if (!isRecord(raw)) return undefined;
+    const cost: Partial<ProviderModelConfig["cost"]> = {};
+    for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+        const value = raw[key];
+        if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+            cost[key] = value;
+        }
+    }
+    return Object.keys(cost).length > 0 ? cost : undefined;
+}
+
+function normalizeMetadataRule(
+    raw: UntrustedJson,
+): CpaMetadataRule | undefined {
+    if (!isRecord(raw) || !isRecord(raw.match) || !isRecord(raw.metadata)) {
+        return undefined;
+    }
+    const id = raw.match.id;
+    const ownedBy = raw.match.ownedBy;
+    if (typeof id !== "string" || id.length === 0) return undefined;
+    if (
+        ownedBy !== undefined &&
+        (typeof ownedBy !== "string" || ownedBy.length === 0)
+    ) {
+        return undefined;
+    }
+
+    const metadata: CpaMetadataRule["metadata"] = {};
+    if (isPositiveInteger(raw.metadata.contextWindow)) {
+        metadata.contextWindow = raw.metadata.contextWindow;
+    }
+    if (isPositiveInteger(raw.metadata.maxTokens)) {
+        metadata.maxTokens = raw.metadata.maxTokens;
+    }
+    if (typeof raw.metadata.reasoning === "boolean") {
+        metadata.reasoning = raw.metadata.reasoning;
+    }
+    const input = normalizeInput(raw.metadata.input);
+    if (input) metadata.input = input;
+    const cost = normalizeCost(raw.metadata.cost);
+    if (cost) metadata.cost = cost;
+    if (Object.keys(metadata).length === 0) return undefined;
+
+    return {
+        match: ownedBy === undefined ? { id } : { id, ownedBy },
+        metadata,
+    };
+}
+
+export function normalizeAiProvidersConfig(
+    raw: UntrustedJson,
+): Partial<AiProvidersConfig> {
+    if (!isRecord(raw)) return {};
+    const rawCpa = isRecord(raw.cpa) ? raw.cpa : {};
+    const config: Partial<AiProvidersConfig> = {
+        providers: normalizeBooleanMap(raw.providers),
+        widgets: normalizeBooleanMap(raw.widgets),
+    };
+
+    const cpa: Partial<AiProvidersConfig["cpa"]> = {};
+    if (isPositiveInteger(rawCpa.refreshTtlMs)) {
+        cpa.refreshTtlMs = rawCpa.refreshTtlMs;
+    }
+    if (typeof rawCpa.silentCatalogDiff === "boolean") {
+        cpa.silentCatalogDiff = rawCpa.silentCatalogDiff;
+    }
+    if (Array.isArray(rawCpa.metadataRules)) {
+        const rules = rawCpa.metadataRules
+            .map(normalizeMetadataRule)
+            .filter((rule): rule is CpaMetadataRule => rule !== undefined);
+        if (rules.length > 0) cpa.metadataRules = rules;
+    }
+    if (Object.keys(cpa).length > 0)
+        config.cpa = cpa as AiProvidersConfig["cpa"];
+
+    if (typeof raw.maxVisibleRows === "number") {
+        config.maxVisibleRows = raw.maxVisibleRows;
+    }
+    return config;
 }
 
 export function mergeAiProvidersConfig(
     base: AiProvidersConfig,
     overrides: Partial<AiProvidersConfig>,
 ): AiProvidersConfig {
-    const baseCpa: AiProvidersConfig["cpa"] = base.cpa ?? {
-        refreshTtlMs: 30_000,
-    };
+    const baseCpa = base.cpa ?? DEFAULT_CONFIG.cpa;
     const overrideCpa: Partial<AiProvidersConfig["cpa"]> = overrides.cpa ?? {};
     return {
-        providers: {
-            ...base.providers,
-            ...overrides.providers,
-        },
-        widgets: {
-            ...base.widgets,
-            ...overrides.widgets,
-        },
+        providers: { ...base.providers, ...overrides.providers },
+        widgets: { ...base.widgets, ...overrides.widgets },
         maxVisibleRows: overrides.maxVisibleRows ?? base.maxVisibleRows,
         cpa: {
             refreshTtlMs:
                 overrideCpa.refreshTtlMs ?? baseCpa.refreshTtlMs ?? 30_000,
             silentCatalogDiff:
                 overrideCpa.silentCatalogDiff ?? baseCpa.silentCatalogDiff,
-            overridePrefixes: overrideCpa.overridePrefixes ??
-                baseCpa.overridePrefixes ?? { ocg: "go" },
+            metadataRules: [
+                ...(baseCpa.metadataRules ?? []),
+                ...(overrideCpa.metadataRules ?? []),
+            ],
         },
     };
 }
 
+/**
+ * Loads only dedicated legacy config files:
+ * `~/.pi/agent/ai-providers.json`, then `<cwd>/.pi/ai-providers.json`.
+ */
 export function loadAiProvidersConfig(cwd = process.cwd()): AiProvidersConfig {
-    const projectLegacyPath = join(cwd, ".pi", "ai-providers.json");
-    const globalLegacyPath = join(getAgentDir(), "ai-providers.json");
-
-    let globalConfig: Partial<AiProvidersConfig> = {};
-    let projectConfig: Partial<AiProvidersConfig> = {};
-
-    try {
-        const manager = SettingsManager.create(cwd);
-        const globalSettings = manager.getGlobalSettings() as Record<
-            string,
-            unknown
-        >;
-        const projectSettings = manager.getProjectSettings() as Record<
-            string,
-            unknown
-        >;
-        globalConfig = normalizeAiProvidersConfig(globalSettings.aiProviders);
-        projectConfig = normalizeAiProvidersConfig(projectSettings.aiProviders);
-    } catch {
-        // fall through to legacy files only
-    }
-
-    if (Object.keys(globalConfig).length === 0) {
-        globalConfig = readLegacyConfig(globalLegacyPath);
-    }
-    if (Object.keys(projectConfig).length === 0) {
-        projectConfig = readLegacyConfig(projectLegacyPath);
-    }
-
-    return mergeAiProvidersConfig(
-        mergeAiProvidersConfig(DEFAULT_CONFIG, globalConfig),
-        projectConfig,
-    );
+    return loadExtensionConfig(cwd, {
+        defaults: DEFAULT_CONFIG,
+        normalize: normalizeAiProvidersConfig,
+        merge: mergeAiProvidersConfig,
+        sources: [{ legacyFilename: "ai-providers.json" }],
+    });
 }
 
 export function isProviderEnabled(
     providerName: string,
     cwd = process.cwd(),
 ): boolean {
-    const config = loadAiProvidersConfig(cwd);
-    return config.providers[providerName] ?? true;
+    return loadAiProvidersConfig(cwd).providers[providerName] ?? true;
 }
 
 export function isWidgetEnabled(
     widgetId: string,
     cwd = process.cwd(),
 ): boolean {
-    const config = loadAiProvidersConfig(cwd);
-    return config.widgets[widgetId] ?? true;
+    return loadAiProvidersConfig(cwd).widgets[widgetId] ?? true;
 }

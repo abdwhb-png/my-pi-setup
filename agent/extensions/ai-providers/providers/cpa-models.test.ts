@@ -16,7 +16,6 @@ import type {
     ModelsDevModel,
     ModelsDevRef,
 } from '../../_shared/models-dev/catalog';
-import { OVERRIDE_TABLES } from '../constants/cpa-overrides';
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
 import {
     enrichModel,
@@ -299,7 +298,7 @@ describe('enrichModel filtering', () => {
             id: 'or/deepseek/deepseek-v4-flash',
             owned_by: 'openrouter',
         };
-        expect(enrichModel(entry, emptyLookup, { ocg: 'go' })).toBeNull();
+        expect(enrichModel(entry, emptyLookup, [])).toBeNull();
     });
 
     it('returns null for bare go- prefix without ocg/', () => {
@@ -307,7 +306,7 @@ describe('enrichModel filtering', () => {
             id: 'go-glm-5.2',
             owned_by: 'ocode-go (main)',
         };
-        expect(enrichModel(entry, emptyLookup, { ocg: 'go' })).toBeNull();
+        expect(enrichModel(entry, emptyLookup, [])).toBeNull();
     });
 
     it('returns config for ocg/ prefixed Go models', () => {
@@ -315,7 +314,7 @@ describe('enrichModel filtering', () => {
             id: 'ocg/go-glm-5.2',
             owned_by: 'ocode-go (main)',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' });
+        const result = enrichModel(entry, emptyLookup, []);
         expect(result).not.toBeNull();
         expect(result!.id).toBe('ocg/go-glm-5.2');
     });
@@ -325,7 +324,7 @@ describe('enrichModel filtering', () => {
             id: 'deepseek/deepseek-v4-flash',
             owned_by: 'openrouter',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' });
+        const result = enrichModel(entry, emptyLookup, []);
         expect(result).not.toBeNull();
         expect(result!.id).toBe('deepseek/deepseek-v4-flash');
     });
@@ -335,13 +334,13 @@ describe('enrichModel filtering', () => {
             id: 'claude-sonnet-4-6',
             owned_by: 'antigravity',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' });
+        const result = enrichModel(entry, emptyLookup, []);
         expect(result).not.toBeNull();
     });
 
     it('returns config for Codex/OpenAI models', () => {
         const entry: CpaModelEntry = { id: 'gpt-5.4', owned_by: 'openai' };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' });
+        const result = enrichModel(entry, emptyLookup, []);
         expect(result).not.toBeNull();
     });
 
@@ -350,7 +349,7 @@ describe('enrichModel filtering', () => {
             id: 'claude-code-super',
             owned_by: 'claude-code',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' });
+        const result = enrichModel(entry, emptyLookup, []);
         expect(result).not.toBeNull();
         expect(result!.id).toBe('claude-code-super');
     });
@@ -371,14 +370,14 @@ describe('enrichModel filtering', () => {
             enrichModel(
                 { id: 'or/deepseek/deepseek-v4-flash', owned_by: 'openrouter' },
                 catalog,
-                { ocg: 'go' },
+                [],
             ),
         ).toBeNull();
         expect(
             enrichModel(
                 { id: 'go-glm-5.2', owned_by: 'ocode-go (main)' },
                 catalog,
-                { ocg: 'go' },
+                [],
             ),
         ).toBeNull();
     });
@@ -392,7 +391,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'unknown-model-42',
             owned_by: 'mystery-provider',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' })!;
+        const result = enrichModel(entry, emptyLookup, [])!;
         expect(result.contextWindow).toBe(128_000);
         expect(result.maxTokens).toBe(32_768);
         expect(result.cost.input).toBe(0);
@@ -404,7 +403,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'deepseek-v4-flash',
             owned_by: 'some-provider',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' })!;
+        const result = enrichModel(entry, emptyLookup, [])!;
         expect(result.contextWindow).toBe(1_000_000);
         expect(result.maxTokens).toBe(384_000);
     });
@@ -429,7 +428,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'deepseek/deepseek-v4-flash',
             owned_by: 'openrouter',
         };
-        const result = enrichModel(entry, catalog, { ocg: 'go' })!;
+        const result = enrichModel(entry, catalog, [])!;
         // catalog overrides family (1M/384K/true) and static (no image)
         expect(result.contextWindow).toBe(1_048_576);
         expect(result.maxTokens).toBe(8192);
@@ -458,7 +457,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'deepseek/deepseek-v4-flash',
             owned_by: 'openrouter',
         };
-        const result = enrichModel(entry, catalog, { ocg: 'go' })!;
+        const result = enrichModel(entry, catalog, [])!;
         expect(result.cost.input).toBe(0);
         expect(result.cost.output).toBe(0.28);
         // missing cacheRead/cacheWrite preserved from fallback (generic zeros)
@@ -469,102 +468,89 @@ describe('enrichModel enrichment pipeline', () => {
         expect(result.maxTokens).toBe(384_000);
     });
 
-    it('applies overrides last: explicit zero wins over nonzero catalog value', () => {
-        // go-deepseek-v4-flash override cost has an explicit cacheWrite: 0.
-        // Applied after the catalog layer, it must overwrite the catalog's
-        // nonzero cacheWrite — and the other defined override fields win too.
+    it('applies configured cost after catalog metadata', () => {
         const catalog = lookupStub([
             providerMatch('opencode-go', 'deepseek-v4-flash', {
                 name: 'DeepSeek V4 Flash',
-                contextWindow: 100_000,
-                maxTokens: 10_000,
-                cost: {
-                    input: 0.3,
-                    output: 0.6,
-                    cacheRead: 0.1,
-                    cacheWrite: 0.1,
-                },
+                cost: { input: 0.3, output: 0.6, cacheRead: 0.1, cacheWrite: 0.1 },
             }),
         ]);
         const entry: CpaModelEntry = {
             id: 'ocg/go-deepseek-v4-flash',
             owned_by: 'ocode-go (main)',
         };
-        const result = enrichModel(entry, catalog, { ocg: 'go' })!;
+        const result = enrichModel(entry, catalog, [
+            {
+                match: { id: 'ocg/go-deepseek-v4-flash' },
+                metadata: { cost: { cacheWrite: 0 } },
+            },
+        ])!;
+
         expect(result.cost).toEqual({
-            input: 0.14,
-            output: 0.28,
-            cacheRead: 0.0028,
+            input: 0.3,
+            output: 0.6,
+            cacheRead: 0.1,
             cacheWrite: 0,
         });
-        expect(result.contextWindow).toBe(1_000_000);
-        expect(result.maxTokens).toBe(384_000);
     });
 
-    it('applies provider-specific overrides for OpenCode Go', () => {
+    it('applies a glob rule to a non-GPT model', () => {
         const entry: CpaModelEntry = {
-            id: 'ocg/go-glm-5.2',
-            owned_by: 'ocode-go (main)',
+            id: 'gemini-3.7-flash',
+            owned_by: 'antigravity',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' })!;
-        // Provider overrides should have the correct pricing
-        expect(result.cost.input).toBe(1.4);
-        expect(result.cost.output).toBe(4.4);
-        expect(result.cost.cacheRead).toBe(0.26);
-        expect(result.contextWindow).toBe(1_000_000);
-        expect(result.maxTokens).toBe(131_072);
+        const result = enrichModel(entry, emptyLookup, [
+            {
+                match: { id: 'gemini-3.7-*' },
+                metadata: { maxTokens: 12_345 },
+            },
+        ])!;
+
+        expect(result.maxTokens).toBe(12_345);
     });
 
-    it('applies provider-specific overrides for OpenCode Go (2nd)', () => {
+    it('does not apply a rule when ownedBy does not match', () => {
         const entry: CpaModelEntry = {
-            id: 'ocg/go-deepseek-v4-pro',
-            owned_by: 'ocode-go (2nd)',
+            id: 'gemini-3.7-flash',
+            owned_by: 'other-provider',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' })!;
-        expect(result.cost.input).toBe(1.74);
-        expect(result.cost.output).toBe(3.48);
-        expect(result.cost.cacheRead).toBe(0.0145);
-        expect(result.contextWindow).toBe(1_000_000);
-        expect(result.maxTokens).toBe(384_000);
+        const result = enrichModel(entry, emptyLookup, [
+            {
+                match: { id: 'gemini-3.7-*', ownedBy: 'antigravity' },
+                metadata: { maxTokens: 12_345 },
+            },
+        ])!;
+
+        expect(result.maxTokens).toBe(65_536);
     });
 
-    it('skips overrides when overridePrefixes map is empty (config-gated)', () => {
+    it('applies configured metadata to a bare CPA model ID after catalog metadata', () => {
+        const catalog = lookupStub([
+            baseMatch('openai/gpt-5.6-terra', {
+                name: 'GPT 5.6 Terra',
+                contextWindow: 1_100_000,
+                maxTokens: 128_000,
+                reasoning: false,
+            }),
+        ]);
         const entry: CpaModelEntry = {
-            id: 'ocg/go-glm-5.2',
-            owned_by: 'ocode-go (main)',
+            id: 'gpt-5.6-terra',
+            owned_by: 'openai',
         };
-        // Empty map → no prefix matches → override table not consulted; cost
-        // falls back to the zero-cost generic (the override would set 1.4/4.4).
-        const result = enrichModel(entry, emptyLookup, {})!;
-        expect(result.cost.input).toBe(0);
-        expect(result.cost.output).toBe(0);
-    });
+        const result = enrichModel(entry, catalog, [
+            {
+                match: { id: 'gpt-5.6-*' },
+                metadata: { reasoning: true },
+            },
+            {
+                match: { id: 'gpt-5.6-terra', ownedBy: 'openai' },
+                metadata: { contextWindow: 372_000 },
+            },
+        ] as never)!;
 
-    it('applies Go override for a prefix mapped to the go table', () => {
-        // Pretend cliproxy renamed `ocg` → `ogo`. Same alias table applies
-        // because the prefix is mapped to "go" in overridePrefixes.
-        const entry: CpaModelEntry = {
-            id: 'ogo/go-glm-5.2',
-            owned_by: 'ocode-go (main)',
-        };
-        const result = enrichModel(entry, emptyLookup, { ogo: 'go' })!;
-        expect(result.cost.input).toBe(1.4);
-        expect(result.cost.output).toBe(4.4);
-        expect(result.contextWindow).toBe(1_000_000);
-        expect(result.maxTokens).toBe(131_072);
-    });
-
-    it('does not cross-contaminate tables on alias collision', () => {
-        // A non-go family `foo` happens to ship a model aliased `go-glm-5.2`.
-        // Dispatch must look in the `foo` table only, not leak into `go`.
-        const entry: CpaModelEntry = {
-            id: 'foo/go-glm-5.2',
-            owned_by: 'foo-provider',
-        };
-        const result = enrichModel(entry, emptyLookup, { foo: 'foo' })!;
-        // foo table is empty → no override → zero-cost generic fallback.
-        expect(result.cost.input).toBe(0);
-        expect(result.cost.output).toBe(0);
+        expect(result.contextWindow).toBe(372_000);
+        expect(result.maxTokens).toBe(128_000);
+        expect(result.reasoning).toBe(true);
     });
 
     it('enriches Antigravity models via exact base mapping without fuzzy lookup', () => {
@@ -580,7 +566,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'claude-sonnet-4-6',
             owned_by: 'antigravity',
         };
-        const result = enrichModel(entry, catalog, { ocg: 'go' })!;
+        const result = enrichModel(entry, catalog, [])!;
         expect(result.contextWindow).toBe(1_000_000);
         expect(result.maxTokens).toBe(64_000);
         expect(result.cost.input).toBe(3);
@@ -593,7 +579,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'deepseek-v4-flash',
             owned_by: 'some-provider',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' })!;
+        const result = enrichModel(entry, emptyLookup, [])!;
         // family fallback intact; no catalog values leaked in
         expect(result.contextWindow).toBe(1_000_000);
         expect(result.maxTokens).toBe(384_000);
@@ -614,7 +600,7 @@ describe('enrichModel enrichment pipeline', () => {
                 owned_by: 'openrouter',
             },
             catalog,
-            { ocg: 'go' },
+            [],
         )!;
         expect(result.cost.input).toBe(0);
         expect(result.cost.output).toBe(0);
@@ -631,7 +617,7 @@ describe('enrichModel enrichment pipeline', () => {
         const result = enrichModel(
             { id: 'claude-code-super', owned_by: 'claude-code' },
             catalog,
-            { ocg: 'go' },
+            [],
         )!;
         expect(result.contextWindow).toBe(1_000_000);
         expect(result.cost.input).toBe(0);
@@ -648,7 +634,7 @@ describe('enrichModel enrichment pipeline', () => {
             }),
         ]);
         const entry: CpaModelEntry = { id: 'gpt-5.4', owned_by: 'openai' };
-        const result = enrichModel(entry, catalog, { ocg: 'go' })!;
+        const result = enrichModel(entry, catalog, [])!;
         // specs still enrich…
         expect(result.contextWindow).toBe(999_999);
         expect(result.maxTokens).toBe(777_777);
@@ -675,7 +661,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'gemini-3.5-flash',
             owned_by: 'antigravity',
         };
-        const result = enrichModel(entry, catalog, { ocg: 'go' })!;
+        const result = enrichModel(entry, catalog, [])!;
         expect(result.input).toEqual(['text']);
     });
 
@@ -689,7 +675,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'gemini-3.5-flash',
             owned_by: 'antigravity',
         };
-        const result = enrichModel(entry, catalog, { ocg: 'go' })!;
+        const result = enrichModel(entry, catalog, [])!;
         expect(result.input).toEqual(['text', 'image']);
     });
 
@@ -698,7 +684,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'gemini-3-flash-preview',
             owned_by: 'antigravity',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' })!;
+        const result = enrichModel(entry, emptyLookup, [])!;
         expect(
             (result.compat as { supportsDeveloperRole?: boolean })
                 ?.supportsDeveloperRole,
@@ -710,7 +696,7 @@ describe('enrichModel enrichment pipeline', () => {
             id: 'claude-sonnet-4-6',
             owned_by: 'antigravity',
         };
-        const result = enrichModel(entry, emptyLookup, { ocg: 'go' })!;
+        const result = enrichModel(entry, emptyLookup, [])!;
         expect(result.name).toContain('Claude');
         expect(result.name).toContain('Antigravity');
     });
@@ -815,31 +801,6 @@ describe('STATIC_FALLBACK_MODELS', () => {
         for (const m of STATIC_FALLBACK_MODELS) {
             expect(m.contextWindow).toBeGreaterThan(0);
             expect(m.maxTokens).toBeGreaterThan(0);
-        }
-    });
-});
-
-// ── OVERRIDE_TABLES ──
-
-describe('OVERRIDE_TABLES', () => {
-    it('exposes the "go" table for OpenCode Go models', () => {
-        expect(OVERRIDE_TABLES.go).toBeDefined();
-    });
-
-    it('go table has 8 models with pricing overrides', () => {
-        expect(Object.keys(OVERRIDE_TABLES.go).length).toBe(8);
-    });
-
-    it('keys go entries by the post-prefix alias (e.g. go-glm-5.2)', () => {
-        expect(OVERRIDE_TABLES.go['go-glm-5.2']).toBeDefined();
-        expect(OVERRIDE_TABLES.go['go-deepseek-v4-pro']).toBeDefined();
-    });
-
-    it('each go override has cost with all fields', () => {
-        for (const [, override] of Object.entries(OVERRIDE_TABLES.go)) {
-            expect(override.cost).toBeDefined();
-            expect(override.cost!.input).not.toBeUndefined();
-            expect(override.cost!.output).not.toBeUndefined();
         }
     });
 });
@@ -954,6 +915,103 @@ describe('buildCpaModels', () => {
         expect(result.models[0].contextWindow).toBe(1_048_576);
         // Claude model has family defaults (no catalog record)
         expect(result.models[1].contextWindow).toBe(1_000_000);
+    });
+
+    it('uses valid CPA metadata for a Codex model over catalog metadata', async () => {
+        globalThis.fetch = mock(() =>
+            Promise.resolve(
+                new Response(
+                    JSON.stringify({
+                        data: [
+                            {
+                                id: 'gpt-5.6-terra',
+                                owned_by: 'openai',
+                                context_length: 372_000,
+                                max_completion_tokens: 128_000,
+                                thinking: { levels: ['low', 'high'] },
+                                supportedInputModalities: ['text', 'image'],
+                            },
+                        ],
+                    }),
+                    {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    },
+                ),
+            ),
+        ) as unknown as typeof fetch;
+
+        const catalog = lookupStub([
+            providerMatch('openai', 'gpt-5.6-terra', {
+                name: 'GPT 5.6 Terra',
+                contextWindow: 128_000,
+                maxTokens: 8_192,
+                reasoning: false,
+                inputModalities: ['text'],
+                cost: { input: 2, output: 12 },
+            }),
+        ]);
+        const result = await buildCpaModels(
+            'http://localhost:8317/v1',
+            'test-key',
+            { catalog },
+        );
+
+        expect(result.models).toHaveLength(1);
+        expect(result.models[0]).toMatchObject({
+            contextWindow: 372_000,
+            maxTokens: 128_000,
+            reasoning: true,
+            input: ['text', 'image'],
+            cost: { input: 2, output: 12 },
+        });
+    });
+
+    it('keeps catalog metadata when CPA metadata is empty or invalid', async () => {
+        globalThis.fetch = mock(() =>
+            Promise.resolve(
+                new Response(
+                    JSON.stringify({
+                        data: [
+                            {
+                                id: 'gpt-5.6-terra',
+                                owned_by: 'openai',
+                                context_length: 0,
+                                max_completion_tokens: 'invalid',
+                                thinking: { levels: [] },
+                                supportedInputModalities: [],
+                            },
+                        ],
+                    }),
+                    {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    },
+                ),
+            ),
+        ) as unknown as typeof fetch;
+
+        const catalog = lookupStub([
+            providerMatch('openai', 'gpt-5.6-terra', {
+                name: 'GPT 5.6 Terra',
+                contextWindow: 222_000,
+                maxTokens: 12_345,
+                reasoning: false,
+                inputModalities: ['text', 'image'],
+            }),
+        ]);
+        const result = await buildCpaModels(
+            'http://localhost:8317/v1',
+            'test-key',
+            { catalog, metadataRules: [] },
+        );
+
+        expect(result.models[0]).toMatchObject({
+            contextWindow: 222_000,
+            maxTokens: 12_345,
+            reasoning: false,
+            input: ['text', 'image'],
+        });
     });
 
     it('defaults the catalog to the process-wide getModelsDevCatalog()', async () => {

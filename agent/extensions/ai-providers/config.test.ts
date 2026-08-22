@@ -17,7 +17,11 @@ describe('normalizeAiProvidersConfig', () => {
 
     test('preserves the global CPA TTL when project config omits CPA settings', () => {
         const global = mergeAiProvidersConfig(
-            { providers: {}, widgets: {}, cpa: { refreshTtlMs: 30_000 } },
+            {
+                providers: {},
+                widgets: {},
+                cpa: { refreshTtlMs: 30_000, metadataRules: [] },
+            },
             normalizeAiProvidersConfig({ cpa: { refreshTtlMs: 45_000 } }),
         );
         const merged = mergeAiProvidersConfig(
@@ -49,81 +53,125 @@ describe('normalizeAiProvidersConfig', () => {
             {
                 providers: {},
                 widgets: {},
-                cpa: { refreshTtlMs: 30_000, silentCatalogDiff: true },
+                cpa: {
+                    refreshTtlMs: 30_000,
+                    silentCatalogDiff: true,
+                    metadataRules: [],
+                },
             },
             normalizeAiProvidersConfig({ providers: { cpa: true } }),
         );
         expect(merged.cpa.silentCatalogDiff).toBe(true);
     });
 
-    // ── cpa.overridePrefixes (prefix → table-name map) ──
-
-    test('accepts a prefix→table map for cpa.overridePrefixes', () => {
-        const normalized = normalizeAiProvidersConfig({
-            cpa: { overridePrefixes: { ocg: 'go', ogo: 'go', foo: 'foo' } },
-        });
-        expect(normalized.cpa?.overridePrefixes).toEqual({
-            ocg: 'go',
-            ogo: 'go',
-            foo: 'foo',
-        });
-    });
-
-    test('drops entries whose value is not a non-empty string', () => {
-        const normalized = normalizeAiProvidersConfig({
-            cpa: {
-                overridePrefixes: {
-                    ocg: 'go',
-                    bad: '',
-                    num: 42,
-                    nul: null,
-                    ok: 'foo',
-                },
-            },
-        });
-        expect(normalized.cpa?.overridePrefixes).toEqual({
-            ocg: 'go',
-            ok: 'foo',
-        });
-    });
-
-    test('ignores non-object cpa.overridePrefixes', () => {
+    test('accepts exact and glob CPA metadata rules', () => {
         expect(
             normalizeAiProvidersConfig({
-                cpa: { overridePrefixes: 'ocg' },
-            }).cpa?.overridePrefixes,
-        ).toBeUndefined();
+                cpa: {
+                    metadataRules: [
+                        {
+                            match: { id: 'gpt-5.6-*', ownedBy: 'openai' },
+                            metadata: { reasoning: true },
+                        },
+                        {
+                            match: { id: 'gpt-5.6-terra' },
+                            metadata: {
+                                contextWindow: 372_000,
+                                maxTokens: 128_000,
+                                input: ['text', 'image'],
+                            },
+                        },
+                    ],
+                },
+            }),
+        ).toEqual({
+            providers: {},
+            widgets: {},
+            cpa: {
+                metadataRules: [
+                    {
+                        match: { id: 'gpt-5.6-*', ownedBy: 'openai' },
+                        metadata: { reasoning: true },
+                    },
+                    {
+                        match: { id: 'gpt-5.6-terra' },
+                        metadata: {
+                            contextWindow: 372_000,
+                            maxTokens: 128_000,
+                            input: ['text', 'image'],
+                        },
+                    },
+                ],
+            },
+        });
     });
 
-    test('project overridePrefixes replaces (not merges) the global map', () => {
+    test('appends project metadata rules after global rules', () => {
         const global = mergeAiProvidersConfig(
             {
                 providers: {},
                 widgets: {},
-                cpa: {
-                    refreshTtlMs: 30_000,
-                    overridePrefixes: { ocg: 'go' },
-                },
+                cpa: { refreshTtlMs: 30_000, metadataRules: [] },
             },
             normalizeAiProvidersConfig({
-                cpa: { overridePrefixes: { ogo: 'go' } },
+                cpa: {
+                    metadataRules: [
+                        {
+                            match: { id: 'gpt-5.6-*' },
+                            metadata: { reasoning: true },
+                        },
+                    ],
+                },
             }),
         );
-        expect(global.cpa.overridePrefixes).toEqual({ ogo: 'go' });
+        const merged = mergeAiProvidersConfig(
+            global,
+            normalizeAiProvidersConfig({
+                cpa: {
+                    metadataRules: [
+                        {
+                            match: { id: 'gpt-5.6-terra' },
+                            metadata: { contextWindow: 372_000 },
+                        },
+                    ],
+                },
+            }),
+        );
+
+        expect(merged.cpa.metadataRules).toEqual([
+            {
+                match: { id: 'gpt-5.6-*' },
+                metadata: { reasoning: true },
+            },
+            {
+                match: { id: 'gpt-5.6-terra' },
+                metadata: { contextWindow: 372_000 },
+            },
+        ]);
     });
 
-    test('default config ships overridePrefixes { ocg: "go" }', () => {
-        const merged = mergeAiProvidersConfig(
-            {
-                providers: {},
-                widgets: {},
-                cpa: {
-                    refreshTtlMs: 30_000,
-                    overridePrefixes: { ocg: 'go' },
-                },
+    test('drops malformed CPA metadata rules', () => {
+        const normalized = normalizeAiProvidersConfig({
+            cpa: {
+                metadataRules: [
+                    { match: { id: '' }, metadata: { contextWindow: 1 } },
+                    { match: { id: 'valid' }, metadata: { maxTokens: 0 } },
+                    {
+                        match: { id: 'valid-owner', ownedBy: 42 },
+                        metadata: { reasoning: true },
+                    },
+                    {
+                        match: { id: 'valid-input' },
+                        metadata: { input: ['image'] },
+                    },
+                    {
+                        match: { id: 'valid-cost' },
+                        metadata: { cost: { input: -1 } },
+                    },
+                ],
             },
-            normalizeAiProvidersConfig({}),
-        );
-        expect(merged.cpa.overridePrefixes).toEqual({ ocg: 'go' });
+        });
+
+        expect(normalized.cpa?.metadataRules).toBeUndefined();
     });
 });

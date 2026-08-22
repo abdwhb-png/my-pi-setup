@@ -35,7 +35,7 @@ mock.module('./config.ts', () => ({
     isWidgetEnabled: () => false,
     loadAiProvidersConfig: () => ({
         cpa: {
-            overridePrefixes: { ocg: 'go' },
+            metadataRules: [],
             refreshTtlMs: 0,
             silentCatalogDiff: true,
         },
