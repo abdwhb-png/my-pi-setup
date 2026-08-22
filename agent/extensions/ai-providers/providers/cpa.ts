@@ -24,6 +24,7 @@ import { loadAiProvidersConfig } from "../config.ts";
 import { STATIC_FALLBACK_MODELS } from "../constants/cpa-static-models";
 import type { CatalogDiffCounts } from "./catalog-diff.ts";
 import { reportCatalogDiff } from "./catalog-diff.ts";
+import { createCpaCatalogCache } from "./cpa-catalog-cache.ts";
 import { createCpaCatalogGuard } from "./cpa-catalog-guard.ts";
 import { buildCpaModels, enrichModel } from "./cpa-models.ts";
 import type { CpaCatalogLookup, CpaModelEntry } from "./cpa-models.ts";
@@ -53,6 +54,7 @@ export interface CpaProviderHandle {
         ctx: LifecycleCtx,
         options?: { force?: boolean },
     ): Promise<void>;
+    refreshStartupProjection(ctx: LifecycleCtx): Promise<void>;
 }
 
 /**
@@ -147,6 +149,16 @@ function buildProviderConfig(models: ProviderModelConfig[]) {
     };
 }
 
+function mergeStartupModels(
+    cachedModels: readonly ProviderModelConfig[],
+): ProviderModelConfig[] {
+    const modelsById = new Map(
+        STATIC_FALLBACK_MODELS.map((model) => [model.id, model]),
+    );
+    for (const model of cachedModels) modelsById.set(model.id, model);
+    return [...modelsById.values()];
+}
+
 // ── Registration ──
 
 /**
@@ -160,12 +172,29 @@ export function registerCpaProvider(
     options?: {
         buildModels?: typeof buildCpaModels;
         getCatalog?: () => CpaCatalogLookup;
+        loadCachedEntries?: () => CpaModelEntry[] | undefined;
+        saveCachedEntries?: (
+            entries: readonly CpaModelEntry[],
+        ) => Promise<void>;
         isSubagentChild?: () => boolean;
         exitProcess?: (code: number) => void;
     },
 ): CpaProviderHandle {
     const buildModels = options?.buildModels ?? buildCpaModels;
     const getCatalog = options?.getCatalog ?? getModelsDevCatalog;
+    const catalogCache = createCpaCatalogCache({
+        cachePath: join(
+            getAgentDir(),
+            "cache",
+            "ai-providers",
+            "cpa-catalog.v1.json",
+        ),
+        endpoint: PROVIDER_BASE_URL,
+    });
+    const loadCachedEntries =
+        options?.loadCachedEntries ?? (() => catalogCache.load());
+    const saveCachedEntries =
+        options?.saveCachedEntries ?? ((entries) => catalogCache.save(entries));
     const isSubagentChild =
         options?.isSubagentChild ??
         (() => Boolean(process.env.PI_SUBAGENT_CHILD_AGENT));
@@ -181,10 +210,22 @@ export function registerCpaProvider(
     const reportedCatalogDrift = new Set<string>();
     let lastNotifiedStaleModelId: string | undefined;
     let unverifiedWarningShown = false;
-    // ponytail: cache raw CPA entries so non-forced projections can
-    // re-enrich against the current catalog without re-fetching CPA /v1/models.
+    // Cache raw CPA entries so projections can re-enrich against current
+    // models.dev metadata without another CPA /v1/models request.
     const lastEntries: CpaModelEntry[] = [];
     let lastEnrichedModels: ProviderModelConfig[] = [];
+    let hasStartupCatalog = false;
+
+    function enrichEntries(
+        entries: readonly CpaModelEntry[],
+    ): ProviderModelConfig[] {
+        const catalog = getCatalog();
+        return entries
+            .map((entry) =>
+                enrichModel(entry, catalog, cpaConfig.metadataRules ?? []),
+            )
+            .filter((model): model is ProviderModelConfig => model !== null);
+    }
 
     async function refreshCatalog(
         ctx: LifecycleCtx,
@@ -205,6 +246,13 @@ export function registerCpaProvider(
                     lastEntries.length = 0;
                     lastEntries.push(...catalog.entries);
                     lastEnrichedModels = catalog.models;
+                    try {
+                        await saveCachedEntries(catalog.entries);
+                    } catch {
+                        console.warn(
+                            "[cpa] Failed to persist the verified CPA catalog.",
+                        );
+                    }
                 }
                 return catalog;
             },
@@ -250,8 +298,19 @@ export function registerCpaProvider(
      */
     const handle: CpaProviderHandle = {
         providerId: PROVIDER_NAME,
-        async refreshProjection(ctx, options) {
-            if (options?.force || lastEnrichedModels.length === 0) {
+        async refreshStartupProjection(ctx) {
+            if (!hasStartupCatalog) return;
+            try {
+                const result = await refreshCatalog(ctx);
+                if (result.state === "stale") {
+                    notifyStaleModelOnce(ctx, result.modelId);
+                }
+            } catch {
+                // Cached projection remains available until input revalidation.
+            }
+        },
+        async refreshProjection(ctx, projectionOptions) {
+            if (projectionOptions?.force || lastEnrichedModels.length === 0) {
                 const result = await refreshCatalog(ctx, true);
                 if (result.state === "stale") {
                     notifyStaleModelOnce(ctx, result.modelId);
@@ -275,10 +334,7 @@ export function registerCpaProvider(
             // the current models.dev catalog snapshot without fetching CPA.
             // No notification — models.dev lifecycle handles its own.
             if (lastEntries.length > 0) {
-                const catalog = getCatalog();
-                const models = lastEntries
-                    .map((e) => enrichModel(e, catalog))
-                    .filter((m): m is ProviderModelConfig => m !== null);
+                const models = enrichEntries(lastEntries);
                 if (models.length > 0) {
                     pi.registerProvider(
                         PROVIDER_NAME,
@@ -289,10 +345,22 @@ export function registerCpaProvider(
         },
     };
 
-    // Phase 1: Register with static fallback models immediately (synchronous)
+    // Phase 1: register static fallbacks plus last verified dynamic entries.
+    // Disk cache is read synchronously so Pi can resolve a CPA default before
+    // session_start performs its live verification.
+    let startupEntries: CpaModelEntry[] = [];
+    try {
+        startupEntries = loadCachedEntries() ?? [];
+    } catch {
+        console.warn("[cpa] Failed to load the CPA catalog cache.");
+    }
+    const startupModels = enrichEntries(startupEntries);
+    hasStartupCatalog = startupModels.length > 0;
+    lastEntries.push(...startupEntries);
+    lastEnrichedModels = startupModels;
     pi.registerProvider(
         PROVIDER_NAME,
-        buildProviderConfig(STATIC_FALLBACK_MODELS),
+        buildProviderConfig(mergeStartupModels(startupModels)),
     );
 
     pi.on("model_select", async (event, ctx) => {

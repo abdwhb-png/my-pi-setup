@@ -35,6 +35,8 @@ export interface ProviderProjectionHandle {
         ctx: LifecycleCtx,
         options?: ProviderProjectionOptions,
     ): Promise<void>;
+    /** Starts provider-specific live verification after cached projection. */
+    refreshStartupProjection?(ctx: LifecycleCtx): Promise<void>;
 }
 
 export interface ProjectionSummary {
@@ -176,7 +178,7 @@ export function registerModelsDevIntegration(
     }
 
     // Session start: await disk load plus all cached provider projections,
-    // then start (without awaiting) the stale network freshness check.
+    // then start provider and models.dev freshness checks without awaiting them.
     pi.on("session_start", async (_event, ctx) => {
         await catalog.load();
         const summary = await projectAll(ctx);
@@ -184,6 +186,10 @@ export function registerModelsDevIntegration(
             warnOnce(ctx, partialProjectionMessage(summary.failedProviders));
         } else {
             warningKey = null;
+        }
+        for (const refresher of getRefreshers()) {
+            if (!refresher.refreshStartupProjection) continue;
+            void refresher.refreshStartupProjection(ctx).catch(() => {});
         }
         void startBackgroundFreshness(ctx).catch(() => {});
     });

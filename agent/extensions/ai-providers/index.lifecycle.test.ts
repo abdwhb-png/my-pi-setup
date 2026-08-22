@@ -41,6 +41,12 @@ mock.module('./config.ts', () => ({
         },
     }),
 }));
+mock.module('./providers/cpa-catalog-cache.ts', () => ({
+    createCpaCatalogCache: () => ({
+        load: () => undefined,
+        save: async () => {},
+    }),
+}));
 mock.module('./providers/factory-ai.ts', () => ({
     registerFactoryProvider: () => ({
         providerId: 'factory-ai',

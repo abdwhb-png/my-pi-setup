@@ -954,7 +954,7 @@ describe('buildCpaModels', () => {
         const result = await buildCpaModels(
             'http://localhost:8317/v1',
             'test-key',
-            { catalog },
+            { catalog, metadataRules: [] },
         );
 
         expect(result.models).toHaveLength(1);

@@ -182,6 +182,18 @@ describe('registerModelsDevIntegration session_start', () => {
         expect(h.refreshers[1].refreshProjection).toHaveBeenCalledTimes(2);
     });
 
+    it('starts provider live verification after cached startup projection without awaiting it', async () => {
+        const h = makeHarness(() =>
+            Promise.resolve({ status: 'fresh', catalog: h.state.status }),
+        );
+        const startupVerification = mock(() => new Promise<void>(() => {}));
+        h.refreshers[0].refreshStartupProjection = startupVerification;
+
+        await h.sessionStart.handler({}, uiCtx());
+
+        expect(startupVerification).toHaveBeenCalledTimes(1);
+    });
+
     it('does not reproject when the automatic refresh reports fresh, not-modified, or failed', async () => {
         for (const status of ['fresh', 'not-modified', 'failed'] as const) {
             const h = makeHarness(() =>

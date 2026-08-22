@@ -12,7 +12,10 @@ import { describe, test, expect, mock } from 'bun:test';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
-import { registerCpaProvider, getCliproxyApiKey } from './cpa.ts';
+import {
+    registerCpaProvider as registerCpaProviderProduction,
+    getCliproxyApiKey,
+} from './cpa.ts';
 import type { CpaModelEntry } from './cpa-models.ts';
 import type { LifecycleCtx } from './cpa.ts';
 
@@ -97,6 +100,18 @@ const fakeModel: ProviderModelConfig = {
 
 const fakeEntry: CpaModelEntry = { id: 'ocg/go-test', owned_by: 'ocode-go (main)' };
 
+function registerCpaProvider(
+    pi: ExtensionAPI,
+    options: Parameters<typeof registerCpaProviderProduction>[1] = {},
+) {
+    return registerCpaProviderProduction(pi, {
+        ...options,
+        loadCachedEntries: options.loadCachedEntries ?? (() => undefined),
+        saveCachedEntries:
+            options.saveCachedEntries ?? (async () => undefined),
+    });
+}
+
 // ── Tests ──
 
 describe('registerCpaProvider', () => {
@@ -128,6 +143,71 @@ describe('registerCpaProvider', () => {
         expect(Array.isArray(models)).toBe(true);
         expect(models!.length).toBe(STATIC_FALLBACK_MODELS.length);
         expect(models).toEqual(STATIC_FALLBACK_MODELS);
+    });
+
+    test('registers cached dynamic CPA models before session creation', () => {
+        const { pi, registeredProviders } = createMockExtensionAPI();
+        registerCpaProvider(pi, {
+            buildModels: createMockBuildCpaModels(),
+            loadCachedEntries: () => [fakeEntry],
+            getCatalog: () => ({
+                lookupFirst: () => undefined,
+                lookupMerge: () => undefined,
+            }),
+        });
+
+        const models = registeredProviders[0].config
+            .models as ProviderModelConfig[];
+        expect(models.map((model) => model.id)).toContain(fakeEntry.id);
+    });
+
+    test('persists raw entries after a successful live catalog refresh', async () => {
+        const { pi } = createMockExtensionAPI();
+        const saveCachedEntries = mock(() => Promise.resolve());
+        const mockBuild = mock(() =>
+            Promise.resolve({
+                models: [fakeModel],
+                entries: [fakeEntry],
+                source: 'live' as const,
+            }),
+        );
+        const handle = registerCpaProvider(pi, {
+            buildModels: mockBuild,
+            saveCachedEntries,
+        });
+
+        await handle.refreshProjection({
+            model: { provider: 'cpa', id: fakeModel.id },
+            modelRegistry: { find: () => fakeModel },
+            hasUI: true,
+            ui: { notify: mock(() => {}) },
+        } as unknown as LifecycleCtx, { force: true });
+
+        expect(saveCachedEntries).toHaveBeenCalledWith([fakeEntry]);
+    });
+
+    test('provides a startup projection that refreshes the cached catalog live', async () => {
+        const { pi } = createMockExtensionAPI();
+        const mockBuild = mock(() =>
+            Promise.resolve({
+                models: [fakeModel],
+                entries: [fakeEntry],
+                source: 'live' as const,
+            }),
+        );
+        const handle = registerCpaProvider(pi, {
+            buildModels: mockBuild,
+            loadCachedEntries: () => [fakeEntry],
+        });
+
+        await handle.refreshStartupProjection({
+            model: { provider: 'cpa', id: fakeModel.id },
+            modelRegistry: { find: () => fakeModel },
+            hasUI: true,
+            ui: { notify: mock(() => {}) },
+        } as unknown as LifecycleCtx);
+
+        expect(mockBuild).toHaveBeenCalledTimes(1);
     });
 
     test('leaves session_start ownership to the shared lifecycle', () => {
