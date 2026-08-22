@@ -15,6 +15,12 @@ const DEFAULT_HEALTH_INTERVAL_MS = 30_000;
 export interface HealthPollerOptions {
     ping: () => Promise<boolean>;
     intervalMs?: number;
+    /**
+     * Consecutive failed probes required before reporting "down". Guards
+     * against transient probe timeouts (e.g. a busy loopback listener) flipping
+     * the widget offline while the service still answers. Default 2.
+     */
+    consecutiveFailuresBeforeDown?: number;
     onHealthChange: (health: HealthState) => void;
 }
 
@@ -31,8 +37,10 @@ export interface HealthPoller {
 export function createHealthPoller(options: HealthPollerOptions): HealthPoller {
     let health: HealthState = "unknown";
     let stopped = false;
+    let consecutiveFailures = 0;
     let timer: Timer | undefined;
     const intervalMs = options.intervalMs ?? DEFAULT_HEALTH_INTERVAL_MS;
+    const failuresBeforeDown = options.consecutiveFailuresBeforeDown ?? 2;
 
     const setHealth = (next: HealthState): void => {
         if (next === health) return;
@@ -48,7 +56,15 @@ export function createHealthPoller(options: HealthPollerOptions): HealthPoller {
         } catch {
             up = false;
         }
-        setHealth(up ? "up" : "down");
+        if (up) {
+            consecutiveFailures = 0;
+            setHealth("up");
+        } else {
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= failuresBeforeDown) {
+                setHealth("down");
+            }
+        }
     };
 
     void check();
