@@ -90,18 +90,30 @@ export function createWidget(
 
         update(ctx: ExtensionContext, fallbackText?: string | null): void {
             if (isActive) {
-                requestFancyFooterRefresh(pi);
+                try {
+                    requestFancyFooterRefresh(pi);
+                } catch {
+                    // Ignore if extension runtime is stale or invalidated after session replacement/reload
+                }
             } else if (ctx.hasUI) {
-                ctx.ui.setWidget(
-                    def.id,
-                    fallbackText ? [fallbackText] : undefined,
-                );
+                try {
+                    ctx.ui.setWidget(
+                        def.id,
+                        fallbackText ? [fallbackText] : undefined,
+                    );
+                } catch {
+                    // Ignore if context is stale or invalidated
+                }
             }
         },
 
         remove(ctx: ExtensionContext): void {
             if (!isActive && ctx.hasUI) {
-                ctx.ui.setWidget(def.id, undefined);
+                try {
+                    ctx.ui.setWidget(def.id, undefined);
+                } catch {
+                    // Ignore if context is stale or invalidated
+                }
             }
         },
     };

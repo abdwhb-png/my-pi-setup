@@ -48,6 +48,7 @@
 import {
     getSettingsListTheme,
     type ExtensionAPI,
+    type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
     Container,
@@ -390,7 +391,8 @@ export default function (pi: ExtensionAPI) {
     // The peak multiplier (3× peak / 1× benefit / 2× std off-peak) is driven
     // off real UTC, so the 60s interval below keeps it fresh across the
     // 06:00–10:00 UTC boundary even when no event fires.
-    let latestCtx: Parameters<Parameters<ExtensionAPI["on"]>[1]>[1] | undefined;
+    let latestCtx: ExtensionContext | undefined;
+    let peakTimer: Timer | undefined;
     const widget = createWidget(pi, {
         id: "pi-glm-tweaks.status",
         label: "GLM status",
@@ -402,12 +404,14 @@ export default function (pi: ExtensionAPI) {
             return r ?? undefined;
         },
     });
-    // ponytail: process-lifetime timer, unref'd so it never blocks exit.
-    // No pi extension-unload hook exists; /reload restarts the process.
-    const peakTimer = setInterval(() => {
-        if (latestCtx) widget.update(latestCtx);
-    }, 60_000);
-    peakTimer.unref?.();
+
+    const updatePeakWidget = () => {
+        try {
+            if (latestCtx) widget.update(latestCtx);
+        } catch {
+            // Ignore stale context or invalidated runtime errors
+        }
+    };
 
     pi.on("session_start", async (_event, ctx) => {
         // Build the full `zai` provider model list, patching only glm-5.2.
@@ -455,7 +459,19 @@ export default function (pi: ExtensionAPI) {
         // for the first model_select. latestCtx lets the 60s interval refresh
         // the clock-driven peak indicator thereafter.
         latestCtx = ctx;
-        widget.update(ctx);
+        updatePeakWidget();
+
+        if (peakTimer !== undefined) clearInterval(peakTimer);
+        peakTimer = setInterval(updatePeakWidget, 60_000);
+        peakTimer.unref?.();
+    });
+
+    pi.on("session_shutdown", async () => {
+        if (peakTimer !== undefined) {
+            clearInterval(peakTimer);
+            peakTimer = undefined;
+        }
+        latestCtx = undefined;
     });
 
     pi.on("before_agent_start", (event, ctx) => {
@@ -580,7 +596,7 @@ export default function (pi: ExtensionAPI) {
         // Refresh the widget on every model switch; its visible/render guards
         // decide whether to show (GLM-5.2 / GLM-5-Turbo on a z.ai route) or
         // hide. This replaces the old ctx.ui.setStatus('glm-thinking', …).
-        widget.update(ctx);
+        updatePeakWidget();
 
         if (!isZaiGlm52(event.model)) return;
 

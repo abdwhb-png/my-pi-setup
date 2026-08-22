@@ -5,7 +5,7 @@ import {
     computePeakStatus,
     PEAK_MODEL_IDS,
     OFF_PEAK_BENEFIT_END_MS,
-} from "../pi-glm-tweaks/peak-hours.ts";
+} from "./peak-hours.ts";
 
 type Model = { provider: string; id: string };
 

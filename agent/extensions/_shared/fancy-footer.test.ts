@@ -39,7 +39,7 @@ describe("FancyFooterWidgetContribution", () => {
       order: 0,
       render: (_ctx) => "visible",
     };
-    expect(returnsString.render({})).toBe("visible");
+    expect(returnsString.render({} as any)).toBe("visible");
 
     const returnsUndefined: FancyFooterWidgetContribution = {
       id: "test.returns-undefined",
@@ -48,7 +48,7 @@ describe("FancyFooterWidgetContribution", () => {
       order: 0,
       render: () => undefined,
     };
-    expect(returnsUndefined.render({})).toBeUndefined();
+    expect(returnsUndefined.render({} as any)).toBeUndefined();
 
     const returnsNull: FancyFooterWidgetContribution = {
       id: "test.returns-null",
@@ -57,7 +57,7 @@ describe("FancyFooterWidgetContribution", () => {
       order: 0,
       render: () => null,
     };
-    expect(returnsNull.render({})).toBeNull();
+    expect(returnsNull.render({} as any)).toBeNull();
 
     const returnsFalse: FancyFooterWidgetContribution = {
       id: "test.returns-false",
@@ -66,7 +66,7 @@ describe("FancyFooterWidgetContribution", () => {
       order: 0,
       render: () => false,
     };
-    expect(returnsFalse.render({})).toBe(false);
+    expect(returnsFalse.render({} as any)).toBe(false);
   });
 
   it("supports icon as family map or function", () => {
@@ -113,6 +113,46 @@ describe("createWidget", () => {
     w.update(ctx);
 
     expect(requestFancyFooterRefresh).toHaveBeenCalled();
+  });
+
+  it("update safely catches errors if requestFancyFooterRefresh throws", async () => {
+    const mockPi = { events: { on: mock(), emit: mock() } } as any;
+    const { createWidget } = await import("./fancy-footer");
+    const { requestFancyFooterRefresh } = await import("pi-fancy-footer/api");
+    (requestFancyFooterRefresh as any).mockImplementationOnce(() => {
+      throw new Error("This extension ctx is stale after session replacement or reload.");
+    });
+
+    const w = createWidget(mockPi, {
+      id: "test.refresh.throw",
+      render: () => "hello",
+    });
+
+    const ctx = { hasUI: true, ui: { setWidget: mock(), setStatus: mock() } } as any;
+    expect(() => w.update(ctx)).not.toThrow();
+  });
+
+  it("update safely catches errors if ctx.ui.setWidget throws in fallback mode", async () => {
+    const mockPi = { events: { on: mock(), emit: mock() } } as any;
+    const { createWidget } = await import("./fancy-footer");
+
+    const w = createWidget(mockPi, {
+      id: "test.fallback.throw",
+      render: () => "hello",
+    });
+    // simulate inactive fallback mode
+    (w as any).isActive = false;
+
+    const ctx = {
+      hasUI: true,
+      ui: {
+        setWidget: mock(() => {
+          throw new Error("UI context is stale");
+        }),
+      },
+    } as any;
+    expect(() => w.update(ctx, "fallback")).not.toThrow();
+    expect(() => w.remove(ctx)).not.toThrow();
   });
 
   it("update falls back to setWidget when not active", () => {
