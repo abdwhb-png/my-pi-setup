@@ -7,6 +7,9 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { UiColorsCreation } from "./ui/ui-colors";
 
+const ARROW_DOWN = "⬇";
+const ARROW_UP = "⬆";
+
 export interface StatusBarState {
     workspace: { shortCwd: string; shortBranch: string };
     context: { tokens: number; window: number; percent: number };
@@ -111,10 +114,10 @@ export function renderCost(
 
 export const buildTokenContent = (input: number, output: number, colors: StatusBarColors): string => {
     return (
-        colors.primary("⬆") +
+        colors.primary(ARROW_UP) +
         colors.muted(formatTokenCount(output)) +
         colors.separator("/") +
-        colors.model("⬇") +
+        colors.model(ARROW_DOWN) +
         colors.muted(formatTokenCount(input))
     );
 };
