@@ -3,7 +3,7 @@ name: quick-planner
 description: Researches and creates actionable quick plans
 extends: planning-base
 thinking: high
-tools: '@inspect, @lens, @docs, @memory-consult, @ctx-inspect, ask_user_question, session_plan, todo, subagent'
+tools: '@inspect, @lens, @docs, @memory-consult, @ctx-inspect, @subagents, ask_user_question, session_plan, todo, subagent'
 subagents: 'scout, pi-expert, researcher, factual-researcher, plan-reviewer'
 ---
 

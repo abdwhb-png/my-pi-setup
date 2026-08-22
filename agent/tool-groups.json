@@ -12,7 +12,11 @@
             "pi_session_query",
             "memory_search"
         ],
-        "memory": ["@memory-consult", "memory"],
+        "memory": [
+            "@memory-consult",
+            "memory_add",
+            "memory"
+        ],
         "files-write": ["edit", "write"],
         "report-write": ["write_report", "edit_report"],
         "implement": ["@files-write", "safe_bash"],
@@ -45,7 +49,8 @@
         "subagents": [
             "subagent",
             "subagent_supervisor",
-            "subagent_wait"
+            "subagent_wait",
+            "intercom"
         ],
         "review": [
             "@inspect",
@@ -57,7 +62,8 @@
             "@review",
             "@lens",
             "@report-write",
-            "intercom"
+            "intercom",
+            "contact_supervisor"
         ]
     }
 }
