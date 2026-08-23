@@ -32,6 +32,7 @@ pi-hermes-memory/
 projects-memory/
 intercom/
 missions/
+cache/
 
 models.backup
 .portable-path-backups/

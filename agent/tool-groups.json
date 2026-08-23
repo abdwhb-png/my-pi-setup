@@ -1,7 +1,12 @@
 {
     "groups": {
         "inspect": ["read", "grep", "find", "ls"],
-        "web": ["web_search", "fetch_content", "get_search_content"],
+        "web": [
+            "web_search",
+            "fetch_content",
+            "get_search_content",
+            "mcp:firecrawl"
+        ],
         "docs": [
             "mcp:context7",
             "mcp:deepwiki"
@@ -54,16 +59,15 @@
         ],
         "review": [
             "@inspect",
-            "@docs",
-            "@web",
-            "memory_search"
+            "@lens",
+            "@ctx-inspect",
+            "contact_supervisor"
         ],
         "review-max": [
             "@review",
-            "@lens",
             "@report-write",
-            "intercom",
-            "contact_supervisor"
+            "@docs",
+            "memory_search"
         ]
     }
 }

@@ -46,8 +46,7 @@
             "./node_modules/.bin/oxfmt *": "allow",
             "* ./node_modules/.bin/oxfmt *": "allow",
             "./node_modules/.bin/oxlint *": "allow",
-            "* ./node_modules/.bin/oxlint *": "allow",
-            "timeout *": "allow"
+            "* ./node_modules/.bin/oxlint *": "allow"
         },
         "write": {
             "*": "allow",
