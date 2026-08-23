@@ -23,7 +23,6 @@ import {
     PLAN_REVIEW_ABANDONED_ENTRY,
     PLAN_REVIEW_REVISION_ENTRY,
     PLAN_REVIEW_SUBMITTED_ENTRY,
-    type PlanReviewState,
 } from "./plan-submission-lifecycle.ts";
 
 const HANDOFF_GUARD = "plan-submission";
@@ -100,12 +99,6 @@ function wasToolCallRecorded(
     });
 }
 
-function pendingStates(entries: readonly LifecycleEntry[]): PlanReviewState[] {
-    return listPlanReviewStates(entries).filter(
-        (state) => state.status !== "approved" && state.status !== "abandoned",
-    );
-}
-
 function appendRevision(
     pi: ExtensionAPI,
     event: ToolResultEvent,
@@ -157,7 +150,6 @@ function appendSubmission(
 
 export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
     let currentCwd: string | null = null;
-    const reminded = new Set<string>();
 
     registerRoleTransitionPolicy((input: RoleTransitionPolicyInput) => {
         if (input.from?.handoffGuard !== HANDOFF_GUARD) {
@@ -207,20 +199,6 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
         }
         if (event.toolName === "plan_submit") {
             appendSubmission(pi, event, ctx);
-        }
-    });
-
-    pi.on("turn_end", (_event, ctx) => {
-        currentCwd = ctx.cwd;
-        if (!ctx.hasUI || !requiresPlanSubmission(ctx)) return;
-        for (const state of pendingStates(ctx.sessionManager.getEntries())) {
-            const key = `${state.path}:${state.revision}`;
-            if (reminded.has(key)) continue;
-            reminded.add(key);
-            ctx.ui.notify(
-                `Plan review pending for ${state.path}. Submit it with plan_submit or abandon it explicitly.`,
-                "warning",
-            );
         }
     });
 

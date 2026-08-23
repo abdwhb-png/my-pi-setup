@@ -253,7 +253,7 @@ describe("plan submission guard", () => {
         });
     });
 
-    it("reminds once per unreviewed revision", async () => {
+    it("registers no turn_end reminder", async () => {
         const { handlers, ctx } = setup();
         ctx.hasUI = true;
         await handlers.get("tool_result")!(
@@ -266,13 +266,7 @@ describe("plan submission guard", () => {
             ctx,
         );
 
-        await handlers.get("turn_end")!({}, ctx);
-        await handlers.get("turn_end")!({}, ctx);
-
-        expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
-        expect(ctx.ui.notify).toHaveBeenCalledWith(
-            expect.stringContaining("pi-plans/feature.md"),
-            "warning",
-        );
+        expect(handlers.has("turn_end")).toBe(false);
+        expect(ctx.ui.notify).not.toHaveBeenCalled();
     });
 });

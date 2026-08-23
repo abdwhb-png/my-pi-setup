@@ -16,7 +16,7 @@ import {
     loadPlannotatorConfig,
     resolvePlanFileDir,
 } from "@plannotator/pi-extension/config.js";
-import { getActiveRole } from "../_shared/pi-roles.ts";
+import { getActiveRole, readFrontmatter } from "../_shared/pi-roles.ts";
 import { createScopedWriter, type ScopedWriteActor } from "./core.ts";
 
 // ── Types ──
@@ -56,6 +56,18 @@ const DEFAULT_PLAN_ACTOR: PlanWriteActor = {
 function planWriteActor(ctx: ExtensionContext): PlanWriteActor {
     const role = getActiveRole(ctx.sessionManager.getEntries())?.name ?? "plan";
     return { agent: role, role, runId: ctx.sessionManager.getSessionId() };
+}
+
+/**
+ * Hint appended to successful plan writes when the active role opts into the
+ * plan-submission handoff guard. Empty for unguarded roles.
+ */
+function planReviewHint(ctx: ExtensionContext): string {
+    const role = getActiveRole(ctx.sessionManager.getEntries());
+    if (!role) return "";
+    const frontmatter = readFrontmatter<{ handoffGuard?: unknown }>(role.path);
+    if (frontmatter?.handoffGuard !== "plan-submission") return "";
+    return "\nPlan revision pending review: submit it with plan_submit for approval.";
 }
 
 function scopedPlanWriter(cwd: string, planDir: string, actor: PlanWriteActor) {
@@ -288,7 +300,12 @@ export function registerPlanTools(pi: ExtensionAPI): void {
             );
             return {
                 content: [
-                    { type: "text", text: result.error ?? result.message },
+                    {
+                        type: "text",
+                        text:
+                            result.error ??
+                            `${result.message}${planReviewHint(ctx)}`,
+                    },
                 ],
                 details: result,
                 isError: result.error !== null,
@@ -313,7 +330,12 @@ export function registerPlanTools(pi: ExtensionAPI): void {
             );
             return {
                 content: [
-                    { type: "text", text: result.error ?? result.message },
+                    {
+                        type: "text",
+                        text:
+                            result.error ??
+                            `${result.message}${planReviewHint(ctx)}`,
+                    },
                 ],
                 details: result,
                 isError: result.error !== null,
