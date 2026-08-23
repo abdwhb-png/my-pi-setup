@@ -2,6 +2,10 @@
 
 ## Status
 
+Superseded by [ADR-013](./ADR-013-pi-dangerous-mode-authorizer-chain.md)
+(extension renamed to `pi-dangerous-mode`; permission layer now handled through
+the package's authorizer chain instead of remaining flag-separated).
+
 Accepted
 
 ## Date

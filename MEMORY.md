@@ -232,4 +232,4 @@ OR_API_KEY=sk-or-v1-...
 
 ## Herdr Pi launches
 
-- For every Pi session launched through Herdr, use `pi --yolo` and launch the session without `ask_user_question`. These are separate requirements: `--yolo` auto-approves permissions but does not itself remove the tool; its absence must be enforced by the separate launch instruction or tool-registration policy.
+- For every Pi session launched through Herdr, use `pi --dangerously-skip-permissions` and launch the session without `ask_user_question`. These are separate requirements: the flag (renamed from `--yolo`, see ADR-013) auto-approves permissions and bypasses unprotected extension blockers but does not itself remove the tool; its absence must be enforced by the separate launch instruction or tool-registration policy.
