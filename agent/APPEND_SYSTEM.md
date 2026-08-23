@@ -29,7 +29,7 @@
 
 <doing_research>
 
-- Always prefer firecrawl mcp tools for web page scrapin. If the mcp is not available fallback to the firecrawl-cli usage (`firecrawl` skill).
+- Always prefer firecrawl mcp tools for web page scraping. If the mcp is not available fallback to the firecrawl-cli usage (`firecrawl` skill).
 - Sometimes basic web search is not enough, you need to couple it with firecrawl tools to get more accurate and up-to-date information.
 
 </doing_research>
