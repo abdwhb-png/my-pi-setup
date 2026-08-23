@@ -114,7 +114,7 @@ afterEach(() => {
 });
 
 describe("plan submission guard real Pi lifecycle", () => {
-    it("blocks switch_role while the latest revision is unsubmitted", async () => {
+    it("blocks switch_role until a revision is approved", async () => {
         const cwd = createProject();
         const previousRole = process.env.PI_ROLE;
         process.env.PI_ROLE = "plan";
@@ -144,7 +144,7 @@ describe("plan submission guard real Pi lifecycle", () => {
         );
 
         expect(session!.events.toolResultsFor("switch_role")[0]?.text).toContain(
-            "Plan review required for pi-plans/feature.md",
+            "An approved plan revision is required before leaving this planning role.",
         );
         expect(entries(session!).findLast((entry) => entry.customType === ACTIVE_ROLE_ENTRY_TYPE)?.data).toMatchObject({
             name: "plan",

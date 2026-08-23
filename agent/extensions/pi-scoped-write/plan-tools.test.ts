@@ -119,7 +119,8 @@ describe("writePlan + editPlan", () => {
       const result = writePlan("my-plan.md", testDir, "pi-plans", "# Hello Plan");
       expect(result.error).toBeNull();
       expect(result.message).toContain("Successfully wrote");
-      expect(result.message).toContain("my-plan.md");
+      expect(result.message).toContain("to pi-plans/my-plan.md");
+      expect(result.path).toBe("pi-plans/my-plan.md");
       const written = readFileSync(join(planDir, "my-plan.md"), "utf-8");
       expect(written).toBe("# Hello Plan");
     });
@@ -137,6 +138,8 @@ describe("writePlan + editPlan", () => {
             const result = writePlan(absolutePath, testDir, "pi-plans", "# Absolute");
 
             expect(result.error).toBeNull();
+            expect(result.message).toContain("to pi-plans/absolute.md");
+            expect(result.path).toBe("pi-plans/absolute.md");
             expect(readFileSync(absolutePath, "utf-8")).toBe("# Absolute");
         });
 
@@ -185,6 +188,8 @@ describe("writePlan + editPlan", () => {
 
       expect(result.error).toBeNull();
       expect(result.message).toContain("Successfully replaced 1 block");
+      expect(result.message).toContain("in pi-plans/edit-test.md");
+      expect(result.path).toBe("pi-plans/edit-test.md");
       const updated = readFileSync(planPath, "utf-8");
       expect(updated).toBe("Line 1\nLine 2 EDITED\nLine 3");
     });

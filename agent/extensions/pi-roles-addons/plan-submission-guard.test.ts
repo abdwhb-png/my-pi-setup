@@ -99,8 +99,44 @@ describe("plan submission guard", () => {
         ]);
     });
 
-    it("blocks exit from a guarded role while its latest revision remains a draft", async () => {
+    it("blocks exit from a guarded role until a plan revision is approved", () => {
         const { handlers, entries, ctx } = setup();
+        handlers.get("session_start")!({}, ctx);
+        const policy = registerRoleTransitionPolicy.mock.calls[0]?.[0];
+
+        expect(
+            policy({
+                from: { handoffGuard: "plan-submission" },
+                to: { handoffGuard: undefined },
+                transition: { kind: "manual" },
+                sessionEntries: entries,
+            }),
+        ).toEqual({
+            allow: false,
+            reason: "An approved plan revision is required before leaving this planning role.",
+        });
+    });
+
+    it("blocks exit when a later plan revision remains a draft", async () => {
+        const { handlers, entries, ctx } = setup();
+        await handlers.get("tool_result")!(
+            {
+                toolName: "write_plan",
+                isError: false,
+                input: { path: "approved.md" },
+                details: {},
+            },
+            ctx,
+        );
+        await handlers.get("tool_result")!(
+            {
+                toolName: "plan_submit",
+                isError: false,
+                input: { filePath: "pi-plans/approved.md" },
+                details: { approved: true },
+            },
+            ctx,
+        );
         await handlers.get("tool_result")!(
             {
                 toolName: "write_plan",
@@ -121,7 +157,7 @@ describe("plan submission guard", () => {
             }),
         ).toEqual({
             allow: false,
-            reason: "Plan review required for pi-plans/feature.md. Submit it or abandon it explicitly.",
+            reason: "Plan approval required for pi-plans/feature.md. Submit it for approval before leaving this planning role.",
         });
     });
 
@@ -202,6 +238,19 @@ describe("plan submission guard", () => {
                 }),
             ]),
         );
+
+        const policy = registerRoleTransitionPolicy.mock.calls[0]?.[0];
+        expect(
+            policy({
+                from: { handoffGuard: "plan-submission" },
+                to: { handoffGuard: undefined },
+                transition: { kind: "manual" },
+                sessionEntries: entries,
+            }),
+        ).toEqual({
+            allow: false,
+            reason: "An approved plan revision is required before leaving this planning role.",
+        });
     });
 
     it("reminds once per unreviewed revision", async () => {

@@ -173,12 +173,25 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
             };
         }
 
-        const pending = pendingStates(asLifecycleEntries(input.sessionEntries));
+        const states = listPlanReviewStates(
+            asLifecycleEntries(input.sessionEntries),
+        );
+        if (!states.some((state) => state.status === "approved")) {
+            return {
+                allow: false,
+                reason: "An approved plan revision is required before leaving this planning role.",
+            };
+        }
+
+        const pending = states.filter(
+            (state) =>
+                state.status !== "approved" && state.status !== "abandoned",
+        );
         if (pending.length === 0) return { allow: true };
         const paths = pending.map((state) => state.path).join(", ");
         return {
             allow: false,
-            reason: `Plan review required for ${paths}. Submit it or abandon it explicitly.`,
+            reason: `Plan approval required for ${paths}. Submit it for approval before leaving this planning role.`,
         };
     }, POLICY_KEY);
 
@@ -213,7 +226,7 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
 
     pi.registerCommand("abandon-plan", {
         description:
-            "Explicitly abandon one tracked plan revision before leaving a guarded planning role",
+            "Abandon one tracked plan revision; an approved revision is still required before leaving",
         handler: async (args, ctx: ExtensionCommandContext) => {
             currentCwd = ctx.cwd;
             if (!requiresPlanSubmission(ctx)) {
@@ -249,7 +262,7 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
             }
             const confirmed = await ctx.ui.confirm(
                 "Abandon plan revision",
-                `Allow leaving the planning workflow without approving ${path} revision ${state.revision}? The file will remain on disk.`,
+                `Abandon ${path} revision ${state.revision}? The file will remain on disk, and an approved revision is still required before leaving.`,
             );
             if (!confirmed) return;
             pi.appendEntry(PLAN_REVIEW_ABANDONED_ENTRY, {

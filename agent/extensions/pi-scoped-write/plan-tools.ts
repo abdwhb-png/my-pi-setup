@@ -27,6 +27,8 @@ export interface PlanPathResult {
 }
 
 export interface WriteResult {
+    /** Canonical path, relative to cwd, for the plan target when it resolves. */
+    path: string | null;
     message: string;
     error: string | null;
 }
@@ -37,6 +39,8 @@ export interface EditInput {
 }
 
 export interface EditResult {
+    /** Canonical path, relative to cwd, for the plan target when it resolves. */
+    path: string | null;
     message: string;
     error: string | null;
 }
@@ -143,7 +147,7 @@ export function resolvePlanPath(
  * Write content to a file inside the plan directory.
  *
  * Auto-creates the plan directory and any parent directories.
- * Returns `{ message, error }` — at most one is set.
+ * Returns `{ path, message, error }`. `path` is cwd-relative when it resolves.
  */
 export function writePlan(
     rawPath: string,
@@ -154,9 +158,10 @@ export function writePlan(
 ): WriteResult {
     const resolved = resolvePlanPath(rawPath, cwd, planDir);
     if (resolved.error) {
-        return { message: "", error: resolved.error };
+        return { path: null, message: "", error: resolved.error };
     }
 
+    const canonicalPath = relative(cwd, resolved.resolved!);
     const writer = scopedPlanWriter(cwd, planDir!, actor);
     const scopedPath = relative(resolve(cwd, planDir!), resolved.resolved!);
     const existing = existsSync(resolved.resolved!)
@@ -171,11 +176,12 @@ export function writePlan(
                   tool: "write_plan",
               });
     if (result.kind !== "success") {
-        return { message: "", error: result.reason };
+        return { path: canonicalPath, message: "", error: result.reason };
     }
 
     return {
-        message: `Successfully wrote ${Buffer.byteLength(content, "utf-8")} bytes to ${rawPath}`,
+        path: canonicalPath,
+        message: `Successfully wrote ${Buffer.byteLength(content, "utf-8")} bytes to ${canonicalPath}`,
         error: null,
     };
 }
@@ -186,7 +192,7 @@ export function writePlan(
  * Edit a file inside the plan directory using text replacements.
  *
  * Each edit must have exactly one unique match for `oldText`.
- * Returns `{ message, error }` — at most one is set.
+ * Returns `{ path, message, error }`. `path` is cwd-relative when it resolves.
  */
 export function editPlan(
     rawPath: string,
@@ -197,11 +203,16 @@ export function editPlan(
 ): EditResult {
     const resolved = resolvePlanPath(rawPath, cwd, planDir);
     if (resolved.error) {
-        return { message: "", error: resolved.error };
+        return { path: null, message: "", error: resolved.error };
     }
 
+    const canonicalPath = relative(cwd, resolved.resolved!);
     if (!existsSync(resolved.resolved!)) {
-        return { message: "", error: `File not found: ${rawPath}` };
+        return {
+            path: canonicalPath,
+            message: "",
+            error: `File not found: ${canonicalPath}`,
+        };
     }
 
     const result = scopedPlanWriter(cwd, planDir!, actor).edit({
@@ -212,21 +223,24 @@ export function editPlan(
     if (result.kind !== "success") {
         if (result.reason === "Edit text was not found.") {
             return {
+                path: canonicalPath,
                 message: "",
-                error: `Could not find match for oldText in ${rawPath}.`,
+                error: `Could not find match for oldText in ${canonicalPath}.`,
             };
         }
         if (result.reason.startsWith("Edit text matches ")) {
             return {
+                path: canonicalPath,
                 message: "",
                 error: result.reason.replace("Edit text", "oldText"),
             };
         }
-        return { message: "", error: result.reason };
+        return { path: canonicalPath, message: "", error: result.reason };
     }
 
     return {
-        message: `Successfully replaced ${edits.length} block(s) in ${rawPath}`,
+        path: canonicalPath,
+        message: `Successfully replaced ${edits.length} block(s) in ${canonicalPath}`,
         error: null,
     };
 }
@@ -261,7 +275,7 @@ export function registerPlanTools(pi: ExtensionAPI): void {
         name: "write_plan",
         label: "Write Plan",
         description:
-            "Write a Markdown plan inside the planFileDir configured by Plannotator.",
+            "Write a Markdown plan inside the configured planFileDir and return its resolved cwd-relative path.",
         parameters: writePlanSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
             const config = loadPlannotatorConfig(ctx.cwd);
@@ -286,7 +300,7 @@ export function registerPlanTools(pi: ExtensionAPI): void {
         name: "edit_plan",
         label: "Edit Plan",
         description:
-            "Edit a Markdown plan inside the planFileDir configured by Plannotator using exact replacement.",
+            "Edit a Markdown plan inside the configured planFileDir and return its resolved cwd-relative path.",
         parameters: editPlanSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
             const config = loadPlannotatorConfig(ctx.cwd);
