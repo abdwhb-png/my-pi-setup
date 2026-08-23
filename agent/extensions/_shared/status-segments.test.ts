@@ -13,7 +13,7 @@ import {
   buildTokenContent,
   renderTokenCounts,
     shortenMiddle,
-  renderPrefix,
+  sessionNamePrefix,
   type StatusBarState,
 } from "./status-segments";
 import type { UiColorsCreation } from "./ui/ui-colors";
@@ -117,7 +117,7 @@ describe("segment renderers", () => {
   });
 
   it("renderSessionName prefixes and shortens; empty when no name", () => {
-    expect(renderSessionName(makeState(), 20, colors)).toBe(`${renderPrefix}my-session`);
+    expect(renderSessionName(makeState(), 20, colors)).toBe(`${sessionNamePrefix}my-session`);
     const empty = makeState({ session: { name: undefined } });
     expect(renderSessionName(empty, 20, colors)).toBe("");
   });
@@ -141,7 +141,7 @@ describe("segment renderers", () => {
   });
 
   it("buildTokenContent labels input and output with their directions", () => {
-    expect(buildTokenContent(1234, 340, colors)).toBe("in↓ 1.2k · out↑ 340");
+    expect(buildTokenContent(1234, 340, colors)).toBe("in↓1.2k/out↑340");
   });
 
   it("renderTokenCounts renders session totals with cache read and write", () => {
@@ -152,7 +152,7 @@ describe("segment renderers", () => {
       buildSessionTokenContent(1234, 340, 20, 8, colors),
     );
     expect(renderTokenCounts(state, 40, colors)).toBe(
-      "Σ in↓ 1.2k · out↑ 340 · cache R 20 · W 8",
+      "Σ in↓1.2k/out↑340 · cache R20/W8",
     );
   });
 });

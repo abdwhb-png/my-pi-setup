@@ -71,7 +71,7 @@ export function renderBranch(
         : "";
 }
 
-export const renderPrefix = "📋->";
+export const sessionNamePrefix = "📋->";
 
 export function renderSessionName(
     state: StatusBarState,
@@ -80,8 +80,8 @@ export function renderSessionName(
 ): string {
     const name = state.session.name;
     if (!name) return "";
-    const maxName = Math.min(20, Math.max(8, availableWidth - 1));
-    return colors.meta(`${renderPrefix}${shortenMiddle(name, maxName)}`);
+    const maxName = Math.min(25, Math.max(8, availableWidth - 1));
+    return colors.meta(`${sessionNamePrefix}${shortenMiddle(name, maxName)}`);
 }
 
 export const buildContextContent = (
@@ -131,11 +131,9 @@ export const buildTokenContent = (
 ): string => {
     return (
         colors.primary(`in${ARROW_DOWN}`) +
-        " " +
         colors.muted(formatTokenCount(input)) +
-        colors.separator(" · ") +
+        colors.separator("/") +
         colors.model(`out${ARROW_UP}`) +
-        " " +
         colors.muted(formatTokenCount(output))
     );
 };
@@ -151,10 +149,10 @@ export const buildSessionTokenContent = (
         colors.meta("Σ ") +
         buildTokenContent(input, output, colors) +
         colors.separator(" · ") +
-        colors.subtle("cache R ") +
+        colors.subtle("cache R") +
         colors.muted(formatTokenCount(cacheRead)) +
-        colors.separator(" · ") +
-        colors.subtle("W ") +
+        colors.separator("/") +
+        colors.subtle("W") +
         colors.muted(formatTokenCount(cacheWrite))
     );
 };
