@@ -376,7 +376,7 @@ describe('registerCpaProvider', () => {
         expect(second).toEqual({ action: 'continue' });
         expect(notify).toHaveBeenCalledTimes(1);
         expect(notify).toHaveBeenCalledWith(
-            expect.stringContaining('indisponible'),
+            expect.stringContaining('unavailable'),
             'warning',
         );
     });
@@ -515,7 +515,7 @@ describe('registerCpaProvider', () => {
         expect(registeredProviders.length).toBe(2);
         expect(registeredProviders[1].config.models).toEqual([fakeModel]);
         expect(notify).toHaveBeenCalledWith(
-            expect.stringContaining('actualisé'),
+            expect.stringContaining('updated'),
             'info',
         );
     });

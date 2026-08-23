@@ -273,7 +273,7 @@ export function registerCpaProvider(
     function notifyStaleModelOnce(ctx: LifecycleCtx, modelId: string): void {
         if (lastNotifiedStaleModelId === modelId) return;
         lastNotifiedStaleModelId = modelId;
-        const message = `Le modèle CPA actif ${modelId} n’existe plus. Utilise /model pour choisir un modèle valide.`;
+        const message = `The active CPA model ${modelId} no longer exists. Use /model to choose a valid model.`;
         if (ctx.hasUI) ctx.ui.notify(message, "warning");
         else console.warn(`[cpa] ${message}`);
     }
@@ -282,7 +282,7 @@ export function registerCpaProvider(
         if (unverifiedWarningShown) return;
         unverifiedWarningShown = true;
         const message =
-            "Catalogue CPA indisponible. Le dernier état vérifié est conservé.";
+            "CPA catalog unavailable. The last verified state is preserved.";
         if (ctx.hasUI) ctx.ui.notify(message, "warning");
         else console.warn(`[cpa] ${message}`);
     }
@@ -319,8 +319,8 @@ export function registerCpaProvider(
 
                 const message =
                     result.state === "valid"
-                        ? "Catalogue CPA actualisé. Le modèle actif est valide."
-                        : "Catalogue CPA indisponible. Le dernier état vérifié est conservé.";
+                        ? "CPA catalog updated. The active model is valid."
+                        : "CPA catalog unavailable. The last verified state is preserved.";
                 if (ctx.hasUI)
                     ctx.ui.notify(
                         message,
