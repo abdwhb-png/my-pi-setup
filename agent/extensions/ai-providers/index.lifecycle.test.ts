@@ -47,15 +47,6 @@ mock.module('./providers/cpa-catalog-cache.ts', () => ({
         save: async () => {},
     }),
 }));
-mock.module('./providers/factory-ai.ts', () => ({
-    registerFactoryProvider: () => ({
-        providerId: 'factory-ai',
-        refreshProjection: mock(async () => {}),
-    }),
-}));
-mock.module('./widgets/factory-credits.ts', () => ({
-    registerFactoryCreditsWidget: () => {},
-}));
 mock.module('./commands/providers.ts', () => ({
     registerProvidersCommand: () => {},
 }));

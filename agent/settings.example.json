@@ -34,7 +34,6 @@
     },
     "aiProviders": {
         "providers": {
-            "factory-ai": false,
             "cpa": true
         }
     },

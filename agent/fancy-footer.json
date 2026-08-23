@@ -58,6 +58,10 @@
         }
     },
     "extensionWidgets": {
+        "local-compressor": {
+            "row": 1,
+            "placement": "aboveEditor"
+        },
         "session-status-bar.model": {
             "row": 0,
             "position": 0
@@ -75,6 +79,9 @@
         "session-status-bar.session": {
             "row": 2,
             "align": "right"
+        },
+        "pi-glm-tweaks.status": {
+            "row": 1
         },
         "git-status-widget": {
             "enabled": true,
@@ -96,33 +103,21 @@
             "row": 2,
             "align": "left"
         },
+        "codex-fast-mode": {
+            "enabled": true,
+            "row": 2,
+            "align": "left"
+        },
+        "auto-translate": {
+            "row": 2,
+            "align": "left"
+        },
         "pi-subagents-overview-widget": {
             "row": 2,
             "align": "right"
         },
-        "factory-credits": {
-            "row": 1
-        },
-        "pi-glm-tweaks.status": {
-            "row": 1
-        },
-        "local-compressor": {
-            "row": 1,
-            "placement": "aboveEditor"
-        },
-        "auto-translate": {
-            "row": 1,
-            "align": "right",
-            "placement": "aboveEditor"
-        },
         "brainstorm-forcer": {
-            "row": 2,
-            "placement": "aboveEditor",
-            "align": "left"
-        },
-        "codex-fast-mode": {
-            "enabled": true,
-            "row": 2,
+            "row": 3,
             "align": "left"
         },
         "pi-lens": {
