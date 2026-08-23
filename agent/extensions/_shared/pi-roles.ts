@@ -14,6 +14,16 @@ export {
     type SwitchProcessedPayload,
 } from "pi-roles/api";
 
+export {
+    authorizeRoleTransition,
+    evaluateRoleTransitionPolicies,
+    registerRoleTransitionPolicy,
+    type RoleTransition,
+    type RoleTransitionDecision,
+    type RoleTransitionPolicy,
+    type RoleTransitionPolicyInput,
+} from "pi-roles/transition-policy";
+
 import { readFileSync } from "node:fs";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { findLatestActiveRoleState, type ActiveRoleState } from "pi-roles/api";

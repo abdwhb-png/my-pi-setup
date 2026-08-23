@@ -1,4 +1,8 @@
+/// <reference types="bun" />
+
 import { expect, mock, test } from 'bun:test';
+
+const planSubmissionGuard = mock();
 import { readFileSync } from 'node:fs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
@@ -9,6 +13,9 @@ mock.module('@plannotator/pi-extension/config.js', () => ({
 mock.module('./plan-auto-switch.ts', () => ({ default: () => undefined }));
 mock.module('./prompt-role-switch.ts', () => ({ default: () => undefined }));
 mock.module('./role-subagents.ts', () => ({ default: () => undefined }));
+mock.module('./plan-submission-guard.ts', () => ({
+    default: planSubmissionGuard,
+}));
 
 test('pi-roles addons registers no tools owned by pi-scoped-write', async () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
@@ -24,6 +31,7 @@ test('pi-roles addons registers no tools owned by pi-scoped-write', async () => 
 
     registerAddons(pi);
 
+    expect(planSubmissionGuard).toHaveBeenCalledWith(pi);
     expect([...registered.keys()]).not.toEqual(
         expect.arrayContaining([
             'write_plan',

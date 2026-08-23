@@ -3,6 +3,7 @@ name: plan
 description: Researches and creates actionable plans with Plannotator browser review
 extends: planning-base
 thinking: xhigh
+handoffGuard: plan-submission
 tools: '@inspect, @lens, @web, @docs, @memory-consult, @ctx, @subagents, ask_user_question, write_plan, edit_plan, todo, plan_submit, plan_annotate'
 subagents: 'scout, pi-expert, researcher, factual-researcher, plan-reviewer, architect, oracle, oh-my-oracle'
 ---

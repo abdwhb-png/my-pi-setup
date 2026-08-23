@@ -4,11 +4,13 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import planAutoSwitch from "./plan-auto-switch.ts";
+import registerPlanSubmissionGuard from "./plan-submission-guard.ts";
 import promptRoleSwitch from "./prompt-role-switch.ts";
 import roleSubagents from "./role-subagents.ts";
 
 export default function aldoborreroExtensions(pi: ExtensionAPI) {
     planAutoSwitch(pi);
+    registerPlanSubmissionGuard(pi);
     promptRoleSwitch(pi);
     roleSubagents(pi);
 }
