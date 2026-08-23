@@ -24,7 +24,7 @@ type RuntimeExtension = {
     handlers: ToolCallHandler[];
 };
 
-type YoloRuntimeState = {
+type DangerousRuntimeState = {
     installed: boolean;
     compatible: boolean;
     configValid: boolean;
@@ -35,9 +35,9 @@ type YoloRuntimeState = {
     config: YoloConfig;
 };
 
-const STATE_KEY = Symbol.for("pi-yolo.runner-patch.state");
+const STATE_KEY = Symbol.for("pi-dangerous-mode.state");
 
-function defaultState(): YoloRuntimeState {
+function defaultState(): DangerousRuntimeState {
     return {
         installed: false,
         compatible: true,
@@ -49,7 +49,7 @@ function defaultState(): YoloRuntimeState {
     };
 }
 
-function getState(): YoloRuntimeState {
+function getState(): DangerousRuntimeState {
     const globals = globalThis as Record<symbol, unknown>;
     const existing = globals[STATE_KEY];
     if (isState(existing)) return existing;
@@ -59,7 +59,7 @@ function getState(): YoloRuntimeState {
     return state;
 }
 
-function isState(value: unknown): value is YoloRuntimeState {
+function isState(value: unknown): value is DangerousRuntimeState {
     return typeof value === "object" && value !== null && "installed" in value;
 }
 
@@ -120,13 +120,13 @@ function reportIncompatibility(runner: ExtensionRunner, reason: string): void {
 
     state.incompatibilityReported = true;
     runner.emitError({
-        extensionPath: "pi-yolo",
+        extensionPath: "pi-dangerous-mode",
         event: "tool_call",
-        error: `YOLO disabled: incompatible ExtensionRunner (${reason}).`,
+        error: `Dangerous mode disabled: incompatible ExtensionRunner (${reason}).`,
     });
 }
 
-export function setYoloRuntimeState(input: {
+export function setDangerousRuntimeState(input: {
     enabled: boolean;
     config: YoloConfig;
 }): void {
@@ -139,11 +139,11 @@ export function setYoloRuntimeState(input: {
     };
 }
 
-export function isYoloEnabled(): boolean {
+export function isDangerousEnabled(): boolean {
     return getState().enabled;
 }
 
-export function startYoloSession(input: {
+export function startDangerousSession(input: {
     isReload: boolean;
     flagEnabled: boolean;
     config: YoloConfig;
@@ -158,7 +158,7 @@ export function startYoloSession(input: {
     state.enabled = state.compatible && (state.override ?? input.flagEnabled);
 }
 
-export function disableYoloForInvalidConfig(): void {
+export function disableForInvalidConfig(): void {
     const state = getState();
     state.configValid = false;
     state.enabled = false;
@@ -168,7 +168,7 @@ export function disableYoloForInvalidConfig(): void {
     };
 }
 
-export function setYoloSessionOverride(enabled: boolean): boolean {
+export function setSessionOverride(enabled: boolean): boolean {
     const state = getState();
     if (enabled && (!state.compatible || !state.configValid)) return false;
 
@@ -177,7 +177,7 @@ export function setYoloSessionOverride(enabled: boolean): boolean {
     return true;
 }
 
-export function getYoloStatus(): {
+export function getStatus(): {
     enabled: boolean;
     compatible: boolean;
     config: YoloConfig;

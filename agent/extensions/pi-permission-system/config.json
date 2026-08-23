@@ -1,4 +1,7 @@
 {
+    "authorizerChain": [
+        "pi-dangerous-mode"
+    ],
     "yoloMode": true,
     "shellTools": {
         "safe_bash": {

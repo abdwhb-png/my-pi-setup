@@ -54,19 +54,17 @@ function validateConfigFile(path: string): void {
     try {
         raw = JSON.parse(readFileSync(path, "utf8"));
     } catch {
-        throw new Error(`Invalid YOLO configuration: cannot parse ${path}.`);
+        throw new Error(`Invalid configuration: cannot parse ${path}.`);
     }
 
     if (!isRecord(raw)) {
-        throw new Error(
-            `Invalid YOLO configuration: ${path} must be an object.`,
-        );
+        throw new Error(`Invalid configuration: ${path} must be an object.`);
     }
 
     for (const field of ["protectedTools", "protectedExtensions"] as const) {
         if (field in raw && !isValidPatternList(raw[field])) {
             throw new Error(
-                `Invalid YOLO configuration: ${field} in ${path} must be a non-empty string list.`,
+                `Invalid configuration: ${field} in ${path} must be a non-empty string list.`,
             );
         }
     }
@@ -74,13 +72,13 @@ function validateConfigFile(path: string): void {
 
 export function loadConfig(cwd: string, agentDir?: string): YoloConfig {
     const resolvedAgentDir = agentDir ?? getAgentDir();
-    validateConfigFile(join(resolvedAgentDir, "pi-yolo.json"));
-    validateConfigFile(join(cwd, ".pi", "pi-yolo.json"));
+    validateConfigFile(join(resolvedAgentDir, "pi-dangerous-mode.json"));
+    validateConfigFile(join(cwd, ".pi", "pi-dangerous-mode.json"));
 
     return loadExtensionConfig(cwd, {
         defaults: DEFAULT_CONFIG,
         normalize,
-        sources: [{ legacyFilename: "pi-yolo.json" }],
+        sources: [{ legacyFilename: "pi-dangerous-mode.json" }],
         agentDir: resolvedAgentDir,
     });
 }

@@ -30,10 +30,10 @@ function writeRaw(path: string, value: string): void {
     writeFileSync(path, value, 'utf8');
 }
 
-describe('pi-yolo configuration', () => {
+describe('pi-dangerous-mode configuration', () => {
     it('uses empty protected lists when configuration is absent', () => {
-        const agentDir = createDir('pi-yolo-agent-');
-        const cwd = createDir('pi-yolo-cwd-');
+        const agentDir = createDir('pi-dangerous-mode-agent-');
+        const cwd = createDir('pi-dangerous-mode-cwd-');
 
         expect(loadConfig(cwd, agentDir)).toEqual({
             protectedTools: [],
@@ -42,13 +42,13 @@ describe('pi-yolo configuration', () => {
     });
 
     it('keeps an undeclared global list when project config overrides the other list', () => {
-        const agentDir = createDir('pi-yolo-agent-');
-        const cwd = createDir('pi-yolo-cwd-');
-        writeJson(join(agentDir, 'pi-yolo.json'), {
+        const agentDir = createDir('pi-dangerous-mode-agent-');
+        const cwd = createDir('pi-dangerous-mode-cwd-');
+        writeJson(join(agentDir, 'pi-dangerous-mode.json'), {
             protectedTools: ['safe_bash'],
             protectedExtensions: ['brainstorm-forcer'],
         });
-        writeJson(join(cwd, '.pi', 'pi-yolo.json'), {
+        writeJson(join(cwd, '.pi', 'pi-dangerous-mode.json'), {
             protectedTools: ['mcp:*'],
         });
 
@@ -59,13 +59,13 @@ describe('pi-yolo configuration', () => {
     });
 
     it('replaces each declared global list with its project list', () => {
-        const agentDir = createDir('pi-yolo-agent-');
-        const cwd = createDir('pi-yolo-cwd-');
-        writeJson(join(agentDir, 'pi-yolo.json'), {
+        const agentDir = createDir('pi-dangerous-mode-agent-');
+        const cwd = createDir('pi-dangerous-mode-cwd-');
+        writeJson(join(agentDir, 'pi-dangerous-mode.json'), {
             protectedTools: ['safe_bash'],
             protectedExtensions: ['brainstorm-forcer'],
         });
-        writeJson(join(cwd, '.pi', 'pi-yolo.json'), {
+        writeJson(join(cwd, '.pi', 'pi-dangerous-mode.json'), {
             protectedTools: ['bash'],
             protectedExtensions: ['*pi-permission-system*'],
         });
@@ -77,39 +77,39 @@ describe('pi-yolo configuration', () => {
     });
 
     it('rejects malformed global JSON', () => {
-        const agentDir = createDir('pi-yolo-agent-');
-        const cwd = createDir('pi-yolo-cwd-');
-        writeRaw(join(agentDir, 'pi-yolo.json'), '{');
+        const agentDir = createDir('pi-dangerous-mode-agent-');
+        const cwd = createDir('pi-dangerous-mode-cwd-');
+        writeRaw(join(agentDir, 'pi-dangerous-mode.json'), '{');
 
         expect(() => loadConfig(cwd, agentDir)).toThrow(
-            'Invalid YOLO configuration: cannot parse',
+            'Invalid configuration: cannot parse',
         );
     });
 
     it('rejects a non-object project configuration', () => {
-        const agentDir = createDir('pi-yolo-agent-');
-        const cwd = createDir('pi-yolo-cwd-');
-        writeJson(join(cwd, '.pi', 'pi-yolo.json'), []);
+        const agentDir = createDir('pi-dangerous-mode-agent-');
+        const cwd = createDir('pi-dangerous-mode-cwd-');
+        writeJson(join(cwd, '.pi', 'pi-dangerous-mode.json'), []);
 
         expect(() => loadConfig(cwd, agentDir)).toThrow(
-            'Invalid YOLO configuration',
+            'Invalid configuration',
         );
     });
 
     it('rejects a declared protection list containing invalid entries', () => {
-        const agentDir = createDir('pi-yolo-agent-');
-        const cwd = createDir('pi-yolo-cwd-');
-        writeJson(join(agentDir, 'pi-yolo.json'), {
+        const agentDir = createDir('pi-dangerous-mode-agent-');
+        const cwd = createDir('pi-dangerous-mode-cwd-');
+        writeJson(join(agentDir, 'pi-dangerous-mode.json'), {
             protectedTools: ['bash', 42],
         });
 
         expect(() => loadConfig(cwd, agentDir)).toThrow(
-            'Invalid YOLO configuration',
+            'Invalid configuration',
         );
     });
 });
 
-describe('pi-yolo matchers', () => {
+describe('pi-dangerous-mode matchers', () => {
     it('matches exact tool names and star globs', () => {
         expect(matchesTool('bash', ['bash'])).toBe(true);
         expect(matchesTool('mcp:github/search', ['mcp:*'])).toBe(true);

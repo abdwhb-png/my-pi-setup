@@ -1,33 +1,37 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { installAuthorizerLink } from "./authorizer-link.ts";
 import { loadConfig } from "./config.ts";
 import {
-    disableYoloForInvalidConfig,
-    getYoloStatus,
+    disableForInvalidConfig,
+    getStatus,
     installRunnerPatch,
-    setYoloSessionOverride,
-    startYoloSession,
+    setSessionOverride,
+    startDangerousSession,
 } from "./runner-patch.ts";
 
 const ACTIONS = ["on", "off", "status"] as const;
 
 function usage(): string {
-    return "Usage: /yolo [on|off|status]";
+    return "Usage: /dangerous-mode [on|off|status]";
 }
 
 function isAction(value: string): value is (typeof ACTIONS)[number] {
     return ACTIONS.some((action) => action === value);
 }
 
-export default function yoloExtension(pi: ExtensionAPI): void {
+export default function dangerousModeExtension(pi: ExtensionAPI): void {
     const patchInstalled = installRunnerPatch();
+    installAuthorizerLink(pi);
 
-    pi.registerFlag("yolo", {
-        description: "Bypass unprotected extension tool-call blockers.",
+    pi.registerFlag("dangerously-skip-permissions", {
+        description:
+            "Skip permission prompts and unprotected extension tool-call blockers for this session.",
         type: "boolean",
     });
 
-    pi.registerCommand("yolo", {
-        description: "Control central YOLO mode. Usage: /yolo [on|off|status]",
+    pi.registerCommand("dangerous-mode", {
+        description:
+            "Control dangerous mode. Usage: /dangerous-mode [on|off|status]",
         getArgumentCompletions: (prefix) => {
             const normalized = prefix.trim().toLowerCase();
             if (normalized.includes(" ")) return null;
@@ -46,50 +50,51 @@ export default function yoloExtension(pi: ExtensionAPI): void {
             }
 
             if (action === "status") {
-                const status = getYoloStatus();
+                const status = getStatus();
                 const protectedTools =
                     status.config.protectedTools.join(", ") || "none";
                 const protectedExtensions =
                     status.config.protectedExtensions.join(", ") || "none";
                 ctx.ui.notify(
-                    `YOLO mode: ${status.enabled ? "ON" : "OFF"}${status.compatible ? "" : " (runner incompatible)"}. Protected tools: ${protectedTools}. Protected extensions: ${protectedExtensions}.`,
+                    `Dangerous mode: ${status.enabled ? "ON" : "OFF"}${status.compatible ? "" : " (runner incompatible)"}. Protected tools: ${protectedTools}. Protected extensions: ${protectedExtensions}.`,
                     "info",
                 );
                 return;
             }
 
             const enabled = action === "on";
-            if (!setYoloSessionOverride(enabled)) {
+            if (!setSessionOverride(enabled)) {
                 ctx.ui.notify(
-                    "YOLO cannot be enabled: configuration or runner is incompatible.",
+                    "Dangerous mode cannot be enabled: configuration or runner is incompatible.",
                     "error",
                 );
                 return;
             }
-            ctx.ui.notify(`YOLO mode: ${enabled ? "ON" : "OFF"}.`, "info");
+            ctx.ui.notify(`Dangerous mode: ${enabled ? "ON" : "OFF"}.`, "info");
         },
     });
 
     pi.on("session_start", (event, ctx) => {
         try {
-            startYoloSession({
+            startDangerousSession({
                 isReload: event.reason === "reload",
-                flagEnabled: pi.getFlag("yolo") === true,
+                flagEnabled:
+                    pi.getFlag("dangerously-skip-permissions") === true,
                 config: loadConfig(ctx.cwd),
             });
         } catch (error) {
-            disableYoloForInvalidConfig();
+            disableForInvalidConfig();
             const message =
                 error instanceof Error
                     ? error.message
-                    : "Invalid YOLO configuration.";
+                    : "Invalid configuration.";
             ctx.ui.notify(message, "error");
             return;
         }
 
-        if (!patchInstalled || !getYoloStatus().compatible) {
+        if (!patchInstalled || !getStatus().compatible) {
             ctx.ui.notify(
-                "YOLO disabled: incompatible ExtensionRunner.",
+                "Dangerous mode disabled: incompatible ExtensionRunner.",
                 "error",
             );
         }

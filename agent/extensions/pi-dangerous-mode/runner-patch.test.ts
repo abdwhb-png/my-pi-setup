@@ -6,7 +6,7 @@ import {
     type ToolCallEvent,
 } from '@earendil-works/pi-coding-agent';
 
-const { installRunnerPatch, isYoloEnabled, setYoloRuntimeState } =
+const { installRunnerPatch, isDangerousEnabled, setDangerousRuntimeState } =
     await import('./runner-patch.ts');
 
 function createFixtureExtension(
@@ -30,7 +30,7 @@ function createRunner(extensions: Extension[]): ExtensionRunner {
     return new ExtensionRunner(
         extensions,
         createExtensionRuntime(),
-        '/tmp/pi-yolo-test',
+        '/tmp/pi-dangerous-mode-test',
         {} as never,
         {} as never,
     );
@@ -46,26 +46,26 @@ function bashCall(): ToolCallEvent {
 }
 
 afterEach(() => {
-    setYoloRuntimeState({
+    setDangerousRuntimeState({
         enabled: false,
         config: { protectedTools: [], protectedExtensions: [] },
     });
 });
 
-describe('pi-yolo runner patch', () => {
+describe('pi-dangerous-mode runner patch', () => {
     it('fails closed when ExtensionRunner constructor is unavailable', () => {
         expect(installRunnerPatch(null)).toBe(false);
-        expect(isYoloEnabled()).toBe(false);
+        expect(isDangerousEnabled()).toBe(false);
     });
 
     it('fails closed when ExtensionRunner lacks required methods', () => {
         class IncompleteRunner {}
 
         expect(installRunnerPatch(IncompleteRunner)).toBe(false);
-        expect(isYoloEnabled()).toBe(false);
+        expect(isDangerousEnabled()).toBe(false);
     });
 
-    it('preserves normal first-block dispatch while yolo is disabled', async () => {
+    it('preserves normal first-block dispatch while dangerous mode is disabled', async () => {
         const calls: string[] = [];
         const runner = createRunner([
             createFixtureExtension('blocker.ts', async () => {
@@ -75,7 +75,7 @@ describe('pi-yolo runner patch', () => {
         ]);
 
         installRunnerPatch();
-        setYoloRuntimeState({
+        setDangerousRuntimeState({
             enabled: false,
             config: { protectedTools: [], protectedExtensions: [] },
         });
@@ -86,7 +86,7 @@ describe('pi-yolo runner patch', () => {
         expect(calls).toEqual(['blocker']);
     });
 
-    it('skips unprotected tool-call handlers while yolo is enabled', async () => {
+    it('skips unprotected tool-call handlers while dangerous mode is enabled', async () => {
         const calls: string[] = [];
         const runner = createRunner([
             createFixtureExtension('blocker.ts', async () => {
@@ -96,7 +96,7 @@ describe('pi-yolo runner patch', () => {
         ]);
 
         installRunnerPatch();
-        setYoloRuntimeState({
+        setDangerousRuntimeState({
             enabled: true,
             config: { protectedTools: [], protectedExtensions: [] },
         });
@@ -107,7 +107,7 @@ describe('pi-yolo runner patch', () => {
         expect(calls).toEqual([]);
     });
 
-    it('keeps a protected extension active under yolo', async () => {
+    it('keeps a protected extension active under dangerous mode', async () => {
         const calls: string[] = [];
         const runner = createRunner([
             createFixtureExtension('/fixtures/blocker.ts', async () => {
@@ -117,7 +117,7 @@ describe('pi-yolo runner patch', () => {
         ]);
 
         installRunnerPatch();
-        setYoloRuntimeState({
+        setDangerousRuntimeState({
             enabled: true,
             config: {
                 protectedTools: [],
@@ -145,7 +145,7 @@ describe('pi-yolo runner patch', () => {
         ]);
 
         installRunnerPatch();
-        setYoloRuntimeState({
+        setDangerousRuntimeState({
             enabled: true,
             config: { protectedTools: ['bash'], protectedExtensions: [] },
         });
@@ -164,7 +164,7 @@ describe('pi-yolo runner patch', () => {
         runner.onError((error) => errors.push(error.error));
 
         installRunnerPatch();
-        setYoloRuntimeState({
+        setDangerousRuntimeState({
             enabled: true,
             config: { protectedTools: [], protectedExtensions: [] },
         });
@@ -175,9 +175,9 @@ describe('pi-yolo runner patch', () => {
         );
 
         expect(rejection).toBeInstanceOf(Error);
-        expect(isYoloEnabled()).toBe(false);
+        expect(isDangerousEnabled()).toBe(false);
         expect(errors).toEqual([
-            'YOLO disabled: incompatible ExtensionRunner (extension collection shape changed).',
+            'Dangerous mode disabled: incompatible ExtensionRunner (extension collection shape changed).',
         ]);
     });
 
