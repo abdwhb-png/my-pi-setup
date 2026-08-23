@@ -1,4 +1,4 @@
-import { loadCompressorConfig } from "./config";
+import { isFinitePercent, loadCompressorConfig } from "./config";
 import type { CompressorConfig } from "./config";
 import type {
     ArchiveRetentionConfig,
@@ -94,6 +94,10 @@ export interface ResolvedCompressorConfig {
     archiveRetention: ArchiveRetentionConfig;
     aggregates: boolean;
     capErrors: boolean;
+    /** Minimum savings % (0-100); undefined/0 disables the floor. */
+    minSavingsPct?: number;
+    /** Independent cap toggle; undefined = legacy coupling to archiving. */
+    truncationEnabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +216,12 @@ export function resolveCompressorConfig(
         },
         aggregates: cfg.aggregates ?? true,
         capErrors: cfg.capErrors ?? true,
+        ...(isFinitePercent(cfg.minSavingsPct)
+            ? { minSavingsPct: cfg.minSavingsPct }
+            : {}),
+        ...(typeof cfg.truncationEnabled === "boolean"
+            ? { truncationEnabled: cfg.truncationEnabled }
+            : {}),
     };
 }
 
@@ -270,5 +280,11 @@ export function getLocalCompressorConfig(
         },
         aggregates: cfg.aggregates ?? true,
         capErrors: cfg.capErrors ?? true,
+        ...(isFinitePercent(cfg.minSavingsPct)
+            ? { minSavingsPct: cfg.minSavingsPct }
+            : {}),
+        ...(typeof cfg.truncationEnabled === "boolean"
+            ? { truncationEnabled: cfg.truncationEnabled }
+            : {}),
     };
 }

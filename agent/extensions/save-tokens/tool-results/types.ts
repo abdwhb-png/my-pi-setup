@@ -145,6 +145,16 @@ export interface LocalCompressorConfig {
     excludeTools: string[];
     /** Input threshold, in estimated tokens, per compression group. */
     minTokensByGroup: CompressionThresholds;
+    /**
+     * Minimum savings % (0-100) a backend result must clear before it
+     * replaces the original. 0/undefined disables the floor.
+     */
+    minSavingsPct?: number;
+    /**
+     * Independent on/off for the deterministic head/tail cap. Undefined
+     * preserves legacy behavior: cap runs only when archiving is enabled.
+     */
+    truncationEnabled?: boolean;
     archiveRetention: ArchiveRetentionConfig;
     aggregates: boolean;
     capErrors: boolean;
@@ -179,6 +189,16 @@ export interface ToolResultHandlerOptions {
     excludeTools?: string[];
     /** Input threshold, in estimated tokens, per compression group. */
     minTokensByGroup?: CompressionThresholds;
+    /**
+     * Minimum savings % (0-100) a backend result must clear before the
+     * original is replaced. 0/undefined = disabled.
+     */
+    minSavingsPct?: number;
+    /**
+     * Independent on/off for the deterministic cap. Undefined preserves the
+     * legacy coupling: cap runs only when archiving is enabled.
+     */
+    truncationEnabled?: boolean;
     aggregates?: boolean;
     capErrors?: boolean;
 }

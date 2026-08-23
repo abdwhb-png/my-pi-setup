@@ -291,16 +291,25 @@ async function maybeCreateArchivedCap(
 ) {
     const targetTokens = options?.capFallbackTokens;
     const maxBytes = options?.maxFallbackBytes;
-    if (!targetTokens || targetTokens <= 0 || !options?.archiveOriginal)
-        return null;
+    if (!targetTokens || targetTokens <= 0) return null;
+    // Truncation is decoupled from archiving. An explicit truncationEnabled
+    // wins; otherwise preserve legacy behavior where the cap ran only when an
+    // archive callback existed.
+    const truncationOn =
+        options?.truncationEnabled ?? options?.archiveOriginal !== undefined;
+    if (!truncationOn) return null;
     if (fitsTokenBudget(text, targetTokens, maxBytes)) {
         return null;
     }
-    const archivePath = await options.archiveOriginal(
-        archiveInput(event, subject, text),
-    );
-    if (!archivePath) throw new Error("archive did not return a path");
-    const note = buildEscapeHatchNote(text, archivePath);
+    const archivePath = options?.archiveOriginal
+        ? ((await options.archiveOriginal(
+              archiveInput(event, subject, text),
+          )) ?? null)
+        : null;
+    if (options?.archiveOriginal && !archivePath) {
+        throw new Error("archive did not return a path");
+    }
+    const note = archivePath ? buildEscapeHatchNote(text, archivePath) : "";
     const prefix = aggregatePrefix ? `${aggregatePrefix}\n` : "";
     // The omission marker is always present in a trimmed result. If the
     // mandatory overhead (note + prefix + marker) already exceeds the budget
@@ -352,7 +361,7 @@ async function maybeCreateArchivedCap(
         estimatedTokensBefore: estimateTokens(text),
         estimatedTokensAfter: estimateTokens(outputText),
         subject,
-        archivePath,
+        archivePath: archivePath ?? undefined,
         ...meta,
     });
 
@@ -365,7 +374,7 @@ async function maybeCreateArchivedCap(
         compressedUtf8Bytes: countUtf8Bytes(outputText),
         estimatedTokensBefore: estimateTokens(text),
         estimatedTokensAfter: estimateTokens(outputText),
-        archivePath,
+        archivePath: archivePath ?? undefined,
     } satisfies CompressionDetails;
     return {
         content: [{ type: "text" as const, text: outputText }],
@@ -691,6 +700,28 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                 originalLength > 0
                     ? Math.round((savedBytes / originalLength) * 100)
                     : 0;
+
+            // §floor — reject near-identical backend output. When the savings
+            // floor is configured and not met, keep the original intact (same
+            // fail-open semantics as `not_smaller`): no cap/archive fallback.
+            const floorPct = options?.minSavingsPct;
+            if (floorPct !== undefined && floorPct > 0 && savedPct < floorPct) {
+                options?.onObservation?.({
+                    kind: "skipped",
+                    toolCallId: event.toolCallId,
+                    toolName: event.toolName,
+                    originalLength,
+                    compressedLength: 0,
+                    reason: "below_min_savings",
+                    subject,
+                    ...callMeta,
+                    latencyMs,
+                    ...(result.metrics
+                        ? { nativeMetrics: result.metrics }
+                        : {}),
+                });
+                return;
+            }
 
             options?.onObservation?.({
                 kind: "compressed",

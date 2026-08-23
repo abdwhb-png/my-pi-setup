@@ -6,7 +6,8 @@ export type CompressionSkippedReason =
     | "not_smaller"
     | "not_shorter"
     | "unsupported_tool"
-    | "no_output";
+    | "no_output"
+    | "below_min_savings";
 export type CompressionFailedReason =
     | "invalid_backend"
     | "service_error"

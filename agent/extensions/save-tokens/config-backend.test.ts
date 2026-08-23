@@ -365,6 +365,21 @@ describe('resolveCompressorConfig', () => {
             search: 1400,
         });
     });
+
+    it('omits minSavingsPct and truncationEnabled when unset', () => {
+        const result = resolveCompressorConfig({});
+        expect(result.truncationEnabled).toBeUndefined();
+        expect(result.minSavingsPct).toBeUndefined();
+    });
+
+    it('passes through minSavingsPct and truncationEnabled when set', () => {
+        const result = resolveCompressorConfig({
+            minSavingsPct: 35,
+            truncationEnabled: false,
+        });
+        expect(result.minSavingsPct).toBe(35);
+        expect(result.truncationEnabled).toBe(false);
+    });
 });
 
 describe('loadSaveTokensConfig', () => {

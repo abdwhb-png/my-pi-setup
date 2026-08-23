@@ -76,6 +76,33 @@ The defaults were calibrated against real `tiktoken` counts — see
 ~10× byte-based cross-script spread to <2×. `bytes` remain only a transport
 safety guard (`maxFallbackBytes`), never a policy decision.
 
+### Minimum savings floor
+
+`minSavingsPct` (0–100, default `0` = disabled) rejects a compressed result
+when the backend shrinks the original too little to be worth replacing it.
+Today any strictly-shorter output replaces the original, so a 2% reduction
+wins. With a floor set, a result whose final returned text (including any
+aggregate prefix and archive note) saves less than `minSavingsPct` percent is
+**skipped** — the original tool result stays intact and telemetry records a
+`below_min_savings` skip. Configure under `saveTokens.compressor`.
+
+### Truncation toggle
+
+The deterministic head/tail cap (`capFallbackTokens`) now has an independent
+on/off switch, decoupled from archiving:
+
+- `truncationEnabled` (default: unset = legacy behavior) turns the cap on/off.
+  When unset, the cap runs only when archiving is enabled (the historical
+  behavior). Setting it explicitly lets you cap without archiving.
+- `archiveOriginal` still controls whether the truncated original is written
+  out and an escape-hatch note with the `read <archivePath>` path is appended.
+
+Because the two were previously fused (`archiveOriginal: false` also disabled
+the cap), the explicit default of unset preserves existing configs exactly. If
+you set `truncationEnabled: true` with `archiveOriginal: false`, the cap runs
+**lossy** — the trimmed result replaces the original with no recovery note. Set
+both for a recoverable truncation.
+
 ## Switching Backends
 
 From `~/projects/shared-services/compression`, stop the current Compose profile,

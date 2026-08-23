@@ -73,6 +73,10 @@ export interface CompressorConfig {
     excludeTools?: string[];
     /** Input threshold, in estimated tokens, per compression group. */
     minTokensByGroup?: Partial<CompressionThresholds>;
+    /** Minimum savings % (0-100); 0/absent disables the floor. */
+    minSavingsPct?: number;
+    /** Independent on/off for the deterministic cap. Undefined = legacy coupling. */
+    truncationEnabled?: boolean;
     archiveRetention?: Partial<ArchiveRetentionConfig>;
     aggregates?: boolean;
     capErrors?: boolean;
@@ -171,6 +175,17 @@ function normalizeThresholds(
     return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
+/** Finite integer 0..100 (percent). */
+export function isFinitePercent(v: unknown): v is number {
+    return (
+        typeof v === "number" &&
+        Number.isFinite(v) &&
+        Number.isInteger(v) &&
+        v >= 0 &&
+        v <= 100
+    );
+}
+
 function normalizeArchiveRetention(
     raw: unknown,
 ): Partial<ArchiveRetentionConfig> | undefined {
@@ -265,6 +280,9 @@ function normalizeCompressor(raw: object): CompressorConfig | undefined {
     }
     const minTokensByGroup = normalizeThresholds(r.minTokensByGroup);
     if (minTokensByGroup) out.minTokensByGroup = minTokensByGroup;
+    if (isFinitePercent(r.minSavingsPct)) out.minSavingsPct = r.minSavingsPct;
+    if (typeof r.truncationEnabled === "boolean")
+        out.truncationEnabled = r.truncationEnabled;
     const archiveRetention = normalizeArchiveRetention(r.archiveRetention);
     if (archiveRetention) out.archiveRetention = archiveRetention;
     if (typeof r.aggregates === "boolean") out.aggregates = r.aggregates;

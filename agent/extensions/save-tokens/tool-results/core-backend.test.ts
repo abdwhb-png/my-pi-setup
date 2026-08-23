@@ -579,15 +579,6 @@ describe('model propagation per tool_result', () => {
             },
         };
 
-        // Separate edgee backend that should never be called
-        const _edgeeBackend = {
-            id: 'edgee' as const,
-            compress: async () => {
-                edgeeCalls++;
-                return { output: 'compressed by edgee' };
-            },
-        };
-
         const handler = createToolResultHandler({
             backend: headroomBackend,
             minTokensByGroup: { shell: 0, read: 0, search: 0 },
@@ -786,5 +777,224 @@ describe('cap overhead fail-open', () => {
         const result = await handler(event, MODEL, undefined);
         expect(result).toBeDefined();
         expect(result?.content[0]?.text).toContain('omitted by head/tail cap');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// minSavingsPct — post-compression savings floor
+// ---------------------------------------------------------------------------
+
+describe('minSavingsPct savings floor', () => {
+    const MODEL = {
+        provider: 'anthropic',
+        id: 'claude-sonnet-4-6',
+        contextWindow: 200000,
+    };
+
+    function floorHandler(
+        output: string,
+        minSavingsPct: number | undefined,
+        observations: CompressionObservation[],
+    ) {
+        return createToolResultHandler({
+            backend: {
+                id: 'headroom' as const,
+                compress: () => Promise.resolve({ output }),
+            },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
+            minSavingsPct,
+            enabled: true,
+            excludeTools: [],
+            aggregates: false,
+            capErrors: false,
+            archiveOriginal: undefined,
+            onObservation: (event) => observations.push(event),
+        });
+    }
+
+    const event = (text: string): ToolResultEvent => ({
+        type: 'tool_result',
+        toolCallId: 'floor-1',
+        toolName: 'bash',
+        content: [{ type: 'text' as const, text }],
+        isError: false,
+        input: {},
+        details: undefined,
+    });
+
+    it('accepts a compressed result when no floor is configured', async () => {
+        const observations: CompressionObservation[] = [];
+        const handler = floorHandler('shorter', undefined, observations);
+        // 12 -> 7 chars: 41% smaller; no floor -> compressed/kept.
+        const result = await handler(event('longlonglong'), MODEL, undefined);
+        expect(observations[0].kind).toBe('compressed');
+        expect(result?.content[0]?.text).toBe('shorter');
+    });
+
+    it('accepts a compressed result when the floor is 0', async () => {
+        const observations: CompressionObservation[] = [];
+        const handler = floorHandler('shorter', 0, observations);
+        const result = await handler(event('longlonglong'), MODEL, undefined);
+        expect(observations[0].kind).toBe('compressed');
+        expect(result?.content[0]?.text).toBe('shorter');
+    });
+
+    it('accepts when savings meets the floor exactly', async () => {
+        const observations: CompressionObservation[] = [];
+        const handler = floorHandler('ab', 50, observations);
+        // 'abcd' -> 'ab': 50% saved -> meets floor 50 -> kept.
+        const result = await handler(event('abcd'), MODEL, undefined);
+        expect(observations[0].kind).toBe('compressed');
+        expect(result?.content[0]?.text).toBe('ab');
+    });
+
+    it('skips the compressed result when savings falls below the floor', async () => {
+        const observations: CompressionObservation[] = [];
+        const handler = floorHandler('abcd', 30, observations);
+        // 'abcdef' -> 'abcd': 33% saved -> below 30? No, 33>=30. Use a
+        // smaller reduction instead: 'abcde' -> 'abcd' = 20%.
+        const result = await handler(event('abcde'), MODEL, undefined);
+        expect(result).toBeUndefined();
+        expect(observations[0]).toEqual(
+            expect.objectContaining({
+                kind: 'skipped',
+                toolCallId: 'floor-1',
+                toolName: 'bash',
+                originalLength: 5,
+                compressedLength: 0,
+                reason: 'below_min_savings',
+                subject: undefined,
+                backend: 'headroom',
+                latencyMs: expect.any(Number),
+            }),
+        );
+    });
+
+    it('keeps the original result intact when below the floor', async () => {
+        const observations: CompressionObservation[] = [];
+        const handler = floorHandler('abcd', 50, observations);
+        // 'abcde' -> 'abcd': 20% saved < 50 -> original returned unchanged.
+        const result = await handler(event('abcde'), MODEL, undefined);
+        expect(result).toBeUndefined();
+        expect(observations[0].kind).toBe('skipped');
+        expect(observations[0].reason).toBe('below_min_savings');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// truncationEnabled — deterministic cap toggle, decoupled from archiveOriginal
+// ---------------------------------------------------------------------------
+
+describe('truncationEnabled cap toggle', () => {
+    const MODEL = {
+        provider: 'anthropic',
+        id: 'claude-sonnet-4-6',
+        contextWindow: 200000,
+    };
+
+    const longText = Array.from({ length: 400 }, (_, i) => `line-${i}`).join(
+        '\n',
+    );
+
+    it('caps (with archive) by default when a budget is set', async () => {
+        let archived = false;
+        const handler = createToolResultHandler({
+            backend: null,
+            archiveOriginal: async () => {
+                archived = true;
+                return '/tmp/archive/decouple-a.txt';
+            },
+            capFallbackTokens: 200,
+            aggregates: false,
+            capErrors: false,
+        });
+        const event: ToolResultEvent = {
+            type: 'tool_result',
+            toolCallId: 'cap-default',
+            toolName: 'find',
+            content: [{ type: 'text' as const, text: longText }],
+            isError: false,
+            input: { path: '/repo' },
+            details: undefined,
+        };
+        const result = await handler(event, MODEL, undefined);
+        expect(result).toBeDefined();
+        expect(result?.content[0]?.text).toContain('omitted by head/tail cap');
+        expect(archived).toBe(true);
+    });
+
+    it('caps without archiving when truncationEnabled is explicit and archive is off', async () => {
+        const handler = createToolResultHandler({
+            backend: null,
+            // archiveOriginal undefined = no archive callback from the caller.
+            archiveOriginal: undefined,
+            capFallbackTokens: 200,
+            aggregates: false,
+            capErrors: false,
+            truncationEnabled: true,
+        });
+        const event: ToolResultEvent = {
+            type: 'tool_result',
+            toolCallId: 'trun-noarch',
+            toolName: 'find',
+            content: [{ type: 'text' as const, text: longText }],
+            isError: false,
+            input: { path: '/repo' },
+            details: undefined,
+        };
+        const result = await handler(event, MODEL, undefined);
+        expect(result).toBeDefined();
+        expect(result?.content[0]?.text).toContain('omitted by head/tail cap');
+        expect(result?.content[0]?.text).not.toContain('run read /tmp/archive');
+    });
+
+    it('keeps current behavior when no archive callback and no explicit truncation flag', async () => {
+        // Today missing archiveOriginal means the cap never runs. That must
+        // stay true when truncationEnabled is absent (undefined).
+        const handler = createToolResultHandler({
+            backend: null,
+            archiveOriginal: undefined,
+            capFallbackTokens: 200,
+            aggregates: false,
+            capErrors: false,
+        });
+        const event: ToolResultEvent = {
+            type: 'tool_result',
+            toolCallId: 'cap-noarch-undef',
+            toolName: 'find',
+            content: [{ type: 'text' as const, text: longText }],
+            isError: false,
+            input: { path: '/repo' },
+            details: undefined,
+        };
+        const result = await handler(event, MODEL, undefined);
+        expect(result).toBeUndefined();
+    });
+
+    it('skips the cap entirely when truncationEnabled is false', async () => {
+        let archived = false;
+        const handler = createToolResultHandler({
+            backend: null,
+            archiveOriginal: async () => {
+                archived = true;
+                return '/tmp/archive/trunc-off.txt';
+            },
+            capFallbackTokens: 200,
+            aggregates: false,
+            capErrors: false,
+            truncationEnabled: false,
+        });
+        const event: ToolResultEvent = {
+            type: 'tool_result',
+            toolCallId: 'cap-disabled',
+            toolName: 'find',
+            content: [{ type: 'text' as const, text: longText }],
+            isError: false,
+            input: { path: '/repo' },
+            details: undefined,
+        };
+        const result = await handler(event, MODEL, undefined);
+        expect(result).toBeUndefined();
+        expect(archived).toBe(false);
     });
 });

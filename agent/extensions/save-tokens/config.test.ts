@@ -348,6 +348,36 @@ describe('compressor enabled/excludeTools/minTokensByGroup', () => {
             }),
         ).toEqual({});
     });
+
+    it('normalizes minSavingsPct and truncationEnabled', () => {
+        expect(
+            normalizeConfig({
+                compressor: {
+                    minSavingsPct: 30,
+                    truncationEnabled: false,
+                },
+            }),
+        ).toEqual({
+            compressor: { minSavingsPct: 30, truncationEnabled: false },
+        });
+    });
+
+    it('drops out-of-range and non-integer minSavingsPct', () => {
+        expect(
+            normalizeConfig({
+                compressor: {
+                    minSavingsPct: -5,
+                    truncationEnabled: 'yes',
+                },
+            }),
+        ).toEqual({});
+        expect(
+            normalizeConfig({ compressor: { minSavingsPct: 101 } }),
+        ).toEqual({});
+        expect(
+            normalizeConfig({ compressor: { minSavingsPct: 1.5 } }),
+        ).toEqual({});
+    });
 });
 
 describe('telemetry default directory', () => {

@@ -226,6 +226,8 @@ export default function localToolResultCompressor(
             enabled: config.enabled,
             excludeTools: config.excludeTools,
             minTokensByGroup: config.minTokensByGroup,
+            minSavingsPct: config.minSavingsPct,
+            truncationEnabled: config.truncationEnabled,
             aggregates: config.aggregates,
             capErrors: config.capErrors,
             onObservation: handleObservation,
