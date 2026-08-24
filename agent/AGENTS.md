@@ -51,3 +51,11 @@ Write one minimal test showing what should happen. Watch it fail for the right r
 - Never log, echo, or print secrets or `.env` token values.
 - Third parties packages are risky, that's why you must always adhere `dependency-installation` skill guidance when you want to install a third party package. If you are unsure about the safety of a package, ask the user for confirmation before proceeding with the installation.
 
+## Subagent wait guard
+
+The `extensions/subagent-wait-guard` extension programmatically enforces the delegation rule "do not finalize an answer while delegated subagent runs are in flight":
+
+- `message_end`: a final assistant prose answer produced while async subagent runs are active is replaced with a `[subagent-wait-guard]` blocked notice.
+- `turn_end`: a follow-up user message forces the agent to call `subagent_wait({ all: true })` and incorporate final reports before answering.
+
+If its interventions look like bugs (withheld answers, repeated "[subagent-wait-guard]" prompts), that is intentional enforcement, not malfunction. Disable with `PI_SUBAGENT_WAIT_GUARD=off` then `/reload`. Consecutive interventions cap at 10 (5 turns); design record: `docs/brainstorms/2026-08-23-programmatic-enforcement-of-subagent-wait/design.md`.
