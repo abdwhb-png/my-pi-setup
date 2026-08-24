@@ -833,7 +833,7 @@ describe('executeCommit', () => {
                     return { stdout: 'true\n' };
                 }
                 if (cmd === 'git' && args[0] === 'rev-parse') {
-                    return { stdout: 'abc1234\n' };
+                    return { stdout: args[1] === '--short' ? 'abc1234\n' : 'main\n' };
                 }
                 throw new Error(
                     'unexpected call: ' + cmd + ' ' + args.join(' '),
@@ -848,17 +848,17 @@ describe('executeCommit', () => {
             '/test/cwd',
         );
 
-        expect(result).toEqual({ success: true, sha: 'abc1234' });
+        expect(result).toEqual({ success: true, sha: 'abc1234', branch: 'main' });
         expect(mockExec.mock.calls[0]).toEqual([
             'git',
             ['rev-parse', '--is-inside-work-tree'],
-            { cwd: '/test/cwd' },
+            { cwd: '/test/cwd', timeout: 30_000 },
         ]);
         expect(addArgs).toEqual([['add', '--', 'src/foo.ts', 'src/bar.ts']]);
-        expect(addOpts).toEqual([{ cwd: '/test/cwd' }]);
-        expect(commitOpts).toEqual([{ cwd: '/test/cwd' }]);
+        expect(addOpts).toEqual([{ cwd: '/test/cwd', timeout: 30_000 }]);
+        expect(commitOpts).toEqual([{ cwd: '/test/cwd', timeout: 30_000 }]);
         expect(commitArgs).toEqual([['commit', '-m', 'feat: add foo']]);
-        expect(mockExec).toHaveBeenCalledTimes(4);
+        expect(mockExec).toHaveBeenCalledTimes(5);
     });
 
     it('should return error when git add fails', async () => {
@@ -930,7 +930,7 @@ describe('executeCommit', () => {
                     return { stdout: '' };
                 }
                 if (cmd === 'git' && args[0] === 'rev-parse') {
-                    return { stdout: 'def5678\n' };
+                    return { stdout: args[1] === '--short' ? 'def5678\n' : 'main\n' };
                 }
                 throw new Error('unexpected: ' + cmd + ' ' + args.join(' '));
             },
@@ -943,7 +943,7 @@ describe('executeCommit', () => {
             '/test/cwd',
         );
 
-        expect(result).toEqual({ success: true, sha: 'def5678' });
+        expect(result).toEqual({ success: true, sha: 'def5678', branch: 'main' });
     });
 });
 
@@ -1023,5 +1023,230 @@ describe('/yeet getArgumentCompletions', () => {
 
         const result = await completionsFn?.('--cwd=');
         expect(result).toBeNull();
+    });
+});
+
+// ── Commit UX feedback (working message, branch/stderr reporting, renderResult) ──
+
+describe('propose_commit_plan commit feedback', () => {
+    interface ToolWithRender {
+        execute: (
+            toolCallId: string,
+            params: unknown,
+            signal: AbortSignal | undefined,
+            onUpdate: unknown,
+            ctx: unknown,
+        ) => Promise<{ content: { text: string }[]; details?: unknown }>;
+        renderResult?: (
+            result: unknown,
+            options: unknown,
+            theme: unknown,
+            context: unknown,
+        ) => { render: (width: number) => string[] };
+    }
+
+    function registerFeedbackTool(
+        execImpl?: (
+            cmd: string,
+            args: string[],
+            opts?: Record<string, unknown>,
+        ) => Promise<{ stdout: string; stderr?: string }>,
+    ): {
+        tool: ToolWithRender;
+        setWorkingMessage: ReturnType<typeof mock>;
+        setStatus: ReturnType<typeof mock>;
+    } {
+        let registeredTool: ToolWithRender | undefined;
+        const setWorkingMessage = mock();
+        const setStatus = mock();
+
+        const pi = {
+            exec: mock(
+                execImpl ??
+                    (async (
+                        _cmd: string,
+                        args: string[],
+                    ): Promise<{ stdout: string; stderr: string }> => {
+                        if (
+                            args[0] === 'rev-parse' &&
+                            args[1] === '--is-inside-work-tree'
+                        )
+                            return { stdout: 'true\n', stderr: '' };
+                        if (args[0] === 'rev-parse' && args[1] === '--short')
+                            return { stdout: 'abc1234\n', stderr: '' };
+                        if (args[0] === 'rev-parse')
+                            return { stdout: 'main\n', stderr: '' };
+                        return { stdout: '', stderr: '' };
+                    }),
+            ),
+            appendEntry: mock(),
+            on: mock(),
+            registerCommand: mock(),
+            registerTool: (tool: unknown) => {
+                if ((tool as { name?: unknown }).name === 'propose_commit_plan') {
+                    registeredTool = tool as ToolWithRender;
+                }
+            },
+            sendUserMessage: mock(),
+        };
+
+        yeetExtension(pi as never);
+        if (!registeredTool) throw new Error('propose_commit_plan was not registered');
+
+        (registeredTool as unknown as { __ui?: unknown }).__ui = undefined;
+        return {
+            tool: registeredTool,
+            setWorkingMessage,
+            setStatus,
+        };
+    }
+
+    function acceptedCtx(setWorkingMessage: unknown, setStatus: unknown) {
+        return {
+            ui: {
+                custom: mock(async () => ({
+                    accepted: true,
+                    cancelled: false,
+                    plan_summary: 's',
+                    cwd: process.cwd(),
+                    files: ['a.ts'],
+                    commit_message: 'test: msg',
+                })),
+                setWorkingMessage,
+                setStatus,
+            },
+        };
+    }
+
+    it('shows and clears a working/status indicator around the commit', async () => {
+        const { tool, setWorkingMessage, setStatus } = registerFeedbackTool();
+
+        await tool.execute(
+            'tc-ux-1',
+            {
+                cwd: process.cwd(),
+                plan_summary: 's',
+                files: ['a.ts'],
+                commit_message: 'test: msg',
+            },
+            undefined,
+            undefined,
+            acceptedCtx(setWorkingMessage, setStatus),
+        );
+
+        expect(setWorkingMessage).toHaveBeenCalled();
+        const firstMsg = String(setWorkingMessage.mock.calls[0]?.[0] ?? '');
+        expect(firstMsg).toContain('Committing');
+
+        const lastWorking =
+            setWorkingMessage.mock.calls[setWorkingMessage.mock.calls.length - 1];
+        expect(lastWorking.length).toBe(0);
+
+        expect(setStatus).toHaveBeenCalledWith('yeet', expect.stringContaining('Committing'));
+        expect(setStatus).toHaveBeenLastCalledWith('yeet', undefined);
+    });
+
+    it('reports branch, sha, duration and the post-edit file list on success', async () => {
+        const { tool } = registerFeedbackTool();
+
+        const result = await tool.execute(
+            'tc-ux-2',
+            {
+                cwd: process.cwd(),
+                plan_summary: 's',
+                files: ['a.ts'],
+                commit_message: 'test: msg',
+            },
+            undefined,
+            undefined,
+            acceptedCtx(mock(), mock()),
+        );
+
+        const text = result.content[0].text;
+        expect(text).toContain('abc1234');
+        expect(text).toContain('Branch: main');
+        expect(text).toContain('user'); // post-edit provenance note
+        expect(result.details).toMatchObject({ sha: 'abc1234', branch: 'main' });
+    });
+
+    it('includes a stderr excerpt when the automatic commit fails', async () => {
+        const failErr = Object.assign(
+            new Error('git failed'),
+            { stderr: 'fatal: nothing to commit, working tree clean' },
+        );
+        const { tool } = registerFeedbackTool(async (_cmd, args) => {
+            if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree')
+                return { stdout: 'true\n', stderr: '' };
+            if (args[0] === 'add') return { stdout: '', stderr: '' };
+            throw failErr;
+        });
+
+        const result = await tool.execute(
+            'tc-ux-3',
+            {
+                cwd: process.cwd(),
+                plan_summary: 's',
+                files: ['a.ts'],
+                commit_message: 'test: msg',
+            },
+            undefined,
+            undefined,
+            acceptedCtx(mock(), mock()),
+        );
+
+        const text = result.content[0].text;
+        expect(text).toContain('nothing to commit');
+    });
+
+    it('bounds every git call with a timeout', async () => {
+        const optsSeen: Array<Record<string, unknown> | undefined> = [];
+        const mockExec = mock(async (_c: string, _a: string[], o?: Record<string, unknown>) => {
+            optsSeen.push(o);
+            if (optsSeen.length >= 5)
+                return { stdout: 'main\n', stderr: '' };
+            if (_a[0] === 'rev-parse' && _a[1] === '--short')
+                return { stdout: 'abc1234\n', stderr: '' };
+            return { stdout: 'true\n', stderr: '' };
+        });
+
+        await executeCommit(mockExec, ['a.ts'], 'msg', '/test/cwd');
+
+        expect(optsSeen.length).toBeGreaterThan(0);
+        for (const opts of optsSeen) {
+            expect(opts?.timeout).toBe(30_000);
+        }
+    });
+
+    it('renders a colored success summary from details', () => {
+        const { tool } = registerFeedbackTool();
+        if (!tool.renderResult) throw new Error('renderResult missing');
+
+        const component = tool.renderResult(
+            { content: [], details: { accepted: true, cancelled: false, sha: 'abc1234', branch: 'main', durationMs: 1200, cwd: '/repo', files: ['a.ts', 'b.ts'], plan_summary: '', commit_message: '' } },
+            { expanded: true, isPartial: false },
+            { fg: (color: string, t: string) => `[${color}]${t}` },
+            { toolCallId: 't1' },
+        );
+
+        const rendered = component.render(100).join('\n');
+        expect(rendered).toContain('abc1234');
+        expect(rendered).toContain('success');
+        expect(rendered).toContain('a.ts');
+    });
+
+    it('renders a failure summary from details', () => {
+        const { tool } = registerFeedbackTool();
+        if (!tool.renderResult) throw new Error('renderResult missing');
+
+        const component = tool.renderResult(
+            { content: [], details: { accepted: true, cancelled: false, commitError: 'boom', commitStderr: 'fatal: bad', cwd: '/repo', files: ['a.ts'], plan_summary: '', commit_message: '' } },
+            { expanded: true, isPartial: false },
+            { fg: (color: string, t: string) => `[${color}]${t}` },
+            { toolCallId: 't2' },
+        );
+
+        const rendered = component.render(100).join('\n');
+        expect(rendered).toContain('error');
+        expect(rendered).toContain('fatal: bad');
     });
 });

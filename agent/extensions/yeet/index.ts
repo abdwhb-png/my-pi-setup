@@ -9,7 +9,7 @@ import {
     type ExtensionCommandContext,
     type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { fuzzyFilter, type TUI } from "@earendil-works/pi-tui";
+import { fuzzyFilter, Text, type TUI } from "@earendil-works/pi-tui";
 import { fdSearch } from "../_shared/file-search/fd-utils";
 import { getSearchDirectories } from "../_shared/file-search/path-resolver";
 import {
@@ -123,33 +123,65 @@ export function validateCommitFiles(
 }
 
 /**
- * Execute a git commit programmatically: stage files, commit, return the short SHA.
+ * Execute a git commit programmatically: stage files, commit, return the short SHA and branch.
+ * Every git invocation is bounded by GIT_TIMEOUT_MS so a hung hook cannot stall the tool forever.
  * Exported for testing with a mock execFn.
  */
+export const GIT_TIMEOUT_MS = 30_000;
+
 export async function executeCommit(
     execFn: (
         cmd: string,
         args: string[],
         opts?: any,
-    ) => Promise<{ stdout: string }>,
+    ) => Promise<{ stdout: string; stderr?: string }>,
     files: string[],
     message: string,
     cwd: string,
-): Promise<{ success: true; sha: string } | { success: false; error: string }> {
+): Promise<
+    | { success: true; sha: string; branch: string }
+    | { success: false; error: string; stderr?: string }
+> {
     try {
-        await execFn("git", ["rev-parse", "--is-inside-work-tree"], { cwd });
-        await execFn("git", ["add", "--", ...files], { cwd });
-        await execFn("git", ["commit", "-m", message], { cwd });
+        await execFn("git", ["rev-parse", "--is-inside-work-tree"], {
+            cwd,
+            timeout: GIT_TIMEOUT_MS,
+        });
+        await execFn("git", ["add", "--", ...files], {
+            cwd,
+            timeout: GIT_TIMEOUT_MS,
+        });
+        await execFn("git", ["commit", "-m", message], {
+            cwd,
+            timeout: GIT_TIMEOUT_MS,
+        });
         const { stdout } = await execFn(
             "git",
             ["rev-parse", "--short", "HEAD"],
-            { cwd },
+            { cwd, timeout: GIT_TIMEOUT_MS },
         );
-        return { success: true, sha: stdout.trim() };
+        const branchResult = await execFn(
+            "git",
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+            { cwd, timeout: GIT_TIMEOUT_MS },
+        );
+        return {
+            success: true,
+            sha: stdout.trim(),
+            branch: branchResult.stdout.trim() || "unknown",
+        };
     } catch (error) {
+        let stderr: string | undefined;
+        if (typeof error === "object" && error !== null && "stderr" in error) {
+            const value = Reflect.get(error, "stderr");
+            if (typeof value === "string" && value.trim()) {
+                stderr = value.slice(0, 400);
+            }
+        }
         return {
             success: false,
             error: error instanceof Error ? error.message : String(error),
+            ...(stderr ? { stderr } : {}),
         };
     }
 }
@@ -492,31 +524,50 @@ export default function (pi: ExtensionAPI) {
                 )) as CommitPlanResult;
             }
 
-            // Accept → commit programmatically with loading notification
+            // Accept → commit programmatically with persistent working/status indicators
             if (result.accepted) {
-                ctx.ui.notify("Committing...", "info");
-                const outcome = await executeCommit(
-                    pi.exec.bind(pi),
-                    result.files,
-                    result.commit_message,
-                    result.cwd,
-                );
+                const startedAt = Date.now();
+                const progress = `Committing ${result.files.length} file(s)…`;
+                ctx.ui?.setWorkingMessage?.(progress);
+                ctx.ui?.setStatus?.("yeet", progress);
+                let outcome: Awaited<ReturnType<typeof executeCommit>>;
+                try {
+                    outcome = await executeCommit(
+                        pi.exec.bind(pi),
+                        result.files,
+                        result.commit_message,
+                        result.cwd,
+                    );
+                } finally {
+                    ctx.ui?.setWorkingMessage?.();
+                    ctx.ui?.setStatus?.("yeet", undefined);
+                }
 
                 if (outcome.success) {
+                    const durationMs = Date.now() - startedAt;
                     return {
                         content: [
                             {
                                 type: "text" as const,
                                 text: [
-                                    `Commit successful (${outcome.sha}).`,
+                                    `Commit successful (${outcome.sha}) in ${(durationMs / 1000).toFixed(1)}s.`,
                                     "",
                                     "Repo path: " + result.cwd,
-                                    "Files: " + result.files.join(", "),
+                                    "Branch: " + outcome.branch,
+                                    "Files committed (as edited by the user in the review UI): " +
+                                        result.files.join(", "),
                                     "Message: " + result.commit_message,
+                                    "",
+                                    "Note: The file list reflects the user's edits in the review UI; it may differ from the original proposal.",
                                 ].join("\n"),
                             },
                         ],
-                        details: result,
+                        details: {
+                            ...result,
+                            sha: outcome.sha,
+                            branch: outcome.branch,
+                            durationMs,
+                        },
                     };
                 }
 
@@ -528,12 +579,24 @@ export default function (pi: ExtensionAPI) {
                                 "Commit FAILED. The approved plan could not be committed automatically.",
                                 "",
                                 "Error: " + outcome.error,
+                                ...(outcome.stderr
+                                    ? [
+                                          "",
+                                          "stderr (excerpt): " + outcome.stderr,
+                                      ]
+                                    : []),
                                 "",
                                 "You may need to investigate (e.g., run git status, check for conflicts) and propose a revised plan.",
                             ].join("\n"),
                         },
                     ],
-                    details: result,
+                    details: {
+                        ...result,
+                        commitError: outcome.error,
+                        ...(outcome.stderr
+                            ? { commitStderr: outcome.stderr }
+                            : {}),
+                    },
                 };
             }
 
@@ -576,6 +639,54 @@ export default function (pi: ExtensionAPI) {
                 ],
                 details: result,
             };
+        },
+        renderResult: (result, _options, theme, _context) => {
+            const details = result.details as
+                | (CommitPlanResult & {
+                      sha?: string;
+                      branch?: string;
+                      durationMs?: number;
+                      commitError?: string;
+                      commitStderr?: string;
+                  })
+                | undefined;
+            const fg = (color: Parameters<typeof theme.fg>[0], text: string) =>
+                typeof theme?.fg === "function" ? theme.fg(color, text) : text;
+
+            if (!details || !details.accepted) {
+                return new Text(
+                    fg(
+                        "dim",
+                        details?.cancelled
+                            ? "⊘ commit flow cancelled"
+                            : "⊘ plan rejected",
+                    ),
+                    0,
+                    0,
+                );
+            }
+            if (details.sha) {
+                const seconds = ((details.durationMs ?? 0) / 1000).toFixed(1);
+                const lines = [
+                    fg("success", `✓ commit ${details.sha}`) +
+                        fg(
+                            "muted",
+                            ` on ${details.branch ?? "?"} (${seconds}s)`,
+                        ),
+                    ...details.files.map((file) => fg("text", `  ${file}`)),
+                ];
+                return new Text(lines.join("\n"), 0, 0);
+            }
+            const failureLines = [fg("error", "✗ commit failed")];
+            if (details.commitError)
+                failureLines.push(
+                    fg("error", `  ${details.commitError.slice(0, 200)}`),
+                );
+            if (details.commitStderr)
+                failureLines.push(
+                    fg("dim", `  ${details.commitStderr.slice(0, 200)}`),
+                );
+            return new Text(failureLines.join("\n"), 0, 0);
         },
     });
 

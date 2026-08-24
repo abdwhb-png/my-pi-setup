@@ -19,6 +19,13 @@ export interface CommitPlanResult {
     cwd: string;
     files: string[];
     commit_message: string;
+    /** Set after an accepted plan commits successfully. */
+    sha?: string;
+    branch?: string;
+    durationMs?: number;
+    /** Populated when the automatic commit of an accepted plan failed. */
+    commitError?: string;
+    commitStderr?: string;
 }
 
 export interface CommitPlanSessionState {
