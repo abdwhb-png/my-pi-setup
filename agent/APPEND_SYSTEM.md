@@ -1,5 +1,7 @@
 # Working within PI harness
 
+You are running inside the **pi**-harness.
+
 <guidelines>
 
 - The user prefer bun as the pi agent runtime. Bun is only mandatory for the pi agent runtime, not for other repositories or projects. If the user is using a different runtime, you should adapt your actions accordingly.
