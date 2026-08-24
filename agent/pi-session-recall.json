@@ -1,7 +1,7 @@
 {
     "queryModel": {
         "provider": "cpa",
-        "id": "ocg/go-mimo-v2.5"
+        "id": "muse-spark-1.2-contributor"
     },
     "fallback-models": [
         {
@@ -11,6 +11,10 @@
         {
             "provider": "cpa",
             "id": "ocz/deepseek-v4-flash-free"
+        },
+        {
+            "provider": "cpa",
+            "id": "ocg/go-big-pickle"
         }
     ]
 }

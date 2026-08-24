@@ -28,6 +28,7 @@ trust.json
 package-finalizer-state.json
 npm/
 pi-hermes-memory/
+hermes-memory-config.json
 .pi-hermes-locks.*
 projects-memory/
 intercom/

@@ -1,4 +1,6 @@
-# Context
+# Additional MEMORY
+
+## Context
 
 - The project was migrated from `@mariozechner/pi-coding-agent` to `@earendil-works/pi-coding-agent` in June 2026.
 - `@mariozechner/pi-coding-agent` is deprecated. All imports in the `~/.pi/agent` source files now use `@earendil-works/pi-coding-agent`.
@@ -34,6 +36,15 @@
 - We implemented a custom Pi package finalizer because Pi package installs (especially git/local path) did not reliably guarantee two things this harness needs: (1) built artifacts like `dist/index.js` / `dist/protocol.js` after install, and (2) bare-import resolution for sibling extensions (`import "pi-roles/protocol"`). The fix lives in the harness, not in Bun global installation.
 - Architectural decisions for the package finalizer: (1) use a Pi extension + minimal wrapper instead of patching global Bun or upstream Pi core; (2) keep startup fast with a persistent cache and only repair configured packages; (3) reserve expensive rebuilds for invalid/missing artifacts or post-mutation wrapper runs (`install/remove/uninstall/update`); (4) create symlinks for package-name resolution rather than fragile re-export shim files; (5) do not automatically replace an existing non-shim package directory in `node_modules` to avoid clobbering user-managed dependencies — only stale generated shims and mismatched symlinks are replaced automatically.
 - Hypa versioning policy: `@hypabolic/pi-hypa` and `@hypabolic/hypa` may ship at different versions. If the Pi package lags behind the Hypa engine, prefer upgrading `@hypabolic/hypa` separately and pointing `HYPA_BIN` to that binary path instead of assuming the Pi package version must match the engine version.
+
+## Subagent wait guard
+
+The `extensions/subagent-wait-guard` extension programmatically enforces the delegation rule "do not finalize an answer while delegated subagent runs are in flight":
+
+- `message_end`: a final assistant prose answer produced while async subagent runs are active is replaced with a `[subagent-wait-guard]` blocked notice.
+- `turn_end`: a follow-up user message forces the agent to call `subagent_wait({ all: true })` and incorporate final reports before answering.
+
+If its interventions look like bugs (withheld answers, repeated "[subagent-wait-guard]" prompts), that is intentional enforcement, not malfunction. Disable with `PI_SUBAGENT_WAIT_GUARD=off` then `/reload`. Consecutive interventions cap at 10 (5 turns); design record: `docs/brainstorms/2026-08-23-programmatic-enforcement-of-subagent-wait/design.md`.
 
 ## Règles de configuration des modèles
 
