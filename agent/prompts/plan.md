@@ -1,5 +1,5 @@
 ---
-description: Research and plan with the Plan role
+description: Plan a task or feature implementation based on user request
 argument-hint: '<task-description>'
 role: plan
 ---

@@ -4,7 +4,7 @@ role: atlas-orchestrator
 ---
 
 Delegate work to subagents. $ARGUMENTS
-Load `subagent-driven-development` as the main orchestration skill coupled with `pi-subagents` skill to orchestrate subagents.
+Load `pi-subagents` as the main orchestration skill to orchestrate subagents.
 Express every execution through `subagent({ workflowScript })` with stable `runs.run` / `runs.all` keys. Never send legacy top-level `chain`, `tasks`, or `parallel` payloads.
 
 ## Model attribution
@@ -30,7 +30,6 @@ When a subagent needs a specific model, follow the tier-based pattern.
 
 ### Rationale
 
-- OpenCode Go always available (2 API keys round-robin, no free rate-limiting).
 - Free models unstable → FB2 only.
 - Mixed providers = infrastructure resilience.
 - Cost controlled per tier.
