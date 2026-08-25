@@ -22,6 +22,7 @@ git/
 extensions/oc.ts
 extensions/tx9/
 extensions/pi-permission-system/logs/
+extensions/pi-permission-system/config.json
 
 run-history.jsonl
 trust.json
