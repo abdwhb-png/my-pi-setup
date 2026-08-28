@@ -66,6 +66,9 @@ export interface DangerousRuntimeState {
 }
 
 const STATE_KEY = Symbol.for("pi-dangerous-mode.state");
+type RuntimeStateGlobal = typeof globalThis & {
+    [STATE_KEY]?: DangerousRuntimeState;
+};
 
 function defaultState(): DangerousRuntimeState {
     return {
@@ -87,10 +90,6 @@ function defaultState(): DangerousRuntimeState {
     };
 }
 
-function isState(value: unknown): value is DangerousRuntimeState {
-    return typeof value === "object" && value !== null && "installed" in value;
-}
-
 function upgradeState(state: DangerousRuntimeState): DangerousRuntimeState {
     state.uiBrokerCompatible ??= true;
     state.dangerousFlag ??= state.enabled;
@@ -104,9 +103,9 @@ function upgradeState(state: DangerousRuntimeState): DangerousRuntimeState {
 }
 
 export function getMutableRuntimeState(): DangerousRuntimeState {
-    const globals = globalThis as Record<symbol, unknown>;
+    const globals = globalThis as RuntimeStateGlobal;
     const existing = globals[STATE_KEY];
-    if (isState(existing)) return upgradeState(existing);
+    if (existing) return upgradeState(existing);
 
     const state = defaultState();
     globals[STATE_KEY] = state;
@@ -206,6 +205,12 @@ export function isDangerousEnabled(): boolean {
 
 export function isAutopilotEnabled(): boolean {
     return getMutableRuntimeState().autopilotEffective;
+}
+
+export function setUiBrokerCompatibility(compatible: boolean): void {
+    const state = getMutableRuntimeState();
+    state.uiBrokerCompatible = compatible;
+    recomputeEffectiveState(state);
 }
 
 export function getRuntimeStatus(): RuntimeStatus {
