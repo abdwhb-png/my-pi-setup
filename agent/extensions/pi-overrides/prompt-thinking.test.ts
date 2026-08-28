@@ -187,10 +187,10 @@ describe('registerPromptThinking', () => {
     it('ignores non-prompt commands (extension)', async () => {
         const { pi, commands } = createMockAPI([
             {
-                name: 'model-thinking',
+                name: 'tool-summary',
                 source: 'extension',
                 sourceInfo: {
-                    path: '/extensions/model-thinking/index.ts',
+                    path: '/extensions/tool-summary/index.ts',
                     source: 'extension',
                     scope: 'user',
                     origin: 'package',
@@ -199,7 +199,7 @@ describe('registerPromptThinking', () => {
         ]);
         registerPromptThinking(pi);
 
-        await commands.handler({ text: '/model-thinking high' });
+        await commands.handler({ text: '/tool-summary' });
 
         expect(commands.setThinkingLevel).not.toHaveBeenCalled();
     });

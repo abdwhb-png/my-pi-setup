@@ -16,7 +16,7 @@ import type {
 
 const CONFIG_FILENAME = "model-thinking.json";
 
-import { isThinkingLevel, THINKING_LEVELS } from "../_shared/thinking.ts";
+import { isThinkingLevel, THINKING_LEVELS } from "../../extensions/_shared/thinking.ts";
 
 interface ModelThinkingConfig {
     models?: Record<string, ThinkingLevel>;
