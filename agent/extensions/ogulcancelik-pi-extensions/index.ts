@@ -5,8 +5,10 @@
  */
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import modelAgents from './model-agents.ts';
+import piGhost from './pi-ghost';
+import quitAndDelete from './quit-and-delete';
 
 export default function ogulcancelikExtensions(pi: ExtensionAPI) {
-    modelAgents(pi);
+    piGhost(pi);
+    quitAndDelete(pi);
 }
