@@ -957,6 +957,7 @@ export class ManifestReviewComponent implements Component {
             panelTitles: this.panelTitleCells(this.renderedLayoutMode),
             panelRows,
             boxFooterRows: visibleActionLines,
+            maxHeight,
         });
         return lines.map((line) => truncateToWidth(line, width));
     }

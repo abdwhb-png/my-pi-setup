@@ -345,6 +345,7 @@ export class SddLiveComponent implements Component {
                     ` Tab/←→ panels · ↑↓ ${this.focusedPanel === "tasks" ? "tasks" : "scroll"} · PgUp/PgDn · Home/End · Esc/q close`,
                 ),
             ],
+            maxHeight,
         }).map((line) => truncateToWidth(line, width));
     }
 

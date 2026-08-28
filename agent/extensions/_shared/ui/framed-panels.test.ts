@@ -132,12 +132,38 @@ describe("shared framed panel chrome", () => {
             panelRows: [[" one", " two"]],
             panelFooterRows: [["", " actions"]],
             footer: "close",
+            maxHeight: 8,
         });
 
         expect(lines.join("\n")).toContain("summary");
         expect(lines.join("\n")).toContain("LEFT");
         expect(lines.join("\n")).toContain("actions");
         expect(lines.at(-1)).toContain("close");
+        expect(lines.every((line) => visibleWidth(line) === 30)).toBe(true);
+    });
+
+    it("reserves the closing footer when a framed panel has a maximum height", () => {
+        const resolved = resolveResponsivePanelLayout(30, [
+            {
+                mode: "compact",
+                minWidth: 30,
+                panels: [{ minWidth: 28 }],
+            },
+        ] as const)!;
+        const lines = renderFramedPanels({
+            theme,
+            title: "Review",
+            layout: resolved.layout,
+            prelude: [" artifact.md"],
+            panelRows: Array.from({ length: 10 }, (_, index) => [
+                ` line ${index + 1}`,
+            ]),
+            footer: "Esc close",
+            maxHeight: 6,
+        });
+
+        expect(lines).toHaveLength(6);
+        expect(lines.at(-1)).toContain("Esc close");
         expect(lines.every((line) => visibleWidth(line) === 30)).toBe(true);
     });
 
@@ -156,6 +182,7 @@ describe("shared framed panel chrome", () => {
             panelRows: [[" one", " two"]],
             panelFooterRows: [[" left help", " right help"]],
             boxFooterRows: [" full-width help"],
+            maxHeight: 20,
         });
 
         const panelHelpLine = lines.find((line) => line.includes("left help"));

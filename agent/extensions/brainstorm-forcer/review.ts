@@ -2,6 +2,8 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, type Component } from "@earendil-works/pi-tui";
 import { cycleFocus } from "../_shared/ui/focus-navigation.ts";
 import {
+    computeFramedPanelViewportRows,
+    computePanelOverlayHeight,
     renderFramedPanelFallback,
     renderFramedPanels,
     resolveResponsivePanelLayout,
@@ -19,12 +21,26 @@ type ArtifactReviewOptions = {
     subtitle: string;
     body: BodyRenderer;
     viewportRows?: number;
+    getTerminalRows?: () => number;
     actions?: readonly ReviewAction[];
     escapeAction?: ReviewAction;
     theme: Theme;
     requestRender(): void;
     done(decision: ReviewAction): void;
 };
+
+export const ARTIFACT_REVIEW_OVERLAY_OPTIONS = {
+    width: "90%",
+    maxHeight: "80%",
+    margin: 2,
+} as const;
+
+function computeArtifactReviewHeight(terminalRows: number): number {
+    return computePanelOverlayHeight(terminalRows, {
+        ratio: 0.8,
+        margin: ARTIFACT_REVIEW_OVERLAY_OPTIONS.margin * 2,
+    });
+}
 
 const ACTIONS: readonly ReviewDecision[] = [
     "Approve",
@@ -33,7 +49,8 @@ const ACTIONS: readonly ReviewDecision[] = [
 ];
 
 export class ArtifactReviewView implements Component {
-    private readonly viewportRows: number;
+    private readonly configuredViewportRows?: number;
+    private activeViewportRows = 18;
     private readonly actions: readonly ReviewAction[];
     private readonly escapeAction: ReviewAction;
     private scrollOffset = 0;
@@ -41,7 +58,7 @@ export class ArtifactReviewView implements Component {
     private closed = false;
 
     constructor(private readonly options: ArtifactReviewOptions) {
-        this.viewportRows = options.viewportRows ?? 18;
+        this.configuredViewportRows = options.viewportRows;
         this.actions = options.actions ?? ACTIONS;
         this.escapeAction = options.escapeAction ?? "Reject";
     }
@@ -49,6 +66,19 @@ export class ArtifactReviewView implements Component {
     render(width: number): string[] {
         const { theme } = this.options;
         const frameWidth = Math.min(Math.max(1, width - 4), 136);
+        const maxHeight = computeArtifactReviewHeight(
+            this.options.getTerminalRows?.() ?? 32,
+        );
+        if (maxHeight < 3) {
+            return renderFramedPanelFallback({
+                theme,
+                width: frameWidth,
+                maxHeight,
+                title: this.options.title,
+                message: this.options.subtitle,
+                footer: `Esc ${this.escapeAction.toLowerCase()}`,
+            });
+        }
         const resolved = resolveResponsivePanelLayout(frameWidth, [
             {
                 mode: "preview",
@@ -60,7 +90,7 @@ export class ArtifactReviewView implements Component {
             return renderFramedPanelFallback({
                 theme,
                 width: frameWidth,
-                maxHeight: 3,
+                maxHeight: Math.min(3, maxHeight),
                 title: this.options.title,
                 message: this.options.subtitle,
                 footer: `Esc ${this.escapeAction.toLowerCase()}`,
@@ -72,10 +102,22 @@ export class ArtifactReviewView implements Component {
             this.options.body.render(contentWidth),
             panelWidth,
         );
+        const wrappedPrelude = wrapPanelLines(
+            [theme.fg("dim", this.options.subtitle)],
+            panelWidth,
+        );
+        const prelude = wrappedPrelude.slice(0, Math.max(0, maxHeight - 3));
+        const availableBodyRows = computeFramedPanelViewportRows(maxHeight, {
+            preludeRows: prelude.length,
+        });
+        this.activeViewportRows = Math.min(
+            this.configuredViewportRows ?? availableBodyRows,
+            availableBodyRows,
+        );
         const viewport = slicePanelViewport(
             bodyLines,
             this.scrollOffset,
-            this.viewportRows,
+            this.activeViewportRows,
         );
         this.scrollOffset = viewport.offset;
 
@@ -86,7 +128,7 @@ export class ArtifactReviewView implements Component {
                     : theme.fg("dim", `  ${action}  `),
             )
             .join("  ");
-        const help = `↑/↓ scroll · ←/→ action · Enter select · Esc ${this.escapeAction.toLowerCase()}`;
+        const help = `Esc ${this.escapeAction.toLowerCase()} · ↑↓ scroll · ←→ action · Enter`;
         const scrollInfo =
             viewport.maxOffset > 0
                 ? ` [${viewport.offset}/${viewport.maxOffset}↑↓] `
@@ -96,13 +138,11 @@ export class ArtifactReviewView implements Component {
             theme,
             title: this.options.title,
             layout: resolved.layout,
-            prelude: wrapPanelLines(
-                [theme.fg("dim", this.options.subtitle)],
-                panelWidth,
-            ),
+            prelude,
             panelRows: viewport.lines.map((line) => [line]),
-            footer: `${scrollInfo}${actions}  ${theme.fg("dim", help)}`,
+            footer: `${theme.fg("dim", help)} ${scrollInfo}${actions}`,
             titlePosition: "center",
+            maxHeight,
         });
     }
 
@@ -123,10 +163,10 @@ export class ArtifactReviewView implements Component {
         } else if (matchesKey(data, "pageUp")) {
             this.scrollOffset = Math.max(
                 0,
-                this.scrollOffset - this.viewportRows,
+                this.scrollOffset - this.activeViewportRows,
             );
         } else if (matchesKey(data, "pageDown")) {
-            this.scrollOffset += this.viewportRows;
+            this.scrollOffset += this.activeViewportRows;
         } else if (matchesKey(data, "left") || data === "h") {
             const current = this.actions[this.selectedAction];
             this.selectedAction = current

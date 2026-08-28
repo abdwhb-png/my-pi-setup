@@ -47,6 +47,34 @@ export function computePanelOverlayHeight(
     return Math.max(0, Math.min(Math.floor(rows * ratio), rows - margin));
 }
 
+export function computeFramedPanelViewportRows(
+    maxHeight: number,
+    options: {
+        preludeRows?: number;
+        hasPanelTitles?: boolean;
+        panelFooterRows?: number;
+        boxFooterRows?: number;
+    } = {},
+): number {
+    const height = Math.max(0, Math.floor(maxHeight));
+    const preludeRows = Math.max(0, Math.floor(options.preludeRows ?? 0));
+    const panelFooterRows = Math.max(
+        0,
+        Math.floor(options.panelFooterRows ?? 0),
+    );
+    const boxFooterRows = Math.max(
+        0,
+        Math.floor(options.boxFooterRows ?? 0),
+    );
+    const fixedRows =
+        2 +
+        preludeRows +
+        (options.hasPanelTitles ? 3 : 0) +
+        panelFooterRows +
+        (boxFooterRows > 0 ? boxFooterRows + 1 : 0);
+    return Math.max(0, height - fixedRows);
+}
+
 export function wrapPanelLines(
     lines: readonly string[],
     panelWidth: number,
@@ -109,6 +137,7 @@ export function renderFramedPanels(options: {
     footer?: string;
     borderStyle?: BoxBorderStyle;
     titlePosition?: "left" | "center" | "right";
+    maxHeight: number;
 }): string[] {
     const {
         theme,
@@ -122,6 +151,7 @@ export function renderFramedPanels(options: {
         footer = "",
         borderStyle = "rounded",
         titlePosition = "left",
+        maxHeight,
     } = options;
     const boxOptions = { borderStyle, titlePosition } as const;
     const fullLayout = allocateBoxPanelLayout(layout.frameWidth, [
@@ -144,8 +174,17 @@ export function renderFramedPanels(options: {
         );
     }
 
+    const visiblePanelRows = panelRows.slice(
+        0,
+        computeFramedPanelViewportRows(maxHeight, {
+            preludeRows: prelude.length,
+            hasPanelTitles: panelTitles !== undefined,
+            panelFooterRows: panelFooterRows.length,
+            boxFooterRows: boxFooterRows.length,
+        }),
+    );
     rendered.push(
-        ...panelRows.map((row) =>
+        ...visiblePanelRows.map((row) =>
             renderBoxPanelRow(theme, layout, row, boxOptions),
         ),
         ...panelFooterRows.map((row) =>
@@ -163,7 +202,11 @@ export function renderFramedPanels(options: {
     rendered.push(
         renderBoxFooter(theme, layout.frameWidth, footer, boxOptions),
     );
-    return rendered;
+    if (rendered.length <= maxHeight) return rendered;
+    const boundedHeight = Math.max(0, Math.floor(maxHeight));
+    if (boundedHeight === 0) return [];
+    if (boundedHeight === 1) return [rendered.at(-1)!];
+    return [...rendered.slice(0, boundedHeight - 1), rendered.at(-1)!];
 }
 
 export function renderFramedPanelFallback(options: {
@@ -206,6 +249,7 @@ export function renderFramedPanelFallback(options: {
         panelRows: viewport.lines.map((line) => [line]),
         footer,
         borderStyle,
+        maxHeight,
     });
     return rendered.slice(0, maxHeight).map((line) => {
         if (visibleWidth(line) === width) return line;

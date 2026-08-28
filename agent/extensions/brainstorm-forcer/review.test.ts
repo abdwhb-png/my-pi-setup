@@ -63,6 +63,37 @@ describe("ArtifactReviewView", () => {
     expect(requestRender).toHaveBeenCalled();
   });
 
+  it("keeps the footer and final artifact line reachable within the overlay height", () => {
+    const body = createBody(
+      Array.from({ length: 24 }, (_, index) => `artifact line ${index + 1}`),
+    );
+    const createView = () =>
+      new ArtifactReviewView({
+        title: "Complete brainstorm",
+        subtitle: "docs/brainstorms/run/artifact.md",
+        body,
+        getTerminalRows: () => 20,
+        theme,
+        requestRender: () => undefined,
+        done: () => undefined,
+      });
+
+    const view = createView();
+    const initial = view.render(80);
+    expect(initial).toHaveLength(16);
+    expect(initial.at(-1)).toContain("Esc reject");
+
+    for (const pageDown of ["\u001b[6~", "\u001b[57422u"]) {
+      const navigated = createView();
+      navigated.render(80);
+      navigated.handleInput(pageDown);
+      const scrolled = navigated.render(80);
+      expect(scrolled).toHaveLength(16);
+      expect(scrolled.join("\n")).toContain("artifact line 24");
+      expect(scrolled.at(-1)).toContain("Esc reject");
+    }
+  });
+
   it("returns the selected decision and treats escape as rejection", () => {
     const decisions: string[] = [];
     const makeView = () =>

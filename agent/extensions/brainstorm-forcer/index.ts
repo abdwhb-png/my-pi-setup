@@ -41,6 +41,7 @@ import {
     type RecordVerificationFailureInput,
 } from "./exploration-ledger";
 import {
+    ARTIFACT_REVIEW_OVERLAY_OPTIONS,
     ArtifactReviewView,
     type ReviewAction,
     type ReviewDecision,
@@ -1227,17 +1228,14 @@ export default function brainstormForcer(
                     body: new Markdown(markdown, 0, 0, getMarkdownTheme()),
                     actions,
                     escapeAction,
+                    getTerminalRows: () => tui.terminal?.rows ?? 32,
                     theme,
                     requestRender: () => tui.requestRender(),
                     done,
                 }),
             {
                 overlay: true,
-                overlayOptions: {
-                    width: "90%",
-                    maxHeight: "80%",
-                    margin: 2,
-                },
+                overlayOptions: ARTIFACT_REVIEW_OVERLAY_OPTIONS,
             },
         );
     }

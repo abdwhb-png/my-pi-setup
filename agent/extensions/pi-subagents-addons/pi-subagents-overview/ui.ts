@@ -580,6 +580,7 @@ export class SubagentsOverviewView implements Component {
             panelTitles,
             panelRows,
             footer,
+            maxHeight,
         });
     }
 
