@@ -2,8 +2,18 @@ import { describe, expect, it, mock } from 'bun:test';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import type {
+    BashOperations,
+    ExtensionAPI,
+    ExtensionContext,
+} from '@earendil-works/pi-coding-agent';
 
+import { createBashOperations } from '../_shared/bash/exec';
+import {
+    claimSandboxExecutionBroker,
+    publishSandboxExecutionState,
+    type SharedBashOperationsOptions,
+} from '../_shared/bash/sandbox-execution-broker';
 import safeBashExtension from './index';
 
 type RegisteredTool = {
@@ -19,7 +29,25 @@ type RegisteredTool = {
     ) => Promise<{ content: Array<{ type: string; text: string }> }>;
 };
 
-function registerExtension(): RegisteredTool {
+function registerExtension(
+    options: {
+        execution?: 'local' | 'missing';
+        createOperations?: (
+            operationsOptions: SharedBashOperationsOptions,
+        ) => BashOperations;
+    } = {},
+): RegisteredTool {
+    const owner = Symbol('safe-bash-execution-test');
+    claimSandboxExecutionBroker(owner);
+    if (options.execution !== 'missing') {
+        publishSandboxExecutionState(owner, {
+            state: 'disabled',
+            createOperations:
+                options.createOperations ??
+                ((operationsOptions) => createBashOperations(operationsOptions)),
+        });
+    }
+
     let tool: RegisteredTool | undefined;
     const activeTools = ['bash', 'safe_bash'];
     const pi = {
@@ -51,6 +79,33 @@ describe('safe_bash explicit stdin', () => {
     it('advertises optional stdin in its registered schema', () => {
         const tool = registerExtension();
         expect(tool.parameters.properties.stdin).toBeDefined();
+    });
+
+    it('fails closed when sandbox execution is unavailable', async () => {
+        await expect(
+            registerExtension({ execution: 'missing' }).execute(
+                'call-uninitialized',
+                { command: 'printf should-not-run' },
+                undefined,
+                undefined,
+                context,
+            ),
+        ).rejects.toThrow('Sandbox execution unavailable: uninitialized');
+    });
+
+    it('executes through the shared sandbox broker factory', async () => {
+        const createOperations = mock((operationsOptions: SharedBashOperationsOptions) =>
+            createBashOperations(operationsOptions),
+        );
+        await registerExtension({ createOperations }).execute(
+            'call-shared-broker',
+            { command: 'printf broker' },
+            undefined,
+            undefined,
+            context,
+        );
+
+        expect(createOperations).toHaveBeenCalledTimes(1);
     });
 
     it('pipes exact stdin through the real bash definition', async () => {
@@ -95,6 +150,28 @@ describe('safe_bash explicit stdin', () => {
                 context,
             ),
         ).rejects.toThrow();
+    });
+
+    it('blocks Python heredoc deletion before a disposable sentinel is touched', async () => {
+        const fixture = await mkdtemp(join(tmpdir(), 'safe-bash-heredoc-'));
+        const targetDirectory = join(fixture, 'target');
+        await mkdir(targetDirectory);
+
+        try {
+            const command = `python3 - <<'PY'\nimport shutil\nshutil.rmtree('${targetDirectory}')\nPY`;
+            await expect(
+                registerExtension().execute(
+                    'call-python-heredoc-delete',
+                    { command },
+                    undefined,
+                    undefined,
+                    context,
+                ),
+            ).rejects.toThrow('file-delete-api');
+            await expect(stat(targetDirectory)).resolves.toBeDefined();
+        } finally {
+            await rm(fixture, { recursive: true, force: true });
+        }
     });
 
     it('blocks direct Python deletion before a disposable sentinel is touched', async () => {

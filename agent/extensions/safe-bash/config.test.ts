@@ -99,66 +99,54 @@ describe('normalizeSafeBashConfig', () => {
         });
     });
 
-    // --- allowDangerous ---
+    // --- guardPolicy ---
 
-    it('accepts allowDangerous as a boolean map of true values', () => {
+    it('accepts ask, deny, and allow policies for known danger groups', () => {
         expect(
             normalizeSafeBashConfig({
-                allowDangerous: { sudo: true, rm: true },
+                guardPolicy: { sudo: 'allow', rm: 'ask', mkfs: 'deny' },
             }),
         ).toEqual({
-            allowDangerous: { sudo: true, rm: true },
+            guardPolicy: { sudo: 'allow', rm: 'ask', mkfs: 'deny' },
         });
     });
 
-    it('drops allowDangerous entries whose value is not exactly true', () => {
+    it('drops invalid policies and unknown danger groups', () => {
         expect(
             normalizeSafeBashConfig({
-                allowDangerous: {
-                    sudo: true,
-                    rm: false,
-                    mkfs: 'yes',
-                    dd: 1,
-                    sudo2: null,
-                } as any,
+                guardPolicy: {
+                    sudo: 'allow',
+                    rm: true,
+                    mkfs: 'prompt',
+                    unknown: 'deny',
+                },
             }),
-        ).toEqual({
-            allowDangerous: { sudo: true },
-        });
+        ).toEqual({ guardPolicy: { sudo: 'allow' } });
     });
 
-    it('rejects allowDangerous that is not an object', () => {
-        expect(
-            normalizeSafeBashConfig({ allowDangerous: ['sudo'] } as any),
-        ).toEqual({});
-        expect(
-            normalizeSafeBashConfig({ allowDangerous: 'sudo' } as any),
-        ).toEqual({});
-        expect(
-            normalizeSafeBashConfig({ allowDangerous: null } as any),
-        ).toEqual({});
+    it('rejects malformed guardPolicy values', () => {
+        expect(normalizeSafeBashConfig({ guardPolicy: ['sudo'] })).toEqual({});
+        expect(normalizeSafeBashConfig({ guardPolicy: 'allow' })).toEqual({});
+        expect(normalizeSafeBashConfig({ guardPolicy: null })).toEqual({});
     });
 
-    it('drops allowDangerous when object has no true entries', () => {
+    it('ignores removed allowDangerous configuration', () => {
         expect(
-            normalizeSafeBashConfig({ allowDangerous: {} }),
-        ).toEqual({});
-        expect(
-            normalizeSafeBashConfig({ allowDangerous: { sudo: false } }),
+            normalizeSafeBashConfig({ allowDangerous: { sudo: true } }),
         ).toEqual({});
     });
 
-    it('preserves mode, allowedShellCommands, and allowDangerous together', () => {
+    it('preserves mode, allowedShellCommands, and guardPolicy together', () => {
         expect(
             normalizeSafeBashConfig({
                 mode: 'replace',
                 allowedShellCommands: ['grep'],
-                allowDangerous: { sudo: true },
+                guardPolicy: { sudo: 'allow' },
             }),
         ).toEqual({
             mode: 'replace',
             allowedShellCommands: ['grep'],
-            allowDangerous: { sudo: true },
+            guardPolicy: { sudo: 'allow' },
         });
     });
 });
@@ -225,10 +213,10 @@ describe('loadSafeBashConfig', () => {
         expect(config.allowedShellCommands).toEqual(['grep', 'rg']);
     });
 
-    it('defaults allowDangerous to empty object', () => {
+    it('defaults guardPolicy to empty object (deny by default)', () => {
         const sm = SettingsManager.inMemory({} as any);
         const config = loadSafeBashConfig(cwd, undefined, sm);
-        expect(config.allowDangerous).toEqual({});
+        expect(config.guardPolicy).toEqual({});
     });
 
     it('defaults telemetry to a bounded local archive', () => {
@@ -294,11 +282,11 @@ describe('loadSafeBashConfig', () => {
         ).toEqual({});
     });
 
-    it('reads allowDangerous from settings', () => {
+    it('reads guardPolicy from settings', () => {
         const sm = SettingsManager.inMemory({
-            safeBash: { allowDangerous: { sudo: true, rm: true } },
+            safeBash: { guardPolicy: { sudo: 'allow', rm: 'ask' } },
         } as any);
         const config = loadSafeBashConfig(cwd, undefined, sm);
-        expect(config.allowDangerous).toEqual({ sudo: true, rm: true });
+        expect(config.guardPolicy).toEqual({ sudo: 'allow', rm: 'ask' });
     });
 });

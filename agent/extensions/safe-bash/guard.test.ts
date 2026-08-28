@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import {
     inspectDangerous,
+    inspectDangerousMatches,
     isDangerous,
     redirectShellCommand,
     redirectShellCommandWithPolicy,
@@ -197,6 +198,27 @@ shutil.rmtree(Path('plugins/cliproxy-model-transport-policy'));
 Path('docs/adr/0002-post-auth-model-transport-policy-plugin.md').unlink()"`;
 
         expect(isDangerous(command)).not.toBeNull();
+    });
+
+    it('should block direct Python deletion APIs read from heredoc stdin', () => {
+        const command = `python3 - <<'PY'
+from pathlib import Path
+import shutil
+target = Path('agent/extensions/model-thinking')
+shutil.rmtree(target)
+PY`;
+
+        const match = inspectDangerous(command);
+        expect(match?.groupId).toBe('file-delete-api');
+    });
+
+    it('should allow non-destructive Python heredoc scripts', () => {
+        const command = `python3 - <<'PY'
+from pathlib import Path
+print(Path('README.md').read_text())
+PY`;
+
+        expect(inspectDangerous(command)).toBeNull();
     });
 
     it('should block direct filesystem deletion APIs across interpreters', () => {
@@ -475,59 +497,17 @@ describe('redirectShellCommandWithPolicy - allowList bypass', () => {
     });
 });
 
-// --- isDangerous allowDangerous (group-level bypass) ---
-
-describe('isDangerous - allowDangerous groups', () => {
-    it('allows a command when its danger group is allowed', () => {
-        expect(isDangerous('sudo apt update', new Set(['sudo']))).toBeNull();
-    });
-
-    it('still blocks a command when its group is NOT allowed', () => {
+describe('isDangerous group reporting', () => {
+    it('reports every matching danger group for compound commands', () => {
         expect(
-            isDangerous('sudo apt update', new Set(['rm'])),
-        ).not.toBeNull();
-    });
-
-    it('blocks when allowedGroups is empty (default behavior)', () => {
-        expect(isDangerous('sudo apt update', new Set())).not.toBeNull();
-    });
-
-    it('blocks when allowedGroups is undefined (backward compatible)', () => {
-        expect(isDangerous('sudo apt update')).not.toBeNull();
-        expect(isDangerous('sudo apt update', undefined)).not.toBeNull();
-    });
-
-    it('silently ignores unknown group ids (no throw, no bypass)', () => {
-        expect(
-            isDangerous('sudo apt update', new Set(['does-not-exist'])),
-        ).not.toBeNull();
-    });
-
-    it('allowing one group does not weaken others: sudo rm still blocked by rm', () => {
-        // sudo group allowed, but the rm group still matches `rm -rf /`
-        const msg = isDangerous('sudo rm -rf /', new Set(['sudo']));
-        expect(msg).not.toBeNull();
-        expect(msg).toContain('group: rm');
-    });
-
-    it('allowing both sudo and rm lets sudo rm through', () => {
-        expect(
-            isDangerous('sudo rm -rf /', new Set(['sudo', 'rm'])),
-        ).toBeNull();
+            inspectDangerousMatches('sudo rm -rf /').map(
+                (match) => match.groupId,
+            ),
+        ).toEqual(['rm', 'sudo']);
     });
 
     it('block message names the matched group id', () => {
         const msg = isDangerous('sudo apt update');
         expect(msg).toContain('group: sudo');
-    });
-
-    it('allowing rm group covers all rm variants (bare rm + flag forms)', () => {
-        expect(
-            isDangerous('rm -rf /etc', new Set(['rm'])),
-        ).toBeNull();
-        expect(isDangerous('rm tmp/x', new Set(['rm']))).toBeNull();
-        expect(
-            isDangerous('rm -rf ~', new Set(['rm'])),
-        ).toBeNull();
     });
 });

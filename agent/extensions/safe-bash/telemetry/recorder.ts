@@ -115,7 +115,7 @@ export function createSafeBashTelemetryRecorder(
             if (input.match) {
                 event.groupId = input.match.groupId;
                 event.patternId = input.match.patternId;
-                event.reason = input.match.message;
+                event.reason = input.reason ?? input.match.message;
             } else {
                 if (input.groupId) event.groupId = input.groupId;
                 if (input.patternId) event.patternId = input.patternId;

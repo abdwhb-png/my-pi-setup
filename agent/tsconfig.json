@@ -1,29 +1,42 @@
 {
-  "compilerOptions": {
-    "types": ["bun", "node"],
-    "target": "ESNext",
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "noEmit": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "noImplicitAny": true,
-    // "ignoreDeprecations": "6.0",
-    "paths": {
-      "pi-fancy-footer": ["../../projects/pi-integrations/pi-fancy-footer/src/index.ts"],
-      "pi-fancy-footer/api": ["../../projects/pi-integrations/pi-fancy-footer/src/api.ts"],
-      "pi-roles": ["../../projects/pi-integrations/pi-roles/src/index.ts"],
-      "pi-roles/protocol": ["../../projects/pi-integrations/pi-roles/src/protocol.ts"]
-    }
-  },
-  "include": ["extensions/**/*.ts", "bin/**/*.ts", "../.pi/extensions/**/*.ts"],
-  "exclude": [
-    "node_modules",
-    "git",
-    "npm",
-    "npm/node_modules/pi-subagents",
-    "npm/node_modules/pi-fancy-footer",
-    "skills",
-    "extensions-legacy",
-  ]
+    "compilerOptions": {
+        "types": ["bun", "node"],
+        "target": "ESNext",
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "noEmit": true,
+        "skipLibCheck": true,
+        "strict": true,
+        "noImplicitAny": true,
+        // "ignoreDeprecations": "6.0",
+        "paths": {
+            "bun:test": ["./node_modules/bun-types/test.d.ts"],
+            "pi-fancy-footer": [
+                "../../projects/pi-integrations/pi-fancy-footer/src/index.ts"
+            ],
+            "pi-fancy-footer/api": [
+                "../../projects/pi-integrations/pi-fancy-footer/src/api.ts"
+            ],
+            "pi-roles": [
+                "../../projects/pi-integrations/pi-roles/src/index.ts"
+            ],
+            "pi-roles/protocol": [
+                "../../projects/pi-integrations/pi-roles/src/protocol.ts"
+            ]
+        }
+    },
+    "include": [
+        "extensions/**/*.ts",
+        "bin/**/*.ts",
+        "../.pi/extensions/**/*.ts"
+    ],
+    "exclude": [
+        "node_modules",
+        "git",
+        "npm",
+        "npm/node_modules/pi-subagents",
+        "npm/node_modules/pi-fancy-footer",
+        "skills",
+        "extensions-legacy"
+    ]
 }

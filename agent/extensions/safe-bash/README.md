@@ -1,8 +1,10 @@
 # safe-bash
 
-`safe_bash` wraps Pi's Bash execution with best-effort dangerous-command detection. It blocks known destructive patterns before execution and records local, redacted attempt telemetry for later review.
+`safe_bash` adds dangerous-command policy before using the sandbox extension's shared Bash execution path. It records local, redacted attempt telemetry for later review.
 
-It is not a security sandbox. Pattern matching cannot prove a command harmless, and processes running as the same OS user can modify local telemetry.
+With sandbox enabled, both `bash` and `safe_bash` use OS-level isolation. `/sandbox off` or `--no-sandbox` explicitly selects local execution for both tools. Missing, uninitialized, or failed sandbox execution state blocks both tools instead of falling back locally.
+
+Pattern matching cannot prove a command harmless, and processes running as the same OS user can modify local telemetry.
 
 ## Deletion API guard
 
@@ -13,7 +15,33 @@ Danger group `file-delete-api` blocks direct filesystem deletion APIs inside int
 - Perl `unlink`/`rmdir`;
 - Ruby `FileUtils.rm_rf`, `File.delete`/`unlink`, and `Dir.rmdir`.
 
-Ordinary scripts and read-only interpreter one-liners remain allowed unless another danger group matches. Existing `safeBash.mode`, `allowedShellCommands`, and `allowDangerous` behavior is unchanged.
+Python deletion calls supplied through heredoc stdin are also detected. Ordinary scripts and read-only interpreter one-liners remain allowed unless another danger group matches.
+
+## Guard policy
+
+Configure each danger group under `safeBash.guardPolicy`:
+
+```json
+{
+    "safeBash": {
+        "guardPolicy": {
+            "sudo": "allow",
+            "rm": "ask",
+            "file-delete-api": "deny"
+        }
+    }
+}
+```
+
+Actions:
+
+- `deny`: block. This is the default for missing groups.
+- `ask`: interactive choice to allow once, allow the exact normalized command for the session, deny, or deny with a reason. Non-interactive sessions deny.
+- `allow`: execute without prompting while preserving telemetry guard evidence.
+
+Every matching group is evaluated, so allowing one group cannot bypass another matching group's `ask` or `deny` policy.
+
+`allowDangerous` is removed and ignored. `safeBash.mode` remains unchanged: `replace` removes raw `bash`, while `coexist` exposes both tools.
 
 ## Telemetry configuration
 

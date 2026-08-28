@@ -7,7 +7,7 @@
 
 /** A named bundle of regexes representing one class of dangerous command. */
 export interface DangerGroup {
-    /** Stable id used in settings.json `safeBash.allowDangerous` (e.g. `"sudo"`). */
+    /** Stable id used in settings.json `safeBash.guardPolicy` (e.g. `"sudo"`). */
     id: string;
     /** Human-readable summary shown in error messages and docs. */
     label: string;
@@ -15,11 +15,19 @@ export interface DangerGroup {
     patterns: RegExp[];
 }
 
+/** Structured result used by enforcement and telemetry. */
+export interface DangerMatch {
+    groupId: string;
+    groupLabel: string;
+    patternId: string;
+    pattern: string;
+    normalizedCommand: string;
+    message: string;
+}
+
 /**
- * Canonical danger groups. Group `id`s are the public, stable handle for
- * selectively disabling a class of check via `safeBash.allowDangerous`.
- * Patterns are verbatim from the previous flat `DANGEROUS_PATTERNS` array —
- * only their container changed.
+ * Canonical danger groups. Group `id`s are public stable handles for
+ * configuring `safeBash.guardPolicy`.
  */
 export const DANGER_GROUPS: readonly DangerGroup[] = [
     {
@@ -99,6 +107,17 @@ export const DANGER_GROUPS: readonly DangerGroup[] = [
         ],
     },
     {
+        id: "file-delete-api",
+        label: "interpreter one-liner direct filesystem deletion APIs",
+        patterns: [
+            /\b(?:python|python3|python2)\s+-c\s+(?:['"]\s*|[\s\S]*?[^'"\w])(?:shutil\.rmtree|(?:Path\([^)]*\)|[A-Za-z_$][\w$]*)\.(?:unlink|rmdir)|os\.(?:remove|unlink|rmdir|removedirs))\s*\(/,
+            /\b(?:python|python3|python2)\s+(?:-\s+)?<<-?\s*['"]?[A-Za-z_][\w]*['"]?[\s\S]*(?:shutil\.rmtree|(?:Path\([^)]*\)|[A-Za-z_$][\w$]*)\.(?:unlink|rmdir)|os\.(?:remove|unlink|rmdir|removedirs))\s*\(/,
+            /\bnode\s+(?:-e|--eval)(?:\s+|=)[\s\S]*(?<!['"])\.(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\s*\(/,
+            /\bperl\s+-e\s+(?:['"]\s*|[\s\S]*?[^'"\w])(?:unlink|rmdir)\b/,
+            /\bruby\s+-e\s+(?:['"]\s*|[\s\S]*?[^'"\w])(?:FileUtils\.rm_rf|File\.(?:delete|unlink)|Dir\.rmdir)\s*\(/,
+        ],
+    },
+    {
         id: "exec-injection",
         label: "python/node/perl/ruby one-liner shell calls",
         patterns: [
@@ -159,26 +178,33 @@ function normalize(command: string): string {
  * Returns null if safe, or an error message string if blocked.
  *
  * @param command - Raw shell command string.
- * @param allowedGroups - Optional set of danger-group ids (e.g. `"sudo"`,
- *   `"rm"`) to skip entirely. Unknown ids are ignored. When a group is
- *   allowed, NONE of its patterns run — so a command is only blocked by
- *   the remaining groups. Empty/undefined = all groups enforced
- *   (backward compatible).
  */
-export function isDangerous(
-    command: string,
-    allowedGroups: ReadonlySet<string> = new Set(),
-): string | null {
-    const normalized = normalize(command);
+export function inspectDangerousMatches(command: string): DangerMatch[] {
+    const normalizedCommand = normalize(command);
+    const matches: DangerMatch[] = [];
     for (const group of DANGER_GROUPS) {
-        if (allowedGroups.has(group.id)) continue;
-        for (const pattern of group.patterns) {
-            if (pattern.test(normalized)) {
-                return `Command blocked by safe_bash: matches dangerous pattern ${pattern} (group: ${group.id})`;
-            }
+        for (const [patternIndex, pattern] of group.patterns.entries()) {
+            if (!pattern.test(normalizedCommand)) continue;
+            matches.push({
+                groupId: group.id,
+                groupLabel: group.label,
+                patternId: `${group.id}:${patternIndex + 1}`,
+                pattern: pattern.toString(),
+                normalizedCommand,
+                message: `Command blocked by safe_bash: matches dangerous pattern ${pattern} (group: ${group.id})`,
+            });
+            break;
         }
     }
-    return null;
+    return matches;
+}
+
+export function inspectDangerous(command: string): DangerMatch | null {
+    return inspectDangerousMatches(command)[0] ?? null;
+}
+
+export function isDangerous(command: string): string | null {
+    return inspectDangerous(command)?.message ?? null;
 }
 
 /**

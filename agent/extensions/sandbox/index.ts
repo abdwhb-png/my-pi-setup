@@ -62,6 +62,13 @@ import {
 } from "../_shared/bash/exec";
 import { createBashPrefixRenderer } from "../_shared/bash/prefix-renderer";
 import { applyFirstRewrite, loadBashRewrites } from "../_shared/bash/rewrites";
+import {
+    claimSandboxExecutionBroker,
+    createSharedBashOperations,
+    publishSandboxExecutionState,
+    releaseSandboxExecutionBroker,
+    type SharedBashOperationsOptions,
+} from "../_shared/bash/sandbox-execution-broker";
 import { appendCompressionFooter } from "../_shared/compression-render";
 import { createWidget } from "../_shared/fancy-footer";
 import { createUiColors, type UiColorsCreation } from "../_shared/ui/ui-colors";
@@ -125,44 +132,90 @@ const DEFAULT_CONFIG: SandboxConfig = {
     },
 };
 
-function normalizeConfig(raw: unknown): Partial<SandboxConfig> {
-    if (!raw || typeof raw !== "object") return {};
+interface SandboxSettingsContainer {
+    sandbox?: unknown;
+}
+
+interface SandboxSettingsReader {
+    getGlobalSettings(): SandboxSettingsContainer;
+    getProjectSettings(): SandboxSettingsContainer;
+}
+
+export interface LoadSandboxConfigOptions {
+    agentDir?: string;
+    settingsManager?: SandboxSettingsReader;
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeConfig(raw: unknown, source: string): Partial<SandboxConfig> {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        throw new Error(`Invalid ${source}`);
+    }
     return raw as Partial<SandboxConfig>;
+}
+
+function readSettingsConfig(
+    settings: SandboxSettingsContainer,
+    source: "global" | "project",
+): Partial<SandboxConfig> {
+    const raw = settings.sandbox;
+    return raw === undefined
+        ? {}
+        : normalizeConfig(raw, `${source} sandbox settings`);
 }
 
 function readLegacyConfig(path: string): Partial<SandboxConfig> {
     if (!existsSync(path)) return {};
     try {
-        return normalizeConfig(JSON.parse(readFileSync(path, "utf-8")));
-    } catch (e) {
-        console.error(`Warning: Could not parse ${path}: ${String(e)}`);
-        return {};
+        return normalizeConfig(
+            JSON.parse(readFileSync(path, "utf-8")),
+            `sandbox config: ${path}`,
+        );
+    } catch (error) {
+        throw new Error(
+            `Could not parse sandbox config ${path}: ${errorMessage(error)}`,
+            { cause: error },
+        );
     }
 }
 
-function loadConfig(cwd: string): SandboxConfig {
+export function loadSandboxConfig(
+    cwd: string,
+    options: LoadSandboxConfigOptions = {},
+): SandboxConfig {
     const projectConfigPath = join(cwd, ".pi", "sandbox.json");
-    const globalConfigPath = join(getAgentDir(), "sandbox.json");
+    const globalConfigPath = join(
+        options.agentDir ?? getAgentDir(),
+        "sandbox.json",
+    );
 
-    let globalConfig: Partial<SandboxConfig> = {};
-    let projectConfig: Partial<SandboxConfig> = {};
-
+    let globalSettings: SandboxSettingsContainer;
+    let projectSettings: SandboxSettingsContainer;
     try {
-        const manager = SettingsManager.create(cwd);
-        const globalSettings = manager.getGlobalSettings() as Record<
-            string,
-            unknown
-        >;
-        const projectSettings = manager.getProjectSettings() as Record<
-            string,
-            unknown
-        >;
-        globalConfig = normalizeConfig(globalSettings.sandbox);
-        projectConfig = normalizeConfig(projectSettings.sandbox);
-    } catch {
-        // fall through to legacy files only
+        if (options.settingsManager) {
+            globalSettings = options.settingsManager.getGlobalSettings();
+            projectSettings = options.settingsManager.getProjectSettings();
+        } else {
+            const manager = SettingsManager.create(cwd);
+            // SAFETY: SettingsManager supports extension-owned keys not declared by its generic Settings type.
+            globalSettings =
+                manager.getGlobalSettings() as unknown as SandboxSettingsContainer;
+            // SAFETY: SettingsManager supports extension-owned keys not declared by its generic Settings type.
+            projectSettings =
+                manager.getProjectSettings() as unknown as SandboxSettingsContainer;
+        }
+    } catch (error) {
+        throw new Error(
+            `Could not load sandbox settings: ${errorMessage(error)}`,
+            { cause: error },
+        );
     }
 
+    let globalConfig = readSettingsConfig(globalSettings, "global");
+    let projectConfig = readSettingsConfig(projectSettings, "project");
     if (Object.keys(globalConfig).length === 0) {
         globalConfig = readLegacyConfig(globalConfigPath);
     }
@@ -187,6 +240,7 @@ function deepMerge(
         result.filesystem = { ...base.filesystem, ...overrides.filesystem };
     }
 
+    // SAFETY: installed sandbox runtime accepts these optional fields, but its exported config type omits them.
     const extOverrides = overrides as unknown as {
         ignoreViolations?: Record<string, string[]>;
         enableWeakerNestedSandbox?: boolean;
@@ -293,12 +347,26 @@ export function buildSandboxShellEnv(
     };
 }
 
-export function createSandboxedBashOps(stdin?: string): BashOperations {
+function applyRequestedRewrite(
+    command: string,
+    rewriteCommand: SharedBashOperationsOptions["rewriteCommand"],
+): string {
+    const rewritten = rewriteCommand?.(command);
+    if (typeof rewritten === "string") return rewritten;
+    if (rewritten && typeof rewritten === "object") return rewritten.command;
+    return command;
+}
+
+export function createSandboxedBashOps(
+    options: SharedBashOperationsOptions = {},
+): BashOperations {
     return createBashOperations({
-        stdin,
+        stdin: options.stdin,
         detached: true,
         prepareCommand: async ({ command, cwd }) => ({
-            command: await SandboxManager.wrapWithSandbox(command),
+            command: await SandboxManager.wrapWithSandbox(
+                applyRequestedRewrite(command, options.rewriteCommand),
+            ),
             cwd,
             env: buildSandboxShellEnv(),
         }),
@@ -313,6 +381,33 @@ export function createSandboxedBashOps(stdin?: string): BashOperations {
 }
 
 export default function (pi: ExtensionAPI) {
+    const brokerOwner = Symbol("sandbox-extension-owner");
+    claimSandboxExecutionBroker(brokerOwner);
+
+    const publishDisabledExecution = () =>
+        publishSandboxExecutionState(brokerOwner, {
+            state: "disabled",
+            createOperations: (options) =>
+                createBashOperations({
+                    stdin: options.stdin,
+                    rewriteCommand: options.rewriteCommand,
+                }),
+        });
+    const publishTransitionExecution = () =>
+        publishSandboxExecutionState(brokerOwner, {
+            state: "uninitialized",
+        });
+    const publishEnabledExecution = () =>
+        publishSandboxExecutionState(brokerOwner, {
+            state: "enabled",
+            createOperations: createSandboxedBashOps,
+        });
+    const publishExecutionError = (error: unknown) =>
+        publishSandboxExecutionState(brokerOwner, {
+            state: "error",
+            error: error instanceof Error ? error.message : String(error),
+        });
+
     pi.registerFlag("no-sandbox", {
         description: "Disable OS-level sandboxing for bash commands",
         type: "boolean",
@@ -374,54 +469,19 @@ export default function (pi: ExtensionAPI) {
         },
         async execute(id, params, signal, onUpdate, _ctx) {
             const input = { command: params.command, timeout: params.timeout };
-            if (!sandboxEnabled || !sandboxInitialized) {
-                const localBash = createBashTool(projectCwd, {
-                    operations: createBashOperations({
-                        stdin: params.stdin,
-                        rewriteCommand: (command) =>
-                            applyFirstRewrite(command, "bash", rewriteRules),
-                    }),
-                });
-                return localBash.execute(id, input, signal, onUpdate);
-            }
-
-            // Sandbox path: rewrite BEFORE sandbox-wrap (design D2).
-            // Rules are composed into prepareCommand so rewrite runs first,
-            // then SandboxManager wraps the rewritten command.
-            const sandboxedBash = createBashTool(projectCwd, {
-                operations: createBashOperations({
-                    stdin: params.stdin,
-                    detached: true,
-                    prepareCommand: async ({ command, cwd }) => {
-                        const rewritten = applyFirstRewrite(
-                            command,
-                            "bash",
-                            rewriteRules,
-                        ).command;
-                        return {
-                            command:
-                                await SandboxManager.wrapWithSandbox(rewritten),
-                            cwd,
-                            env: buildSandboxShellEnv(),
-                        };
-                    },
-                    afterClose: ({ cwd }) => {
-                        try {
-                            SandboxManager.cleanupAfterCommand();
-                        } catch {
-                            ensureGitignored(cwd);
-                        }
-                    },
-                }),
+            const operations = createSharedBashOperations({
+                stdin: params.stdin,
+                rewriteCommand: (command) =>
+                    applyFirstRewrite(command, "bash", rewriteRules),
             });
-            return sandboxedBash.execute(id, input, signal, onUpdate);
+            const sharedBash = createBashTool(projectCwd, { operations });
+            return sharedBash.execute(id, input, signal, onUpdate);
         },
     });
 
-    pi.on("user_bash", () => {
-        if (!sandboxEnabled || !sandboxInitialized) return;
-        return { operations: createSandboxedBashOps() };
-    });
+    pi.on("user_bash", () => ({
+        operations: createSharedBashOperations(),
+    }));
 
     pi.on("session_start", async (_event, ctx) => {
         gitignoreEnsured = false;
@@ -434,16 +494,31 @@ export default function (pi: ExtensionAPI) {
         if (noSandbox) {
             sandboxEnabled = false;
             sandboxInitialized = false;
+            publishDisabledExecution();
             updateSandboxStatus(ctx, "off");
             ctx.ui.notify("Sandbox disabled via --no-sandbox", "warning");
             return;
         }
 
-        const config = loadConfig(ctx.cwd);
+        let config: SandboxConfig;
+        try {
+            config = loadSandboxConfig(ctx.cwd);
+        } catch (error) {
+            sandboxEnabled = false;
+            sandboxInitialized = false;
+            publishExecutionError(error);
+            updateSandboxStatus(ctx, "error");
+            ctx.ui.notify(
+                `Sandbox configuration failed: ${errorMessage(error)}`,
+                "error",
+            );
+            return;
+        }
 
         if (!config.enabled) {
             sandboxEnabled = false;
             sandboxInitialized = false;
+            publishDisabledExecution();
             updateSandboxStatus(ctx, "off");
             return;
         }
@@ -452,12 +527,14 @@ export default function (pi: ExtensionAPI) {
         if (platform !== "darwin" && platform !== "linux") {
             sandboxEnabled = false;
             sandboxInitialized = false;
+            publishExecutionError(`Sandbox not supported on ${platform}`);
             updateSandboxStatus(ctx, "restricted");
             ctx.ui.notify(`Sandbox not supported on ${platform}`, "warning");
             return;
         }
 
         try {
+            // SAFETY: installed sandbox runtime accepts these optional fields, but its exported config type omits them.
             const configExt = config as unknown as {
                 ignoreViolations?: Record<string, string[]>;
                 enableWeakerNestedSandbox?: boolean;
@@ -472,12 +549,14 @@ export default function (pi: ExtensionAPI) {
 
             sandboxEnabled = true;
             sandboxInitialized = true;
+            publishEnabledExecution();
 
             updateSandboxStatus(ctx, "on");
             ctx.ui.notify("Sandbox initialized", "info");
         } catch (err) {
             sandboxEnabled = false;
             sandboxInitialized = false;
+            publishExecutionError(err);
             updateSandboxStatus(ctx, "error");
             ctx.ui.notify(
                 `Sandbox initialization failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -487,6 +566,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("session_shutdown", async () => {
+        if (!releaseSandboxExecutionBroker(brokerOwner)) return;
         killActiveBashProcesses();
         if (sandboxInitialized) {
             try {
@@ -524,6 +604,9 @@ export default function (pi: ExtensionAPI) {
 
                 const platform = process.platform;
                 if (platform !== "darwin" && platform !== "linux") {
+                    publishExecutionError(
+                        `Sandbox not supported on ${platform}`,
+                    );
                     updateSandboxStatus(ctx, "restricted");
                     ctx.ui.notify(
                         `Sandbox not supported on ${platform}`,
@@ -532,8 +615,10 @@ export default function (pi: ExtensionAPI) {
                     return;
                 }
 
-                const config = loadConfig(ctx.cwd);
+                publishTransitionExecution();
                 try {
+                    const config = loadSandboxConfig(ctx.cwd);
+                    // SAFETY: installed sandbox runtime accepts these optional fields, but its exported config type omits them.
                     const configExt = config as unknown as {
                         ignoreViolations?: Record<string, string[]>;
                         enableWeakerNestedSandbox?: boolean;
@@ -549,12 +634,14 @@ export default function (pi: ExtensionAPI) {
 
                     sandboxEnabled = true;
                     sandboxInitialized = true;
+                    publishEnabledExecution();
 
                     updateSandboxStatus(ctx, "on");
                     ctx.ui.notify("Sandbox enabled", "info");
                 } catch (err) {
                     sandboxEnabled = false;
                     sandboxInitialized = false;
+                    publishExecutionError(err);
                     updateSandboxStatus(ctx, "error");
                     ctx.ui.notify(
                         `Sandbox initialization failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -566,20 +653,23 @@ export default function (pi: ExtensionAPI) {
 
             // /sandbox off
             if (arg === "off" || arg === "disable") {
-                if (!sandboxEnabled) {
-                    ctx.ui.notify("Sandbox is already disabled", "info");
-                    return;
-                }
-
                 sandboxEnabled = false;
                 if (sandboxInitialized) {
+                    publishTransitionExecution();
                     try {
                         await SandboxManager.reset();
-                    } catch {
-                        // Ignore cleanup errors
+                    } catch (error) {
+                        publishExecutionError(error);
+                        updateSandboxStatus(ctx, "error");
+                        ctx.ui.notify(
+                            `Sandbox reset failed: ${errorMessage(error)}`,
+                            "error",
+                        );
+                        return;
                     }
                     sandboxInitialized = false;
                 }
+                publishDisabledExecution();
                 updateSandboxStatus(ctx, "off");
                 ctx.ui.notify("Sandbox disabled", "info");
                 return;
@@ -587,7 +677,18 @@ export default function (pi: ExtensionAPI) {
 
             // /sandbox (no args) — toggle or show status
             if (!arg) {
-                const config = loadConfig(ctx.cwd);
+                let config: SandboxConfig;
+                try {
+                    config = loadSandboxConfig(ctx.cwd);
+                } catch (error) {
+                    publishExecutionError(error);
+                    updateSandboxStatus(ctx, "error");
+                    ctx.ui.notify(
+                        `Sandbox configuration failed: ${errorMessage(error)}`,
+                        "error",
+                    );
+                    return;
+                }
                 const status = sandboxEnabled ? "ENABLED" : "DISABLED";
                 const lines = [
                     `Sandbox: ${status}`,

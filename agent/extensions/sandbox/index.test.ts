@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Theme } from '@earendil-works/pi-coding-agent';
@@ -8,12 +15,89 @@ import {
     ensureGitignored,
     GHOST_PATTERNS,
     _resetGitignoreEnsured,
+    loadSandboxConfig,
     renderSandboxWidget,
 } from './index';
 
 function fakeTheme(): Theme {
     return { fg: (color: string, text: string) => `fg:${color}:${text}` } as unknown as Theme;
 }
+
+const emptySettingsManager = {
+    getGlobalSettings: () => ({}),
+    getProjectSettings: () => ({}),
+};
+
+describe('loadSandboxConfig', () => {
+    let root: string;
+    let agentDir: string;
+    let cwd: string;
+
+    beforeEach(() => {
+        root = mkdtempSync(join(tmpdir(), 'sandbox-config-test-'));
+        agentDir = join(root, 'agent');
+        cwd = join(root, 'project');
+        mkdirSync(agentDir, { recursive: true });
+        mkdirSync(cwd, { recursive: true });
+    });
+
+    afterEach(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it('throws for malformed global legacy config', () => {
+        writeFileSync(join(agentDir, 'sandbox.json'), '{ invalid');
+
+        expect(() =>
+            loadSandboxConfig(cwd, { agentDir, settingsManager: emptySettingsManager }),
+        ).toThrow('Could not parse sandbox config');
+    });
+
+    it('throws for malformed project legacy config', () => {
+        mkdirSync(join(cwd, '.pi'), { recursive: true });
+        writeFileSync(join(cwd, '.pi', 'sandbox.json'), '{ invalid');
+
+        expect(() =>
+            loadSandboxConfig(cwd, { agentDir, settingsManager: emptySettingsManager }),
+        ).toThrow('Could not parse sandbox config');
+    });
+
+    it('throws for malformed global and project settings values', () => {
+        expect(() =>
+            loadSandboxConfig(cwd, {
+                agentDir,
+                settingsManager: {
+                    getGlobalSettings: () => ({ sandbox: 'invalid' }),
+                    getProjectSettings: () => ({}),
+                },
+            }),
+        ).toThrow('Invalid global sandbox settings');
+
+        expect(() =>
+            loadSandboxConfig(cwd, {
+                agentDir,
+                settingsManager: {
+                    getGlobalSettings: () => ({}),
+                    getProjectSettings: () => ({ sandbox: [] }),
+                },
+            }),
+        ).toThrow('Invalid project sandbox settings');
+    });
+
+    it('throws when settings loading fails', () => {
+        expect(() =>
+            loadSandboxConfig(cwd, {
+                agentDir,
+                settingsManager: {
+                    getGlobalSettings: () => {
+                        throw new Error('settings unavailable');
+                    },
+                    getProjectSettings: () => ({}),
+                },
+            }),
+        ).toThrow('Could not load sandbox settings: settings unavailable');
+    });
+});
 
 describe('ensureGitignored', () => {
     let tmpDir: string;

@@ -8,10 +8,12 @@
  * fall back to defaults while valid global/project fields merge per layer.
  */
 import type { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { DANGER_GROUP_IDS } from "../_shared/bash/guard.ts";
 import { loadExtensionConfig } from "../_shared/config-loader.ts";
 import { SAFE_BASH_AUDIT_BOUNDS } from "./telemetry/types.ts";
 
 export type SafeBashMode = "coexist" | "replace";
+export type SafeBashGuardPolicy = "ask" | "deny" | "allow";
 
 export interface SafeBashTelemetryConfig {
     enabled: boolean;
@@ -31,20 +33,8 @@ export interface SafeBashConfig {
      * `isDangerous()` still runs on these commands — only the redirect is bypassed.
      */
     allowedShellCommands: string[];
-    /**
-     * Danger-group ids whose checks should be skipped in `isDangerous()`.
-     * Map of `{ "<groupId>": true }` — only keys with value `true` are honored.
-     * Valid ids come from `DANGER_GROUPS` in `_shared/bash/guard.ts`
-     * (e.g. `sudo`, `rm`, `mkfs`, `dd`, `chmod`, `chown`, `remote-shell`,
-     * `reverse-shell`, `file-delete-api`, `exec-injection`, `shutdown`, `init`,
-     * `kill`, `cryptominer`, `forkbomb`, `raw-disk-write`). Unknown ids are ignored.
-     *
-     * Example: `{ "sudo": true }` lets `sudo ...` through but leaves every
-     * other danger group (rm, mkfs, ...) enforced.
-     *
-     * Empty = all groups enforced (backward compatible).
-     */
-    allowDangerous: Record<string, boolean>;
+    /** Per-danger-group action. Missing groups default to `deny`. */
+    guardPolicy: Record<string, SafeBashGuardPolicy>;
     /** Local, redacted command-attempt telemetry used by `/safe-bash-audit`. */
     telemetry: SafeBashTelemetryConfig;
 }
@@ -52,7 +42,7 @@ export interface SafeBashConfig {
 export const DEFAULT_SAFE_BASH_CONFIG: SafeBashConfig = {
     mode: "coexist",
     allowedShellCommands: [],
-    allowDangerous: {},
+    guardPolicy: {},
     telemetry: {
         enabled: true,
         directory: "~/.pi/agent/safe-bash-telemetry",
@@ -107,7 +97,7 @@ function normalizeTelemetry(raw: unknown): Partial<SafeBashTelemetryConfig> {
 
 /**
  * Normalize raw JSON → Partial<SafeBashConfig>.
- * Keeps only valid `mode`, `allowedShellCommands`, and `allowDangerous` fields; drops everything else.
+ * Keeps only valid `mode`, `allowedShellCommands`, `guardPolicy`, and telemetry fields.
  */
 export function normalizeSafeBashConfig(raw: unknown): Partial<SafeBashConfig> {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -135,22 +125,25 @@ export function normalizeSafeBashConfig(raw: unknown): Partial<SafeBashConfig> {
     if (Object.keys(telemetry).length > 0)
         result.telemetry = telemetry as SafeBashTelemetryConfig;
 
-    const allowDangerousRaw = obj.allowDangerous;
+    const guardPolicyRaw = obj.guardPolicy;
     if (
-        typeof allowDangerousRaw === "object" &&
-        allowDangerousRaw !== null &&
-        !Array.isArray(allowDangerousRaw)
+        typeof guardPolicyRaw === "object" &&
+        guardPolicyRaw !== null &&
+        !Array.isArray(guardPolicyRaw)
     ) {
-        // Keep only string-keyed boolean:true entries; everything else is noise.
-        const filtered: Record<string, true> = {};
-        for (const [k, v] of Object.entries(
-            allowDangerousRaw as Record<string, unknown>,
+        const knownGroups = new Set(DANGER_GROUP_IDS);
+        const filtered: Record<string, SafeBashGuardPolicy> = {};
+        for (const [groupId, value] of Object.entries(
+            guardPolicyRaw as Record<string, unknown>,
         )) {
-            if (typeof k === "string" && v === true) filtered[k] = true;
+            if (
+                knownGroups.has(groupId) &&
+                (value === "ask" || value === "deny" || value === "allow")
+            ) {
+                filtered[groupId] = value;
+            }
         }
-        if (Object.keys(filtered).length > 0) {
-            result.allowDangerous = filtered;
-        }
+        if (Object.keys(filtered).length > 0) result.guardPolicy = filtered;
     }
 
     return result;
@@ -174,6 +167,10 @@ export function loadSafeBashConfig(
         merge: (base, overlay) => ({
             ...base,
             ...overlay,
+            guardPolicy: {
+                ...base.guardPolicy,
+                ...overlay.guardPolicy,
+            },
             telemetry: {
                 ...base.telemetry,
                 ...overlay.telemetry,

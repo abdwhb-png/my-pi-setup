@@ -61,6 +61,35 @@ describe("safe-bash telemetry recorder", () => {
         expect(events[0]?.commandLength).toBeGreaterThan(40);
     });
 
+    it("preserves an explicit denial reason with guard evidence", async () => {
+        const events: SafeBashTelemetryEvent[] = [];
+        const recorder = createSafeBashTelemetryRecorder({
+            config: DEFAULT_SAFE_BASH_CONFIG.telemetry,
+            sessionId: "session-1",
+            cwd: "/workspace/project",
+            writer: {
+                append: async (event) => {
+                    events.push(event);
+                },
+                flush: async () => undefined,
+            },
+        });
+
+        await recorder.record({
+            toolCallId: "call-denied",
+            command: "python3 -c ...",
+            match: deletionMatch,
+            outcome: "blocked",
+            reason: "not during release",
+        });
+
+        expect(events[0]).toMatchObject({
+            groupId: "file-delete-api",
+            patternId: "file-delete-api:1",
+            reason: "not during release",
+        });
+    });
+
     it("uses an injected session sequence across recorder recreation", async () => {
         const events: SafeBashTelemetryEvent[] = [];
         let sequence = 40;

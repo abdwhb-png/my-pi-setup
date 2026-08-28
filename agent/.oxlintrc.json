@@ -41,7 +41,8 @@
     "scripts/",
     "*.test.ts",
     "extensions-legacy/",
-    "extensions/ogulcancelik/pi-herdr.ts",
+    "extensions/aldoborrero-pi-agent-kit/",
+    "extensions/ogulcancelik-pi-extensions/",
   ],
   "overrides": [
     {

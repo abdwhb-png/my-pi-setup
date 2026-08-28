@@ -7,6 +7,7 @@
  */
 export {
     inspectDangerous,
+    inspectDangerousMatches,
     isDangerous,
     redirectShellCommand,
     redirectShellCommandWithPolicy,
