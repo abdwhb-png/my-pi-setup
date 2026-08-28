@@ -27,7 +27,7 @@ afterEach(() => {
     agentDir = '';
 });
 
-function setup(initialYolo = false) {
+function setup(initialYolo = false, startBusy = false) {
     agentDir = mkdtempSync(join(tmpdir(), 'perm-addon-command-'));
     const configDir = join(agentDir, 'extensions', 'pi-permission-system');
     mkdirSync(configDir, { recursive: true });
@@ -59,11 +59,20 @@ function setup(initialYolo = false) {
 
     const notifications: Array<[string, string]> = [];
     let reloads = 0;
+    let releaseIdle = () => {};
+    const idle = startBusy
+        ? new Promise<void>((resolve) => {
+              releaseIdle = resolve;
+          })
+        : Promise.resolve();
     const ctx = {
         ui: {
             notify(message: string, level: string) {
                 notifications.push([message, level]);
             },
+        },
+        waitForIdle() {
+            return idle;
         },
         async reload() {
             reloads += 1;
@@ -75,6 +84,7 @@ function setup(initialYolo = false) {
         flags,
         ctx,
         notifications,
+        releaseIdle,
         get reloads() {
             return reloads;
         },
@@ -128,6 +138,46 @@ describe('extension entry point', () => {
             permission: { bash: { '*': 'allow' } },
         });
         expect(fixture.reloads).toBe(1);
+    });
+
+    it('does nothing when requested mode is already active', async () => {
+        const fixture = setup(false);
+        const initial = readFileSync(fixture.configPath, 'utf-8');
+
+        await fixture.command.handler('off', fixture.ctx);
+
+        expect(readFileSync(fixture.configPath, 'utf-8')).toBe(initial);
+        expect(fixture.reloads).toBe(0);
+        expect(fixture.notifications.at(-1)?.[0]).toContain('already OFF');
+    });
+
+    it('coalesces duplicate pending changes into one write and reload', async () => {
+        const fixture = setup(false, true);
+
+        const first = fixture.command.handler('on', fixture.ctx);
+        const second = fixture.command.handler('on', fixture.ctx);
+        fixture.releaseIdle();
+        await Promise.all([first, second]);
+
+        expect(JSON.parse(readFileSync(fixture.configPath, 'utf-8'))).toEqual({
+            yoloMode: true,
+            permission: { bash: { '*': 'allow' } },
+        });
+        expect(fixture.reloads).toBe(1);
+    });
+
+    it('cancels opposite pending changes before idle without writing or reloading', async () => {
+        const fixture = setup(false, true);
+        const initial = readFileSync(fixture.configPath, 'utf-8');
+
+        const enable = fixture.command.handler('on', fixture.ctx);
+        const disable = fixture.command.handler('off', fixture.ctx);
+        fixture.releaseIdle();
+        await Promise.all([enable, disable]);
+
+        expect(readFileSync(fixture.configPath, 'utf-8')).toBe(initial);
+        expect(fixture.reloads).toBe(0);
+        expect(fixture.notifications.at(-1)?.[0]).toContain('canceled');
     });
 
     it('reports status without reloading', async () => {
