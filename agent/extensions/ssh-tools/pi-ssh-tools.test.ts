@@ -17,7 +17,7 @@ function createExtensionApi() {
 
 describe("pi-ssh-tools", () => {
     it("registers SSH tools", async () => {
-        const { default: sshToolsExtension } = await import("./index.ts");
+        const { default: sshToolsExtension } = await import("./pi-ssh-tools.ts");
         const { api, tools } = createExtensionApi();
 
         sshToolsExtension(api as never);

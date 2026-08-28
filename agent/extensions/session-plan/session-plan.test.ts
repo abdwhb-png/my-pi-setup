@@ -72,7 +72,7 @@ describe("session_plan extension", () => {
 
         const planDirs = readdirSync(join(cwd, ".pi", "session-plans"));
         expect(planDirs.length).toBe(1);
-        expect(planDirs[0]).toMatch(/^\d{4}-\d{2}-\d{2}-my-plan$/);
+        expect(planDirs[0]).toBe("my-plan");
 
         const planPath = join(cwd, ".pi", "session-plans", planDirs[0]);
         expect(existsSync(join(planPath, "manifest.json"))).toBe(true);
@@ -225,7 +225,7 @@ describe("session_plan extension", () => {
 
         const planDirs = readdirSync(join(cwd, ".pi", "session-plans"));
         expect(planDirs.length).toBe(1);
-        expect(planDirs[0]).toMatch(/^\d{4}-\d{2}-\d{2}-my-heading$/);
+        expect(planDirs[0]).toBe("my-heading");
     });
 
     it("save without topic and without heading falls back to plan-{sessionId}", async () => {
@@ -241,7 +241,7 @@ describe("session_plan extension", () => {
 
         const planDirs = readdirSync(join(cwd, ".pi", "session-plans"));
         expect(planDirs.length).toBe(1);
-        expect(planDirs[0]).toMatch(/^\d{4}-\d{2}-\d{2}-plan-abc12345$/);
+        expect(planDirs[0]).toBe("plan-abc12345");
     });
 
     it("read without topic returns error", async () => {

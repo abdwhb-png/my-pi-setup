@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { savePlan, readPlan, clearPlan, PLAN_ROOT } from './plan-store';
@@ -22,7 +30,7 @@ describe('plan-store', () => {
 
         const dirs = readdirSync(join(cwd, PLAN_ROOT));
         expect(dirs.length).toBe(1);
-        expect(dirs[0]).toMatch(/^\d{4}-\d{2}-\d{2}-my-topic$/);
+        expect(dirs[0]).toBe('my-topic');
 
         const planPath = join(cwd, PLAN_ROOT, dirs[0]);
         expect(existsSync(join(planPath, 'v001.md'))).toBe(true);
@@ -85,6 +93,50 @@ describe('plan-store', () => {
         cleanup();
     });
 
+    it('appends N+1 from a different session to an existing dated plan', () => {
+        const cwd = mkdtempSync(join(tmpdir(), 'ps-test-'));
+        temporaryDirectories.push(cwd);
+        const legacyRoot = join(PLAN_ROOT, '2026-01-01-shared-plan');
+        const legacyDir = join(cwd, legacyRoot);
+        mkdirSync(legacyDir, { recursive: true });
+        writeFileSync(join(legacyDir, 'v001.md'), '# Shared plan\n\nv1.\n');
+        writeFileSync(
+            join(legacyDir, 'manifest.json'),
+            JSON.stringify({
+                version: 1,
+                topic: 'shared plan',
+                root: legacyRoot,
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-01T00:00:00.000Z',
+                latestVersion: 1,
+                versions: [
+                    {
+                        version: 1,
+                        path: `${legacyRoot}/v001.md`,
+                        createdAt: '2026-01-01T00:00:00.000Z',
+                        bytes: 18,
+                        sessionId: 'session-one',
+                    },
+                ],
+            }),
+        );
+
+        const result = savePlan(
+            cwd,
+            'shared plan',
+            '# Shared plan\n\nv2.',
+            'session-two',
+        );
+
+        expect(result.version).toBe(2);
+        expect(result.path).toBe(join(legacyDir, 'v002.md'));
+        const manifest = JSON.parse(
+            readFileSync(join(legacyDir, 'manifest.json'), 'utf8'),
+        );
+        expect(manifest.versions[1].sessionId).toBe('session-two');
+        cleanup();
+    });
+
     it('savePlan without topic uses session ID fallback', () => {
         const cwd = mkdtempSync(join(tmpdir(), 'ps-test-'));
         temporaryDirectories.push(cwd);
@@ -93,7 +145,7 @@ describe('plan-store', () => {
         expect(result.version).toBe(1);
 
         const dirs = readdirSync(join(cwd, PLAN_ROOT));
-        expect(dirs[0]).toMatch(/^\d{4}-\d{2}-\d{2}-plan-abc12345$/);
+        expect(dirs[0]).toBe('plan-abc12345');
         cleanup();
     });
 });

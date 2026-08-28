@@ -21,6 +21,7 @@ export type PlanVersionEntry = {
     path: string;
     createdAt: string;
     bytes: number;
+    sessionId?: string;
 };
 
 export type PlanManifest = {
@@ -60,9 +61,7 @@ export function extractFirstHeading(content: string): string | undefined {
 }
 
 export function resolvePlanDir(cwd: string, topic: string): string {
-    const date = new Date().toISOString().slice(0, 10);
-    const slug = slugify(topic);
-    return join(cwd, PLAN_ROOT, `${date}-${slug}`);
+    return join(cwd, PLAN_ROOT, slugify(topic));
 }
 
 export function resolvePlanDirForDate(
@@ -96,6 +95,43 @@ function versionFileName(version: number): string {
     return `v${String(version).padStart(3, "0")}.md`;
 }
 
+type PlanRecord = {
+    planDir: string;
+    manifestPath: string;
+    manifest: PlanManifest;
+};
+
+function listPlanRecords(cwd: string, topic: string): PlanRecord[] {
+    const plansRoot = join(cwd, PLAN_ROOT);
+    if (!existsSync(plansRoot)) return [];
+
+    const stablePlanDir = resolvePlanDir(cwd, topic);
+    const records: PlanRecord[] = [];
+    for (const entry of readdirSync(plansRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name === MIGRATED_MARKER) continue;
+        const planDir = join(plansRoot, entry.name);
+        const manifestPath = join(planDir, "manifest.json");
+        const manifest = readManifestSafe(manifestPath);
+        if (manifest?.topic !== topic) continue;
+        records.push({ planDir, manifestPath, manifest });
+    }
+
+    return records.toSorted((left, right) => {
+        const stableOrder =
+            Number(right.planDir === stablePlanDir) -
+            Number(left.planDir === stablePlanDir);
+        if (stableOrder !== 0) return stableOrder;
+        const updatedOrder = right.manifest.updatedAt.localeCompare(
+            left.manifest.updatedAt,
+        );
+        return updatedOrder || left.planDir.localeCompare(right.planDir);
+    });
+}
+
+function findPlanRecord(cwd: string, topic: string): PlanRecord | undefined {
+    return listPlanRecords(cwd, topic)[0];
+}
+
 // ── Core operations ──────────────────────────────────────────────────────────
 
 export function savePlan(
@@ -104,32 +140,16 @@ export function savePlan(
     content: string,
     sessionId?: string,
 ): { path: string; manifestPath: string; version: number; bytes: number } {
-    let planDir = resolvePlanDir(cwd, topic);
-    let manifestPath = join(planDir, "manifest.json");
-
-    // Collision handling: if dir exists but manifest belongs to a different directory, append sessionId
-    if (existsSync(manifestPath) && sessionId) {
-        const existing = readManifestSafe(manifestPath);
-        if (existing && existing.versions.length > 0) {
-            // firstPath is like '.pi/session-plans/2026-08-21-slug/v001.md'
-            // Extract the plan directory name (index 2 after '.pi/session-plans/')
-            const firstDirName = existing.versions[0].path.split("/")[2];
-            const expectedDirName = planDir.split("/").pop()!;
-            if (firstDirName !== expectedDirName) {
-                const slug = slugify(topic);
-                const date = new Date().toISOString().slice(0, 10);
-                const disambiguatedSlug = `${slug}-${slugify(sessionId)}`;
-                planDir = join(cwd, PLAN_ROOT, `${date}-${disambiguatedSlug}`);
-                manifestPath = join(planDir, "manifest.json");
-            }
-        }
-    }
+    const existingRecord = findPlanRecord(cwd, topic);
+    const planDir = existingRecord?.planDir ?? resolvePlanDir(cwd, topic);
+    const manifestPath =
+        existingRecord?.manifestPath ?? join(planDir, "manifest.json");
 
     mkdirSync(planDir, { recursive: true });
 
     const now = new Date().toISOString();
     const normalizedContent = `${content.trimEnd()}\n`;
-    const existingManifest = readManifestSafe(manifestPath);
+    const existingManifest = existingRecord?.manifest;
     const dirName = planDir.split("/").pop()!;
     let manifest: PlanManifest = existingManifest ?? {
         version: 1,
@@ -159,6 +179,7 @@ export function savePlan(
                 path: relativePath,
                 createdAt: now,
                 bytes: Buffer.byteLength(normalizedContent, "utf8"),
+                ...(sessionId ? { sessionId } : {}),
             },
         ],
     };
@@ -178,25 +199,9 @@ export function readPlan(
     topic: string,
     version?: number,
 ): { content: string; version: number } | undefined {
-    const slug = slugify(topic);
-    const plansRoot = join(cwd, PLAN_ROOT);
-
-    if (!existsSync(plansRoot)) return undefined;
-
-    // Find the plan directory matching this topic slug
-    const dirs = readdirSync(plansRoot);
-    const matchingDir = dirs.find((d) => {
-        if (d === MIGRATED_MARKER) return false;
-        // Match date-slug or date-slug-disambiguation patterns
-        const afterDate = d.replace(/^\d{4}-\d{2}-\d{2}-/, "");
-        return afterDate === slug || afterDate.startsWith(`${slug}-`);
-    });
-
-    if (!matchingDir) return undefined;
-
-    const manifestPath = join(plansRoot, matchingDir, "manifest.json");
-    const manifest = readManifestSafe(manifestPath);
-    if (!manifest || manifest.versions.length === 0) return undefined;
+    const record = findPlanRecord(cwd, topic);
+    if (!record || record.manifest.versions.length === 0) return undefined;
+    const { manifest } = record;
 
     const targetEntry =
         version != null
@@ -206,8 +211,7 @@ export function readPlan(
     if (!targetEntry) return undefined;
 
     const versionPath = join(
-        plansRoot,
-        matchingDir,
+        record.planDir,
         versionFileName(targetEntry.version),
     );
 
@@ -220,44 +224,16 @@ export function readPlan(
 }
 
 export function clearPlan(cwd: string, topic: string): boolean {
-    const slug = slugify(topic);
-    const plansRoot = join(cwd, PLAN_ROOT);
-
-    if (!existsSync(plansRoot)) return false;
-
-    const dirs = readdirSync(plansRoot);
-    const matchingDir = dirs.find((d) => {
-        if (d === MIGRATED_MARKER) return false;
-        const afterDate = d.replace(/^\d{4}-\d{2}-\d{2}-/, "");
-        return afterDate === slug || afterDate.startsWith(`${slug}-`);
-    });
-
-    if (!matchingDir) return false;
-
-    const planDirPath = join(plansRoot, matchingDir);
-    rmSync(planDirPath, { recursive: true, force: true });
-    return true;
+    const records = listPlanRecords(cwd, topic);
+    for (const record of records) {
+        rmSync(record.planDir, { recursive: true, force: true });
+    }
+    return records.length > 0;
 }
 
 export function listVersions(
     cwd: string,
     topic: string,
 ): PlanVersionEntry[] | undefined {
-    const slug = slugify(topic);
-    const plansRoot = join(cwd, PLAN_ROOT);
-
-    if (!existsSync(plansRoot)) return undefined;
-
-    const dirs = readdirSync(plansRoot);
-    const matchingDir = dirs.find((d) => {
-        if (d === MIGRATED_MARKER) return false;
-        const afterDate = d.replace(/^\d{4}-\d{2}-\d{2}-/, "");
-        return afterDate === slug || afterDate.startsWith(`${slug}-`);
-    });
-
-    if (!matchingDir) return undefined;
-
-    const manifestPath = join(plansRoot, matchingDir, "manifest.json");
-    const manifest = readManifestSafe(manifestPath);
-    return manifest?.versions;
+    return findPlanRecord(cwd, topic)?.manifest.versions;
 }
