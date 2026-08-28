@@ -4,15 +4,24 @@ import type {
     ToolCallEvent,
     ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { matchesExtension, matchesTool, type YoloConfig } from "./config.ts";
+import { matchesExtension, matchesTool } from "./config.ts";
+import {
+    getMutableRuntimeState,
+    recomputeEffectiveState,
+    type EmitToolCall,
+} from "./runtime-state.ts";
+
+export {
+    disableForInvalidConfig,
+    getStatus,
+    isDangerousEnabled,
+    setDangerousRuntimeState,
+    setSessionOverride,
+    startDangerousSession,
+} from "./runtime-state.ts";
 
 type ExtensionRunner = InstanceType<typeof Pi.ExtensionRunner>;
 type ExtensionRunnerConstructor = typeof Pi.ExtensionRunner;
-
-type EmitToolCall = (
-    this: ExtensionRunner,
-    event: ToolCallEvent,
-) => Promise<ToolCallEventResult | undefined>;
 
 type ToolCallHandler = (
     event: ToolCallEvent,
@@ -23,45 +32,6 @@ type RuntimeExtension = {
     path: string;
     handlers: ToolCallHandler[];
 };
-
-type DangerousRuntimeState = {
-    installed: boolean;
-    compatible: boolean;
-    configValid: boolean;
-    incompatibilityReported: boolean;
-    original?: EmitToolCall;
-    enabled: boolean;
-    override: boolean | undefined;
-    config: YoloConfig;
-};
-
-const STATE_KEY = Symbol.for("pi-dangerous-mode.state");
-
-function defaultState(): DangerousRuntimeState {
-    return {
-        installed: false,
-        compatible: true,
-        configValid: true,
-        incompatibilityReported: false,
-        enabled: false,
-        override: undefined,
-        config: { protectedTools: [], protectedExtensions: [] },
-    };
-}
-
-function getState(): DangerousRuntimeState {
-    const globals = globalThis as Record<symbol, unknown>;
-    const existing = globals[STATE_KEY];
-    if (isState(existing)) return existing;
-
-    const state = defaultState();
-    globals[STATE_KEY] = state;
-    return state;
-}
-
-function isState(value: unknown): value is DangerousRuntimeState {
-    return typeof value === "object" && value !== null && "installed" in value;
-}
 
 function getRuntimeExtensions(
     runner: ExtensionRunner,
@@ -113,9 +83,9 @@ function isExtensionRunnerConstructor(
 }
 
 function reportIncompatibility(runner: ExtensionRunner, reason: string): void {
-    const state = getState();
-    state.enabled = false;
+    const state = getMutableRuntimeState();
     state.compatible = false;
+    recomputeEffectiveState(state);
     if (state.incompatibilityReported) return;
 
     state.incompatibilityReported = true;
@@ -126,82 +96,15 @@ function reportIncompatibility(runner: ExtensionRunner, reason: string): void {
     });
 }
 
-export function setDangerousRuntimeState(input: {
-    enabled: boolean;
-    config: YoloConfig;
-}): void {
-    const state = getState();
-    state.configValid = true;
-    state.enabled = input.enabled && state.compatible;
-    state.config = {
-        protectedTools: [...input.config.protectedTools],
-        protectedExtensions: [...input.config.protectedExtensions],
-    };
-}
-
-export function isDangerousEnabled(): boolean {
-    return getState().enabled;
-}
-
-export function startDangerousSession(input: {
-    isReload: boolean;
-    flagEnabled: boolean;
-    config: YoloConfig;
-}): void {
-    const state = getState();
-    if (!input.isReload) state.override = undefined;
-    state.config = {
-        protectedTools: [...input.config.protectedTools],
-        protectedExtensions: [...input.config.protectedExtensions],
-    };
-    state.configValid = true;
-    state.enabled = state.compatible && (state.override ?? input.flagEnabled);
-}
-
-export function disableForInvalidConfig(): void {
-    const state = getState();
-    state.configValid = false;
-    state.enabled = false;
-    state.config = {
-        protectedTools: [],
-        protectedExtensions: [],
-    };
-}
-
-export function setSessionOverride(enabled: boolean): boolean {
-    const state = getState();
-    if (enabled && (!state.compatible || !state.configValid)) return false;
-
-    state.override = enabled;
-    state.enabled = state.compatible && state.configValid && enabled;
-    return true;
-}
-
-export function getStatus(): {
-    enabled: boolean;
-    compatible: boolean;
-    config: YoloConfig;
-} {
-    const state = getState();
-    return {
-        enabled: state.enabled,
-        compatible: state.compatible,
-        config: {
-            protectedTools: [...state.config.protectedTools],
-            protectedExtensions: [...state.config.protectedExtensions],
-        },
-    };
-}
-
 export function installRunnerPatch(
     runnerConstructor: unknown = Pi.ExtensionRunner,
 ): boolean {
-    const state = getState();
+    const state = getMutableRuntimeState();
     if (state.installed) return state.compatible;
 
     if (!isExtensionRunnerConstructor(runnerConstructor)) {
         state.compatible = false;
-        state.enabled = false;
+        recomputeEffectiveState(state);
         return false;
     }
 
@@ -211,7 +114,7 @@ export function installRunnerPatch(
     )?.value;
     if (!isEmitToolCall(original)) {
         state.compatible = false;
-        state.enabled = false;
+        recomputeEffectiveState(state);
         return false;
     }
 
@@ -221,7 +124,7 @@ export function installRunnerPatch(
         this: ExtensionRunner,
         event: ToolCallEvent,
     ): Promise<ToolCallEventResult | undefined> {
-        const current = getState();
+        const current = getMutableRuntimeState();
         const originalEmit = current.original;
         if (!originalEmit) {
             return undefined;

@@ -6,8 +6,14 @@ import {
     type ToolCallEvent,
 } from '@earendil-works/pi-coding-agent';
 
-const { installRunnerPatch, isDangerousEnabled, setDangerousRuntimeState } =
-    await import('./runner-patch.ts');
+const {
+    getStatus,
+    installRunnerPatch,
+    isDangerousEnabled,
+    setDangerousRuntimeState,
+    setSessionOverride,
+    startDangerousSession,
+} = await import('./runner-patch.ts');
 
 function createFixtureExtension(
     path: string,
@@ -156,6 +162,43 @@ describe('pi-dangerous-mode runner patch', () => {
         expect(calls).toEqual(['observer', 'blocker']);
     });
 
+    it('preserves an explicit off override through reload', () => {
+        startDangerousSession({
+            isReload: false,
+            flagEnabled: true,
+            config: { protectedTools: ['bash'], protectedExtensions: [] },
+        });
+        expect(setSessionOverride(false)).toBe(true);
+        expect(isDangerousEnabled()).toBe(false);
+
+        startDangerousSession({
+            isReload: true,
+            flagEnabled: true,
+            config: { protectedTools: ['read'], protectedExtensions: [] },
+        });
+
+        expect(isDangerousEnabled()).toBe(false);
+        expect(getStatus().config.protectedTools).toEqual(['read']);
+    });
+
+    it('restores flag state for a new session after an explicit off override', () => {
+        startDangerousSession({
+            isReload: false,
+            flagEnabled: true,
+            config: { protectedTools: [], protectedExtensions: [] },
+        });
+        expect(setSessionOverride(false)).toBe(true);
+        expect(isDangerousEnabled()).toBe(false);
+
+        startDangerousSession({
+            isReload: false,
+            flagEnabled: true,
+            config: { protectedTools: [], protectedExtensions: [] },
+        });
+
+        expect(isDangerousEnabled()).toBe(true);
+    });
+
     it('fails closed and reports once when runner internals are incompatible', async () => {
         const invalid = createFixtureExtension('broken.ts', async () => undefined);
         invalid.handlers.set('tool_call', [{} as never]);
@@ -169,10 +212,13 @@ describe('pi-dangerous-mode runner patch', () => {
             config: { protectedTools: [], protectedExtensions: [] },
         });
 
-        const rejection = await runner.emitToolCall(bashCall()).then(
-            () => new Error('Expected incompatible runner to reject.'),
-            (error: unknown) => error,
-        );
+        let rejection: unknown;
+        try {
+            await runner.emitToolCall(bashCall());
+            rejection = new Error('Expected incompatible runner to reject.');
+        } catch (error) {
+            rejection = error;
+        }
 
         expect(rejection).toBeInstanceOf(Error);
         expect(isDangerousEnabled()).toBe(false);
