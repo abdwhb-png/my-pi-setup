@@ -50,6 +50,7 @@ docs/brainstorms
 context.md
 docs/resources/about-caveman/
 save-tokens-telemetry/
+/agent/safe-bash-telemetry/
 
 .bash_profile
 .bashrc

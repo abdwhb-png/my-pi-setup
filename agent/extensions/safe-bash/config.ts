@@ -4,15 +4,24 @@
  * Reads the `safeBash` key from settings.json (global + project) via the
  * shared config-loader. Project settings override global.
  *
- * Schema (settings.json):
- *   "safeBash": { "mode": "replace" | "coexist" }
- *
- * Unknown / invalid values fall back to the default ("coexist").
+ * Schema is documented in `safe-bash/README.md`. Unknown or invalid values
+ * fall back to defaults while valid global/project fields merge per layer.
  */
 import type { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { loadExtensionConfig } from "../_shared/config-loader.ts";
+import { SAFE_BASH_AUDIT_BOUNDS } from "./telemetry/types.ts";
 
 export type SafeBashMode = "coexist" | "replace";
+
+export interface SafeBashTelemetryConfig {
+    enabled: boolean;
+    directory: string;
+    retentionDays: number;
+    captureCommand: boolean;
+    maxCommandLength: number;
+    auditDays: number;
+    auditLimit: number;
+}
 
 export interface SafeBashConfig {
     mode: SafeBashMode;
@@ -27,8 +36,8 @@ export interface SafeBashConfig {
      * Map of `{ "<groupId>": true }` — only keys with value `true` are honored.
      * Valid ids come from `DANGER_GROUPS` in `_shared/bash/guard.ts`
      * (e.g. `sudo`, `rm`, `mkfs`, `dd`, `chmod`, `chown`, `remote-shell`,
-     * `reverse-shell`, `exec-injection`, `shutdown`, `init`, `kill`,
-     * `cryptominer`, `forkbomb`, `raw-disk-write`). Unknown ids are ignored.
+     * `reverse-shell`, `file-delete-api`, `exec-injection`, `shutdown`, `init`,
+     * `kill`, `cryptominer`, `forkbomb`, `raw-disk-write`). Unknown ids are ignored.
      *
      * Example: `{ "sudo": true }` lets `sudo ...` through but leaves every
      * other danger group (rm, mkfs, ...) enforced.
@@ -36,13 +45,65 @@ export interface SafeBashConfig {
      * Empty = all groups enforced (backward compatible).
      */
     allowDangerous: Record<string, boolean>;
+    /** Local, redacted command-attempt telemetry used by `/safe-bash-audit`. */
+    telemetry: SafeBashTelemetryConfig;
 }
 
 export const DEFAULT_SAFE_BASH_CONFIG: SafeBashConfig = {
     mode: "coexist",
     allowedShellCommands: [],
     allowDangerous: {},
+    telemetry: {
+        enabled: true,
+        directory: "~/.pi/agent/safe-bash-telemetry",
+        retentionDays: 30,
+        captureCommand: true,
+        maxCommandLength: 10_000,
+        auditDays: 30,
+        auditLimit: 100,
+    },
 };
+
+function isPositiveInteger(value: unknown): value is number {
+    return (
+        typeof value === "number" &&
+        Number.isFinite(value) &&
+        Number.isInteger(value) &&
+        value > 0
+    );
+}
+
+function normalizeTelemetry(raw: unknown): Partial<SafeBashTelemetryConfig> {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        return {};
+    }
+    const obj = raw as Record<string, unknown>;
+    const result: Partial<SafeBashTelemetryConfig> = {};
+
+    if (typeof obj.enabled === "boolean") result.enabled = obj.enabled;
+    if (typeof obj.directory === "string" && obj.directory.trim()) {
+        result.directory = obj.directory;
+    }
+    if (typeof obj.captureCommand === "boolean") {
+        result.captureCommand = obj.captureCommand;
+    }
+    for (const key of ["retentionDays", "maxCommandLength"] as const) {
+        if (isPositiveInteger(obj[key])) result[key] = obj[key];
+    }
+    if (
+        isPositiveInteger(obj.auditDays) &&
+        obj.auditDays <= SAFE_BASH_AUDIT_BOUNDS.days
+    ) {
+        result.auditDays = obj.auditDays;
+    }
+    if (
+        isPositiveInteger(obj.auditLimit) &&
+        obj.auditLimit <= SAFE_BASH_AUDIT_BOUNDS.limit
+    ) {
+        result.auditLimit = obj.auditLimit;
+    }
+    return result;
+}
 
 /**
  * Normalize raw JSON → Partial<SafeBashConfig>.
@@ -69,6 +130,10 @@ export function normalizeSafeBashConfig(raw: unknown): Partial<SafeBashConfig> {
             result.allowedShellCommands = filtered;
         }
     }
+
+    const telemetry = normalizeTelemetry(obj.telemetry);
+    if (Object.keys(telemetry).length > 0)
+        result.telemetry = telemetry as SafeBashTelemetryConfig;
 
     const allowDangerousRaw = obj.allowDangerous;
     if (
@@ -106,6 +171,14 @@ export function loadSafeBashConfig(
     return loadExtensionConfig<SafeBashConfig>(cwd, {
         defaults: DEFAULT_SAFE_BASH_CONFIG,
         normalize: normalizeSafeBashConfig,
+        merge: (base, overlay) => ({
+            ...base,
+            ...overlay,
+            telemetry: {
+                ...base.telemetry,
+                ...overlay.telemetry,
+            },
+        }),
         sources: [{ settingsKey: "safeBash" }],
         agentDir,
         _settingsManager,

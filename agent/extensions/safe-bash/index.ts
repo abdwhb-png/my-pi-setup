@@ -18,7 +18,12 @@
  *   - Mode changes via `/safe-bash` are runtime-only and do not persist to
  *     settings.json; they reset to the configured value on next session start.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
+
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { shouldEnforceNativeTools } from "../_shared/audit-mode/audit-tool-routing";
 import {
@@ -27,14 +32,27 @@ import {
     killActiveBashProcesses,
 } from "../_shared/bash/exec";
 import {
-    isDangerous,
+    inspectDangerous,
     redirectShellCommandWithPolicy,
 } from "../_shared/bash/guard";
 import { createBashPrefixRenderer } from "../_shared/bash/prefix-renderer";
 import { applyFirstRewrite, loadBashRewrites } from "../_shared/bash/rewrites";
 import { appendCompressionFooter } from "../_shared/compression-render";
 import { applyMode, restoreBash, shouldBlockBashCall } from "./apply-mode.ts";
-import { loadSafeBashConfig, type SafeBashMode } from "./config.ts";
+import { registerSafeBashAuditCommand } from "./audit-command.ts";
+import {
+    loadSafeBashConfig,
+    type SafeBashConfig,
+    type SafeBashMode,
+} from "./config.ts";
+import {
+    createSafeBashTelemetryRecorder,
+    type SafeBashTelemetryRecorder,
+} from "./telemetry/recorder.ts";
+import {
+    purgeExpiredTelemetry,
+    resolveTelemetryRoot,
+} from "./telemetry/storage.ts";
 
 export default function (pi: ExtensionAPI) {
     // Use createBashToolDefinition to get renderCall/renderResult
@@ -57,10 +75,15 @@ export default function (pi: ExtensionAPI) {
      */
     let currentAllowedDangerousGroups: ReadonlySet<string> = new Set();
     let currentRewriteRules = loadBashRewrites(process.cwd()).rules;
+    let currentConfig: SafeBashConfig | null = null;
+    let telemetryRecorder: SafeBashTelemetryRecorder | null = null;
+    let telemetrySequence = 0;
+    let auditRecommendationTurnActive = false;
 
     /** Reload config from settings.json and apply the mode to the active tools. */
     function reloadConfig(cwd: string): SafeBashMode {
         const config = loadSafeBashConfig(cwd);
+        currentConfig = config;
         currentAllowedShellCommands = config.allowedShellCommands;
         currentAllowedDangerousGroups = new Set(
             Object.entries(config.allowDangerous)
@@ -69,6 +92,34 @@ export default function (pi: ExtensionAPI) {
         );
         currentRewriteRules = loadBashRewrites(cwd).rules;
         return setMode(config.mode);
+    }
+
+    async function initializeTelemetry(ctx: ExtensionContext): Promise<void> {
+        await telemetryRecorder?.flush();
+        const config = currentConfig ?? loadSafeBashConfig(ctx.cwd);
+        currentConfig = config;
+        telemetryRecorder = createSafeBashTelemetryRecorder({
+            config: config.telemetry,
+            sessionId: ctx.sessionManager.getSessionId() ?? randomUUID(),
+            cwd: ctx.cwd,
+            sequenceGenerator: () => ++telemetrySequence,
+            onError: (message) => {
+                if (ctx.hasUI) ctx.ui.notify(message, "warning");
+            },
+        });
+        try {
+            await purgeExpiredTelemetry(
+                resolveTelemetryRoot(config.telemetry.directory),
+                config.telemetry.retentionDays,
+            );
+        } catch {
+            if (ctx.hasUI) {
+                ctx.ui.notify(
+                    "safe-bash telemetry retention cleanup failed",
+                    "warning",
+                );
+            }
+        }
     }
 
     /** Transition to a new mode and mutate the active tool list accordingly. */
@@ -117,12 +168,18 @@ export default function (pi: ExtensionAPI) {
             return component;
         },
         async execute(toolCallId, params, signal, onUpdate, ctx) {
-            const danger = isDangerous(
+            const danger = inspectDangerous(
                 params.command,
                 currentAllowedDangerousGroups,
             );
             if (danger) {
-                throw new Error(danger);
+                await telemetryRecorder?.record({
+                    toolCallId,
+                    command: params.command,
+                    match: danger,
+                    outcome: "blocked",
+                });
+                throw new Error(danger.message);
             }
             const redirect = redirectShellCommandWithPolicy(
                 params.command,
@@ -130,6 +187,15 @@ export default function (pi: ExtensionAPI) {
                 currentAllowedShellCommands,
             );
             if (redirect) {
+                await telemetryRecorder?.record({
+                    toolCallId,
+                    command: params.command,
+                    match: null,
+                    decision: "blocked",
+                    outcome: "blocked",
+                    groupId: "native-tool-redirect",
+                    reason: redirect,
+                });
                 throw new Error(redirect);
             }
             const executionDefinition = createBashToolDefinition(ctx.cwd, {
@@ -143,26 +209,54 @@ export default function (pi: ExtensionAPI) {
                         ),
                 }),
             });
-            return executionDefinition.execute(
-                toolCallId,
-                { command: params.command, timeout: params.timeout },
-                signal,
-                onUpdate,
-                ctx,
-            );
+            try {
+                const result = await executionDefinition.execute(
+                    toolCallId,
+                    { command: params.command, timeout: params.timeout },
+                    signal,
+                    onUpdate,
+                    ctx,
+                );
+                await telemetryRecorder?.record({
+                    toolCallId,
+                    command: params.command,
+                    match: null,
+                    outcome: "succeeded",
+                });
+                return result;
+            } catch (error) {
+                await telemetryRecorder?.record({
+                    toolCallId,
+                    command: params.command,
+                    match: null,
+                    outcome: signal?.aborted ? "aborted" : "failed",
+                    error:
+                        error instanceof Error ? error.message : String(error),
+                });
+                throw error;
+            }
         },
     });
 
     // Apply safe-bash mode from settings.json on every session start / reload.
     // Runs after the tool list is built so applyMode sees the final active set.
     pi.on("session_start", async (_event, ctx) => {
+        telemetrySequence = 0;
+        auditRecommendationTurnActive = false;
         reloadConfig(ctx.cwd);
+        await initializeTelemetry(ctx);
     });
 
     // Hard guarantee: even if the LLM references `bash` from earlier history,
     // block execution in replace mode. setActiveTools only filters the prompt.
     pi.on("tool_call", async (event) => {
-        if (!shouldBlockBashCall(event.toolName, currentMode)) return;
+        if (auditRecommendationTurnActive) {
+            return {
+                block: true as const,
+                reason: "safe-bash audit is recommendation-only; tool execution is disabled for this analysis turn.",
+            };
+        }
+        if (!shouldBlockBashCall(event.toolName, currentMode)) return undefined;
         return {
             block: true as const,
             reason: "bash is disabled in safe-bash `replace` mode — use the `safe_bash` tool instead.",
@@ -176,8 +270,21 @@ export default function (pi: ExtensionAPI) {
         if (currentMode === "replace") applyMode(pi, "replace");
     });
 
-    pi.on("session_shutdown", () => {
+    pi.on("agent_end", () => {
+        auditRecommendationTurnActive = false;
+    });
+
+    pi.on("session_shutdown", async () => {
+        auditRecommendationTurnActive = false;
         killActiveBashProcesses();
+        await telemetryRecorder?.flush();
+    });
+
+    registerSafeBashAuditCommand(pi, {
+        getConfig: () => currentConfig ?? loadSafeBashConfig(process.cwd()),
+        beginAudit: () => {
+            auditRecommendationTurnActive = true;
+        },
     });
 
     pi.registerCommand("safe-bash", {
@@ -209,6 +316,7 @@ export default function (pi: ExtensionAPI) {
 
             if (arg === "reload" || arg === "refresh") {
                 const mode = reloadConfig(ctx.cwd);
+                await initializeTelemetry(ctx);
                 ctx.ui.notify(
                     `safe-bash config reloaded (mode: ${mode})`,
                     "info",

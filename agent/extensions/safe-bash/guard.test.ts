@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import {
+    inspectDangerous,
     isDangerous,
     redirectShellCommand,
     redirectShellCommandWithPolicy,
@@ -48,6 +49,20 @@ describe('isDangerous - safe commands', () => {
     it('should allow python/node without destructive patterns', () => {
         expect(isDangerous('python3 script.py')).toBeNull();
         expect(isDangerous('node index.js')).toBeNull();
+        expect(
+            isDangerous(
+                `python3 -c "from pathlib import Path; print(Path('README.md').read_text())"`,
+            ),
+        ).toBeNull();
+        expect(
+            isDangerous(
+                `node -e "console.log(require('node:fs').readFileSync('README.md', 'utf8'))"`,
+            ),
+        ).toBeNull();
+        expect(isDangerous(`perl -e "print 'ok'"`)).toBeNull();
+        expect(isDangerous(`ruby -e "puts File.read('README.md')"`)).toBeNull();
+        expect(isDangerous(`python3 -c "print('os.remove(')"`)).toBeNull();
+        expect(isDangerous(`ruby -e "puts 'File.delete('"`)).toBeNull();
     });
 
     it('should allow killall with specific process', () => {
@@ -174,6 +189,31 @@ describe('isDangerous - bypass attempts', () => {
         expect(
             isDangerous('python3 -c "import os; os.system(\'rm -rf /\')"'),
         ).not.toBeNull();
+    });
+
+    it('should block direct Python filesystem deletion APIs', () => {
+        const command = `python3 -c "import shutil; from pathlib import Path;
+shutil.rmtree(Path('plugins/cliproxy-model-transport-policy'));
+Path('docs/adr/0002-post-auth-model-transport-policy-plugin.md').unlink()"`;
+
+        expect(isDangerous(command)).not.toBeNull();
+    });
+
+    it('should block direct filesystem deletion APIs across interpreters', () => {
+        const commands = [
+            `python3 -c "import os; os.remove('artifact.txt')"`,
+            `python3 -c "from pathlib import Path; target=Path('artifact.txt'); target.unlink()"`,
+            `node -e "require('node:fs').rmSync('dist', { recursive: true })"`,
+            `node --eval="require('node:fs').rmSync('dist', { recursive: true })"`,
+            `perl -e "unlink 'artifact.txt'"`,
+            `ruby -e "FileUtils.rm_rf('dist')"`,
+        ];
+
+        for (const command of commands) {
+            const match = inspectDangerous(command);
+            expect(match?.groupId).toBe('file-delete-api');
+            expect(match?.patternId).toStartWith('file-delete-api:');
+        }
     });
 
     it('should block node -e with exec', () => {

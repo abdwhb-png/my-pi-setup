@@ -231,6 +231,69 @@ describe('loadSafeBashConfig', () => {
         expect(config.allowDangerous).toEqual({});
     });
 
+    it('defaults telemetry to a bounded local archive', () => {
+        const sm = SettingsManager.inMemory({} as any);
+        const config = loadSafeBashConfig(cwd, undefined, sm);
+        expect(config.telemetry).toEqual({
+            enabled: true,
+            directory: '~/.pi/agent/safe-bash-telemetry',
+            retentionDays: 30,
+            captureCommand: true,
+            maxCommandLength: 10_000,
+            auditDays: 30,
+            auditLimit: 100,
+        });
+    });
+
+    it('merges partial telemetry settings over telemetry defaults', () => {
+        const sm = SettingsManager.inMemory({
+            safeBash: { telemetry: { auditDays: 7 } },
+        } as any);
+        const config = loadSafeBashConfig(cwd, undefined, sm);
+
+        expect(config.telemetry).toEqual({
+            ...DEFAULT_SAFE_BASH_CONFIG.telemetry,
+            auditDays: 7,
+        });
+    });
+
+    it('normalizes valid telemetry overrides and rejects invalid bounds', () => {
+        expect(
+            normalizeSafeBashConfig({
+                telemetry: {
+                    enabled: false,
+                    directory: '/tmp/safe-bash-audit',
+                    retentionDays: 14,
+                    captureCommand: false,
+                    maxCommandLength: 2_000,
+                    auditDays: 7,
+                    auditLimit: 25,
+                },
+            }),
+        ).toEqual({
+            telemetry: {
+                enabled: false,
+                directory: '/tmp/safe-bash-audit',
+                retentionDays: 14,
+                captureCommand: false,
+                maxCommandLength: 2_000,
+                auditDays: 7,
+                auditLimit: 25,
+            },
+        });
+
+        expect(
+            normalizeSafeBashConfig({
+                telemetry: {
+                    retentionDays: 0,
+                    maxCommandLength: -1,
+                    auditDays: 366,
+                    auditLimit: 501,
+                },
+            }),
+        ).toEqual({});
+    });
+
     it('reads allowDangerous from settings', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { allowDangerous: { sudo: true, rm: true } },

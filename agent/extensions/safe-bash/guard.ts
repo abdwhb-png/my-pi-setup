@@ -6,6 +6,7 @@
  * continue to work without changes.
  */
 export {
+    inspectDangerous,
     isDangerous,
     redirectShellCommand,
     redirectShellCommandWithPolicy,

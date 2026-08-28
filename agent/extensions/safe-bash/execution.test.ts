@@ -1,4 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 
 import safeBashExtension from './index';
@@ -92,5 +95,30 @@ describe('safe_bash explicit stdin', () => {
                 context,
             ),
         ).rejects.toThrow();
+    });
+
+    it('blocks direct Python deletion before a disposable sentinel is touched', async () => {
+        const fixture = await mkdtemp(join(tmpdir(), 'safe-bash-sentinel-'));
+        const targetDirectory = join(fixture, 'target');
+        const sentinel = join(fixture, 'sentinel.txt');
+        await mkdir(targetDirectory);
+        await writeFile(sentinel, 'keep');
+
+        try {
+            const command = `python3 -c "import shutil; from pathlib import Path; shutil.rmtree(Path('${targetDirectory}')); Path('${sentinel}').unlink()"`;
+            await expect(
+                registerExtension().execute(
+                    'call-python-delete',
+                    { command },
+                    undefined,
+                    undefined,
+                    context,
+                ),
+            ).rejects.toThrow('file-delete-api');
+            await expect(stat(targetDirectory)).resolves.toBeDefined();
+            await expect(stat(sentinel)).resolves.toBeDefined();
+        } finally {
+            await rm(fixture, { recursive: true, force: true });
+        }
     });
 });
