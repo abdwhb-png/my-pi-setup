@@ -6,6 +6,35 @@ import { join } from 'node:path';
 const { loadConfig, matchesExtension, matchesTool } =
     await import('./config.ts');
 
+const DEFAULT_AUTOPILOT = {
+    maxTurns: 8,
+    maxRetries: 2,
+    maxDurationMs: 600_000,
+    guardedTools: [
+        '*deploy*',
+        '*publish*',
+        '*purchase*',
+        '*payment*',
+        '*delete*',
+        '*destroy*',
+    ],
+    guardedCommands: [
+        '*git push*',
+        '*gh pr create*',
+        '*gh release create*',
+        '*npm publish*',
+        '*bun publish*',
+        '*pnpm publish*',
+        '*docker push*',
+        '*kubectl apply*',
+        '*kubectl delete*',
+        '*helm install*',
+        '*helm upgrade*',
+        '*terraform apply*',
+        '*terraform destroy*',
+    ],
+};
+
 const paths: string[] = [];
 
 afterEach(() => {
@@ -38,6 +67,7 @@ describe('pi-dangerous-mode configuration', () => {
         expect(loadConfig(cwd, agentDir)).toEqual({
             protectedTools: [],
             protectedExtensions: [],
+            autopilot: DEFAULT_AUTOPILOT,
         });
     });
 
@@ -55,6 +85,7 @@ describe('pi-dangerous-mode configuration', () => {
         expect(loadConfig(cwd, agentDir)).toEqual({
             protectedTools: ['mcp:*'],
             protectedExtensions: ['brainstorm-forcer'],
+            autopilot: DEFAULT_AUTOPILOT,
         });
     });
 
@@ -73,7 +104,83 @@ describe('pi-dangerous-mode configuration', () => {
         expect(loadConfig(cwd, agentDir)).toEqual({
             protectedTools: ['bash'],
             protectedExtensions: ['*pi-permission-system*'],
+            autopilot: DEFAULT_AUTOPILOT,
         });
+    });
+
+    it('deep-merges Autopilot fields while replacing declared lists', () => {
+        const agentDir = createDir('pi-dangerous-mode-agent-');
+        const cwd = createDir('pi-dangerous-mode-cwd-');
+        writeJson(join(agentDir, 'pi-dangerous-mode.json'), {
+            autopilot: {
+                maxTurns: 12,
+                guardedTools: ['global-guard-*'],
+                guardedCommands: ['*global command*'],
+            },
+        });
+        writeJson(join(cwd, '.pi', 'pi-dangerous-mode.json'), {
+            autopilot: {
+                maxRetries: 1,
+                guardedTools: ['project-guard-*'],
+            },
+        });
+
+        expect(loadConfig(cwd, agentDir).autopilot).toEqual({
+            maxTurns: 12,
+            maxRetries: 1,
+            maxDurationMs: 600_000,
+            guardedTools: ['project-guard-*'],
+            guardedCommands: ['*global command*'],
+        });
+    });
+
+    it('replaces default guard lists when global config declares them', () => {
+        const agentDir = createDir('pi-dangerous-mode-agent-');
+        const cwd = createDir('pi-dangerous-mode-cwd-');
+        writeJson(join(agentDir, 'pi-dangerous-mode.json'), {
+            autopilot: {
+                guardedTools: ['custom-tool'],
+                guardedCommands: ['*custom command*'],
+            },
+        });
+
+        expect(loadConfig(cwd, agentDir).autopilot).toEqual({
+            ...DEFAULT_AUTOPILOT,
+            guardedTools: ['custom-tool'],
+            guardedCommands: ['*custom command*'],
+        });
+    });
+
+    it('rejects malformed declared Autopilot fields', () => {
+        const invalidValues = [
+            { maxTurns: 0 },
+            { maxRetries: -1 },
+            { maxDurationMs: 1.5 },
+            { guardedTools: ['valid', 42] },
+            { guardedCommands: 'not-a-list' },
+        ];
+
+        for (const autopilot of invalidValues) {
+            const agentDir = createDir('pi-dangerous-mode-agent-');
+            const cwd = createDir('pi-dangerous-mode-cwd-');
+            writeJson(join(agentDir, 'pi-dangerous-mode.json'), { autopilot });
+
+            expect(() => loadConfig(cwd, agentDir)).toThrow(
+                'Invalid configuration',
+            );
+        }
+    });
+
+    it('rejects a non-object declared Autopilot config', () => {
+        const agentDir = createDir('pi-dangerous-mode-agent-');
+        const cwd = createDir('pi-dangerous-mode-cwd-');
+        writeJson(join(agentDir, 'pi-dangerous-mode.json'), {
+            autopilot: [],
+        });
+
+        expect(() => loadConfig(cwd, agentDir)).toThrow(
+            'Invalid configuration',
+        );
     });
 
     it('rejects malformed global JSON', () => {
