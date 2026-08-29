@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createWidget } from "../_shared/fancy-footer.ts";
 import { installAuthorizerLink } from "./authorizer-link.ts";
 import {
     isAutopilotAgentActive,
@@ -22,6 +23,7 @@ import {
     installUiBrokerPatches,
     unregisterUiBrokerGuard,
 } from "./ui-broker.ts";
+import { renderDangerousWidget, WIDGET_ID } from "./widget.ts";
 
 const ACTIONS = ["on", "off", "status"] as const;
 type ModeAction = (typeof ACTIONS)[number];
@@ -62,6 +64,16 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
     const telemetry = createTelemetryRecorder((customType, data) =>
         pi.appendEntry(customType, data),
     );
+    const widget = createWidget(pi, {
+        id: WIDGET_ID,
+        label: "Dangerous Mode",
+        description: "Shows Dangerous/Autopilot effective state.",
+        row: 1,
+        order: 12,
+        align: "right",
+        styled: true,
+        render: (ctx) => renderDangerousWidget(ctx.theme, getRuntimeStatus()),
+    });
     const patchInstalled = installRunnerPatch(undefined, {
         telemetry,
         onPromptBlocked: noteAutopilotPromptBlocked,
@@ -76,7 +88,16 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
     });
     installAuthorizerLink(pi);
     registerAutopilotLoop(pi, { telemetry });
-    pi.on("session_shutdown", () => unregisterUiBrokerGuard());
+    pi.on("session_shutdown", (_event, ctx) => {
+        widget.remove(ctx as never);
+        unregisterUiBrokerGuard();
+    });
+    pi.on("turn_end", async (_event, ctx) => {
+        widget.update(
+            ctx,
+            renderDangerousWidget(ctx.ui.theme, getRuntimeStatus()),
+        );
+    });
     // AgentSession skips runner dispatch when no tool_call handler exists.
     pi.on("tool_call", () => undefined);
 
@@ -121,6 +142,10 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
                 source: "command",
                 enabled,
             });
+            widget.update(
+                ctx,
+                renderDangerousWidget(ctx.ui.theme, getRuntimeStatus()),
+            );
             ctx.ui.notify(
                 `Dangerous mode direct source: ${enabled ? "ON" : "OFF"}; effective=${getRuntimeStatus().dangerous.effective ? "ON" : "OFF"}.`,
                 "info",
@@ -158,6 +183,10 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
                 source: "command",
                 enabled,
             });
+            widget.update(
+                ctx,
+                renderDangerousWidget(ctx.ui.theme, getRuntimeStatus()),
+            );
             ctx.ui.notify(
                 `Autopilot: ${enabled ? "ON" : "OFF"}. Dangerous effective=${getRuntimeStatus().dangerous.effective ? "ON" : "OFF"}.`,
                 "info",
@@ -187,6 +216,10 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
         }
 
         syncAutopilotToolVisibility(pi);
+        widget.update(
+            ctx,
+            renderDangerousWidget(ctx.ui.theme, getRuntimeStatus()),
+        );
         const source = event.reason === "reload" ? "reload" : "flag";
         telemetry({
             event: "mode_change",
