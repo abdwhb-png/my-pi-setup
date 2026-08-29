@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
 import {
     createExtensionRuntime,
     ExtensionRunner,
@@ -14,6 +14,9 @@ const {
     setSessionOverride,
     startDangerousSession,
 } = await import('./runner-patch.ts');
+const { DEFAULT_AUTOPILOT } = await import('./config.ts');
+const { getRuntimeStatus, startRuntimeSession } =
+    await import('./runtime-state.ts');
 
 function createFixtureExtension(
     path: string,
@@ -42,13 +45,35 @@ function createRunner(extensions: Extension[]): ExtensionRunner {
     );
 }
 
-function bashCall(): ToolCallEvent {
+function toolCall(toolName: string, input: Record<string, unknown>): ToolCallEvent {
     return {
         type: 'tool_call',
         toolCallId: 'tool-call-id',
-        toolName: 'bash',
-        input: { command: 'echo ok' },
+        toolName,
+        input,
     };
+}
+
+function bashCall(): ToolCallEvent {
+    return toolCall('bash', { command: 'echo ok' });
+}
+
+function startAutopilot(): void {
+    startRuntimeSession({
+        isReload: false,
+        dangerousFlag: false,
+        autopilotFlag: true,
+        config: {
+            protectedTools: [],
+            protectedExtensions: [],
+            autopilot: {
+                ...DEFAULT_AUTOPILOT,
+                guardedTools: [...DEFAULT_AUTOPILOT.guardedTools],
+                guardedCommands: [...DEFAULT_AUTOPILOT.guardedCommands],
+            },
+        },
+        now: 1_000,
+    });
 }
 
 afterEach(() => {
@@ -160,6 +185,59 @@ describe('pi-dangerous-mode runner patch', () => {
 
         expect(result).toEqual({ block: true, reason: 'blocked' });
         expect(calls).toEqual(['observer', 'blocker']);
+    });
+
+    it('blocks ask_user_question before extension handlers under Autopilot', async () => {
+        const handler = mock(async () => ({ block: false }));
+        const telemetry = mock(() => undefined);
+        const onPromptBlocked = mock(() => undefined);
+        const runner = createRunner([
+            createFixtureExtension('ask-user.ts', handler),
+        ]);
+        installRunnerPatch(undefined, { telemetry, onPromptBlocked });
+        startAutopilot();
+
+        const result = await runner.emitToolCall(
+            toolCall('ask_user_question', { questions: [] }),
+        );
+
+        expect(result).toEqual({
+            block: true,
+            reason: '[AUTOPILOT_PROMPT_BLOCKED] Human question suppressed. Choose the safest path from current context without calling ask_user_question again. If no safe path exists, finish with autopilot_complete outcome=blocked.',
+        });
+        expect(handler).toHaveBeenCalledTimes(0);
+        expect(onPromptBlocked).toHaveBeenCalledTimes(1);
+        expect(telemetry).toHaveBeenCalledWith({
+            event: 'prompt_blocked',
+            kind: 'ask_user_question',
+            agentActive: true,
+        });
+    });
+
+    it('blocks guarded tools before Dangerous bypass and ends Autopilot', async () => {
+        const handler = mock(async () => ({ block: false }));
+        const telemetry = mock(() => undefined);
+        const runner = createRunner([
+            createFixtureExtension('deploy.ts', handler),
+        ]);
+        installRunnerPatch(undefined, { telemetry });
+        startAutopilot();
+
+        const result = await runner.emitToolCall(
+            toolCall('deploy_service', { environment: 'production' }),
+        );
+
+        expect(result).toEqual({
+            block: true,
+            reason: '[AUTOPILOT_GUARD_BLOCKED] Autopilot guard blocked deploy via deploy_service. Finish with autopilot_complete outcome=blocked or choose a safe reversible path.',
+        });
+        expect(handler).toHaveBeenCalledTimes(0);
+        expect(getRuntimeStatus().autopilot.phase).toBe('blocked');
+        expect(telemetry).toHaveBeenCalledWith({
+            event: 'guard_blocked',
+            category: 'deploy',
+            toolName: 'deploy_service',
+        });
     });
 
     it('preserves an explicit off override through reload', () => {
