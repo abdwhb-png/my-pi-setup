@@ -3,7 +3,11 @@ import type {
     ToolCallEvent,
     ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import type { YoloConfig } from "./config.ts";
+import {
+    DEFAULT_AUTOPILOT,
+    type DangerousModeConfig,
+    type YoloConfig,
+} from "./config.ts";
 
 export type EmitToolCall = (
     this: ExtensionRunner,
@@ -22,6 +26,11 @@ export interface AutopilotBudgets {
     maxRetries: number;
     maxDurationMs: number;
 }
+
+export type AutopilotBudgetStopReason =
+    | "turn_budget"
+    | "retry_budget"
+    | "time_budget";
 
 export interface RuntimeStatus {
     compatible: { runner: boolean; uiBroker: boolean };
@@ -44,6 +53,12 @@ export interface RuntimeStatus {
     };
 }
 
+export interface AutopilotBudgetRemaining {
+    turns: number;
+    retries: number;
+    milliseconds: number;
+}
+
 export interface DangerousRuntimeState {
     installed: boolean;
     compatible: boolean;
@@ -60,15 +75,36 @@ export interface DangerousRuntimeState {
     autopilotPhase: AutopilotPhase;
     turnsUsed: number;
     retriesUsed: number;
+    lastTurnHadError: boolean;
     startedAt?: number;
     stopReason?: string;
-    config: YoloConfig;
+    config: DangerousModeConfig;
 }
 
 const STATE_KEY = Symbol.for("pi-dangerous-mode.state");
 type RuntimeStateGlobal = typeof globalThis & {
     [STATE_KEY]?: DangerousRuntimeState;
 };
+
+function cloneAutopilotConfig(
+    config: DangerousModeConfig["autopilot"] = DEFAULT_AUTOPILOT,
+): DangerousModeConfig["autopilot"] {
+    return {
+        ...config,
+        guardedTools: [...config.guardedTools],
+        guardedCommands: [...config.guardedCommands],
+    };
+}
+
+function cloneConfig(config: YoloConfig | DangerousModeConfig): DangerousModeConfig {
+    return {
+        protectedTools: [...config.protectedTools],
+        protectedExtensions: [...config.protectedExtensions],
+        autopilot: cloneAutopilotConfig(
+            "autopilot" in config ? config.autopilot : DEFAULT_AUTOPILOT,
+        ),
+    };
+}
 
 function defaultState(): DangerousRuntimeState {
     return {
@@ -86,7 +122,11 @@ function defaultState(): DangerousRuntimeState {
         autopilotPhase: "inactive",
         turnsUsed: 0,
         retriesUsed: 0,
-        config: { protectedTools: [], protectedExtensions: [] },
+        lastTurnHadError: false,
+        config: cloneConfig({
+            protectedTools: [],
+            protectedExtensions: [],
+        }),
     };
 }
 
@@ -99,6 +139,8 @@ function upgradeState(state: DangerousRuntimeState): DangerousRuntimeState {
     state.autopilotPhase ??= "inactive";
     state.turnsUsed ??= 0;
     state.retriesUsed ??= 0;
+    state.lastTurnHadError ??= false;
+    state.config = cloneConfig(state.config);
     return state;
 }
 
@@ -112,6 +154,23 @@ export function getMutableRuntimeState(): DangerousRuntimeState {
     return state;
 }
 
+function isTerminalPhase(phase: AutopilotPhase): boolean {
+    return (
+        phase === "completed" ||
+        phase === "blocked" ||
+        phase === "budget_exhausted"
+    );
+}
+
+function resetAutopilotRun(state: DangerousRuntimeState, now: number): void {
+    state.autopilotPhase = "inactive";
+    state.turnsUsed = 0;
+    state.retriesUsed = 0;
+    state.lastTurnHadError = false;
+    state.startedAt = now;
+    state.stopReason = undefined;
+}
+
 export function recomputeEffectiveState(
     state: DangerousRuntimeState = getMutableRuntimeState(),
 ): void {
@@ -122,7 +181,8 @@ export function recomputeEffectiveState(
         state.configValid &&
         state.compatible &&
         state.uiBrokerCompatible &&
-        autopilotRequested;
+        autopilotRequested &&
+        !isTerminalPhase(state.autopilotPhase);
     state.enabled =
         state.configValid &&
         state.compatible &&
@@ -137,29 +197,18 @@ export function recomputeEffectiveState(
     }
 }
 
-function cloneConfig(config: YoloConfig): YoloConfig {
-    return {
-        protectedTools: [...config.protectedTools],
-        protectedExtensions: [...config.protectedExtensions],
-    };
-}
-
 export function startRuntimeSession(input: {
     isReload: boolean;
     dangerousFlag: boolean;
     autopilotFlag: boolean;
-    config: YoloConfig;
+    config: DangerousModeConfig;
     now: number;
 }): void {
     const state = getMutableRuntimeState();
     if (!input.isReload) {
         state.override = undefined;
         state.autopilotOverride = undefined;
-        state.turnsUsed = 0;
-        state.retriesUsed = 0;
-        state.startedAt = undefined;
-        state.stopReason = undefined;
-        state.autopilotPhase = "inactive";
+        resetAutopilotRun(state, input.now);
     }
     state.dangerousFlag = input.dangerousFlag;
     state.autopilotFlag = input.autopilotFlag;
@@ -191,11 +240,9 @@ export function setAutopilotOverride(enabled: boolean, now: number): boolean {
         return false;
     }
 
+    if (enabled && !state.autopilotEffective) resetAutopilotRun(state, now);
     state.autopilotOverride = enabled;
     recomputeEffectiveState(state);
-    if (state.autopilotEffective && state.startedAt === undefined) {
-        state.startedAt = now;
-    }
     return true;
 }
 
@@ -211,6 +258,78 @@ export function setUiBrokerCompatibility(compatible: boolean): void {
     const state = getMutableRuntimeState();
     state.uiBrokerCompatible = compatible;
     recomputeEffectiveState(state);
+}
+
+export function budgetStopReason(
+    now: number,
+): AutopilotBudgetStopReason | undefined {
+    const state = getMutableRuntimeState();
+    const budgets = state.config.autopilot;
+    if (state.turnsUsed >= budgets.maxTurns) return "turn_budget";
+    if (state.retriesUsed >= budgets.maxRetries) return "retry_budget";
+    if (
+        state.startedAt !== undefined &&
+        now - state.startedAt >= budgets.maxDurationMs
+    ) {
+        return "time_budget";
+    }
+    return undefined;
+}
+
+export function getAutopilotBudgetRemaining(
+    now: number,
+): AutopilotBudgetRemaining {
+    const state = getMutableRuntimeState();
+    const budgets = state.config.autopilot;
+    return {
+        turns: Math.max(0, budgets.maxTurns - state.turnsUsed),
+        retries: Math.max(0, budgets.maxRetries - state.retriesUsed),
+        milliseconds: Math.max(
+            0,
+            budgets.maxDurationMs -
+                (state.startedAt === undefined ? 0 : now - state.startedAt),
+        ),
+    };
+}
+
+export function recordAutopilotTurn(input: {
+    hadError: boolean;
+    now: number;
+}): void {
+    const state = getMutableRuntimeState();
+    if (
+        !state.autopilotEffective ||
+        state.autopilotPhase !== "running"
+    ) {
+        return;
+    }
+
+    state.turnsUsed += 1;
+    state.lastTurnHadError = input.hadError;
+    if (input.hadError) state.retriesUsed += 1;
+
+    const stopReason = budgetStopReason(input.now);
+    if (!stopReason) return;
+
+    state.autopilotPhase = "budget_exhausted";
+    state.stopReason = stopReason;
+    recomputeEffectiveState(state);
+}
+
+export function completeAutopilot(input: {
+    outcome: "completed" | "blocked";
+    reason: string;
+}): void {
+    const state = getMutableRuntimeState();
+    if (state.autopilotPhase !== "running") return;
+
+    state.autopilotPhase = input.outcome;
+    state.stopReason = input.reason;
+    recomputeEffectiveState(state);
+}
+
+export function didLastAutopilotTurnFail(): boolean {
+    return getMutableRuntimeState().lastTurnHadError;
 }
 
 export function getRuntimeStatus(): RuntimeStatus {
@@ -266,7 +385,7 @@ export function startDangerousSession(input: {
         isReload: input.isReload,
         dangerousFlag: input.flagEnabled,
         autopilotFlag: false,
-        config: input.config,
+        config: cloneConfig(input.config),
         now: Date.now(),
     });
 }
@@ -274,10 +393,10 @@ export function startDangerousSession(input: {
 export function disableForInvalidConfig(): void {
     const state = getMutableRuntimeState();
     state.configValid = false;
-    state.config = {
+    state.config = cloneConfig({
         protectedTools: [],
         protectedExtensions: [],
-    };
+    });
     recomputeEffectiveState(state);
 }
 
@@ -294,6 +413,9 @@ export function getStatus(): {
     return {
         enabled: state.enabled,
         compatible: state.compatible,
-        config: cloneConfig(state.config),
+        config: {
+            protectedTools: [...state.config.protectedTools],
+            protectedExtensions: [...state.config.protectedExtensions],
+        },
     };
 }
