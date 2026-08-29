@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createWidget, type WidgetHandle } from "./_shared/fancy-footer";
 
 const SERVICE_TIER = "priority";
-const WIDGET_ID = "codex-fast-mode";
+const STATUS_KEY = "codex-fast-mode";
+const ICON = "🗲";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -25,40 +25,56 @@ function isOpenAICodexResponsesPayload(payload: unknown): payload is Record<stri
   );
 }
 
-function statusText(enabled: boolean): string {
-  return `Codex fast mode: ${enabled ? "enabled" : "disabled"}`;
+function isOpenAIModel(model: unknown): boolean {
+  if (!isRecord(model)) return false;
+
+  const provider = typeof model.provider === "string" ? model.provider.toLowerCase() : "";
+  if (provider !== "openai" && provider !== "openai-codex") {
+    return false;
+  }
+
+  return true;
 }
 
-function widgetText(enabled: boolean): string {
-  return `codex-fast ${enabled ? "on" : "off"}`;
+function statusNotificationText(enabled: boolean): string {
+  return `${ICON}Codex fast mode: ${enabled ? "enabled" : "disabled"}`;
+}
+
+// Avoid the word "off" here: pi-fancy-footer's extension-status renderer
+// colors any status containing "off" red with a ● prefix (see
+// buildExtensionStatusSegments in pi-fancy-footer/src/render.ts).
+export function statusText(enabled: boolean): string {
+  return `${ICON}codex-fast:${enabled ? "on" : "off"}`;
 }
 
 export default function (pi: ExtensionAPI) {
   let enabled = false;
-  let latestWidgetText = widgetText(enabled);
-  let widget: WidgetHandle | undefined;
+  let currentModel: unknown = undefined;
 
-  function updateWidget(ctx: ExtensionContext): void {
-    latestWidgetText = widgetText(enabled);
-    widget?.update(ctx, latestWidgetText);
+  function updateStatus(ctx: ExtensionContext, modelOverride?: unknown): void {
+    if (!ctx.hasUI) return;
+    if (modelOverride !== undefined) {
+      currentModel = modelOverride;
+    } else if (ctx.model !== undefined) {
+      currentModel = ctx.model;
+    }
+
+    const visible = isOpenAIModel(currentModel);
+    ctx.ui.setStatus(STATUS_KEY, visible ? statusText(enabled) : undefined);
   }
 
-  widget = createWidget(pi, {
-    id: WIDGET_ID,
-    label: "Codex Fast Mode",
-    description: "Shows whether OpenAI Codex priority service tier is enabled.",
-    row: 0,
-    order: 64,
-    align: "right",
-    render: () => latestWidgetText,
+  pi.on("session_start", async (_event, ctx) => {
+    updateStatus(ctx, ctx.model);
   });
 
-  pi.on("session_start", async (_event, ctx) => {
-    updateWidget(ctx);
+  pi.on("model_select", async (event, ctx) => {
+    updateStatus(ctx, event.model);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    widget?.remove(ctx);
+    if (ctx.hasUI) {
+      ctx.ui.setStatus(STATUS_KEY, undefined);
+    }
   });
 
   pi.registerCommand("codex-fast-mode", {
@@ -74,21 +90,21 @@ export default function (pi: ExtensionAPI) {
 
       if (arg === "on") {
         enabled = true;
-        updateWidget(ctx);
-        ctx.ui.notify(statusText(enabled), "info");
+        updateStatus(ctx);
+        ctx.ui.notify(statusNotificationText(enabled), "info");
         return;
       }
 
       if (arg === "off") {
         enabled = false;
-        updateWidget(ctx);
-        ctx.ui.notify(statusText(enabled), "info");
+        updateStatus(ctx);
+        ctx.ui.notify(statusNotificationText(enabled), "info");
         return;
       }
 
       if (arg === "status" || arg === "") {
-        updateWidget(ctx);
-        ctx.ui.notify(statusText(enabled), "info");
+        updateStatus(ctx);
+        ctx.ui.notify(statusNotificationText(enabled), "info");
         return;
       }
 
@@ -100,8 +116,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("before_provider_request", (event) => {
-    if (!enabled) return;
-    if (!isOpenAICodexResponsesPayload(event.payload)) return;
+    if (!enabled) return undefined;
+    if (!isOpenAICodexResponsesPayload(event.payload)) return undefined;
 
     return {
       ...event.payload,

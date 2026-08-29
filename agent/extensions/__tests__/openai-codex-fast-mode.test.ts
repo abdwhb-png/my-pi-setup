@@ -1,23 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-
-const widgetContributions: any[] = [];
-const discoverMock = mock(() => undefined);
-const refreshMock = mock(() => undefined);
-
-mock.module("pi-fancy-footer/api", () => ({
-  contributeFancyFooterWidgets: mock((_pi: any, provider: any) => {
-    widgetContributions.push(provider);
-  }),
-  requestFancyFooterWidgetDiscovery: discoverMock,
-  requestFancyFooterRefresh: refreshMock,
-  // _shared/fancy-footer re-exports the extension-statuses surface; provide it
-  // so any sibling extension importing the wrapper isn't broken by this mock.
-  publishExtensionStatusesSnapshot: mock(() => undefined),
-  getExtensionStatusesSnapshot: mock(() => []),
-  subscribeExtensionStatusesSnapshot: mock(() => () => {}),
-  FANCY_FOOTER_EXTENSION_STATUSES_SNAPSHOT_EVENT:
-    "pi-fancy-footer:extension-statuses-snapshot",
-}));
+import { statusText } from "../openai-codex-fast-mode.ts";
 
 const { default: codexFastMode } = await import("../openai-codex-fast-mode.ts");
 
@@ -34,12 +16,13 @@ function createMockAPI() {
   return { pi, handlers, commands };
 }
 
-function createCtx() {
+function createCtx(model?: any) {
   return {
     hasUI: true,
+    model,
     ui: {
       notify: mock(() => undefined),
-      setWidget: mock(() => undefined),
+      setStatus: mock(() => undefined),
     },
   } as any;
 }
@@ -64,7 +47,7 @@ describe("openai codex fast mode", () => {
 
   it("toggles priority with slash command and reports status", async () => {
     const { pi, handlers, commands } = createMockAPI();
-    const ctx = createCtx();
+    const ctx = createCtx({ provider: "openai-codex", id: "gpt-5.6-sol" });
     codexFastMode(pi);
 
     expect(commands.has("codex-fast-mode")).toBe(true);
@@ -87,18 +70,81 @@ describe("openai codex fast mode", () => {
     expect(handler({ payload: codexPayload }, ctx)).toBeUndefined();
   });
 
-  it("registers a fancy-footer widget showing current status", async () => {
-    widgetContributions.length = 0;
-    const { pi, commands } = createMockAPI();
+  it("shows status on session start only if model is an OpenAI model", async () => {
+    const { pi, handlers } = createMockAPI();
+    const openAICtx = createCtx({ provider: "openai-codex", id: "gpt-5.6-sol" });
+    codexFastMode(pi);
+
+    const sessionStartHandler = handlers.get("session_start")?.[0];
+    expect(sessionStartHandler).toBeDefined();
+
+    await sessionStartHandler({}, openAICtx);
+    expect(openAICtx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", statusText(false));
+
+    const nonOpenAICtx = createCtx({ provider: "anthropic", id: "claude-3-5-sonnet" });
+    await sessionStartHandler({}, nonOpenAICtx);
+    expect(nonOpenAICtx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", undefined);
+  });
+
+  it("hides status for OpenAI-compatible proxies routed via other providers", async () => {
+    const { pi, handlers } = createMockAPI();
+    codexFastMode(pi);
+
+    const sessionStartHandler = handlers.get("session_start")?.[0];
+
+    // CPA proxy models use openai-completions/openai-responses APIs but are
+    // NOT OpenAI models — the status must stay hidden.
+    const cpaCtx = createCtx({
+      provider: "cpa",
+      id: "ox-alpha-free",
+      api: "openai-responses",
+    });
+    await sessionStartHandler({}, cpaCtx);
+    expect(cpaCtx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", undefined);
+
+    const zaiCtx = createCtx({
+      provider: "zai",
+      id: "glm-5.2",
+      api: "openai-completions",
+    });
+    await sessionStartHandler({}, zaiCtx);
+    expect(zaiCtx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", undefined);
+  });
+
+  it("updates status visibility on model_select event", async () => {
+    const { pi, handlers, commands } = createMockAPI();
     const ctx = createCtx();
     codexFastMode(pi);
 
-    const widget = widgetContributions.find((entry) => entry.id === "codex-fast-mode");
-    expect(widget).toBeDefined();
-    expect(widget.render()).toContain("off");
+    const modelSelectHandler = handlers.get("model_select")?.[0];
+    expect(modelSelectHandler).toBeDefined();
 
+    // Select OpenAI model -> status becomes visible
+    await modelSelectHandler({ model: { provider: "openai", id: "gpt-4o" } }, ctx);
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode",statusText(false));
+
+    // Enable fast mode
     await commands.get("codex-fast-mode").handler("on", ctx);
-    expect(widget.render()).toContain("on");
-    expect(refreshMock).toHaveBeenCalled();
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", statusText(true));
+
+    // Switch to non-OpenAI model -> status is hidden
+    await modelSelectHandler({ model: { provider: "anthropic", id: "claude-3-5-sonnet" } }, ctx);
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", undefined);
+
+    // Switch back to OpenAI Codex model -> status reappears as on
+    await modelSelectHandler({ model: { provider: "openai-codex", id: "gpt-5.6-sol" } }, ctx);
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", statusText(true));
+  });
+
+  it("clears status on session shutdown", async () => {
+    const { pi, handlers } = createMockAPI();
+    const ctx = createCtx({ provider: "openai-codex", id: "gpt-5.6-sol" });
+    codexFastMode(pi);
+
+    const shutdownHandler = handlers.get("session_shutdown")?.[0];
+    expect(shutdownHandler).toBeDefined();
+
+    await shutdownHandler({}, ctx);
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("codex-fast-mode", undefined);
   });
 });
