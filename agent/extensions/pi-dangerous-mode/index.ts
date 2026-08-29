@@ -73,6 +73,8 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
     });
     installAuthorizerLink(pi);
     registerAutopilotLoop(pi, { telemetry });
+    // AgentSession skips runner dispatch when no tool_call handler exists.
+    pi.on("tool_call", () => undefined);
 
     pi.registerFlag("dangerously-skip-permissions", {
         description:

@@ -190,7 +190,7 @@ export function installRunnerPatch(
             });
             return {
                 block: true,
-                reason: "[AUTOPILOT_PROMPT_BLOCKED] Human question suppressed. Choose the safest path from current context without calling ask_user_question again. If no safe path exists, finish with autopilot_complete outcome=blocked.",
+                reason: "[AUTOPILOT_PROMPT_BLOCKED] Human question blocked and suppressed. Choose the safest non-interactive path from current context without calling ask_user_question again. If no safe path exists, finish with autopilot_complete outcome=blocked.",
             };
         }
 

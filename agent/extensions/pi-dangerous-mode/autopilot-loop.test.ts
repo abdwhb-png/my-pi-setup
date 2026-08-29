@@ -196,8 +196,27 @@ describe("pi-dangerous-mode Autopilot loop", () => {
         expect(fixture.sendMessage).toHaveBeenCalledTimes(1);
         expect(fixture.sendMessage).toHaveBeenCalledWith(
             expect.objectContaining({ customType: "pi:autopilot:continue" }),
-            { triggerTurn: true, deliverAs: "nextTurn" },
+            { triggerTurn: true },
         );
+    });
+
+    it("uses retry continuation when any turn in the agent run failed", async () => {
+        setMode(true);
+        const fixture = setup(["read"]);
+        await fixture.emit("agent_start");
+        await fixture.emit("turn_end", {
+            toolResults: [{ isError: true }],
+        });
+        await fixture.emit("turn_end", {
+            toolResults: [{ isError: false }],
+        });
+
+        await fixture.emit("agent_settled");
+
+        expect(fixture.telemetry).toHaveBeenCalledWith({
+            event: "continuation_queued",
+            reason: "retry",
+        });
     });
 
     it("queues no continuation when messages are pending", async () => {

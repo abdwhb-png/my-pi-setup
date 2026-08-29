@@ -23,7 +23,7 @@ export class AutopilotPromptBlockedError extends Error {
         readonly kind: AutopilotPromptKind,
         summary: string,
     ) {
-        super(summary);
+        super(`[AUTOPILOT_PROMPT_BLOCKED] ${summary}`);
         this.name = "AutopilotPromptBlockedError";
     }
 }
@@ -86,8 +86,10 @@ function getState(): UiBrokerState {
 
 function prototypeFrom(value: unknown): object | undefined {
     if (typeof value !== "function") return undefined;
-    const prototype = Object.getOwnPropertyDescriptor(value, "prototype")
-        ?.value;
+    const prototype = Object.getOwnPropertyDescriptor(
+        value,
+        "prototype",
+    )?.value;
     return typeof prototype === "object" && prototype !== null
         ? prototype
         : undefined;
@@ -202,9 +204,7 @@ function patchInteractiveMode(interactiveConstructor: unknown): boolean {
     state.interactiveOriginals.set(prototype, original);
     Object.defineProperty(prototype, "createExtensionUIContext", {
         ...descriptor,
-        value: function createAutopilotUIContext(
-            this: InteractiveModeLike,
-        ) {
+        value: function createAutopilotUIContext(this: InteractiveModeLike) {
             const currentOriginal =
                 getState().interactiveOriginals.get(prototype);
             if (!currentOriginal) {

@@ -3,7 +3,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
     completeAutopilot,
-    didLastAutopilotTurnFail,
     getAutopilotBudgetRemaining,
     getRuntimeStatus,
     isAutopilotEnabled,
@@ -15,6 +14,7 @@ export const AUTOPILOT_COMPLETE_TOOL = "autopilot_complete";
 const AUTOPILOT_CONTINUE_MESSAGE = "pi:autopilot:continue";
 
 let agentActive = false;
+let agentRunHadError = false;
 let continuationQueued = false;
 let nextContinuationReason: "prompt_blocked" | undefined;
 
@@ -105,6 +105,7 @@ export function registerAutopilotLoop(
 
     pi.on("session_start", () => {
         agentActive = false;
+        agentRunHadError = false;
         continuationQueued = false;
         nextContinuationReason = undefined;
         syncAutopilotToolVisibility(pi);
@@ -119,6 +120,7 @@ export function registerAutopilotLoop(
 
     pi.on("agent_start", () => {
         agentActive = true;
+        agentRunHadError = false;
         continuationQueued = false;
         syncAutopilotToolVisibility(pi);
     });
@@ -127,6 +129,7 @@ export function registerAutopilotLoop(
         if (!isAutopilotEnabled()) return;
 
         const hadError = event.toolResults.some((result) => result.isError);
+        agentRunHadError ||= hadError;
         recordAutopilotTurn({ hadError, now: now() });
         const status = getRuntimeStatus().autopilot;
         deps.telemetry({
@@ -159,7 +162,7 @@ export function registerAutopilotLoop(
 
         const reason =
             nextContinuationReason ??
-            (didLastAutopilotTurnFail() ? "retry" : "continue");
+            (agentRunHadError ? "retry" : "continue");
         continuationQueued = true;
         nextContinuationReason = undefined;
         pi.sendMessage(
@@ -170,7 +173,7 @@ export function registerAutopilotLoop(
                 display: false,
                 details: { reason },
             },
-            { triggerTurn: true, deliverAs: "nextTurn" },
+            { triggerTurn: true },
         );
         deps.telemetry({ event: "continuation_queued", reason });
     });
