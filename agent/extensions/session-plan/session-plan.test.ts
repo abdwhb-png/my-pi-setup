@@ -279,6 +279,7 @@ describe("session_plan extension", () => {
         );
 
         expect(role).toContain("session_plan");
+        expect(role).not.toContain("@ctx-inspect");
         expect(role).not.toMatch(/tools:.*\bmemory\b(?!-)/);
         expect(role).not.toContain("#tool:vscode/memory");
         expect(role).not.toContain("/quick-plans/");

@@ -279,6 +279,16 @@ describe('tool-groups configuration invariants', () => {
         expect(validateProtectedBoundaries(readConfiguredGroups())).toEqual([]);
     });
 
+    it('registers context-mode tools directly for granular role access', () => {
+        const mcpConfig = JSON.parse(
+            readFileSync(join(agentDir(), 'mcp.json'), 'utf8'),
+        ) as {
+            mcpServers?: Record<string, { directTools?: boolean | string[] }>;
+        };
+
+        expect(mcpConfig.mcpServers?.['context-mode']?.directTools).toBe(true);
+    });
+
     it('accepts valid custom groups without a canonical snapshot', () => {
         const groups = {
             inspect: ['read'],

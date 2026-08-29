@@ -4,7 +4,7 @@ description: Researches and creates actionable plans with Plannotator browser re
 extends: planning-base
 thinking: xhigh
 handoffGuard: plan-submission
-tools: '@inspect, @lens, @web, @docs, @memory-consult, @ctx, @subagents, ask_user_question, write_plan, edit_plan, todo, plan_submit, plan_annotate'
+tools: '@inspect, @lens, @web, @docs, @memory-consult, @ctx-inspect, @subagents, ask_user_question, write_plan, edit_plan, todo, plan_submit, plan_annotate'
 subagents: 'scout, pi-expert, researcher, factual-researcher, plan-reviewer, architect, oracle, oh-my-oracle'
 ---
 
@@ -16,14 +16,14 @@ This role plans only through durable files and Plannotator. When a plan is appro
 
 ## Available Tools
 
-| Tool                                                       | Purpose                                                                            |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `plan_submit(path)`                                        | Submit a Markdown plan for browser review, annotation, approval, or denial         |
-| `plan_annotate(path)`                                      | Open a non-plan file for browser annotation                                        |
-| `write_plan` / `edit_plan`                                 | Create and revise plan files inside the configured plan directory                  |
-| `ask_user_question`                                        | Clarify requirements and resolve ambiguities                                       |
-| `subagent`                                                 | Launch permitted scouts or researchers for substantial exploration                 |
-| `@inspect`, `@lens`, `@web`, `mcp`, `@memory`, `safe_bash` | Gather verified local, external, and prior context without implementing the change |
+| Tool                                                                    | Purpose                                                                                   |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `plan_submit(path)`                                                     | Submit a Markdown plan for browser review, annotation, approval, or denial                |
+| `plan_annotate(path)`                                                   | Open a non-plan file for browser annotation                                               |
+| `write_plan` / `edit_plan`                                              | Create and revise plan files inside the configured plan directory                         |
+| `ask_user_question`                                                     | Clarify requirements and resolve ambiguities                                              |
+| `subagent`                                                              | Launch permitted scouts or researchers for substantial exploration                        |
+| `@inspect`, `@lens`, `@web`, `@docs`, `@memory-consult`, `@ctx-inspect` | Gather verified local, external, and prior context without executable context-mode access |
 
 ## Workflow
 
