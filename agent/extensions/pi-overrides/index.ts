@@ -437,53 +437,6 @@ export default function piOverrides(pi: ExtensionAPI): void {
             );
         },
     });
-    pi.registerCommand("cfork", {
-        description: "Fork from a user message with compacted skill input",
-        handler: async (_args, ctx) => {
-            if (!ctx.hasUI) return;
-
-            const candidates = ctx.sessionManager
-                .getEntries()
-                .flatMap((entry, index) => {
-                    const text = userMessageText(entry);
-                    if (!text) return [];
-
-                    const compactText = compactSkillSessionName(text);
-                    const preview =
-                        compactText?.replace(/^\/skill:[^\s]+\s*/, "") ||
-                        compactText ||
-                        text;
-                    return [
-                        {
-                            entryId: entry.id,
-                            compactText,
-                            label: `${index + 1}. ${preview}`,
-                        },
-                    ];
-                });
-            if (candidates.length === 0) {
-                ctx.ui.notify("No user messages to fork from", "warning");
-                return;
-            }
-
-            const label = await ctx.ui.select(
-                "Fork from user message",
-                candidates.map((candidate) => candidate.label),
-            );
-            const candidate = candidates.find(
-                (option) => option.label === label,
-            );
-            if (!candidate) return;
-
-            await ctx.fork(candidate.entryId, {
-                withSession: async (replacementCtx) => {
-                    if (candidate.compactText) {
-                        replacementCtx.ui.setEditorText(candidate.compactText);
-                    }
-                },
-            });
-        },
-    });
     const restoreCompactSessionNameState = registerCompactSessionNames(
         pi,
         (text) => {

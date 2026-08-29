@@ -477,62 +477,6 @@ describe('pi-overrides', () => {
         );
     });
 
-    it('forks through /cfork and restores compact skill input', async () => {
-        const { pi, registeredCommands } = createMockExtensionApi();
-        piOverrides(pi);
-        const handler = registeredCommands.get('cfork')?.handler;
-        if (!handler) throw new Error('/cfork handler not registered');
-        const skillMessage = {
-            id: 'skill-message',
-            type: 'message',
-            message: {
-                role: 'user',
-                content:
-                    '<skill name="diagnose" location="/skills/diagnose/SKILL.md">instructions</skill>\n\nInvestigate color',
-            },
-        };
-        const replacementSetEditorText = mock((_text: string) => undefined);
-        const fork = mock(
-            async (
-                _entryId: string,
-                options: {
-                    withSession?: (ctx: {
-                        ui: { setEditorText: (text: string) => void };
-                    }) => Promise<void>;
-                } = {},
-            ) => {
-                await options.withSession?.({
-                    ui: { setEditorText: replacementSetEditorText },
-                });
-                return { cancelled: false };
-            },
-        );
-        const select = mock(async () => '1. Investigate color');
-        const setEditorText = mock((_text: string) => undefined);
-
-        await handler('', {
-            fork,
-            hasUI: true,
-            sessionManager: { getEntries: () => [skillMessage] },
-            ui: { select, setEditorText },
-        });
-
-        expect(select).toHaveBeenCalledWith('Fork from user message', [
-            '1. Investigate color',
-        ]);
-        expect(fork).toHaveBeenCalledWith(
-            'skill-message',
-            expect.objectContaining({ withSession: expect.any(Function) }),
-        );
-        expect(replacementSetEditorText).toHaveBeenCalledWith(
-            '/skill:diagnose Investigate color',
-        );
-        expect(setEditorText).not.toHaveBeenCalled();
-        expect(skillMessage.message.content).toBe(
-            '<skill name="diagnose" location="/skills/diagnose/SKILL.md">instructions</skill>\n\nInvestigate color',
-        );
-    });
-
     it('does not name a resumed session from a later skill message', async () => {
         const { pi, handlers, getSessionName } = createMockExtensionApi();
         piOverrides(pi);
