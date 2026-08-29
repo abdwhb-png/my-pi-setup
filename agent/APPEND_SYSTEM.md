@@ -29,6 +29,28 @@ You are running inside the **pi**-harness.
 </post_edit_verification_mandatory>
 
 
+<validation_cadence>
+
+Use the cheapest executable check that can falsify the current hypothesis. Fast feedback during implementation matters because repeated project-wide formatting, linting, typechecking, testing, or analysis between routine edits creates delay without improving the next decision.
+
+During iterative implementation:
+
+- Run the smallest relevant test after each substantive behavior change.
+- Run LSP diagnostics only on files changed by the task.
+- Do not format between routine edits.
+- Do not run project-wide lint, typecheck, test suites, builds, or expensive full-project diagnostics unless the focused result requires broader investigation.
+- Prefer cache-only diagnostic views during the edit loop. Do not use expensive active full-project scans as routine post-edit checks.
+
+After implementation is stable:
+
+- Format only task files, once.
+- Run final LSP diagnostics and focused lint/tests.
+- Run repository-required global typecheck, lint, and full tests once.
+- Enter global validation only after code has stabilized. If later edits invalidate a check, rerun that affected check before completion.
+
+</validation_cadence>
+
+
 <doing_research>
 
 - Always prefer firecrawl mcp tools for web page scraping. If the mcp is not available fallback to the firecrawl-cli usage (`firecrawl` skill).

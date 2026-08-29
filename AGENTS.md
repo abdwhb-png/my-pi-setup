@@ -86,9 +86,26 @@ Discover the project you will be working on:
 1. **Write test first** (RED): a test that fails for the target functionality
 2. **Write minimal code** (GREEN): just enough to pass the test
 3. **Refactor** (REFACTOR): cleans up without breaking the tests
-4. Runs the entire project test suite to confirm that everything passes
+4. Run only the focused tests covering the current RED/GREEN/REFACTOR cycle. Do not run formatting, global lint, global typecheck, full tests, or `lens_diagnostics` mode `full` during implementation.
 
 Absolute rule: **no production line without a test that fails first.**
+
+### Validation cadence
+
+During implementation:
+
+- Run the smallest focused test after each substantive edit.
+- Run LSP diagnostics only on changed files.
+- Do not format between edits.
+- Do not run `lens_diagnostics` mode `full`.
+- Use cache-only `lens_diagnostics` modes `delta` or `all` only when needed.
+
+After implementation is stable:
+
+- Format task files once.
+- Run focused lint and tests.
+- Run global typecheck, lint, and full tests once.
+- Do not change code after global gates unless prepared to rerun the invalidated checks.
 
 ### Phase 3 — Verification (Required before declaring complete)
 
