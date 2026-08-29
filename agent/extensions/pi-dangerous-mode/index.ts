@@ -18,7 +18,10 @@ import {
     startRuntimeSession,
 } from "./runtime-state.ts";
 import { createTelemetryRecorder } from "./telemetry.ts";
-import { installUiBrokerPatches } from "./ui-broker.ts";
+import {
+    installUiBrokerPatches,
+    unregisterUiBrokerGuard,
+} from "./ui-broker.ts";
 
 const ACTIONS = ["on", "off", "status"] as const;
 type ModeAction = (typeof ACTIONS)[number];
@@ -73,6 +76,7 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
     });
     installAuthorizerLink(pi);
     registerAutopilotLoop(pi, { telemetry });
+    pi.on("session_shutdown", () => unregisterUiBrokerGuard());
     // AgentSession skips runner dispatch when no tool_call handler exists.
     pi.on("tool_call", () => undefined);
 

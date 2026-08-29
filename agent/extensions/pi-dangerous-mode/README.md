@@ -9,10 +9,10 @@ Autopilot does not make Dangerous auto-answer business questions. Dangerous-only
 
 ## Activation
 
-| Surface | Dangerous | Autopilot |
-| --- | --- | --- |
-| CLI flag | `--dangerously-skip-permissions` | `--autopilot` |
-| Command | `/dangerous-mode on\|off\|status` | `/autopilot on\|off\|status` |
+| Surface  | Dangerous                         | Autopilot                    |
+| -------- | --------------------------------- | ---------------------------- |
+| CLI flag | `--dangerously-skip-permissions`  | `--autopilot`                |
+| Command  | `/dangerous-mode on\|off\|status` | `/autopilot on\|off\|status` |
 
 Both flags and commands apply to the current session. They do not persist a permissive setting to disk.
 
@@ -46,9 +46,9 @@ Model calls:
 
 ```json
 {
-  "outcome": "completed",
-  "summary": "Requested work and executable validation completed.",
-  "remainingRisks": []
+    "outcome": "completed",
+    "summary": "Requested work and executable validation completed.",
+    "remainingRisks": []
 }
 ```
 
@@ -85,36 +85,36 @@ Defaults:
 
 ```json
 {
-  "protectedTools": [],
-  "protectedExtensions": [],
-  "autopilot": {
-    "maxTurns": 8,
-    "maxRetries": 2,
-    "maxDurationMs": 600000,
-    "guardedTools": [
-      "*deploy*",
-      "*publish*",
-      "*purchase*",
-      "*payment*",
-      "*delete*",
-      "*destroy*"
-    ],
-    "guardedCommands": [
-      "*git push*",
-      "*gh pr create*",
-      "*gh release create*",
-      "*npm publish*",
-      "*bun publish*",
-      "*pnpm publish*",
-      "*docker push*",
-      "*kubectl apply*",
-      "*kubectl delete*",
-      "*helm install*",
-      "*helm upgrade*",
-      "*terraform apply*",
-      "*terraform destroy*"
-    ]
-  }
+    "protectedTools": [],
+    "protectedExtensions": [],
+    "autopilot": {
+        "maxTurns": 8,
+        "maxRetries": 2,
+        "maxDurationMs": 600000,
+        "guardedTools": [
+            "*deploy*",
+            "*publish*",
+            "*purchase*",
+            "*payment*",
+            "*delete*",
+            "*destroy*"
+        ],
+        "guardedCommands": [
+            "*git push*",
+            "*gh pr create*",
+            "*gh release create*",
+            "*npm publish*",
+            "*bun publish*",
+            "*pnpm publish*",
+            "*docker push*",
+            "*kubectl apply*",
+            "*kubectl delete*",
+            "*helm install*",
+            "*helm upgrade*",
+            "*terraform apply*",
+            "*terraform destroy*"
+        ]
+    }
 }
 ```
 
@@ -158,9 +158,9 @@ Every record contains:
 
 ```json
 {
-  "schemaVersion": 1,
-  "timestamp": "2026-08-29T00:00:00.000Z",
-  "event": "mode_change"
+    "schemaVersion": 1,
+    "timestamp": "2026-08-29T00:00:00.000Z",
+    "event": "mode_change"
 }
 ```
 

@@ -63,7 +63,7 @@ interface Fixture {
 
 function activate(flagValue: boolean | undefined): Fixture {
     let readyHandler: ((payload?: unknown) => void) | undefined;
-    let shutdownHandler: (() => void) | undefined;
+    const shutdownHandlers: Array<() => void> = [];
     let activeTools = ["read", "bash"];
 
     extension({
@@ -94,7 +94,9 @@ function activate(flagValue: boolean | undefined): Fixture {
                     },
                 );
             }
-            if (event === "session_shutdown") shutdownHandler = handler as () => void;
+            if (event === "session_shutdown") {
+                shutdownHandlers.push(handler as () => void);
+            }
         },
         events: {
             on(channel: string, handler: (payload?: unknown) => void) {
@@ -105,13 +107,15 @@ function activate(flagValue: boolean | undefined): Fixture {
         },
     } as never);
 
-    if (!readyHandler || !shutdownHandler) {
+    if (!readyHandler || shutdownHandlers.length === 0) {
         throw new Error("dangerous-mode did not subscribe to lifecycle events");
     }
     return {
         flagValue,
         emitReady: () => readyHandler?.(),
-        runSessionShutdown: () => shutdownHandler?.(),
+        runSessionShutdown: () => {
+            for (const handler of shutdownHandlers) handler();
+        },
     };
 }
 

@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "tool_name": "editFiles",
+        "type": "command",
+        "command": "/home/abdwhb/projects/shared-services/pi-lens-dist/node_modules/.bin/pi-lens-analyze --hook"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "/home/abdwhb/projects/shared-services/pi-lens-dist/node_modules/.bin/pi-lens-analyze --turn-end",
+        "timeout": 60
+      }
+    ]
+  }
+}

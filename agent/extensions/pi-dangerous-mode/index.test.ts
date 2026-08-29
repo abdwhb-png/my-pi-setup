@@ -45,6 +45,8 @@ interface SetupFixture {
     dangerousCommand: Command;
     autopilotCommand: Command;
     sessionStart(event: SessionStartEvent, ctx: CommandContext): Promise<void>;
+    sessionShutdown(ctx: CommandContext): Promise<void>;
+    sessionShutdownHandlerCount: number;
     flags: string[];
     activeTools(): string[];
     entries: Array<[string, unknown]>;
@@ -69,6 +71,7 @@ function setup(
 ): SetupFixture {
     const commands = new Map<string, Command>();
     const sessionHandlers: SessionHandler[] = [];
+    const sessionShutdownHandlers: SessionHandler[] = [];
     const flags: string[] = [];
     const entries: Array<[string, unknown]> = [];
     let activeTools = ["read", "bash"];
@@ -92,6 +95,9 @@ function setup(
         },
         on(event: string, handler: SessionHandler) {
             if (event === "session_start") sessionHandlers.push(handler);
+            if (event === "session_shutdown") {
+                sessionShutdownHandlers.push(handler);
+            }
         },
         getActiveTools() {
             return [...activeTools];
@@ -123,6 +129,12 @@ function setup(
         async sessionStart(event, ctx) {
             for (const handler of sessionHandlers) await handler(event, ctx);
         },
+        async sessionShutdown(ctx) {
+            for (const handler of sessionShutdownHandlers) {
+                await handler({ reason: "startup" }, ctx);
+            }
+        },
+        sessionShutdownHandlerCount: sessionShutdownHandlers.length,
         flags,
         activeTools: () => [...activeTools],
         entries,
@@ -167,6 +179,14 @@ describe("pi-dangerous-mode extension", () => {
             { value: "off", label: "off" },
             { value: "status", label: "status" },
         ]);
+    });
+
+    it("registers UI broker cleanup for session shutdown", async () => {
+        const fixture = setup();
+        const { ctx } = createContext();
+
+        expect(fixture.sessionShutdownHandlerCount).toBe(2);
+        await fixture.sessionShutdown(ctx);
     });
 
     it("enables, disables, and reports dangerous mode without reload", async () => {
