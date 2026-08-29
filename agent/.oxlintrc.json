@@ -43,6 +43,7 @@
     "extensions-legacy/",
     "extensions/aldoborrero-pi-agent-kit/",
     "extensions/ogulcancelik-pi-extensions/",
+    "extensions/herdr-agent-state.ts"
   ],
   "overrides": [
     {

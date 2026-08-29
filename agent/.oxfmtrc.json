@@ -67,6 +67,7 @@
         "*.test.ts",
         "extensions-legacy/",
         "sessions/",
-        "skills/"
+        "skills/",
+        "extensions/herdr-agent-state.ts"
     ]
 }

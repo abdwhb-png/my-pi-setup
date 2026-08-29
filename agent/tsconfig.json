@@ -37,6 +37,7 @@
         "npm/node_modules/pi-subagents",
         "npm/node_modules/pi-fancy-footer",
         "skills",
-        "extensions-legacy"
+        "extensions-legacy",
+        "extensions/herdr-agent-state.ts"
     ]
 }
