@@ -447,6 +447,7 @@ export function enrichModel(
 
     // ── Layer 1: Generic fallback ──
     const genericCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    let api: CpaMetadataRule["metadata"]["api"];
     let contextWindow = 128_000;
     let maxTokens = 32_768;
     let reasoning = true;
@@ -527,6 +528,7 @@ export function enrichModel(
     ];
     for (const rule of matchingRules) {
         const { metadata } = rule;
+        if (metadata.api !== undefined) api = metadata.api;
         if (metadata.contextWindow !== undefined) {
             contextWindow = metadata.contextWindow;
         }
@@ -550,6 +552,7 @@ export function enrichModel(
     return {
         id: modelId,
         name: formatModelName(modelId, ownedBy),
+        ...(api ? { api } : {}),
         reasoning,
         input,
         contextWindow,

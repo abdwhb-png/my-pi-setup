@@ -6,12 +6,15 @@ import { loadExtensionConfig } from "../_shared/config-loader.ts";
 // oxlint-disable-next-line typescript/no-restricted-types -- config-loader passes untrusted JSON as unknown.
 type UntrustedJson = unknown;
 
+type CpaApi = "openai-completions" | "openai-responses";
+
 export interface CpaMetadataRule {
     match: {
         id: string;
         ownedBy?: string;
     };
     metadata: {
+        api?: CpaApi;
         contextWindow?: number;
         maxTokens?: number;
         reasoning?: boolean;
@@ -101,6 +104,12 @@ function normalizeMetadataRule(
     }
 
     const metadata: CpaMetadataRule["metadata"] = {};
+    if (
+        raw.metadata.api === "openai-completions" ||
+        raw.metadata.api === "openai-responses"
+    ) {
+        metadata.api = raw.metadata.api;
+    }
     if (isPositiveInteger(raw.metadata.contextWindow)) {
         metadata.contextWindow = raw.metadata.contextWindow;
     }

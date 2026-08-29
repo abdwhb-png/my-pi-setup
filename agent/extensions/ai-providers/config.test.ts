@@ -76,6 +76,7 @@ describe('normalizeAiProvidersConfig', () => {
                         {
                             match: { id: 'gpt-5.6-terra' },
                             metadata: {
+                                api: 'openai-responses',
                                 contextWindow: 372_000,
                                 maxTokens: 128_000,
                                 input: ['text', 'image'],
@@ -96,6 +97,7 @@ describe('normalizeAiProvidersConfig', () => {
                     {
                         match: { id: 'gpt-5.6-terra' },
                         metadata: {
+                            api: 'openai-responses',
                             contextWindow: 372_000,
                             maxTokens: 128_000,
                             input: ['text', 'image'],

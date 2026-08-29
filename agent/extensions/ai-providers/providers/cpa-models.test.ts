@@ -509,6 +509,24 @@ describe('enrichModel enrichment pipeline', () => {
         expect(result.maxTokens).toBe(12_345);
     });
 
+    it('applies a model API override', () => {
+        const result = enrichModel(
+            {
+                id: 'muse-spark-1.2-contributor',
+                owned_by: 'codex',
+            },
+            emptyLookup,
+            [
+                {
+                    match: { id: 'muse-spark-1.2-contributor' },
+                    metadata: { api: 'openai-responses' },
+                },
+            ] as never,
+        )!;
+
+        expect(result.api).toBe('openai-responses');
+    });
+
     it('does not apply a rule when ownedBy does not match', () => {
         const entry: CpaModelEntry = {
             id: 'gemini-3.7-flash',
