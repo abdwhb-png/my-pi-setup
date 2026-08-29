@@ -289,6 +289,16 @@ describe('tool-groups configuration invariants', () => {
         expect(mcpConfig.mcpServers?.['context-mode']?.directTools).toBe(true);
     });
 
+    it('keeps role tool-policy enforcement active in dangerous mode', () => {
+        const dangerousModeConfig = JSON.parse(
+            readFileSync(join(agentDir(), 'pi-dangerous-mode.json'), 'utf8'),
+        ) as { protectedExtensions?: string[] };
+
+        expect(dangerousModeConfig.protectedExtensions).toContain(
+            '*tool-groups*',
+        );
+    });
+
     it('accepts valid custom groups without a canonical snapshot', () => {
         const groups = {
             inspect: ['read'],

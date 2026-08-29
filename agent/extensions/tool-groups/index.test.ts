@@ -24,6 +24,10 @@ type MockHandler = (event: unknown, ctx: unknown) => unknown;
 
 interface MockPi {
     on(event: string, handler: MockHandler): void;
+    events: {
+        on(event: string, handler: (payload: unknown) => void): () => void;
+        emit(event: string, payload: unknown): void;
+    };
     registerTool(tool: Record<string, unknown>): void;
     getActiveTools(): string[];
     getAllTools(): { name: string }[];
@@ -59,6 +63,7 @@ function makeMockPi(
     initialTools: string[] = ['read', 'edit', 'write'],
 ): MockPi {
     const handlers = new Map<string, MockHandler>();
+    const eventHandlers = new Map<string, Set<(payload: unknown) => void>>();
     const registeredTools: Record<string, unknown>[] = [
         { name: 'read', description: '', parameters: {} },
         { name: 'edit', description: '', parameters: {} },
@@ -71,6 +76,19 @@ function makeMockPi(
     return {
         on(event: string, handler: MockHandler) {
             handlers.set(event, handler);
+        },
+        events: {
+            on(event: string, handler: (payload: unknown) => void) {
+                const listeners = eventHandlers.get(event) ?? new Set();
+                listeners.add(handler);
+                eventHandlers.set(event, listeners);
+                return () => listeners.delete(handler);
+            },
+            emit(event: string, payload: unknown) {
+                for (const handler of eventHandlers.get(event) ?? []) {
+                    handler(payload);
+                }
+            },
         },
         registerTool(tool: Record<string, unknown>) {
             registeredTools.push(tool);
@@ -140,6 +158,76 @@ describe('tool-groups extension', () => {
         expect(pi._handlers.has('session_start')).toBe(true);
         expect(pi._handlers.has('input')).toBe(true);
         expect(pi._handlers.has('before_agent_start')).toBe(true);
+        expect(pi._handlers.has('tool_call')).toBe(true);
+    });
+
+    it('removes and blocks a late tool outside the active role policy', () => {
+        const pi = makeMockPi(['@inspect']);
+        const factory = createToolGroupsExtension(() => ({
+            groups: { inspect: ['read', 'ls'] },
+        }));
+        factory(pi as never);
+
+        pi.events.emit('pi-roles:tool-policy', {
+            version: 1,
+            roleName: 'quick-planner',
+            mode: 'set',
+            toolNames: ['@inspect'],
+        });
+        pi._handlers.get('session_start')!(
+            { type: 'session_start', reason: 'reload' },
+            makeMockCtx(),
+        );
+
+        pi.registerTool({ name: 'ctx_execute' });
+        pi.setActiveTools([...pi.getActiveTools(), 'ctx_execute']);
+        pi._handlers.get('input')!(
+            { type: 'input', text: 'continue', source: 'interactive' },
+            makeMockCtx(),
+        );
+
+        expect(pi.getActiveTools()).toEqual(['read', 'ls']);
+        expect(
+            pi._handlers.get('tool_call')!(
+                { type: 'tool_call', toolName: 'ctx_execute' },
+                makeMockCtx(),
+            ),
+        ).toEqual({
+            block: true,
+            reason: 'Tool "ctx_execute" is not allowed by active role "quick-planner".',
+        });
+        expect(
+            pi._handlers.get('tool_call')!(
+                { type: 'tool_call', toolName: 'read' },
+                makeMockCtx(),
+            ),
+        ).toBeUndefined();
+    });
+
+    it('warns when a top-level role tool is absent from the runtime', () => {
+        const pi = makeMockPi(['@inspect']);
+        const ctx = makeMockCtx(true);
+        const factory = createToolGroupsExtension(() => ({
+            groups: { inspect: ['read', 'ls'] },
+        }));
+        factory(pi as never);
+
+        pi.events.emit('pi-roles:tool-policy', {
+            version: 1,
+            roleName: 'quick-planner',
+            mode: 'set',
+            toolNames: ['@inspect', 'ask_user_question'],
+        });
+        pi._handlers.get('session_start')!(
+            { type: 'session_start', reason: 'reload' },
+            ctx,
+        );
+
+        expect(pi.getActiveTools()).toEqual(['read', 'ls']);
+        expect(ctx.ui.notify).toHaveBeenCalledWith(
+            'Tool-group diagnostics:\n  [unknown-tool] Unknown tool: ask_user_question',
+            'warning',
+        );
     });
 
     it('does nothing when groups config is empty', () => {

@@ -11,7 +11,9 @@ references, or glob patterns.
 
 The extension expands aliases in the active tool set during `session_start`,
 `input`, and `before_agent_start`. Concrete members replace the aliases before
-the model can call tools.
+the model can call tools. When `pi-roles` publishes `pi-roles:tool-policy`, the
+extension keeps that policy sticky across late tool registration and blocks
+out-of-policy calls at `tool_call`.
 
 For an aliased CLI `--tools` or `-t` list, the Pi wrapper defers filtering until
 `session_start`. This keeps the complete registry available for nested groups
@@ -139,7 +141,9 @@ supported list syntax.
 - Expansion preserves first-occurrence order and removes duplicates.
 - Diagnostics are deduplicated by code, group, and member. New diagnostics use
   a UI notification when available and `console.warn` otherwise.
-- Expansion is a no-op when the active set contains no `@` alias.
+- Expansion is a no-op when the active set contains no `@` alias and no role policy is active.
+- Role policies are resolved again before every model turn, removing tools registered asynchronously after `session_start`.
+- `tool_call` enforces the same resolved policy, so stale history cannot execute a hidden tool.
 
 Diagnostic codes:
 
@@ -156,7 +160,7 @@ the already-loaded configuration but does not read files again.
 
 ## Scope
 
-This extension changes active-tool lists only. It does not:
+This extension changes active-tool lists and enforces an active `pi-roles` tool allowlist. It does not:
 
 - rewrite arbitrary JSON, YAML, or permission-policy keys;
 - change tool behaviour, parameters, or permission checks;

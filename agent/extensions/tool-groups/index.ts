@@ -76,6 +76,35 @@ function buildMcpResolver(cwd: string): (ref: string) => string[] {
     return createMcpRefResolver(cwd);
 }
 
+const ROLE_TOOL_POLICY_EVENT = "pi-roles:tool-policy";
+
+interface RoleToolPolicy {
+    version: 1;
+    roleName: string;
+    mode: "all" | "set";
+    toolNames: string[];
+}
+
+function parseRoleToolPolicy(value: unknown): RoleToolPolicy | undefined {
+    if (typeof value !== "object" || value === null) return undefined;
+    const candidate = value as Partial<RoleToolPolicy>;
+    if (
+        candidate.version !== 1 ||
+        typeof candidate.roleName !== "string" ||
+        (candidate.mode !== "all" && candidate.mode !== "set") ||
+        !Array.isArray(candidate.toolNames) ||
+        !candidate.toolNames.every((name) => typeof name === "string")
+    ) {
+        return undefined;
+    }
+    return {
+        version: 1,
+        roleName: candidate.roleName,
+        mode: candidate.mode,
+        toolNames: [...candidate.toolNames],
+    };
+}
+
 export function createToolGroupsExtension(
     loadConfig: (cwd: string) => ToolGroupsConfig = loadToolGroupsConfig,
     loadRequestedTools: () => string[] | undefined = loadRequestedToolsFromEnv,
@@ -111,6 +140,16 @@ export function createToolGroupsExtension(
 
         let lastDiagKey: string | undefined;
         let appliedRequestedTools = false;
+        let cliToolPolicy: string[] | undefined;
+        let roleToolPolicy: RoleToolPolicy | undefined;
+
+        const unsubscribeRoleToolPolicy = pi.events.on(
+            ROLE_TOOL_POLICY_EVENT,
+            (payload) => {
+                const parsed = parseRoleToolPolicy(payload);
+                if (parsed) roleToolPolicy = parsed;
+            },
+        );
 
         function reportDiagnostics(
             diagnostics: ToolGroupDiagnostic[],
@@ -161,6 +200,7 @@ export function createToolGroupsExtension(
                 pi,
                 candidates,
             );
+            cliToolPolicy = [...reconciled];
             pi.setActiveTools(reconciled);
             reportDiagnostics(requested.diagnostics, ctx);
         }
@@ -201,6 +241,68 @@ export function createToolGroupsExtension(
          * stay in the active list after a reload because no alias is present to
          * trigger expandAliases.
          */
+        function resolveConfiguredPolicy(): {
+            names: string[];
+            diagnostics: ToolGroupDiagnostic[];
+        } | undefined {
+            const allToolNames = pi.getAllTools().map((tool) => tool.name);
+            const diagnostics: ToolGroupDiagnostic[] = [];
+            let names: string[] | undefined;
+
+            if (roleToolPolicy?.mode === "set") {
+                const resolvedRole = resolveToolAliases(
+                    roleToolPolicy.toolNames,
+                    allToolNames,
+                    groups,
+                    resolveMcp,
+                );
+                names = resolvedRole.names;
+                diagnostics.push(...resolvedRole.diagnostics);
+            }
+
+            let cliAllowed: Set<string> | undefined;
+            if (cliToolPolicy) {
+                cliAllowed = new Set(cliToolPolicy);
+                names = names
+                    ? names.filter((name) => cliAllowed!.has(name))
+                    : [...cliToolPolicy];
+            }
+
+            if (!names) return undefined;
+
+            const broker = getSharedVisibilityBroker();
+            const activeWorkflow = broker.getActiveWorkflow(pi);
+            if (activeWorkflow) {
+                for (const name of pi.getActiveTools()) {
+                    if (
+                        broker.isMemberOf(activeWorkflow, name) &&
+                        (!cliAllowed || cliAllowed.has(name)) &&
+                        !names.includes(name)
+                    ) {
+                        names.push(name);
+                    }
+                }
+            }
+
+            return {
+                names: broker.reconcileWithLease(pi, names),
+                diagnostics,
+            };
+        }
+
+        function enforceConfiguredPolicy(ctx?: ExtensionContext): void {
+            const policy = resolveConfiguredPolicy();
+            if (!policy) return;
+            const active = pi.getActiveTools();
+            if (
+                policy.names.length !== active.length ||
+                policy.names.some((name, index) => name !== active[index])
+            ) {
+                pi.setActiveTools(policy.names);
+            }
+            if (ctx) reportDiagnostics(policy.diagnostics, ctx);
+        }
+
         function reconcileWorkflowVisibility(): void {
             const active = pi.getActiveTools();
             const reconciled = getSharedVisibilityBroker().reconcileWithLease(
@@ -218,18 +320,40 @@ export function createToolGroupsExtension(
         pi.on("session_start", (event, ctx) => {
             applyRequestedTools(ctx);
             expandAliases(event, ctx);
+            enforceConfiguredPolicy(ctx);
             reconcileWorkflowVisibility();
             checkToolGroupsPackageOrder(cwd);
         });
 
         pi.on("input", (event, ctx) => {
             expandAliases(event, ctx);
+            enforceConfiguredPolicy(ctx);
+            reconcileWorkflowVisibility();
             return { action: "continue" as const };
         });
 
         pi.on("before_agent_start", (event, ctx) => {
             expandAliases(event, ctx);
+            enforceConfiguredPolicy(ctx);
             reconcileWorkflowVisibility();
+        });
+
+        pi.on("tool_call", (event) => {
+            const policy = resolveConfiguredPolicy();
+            if (!policy || policy.names.includes(event.toolName)) {
+                return undefined;
+            }
+            const roleName = roleToolPolicy?.roleName ?? "CLI tool policy";
+            return {
+                block: true as const,
+                reason: `Tool "${event.toolName}" is not allowed by active role "${roleName}".`,
+            };
+        });
+
+        pi.on("session_shutdown", () => {
+            unsubscribeRoleToolPolicy();
+            roleToolPolicy = undefined;
+            cliToolPolicy = undefined;
         });
     };
 }
