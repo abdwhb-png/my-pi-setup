@@ -20,9 +20,11 @@ function tools(roleName: string): string[] {
         .filter(Boolean);
 }
 
-test("plan opts into submission guard while quick-planner remains session-plan-only", () => {
+test("planning roles opt into their matching programmatic handoff guards", () => {
     expect(frontmatter("plan").handoffGuard).toBe("plan-submission");
-    expect(frontmatter("quick-planner").handoffGuard).toBeUndefined();
+    expect(frontmatter("quick-planner").handoffGuard).toBe(
+        "session-plan-persistence",
+    );
 });
 
 test("planning roles exclude generic and executable context-mode access", () => {

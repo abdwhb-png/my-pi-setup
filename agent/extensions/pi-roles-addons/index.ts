@@ -8,6 +8,7 @@ import planAutoSwitch from "./plan-auto-switch.ts";
 import registerPlanSubmissionGuard from "./plan-submission-guard.ts";
 import promptRoleSwitch from "./prompt-role-switch.ts";
 import roleSubagents from "./role-subagents.ts";
+import sessionPlanPersistenceGuard from "./session-plan-persistence-guard.ts";
 
 export default function aldoborreroExtensions(pi: ExtensionAPI) {
     atlasPiSubagents(pi);
@@ -15,4 +16,5 @@ export default function aldoborreroExtensions(pi: ExtensionAPI) {
     registerPlanSubmissionGuard(pi);
     promptRoleSwitch(pi);
     roleSubagents(pi);
+    sessionPlanPersistenceGuard(pi);
 }

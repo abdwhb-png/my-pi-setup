@@ -3,6 +3,7 @@
 import { expect, mock, test } from 'bun:test';
 
 const planSubmissionGuard = mock();
+const sessionPlanPersistenceGuard = mock();
 import { readFileSync } from 'node:fs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
@@ -15,6 +16,9 @@ mock.module('./prompt-role-switch.ts', () => ({ default: () => undefined }));
 mock.module('./role-subagents.ts', () => ({ default: () => undefined }));
 mock.module('./plan-submission-guard.ts', () => ({
     default: planSubmissionGuard,
+}));
+mock.module('./session-plan-persistence-guard.ts', () => ({
+    default: sessionPlanPersistenceGuard,
 }));
 
 test('pi-roles addons registers no tools owned by pi-scoped-write', async () => {
@@ -32,6 +36,7 @@ test('pi-roles addons registers no tools owned by pi-scoped-write', async () => 
     registerAddons(pi);
 
     expect(planSubmissionGuard).toHaveBeenCalledWith(pi);
+    expect(sessionPlanPersistenceGuard).toHaveBeenCalledWith(pi);
     expect([...registered.keys()]).not.toEqual(
         expect.arrayContaining([
             'write_plan',
