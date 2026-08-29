@@ -96,7 +96,9 @@ function cloneAutopilotConfig(
     };
 }
 
-function cloneConfig(config: YoloConfig | DangerousModeConfig): DangerousModeConfig {
+function cloneConfig(
+    config: YoloConfig | DangerousModeConfig,
+): DangerousModeConfig {
     return {
         protectedTools: [...config.protectedTools],
         protectedExtensions: [...config.protectedExtensions],
@@ -175,8 +177,7 @@ export function recomputeEffectiveState(
     state: DangerousRuntimeState = getMutableRuntimeState(),
 ): void {
     const directDangerous = state.override ?? state.dangerousFlag;
-    const autopilotRequested =
-        state.autopilotOverride ?? state.autopilotFlag;
+    const autopilotRequested = state.autopilotOverride ?? state.autopilotFlag;
     state.autopilotEffective =
         state.configValid &&
         state.compatible &&
@@ -233,9 +234,7 @@ export function setAutopilotOverride(enabled: boolean, now: number): boolean {
     const state = getMutableRuntimeState();
     if (
         enabled &&
-        (!state.compatible ||
-            !state.uiBrokerCompatible ||
-            !state.configValid)
+        (!state.compatible || !state.uiBrokerCompatible || !state.configValid)
     ) {
         return false;
     }
@@ -297,10 +296,7 @@ export function recordAutopilotTurn(input: {
     now: number;
 }): void {
     const state = getMutableRuntimeState();
-    if (
-        !state.autopilotEffective ||
-        state.autopilotPhase !== "running"
-    ) {
+    if (!state.autopilotEffective || state.autopilotPhase !== "running") {
         return;
     }
 

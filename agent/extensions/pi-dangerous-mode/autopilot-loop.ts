@@ -161,8 +161,7 @@ export function registerAutopilotLoop(
         }
 
         const reason =
-            nextContinuationReason ??
-            (agentRunHadError ? "retry" : "continue");
+            nextContinuationReason ?? (agentRunHadError ? "retry" : "continue");
         continuationQueued = true;
         nextContinuationReason = undefined;
         pi.sendMessage(

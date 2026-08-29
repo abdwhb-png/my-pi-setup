@@ -76,7 +76,9 @@ function normalizePositiveInteger(value: unknown): number | undefined {
         : undefined;
 }
 
-function normalizeAutopilot(raw: unknown): Partial<AutopilotConfig> | undefined {
+function normalizeAutopilot(
+    raw: unknown,
+): Partial<AutopilotConfig> | undefined {
     if (!isRecord(raw)) return undefined;
 
     const maxTurns = normalizePositiveInteger(raw.maxTurns);
@@ -128,11 +130,7 @@ function validateAutopilot(path: string, value: unknown): void {
         );
     }
 
-    for (const field of [
-        "maxTurns",
-        "maxRetries",
-        "maxDurationMs",
-    ] as const) {
+    for (const field of ["maxTurns", "maxRetries", "maxDurationMs"] as const) {
         if (field in value && !isPositiveInteger(value[field])) {
             throw new Error(
                 `Invalid configuration: ${field} in ${path} must be a positive integer.`,
@@ -174,7 +172,10 @@ function validateConfigFile(path: string): void {
     if ("autopilot" in raw) validateAutopilot(path, raw.autopilot);
 }
 
-function mergeConfig(base: ConfigLayer, overlay: Partial<ConfigLayer>): ConfigLayer {
+function mergeConfig(
+    base: ConfigLayer,
+    overlay: Partial<ConfigLayer>,
+): ConfigLayer {
     return {
         protectedTools: overlay.protectedTools ?? base.protectedTools,
         protectedExtensions:
@@ -186,7 +187,10 @@ function mergeConfig(base: ConfigLayer, overlay: Partial<ConfigLayer>): ConfigLa
     };
 }
 
-export function loadConfig(cwd: string, agentDir?: string): DangerousModeConfig {
+export function loadConfig(
+    cwd: string,
+    agentDir?: string,
+): DangerousModeConfig {
     const resolvedAgentDir = agentDir ?? getAgentDir();
     validateConfigFile(join(resolvedAgentDir, "pi-dangerous-mode.json"));
     validateConfigFile(join(cwd, ".pi", "pi-dangerous-mode.json"));
