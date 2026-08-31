@@ -42,9 +42,9 @@ function registerPromptFixture(pi: ExtensionAPI): void {
     });
 }
 
-async function enableAutopilot(session: TestSession): Promise<void> {
-    const command = session.session.extensionRunner.getCommand("autopilot");
-    if (!command) throw new Error("Missing /autopilot command");
+async function enableUnattended(session: TestSession): Promise<void> {
+    const command = session.session.extensionRunner.getCommand("unattended");
+    if (!command) throw new Error("Missing /unattended command");
     await command.handler(
         "on",
         session.session.extensionRunner.createCommandContext(),
@@ -116,7 +116,7 @@ describe("notify extension real Pi UI boundary", () => {
         expect(interactionOrder).toEqual(["ui:select"]);
     });
 
-    it("lets Autopilot guard block before notification observation", async () => {
+    it("lets Unattended suppress a prompt before notification observation", async () => {
         session = await createTestSession({
             extensionFactories: [
                 registerPromptFixture,
@@ -131,7 +131,7 @@ describe("notify extension real Pi UI boundary", () => {
             },
             propagateErrors: false,
         });
-        await enableAutopilot(session);
+        await enableUnattended(session);
 
         await session.run(
             when("Open blocked selection", [

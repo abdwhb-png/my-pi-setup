@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-018](ADR-018-pi-dangerous-mode-unattended-prompt-suppression.md)
 
 ## Date
 

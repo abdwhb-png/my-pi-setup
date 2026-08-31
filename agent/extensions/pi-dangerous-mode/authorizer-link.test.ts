@@ -20,8 +20,6 @@ const {
     setDangerousRuntimeState,
     isDangerousEnabled,
 } = await import("./runner-patch.ts");
-const { DEFAULT_AUTOPILOT } = await import("./config.ts");
-const { startRuntimeSession } = await import("./runtime-state.ts");
 
 type AuthorizeFn = (
     details: PromptPermissionDetails,
@@ -80,7 +78,6 @@ function activate(flagValue: boolean | undefined): Fixture {
         },
         getFlag(name: string) {
             if (name === "dangerously-skip-permissions") return flagValue;
-            if (name === "autopilot") return false;
             return undefined;
         },
         on(event: string, handler: unknown) {
@@ -218,51 +215,6 @@ describe("pi-dangerous-mode authorizer link", () => {
                 debug() {},
             }),
         ).toEqual({ kind: "defer" });
-    });
-
-    it("denies guarded Autopilot permission asks without opening UI", async () => {
-        service = { registerAuthorizer };
-        const fixture = activate(false);
-        fixture.emitReady();
-        startRuntimeSession({
-            isReload: false,
-            dangerousFlag: false,
-            autopilotFlag: true,
-            config: {
-                protectedTools: [],
-                protectedExtensions: [],
-                autopilot: {
-                    ...DEFAULT_AUTOPILOT,
-                    guardedTools: [...DEFAULT_AUTOPILOT.guardedTools],
-                    guardedCommands: [...DEFAULT_AUTOPILOT.guardedCommands],
-                },
-            },
-            now: 1_000,
-        });
-        const review = mock(() => undefined);
-        const [, authorize] = registerAuthorizer.mock.calls[0] as unknown as [
-            string,
-            AuthorizeFn,
-        ];
-
-        const verdict = await authorize(
-            permissionDetails({
-                command: "git push origin main",
-                toolName: "bash",
-                target: "origin/main",
-            }),
-            query,
-            { review, debug() {} },
-        );
-
-        expect(verdict).toEqual({
-            kind: "deny",
-            reason: expect.stringContaining("Autopilot guard"),
-        });
-        expect(review).toHaveBeenCalledWith("autopilot.guard_blocked", {
-            category: "publish",
-            toolName: "bash",
-        });
     });
 
     it("disposes registered links on session shutdown", () => {
