@@ -1,4 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 
 const extensionModule = (await import("./index.ts")) as Record<
   string,
@@ -20,22 +22,21 @@ interface SelectorTui {
   requestRender(): void;
 }
 
-interface SelectorTheme {
-  fg(role: string, text: string): string;
-  bold(text: string): string;
-}
-
 type SelectorConstructor = new (
   candidates: readonly Candidate[],
   tui: SelectorTui,
-  theme: SelectorTheme,
+  theme: Theme,
   done: (entryId: string | undefined) => void,
 ) => SelectorLike;
 
-const theme: SelectorTheme = {
-  fg: (_role, text) => text,
-  bold: (text) => text,
-};
+const theme = {
+  fg: (_role: string, text: string) => text,
+  bg: (_role: string, text: string) => text,
+  bold: (text: string) => text,
+  italic: (text: string) => text,
+  inverse: (text: string) => text,
+  underline: (text: string) => text,
+} as Theme;
 
 function candidates(count: number): Candidate[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -44,7 +45,7 @@ function candidates(count: number): Candidate[] {
   }));
 }
 
-function createSelector(count: number, rows = 27) {
+function createSelector(count: number, rows = 27, selectorTheme = theme) {
   const Selector = extensionModule.EnhancedForkSelector as
     | SelectorConstructor
     | undefined;
@@ -55,15 +56,35 @@ function createSelector(count: number, rows = 27) {
     requestRender: mock(() => undefined),
   };
   const done = mock((_entryId: string | undefined) => undefined);
-  const selector = new Selector!(candidates(count), tui, theme, done);
+  const selector = new Selector!(candidates(count), tui, selectorTheme, done);
   return { selector, tui, done };
 }
 
 function selectedLine(selector: SelectorLike): string {
-  return selector.render(60).find((line) => line.startsWith("› ")) ?? "";
+  return selector.render(60).find((line) => line.includes("› ")) ?? "";
 }
 
 describe("EnhancedForkSelector", () => {
+  it("renders a bounded shared rounded frame with a closing footer", () => {
+    const { selector } = createSelector(3, 27);
+    const lines = selector.render(60);
+
+    expect(lines[0]).toStartWith("╭");
+    expect(lines.at(-1)).toEndWith("╯");
+    expect(lines.every((line) => visibleWidth(line) === 56)).toBeTrue();
+  });
+
+  it("renders candidate indexes through the shared muted color", () => {
+    const mutedTheme = {
+      ...theme,
+      fg: (role: string, text: string) =>
+        role === "muted" ? `<muted>${text}</muted>` : text,
+    } as Theme;
+    const { selector } = createSelector(3, 27, mutedTheme);
+
+    expect(selectedLine(selector)).toContain("<muted>[3/3]</muted>");
+  });
+
   it("starts on the newest candidate and keeps it visible in a 27-row pane", () => {
     const { selector } = createSelector(8, 27);
     const lines = selector.render(60);

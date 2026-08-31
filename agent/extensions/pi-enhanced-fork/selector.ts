@@ -1,3 +1,4 @@
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
     isKeyRelease,
     Key,
@@ -7,16 +8,14 @@ import {
 } from "@earendil-works/pi-tui";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 
+import { BoxRenderer } from "../_shared/ui/framed-box.ts";
+import { createUiColors } from "../_shared/ui/ui-colors.ts";
+
 type SelectorTui = Pick<TUI, "requestRender" | "terminal">;
 
 export interface ForkCandidate {
     entryId: string;
     text: string;
-}
-
-export interface ForkSelectorTheme {
-    fg(role: "accent" | "muted" | "dim", text: string): string;
-    bold(text: string): string;
 }
 
 function visibleCapacity(terminalRows: number): number {
@@ -41,7 +40,7 @@ export function parseWheelDirection(data: string): -1 | 1 | undefined {
 export class EnhancedForkSelector implements Component {
     private readonly candidates: readonly ForkCandidate[];
     private readonly tui: SelectorTui;
-    private readonly theme: ForkSelectorTheme;
+    private readonly theme: Theme;
     private readonly done: (entryId: string | undefined) => void;
     private selectedIndex: number;
     private windowStart = 0;
@@ -50,7 +49,7 @@ export class EnhancedForkSelector implements Component {
     constructor(
         candidates: readonly ForkCandidate[],
         tui: SelectorTui,
-        theme: ForkSelectorTheme,
+        theme: Theme,
         done: (entryId: string | undefined) => void,
     ) {
         this.candidates = candidates;
@@ -65,26 +64,31 @@ export class EnhancedForkSelector implements Component {
     render(width: number): string[] {
         const capacity = visibleCapacity(this.tui.terminal.rows);
         this.keepSelectionVisible(capacity);
-        const end = Math.min(
-            this.candidates.length,
-            this.windowStart + capacity,
-        );
-        const lines = [
-            truncateToWidth(this.theme.bold("Enhanced Fork"), width),
-            truncateToWidth(
-                this.theme.fg("muted", "Select a user message to fork from"),
-                width,
-            ),
-        ];
+        const colors = createUiColors(this.theme);
+        const box = new BoxRenderer(this.theme, width, {
+            viewportHeight: Math.min(capacity, this.candidates.length),
+        });
+        box.setTitle("Enhanced Fork");
+        box.setFixedHeader([
+            colors.muted("Select a user message to fork from"),
+        ]);
 
-        for (let index = this.windowStart; index < end; index += 1) {
+        const lines: string[] = [];
+
+        for (let index = 0; index < this.candidates.length; index += 1) {
             const candidate = this.candidates[index];
             if (!candidate) continue;
 
             const selected = index === this.selectedIndex;
             const cursor = selected ? "› " : "  ";
-            const prefix = `${cursor}[${index + 1}/${this.candidates.length}] `;
-            const previewWidth = Math.max(0, width - visibleWidth(prefix));
+            const indexLabel = colors.muted(
+                `[${index + 1}/${this.candidates.length}]`,
+            );
+            const prefix = `${cursor}${indexLabel} `;
+            const previewWidth = Math.max(
+                0,
+                box.getContentWidth() - visibleWidth(prefix),
+            );
             const preview = truncateToWidth(
                 candidate.text.replace(/\s+/g, " ").trim(),
                 previewWidth,
@@ -94,16 +98,12 @@ export class EnhancedForkSelector implements Component {
             );
         }
 
-        lines.push(
-            truncateToWidth(
-                this.theme.fg(
-                    "dim",
-                    "↑/↓ move  PgUp/PgDn page  Home/End jump  Enter fork  Esc cancel",
-                ),
-                width,
-            ),
+        box.setContent(lines);
+        box.scrollTo(this.windowStart);
+        box.setFooter(
+            "↑/↓ move  PgUp/PgDn page  Home/End jump  Enter fork  Esc cancel",
         );
-        return lines;
+        return box.render();
     }
 
     handleInput(data: string): void {
