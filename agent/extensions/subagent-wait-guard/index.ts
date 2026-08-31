@@ -6,12 +6,14 @@
  *
  * Mode-aware safeguards backed by pi-subagents' process-global active-runs API:
  *
- * 1. `message_end` always replaces a final assistant prose answer while runs remain.
- * 2. Interactive TUI sessions return control and rely on native completion wake.
- * 3. RPC/headless sessions receive one blocking-wait follow-up per active-run snapshot.
+ * 1. `message_end` replaces final assistant prose while runs remain.
+ * 2. Explicitly marked progress is allowed through a one-shot runtime permit.
+ * 3. Interactive TUI sessions return control and rely on native completion wake.
+ * 4. RPC/headless sessions receive one blocking-wait follow-up per active-run snapshot.
  *
- * Paused runs produce attention guidance instead of a wait loop. Snapshot changes
- * create a new bounded intervention, and an empty snapshot resets session state.
+ * Successful subagent tool results grant one progress permit. Paused runs grant one
+ * attention permit. Snapshot changes invalidate stale permits, and an empty snapshot
+ * resets session state.
  * PI_SUBAGENT_WAIT_GUARD=off disables registration entirely.
  *
  * Hard veto of turn completion is unavailable through Pi's public extension API;
@@ -22,8 +24,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     buildFollowUp,
     buildReplacement,
+    injectProgressProtocol,
     isInteractiveTuiRuntime,
     isPrematureFinalAssistant,
+    stripProgressMarker,
     type GuardNoticeKind,
 } from "./guard.ts";
 
@@ -36,6 +40,7 @@ interface SessionInterventionState {
     fingerprint: string;
     followUpPending: boolean;
     followUpSent: boolean;
+    progressPermit: boolean;
 }
 
 const sessionInterventions = new Map<string, SessionInterventionState>();
@@ -201,6 +206,7 @@ function interventionState(
         fingerprint,
         followUpPending: false,
         followUpSent: false,
+        progressPermit: hasPausedRun(runs),
     };
     sessionInterventions.set(sessionId, created);
     return created;
@@ -231,6 +237,7 @@ function reconcileTurnEndState(
         fingerprint,
         followUpPending: !hasPausedRun(runs),
         followUpSent: false,
+        progressPermit: hasPausedRun(runs),
     };
     sessionInterventions.set(sessionId, reconciled);
     return reconciled;
@@ -240,14 +247,42 @@ export default function register(pi: ExtensionAPI): void {
     if (process.env.PI_SUBAGENT_WAIT_GUARD === "off") return;
     const sendUserMessage = pi.sendUserMessage.bind(pi);
 
-    pi.on("message_end", (event, ctx) => {
+    pi.on("before_agent_start", (event) => ({
+        systemPrompt: injectProgressProtocol(event.systemPrompt),
+    }));
+
+    pi.on("tool_result", (event, ctx) => {
+        if (
+            event.isError ||
+            (event.toolName !== "subagent" &&
+                event.toolName !== "subagent_wait")
+        ) {
+            return;
+        }
         const sessionId = resolveSessionIdentity(ctx.sessionManager);
         const runs = activeRuns(sessionId);
-        if (resetIfSettled(sessionId, runs)) return undefined;
+        if (resetIfSettled(sessionId, runs)) return;
+        interventionState(sessionId, runs).progressPermit = true;
+    });
+
+    pi.on("message_end", (event, ctx) => {
         const { message } = event;
         if (message.role !== "assistant") return undefined;
-        if (!isPrematureFinalAssistant(message)) return undefined;
+        const progressMessage = stripProgressMarker(message);
+        const sessionId = resolveSessionIdentity(ctx.sessionManager);
+        const runs = activeRuns(sessionId);
+        if (resetIfSettled(sessionId, runs)) {
+            return progressMessage ? { message: progressMessage } : undefined;
+        }
+        if (!isPrematureFinalAssistant(message)) {
+            return progressMessage ? { message: progressMessage } : undefined;
+        }
         const state = interventionState(sessionId, runs);
+        const progressPermitted = state.progressPermit;
+        state.progressPermit = false;
+        if (progressMessage && progressPermitted) {
+            return { message: progressMessage };
+        }
         const attentionRequired = hasPausedRun(runs);
         const interactive = isInteractiveTuiRuntime(ctx.hasUI, process.argv);
         if (

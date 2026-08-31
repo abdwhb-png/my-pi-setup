@@ -7,6 +7,52 @@
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
+export const SUBAGENT_PROGRESS_MARKER = "[subagent-progress]";
+
+const SUBAGENT_PROGRESS_PROTOCOL =
+    "[subagent-wait-guard progress protocol] While delegated runs are active, prefix exactly one factual progress or attention update with `" +
+    SUBAGENT_PROGRESS_MARKER +
+    "` only after a successful `subagent` or `subagent_wait` result, or when a run enters paused attention; never use it for a final answer. The marker is removed before display.";
+
+/** Adds the explicit progress protocol without duplicating it across agent starts. */
+export function injectProgressProtocol(systemPrompt: string): string {
+    if (systemPrompt.includes(SUBAGENT_PROGRESS_PROTOCOL)) return systemPrompt;
+    return `${systemPrompt}\n\n${SUBAGENT_PROGRESS_PROTOCOL}`;
+}
+
+/**
+ * Removes the exact marker from a meaningful progress message.
+ * Undefined means the message did not opt into the explicit protocol.
+ */
+export function stripProgressMarker(
+    message: AssistantMessage,
+): AssistantMessage | undefined {
+    const markedIndex = message.content.findIndex(
+        (part) => part.type === "text" && part.text.trim().length > 0,
+    );
+    if (markedIndex < 0) return undefined;
+    const marked = message.content[markedIndex];
+    if (marked.type !== "text") return undefined;
+    const trimmed = marked.text.trimStart();
+    if (!trimmed.startsWith(SUBAGENT_PROGRESS_MARKER)) return undefined;
+    const progressText = trimmed
+        .slice(SUBAGENT_PROGRESS_MARKER.length)
+        .trimStart();
+    const content = message.content.map((part, index) =>
+        index === markedIndex && part.type === "text"
+            ? { ...part, text: progressText }
+            : part,
+    );
+    if (
+        !content.some(
+            (part) => part.type === "text" && part.text.trim().length > 0,
+        )
+    ) {
+        return undefined;
+    }
+    return { ...message, content };
+}
+
 /**
  * True when an assistant message is a final prose answer (no tool calls),
  * i.e. exactly the kind of message that must not land while delegated

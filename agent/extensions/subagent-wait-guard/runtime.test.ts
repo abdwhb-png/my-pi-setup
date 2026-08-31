@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+	calls,
 	createTestSession,
 	says,
 	type TestSession,
@@ -9,7 +10,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildFollowUp } from "./guard.ts";
+import { buildFollowUp, SUBAGENT_PROGRESS_MARKER } from "./guard.ts";
 
 const ACTIVE_SUBAGENT_RUNS_REGISTRY_KEY = "pi-subagents.active-runs.v1";
 const GUARD_EXTENSION_PATH = fileURLToPath(new URL("./index.ts", import.meta.url));
@@ -83,6 +84,50 @@ describe("subagent-wait-guard real Pi runtime", () => {
 		expect(assistantText).toContain(runId);
 		expect(assistantText).not.toContain("premature runtime answer");
 		expect(assistantText).toContain("final report incorporated");
+	});
+
+	test("real subagent status result authorizes one marked progress update", async () => {
+		const runId = "runtime-progress-run";
+		session = await createTestSession({
+			extensions: [PI_SUBAGENTS_SOURCE_PATH, GUARD_EXTENSION_PATH],
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					let started = false;
+					pi.on("before_agent_start", (_event, ctx) => {
+						if (started) return;
+						started = true;
+						const sessionId =
+							ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId();
+						pi.events.emit("subagent:async-started", {
+							id: runId,
+							pid: 1,
+							sessionId,
+							mode: "single",
+							agent: "worker",
+							asyncDir: "/tmp/runtime-progress-run",
+						});
+					});
+				},
+			],
+		});
+
+		await session.run(
+			when("Report active child progress", [
+				calls("subagent", { action: "status" }),
+				says(`${SUBAGENT_PROGRESS_MARKER} Child still running.`),
+			]),
+		);
+
+		const assistantText = session.events.messages
+			.filter((message) => message.role === "assistant")
+			.flatMap((message) => message.content)
+			.filter((part) => part.type === "text")
+			.map((part) => part.text)
+			.join("\n");
+		expect(session.events.toolResultsFor("subagent")[0]?.isError).toBe(false);
+		expect(assistantText).toContain("Child still running.");
+		expect(assistantText).not.toContain(SUBAGENT_PROGRESS_MARKER);
+		expect(assistantText).not.toContain("[subagent-wait-guard] Answer deferred");
 	});
 
 	test("headless runtime does not create another follow-up for the same active snapshot", async () => {

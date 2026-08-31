@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { SUBAGENT_PROGRESS_MARKER } from "./guard.ts";
 import register from "./index.ts";
 
 type Handler = (event: any, ctx: any) => any;
@@ -98,14 +99,52 @@ const assistantText = {
 	timestamp: Date.now(),
 } as const;
 
+function assistantMessage(text: string) {
+	return {
+		...structuredClone(assistantText),
+		content: [{ type: "text", text }],
+	};
+}
+
+function toolResult(toolName: string, isError = false) {
+	return {
+		type: "tool_result",
+		toolCallId: "tool-call-1",
+		toolName,
+		input: {},
+		content: [{ type: "text", text: isError ? "failed" : "ok" }],
+		isError,
+	};
+}
+
 describe("subagent-wait-guard entry", () => {
 	test("registers Pi handlers without lifecycle event subscriptions", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
 
-		expect([...handlers.keys()].sort()).toEqual(["message_end", "session_shutdown", "turn_end"]);
+		expect([...handlers.keys()].sort()).toEqual([
+			"before_agent_start",
+			"message_end",
+			"session_shutdown",
+			"tool_result",
+			"turn_end",
+		]);
 		expect(runtime.subscribers("subagent:async-started")).toBe(0);
 		expect(runtime.subscribers("subagent:async-complete")).toBe(0);
+	});
+
+	test("injects the explicit progress protocol before each agent run", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+
+		const result = handlers.get("before_agent_start")!(
+			{ prompt: "continue", systemPrompt: "Base prompt." },
+			makeCtx("sess-prompt"),
+		);
+
+		expect(result.systemPrompt).toContain("Base prompt.");
+		expect(result.systemPrompt).toContain(SUBAGENT_PROGRESS_MARKER);
+		expect(result.systemPrompt).toContain("never use it for a final answer");
 	});
 
 	test("replaces premature answer from the process-global active-runs snapshot", () => {
@@ -123,6 +162,114 @@ describe("subagent-wait-guard entry", () => {
 		expect(sentUserMessages).toHaveLength(1);
 		expect(sentUserMessages[0].content).toContain("run-1");
 		expect(sentUserMessages[0].options).toEqual({ deliverAs: "followUp" });
+	});
+
+	test("allows one marked progress update after a successful subagent result", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-progress", sessionId: "sess-progress", status: "running" }];
+		const ctx = makeCtx("sess-progress", undefined, true);
+		const messageEnd = handlers.get("message_end")!;
+
+		handlers.get("tool_result")!(toolResult("subagent"), ctx);
+		const progress = messageEnd(
+			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Child still reviewing.`) },
+			ctx,
+		);
+
+		expect(progress?.message?.content).toEqual([{ type: "text", text: "Child still reviewing." }]);
+		expect(JSON.stringify(progress?.message?.content)).not.toContain(SUBAGENT_PROGRESS_MARKER);
+
+		const repeated = messageEnd(
+			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Repeated progress.`) },
+			ctx,
+		);
+		expect(JSON.stringify(repeated?.message?.content)).toContain("subagent-wait-guard");
+		expect(JSON.stringify(repeated?.message?.content)).not.toContain("Repeated progress");
+	});
+
+	test("does not grant progress permits for failed or unrelated tool results", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-progress", sessionId: "sess-progress", status: "running" }];
+		const ctx = makeCtx("sess-progress", undefined, true);
+		const messageEnd = handlers.get("message_end")!;
+
+		handlers.get("tool_result")!(toolResult("subagent", true), ctx);
+		const failed = messageEnd(
+			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Failed result.`) },
+			ctx,
+		);
+		expect(JSON.stringify(failed?.message?.content)).toContain("subagent-wait-guard");
+
+		handlers.get("tool_result")!(toolResult("safe_bash"), ctx);
+		const unrelated = messageEnd(
+			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Unrelated result.`) },
+			ctx,
+		);
+		expect(JSON.stringify(unrelated?.message?.content)).toContain("subagent-wait-guard");
+	});
+
+	test("consumes a progress permit even when the next prose message omits the marker", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-progress", sessionId: "sess-progress", status: "running" }];
+		const ctx = makeCtx("sess-progress", undefined, true);
+		const messageEnd = handlers.get("message_end")!;
+
+		handlers.get("tool_result")!(toolResult("subagent_wait"), ctx);
+		const unmarked = messageEnd({ message: assistantMessage("Unmarked final answer.") }, ctx);
+		expect(JSON.stringify(unmarked?.message?.content)).toContain("subagent-wait-guard");
+
+		const stale = messageEnd(
+			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Stale permit.`) },
+			ctx,
+		);
+		expect(JSON.stringify(stale?.message?.content)).toContain("subagent-wait-guard");
+	});
+
+	test("invalidates a stale progress permit when the active snapshot changes", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-a", sessionId: "sess-change", status: "running" }];
+		const ctx = makeCtx("sess-change", undefined, true);
+
+		handlers.get("tool_result")!(toolResult("subagent"), ctx);
+		activeRuns = [
+			{ id: "run-a", sessionId: "sess-change", status: "running" },
+			{ id: "run-b", sessionId: "sess-change", status: "queued" },
+		];
+		const result = handlers.get("message_end")!(
+			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Stale snapshot.`) },
+			ctx,
+		);
+
+		expect(JSON.stringify(result?.message?.content)).toContain("subagent-wait-guard");
+		expect(JSON.stringify(result?.message?.content)).not.toContain("Stale snapshot");
+	});
+
+	test("permits one explicit attention update when a run becomes paused", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-paused", sessionId: "sess-attention", status: "running" }];
+		const ctx = makeCtx("sess-attention", undefined, true);
+		const messageEnd = handlers.get("message_end")!;
+		messageEnd({ message: assistantMessage("Still running.") }, ctx);
+		activeRuns = [{ id: "run-paused", sessionId: "sess-attention", status: "paused" }];
+
+		const attention = messageEnd(
+			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Child needs clarification.`) },
+			ctx,
+		);
+		expect(attention?.message?.content).toEqual([
+			{ type: "text", text: "Child needs clarification." },
+		]);
+
+		const repeated = messageEnd(
+			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Repeated attention.`) },
+			ctx,
+		);
+		expect(JSON.stringify(repeated?.message?.content)).toContain("subagent-wait-guard");
 	});
 
 	test("becomes inert and resets enforcement when the source has no active runs", () => {

@@ -3,8 +3,11 @@ import type { AssistantMessage, TextContent, ToolCall } from "@earendil-works/pi
 import {
 	buildFollowUp,
 	buildReplacement,
+	injectProgressProtocol,
 	isInteractiveTuiRuntime,
 	isPrematureFinalAssistant,
+	stripProgressMarker,
+	SUBAGENT_PROGRESS_MARKER,
 } from "./guard.ts";
 
 const usage = {
@@ -46,6 +49,41 @@ describe("isPrematureFinalAssistant", () => {
 	test("false for empty or whitespace-only text", () => {
 		const message = assistantMessage([{ type: "text", text: "   " }]);
 		expect(isPrematureFinalAssistant(message)).toBe(false);
+	});
+});
+
+describe("progress protocol", () => {
+	test("strips an exact leading marker while preserving assistant identity", () => {
+		const original = assistantMessage([
+			{ type: "text", text: `${SUBAGENT_PROGRESS_MARKER} Reviewing child status.` },
+		]);
+
+		const progress = stripProgressMarker(original);
+
+		expect(progress?.model).toBe(original.model);
+		expect(progress?.content).toEqual([{ type: "text", text: "Reviewing child status." }]);
+		expect(original.content).toEqual([
+			{ type: "text", text: `${SUBAGENT_PROGRESS_MARKER} Reviewing child status.` },
+		]);
+	});
+
+	test("rejects unmarked, misplaced, and empty progress messages", () => {
+		expect(stripProgressMarker(assistantMessage([{ type: "text", text: "Ordinary answer" }]))).toBeUndefined();
+		expect(
+			stripProgressMarker(
+				assistantMessage([{ type: "text", text: `Status ${SUBAGENT_PROGRESS_MARKER}` }]),
+			),
+		).toBeUndefined();
+		expect(
+			stripProgressMarker(assistantMessage([{ type: "text", text: SUBAGENT_PROGRESS_MARKER }])),
+		).toBeUndefined();
+	});
+
+	test("injects concise marker instructions exactly once", () => {
+		const injected = injectProgressProtocol("Base system prompt.");
+		expect(injected).toContain(SUBAGENT_PROGRESS_MARKER);
+		expect(injected).toContain("progress or attention update");
+		expect(injectProgressProtocol(injected)).toBe(injected);
 	});
 });
 
