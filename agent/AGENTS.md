@@ -4,8 +4,11 @@
 
 - User prefer clear and concise communication. You must always follow the `concise-communication` skill instructions when communicating with the user. Avoid unnecessary chatter and get straight to the point.
 - Always follow `dependency-installation` skill instructions when installing new dependencies. Do not skip steps or make assumptions about the environment.
-- Never, absoluetly never spawn a subagent with a different model from the predefined agent models list unless explicit asked to do so by the user.
+- Never, absoluetly never spawn a subagent with a different llm from the predefined list unless explicit asked to do so by the user.
 - **Do not use sdd for implémentation unless directly instructed**: Spawn subagents without asking for confirmation only for exploration, research and video analysis.
+- Always use direct imperative address directed at the executing agent:
+  - Incorrect (3rd person): "Models naturally amplify claims while discarding limits. The model must not execute actions while discarding constraints."
+  - Correct (Direct imperative): "Weld limits to permissions: state capabilities alongside their non-negotiable boundaries. Never state a finding without its error margin or caveats."
 
 ## Stack preferences
 
@@ -18,7 +21,7 @@ These preferences are just preferences and must only be considered when choice i
 
 Work directly by default. Do not delegate work that can be completed with a small number of direct file reads, searches, or MCP calls. Delegation is justified only when repository exploration spans multiple independent areas, parallel research materially reduces completion time, the task needs a specialist capability unavailable through direct tools, or the user explicitly requests delegation.
 
-Delegation is valuable when it reduces uncertainty or parallelizes substantial work, but unnecessary delegation adds coordination cost. Choose a specialist agent based on the work, keep its scope explicit, and treat only its final report as a completed result.
+Delegation is valuable when it reduces uncertainty or parallelizes substantial work, but unnecessary delegation adds coordination cost. Choose a specialist agent based on the work, keep its scope explicit, and treat only its final report as a completed result. Prevent organizational distortion across handoffs by carrying explicit intent, constraints, and success criteria intact.
 
 - Without explicit user authorization, launch at most one exploration or research subagent per request.
 - For local repository discovery, use direct tools first; use `Scout` only when the search is broad or the correct implementation surface is genuinely uncertain.
@@ -27,6 +30,7 @@ Delegation is valuable when it reduces uncertainty or parallelizes substantial w
 - Use `Librarian` for substantial external open-source code or documentation research that requires repository-level investigation.
 - Use `code-reviewer` or `quick-reviewer` for review work. Use `architect` or `oracle` for complex design or architecture assessment, not as a substitute for implementation review.
 - For implementation delegation, use a lightweight worker for a clear low-to-medium complexity task and a general worker when the task requires more reasoning or coordination.
+- Require subagents to state boundaries and unverified items explicitly rather than smoothing them away.
 - Do not start a full software-development workflow unless the user explicitly requests it. Without that request, delegate exploration, research, or video analysis when useful and keep implementation under the current task's control.
 - Treat a delegated result as complete only after receiving the agent's final report. Do not present an interim result as a completed review or research finding.
 - Once a subagent (scout, researcher, librarian, reviewer, worker) is spawned to investigate or validate a question, do not deliver a final conclusion or direction to the user until that subagent has completed and returned its final report, or until you explicitly stop it.
@@ -71,6 +75,7 @@ Write one minimal test showing what should happen. Watch it fail for the right r
 2. **Skipping TDD because "the environment makes testing hard"** — If the env blocks imports, mock the blockers, don't bypass them.
 3. **Testing pure helpers in isolation without testing the module that exports them** — The helpers are only useful if the consuming module loads correctly. Always have at least one test that imports the full module.
 4. **Detaching methods from class instances** (`const f = obj.method; f()`) — In TypeScript, class methods lose `this` when detached. Always call methods directly (`obj.method()`) or use arrow-function class fields. Tests must explicitly verify this pattern if a public API returns a method reference.
+5. **Masking edge cases or silent error suppression** — Tests must assert on explicit boundaries and error states. Code must never silently swallow failures or hide broken contracts under generic fallbacks.
 
 ## Security and Safety
 

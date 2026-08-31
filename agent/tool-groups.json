@@ -20,7 +20,8 @@
         "memory": [
             "@memory-consult",
             "memory_add",
-            "memory"
+            "memory_replace",
+            "memory_remove"
         ],
         "files-write": ["edit", "write"],
         "report-write": ["write_report", "edit_report"],

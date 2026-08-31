@@ -89,6 +89,11 @@
             "align": "left",
             "position": 0
         },
+        "dangerous-mode": {
+            "row": 2,
+            "position": 0,
+            "align": "left"
+        },
         "pi-sandbox": {
             "row": 2,
             "position": 1,

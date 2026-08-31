@@ -1,3 +1,6 @@
 {
-    "tools": []
+    "tools": [
+        "@ctx-exec",
+        "@subagents"
+    ]
 }
