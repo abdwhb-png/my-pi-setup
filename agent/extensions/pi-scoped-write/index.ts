@@ -14,9 +14,8 @@ import {
     type ArtifactRunRoot,
     type ArtifactRootRegistry,
     type ScopedWriter,
-} from "./core.ts";
+} from "../_shared/scoped-write.ts";
 import { commonDebugRoot, registerDebugTools } from "./debug-tools.ts";
-import { registerPlanTools } from "./plan-tools.ts";
 
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const REPORT_MAX_BYTES = 1_048_576;
@@ -150,7 +149,6 @@ const purgeArtifactsSchema = Type.Object({
 export default function registerScopedWrite(pi: ExtensionAPI): void {
     const roots = sharedArtifactRootRegistry();
 
-    registerPlanTools(pi);
     registerDebugTools(pi);
 
     pi.registerTool({

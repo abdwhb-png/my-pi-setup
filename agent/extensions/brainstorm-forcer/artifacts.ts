@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { createScopedWriter } from "../pi-scoped-write/core";
+import { createScopedWriter } from "../_shared/scoped-write.ts";
 
 export const BRAINSTORM_PHASES = [
     "discovery",
@@ -82,6 +82,49 @@ function expectWriteSuccess(
     return result.path;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isArtifactRevision(value: unknown): value is ArtifactRevision {
+    if (!isRecord(value)) return false;
+    return (
+        typeof value.phase === "string" &&
+        BRAINSTORM_PHASES.some((phase) => phase === value.phase) &&
+        typeof value.revision === "number" &&
+        (value.status === "active" || value.status === "stale") &&
+        typeof value.path === "string" &&
+        typeof value.sha256 === "string" &&
+        typeof value.createdAt === "string"
+    );
+}
+
+function isManifest(value: unknown): value is BrainstormArtifactManifest {
+    if (!isRecord(value) || !isRecord(value.activeRevisions)) return false;
+    return (
+        value.version === 1 &&
+        typeof value.runId === "string" &&
+        typeof value.topic === "string" &&
+        typeof value.root === "string" &&
+        typeof value.updatedAt === "string" &&
+        Object.values(value.activeRevisions).every(
+            (revision) => typeof revision === "number",
+        ) &&
+        Array.isArray(value.revisions) &&
+        value.revisions.every(isArtifactRevision)
+    );
+}
+
+function readManifest(path: string): BrainstormArtifactManifest {
+    try {
+        const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+        if (!isManifest(parsed)) throw new Error("Manifest shape is invalid.");
+        return parsed;
+    } catch (error) {
+        throw new Error(`Invalid artifact manifest: ${path}`, { cause: error });
+    }
+}
+
 export function createBrainstormArtifactStore(options: StoreOptions) {
     const now = options.now ?? (() => new Date().toISOString());
     const createdAt = now();
@@ -90,9 +133,7 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
     let manifestPath = `docs/brainstorms/${relativeRoot}/manifest.json`;
     let absoluteManifestPath = join(options.projectRoot, manifestPath);
     if (existsSync(absoluteManifestPath)) {
-        const existing = JSON.parse(
-            readFileSync(absoluteManifestPath, "utf8"),
-        ) as BrainstormArtifactManifest;
+        const existing = readManifest(absoluteManifestPath);
         if (existing.runId !== options.runId) {
             relativeRoot = `${relativeRoot}-${slugify(options.runId)}`;
             manifestPath = `docs/brainstorms/${relativeRoot}/manifest.json`;
@@ -130,9 +171,7 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
     };
 
     if (existsSync(absoluteManifestPath)) {
-        manifest = JSON.parse(
-            readFileSync(absoluteManifestPath, "utf8"),
-        ) as BrainstormArtifactManifest;
+        manifest = readManifest(absoluteManifestPath);
         if (manifest.runId !== options.runId)
             throw new Error(
                 `Artifact root already belongs to run ${manifest.runId}.`,

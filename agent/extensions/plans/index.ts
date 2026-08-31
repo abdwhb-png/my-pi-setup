@@ -4,6 +4,9 @@ import {
     withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { registerPlanTools } from "./scoped-plan-tools.ts";
+import { registerShowSavedPlansCommand } from "./show-saved-plans-command.ts";
+import { recordSavedPlan } from "./tracker.ts";
 import {
     extractFirstHeading,
     listVersions,
@@ -74,7 +77,10 @@ function formatHistory(
     return `Version history (${versions.length} version${versions.length === 1 ? "" : "s"}):\n${lines.join("\n")}`;
 }
 
-export default function sessionPlanExtension(pi: ExtensionAPI): void {
+export default function plansExtension(pi: ExtensionAPI): void {
+    registerPlanTools(pi);
+    registerShowSavedPlansCommand(pi);
+
     pi.registerTool({
         name: "session_plan",
         label: "Session Plan",
@@ -213,6 +219,15 @@ export default function sessionPlanExtension(pi: ExtensionAPI): void {
                                 ),
                             ),
                     );
+
+                    recordSavedPlan(sessionId, {
+                        kind: "session_plan",
+                        key: topic,
+                        topic,
+                        path: saveResult.path,
+                        version: saveResult.version,
+                        bytes: saveResult.bytes,
+                    });
 
                     return {
                         content: [

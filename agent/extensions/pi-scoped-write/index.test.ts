@@ -17,7 +17,7 @@ afterEach(() => {
     }
 });
 
-test('the scoped-write extension owns all five scoped tools and attributes writes to the active role session', async () => {
+test('the scoped-write extension owns debug, report, and purge tools', async () => {
     const registered = new Map<string, { execute: Function }>();
     const { default: registerScopedWrite } = await import('./index.ts');
     registerScopedWrite({
@@ -27,8 +27,6 @@ test('the scoped-write extension owns all five scoped tools and attributes write
     } as unknown as ExtensionAPI);
 
     expect([...registered.keys()]).toEqual([
-        'write_plan',
-        'edit_plan',
         'write_debug_probe',
         'edit_debug_probe',
         'write_report',
@@ -38,38 +36,6 @@ test('the scoped-write extension owns all five scoped tools and attributes write
 
     const cwd = mkdtempSync(join(tmpdir(), 'pi-scoped-write-extension-'));
     temporaryDirectories.push(cwd);
-    const writePlan = registered.get('write_plan');
-    if (!writePlan) throw new Error('write_plan was not registered');
-    const planResult = await writePlan.execute(
-        'call-plan',
-        { path: 'audited.md', content: '# Audited plan\n' },
-        undefined,
-        undefined,
-        {
-            cwd,
-            hasUI: false,
-            sessionManager: {
-                getSessionId: () => 'session-1',
-                getEntries: () => [
-                    {
-                        type: 'custom',
-                        customType: 'pi-roles:active-role',
-                        data: {
-                            name: 'plan',
-                            source: 'user',
-                            path: 'plan.md',
-                            appliedAt: 1,
-                        },
-                    },
-                ],
-            },
-        },
-    );
-    expect(planResult.details.error).toBeNull();
-    expect(readFileSync(join(cwd, 'docs/plans/audited.md'), 'utf8')).toBe(
-        '# Audited plan\n',
-    );
-
     const write = registered.get('write_report');
     if (!write) throw new Error('write_report was not registered');
     const result = await write.execute(
@@ -117,7 +83,6 @@ test('the scoped-write extension owns all five scoped tools and attributes write
         .split('\n')
         .map((line) => JSON.parse(line));
     expect(auditEvents.map((event) => event.tool)).toEqual([
-        'write_plan',
         'write_report',
     ]);
 });

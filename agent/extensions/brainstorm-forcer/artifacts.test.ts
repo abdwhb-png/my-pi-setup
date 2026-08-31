@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBrainstormArtifactStore } from "./artifacts";
@@ -41,6 +41,21 @@ describe("brainstorm artifact store", () => {
       activeRevisions: { discovery: 1 },
       revisions: [{ phase: "discovery", revision: 1, status: "active", path: result.path }],
     });
+  });
+
+  it("reports an invalid existing manifest without leaking a JSON parser error", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-artifacts-"));
+    temporaryDirectories.push(projectRoot);
+    const manifestDir = join(projectRoot, "docs/brainstorms/2026-07-24-invalid-manifest");
+    await mkdir(manifestDir, { recursive: true });
+    await writeFile(join(manifestDir, "manifest.json"), "not json");
+
+    expect(() => createBrainstormArtifactStore({
+      projectRoot,
+      runId: "brainstorm-invalid",
+      topic: "Invalid manifest",
+      now: () => "2026-07-24T12:00:00.000Z",
+    })).toThrow("Invalid artifact manifest");
   });
 
   it("reads a submitted artifact through its verified run scope", async () => {

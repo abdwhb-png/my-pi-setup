@@ -2,7 +2,7 @@
 
 `pi-scoped-write` is a native Pi extension that provides narrow, auditable filesystem mutation capabilities for roles that must produce artefacts without receiving general implementation authority.
 
-It owns `write_plan`, `edit_plan`, `write_debug_probe`, `edit_debug_probe`, `write_report`, `edit_report`, and `artifacts_purge`. The Plannotator-specific adapter is isolated in `plan-tools.ts`; the throwaway debug-probe adapter is isolated in `debug-tools.ts`; `pi-roles-addons` owns no filesystem-mutation tool.
+It owns `write_debug_probe`, `edit_debug_probe`, `write_report`, `edit_report`, and `artifacts_purge`. Plan tools (`session_plan`, `write_plan`, `edit_plan`, and `/show-saved-plans`) belong to `extensions/plans/`. The throwaway debug-probe adapter is isolated in `debug-tools.ts`; `pi-roles-addons` owns no filesystem-mutation tool.
 
 Report attribution prefers the active public `pi-roles` role. In a `pi-subagents` child without an active role, it falls back to the declared `PI_SUBAGENT_CHILD_AGENT`; otherwise it uses the documented neutral identity.
 

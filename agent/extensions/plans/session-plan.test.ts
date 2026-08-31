@@ -36,6 +36,7 @@ function makeExtension() {
             registeredTool = tool;
         },
         on() {},
+        registerCommand() {},
     } as unknown as ExtensionAPI;
     sessionPlanExtension(pi);
     return registeredTool!;

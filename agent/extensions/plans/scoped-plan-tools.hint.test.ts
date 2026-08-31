@@ -27,7 +27,7 @@ type ExecuteResult = {
 };
 
 function setup() {
-    const { registerPlanTools } = require("./plan-tools");
+    const { registerPlanTools } = require("./scoped-plan-tools");
     const tools = new Map<
         string,
         {

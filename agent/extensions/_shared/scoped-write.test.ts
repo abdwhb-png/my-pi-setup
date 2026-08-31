@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createArtifactRootRegistry, createScopedWriter, purgeArtifacts } from './core.ts';
+import { createArtifactRootRegistry, createScopedWriter, purgeArtifacts } from './scoped-write.ts';
 
 const temporaryDirectories: string[] = [];
 

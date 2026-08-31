@@ -24,7 +24,7 @@ import {
     type ArtifactRootRegistry,
     type ArtifactRunRoot,
     type ScopedWriter,
-} from "./core.ts";
+} from "../_shared/scoped-write.ts";
 
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const DEBUG_MAX_BYTES = 4 * 1024 * 1024;

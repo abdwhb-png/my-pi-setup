@@ -17,7 +17,8 @@ import {
     resolvePlanFileDir,
 } from "@plannotator/pi-extension/config.js";
 import { getActiveRole, readFrontmatter } from "../_shared/pi-roles.ts";
-import { createScopedWriter, type ScopedWriteActor } from "./core.ts";
+import { createScopedWriter, type ScopedWriteActor } from "../_shared/scoped-write.ts";
+import { recordSavedPlan } from "./tracker.ts";
 
 // ── Types ──
 
@@ -298,6 +299,13 @@ export function registerPlanTools(pi: ExtensionAPI): void {
                 params.content,
                 planWriteActor(ctx),
             );
+            if (result.error === null && result.path !== null) {
+                recordSavedPlan(ctx.sessionManager.getSessionId(), {
+                    kind: "pi-plan",
+                    key: result.path,
+                    path: result.path,
+                });
+            }
             return {
                 content: [
                     {
@@ -328,6 +336,13 @@ export function registerPlanTools(pi: ExtensionAPI): void {
                 params.edits,
                 planWriteActor(ctx),
             );
+            if (result.error === null && result.path !== null) {
+                recordSavedPlan(ctx.sessionManager.getSessionId(), {
+                    kind: "pi-plan",
+                    key: result.path,
+                    path: result.path,
+                });
+            }
             return {
                 content: [
                     {

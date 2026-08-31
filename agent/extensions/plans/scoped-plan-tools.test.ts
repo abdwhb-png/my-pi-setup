@@ -13,7 +13,7 @@ import {
   resolvePlanPath,
   writePlan,
   editPlan,
-} from "./plan-tools";
+} from "./scoped-plan-tools";
 
 
 // ── resolvePlanPath ──
