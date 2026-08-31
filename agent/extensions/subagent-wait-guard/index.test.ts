@@ -6,6 +6,7 @@ type Handler = (event: any, ctx: any) => any;
 interface ActiveSubagentRun {
 	id: string;
 	sessionId: string;
+	status?: "queued" | "running" | "paused";
 }
 
 const ACTIVE_SUBAGENT_RUNS_REGISTRY_KEY = "pi-subagents.active-runs.v1";
@@ -153,7 +154,7 @@ describe("subagent-wait-guard entry", () => {
 		expect(JSON.stringify(result?.message?.content)).toContain("run-file");
 	});
 
-	test("ignores non-final messages while a run is active", () => {
+	test("ignores non-final messages without queueing a follow-up", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
 		activeRuns = [{ id: "run-1", sessionId: "sess-1" }];
@@ -171,6 +172,33 @@ describe("subagent-wait-guard entry", () => {
 		expect(
 			handlers.get("message_end")!({ message: { role: "user", content: [{ type: "text", text: "hi" }] } }, ctx),
 		).toBeUndefined();
+		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
+		expect(sentUserMessages).toHaveLength(0);
+	});
+
+	test("queues one follow-up after withholding a final answer", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-1", sessionId: "sess-1" }];
+		const ctx = makeCtx("sess-1");
+
+		handlers.get("message_end")!({ message: structuredClone(assistantText) }, ctx);
+		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
+		handlers.get("turn_end")!({ turnIndex: 1, message: {}, toolResults: [] }, ctx);
+
+		expect(sentUserMessages).toHaveLength(1);
+	});
+
+	test("withholds a final answer for a paused run without queueing a wait", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "paused-run", sessionId: "sess-1", status: "paused" }];
+		const ctx = makeCtx("sess-1");
+
+		const result = handlers.get("message_end")!({ message: structuredClone(assistantText) }, ctx);
+		expect(JSON.stringify(result?.message?.content)).toContain("paused-run");
+		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
+		expect(sentUserMessages).toHaveLength(0);
 	});
 
 	test("backs off at the cap, then an empty snapshot resets the session", () => {
@@ -181,11 +209,11 @@ describe("subagent-wait-guard entry", () => {
 		const messageEnd = handlers.get("message_end")!;
 		const turnEnd = handlers.get("turn_end")!;
 
-		for (let i = 0; i < 5; i++) {
+		for (let i = 0; i < 10; i++) {
 			messageEnd({ message: structuredClone(assistantText) }, ctx);
 			turnEnd({ turnIndex: i, message: {}, toolResults: [] }, ctx);
 		}
-		expect(sentUserMessages).toHaveLength(5);
+		expect(sentUserMessages).toHaveLength(10);
 		expect(messageEnd({ message: structuredClone(assistantText) }, ctx)).toBeUndefined();
 
 		activeRuns = [];

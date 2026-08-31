@@ -8,7 +8,7 @@
  * active-runs API:
  *
  * 1. `message_end` replaces a final assistant prose answer while runs remain.
- * 2. `turn_end` injects a follow-up forcing `subagent_wait({ all: true })`.
+ * 2. Its matching `turn_end` injects one follow-up forcing `subagent_wait({ all: true })`.
  *
  * Safety valves:
  * - Consecutive-intervention cap prevents an eternally hung child from
@@ -34,10 +34,14 @@ const MAX_SOURCES = 100;
 const MAX_RUNS_PER_SOURCE = 10_000;
 const INTERVENTION_CAP = 10;
 const consecutiveInterventions = new Map<string, number>();
+const pendingFollowUps = new Set<string>();
+
+type ActiveSubagentRunStatus = "queued" | "running" | "paused";
 
 interface ActiveSubagentRun {
     id: string;
     sessionId: string;
+    status: ActiveSubagentRunStatus;
 }
 
 interface ActiveRunsRegistry {
@@ -64,6 +68,10 @@ function validString(value: unknown): value is string {
     );
 }
 
+function validStatus(value: unknown): value is ActiveSubagentRunStatus {
+    return value === "queued" || value === "running" || value === "paused";
+}
+
 function activeRunsRegistry(): ActiveRunsRegistry | undefined {
     const value = (globalThis as Record<PropertyKey, unknown>)[
         Symbol.for(ACTIVE_RUNS_REGISTRY_KEY)
@@ -72,8 +80,8 @@ function activeRunsRegistry(): ActiveRunsRegistry | undefined {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("Malformed pi-subagents active-runs registry.");
     }
-    const version = Reflect.get(value, "version");
-    const sources = Reflect.get(value, "sources");
+    const registry = value as { version?: unknown; sources?: unknown };
+    const { version, sources } = registry;
     if (version !== ACTIVE_RUNS_PROTOCOL_VERSION || !(sources instanceof Map)) {
         throw new Error(
             `Unsupported pi-subagents active-runs registry version '${String(version)}'.`,
@@ -93,18 +101,22 @@ function snapshotActiveSubagentRuns(sessionId: string): ActiveSubagentRun[] {
         if (!source || typeof source !== "object" || Array.isArray(source)) {
             throw new Error(`Active-runs source '${sourceName}' is malformed.`);
         }
-        if (Reflect.get(source, "name") !== sourceName) {
+        const sourceRecord = source as {
+            name?: unknown;
+            listActiveRuns?: unknown;
+        };
+        if (sourceRecord.name !== sourceName) {
             throw new Error(
                 `Active-runs source '${sourceName}' has a mismatched name.`,
             );
         }
-        const listActiveRuns = Reflect.get(source, "listActiveRuns");
+        const { listActiveRuns } = sourceRecord;
         if (typeof listActiveRuns !== "function") {
             throw new Error(
                 `Active-runs source '${sourceName}' lacks listActiveRuns().`,
             );
         }
-        const active: unknown = Reflect.apply(listActiveRuns, source, []);
+        const active: unknown = listActiveRuns.call(source);
         if (!Array.isArray(active)) {
             throw new Error(
                 `Active-runs source '${sourceName}' did not return an array.`,
@@ -121,11 +133,20 @@ function snapshotActiveSubagentRuns(sessionId: string): ActiveSubagentRun[] {
                     `Active-runs source '${sourceName}' returned a malformed run.`,
                 );
             }
-            const id = Reflect.get(value, "id");
-            const ownerSessionId = Reflect.get(value, "sessionId");
+            const run = value as {
+                id?: unknown;
+                sessionId?: unknown;
+                status?: unknown;
+            };
+            const { id, sessionId: ownerSessionId, status: rawStatus } = run;
             if (!validString(id) || !validString(ownerSessionId)) {
                 throw new Error(
                     `Active-runs source '${sourceName}' returned an invalid run identity.`,
+                );
+            }
+            if (rawStatus !== undefined && !validStatus(rawStatus)) {
+                throw new Error(
+                    `Active-runs source '${sourceName}' returned an invalid run status.`,
                 );
             }
             const identity = `${ownerSessionId}\0${id}`;
@@ -133,17 +154,21 @@ function snapshotActiveSubagentRuns(sessionId: string): ActiveSubagentRun[] {
                 throw new Error(`Duplicate active run '${id}'.`);
             identities.add(identity);
             if (ownerSessionId === sessionId)
-                runs.push({ id, sessionId: ownerSessionId });
+                runs.push({
+                    id,
+                    sessionId: ownerSessionId,
+                    status: rawStatus ?? "running",
+                });
         }
     }
     return runs;
 }
 
-function activeRunIds(sessionId: string): string[] {
+function activeRuns(sessionId: string): ActiveSubagentRun[] {
     try {
-        return snapshotActiveSubagentRuns(sessionId)
-            .map((run) => run.id)
-            .toSorted();
+        return snapshotActiveSubagentRuns(sessionId).toSorted((left, right) =>
+            left.id.localeCompare(right.id),
+        );
     } catch (error) {
         console.error(
             "[subagent-wait-guard] Failed to snapshot active pi-subagents runs:",
@@ -153,10 +178,18 @@ function activeRunIds(sessionId: string): string[] {
     }
 }
 
-function resetIfSettled(sessionId: string, runIds: readonly string[]): boolean {
-    if (runIds.length > 0) return false;
+function resetIfSettled(
+    sessionId: string,
+    runs: readonly ActiveSubagentRun[],
+): boolean {
+    if (runs.length > 0) return false;
     consecutiveInterventions.delete(sessionId);
+    pendingFollowUps.delete(sessionId);
     return true;
+}
+
+function waitableRunIds(runs: readonly ActiveSubagentRun[]): string[] {
+    return runs.filter((run) => run.status !== "paused").map((run) => run.id);
 }
 
 export default function register(pi: ExtensionAPI): void {
@@ -165,8 +198,8 @@ export default function register(pi: ExtensionAPI): void {
 
     pi.on("message_end", (event, ctx) => {
         const sessionId = resolveSessionIdentity(ctx.sessionManager);
-        const runIds = activeRunIds(sessionId);
-        if (resetIfSettled(sessionId, runIds)) return undefined;
+        const runs = activeRuns(sessionId);
+        if (resetIfSettled(sessionId, runs)) return undefined;
         const { message } = event;
         if (message.role !== "assistant") return undefined;
         if (!isPrematureFinalAssistant(message)) return undefined;
@@ -176,23 +209,28 @@ export default function register(pi: ExtensionAPI): void {
         );
         if (next === null) return undefined;
         consecutiveInterventions.set(sessionId, next);
-        return { message: buildReplacement(message, runIds) };
+        pendingFollowUps.add(sessionId);
+        return {
+            message: buildReplacement(
+                message,
+                runs.map((run) => run.id),
+            ),
+        };
     });
 
     pi.on("turn_end", (_event, ctx) => {
         const sessionId = resolveSessionIdentity(ctx.sessionManager);
-        const runIds = activeRunIds(sessionId);
-        if (resetIfSettled(sessionId, runIds)) return;
-        const next = nextInterventionCount(
-            consecutiveInterventions.get(sessionId) ?? 0,
-            INTERVENTION_CAP,
-        );
-        if (next === null) return;
-        consecutiveInterventions.set(sessionId, next);
+        const runs = activeRuns(sessionId);
+        if (resetIfSettled(sessionId, runs)) return;
+        if (!pendingFollowUps.has(sessionId)) return;
+        const runIds = waitableRunIds(runs);
+        if (runIds.length === 0) return;
+        pendingFollowUps.delete(sessionId);
         sendUserMessage(buildFollowUp(runIds), { deliverAs: "followUp" });
     });
 
     pi.on("session_shutdown", () => {
         consecutiveInterventions.clear();
+        pendingFollowUps.clear();
     });
 }
