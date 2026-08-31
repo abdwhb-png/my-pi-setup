@@ -12,10 +12,14 @@ interface ActiveSubagentRun {
 const ACTIVE_SUBAGENT_RUNS_REGISTRY_KEY = "pi-subagents.active-runs.v1";
 const handlers = new Map<string, Handler>();
 const sentUserMessages: Array<{ content: string; options?: unknown }> = [];
+const sessionContexts = new Map<string, ReturnType<typeof makeCtx>>();
 let activeRuns: ActiveSubagentRun[] = [];
 
 afterEach(() => {
-	handlers.get("session_shutdown")?.({}, makeCtx("cleanup"));
+	for (const ctx of sessionContexts.values()) {
+		handlers.get("session_shutdown")?.({}, ctx);
+	}
+	sessionContexts.clear();
 	handlers.clear();
 	sentUserMessages.length = 0;
 	activeRuns = [];
@@ -63,13 +67,16 @@ function registerRuntime(runtime: ReturnType<typeof makePi>): void {
 	register(runtime.pi as unknown as ExtensionAPI);
 }
 
-function makeCtx(sessionId: string, sessionFile?: string) {
-	return {
+function makeCtx(sessionId: string, sessionFile?: string, hasUI = false) {
+	const ctx = {
+		hasUI,
 		sessionManager: {
 			getSessionId: () => sessionId,
 			getSessionFile: () => sessionFile,
 		},
 	};
+	sessionContexts.set(sessionFile ?? sessionId, ctx);
+	return ctx;
 }
 
 const usage = {
@@ -189,6 +196,106 @@ describe("subagent-wait-guard entry", () => {
 		expect(sentUserMessages).toHaveLength(1);
 	});
 
+	test("interactive TUI withholds once without forcing an immediate wait turn", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-ui", sessionId: "sess-ui", status: "running" }];
+		const ctx = makeCtx("sess-ui", undefined, true);
+
+		const result = handlers.get("message_end")!({ message: structuredClone(assistantText) }, ctx);
+		expect(JSON.stringify(result?.message?.content)).toContain("run-ui");
+		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
+
+		expect(sentUserMessages).toHaveLength(0);
+	});
+
+	test("headless mode forces at most one wait turn for an unchanged run snapshot", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-headless", sessionId: "sess-headless", status: "running" }];
+		const ctx = makeCtx("sess-headless");
+		const messageEnd = handlers.get("message_end")!;
+		const turnEnd = handlers.get("turn_end")!;
+
+		messageEnd({ message: structuredClone(assistantText) }, ctx);
+		turnEnd({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
+		messageEnd({ message: structuredClone(assistantText) }, ctx);
+		turnEnd({ turnIndex: 1, message: {}, toolResults: [] }, ctx);
+
+		expect(sentUserMessages).toHaveLength(1);
+		expect(sentUserMessages[0].content).toContain("standalone `subagent_wait` tool");
+		expect(sentUserMessages[0].content).toContain("not `subagent({ action: \"wait\" })`");
+	});
+
+	test("headless follow-up reconciles a run snapshot changed before turn end", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-before", sessionId: "sess-race", status: "running" }];
+		const ctx = makeCtx("sess-race");
+
+		handlers.get("message_end")!({ message: structuredClone(assistantText) }, ctx);
+		activeRuns = [{ id: "run-after", sessionId: "sess-race", status: "queued" }];
+		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
+
+		expect(sentUserMessages).toHaveLength(1);
+		expect(sentUserMessages[0].content).toContain("run-after");
+		expect(sentUserMessages[0].content).not.toContain("run-before");
+	});
+
+	test("changed run membership permits one new headless intervention", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-a", sessionId: "sess-change", status: "running" }];
+		const ctx = makeCtx("sess-change");
+		const messageEnd = handlers.get("message_end")!;
+		const turnEnd = handlers.get("turn_end")!;
+
+		messageEnd({ message: structuredClone(assistantText) }, ctx);
+		turnEnd({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
+		activeRuns = [
+			{ id: "run-a", sessionId: "sess-change", status: "running" },
+			{ id: "run-b", sessionId: "sess-change", status: "queued" },
+		];
+		messageEnd({ message: structuredClone(assistantText) }, ctx);
+		turnEnd({ turnIndex: 1, message: {}, toolResults: [] }, ctx);
+
+		expect(sentUserMessages).toHaveLength(2);
+		expect(sentUserMessages[1].content).toContain("run-b");
+	});
+
+	test("paused or mixed snapshots report attention without forcing a wait loop", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [
+			{ id: "run-live", sessionId: "sess-attention", status: "running" },
+			{ id: "run-paused", sessionId: "sess-attention", status: "paused" },
+		];
+		const ctx = makeCtx("sess-attention");
+
+		const result = handlers.get("message_end")!({ message: structuredClone(assistantText) }, ctx);
+		expect(JSON.stringify(result?.message?.content)).toContain("attention");
+		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
+
+		expect(sentUserMessages).toHaveLength(0);
+	});
+
+	test("one session shutdown preserves another session's pending intervention", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		const sessionOne = makeCtx("sess-one");
+		const sessionTwo = makeCtx("sess-two");
+
+		activeRuns = [{ id: "run-one", sessionId: "sess-one", status: "running" }];
+		handlers.get("message_end")!({ message: structuredClone(assistantText) }, sessionOne);
+		activeRuns = [{ id: "run-two", sessionId: "sess-two", status: "running" }];
+		handlers.get("message_end")!({ message: structuredClone(assistantText) }, sessionTwo);
+		handlers.get("session_shutdown")!({}, sessionOne);
+		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, sessionTwo);
+
+		expect(sentUserMessages).toHaveLength(1);
+		expect(sentUserMessages[0].content).toContain("run-two");
+	});
+
 	test("withholds a final answer for a paused run without queueing a wait", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
@@ -201,25 +308,27 @@ describe("subagent-wait-guard entry", () => {
 		expect(sentUserMessages).toHaveLength(0);
 	});
 
-	test("backs off at the cap, then an empty snapshot resets the session", () => {
+	test("stays fail-closed without repeating follow-ups, then resets after settlement", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
-		activeRuns = [{ id: "run-stuck", sessionId: "sess-cap" }];
-		const ctx = makeCtx("sess-cap");
+		activeRuns = [{ id: "run-stuck", sessionId: "sess-reset" }];
+		const ctx = makeCtx("sess-reset");
 		const messageEnd = handlers.get("message_end")!;
 		const turnEnd = handlers.get("turn_end")!;
 
 		for (let i = 0; i < 10; i++) {
-			messageEnd({ message: structuredClone(assistantText) }, ctx);
+			const result = messageEnd({ message: structuredClone(assistantText) }, ctx);
+			expect(result?.message).toBeDefined();
 			turnEnd({ turnIndex: i, message: {}, toolResults: [] }, ctx);
 		}
-		expect(sentUserMessages).toHaveLength(10);
-		expect(messageEnd({ message: structuredClone(assistantText) }, ctx)).toBeUndefined();
+		expect(sentUserMessages).toHaveLength(1);
 
 		activeRuns = [];
 		messageEnd({ message: structuredClone(assistantText) }, ctx);
-		activeRuns = [{ id: "run-new", sessionId: "sess-cap" }];
+		activeRuns = [{ id: "run-new", sessionId: "sess-reset" }];
 		const revived = messageEnd({ message: structuredClone(assistantText) }, ctx);
+		turnEnd({ turnIndex: 11, message: {}, toolResults: [] }, ctx);
 		expect(JSON.stringify(revived?.message?.content)).toContain("run-new");
+		expect(sentUserMessages).toHaveLength(2);
 	});
 });

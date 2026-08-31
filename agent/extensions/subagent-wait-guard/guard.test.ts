@@ -3,8 +3,8 @@ import type { AssistantMessage, TextContent, ToolCall } from "@earendil-works/pi
 import {
 	buildFollowUp,
 	buildReplacement,
+	isInteractiveTuiRuntime,
 	isPrematureFinalAssistant,
-	nextInterventionCount,
 } from "./guard.ts";
 
 const usage = {
@@ -49,10 +49,19 @@ describe("isPrematureFinalAssistant", () => {
 	});
 });
 
+describe("isInteractiveTuiRuntime", () => {
+	test("accepts interactive UI and rejects headless or RPC modes", () => {
+		expect(isInteractiveTuiRuntime(true, ["pi"])).toBe(true);
+		expect(isInteractiveTuiRuntime(false, ["pi"])).toBe(false);
+		expect(isInteractiveTuiRuntime(true, ["pi", "--mode", "rpc"])).toBe(false);
+		expect(isInteractiveTuiRuntime(true, ["pi", "--mode=rpc"])).toBe(false);
+	});
+});
+
 describe("buildReplacement", () => {
-	test("keeps assistant identity and replaces content with blocked notice listing runs", () => {
+	test("keeps assistant identity and tells interactive sessions to await native wake", () => {
 		const original = assistantMessage([{ type: "text", text: "premature answer" }]);
-		const replaced = buildReplacement(original, ["run-a"]);
+		const replaced = buildReplacement(original, ["run-a"], "interactive");
 		expect(replaced.role).toBe("assistant");
 		expect(replaced.stopReason).toBe("stop");
 		expect(replaced.model).toBe(original.model);
@@ -60,27 +69,25 @@ describe("buildReplacement", () => {
 		expect(replaced.content[0].type).toBe("text");
 		if (replaced.content[0].type === "text") {
 			expect(replaced.content[0].text).toContain("run-a");
-			expect(replaced.content[0].text).toContain("subagent_wait");
+			expect(replaced.content[0].text).toContain("Pi will wake this session");
 			expect(replaced.content[0].text).not.toContain("premature answer");
 		}
+	});
+
+	test("uses attention guidance whenever a run is paused", () => {
+		const original = assistantMessage([{ type: "text", text: "premature answer" }]);
+		const replaced = buildReplacement(original, ["run-paused"], "attention");
+		expect(JSON.stringify(replaced.content)).toContain("needs attention");
+		expect(JSON.stringify(replaced.content)).not.toContain("subagent_wait");
 	});
 });
 
 describe("buildFollowUp", () => {
-	test("mentions run ids and the wait instruction", () => {
+	test("distinguishes the standalone wait tool from subagent management actions", () => {
 		const text = buildFollowUp(["run-a", "run-b"]);
 		expect(text).toContain("run-a");
 		expect(text).toContain("run-b");
-		expect(text).toContain("subagent_wait");
-	});
-});
-
-describe("nextInterventionCount", () => {
-	test("increments while under cap", () => {
-		expect(nextInterventionCount(3, 10)).toBe(4);
-	});
-
-	test("returns null when cap reached (guard must back off)", () => {
-		expect(nextInterventionCount(10, 10)).toBeNull();
+		expect(text).toContain("standalone `subagent_wait` tool");
+		expect(text).toContain("not `subagent({ action: \"wait\" })`");
 	});
 });

@@ -4,37 +4,41 @@
  * Programmatic enforcement of the delegation rule: do not finalize an answer
  * while delegated subagent runs are still in flight.
  *
- * Two coordinated safeguards, backed by pi-subagents' process-global
- * active-runs API:
+ * Mode-aware safeguards backed by pi-subagents' process-global active-runs API:
  *
- * 1. `message_end` replaces a final assistant prose answer while runs remain.
- * 2. Its matching `turn_end` injects one follow-up forcing `subagent_wait({ all: true })`.
+ * 1. `message_end` always replaces a final assistant prose answer while runs remain.
+ * 2. Interactive TUI sessions return control and rely on native completion wake.
+ * 3. RPC/headless sessions receive one blocking-wait follow-up per active-run snapshot.
  *
- * Safety valves:
- * - Consecutive-intervention cap prevents an eternally hung child from
- *   creating an infinite loop.
- * - An empty active-runs snapshot resets the intervention count.
- * - PI_SUBAGENT_WAIT_GUARD=off disables registration entirely.
+ * Paused runs produce attention guidance instead of a wait loop. Snapshot changes
+ * create a new bounded intervention, and an empty snapshot resets session state.
+ * PI_SUBAGENT_WAIT_GUARD=off disables registration entirely.
  *
- * Hard veto of turn completion is not available through Pi's public extension
- * API; replacement plus follow-up is the strongest extension-level boundary.
+ * Hard veto of turn completion is unavailable through Pi's public extension API;
+ * replacement plus mode-aware wake/wait behavior is the strongest extension boundary.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     buildFollowUp,
     buildReplacement,
+    isInteractiveTuiRuntime,
     isPrematureFinalAssistant,
-    nextInterventionCount,
+    type GuardNoticeKind,
 } from "./guard.ts";
 
 const ACTIVE_RUNS_REGISTRY_KEY = "pi-subagents.active-runs.v1";
 const ACTIVE_RUNS_PROTOCOL_VERSION = 1;
 const MAX_SOURCES = 100;
 const MAX_RUNS_PER_SOURCE = 10_000;
-const INTERVENTION_CAP = 10;
-const consecutiveInterventions = new Map<string, number>();
-const pendingFollowUps = new Set<string>();
+
+interface SessionInterventionState {
+    fingerprint: string;
+    followUpPending: boolean;
+    followUpSent: boolean;
+}
+
+const sessionInterventions = new Map<string, SessionInterventionState>();
 
 type ActiveSubagentRunStatus = "queued" | "running" | "paused";
 
@@ -57,6 +61,10 @@ interface SessionIdentityManager {
 /** Mirrors pi-subagents' session identity selection. */
 function resolveSessionIdentity(manager: SessionIdentityManager): string {
     return manager.getSessionFile() ?? manager.getSessionId();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function validString(value: unknown): value is string {
@@ -98,19 +106,15 @@ function snapshotActiveSubagentRuns(sessionId: string): ActiveSubagentRun[] {
     const runs: ActiveSubagentRun[] = [];
     const identities = new Set<string>();
     for (const [sourceName, source] of registry.sources) {
-        if (!source || typeof source !== "object" || Array.isArray(source)) {
+        if (!isRecord(source)) {
             throw new Error(`Active-runs source '${sourceName}' is malformed.`);
         }
-        const sourceRecord = source as {
-            name?: unknown;
-            listActiveRuns?: unknown;
-        };
-        if (sourceRecord.name !== sourceName) {
+        if (source.name !== sourceName) {
             throw new Error(
                 `Active-runs source '${sourceName}' has a mismatched name.`,
             );
         }
-        const { listActiveRuns } = sourceRecord;
+        const { listActiveRuns } = source;
         if (typeof listActiveRuns !== "function") {
             throw new Error(
                 `Active-runs source '${sourceName}' lacks listActiveRuns().`,
@@ -128,17 +132,12 @@ function snapshotActiveSubagentRuns(sessionId: string): ActiveSubagentRun[] {
             );
         }
         for (const value of active) {
-            if (!value || typeof value !== "object" || Array.isArray(value)) {
+            if (!isRecord(value)) {
                 throw new Error(
                     `Active-runs source '${sourceName}' returned a malformed run.`,
                 );
             }
-            const run = value as {
-                id?: unknown;
-                sessionId?: unknown;
-                status?: unknown;
-            };
-            const { id, sessionId: ownerSessionId, status: rawStatus } = run;
+            const { id, sessionId: ownerSessionId, status: rawStatus } = value;
             if (!validString(id) || !validString(ownerSessionId)) {
                 throw new Error(
                     `Active-runs source '${sourceName}' returned an invalid run identity.`,
@@ -183,13 +182,58 @@ function resetIfSettled(
     runs: readonly ActiveSubagentRun[],
 ): boolean {
     if (runs.length > 0) return false;
-    consecutiveInterventions.delete(sessionId);
-    pendingFollowUps.delete(sessionId);
+    sessionInterventions.delete(sessionId);
     return true;
 }
 
-function waitableRunIds(runs: readonly ActiveSubagentRun[]): string[] {
-    return runs.filter((run) => run.status !== "paused").map((run) => run.id);
+function runFingerprint(runs: readonly ActiveSubagentRun[]): string {
+    return JSON.stringify(runs.map((run) => [run.id, run.status]));
+}
+
+function interventionState(
+    sessionId: string,
+    runs: readonly ActiveSubagentRun[],
+): SessionInterventionState {
+    const fingerprint = runFingerprint(runs);
+    const current = sessionInterventions.get(sessionId);
+    if (current?.fingerprint === fingerprint) return current;
+    const created: SessionInterventionState = {
+        fingerprint,
+        followUpPending: false,
+        followUpSent: false,
+    };
+    sessionInterventions.set(sessionId, created);
+    return created;
+}
+
+function hasPausedRun(runs: readonly ActiveSubagentRun[]): boolean {
+    return runs.some((run) => run.status === "paused");
+}
+
+function replacementKind(
+    runs: readonly ActiveSubagentRun[],
+    interactive: boolean,
+): GuardNoticeKind {
+    if (hasPausedRun(runs)) return "attention";
+    return interactive ? "interactive" : "headless";
+}
+
+function reconcileTurnEndState(
+    sessionId: string,
+    runs: readonly ActiveSubagentRun[],
+): SessionInterventionState | undefined {
+    const current = sessionInterventions.get(sessionId);
+    if (!current) return undefined;
+    const fingerprint = runFingerprint(runs);
+    if (current.fingerprint === fingerprint) return current;
+    if (!current.followUpPending) return undefined;
+    const reconciled: SessionInterventionState = {
+        fingerprint,
+        followUpPending: !hasPausedRun(runs),
+        followUpSent: false,
+    };
+    sessionInterventions.set(sessionId, reconciled);
+    return reconciled;
 }
 
 export default function register(pi: ExtensionAPI): void {
@@ -203,17 +247,22 @@ export default function register(pi: ExtensionAPI): void {
         const { message } = event;
         if (message.role !== "assistant") return undefined;
         if (!isPrematureFinalAssistant(message)) return undefined;
-        const next = nextInterventionCount(
-            consecutiveInterventions.get(sessionId) ?? 0,
-            INTERVENTION_CAP,
-        );
-        if (next === null) return undefined;
-        consecutiveInterventions.set(sessionId, next);
-        pendingFollowUps.add(sessionId);
+        const state = interventionState(sessionId, runs);
+        const attentionRequired = hasPausedRun(runs);
+        const interactive = isInteractiveTuiRuntime(ctx.hasUI, process.argv);
+        if (
+            !interactive &&
+            !attentionRequired &&
+            !state.followUpPending &&
+            !state.followUpSent
+        ) {
+            state.followUpPending = true;
+        }
         return {
             message: buildReplacement(
                 message,
                 runs.map((run) => run.id),
+                replacementKind(runs, interactive),
             ),
         };
     });
@@ -222,15 +271,17 @@ export default function register(pi: ExtensionAPI): void {
         const sessionId = resolveSessionIdentity(ctx.sessionManager);
         const runs = activeRuns(sessionId);
         if (resetIfSettled(sessionId, runs)) return;
-        if (!pendingFollowUps.has(sessionId)) return;
-        const runIds = waitableRunIds(runs);
-        if (runIds.length === 0) return;
-        pendingFollowUps.delete(sessionId);
-        sendUserMessage(buildFollowUp(runIds), { deliverAs: "followUp" });
+        const state = reconcileTurnEndState(sessionId, runs);
+        if (!state?.followUpPending || state.followUpSent) return;
+        state.followUpPending = false;
+        if (hasPausedRun(runs)) return;
+        state.followUpSent = true;
+        sendUserMessage(buildFollowUp(runs.map((run) => run.id)), {
+            deliverAs: "followUp",
+        });
     });
 
-    pi.on("session_shutdown", () => {
-        consecutiveInterventions.clear();
-        pendingFollowUps.clear();
+    pi.on("session_shutdown", (_event, ctx) => {
+        sessionInterventions.delete(resolveSessionIdentity(ctx.sessionManager));
     });
 }

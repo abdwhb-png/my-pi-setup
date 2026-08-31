@@ -33,7 +33,7 @@ describe("subagent-wait-guard real Pi runtime", () => {
 		delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(ACTIVE_SUBAGENT_RUNS_REGISTRY_KEY)];
 	});
 
-	test("loads by path, replaces the real message, and injects the forced follow-up", async () => {
+	test("headless runtime replaces the real message, waits once, and allows the settled answer", async () => {
 		const runId = "runtime-probe-run";
 		let agentStarts = 0;
 		session = await createTestSession({
@@ -83,5 +83,55 @@ describe("subagent-wait-guard real Pi runtime", () => {
 		expect(assistantText).toContain(runId);
 		expect(assistantText).not.toContain("premature runtime answer");
 		expect(assistantText).toContain("final report incorporated");
+	});
+
+	test("headless runtime does not create another follow-up for the same active snapshot", async () => {
+		const runId = "runtime-stuck-run";
+		let started = false;
+		session = await createTestSession({
+			extensions: [PI_SUBAGENTS_SOURCE_PATH, GUARD_EXTENSION_PATH],
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("before_agent_start", (_event, ctx) => {
+						if (started) return;
+						started = true;
+						const sessionId =
+							ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId();
+						pi.events.emit("subagent:async-started", {
+							id: runId,
+							pid: 1,
+							sessionId,
+							mode: "single",
+							agent: "worker",
+							asyncDir: "/tmp/runtime-stuck-run",
+						});
+					});
+				},
+			],
+		});
+
+		const forcedFollowUp = buildFollowUp([runId]);
+		await session.run(
+			when("Run the stuck guard probe", [says("first premature runtime answer")]),
+			when(forcedFollowUp, [says("second premature runtime answer")]),
+		);
+
+		const guardMessages = session.events.messages
+			.filter((message) => message.role === "assistant")
+			.flatMap((message) => message.content)
+			.filter(
+				(part) =>
+					part.type === "text" && part.text.includes("[subagent-wait-guard]"),
+			);
+		const forcedFollowUps = session.events.messages.filter(
+			(message) =>
+				message.role === "user" &&
+				JSON.stringify(message.content).includes("standalone `subagent_wait` tool"),
+		);
+		expect(guardMessages).toHaveLength(2);
+		expect(forcedFollowUps).toHaveLength(1);
+		expect(JSON.stringify(session.events.messages)).not.toContain(
+			"second premature runtime answer",
+		);
 	});
 });
