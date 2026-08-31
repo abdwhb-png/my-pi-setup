@@ -26,6 +26,7 @@ export interface RuntimeStatus {
 
 export interface DangerousRuntimeState {
     installed: boolean;
+    runnerPatchVersion?: number;
     compatible: boolean;
     uiBrokerCompatible: boolean;
     configValid: boolean;
@@ -96,7 +97,6 @@ export function recomputeEffectiveState(
         state.compatible &&
         (state.dangerousOverride ?? state.dangerousFlag);
     state.unattendedEffective =
-        state.configValid &&
         state.compatible &&
         state.uiBrokerCompatible &&
         state.unattendedOverride === true;
@@ -108,13 +108,19 @@ export function startRuntimeSession(input: {
     config: YoloConfig;
 }): void {
     const state = getMutableRuntimeState();
-    if (!input.isReload) {
-        state.dangerousOverride = undefined;
-        state.unattendedOverride = undefined;
-    }
+    resetRuntimeSessionOverrides(input.isReload);
     state.dangerousFlag = input.dangerousFlag;
     state.config = cloneConfig(input.config);
     state.configValid = true;
+    recomputeEffectiveState(state);
+}
+
+export function resetRuntimeSessionOverrides(isReload: boolean): void {
+    if (isReload) return;
+
+    const state = getMutableRuntimeState();
+    state.dangerousOverride = undefined;
+    state.unattendedOverride = undefined;
     recomputeEffectiveState(state);
 }
 
@@ -129,10 +135,7 @@ export function setDangerousOverride(enabled: boolean): boolean {
 
 export function setUnattendedOverride(enabled: boolean): boolean {
     const state = getMutableRuntimeState();
-    if (
-        enabled &&
-        (!state.compatible || !state.uiBrokerCompatible || !state.configValid)
-    ) {
+    if (enabled && (!state.compatible || !state.uiBrokerCompatible)) {
         return false;
     }
 

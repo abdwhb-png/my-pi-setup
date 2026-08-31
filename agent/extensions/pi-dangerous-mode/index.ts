@@ -7,6 +7,7 @@ import {
     getMutableRuntimeState,
     getRuntimeStatus,
     isUnattendedEnabled,
+    resetRuntimeSessionOverrides,
     setDangerousOverride,
     setUnattendedOverride,
     startRuntimeSession,
@@ -157,6 +158,7 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
     });
 
     pi.on("session_start", (event, ctx) => {
+        resetRuntimeSessionOverrides(event.reason === "reload");
         try {
             startRuntimeSession({
                 isReload: event.reason === "reload",

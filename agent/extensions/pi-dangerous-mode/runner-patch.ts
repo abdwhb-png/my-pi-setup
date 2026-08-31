@@ -34,6 +34,8 @@ type RuntimeExtension = {
     handlers: ToolCallHandler[];
 };
 
+const RUNNER_PATCH_VERSION = 2;
+
 function getRuntimeExtensions(
     runner: ExtensionRunner,
 ): RuntimeExtension[] | null {
@@ -113,12 +115,18 @@ export function installRunnerPatch(
     runnerConstructor: unknown = Pi.ExtensionRunner,
 ): boolean {
     const state = getMutableRuntimeState();
-    if (state.installed) return state.compatible;
+    if (state.installed && state.runnerPatchVersion === RUNNER_PATCH_VERSION) {
+        return state.compatible;
+    }
 
     if (!isExtensionRunnerConstructor(runnerConstructor)) {
         state.compatible = false;
         recomputeEffectiveState(state);
         return false;
+    }
+
+    if (state.installed && isEmitToolCall(state.original)) {
+        runnerConstructor.prototype.emitToolCall = state.original;
     }
 
     const original = Object.getOwnPropertyDescriptor(
@@ -192,5 +200,6 @@ export function installRunnerPatch(
             return result;
         };
     state.installed = true;
+    state.runnerPatchVersion = RUNNER_PATCH_VERSION;
     return true;
 }

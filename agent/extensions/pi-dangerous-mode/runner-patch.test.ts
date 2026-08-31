@@ -7,7 +7,11 @@ import {
     type ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
 import { installRunnerPatch } from "./runner-patch.ts";
-import { setDangerousRuntimeState, setUnattendedOverride } from "./runtime-state.ts";
+import {
+    getMutableRuntimeState,
+    setDangerousRuntimeState,
+    setUnattendedOverride,
+} from "./runtime-state.ts";
 
 function runner(extensions: Extension[] = []): ExtensionRunner {
     return new ExtensionRunner(extensions, createExtensionRuntime(), "/tmp/unattended", {} as never, {} as never);
@@ -22,6 +26,24 @@ afterEach(() => {
 });
 
 describe("Unattended runner boundary", () => {
+    it("replaces a legacy installed wrapper after reload", async () => {
+        const original = ExtensionRunner.prototype.emitToolCall;
+        const state = getMutableRuntimeState();
+        state.installed = true;
+        state.original = original;
+        (state as typeof state & { runnerPatchVersion?: number }).runnerPatchVersion = 1;
+        ExtensionRunner.prototype.emitToolCall = async () => undefined;
+
+        expect(installRunnerPatch()).toBe(true);
+        expect(setUnattendedOverride(true)).toBe(true);
+
+        const result = await runner().emitToolCall(call("ask_user_question"));
+        expect(result).toMatchObject({
+            block: true,
+            reason: expect.stringContaining("UNATTENDED_PROMPT_BLOCKED"),
+        });
+    });
+
     it("blocks ask_user_question before extension handlers without enabling Dangerous", async () => {
         const handler = mock(() => ({ block: false }));
         const extension = {
