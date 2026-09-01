@@ -16,7 +16,9 @@ export interface PreparedToolGroupArgs {
 }
 
 export function resolveRealPiPath(realPi = process.env.PI_REAL_BIN, homeDir = homedir()): string {
-  return resolve(realPi?.trim() || join(homeDir, ".bun", "bin", "pi"));
+  return resolve(
+    realPi?.trim() || join(homeDir, "projects", "pi-core", "packages", "coding-agent", "dist", "pi"),
+  );
 }
 
 function parseToolList(value: string): string[] {
