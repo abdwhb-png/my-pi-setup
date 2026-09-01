@@ -147,7 +147,10 @@ export function createToolGroupsExtension(
             ROLE_TOOL_POLICY_EVENT,
             (payload) => {
                 const parsed = parseRoleToolPolicy(payload);
-                if (parsed) roleToolPolicy = parsed;
+                if (parsed) {
+                    roleToolPolicy = parsed;
+                    enforceConfiguredPolicy();
+                }
             },
         );
 
@@ -241,10 +244,12 @@ export function createToolGroupsExtension(
          * stay in the active list after a reload because no alias is present to
          * trigger expandAliases.
          */
-        function resolveConfiguredPolicy(): {
-            names: string[];
-            diagnostics: ToolGroupDiagnostic[];
-        } | undefined {
+        function resolveConfiguredPolicy():
+            | {
+                  names: string[];
+                  diagnostics: ToolGroupDiagnostic[];
+              }
+            | undefined {
             const allToolNames = pi.getAllTools().map((tool) => tool.name);
             const diagnostics: ToolGroupDiagnostic[] = [];
             let names: string[] | undefined;

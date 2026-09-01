@@ -102,6 +102,67 @@ describe('tool-groups SDK integration', () => {
         }
     });
 
+    it('resolves role aliases before policy publication returns', async () => {
+        const tmpDir = await mkdtemp(join(tmpdir(), 'tool-groups-role-policy-'));
+        try {
+            const settings = SettingsManager.inMemory({});
+            const modelRuntime = await createInMemoryModelRuntime();
+            const sessionManager = SessionManager.inMemory(tmpDir);
+            let activeAtPolicyPublication: string[] | undefined;
+
+            const loader = new DefaultResourceLoader({
+                cwd: tmpDir,
+                agentDir: tmpDir,
+                settingsManager: settings,
+                extensionFactories: [
+                    createToolGroupsExtension(() => ({
+                        groups: { inspect: ['read', 'ls'] },
+                    })),
+                    (pi) => {
+                        pi.on('session_start', () => {
+                            pi.setActiveTools(['@inspect']);
+                            pi.events.emit('pi-roles:tool-policy', {
+                                version: 1,
+                                roleName: 'atlas-orchestrator',
+                                mode: 'set',
+                                toolNames: ['@inspect'],
+                            });
+                            activeAtPolicyPublication = pi.getActiveTools();
+                        });
+                    },
+                ],
+                noExtensions: true,
+                noSkills: true,
+                noThemes: true,
+                noPromptTemplates: true,
+                noContextFiles: true,
+            });
+            await loader.reload();
+
+            const { session } = await createAgentSession({
+                cwd: tmpDir,
+                agentDir: tmpDir,
+                tools: ['@inspect', 'read', 'ls'],
+                settingsManager: settings,
+                sessionManager,
+                modelRuntime,
+                resourceLoader: loader,
+            });
+
+            await session.bindExtensions({ mode: 'print' });
+
+            expect(activeAtPolicyPublication).toEqual(['read', 'ls']);
+            expect(
+                activeAtPolicyPublication!.every(
+                    (name) => !name.startsWith('@'),
+                ),
+            ).toBe(true);
+            session.dispose();
+        } finally {
+            await rm(tmpDir, { recursive: true, force: true });
+        }
+    });
+
     it('applies wrapper-deferred aliases after the full tool registry is available', async () => {
         const tmpDir = await mkdtemp(join(tmpdir(), 'tool-groups-deferred-'));
         try {

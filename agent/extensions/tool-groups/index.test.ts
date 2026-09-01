@@ -161,6 +161,27 @@ describe('tool-groups extension', () => {
         expect(pi._handlers.has('tool_call')).toBe(true);
     });
 
+    it('resolves role aliases synchronously when policy is published', () => {
+        const pi = makeMockPi();
+        const factory = createToolGroupsExtension(() => ({
+            groups: { inspect: ['read', 'ls'] },
+        }));
+        factory(pi as never);
+
+        pi.setActiveTools(['@inspect']);
+        pi.events.emit('pi-roles:tool-policy', {
+            version: 1,
+            roleName: 'atlas-orchestrator',
+            mode: 'set',
+            toolNames: ['@inspect'],
+        });
+
+        expect(pi.getActiveTools()).toEqual(['read', 'ls']);
+        expect(pi.getActiveTools().every((name) => !name.startsWith('@'))).toBe(
+            true,
+        );
+    });
+
     it('removes and blocks a late tool outside the active role policy', () => {
         const pi = makeMockPi(['@inspect']);
         const factory = createToolGroupsExtension(() => ({
