@@ -49,6 +49,7 @@ const {
     levenshteinDistance,
     fuzzyMatchBasename,
     enrichAutocompleteWithCache,
+    orderCacheMatches,
     realtimeFdSearch,
 } = await import('./pi-file-resolver.ts');
 
@@ -633,6 +634,26 @@ describe('enrichAutocompleteWithCache', () => {
         );
     });
 
+    it('ranks agent/settings.json first in the picker when CWD contains it', () => {
+        const cache2 = {
+            files: [
+                '/home/u/.pi/.pi/settings.json',
+                '/home/u/.pi/.vscode/settings.json',
+                '/home/u/.pi/agent/settings.json',
+            ],
+            ready: true,
+            running: false,
+        };
+        const result = enrichAutocompleteWithCache(
+            '@settings.json',
+            [],
+            cache2,
+            gitNoRespConfig,
+            { cwd: '/home/u/.pi' },
+        );
+        expect(result[0]?.description).toBe('agent/settings.json');
+    });
+
     it('path query: fuzzy match on full path still works', () => {
         const cache2 = {
             files: [
@@ -745,6 +766,97 @@ describe('enrichAutocompleteWithCache', () => {
         expect(helperItem).toBeDefined();
         expect(helperItem!.value).toBe('@/other/lib/helper.ts');
         expect(helperItem!.description).toBe('/other/lib/helper.ts');
+    });
+});
+
+describe('orderCacheMatches', () => {
+    const cwd = '/home/u/.pi';
+
+    const files = [
+        '/home/u/.pi/.pi/settings.json',
+        '/home/u/.pi/.vscode/settings.json',
+        '/home/u/.pi/migration-backups/pi-subagents-x/settings.json',
+        '/home/u/.pi/agent/settings.json',
+    ];
+
+    it('ranks agent/settings.json above hidden and backup copies under the same CWD', () => {
+        const result = orderCacheMatches(files, 'settings.json', cwd, []);
+        expect(result[0]).toBe('/home/u/.pi/agent/settings.json');
+    });
+
+    it('prefers fewer hidden segments over shallower depth', () => {
+        const result = orderCacheMatches(
+            [
+                '/home/u/.pi/.pi/settings.json',
+                '/home/u/.pi/agent/settings.json',
+            ],
+            'settings.json',
+            cwd,
+            [],
+        );
+        expect(result[0]).toBe('/home/u/.pi/agent/settings.json');
+    });
+
+    it('prefers shallower depth among equal hidden counts', () => {
+        const result = orderCacheMatches(
+            [
+                '/home/u/.pi/migration-backups/pi-subagents-x/settings.json',
+                '/home/u/.pi/agent/settings.json',
+            ],
+            'settings.json',
+            cwd,
+            [],
+        );
+        expect(result[0]).toBe('/home/u/.pi/agent/settings.json');
+    });
+
+    it('keeps input order on full ties (stable sort)', () => {
+        const result = orderCacheMatches(
+            [
+                '/home/u/.pi/b/settings.json',
+                '/home/u/.pi/a/settings.json',
+            ],
+            'settings.json',
+            cwd,
+            [],
+        );
+        expect(result[0]).toBe('/home/u/.pi/b/settings.json');
+    });
+
+    it('does not penalize cwd children for the hidden cwd root itself', () => {
+        // cwd IS ~/.pi (hidden root). Hidden segments are counted relative to
+        // cwd, so agent/settings.json has 0 hidden segments, not 1.
+        const result = orderCacheMatches(
+            ['/home/u/.pi/agent/settings.json'],
+            'settings.json',
+            cwd,
+            [],
+        );
+        expect(result[0]).toBe('/home/u/.pi/agent/settings.json');
+    });
+
+    it('orders CWD before additionalDirectories before other roots', () => {
+        const result = orderCacheMatches(
+            [
+                '/x/y/settings.json',
+                '/other/addl/settings.json',
+                '/home/u/.pi/.pi/settings.json',
+            ],
+            'settings.json',
+            cwd,
+            ['/other/addl'],
+        );
+        expect(result.indexOf('/home/u/.pi/.pi/settings.json')).toBeLessThan(
+            result.indexOf('/other/addl/settings.json'),
+        );
+        expect(result.indexOf('/other/addl/settings.json')).toBeLessThan(
+            result.indexOf('/x/y/settings.json'),
+        );
+    });
+
+    it('returns empty for empty query or empty files', () => {
+        expect(orderCacheMatches([], 'settings.json', cwd, [])).toEqual([]);
+        expect(orderCacheMatches(files, '', cwd, [])).toEqual([]);
     });
 });
 

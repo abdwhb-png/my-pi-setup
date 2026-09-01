@@ -169,38 +169,15 @@ export function enrichAutocompleteWithCache(
     if (!parsed.path) return items;
 
     const query = parsed.path.replace(/\/+$/, "");
-    const isBareName = !query.includes("/");
-
-    let extraFiles: string[];
-    if (isBareName) {
-        const lowerQuery = query.toLowerCase();
-        // Exact basename match first
-        const exact = cache.files.filter((f) => {
-            const base = f.split("/").pop() ?? "";
-            return base.toLowerCase() === lowerQuery;
-        });
-        // Use exact if found, else fuzzy basename fallback
-        extraFiles =
-            exact.length > 0
-                ? exact
-                : fuzzyFilter(
-                      cache.files,
-                      query,
-                      (f) => f.split("/").pop() ?? "",
-                  );
-    } else {
-        extraFiles = fuzzyFilter(cache.files, query, (f) => f);
-    }
-    if (extraFiles.length === 0) return items;
-
-    // Order: CWD first, then additionalDirectories, then other roots.
     const cwd = options?.cwd;
-    const addlDirs = config.additionalDirectories;
-    if (cwd) {
-        extraFiles = extraFiles.toSorted((a, b) => {
-            return tierOf(a, cwd, addlDirs) - tierOf(b, cwd, addlDirs);
-        });
-    }
+
+    const extraFiles = orderCacheMatches(
+        cache.files,
+        query,
+        cwd,
+        config.additionalDirectories,
+    );
+    if (extraFiles.length === 0) return items;
 
     // Dedup by full path (skip files already in built-in items).
     const existingPaths = new Set(items.map((i) => i.description));
@@ -238,14 +215,102 @@ export function enrichAutocompleteWithCache(
  */
 function tierOf(
     path: string,
-    cwd: string,
+    cwd: string | undefined,
     additionalDirectories: readonly string[],
 ): number {
-    if (path.startsWith(cwd)) return 0;
+    if (cwd && path.startsWith(cwd)) return 0;
     for (const d of additionalDirectories) {
         if (path.startsWith(d)) return 1;
     }
     return 2;
+}
+
+/**
+ * Count hidden (dot-leading) path segments and path depth, computed relative
+ * to cwd when the path is under it, so a project's own hidden root (e.g.
+ * cwd = ~/.pi) doesn't penalize every child. Falls back to absolute metrics
+ * for paths outside cwd.
+ */
+function orderMetrics(
+    path: string,
+    cwd: string | undefined,
+): { hidden: number; depth: number } {
+    let target = path;
+    if (cwd && path === cwd) {
+        target = "";
+    } else if (cwd && path.startsWith(cwd + "/")) {
+        target = path.slice(cwd.length + 1);
+    }
+    const segments = target
+        .split("/")
+        .filter((s) => s.length > 0 && s !== ".");
+    const hidden = segments.filter((s) => s.startsWith(".")).length;
+    return { hidden, depth: segments.length };
+}
+
+/**
+ * Total order shared by autocomplete enrichment and @-reference resolution.
+ * Primary: proximity tier (CWD → additionalDirectories → other roots). Within
+ * a tier, prefer fewer hidden segments, then a shallower path. Exact ties
+ * keep input order (stable sort), so the closest, non-hidden match ranks first.
+ */
+function compareByOrder(
+    a: string,
+    b: string,
+    cwd: string | undefined,
+    additionalDirectories: readonly string[],
+): number {
+    const tier =
+        tierOf(a, cwd, additionalDirectories) -
+        tierOf(b, cwd, additionalDirectories);
+    if (tier !== 0) return tier;
+    const aMetrics = orderMetrics(a, cwd);
+    const bMetrics = orderMetrics(b, cwd);
+    if (aMetrics.hidden !== bMetrics.hidden) {
+        return aMetrics.hidden - bMetrics.hidden;
+    }
+    return aMetrics.depth - bMetrics.depth;
+}
+
+/**
+ * Match cache files against a query using the shared autocomplete/resolution
+ * order. Bare names (no "/") use exact basename match first (no .bak / fuzzy
+ * noise when exact matches exist), falling back to fuzzy basename. Path
+ * queries fuzzy-match the full path. Results are ordered by compareByOrder.
+ */
+export function orderCacheMatches(
+    files: string[],
+    query: string,
+    cwd: string | undefined,
+    additionalDirectories: readonly string[],
+): string[] {
+    if (!query || files.length === 0) return [];
+    const isBareName = !query.includes("/");
+    let matches: string[];
+    if (isBareName) {
+        const lowerQuery = query.toLowerCase();
+        const exact = files.filter(
+            (f) =>
+                (f.split("/").pop() ?? "").toLowerCase() === lowerQuery,
+        );
+        matches =
+            exact.length > 0
+                ? exact
+                : fuzzyFilter(
+                      files,
+                      query,
+                      (f) => f.split("/").pop() ?? "",
+                  );
+    } else {
+        matches = fuzzyFilter(files, query, (f) => f);
+    }
+    if (matches.length === 0) return [];
+    if (cwd) {
+        matches = matches.toSorted((a, b) =>
+            compareByOrder(a, b, cwd, additionalDirectories),
+        );
+    }
+    return matches;
 }
 
 /**
@@ -528,7 +593,10 @@ function buildIndexBackground(
                     ];
                     cache.ready = true;
                 }
-            } catch {}
+            } catch {
+                // Unreadable root (e.g. permission denied): skip it.
+                continue;
+            }
         }
         // Final update with all roots — same dedup logic, safe no-op if
         // early ready already set (cache.files reference is replaced with
@@ -757,12 +825,18 @@ export default function (pi: ExtensionAPI): void {
         const resolutions: string[] = [];
         let anyResolved = false;
 
+        const config = getFileResolverConfig();
+
         for (const ref of refs) {
-            // Try exact sequential fuzzy match first (current behaviour)
-            let matches = fuzzyFilter(currentCache.files, ref.name, (p) => {
-                const base = p.split("/").pop() ?? "";
-                return base;
-            });
+            // Share the autocomplete ordering so the `Resolved:` line picks
+            // the same top match the picker would show (CWD → addl dirs →
+            // others, then non-hidden + shallowest).
+            let matches = orderCacheMatches(
+                currentCache.files,
+                ref.name,
+                sessionCwd,
+                config.additionalDirectories,
+            );
 
             // Fallback: typo-tolerant Levenshtein match on basename
             if (matches.length === 0) {
