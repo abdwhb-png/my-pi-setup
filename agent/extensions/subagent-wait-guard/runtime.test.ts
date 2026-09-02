@@ -9,11 +9,13 @@ import {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { buildFollowUp, SUBAGENT_PROGRESS_MARKER } from "./guard.ts";
 
 const ACTIVE_SUBAGENT_RUNS_REGISTRY_KEY = "pi-subagents.active-runs.v1";
-const GUARD_EXTENSION_PATH = fileURLToPath(new URL("./index.ts", import.meta.url));
+const GUARD_EXTENSION_PATH = resolve(
+	homedir(),
+	".pi/agent/extensions/subagent-wait-guard/index.ts",
+);
 const PI_SUBAGENTS_SOURCE_PATH = resolve(
 	homedir(),
 	"projects/pi-integrations/pi-subagents/src/extension/index.ts",
@@ -34,7 +36,7 @@ describe("subagent-wait-guard real Pi runtime", () => {
 		delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(ACTIVE_SUBAGENT_RUNS_REGISTRY_KEY)];
 	});
 
-	test("headless runtime replaces the real message, waits once, and allows the settled answer", async () => {
+	test("interactive runtime preserves parent output and records a hidden reminder before settlement", async () => {
 		const runId = "runtime-probe-run";
 		let agentStarts = 0;
 		session = await createTestSession({
@@ -80,10 +82,21 @@ describe("subagent-wait-guard real Pi runtime", () => {
 			.filter((part) => part.type === "text")
 			.map((part) => part.text)
 			.join("\n");
-		expect(assistantText).toContain("[subagent-wait-guard]");
-		expect(assistantText).toContain(runId);
-		expect(assistantText).not.toContain("premature runtime answer");
+		expect(assistantText).toContain("premature runtime answer");
 		expect(assistantText).toContain("final report incorporated");
+		expect(assistantText).not.toContain("[subagent-wait-guard]");
+
+		const reminders = session.events.messages.filter(
+			(message) =>
+				message.role === "custom" &&
+				message.customType === "subagent-wait-guard-reminder",
+		);
+		expect(reminders).toHaveLength(1);
+		const reminder = reminders[0];
+		expect(reminder?.role).toBe("custom");
+		if (reminder?.role !== "custom") throw new Error("Expected hidden custom reminder");
+		expect(reminder.display).toBe(false);
+		expect(JSON.stringify(reminder.content)).toContain(runId);
 	});
 
 	test("real subagent status result authorizes one marked progress update", async () => {
@@ -130,7 +143,7 @@ describe("subagent-wait-guard real Pi runtime", () => {
 		expect(assistantText).not.toContain("[subagent-wait-guard] Answer deferred");
 	});
 
-	test("headless runtime does not create another follow-up for the same active snapshot", async () => {
+	test("interactive runtime records one hidden reminder for an unchanged active snapshot", async () => {
 		const runId = "runtime-stuck-run";
 		let started = false;
 		session = await createTestSession({
@@ -168,14 +181,18 @@ describe("subagent-wait-guard real Pi runtime", () => {
 				(part) =>
 					part.type === "text" && part.text.includes("[subagent-wait-guard]"),
 			);
-		const forcedFollowUps = session.events.messages.filter(
+		const reminders = session.events.messages.filter(
 			(message) =>
-				message.role === "user" &&
-				JSON.stringify(message.content).includes("standalone `subagent_wait` tool"),
+				message.role === "custom" &&
+				message.customType === "subagent-wait-guard-reminder",
 		);
-		expect(guardMessages).toHaveLength(2);
-		expect(forcedFollowUps).toHaveLength(1);
-		expect(JSON.stringify(session.events.messages)).not.toContain(
+		expect(guardMessages).toHaveLength(0);
+		expect(reminders).toHaveLength(1);
+		const reminder = reminders[0];
+		expect(reminder?.role).toBe("custom");
+		if (reminder?.role !== "custom") throw new Error("Expected hidden custom reminder");
+		expect(reminder.display).toBe(false);
+		expect(JSON.stringify(session.events.messages)).toContain(
 			"second premature runtime answer",
 		);
 	});

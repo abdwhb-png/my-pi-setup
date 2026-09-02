@@ -13,11 +13,26 @@ const SUBAGENT_PROGRESS_PROTOCOL =
     "[subagent-wait-guard progress protocol] While delegated runs are active, prefix exactly one factual progress or attention update with `" +
     SUBAGENT_PROGRESS_MARKER +
     "` only after a successful `subagent` or `subagent_wait` result, or when a run enters paused attention; never use it for a final answer. The marker is removed before display.";
+const ACTIVE_RUNS_REMINDER_PREFIX = "\n\n[subagent-wait-guard active runs] ";
 
-/** Adds the explicit progress protocol without duplicating it across agent starts. */
-export function injectProgressProtocol(systemPrompt: string): string {
-    if (systemPrompt.includes(SUBAGENT_PROGRESS_PROTOCOL)) return systemPrompt;
-    return `${systemPrompt}\n\n${SUBAGENT_PROGRESS_PROTOCOL}`;
+/** Adds the progress protocol and current run identities without duplicating stale reminders. */
+export function injectProgressProtocol(
+    systemPrompt: string,
+    runIds: readonly string[] = [],
+): string {
+    const reminderIndex = systemPrompt.indexOf(ACTIVE_RUNS_REMINDER_PREFIX);
+    const withoutReminder =
+        reminderIndex < 0 ? systemPrompt : systemPrompt.slice(0, reminderIndex);
+    const withProtocol = withoutReminder.includes(SUBAGENT_PROGRESS_PROTOCOL)
+        ? withoutReminder
+        : `${withoutReminder}\n\n${SUBAGENT_PROGRESS_PROTOCOL}`;
+    if (runIds.length === 0) return withProtocol;
+    return (
+        withProtocol +
+        ACTIVE_RUNS_REMINDER_PREFIX +
+        runList(runIds) +
+        ". Return only progress while these runs remain active; wait for every final report before concluding."
+    );
 }
 
 /**
@@ -67,7 +82,7 @@ export function isPrematureFinalAssistant(message: AssistantMessage): boolean {
 }
 
 function runList(runIds: readonly string[]): string {
-    return runIds.map((id) => '"' + id + '"').join(", ");
+    return runIds.map((id) => JSON.stringify(id)).join(", ");
 }
 
 export type GuardNoticeKind = "interactive" | "headless" | "attention";
@@ -94,6 +109,19 @@ export function isInteractiveTuiRuntime(
     );
 }
 
+/** Hidden parent reminder used without rewriting interactive assistant output. */
+export function buildParentReminder(
+    runIds: readonly string[],
+    kind: GuardNoticeKind,
+): string {
+    return (
+        "[subagent-wait-guard] Delegated subagent run(s) " +
+        runList(runIds) +
+        " remain active. " +
+        REPLACEMENT_GUIDANCE[kind]
+    );
+}
+
 /** Replacement assistant message body shown instead of a premature answer. */
 export function buildReplacement(
     original: AssistantMessage,
@@ -110,7 +138,7 @@ export function buildReplacement(
     };
 }
 
-/** Follow-up user message forcing a non-interactive agent to wait for in-flight runs. */
+/** Hidden custom follow-up forcing a non-interactive parent to wait for active runs. */
 export function buildFollowUp(runIds: readonly string[]): string {
     return (
         "[subagent-wait-guard] Subagent run(s) " +

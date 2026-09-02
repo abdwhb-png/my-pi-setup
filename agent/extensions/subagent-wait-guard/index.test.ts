@@ -12,6 +12,10 @@ interface ActiveSubagentRun {
 
 const ACTIVE_SUBAGENT_RUNS_REGISTRY_KEY = "pi-subagents.active-runs.v1";
 const handlers = new Map<string, Handler>();
+const sentCustomMessages: Array<{
+	message: { customType: string; content: string; display: boolean };
+	options?: unknown;
+}> = [];
 const sentUserMessages: Array<{ content: string; options?: unknown }> = [];
 const sessionContexts = new Map<string, ReturnType<typeof makeCtx>>();
 let activeRuns: ActiveSubagentRun[] = [];
@@ -22,6 +26,7 @@ afterEach(() => {
 	}
 	sessionContexts.clear();
 	handlers.clear();
+	sentCustomMessages.length = 0;
 	sentUserMessages.length = 0;
 	activeRuns = [];
 	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(ACTIVE_SUBAGENT_RUNS_REGISTRY_KEY)];
@@ -33,6 +38,12 @@ function makePi() {
 		pi: {
 			on(event: string, handler: Handler) {
 				handlers.set(event, handler);
+			},
+			sendMessage: (
+				message: { customType: string; content: string; display: boolean },
+				options?: unknown,
+			) => {
+				sentCustomMessages.push({ message, options });
 			},
 			sendUserMessage: (content: string, options?: unknown) => {
 				sentUserMessages.push({ content, options });
@@ -133,9 +144,10 @@ describe("subagent-wait-guard entry", () => {
 		expect(runtime.subscribers("subagent:async-complete")).toBe(0);
 	});
 
-	test("injects the explicit progress protocol before each agent run", () => {
+	test("injects the explicit progress protocol and current run identities before each agent run", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
+		activeRuns = [{ id: "run-prompt", sessionId: "sess-prompt", status: "running" }];
 
 		const result = handlers.get("before_agent_start")!(
 			{ prompt: "continue", systemPrompt: "Base prompt." },
@@ -145,9 +157,11 @@ describe("subagent-wait-guard entry", () => {
 		expect(result.systemPrompt).toContain("Base prompt.");
 		expect(result.systemPrompt).toContain(SUBAGENT_PROGRESS_MARKER);
 		expect(result.systemPrompt).toContain("never use it for a final answer");
+		expect(result.systemPrompt).toContain("run-prompt");
+		expect(result.systemPrompt).toContain("Return only progress while these runs remain active");
 	});
 
-	test("replaces premature answer from the process-global active-runs snapshot", () => {
+	test("headless mode replaces premature prose and sends its wait reminder through a hidden custom message", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
 		activeRuns = [{ id: "run-1", sessionId: "sess-1" }];
@@ -159,12 +173,20 @@ describe("subagent-wait-guard entry", () => {
 		expect(JSON.stringify(result?.message?.content)).not.toContain("premature final direction");
 
 		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
-		expect(sentUserMessages).toHaveLength(1);
-		expect(sentUserMessages[0].content).toContain("run-1");
-		expect(sentUserMessages[0].options).toEqual({ deliverAs: "followUp" });
+		expect(sentCustomMessages).toEqual([
+			{
+				message: {
+					customType: "subagent-wait-guard-reminder",
+					content: expect.stringContaining("run-1"),
+					display: false,
+				},
+				options: { deliverAs: "followUp" },
+			},
+		]);
+		expect(sentUserMessages).toHaveLength(0);
 	});
 
-	test("allows one marked progress update after a successful subagent result", () => {
+	test("preserves every marked interactive progress update after stripping its marker", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
 		activeRuns = [{ id: "run-progress", sessionId: "sess-progress", status: "running" }];
@@ -184,11 +206,11 @@ describe("subagent-wait-guard entry", () => {
 			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Repeated progress.`) },
 			ctx,
 		);
-		expect(JSON.stringify(repeated?.message?.content)).toContain("subagent-wait-guard");
-		expect(JSON.stringify(repeated?.message?.content)).not.toContain("Repeated progress");
+		expect(repeated?.message?.content).toEqual([{ type: "text", text: "Repeated progress." }]);
+		expect(JSON.stringify(repeated?.message?.content)).not.toContain(SUBAGENT_PROGRESS_MARKER);
 	});
 
-	test("does not grant progress permits for failed or unrelated tool results", () => {
+	test("preserves marked interactive updates after failed or unrelated tool results", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
 		activeRuns = [{ id: "run-progress", sessionId: "sess-progress", status: "running" }];
@@ -200,17 +222,17 @@ describe("subagent-wait-guard entry", () => {
 			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Failed result.`) },
 			ctx,
 		);
-		expect(JSON.stringify(failed?.message?.content)).toContain("subagent-wait-guard");
+		expect(failed?.message?.content).toEqual([{ type: "text", text: "Failed result." }]);
 
 		handlers.get("tool_result")!(toolResult("safe_bash"), ctx);
 		const unrelated = messageEnd(
 			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Unrelated result.`) },
 			ctx,
 		);
-		expect(JSON.stringify(unrelated?.message?.content)).toContain("subagent-wait-guard");
+		expect(unrelated?.message?.content).toEqual([{ type: "text", text: "Unrelated result." }]);
 	});
 
-	test("consumes a progress permit even when the next prose message omits the marker", () => {
+	test("preserves unmarked interactive prose and strips a later marked update", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
 		activeRuns = [{ id: "run-progress", sessionId: "sess-progress", status: "running" }];
@@ -219,16 +241,16 @@ describe("subagent-wait-guard entry", () => {
 
 		handlers.get("tool_result")!(toolResult("subagent_wait"), ctx);
 		const unmarked = messageEnd({ message: assistantMessage("Unmarked final answer.") }, ctx);
-		expect(JSON.stringify(unmarked?.message?.content)).toContain("subagent-wait-guard");
+		expect(unmarked).toBeUndefined();
 
-		const stale = messageEnd(
-			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Stale permit.`) },
+		const marked = messageEnd(
+			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Later update.`) },
 			ctx,
 		);
-		expect(JSON.stringify(stale?.message?.content)).toContain("subagent-wait-guard");
+		expect(marked?.message?.content).toEqual([{ type: "text", text: "Later update." }]);
 	});
 
-	test("invalidates a stale progress permit when the active snapshot changes", () => {
+	test("preserves a marked interactive update when the active snapshot changes", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
 		activeRuns = [{ id: "run-a", sessionId: "sess-change", status: "running" }];
@@ -244,8 +266,8 @@ describe("subagent-wait-guard entry", () => {
 			ctx,
 		);
 
-		expect(JSON.stringify(result?.message?.content)).toContain("subagent-wait-guard");
-		expect(JSON.stringify(result?.message?.content)).not.toContain("Stale snapshot");
+		expect(result?.message?.content).toEqual([{ type: "text", text: "Stale snapshot." }]);
+		expect(JSON.stringify(result?.message?.content)).not.toContain(SUBAGENT_PROGRESS_MARKER);
 	});
 
 	test("permits one explicit attention update when a run becomes paused", () => {
@@ -269,7 +291,9 @@ describe("subagent-wait-guard entry", () => {
 			{ message: assistantMessage(`${SUBAGENT_PROGRESS_MARKER} Repeated attention.`) },
 			ctx,
 		);
-		expect(JSON.stringify(repeated?.message?.content)).toContain("subagent-wait-guard");
+		expect(repeated?.message?.content).toEqual([
+			{ type: "text", text: "Repeated attention." },
+		]);
 	});
 
 	test("becomes inert and resets enforcement when the source has no active runs", () => {
@@ -340,19 +364,67 @@ describe("subagent-wait-guard entry", () => {
 		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
 		handlers.get("turn_end")!({ turnIndex: 1, message: {}, toolResults: [] }, ctx);
 
-		expect(sentUserMessages).toHaveLength(1);
+		expect(sentCustomMessages).toHaveLength(1);
+		expect(sentUserMessages).toHaveLength(0);
 	});
 
-	test("interactive TUI withholds once without forcing an immediate wait turn", () => {
+	test("interactive TUI preserves parent text and thinking, then records one hidden reminder", () => {
 		const runtime = makePi();
 		registerRuntime(runtime);
 		activeRuns = [{ id: "run-ui", sessionId: "sess-ui", status: "running" }];
 		const ctx = makeCtx("sess-ui", undefined, true);
+		const original = {
+			...structuredClone(assistantText),
+			content: [
+				{ type: "thinking", thinking: "Visible planning notes", thinkingSignature: "signature" },
+				{ type: "text", text: "Parent progress remains visible." },
+			],
+		};
 
-		const result = handlers.get("message_end")!({ message: structuredClone(assistantText) }, ctx);
-		expect(JSON.stringify(result?.message?.content)).toContain("run-ui");
+		const result = handlers.get("message_end")!({ message: original }, ctx);
+		expect(result).toBeUndefined();
+		expect(original.content).toEqual([
+			{ type: "thinking", thinking: "Visible planning notes", thinkingSignature: "signature" },
+			{ type: "text", text: "Parent progress remains visible." },
+		]);
+
+		handlers.get("turn_end")!({ turnIndex: 0, message: original, toolResults: [] }, ctx);
+		expect(sentCustomMessages).toEqual([
+			{
+				message: {
+					customType: "subagent-wait-guard-reminder",
+					content: expect.stringContaining("run-ui"),
+					display: false,
+				},
+				options: { triggerTurn: false },
+			},
+		]);
+		expect(sentCustomMessages[0]?.message.content).toContain("Pi will wake this session");
+		expect(sentCustomMessages[0]?.message.content).not.toContain("subagent_wait");
+		expect(sentUserMessages).toHaveLength(0);
+	});
+
+	test("interactive paused run preserves parent output and records one hidden attention reminder", () => {
+		const runtime = makePi();
+		registerRuntime(runtime);
+		activeRuns = [{ id: "run-paused-ui", sessionId: "sess-paused-ui", status: "paused" }];
+		const ctx = makeCtx("sess-paused-ui", undefined, true);
+
+		const result = handlers.get("message_end")!(
+			{ message: assistantMessage("Parent asks for clarification.") },
+			ctx,
+		);
+		expect(result).toBeUndefined();
 		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
 
+		expect(sentCustomMessages).toHaveLength(1);
+		expect(sentCustomMessages[0]?.message).toEqual({
+			customType: "subagent-wait-guard-reminder",
+			content: expect.stringContaining("needs attention"),
+			display: false,
+		});
+		expect(sentCustomMessages[0]?.message.content).not.toContain("subagent_wait");
+		expect(sentCustomMessages[0]?.options).toEqual({ triggerTurn: false });
 		expect(sentUserMessages).toHaveLength(0);
 	});
 
@@ -369,9 +441,13 @@ describe("subagent-wait-guard entry", () => {
 		messageEnd({ message: structuredClone(assistantText) }, ctx);
 		turnEnd({ turnIndex: 1, message: {}, toolResults: [] }, ctx);
 
-		expect(sentUserMessages).toHaveLength(1);
-		expect(sentUserMessages[0].content).toContain("standalone `subagent_wait` tool");
-		expect(sentUserMessages[0].content).toContain("not `subagent({ action: \"wait\" })`");
+		expect(sentCustomMessages).toHaveLength(1);
+		expect(sentCustomMessages[0]?.message.content).toContain("standalone `subagent_wait` tool");
+		expect(sentCustomMessages[0]?.message.content).toContain(
+			"not `subagent({ action: \"wait\" })`",
+		);
+		expect(sentCustomMessages[0]?.options).toEqual({ deliverAs: "followUp" });
+		expect(sentUserMessages).toHaveLength(0);
 	});
 
 	test("headless follow-up reconciles a run snapshot changed before turn end", () => {
@@ -384,9 +460,10 @@ describe("subagent-wait-guard entry", () => {
 		activeRuns = [{ id: "run-after", sessionId: "sess-race", status: "queued" }];
 		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
 
-		expect(sentUserMessages).toHaveLength(1);
-		expect(sentUserMessages[0].content).toContain("run-after");
-		expect(sentUserMessages[0].content).not.toContain("run-before");
+		expect(sentCustomMessages).toHaveLength(1);
+		expect(sentCustomMessages[0]?.message.content).toContain("run-after");
+		expect(sentCustomMessages[0]?.message.content).not.toContain("run-before");
+		expect(sentUserMessages).toHaveLength(0);
 	});
 
 	test("changed run membership permits one new headless intervention", () => {
@@ -406,8 +483,9 @@ describe("subagent-wait-guard entry", () => {
 		messageEnd({ message: structuredClone(assistantText) }, ctx);
 		turnEnd({ turnIndex: 1, message: {}, toolResults: [] }, ctx);
 
-		expect(sentUserMessages).toHaveLength(2);
-		expect(sentUserMessages[1].content).toContain("run-b");
+		expect(sentCustomMessages).toHaveLength(2);
+		expect(sentCustomMessages[1]?.message.content).toContain("run-b");
+		expect(sentUserMessages).toHaveLength(0);
 	});
 
 	test("paused or mixed snapshots report attention without forcing a wait loop", () => {
@@ -439,8 +517,9 @@ describe("subagent-wait-guard entry", () => {
 		handlers.get("session_shutdown")!({}, sessionOne);
 		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, sessionTwo);
 
-		expect(sentUserMessages).toHaveLength(1);
-		expect(sentUserMessages[0].content).toContain("run-two");
+		expect(sentCustomMessages).toHaveLength(1);
+		expect(sentCustomMessages[0]?.message.content).toContain("run-two");
+		expect(sentUserMessages).toHaveLength(0);
 	});
 
 	test("withholds a final answer for a paused run without queueing a wait", () => {
@@ -452,6 +531,9 @@ describe("subagent-wait-guard entry", () => {
 		const result = handlers.get("message_end")!({ message: structuredClone(assistantText) }, ctx);
 		expect(JSON.stringify(result?.message?.content)).toContain("paused-run");
 		handlers.get("turn_end")!({ turnIndex: 0, message: {}, toolResults: [] }, ctx);
+		expect(sentCustomMessages).toHaveLength(1);
+		expect(sentCustomMessages[0]?.message.content).toContain("needs attention");
+		expect(sentCustomMessages[0]?.options).toEqual({ triggerTurn: false });
 		expect(sentUserMessages).toHaveLength(0);
 	});
 
@@ -468,7 +550,8 @@ describe("subagent-wait-guard entry", () => {
 			expect(result?.message).toBeDefined();
 			turnEnd({ turnIndex: i, message: {}, toolResults: [] }, ctx);
 		}
-		expect(sentUserMessages).toHaveLength(1);
+		expect(sentCustomMessages).toHaveLength(1);
+		expect(sentUserMessages).toHaveLength(0);
 
 		activeRuns = [];
 		messageEnd({ message: structuredClone(assistantText) }, ctx);
@@ -476,6 +559,7 @@ describe("subagent-wait-guard entry", () => {
 		const revived = messageEnd({ message: structuredClone(assistantText) }, ctx);
 		turnEnd({ turnIndex: 11, message: {}, toolResults: [] }, ctx);
 		expect(JSON.stringify(revived?.message?.content)).toContain("run-new");
-		expect(sentUserMessages).toHaveLength(2);
+		expect(sentCustomMessages).toHaveLength(2);
+		expect(sentUserMessages).toHaveLength(0);
 	});
 });

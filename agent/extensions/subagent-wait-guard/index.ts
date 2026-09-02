@@ -6,23 +6,24 @@
  *
  * Mode-aware safeguards backed by pi-subagents' process-global active-runs API:
  *
- * 1. `message_end` replaces final assistant prose while runs remain.
- * 2. Explicitly marked progress is allowed through a one-shot runtime permit.
- * 3. Interactive TUI sessions return control and rely on native completion wake.
- * 4. RPC/headless sessions receive one blocking-wait follow-up per active-run snapshot.
+ * 1. Interactive TUI sessions preserve parent output, including exposed thinking.
+ * 2. Interactive reminders use hidden custom messages and native completion wake.
+ * 3. RPC/headless sessions replace premature prose and receive one hidden blocking-wait
+ *    follow-up per active-run snapshot.
+ * 4. Paused runs receive one hidden attention reminder without a blind wait turn.
  *
- * Successful subagent tool results grant one progress permit. Paused runs grant one
- * attention permit. Snapshot changes invalidate stale permits, and an empty snapshot
- * resets session state.
+ * Explicit progress markers are stripped before display. Snapshot changes reset the
+ * one-shot reminder state, and an empty snapshot clears session state.
  * PI_SUBAGENT_WAIT_GUARD=off disables registration entirely.
  *
- * Hard veto of turn completion is unavailable through Pi's public extension API;
- * replacement plus mode-aware wake/wait behavior is the strongest extension boundary.
+ * Hard veto of turn completion is unavailable through Pi's public extension API, so
+ * strict replacement remains limited to non-interactive runtimes.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     buildFollowUp,
+    buildParentReminder,
     buildReplacement,
     injectProgressProtocol,
     isInteractiveTuiRuntime,
@@ -235,7 +236,7 @@ function reconcileTurnEndState(
     if (!current.followUpPending) return undefined;
     const reconciled: SessionInterventionState = {
         fingerprint,
-        followUpPending: !hasPausedRun(runs),
+        followUpPending: true,
         followUpSent: false,
         progressPermit: hasPausedRun(runs),
     };
@@ -245,11 +246,18 @@ function reconcileTurnEndState(
 
 export default function register(pi: ExtensionAPI): void {
     if (process.env.PI_SUBAGENT_WAIT_GUARD === "off") return;
-    const sendUserMessage = pi.sendUserMessage.bind(pi);
+    const sendMessage = pi.sendMessage.bind(pi);
 
-    pi.on("before_agent_start", (event) => ({
-        systemPrompt: injectProgressProtocol(event.systemPrompt),
-    }));
+    pi.on("before_agent_start", (event, ctx) => {
+        const sessionId = resolveSessionIdentity(ctx.sessionManager);
+        const runs = activeRuns(sessionId);
+        return {
+            systemPrompt: injectProgressProtocol(
+                event.systemPrompt,
+                runs.map((run) => run.id),
+            ),
+        };
+    });
 
     pi.on("tool_result", (event, ctx) => {
         if (
@@ -283,15 +291,12 @@ export default function register(pi: ExtensionAPI): void {
         if (progressMessage && progressPermitted) {
             return { message: progressMessage };
         }
-        const attentionRequired = hasPausedRun(runs);
         const interactive = isInteractiveTuiRuntime(ctx.hasUI, process.argv);
-        if (
-            !interactive &&
-            !attentionRequired &&
-            !state.followUpPending &&
-            !state.followUpSent
-        ) {
+        if (!state.followUpPending && !state.followUpSent) {
             state.followUpPending = true;
+        }
+        if (interactive) {
+            return progressMessage ? { message: progressMessage } : undefined;
         }
         return {
             message: buildReplacement(
@@ -309,11 +314,30 @@ export default function register(pi: ExtensionAPI): void {
         const state = reconcileTurnEndState(sessionId, runs);
         if (!state?.followUpPending || state.followUpSent) return;
         state.followUpPending = false;
-        if (hasPausedRun(runs)) return;
         state.followUpSent = true;
-        sendUserMessage(buildFollowUp(runs.map((run) => run.id)), {
-            deliverAs: "followUp",
-        });
+        const interactive = isInteractiveTuiRuntime(ctx.hasUI, process.argv);
+        if (interactive || hasPausedRun(runs)) {
+            sendMessage(
+                {
+                    customType: "subagent-wait-guard-reminder",
+                    content: buildParentReminder(
+                        runs.map((run) => run.id),
+                        replacementKind(runs, interactive),
+                    ),
+                    display: false,
+                },
+                { triggerTurn: false },
+            );
+            return;
+        }
+        sendMessage(
+            {
+                customType: "subagent-wait-guard-reminder",
+                content: buildFollowUp(runs.map((run) => run.id)),
+                display: false,
+            },
+            { deliverAs: "followUp" },
+        );
     });
 
     pi.on("session_shutdown", (_event, ctx) => {
