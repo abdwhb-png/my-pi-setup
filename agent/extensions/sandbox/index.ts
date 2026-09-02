@@ -38,7 +38,14 @@
  * Linux also requires: bubblewrap, socat, ripgrep
  */
 
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import {
+    appendFileSync,
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    renameSync,
+    writeFileSync,
+} from "node:fs";
 import { delimiter, join } from "node:path";
 import {
     SandboxManager,
@@ -56,6 +63,13 @@ import {
     getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import {
+    claimAnalysisSandboxBroker,
+    publishAnalysisSandboxError,
+    publishAnalysisSandboxService,
+    publishAnalysisSandboxTransition,
+    releaseAnalysisSandboxBroker,
+} from "../_shared/analysis/sandbox-analysis-broker.ts";
+import {
     bashWithStdinSchema,
     createBashOperations,
     killActiveBashProcesses,
@@ -72,13 +86,111 @@ import {
 import { appendCompressionFooter } from "../_shared/compression-render";
 import { createWidget } from "../_shared/fancy-footer";
 import { createUiColors, type UiColorsCreation } from "../_shared/ui/ui-colors";
+import {
+    createAnalysisSandboxService,
+    type AnalysisSandboxService,
+} from "./analysis/client.ts";
 
 /** Footer widget state for the sandbox indicator. */
 export type SandboxFooterState = "on" | "restricted" | "off" | "error";
 
 /** Shield glyph shown in the footer widget (same metaphor as the bash 🛡️ prefix). */
 const SANDBOX_ICON = "🛡️";
+/** Warning glyph used in the footer widget when sandbox is disabled. */
+const OFF_ICON = "⚠️";
 const WIDGET_ID = "pi-sandbox";
+
+/** Filename used to persist the sandbox status for a session. */
+export const SESSION_STATE_FILENAME = "sandbox-state.json";
+
+/** Env var that propagates the parent's sandbox status to spawned subagent children. */
+export const ENV_SESSION_STATUS = "PI_SANDBOX_SESSION_STATUS";
+
+/** Which config layer supplied the effective `enabled` flag. */
+export type SandboxConfigSource =
+    | "env"
+    | "session-file"
+    | "project-config"
+    | "global-config"
+    | "default";
+
+/** Result of resolving `loadSandboxConfig` for one session. */
+export interface LoadSandboxConfigResult {
+    config: SandboxConfig;
+    source: SandboxConfigSource;
+}
+
+/** True when the resolved status came from any explicit source and disabled. */
+export function explicitlyDisabled(result: LoadSandboxConfigResult): boolean {
+    return result.source !== "default" && result.config.enabled === false;
+}
+
+/**
+ * Read `PI_SANDBOX_SESSION_STATUS` and return a normalized status, or undefined.
+ * Accepts `enabled` / `disabled` (case-insensitive); any other value is rejected.
+ */
+export function envSandboxStatus(): "enabled" | "disabled" | undefined {
+    const raw = process.env[ENV_SESSION_STATUS];
+    if (raw === undefined) return undefined;
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === "enabled") return "enabled";
+    if (normalized === "disabled") return "disabled";
+    return undefined;
+}
+
+/**
+ * Read `<sessionDir>/sandbox-state.json` and return the persisted status.
+ * Returns undefined when the file is missing, malformed, or its payload is invalid.
+ */
+export function loadSessionSandboxStatus(
+    sessionDir: string,
+): "enabled" | "disabled" | undefined {
+    if (!sessionDir) return undefined;
+    const file = join(sessionDir, SESSION_STATE_FILENAME);
+    if (!existsSync(file)) return undefined;
+    let raw: unknown;
+    try {
+        raw = JSON.parse(readFileSync(file, "utf-8"));
+    } catch {
+        return undefined;
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const enabled = (raw as { enabled?: unknown }).enabled;
+    if (enabled === true) return "enabled";
+    if (enabled === false) return "disabled";
+    return undefined;
+}
+
+/**
+ * Atomically persist the session's sandbox status to `<sessionDir>/sandbox-state.json`.
+ * Writes to a temp file in the same directory and renames over the target.
+ * Best-effort: returns silently on missing sessionDir or write failure (logged to stderr).
+ */
+export function saveSessionSandboxStatus(
+    sessionDir: string,
+    status: "enabled" | "disabled",
+): void {
+    if (!sessionDir) return;
+    const file = join(sessionDir, SESSION_STATE_FILENAME);
+    const tmp = join(sessionDir, `.${SESSION_STATE_FILENAME}.tmp`);
+    const body = JSON.stringify(
+        {
+            enabled: status === "enabled",
+            updatedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+    );
+    try {
+        mkdirSync(sessionDir, { recursive: true });
+        writeFileSync(tmp, body);
+        renameSync(tmp, file);
+    } catch (error) {
+        console.error(
+            `saveSessionSandboxStatus: ${errorMessage(error)}`,
+        );
+    }
+}
 
 /**
  * Pure render for the sandbox footer widget.
@@ -92,16 +204,27 @@ export function renderSandboxWidget(
     theme: import("@earendil-works/pi-coding-agent").Theme,
     state: SandboxFooterState,
 ): string | null {
-    if (state === "off") return null;
     const colors: UiColorsCreation = createUiColors(theme);
+    if (state === "off") {
+        return `${colors.subtle(`${OFF_ICON}sandbox:`)} ${colors.warning(state)}`;
+    }
     const label = colors.subtle(`${SANDBOX_ICON}sandbox:`);
-    const value =
-        state === "on"
-            ? colors.primary(state)
-            : state === "restricted"
-              ? colors.warning(state)
-              : colors.danger(state);
+    const value = colorForState(colors, state);
     return `${label} ${value}`;
+}
+
+function colorForState(
+    colors: UiColorsCreation,
+    state: Exclude<SandboxFooterState, "off">,
+): string {
+    switch (state) {
+        case "on":
+            return colors.primary(state);
+        case "restricted":
+            return colors.warning(state);
+        case "error":
+            return colors.danger(state);
+    }
 }
 
 interface SandboxConfig extends SandboxRuntimeConfig {
@@ -144,6 +267,10 @@ interface SandboxSettingsReader {
 export interface LoadSandboxConfigOptions {
     agentDir?: string;
     settingsManager?: SandboxSettingsReader;
+    /** Session directory; if provided, an existing `sandbox-state.json` overrides the `enabled` flag. */
+    sessionDir?: string;
+    /** Explicit status override (e.g. from `PI_SANDBOX_SESSION_STATUS`); takes priority over the session file. */
+    envOverride?: "enabled" | "disabled";
 }
 
 function errorMessage(error: unknown): string {
@@ -185,7 +312,7 @@ function readLegacyConfig(path: string): Partial<SandboxConfig> {
 export function loadSandboxConfig(
     cwd: string,
     options: LoadSandboxConfigOptions = {},
-): SandboxConfig {
+): LoadSandboxConfigResult {
     const projectConfigPath = join(cwd, ".pi", "sandbox.json");
     const globalConfigPath = join(
         options.agentDir ?? getAgentDir(),
@@ -223,7 +350,34 @@ export function loadSandboxConfig(
         projectConfig = readLegacyConfig(projectConfigPath);
     }
 
-    return deepMerge(deepMerge(DEFAULT_CONFIG, globalConfig), projectConfig);
+    const merged = deepMerge(
+        deepMerge(DEFAULT_CONFIG, globalConfig),
+        projectConfig,
+    );
+
+    let source: SandboxConfigSource;
+    if (projectConfig.enabled === undefined) {
+        if (globalConfig.enabled === undefined) {
+            source = "default";
+        } else {
+            source = "global-config";
+        }
+    } else {
+        source = "project-config";
+    }
+
+    if (options.envOverride !== undefined) {
+        source = "env";
+        merged.enabled = options.envOverride === "enabled";
+    } else if (options.sessionDir) {
+        const sessionStatus = loadSessionSandboxStatus(options.sessionDir);
+        if (sessionStatus !== undefined) {
+            source = "session-file";
+            merged.enabled = sessionStatus === "enabled";
+        }
+    }
+
+    return { config: merged, source };
 }
 
 function deepMerge(
@@ -320,7 +474,7 @@ export function ensureGitignored(cwd: string): void {
             return;
         }
 
-        const toAppend = "\n" + header + "\n" + missing.join("\n") + "\n";
+        const toAppend = `\n${header}\n${missing.join("\n")}\n`;
         appendFileSync(gitignorePath, toAppend);
         gitignoreEnsured = true;
     } catch {
@@ -382,7 +536,9 @@ export function createSandboxedBashOps(
 
 export default function (pi: ExtensionAPI) {
     const brokerOwner = Symbol("sandbox-extension-owner");
+    const analysisBrokerOwner = Symbol("sandbox-analysis-extension-owner");
     claimSandboxExecutionBroker(brokerOwner);
+    claimAnalysisSandboxBroker(analysisBrokerOwner);
 
     const publishDisabledExecution = () =>
         publishSandboxExecutionState(brokerOwner, {
@@ -407,6 +563,19 @@ export default function (pi: ExtensionAPI) {
             state: "error",
             error: error instanceof Error ? error.message : String(error),
         });
+    let analysisService: AnalysisSandboxService | null = null;
+    const transitionAnalysis = () =>
+        publishAnalysisSandboxTransition(analysisBrokerOwner);
+    const disableAnalysis = async (reason: unknown): Promise<void> => {
+        await analysisService?.shutdown();
+        analysisService = null;
+        publishAnalysisSandboxError(analysisBrokerOwner, reason);
+    };
+    const enableAnalysis = async (): Promise<void> => {
+        await analysisService?.shutdown();
+        analysisService = createAnalysisSandboxService();
+        publishAnalysisSandboxService(analysisBrokerOwner, analysisService);
+    };
 
     pi.registerFlag("no-sandbox", {
         description: "Disable OS-level sandboxing for bash commands",
@@ -440,6 +609,21 @@ export default function (pi: ExtensionAPI) {
     ): void {
         sandboxFooterState = status;
         w.update(ctx);
+    }
+
+    /**
+     * Persist the session's sandbox status to `<sessionDir>/sandbox-state.json` and
+     * set the live env var for spawned subagent children to inherit.
+     * No-op when `sessionManager` is absent (test contexts).
+     */
+    function persistSessionStatus(
+        ctx: ExtensionContext,
+        status: "enabled" | "disabled",
+    ): void {
+        const sessionDir = ctx.sessionManager?.getSessionDir();
+        if (!sessionDir) return;
+        saveSessionSandboxStatus(sessionDir, status);
+        process.env[ENV_SESSION_STATUS] = status;
     }
 
     pi.registerTool({
@@ -495,18 +679,26 @@ export default function (pi: ExtensionAPI) {
             sandboxEnabled = false;
             sandboxInitialized = false;
             publishDisabledExecution();
+            await disableAnalysis("disabled via --no-sandbox");
             updateSandboxStatus(ctx, "off");
-            ctx.ui.notify("Sandbox disabled via --no-sandbox", "warning");
+            ctx.ui.notify(
+                `⚠ Sandbox disabled via --no-sandbox — bash commands run unsandboxed.`,
+                "warning",
+            );
             return;
         }
 
-        let config: SandboxConfig;
+        let resolved: LoadSandboxConfigResult;
         try {
-            config = loadSandboxConfig(ctx.cwd);
+            resolved = loadSandboxConfig(ctx.cwd, {
+                sessionDir: ctx.sessionManager?.getSessionDir(),
+                envOverride: envSandboxStatus(),
+            });
         } catch (error) {
             sandboxEnabled = false;
             sandboxInitialized = false;
             publishExecutionError(error);
+            await disableAnalysis(error);
             updateSandboxStatus(ctx, "error");
             ctx.ui.notify(
                 `Sandbox configuration failed: ${errorMessage(error)}`,
@@ -515,11 +707,20 @@ export default function (pi: ExtensionAPI) {
             return;
         }
 
+        const { config, source } = resolved;
+
         if (!config.enabled) {
             sandboxEnabled = false;
             sandboxInitialized = false;
             publishDisabledExecution();
+            await disableAnalysis(`disabled (${source})`);
             updateSandboxStatus(ctx, "off");
+            if (explicitlyDisabled(resolved)) {
+                ctx.ui.notify(
+                    `⚠ Sandbox is DISABLED for this session — bash commands run unsandboxed. (Source: ${source}; preference is persisted.)`,
+                    "warning",
+                );
+            }
             return;
         }
 
@@ -527,12 +728,16 @@ export default function (pi: ExtensionAPI) {
         if (platform !== "darwin" && platform !== "linux") {
             sandboxEnabled = false;
             sandboxInitialized = false;
-            publishExecutionError(`Sandbox not supported on ${platform}`);
+            const error = `Sandbox not supported on ${platform}`;
+            publishExecutionError(error);
+            await disableAnalysis(error);
             updateSandboxStatus(ctx, "restricted");
-            ctx.ui.notify(`Sandbox not supported on ${platform}`, "warning");
+            ctx.ui.notify(error, "warning");
             return;
         }
 
+        publishTransitionExecution();
+        transitionAnalysis();
         try {
             // SAFETY: installed sandbox runtime accepts these optional fields, but its exported config type omits them.
             const configExt = config as unknown as {
@@ -550,6 +755,8 @@ export default function (pi: ExtensionAPI) {
             sandboxEnabled = true;
             sandboxInitialized = true;
             publishEnabledExecution();
+            if (platform === "linux") await enableAnalysis();
+            else await disableAnalysis("analysis sandbox supports Linux only");
 
             updateSandboxStatus(ctx, "on");
             ctx.ui.notify("Sandbox initialized", "info");
@@ -557,6 +764,7 @@ export default function (pi: ExtensionAPI) {
             sandboxEnabled = false;
             sandboxInitialized = false;
             publishExecutionError(err);
+            await disableAnalysis(err);
             updateSandboxStatus(ctx, "error");
             ctx.ui.notify(
                 `Sandbox initialization failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -566,6 +774,9 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("session_shutdown", async () => {
+        releaseAnalysisSandboxBroker(analysisBrokerOwner);
+        await analysisService?.shutdown();
+        analysisService = null;
         if (!releaseSandboxExecutionBroker(brokerOwner)) return;
         killActiveBashProcesses();
         if (sandboxInitialized) {
@@ -604,20 +815,21 @@ export default function (pi: ExtensionAPI) {
 
                 const platform = process.platform;
                 if (platform !== "darwin" && platform !== "linux") {
-                    publishExecutionError(
-                        `Sandbox not supported on ${platform}`,
-                    );
+                    const error = `Sandbox not supported on ${platform}`;
+                    publishExecutionError(error);
+                    await disableAnalysis(error);
                     updateSandboxStatus(ctx, "restricted");
-                    ctx.ui.notify(
-                        `Sandbox not supported on ${platform}`,
-                        "error",
-                    );
+                    ctx.ui.notify(error, "error");
                     return;
                 }
 
                 publishTransitionExecution();
+                transitionAnalysis();
                 try {
-                    const config = loadSandboxConfig(ctx.cwd);
+                    const { config } = loadSandboxConfig(ctx.cwd, {
+                        sessionDir: ctx.sessionManager?.getSessionDir(),
+                        envOverride: envSandboxStatus(),
+                    });
                     // SAFETY: installed sandbox runtime accepts these optional fields, but its exported config type omits them.
                     const configExt = config as unknown as {
                         ignoreViolations?: Record<string, string[]>;
@@ -635,13 +847,20 @@ export default function (pi: ExtensionAPI) {
                     sandboxEnabled = true;
                     sandboxInitialized = true;
                     publishEnabledExecution();
+                    if (platform === "linux") await enableAnalysis();
+                    else
+                        await disableAnalysis(
+                            "analysis sandbox supports Linux only",
+                        );
 
                     updateSandboxStatus(ctx, "on");
+                    persistSessionStatus(ctx, "enabled");
                     ctx.ui.notify("Sandbox enabled", "info");
                 } catch (err) {
                     sandboxEnabled = false;
                     sandboxInitialized = false;
                     publishExecutionError(err);
+                    await disableAnalysis(err);
                     updateSandboxStatus(ctx, "error");
                     ctx.ui.notify(
                         `Sandbox initialization failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -653,13 +872,21 @@ export default function (pi: ExtensionAPI) {
 
             // /sandbox off
             if (arg === "off" || arg === "disable") {
+                ctx.ui.notify(
+                    "⚠ Disabling sandbox is a security risk — bash commands will run with full system access. (This preference is persisted for this session.)",
+                    "warning",
+                );
                 sandboxEnabled = false;
+                if (sandboxInitialized) publishTransitionExecution();
+                transitionAnalysis();
+                await analysisService?.shutdown();
+                analysisService = null;
                 if (sandboxInitialized) {
-                    publishTransitionExecution();
                     try {
                         await SandboxManager.reset();
                     } catch (error) {
                         publishExecutionError(error);
+                        publishAnalysisSandboxError(analysisBrokerOwner, error);
                         updateSandboxStatus(ctx, "error");
                         ctx.ui.notify(
                             `Sandbox reset failed: ${errorMessage(error)}`,
@@ -669,17 +896,25 @@ export default function (pi: ExtensionAPI) {
                     }
                     sandboxInitialized = false;
                 }
+                publishAnalysisSandboxError(
+                    analysisBrokerOwner,
+                    "sandbox disabled by command",
+                );
                 publishDisabledExecution();
                 updateSandboxStatus(ctx, "off");
+                persistSessionStatus(ctx, "disabled");
                 ctx.ui.notify("Sandbox disabled", "info");
                 return;
             }
 
-            // /sandbox (no args) — toggle or show status
+            // /sandbox (no args) — show status
             if (!arg) {
-                let config: SandboxConfig;
+                let resolved: LoadSandboxConfigResult;
                 try {
-                    config = loadSandboxConfig(ctx.cwd);
+                    resolved = loadSandboxConfig(ctx.cwd, {
+                        sessionDir: ctx.sessionManager?.getSessionDir(),
+                        envOverride: envSandboxStatus(),
+                    });
                 } catch (error) {
                     publishExecutionError(error);
                     updateSandboxStatus(ctx, "error");
@@ -689,9 +924,14 @@ export default function (pi: ExtensionAPI) {
                     );
                     return;
                 }
+                const { config, source } = resolved;
                 const status = sandboxEnabled ? "ENABLED" : "DISABLED";
+                const securityLabel = explicitlyDisabled(resolved)
+                    ? `${status} ⚠`
+                    : status;
                 const lines = [
-                    `Sandbox: ${status}`,
+                    `Sandbox: ${securityLabel}`,
+                    `Source: ${source}`,
                     "",
                     "Network:",
                     `  Allowed: ${config.network?.allowedDomains?.join(", ") || "(none)"}`,
