@@ -103,18 +103,20 @@ During implementation:
 After implementation is stable:
 
 - Format task files once.
-- Run focused lint and tests.
-- Run global typecheck, lint, and full tests once.
-- Do not change code after global gates unless prepared to rerun the invalidated checks.
+- Run LSP diagnostics on changed files, focused lint, and focused tests covering the changed behavior.
+- Keep validation scoped to the task by default. Do not run project-wide typecheck, lint, full tests, builds, or expensive diagnostics merely because those commands exist.
+- Broaden validation only when the user explicitly requests it, the repository's documented CI or contribution contract requires it for this change, or the change is genuinely transversal/high-risk and focused checks cannot establish correctness. State the reason before running a broad check.
+- If a later edit invalidates a completed check, rerun only the affected check.
 
 ### Phase 3 — Verification (Required before declaring complete)
 
-1. Runs the project's **typecheck** (`tsc --noEmit` or equivalent)
-2. Runs the project's **linter** (or install/configure one if it doesn't exist)
-3. Runs all the project's **tests** — not just yours
-4. Verifies that no unwanted artifacts are being tracked (lock files from the wrong package manager, build folders, etc.)
+1. Run LSP diagnostics on every changed source file.
+2. Run the narrowest available typecheck and linter scope covering the changed files.
+3. Run focused tests covering the changed behavior and its directly affected directory or module.
+4. Verify that no unwanted artifacts are being tracked (lock files from the wrong package manager, build folders, etc.).
+5. Run project-wide gates only under the explicit broad-validation conditions above.
 
-**Rule**: if any of these checks fail, you fix it before moving on to the next step.
+**Rule**: fix task-caused failures before declaring complete. Report unrelated or pre-existing failures without expanding scope unless the user asks you to fix them.
 
 ## Coding guidelines
 

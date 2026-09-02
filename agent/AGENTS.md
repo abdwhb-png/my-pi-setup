@@ -10,6 +10,7 @@
   - Incorrect (3rd person): "Models naturally amplify claims while discarding limits. The model must not execute actions while discarding constraints."
   - Correct (Direct imperative): "Weld limits to permissions: state capabilities alongside their non-negotiable boundaries. Never state a finding without its error margin or caveats."
 - Treat every shell-tool call as an independent process: explicitly select target package's working directory before package-manager commands or relative paths.
+- Keep validation scoped to the changed behavior by default; run project-wide checks only when the user requests them, a documented repository or CI contract requires them for that change, or focused checks cannot validate a genuinely transversal or high-risk change, and state the reason before running them.
 
 ## Stack preferences
 
