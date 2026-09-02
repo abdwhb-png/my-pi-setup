@@ -43,7 +43,7 @@ const schema = {
 
 function verifier(
     outputName: string,
-    agent = "brainstorm-code-scout",
+    agent = "brainstorm-scout",
 ): VerificationDelegationNode {
     return {
         role: "verifier",

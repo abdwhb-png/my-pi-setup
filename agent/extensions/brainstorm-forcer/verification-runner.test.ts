@@ -15,7 +15,7 @@ const pendingRun: PendingVerificationRun = {
         {
             role: "verifier",
             outputName: "verify_local_code_supported",
-            agent: "brainstorm-code-scout",
+            agent: "brainstorm-scout",
             domain: "local-code",
             outcome: "supported",
             claimIds: ["CL-001"],

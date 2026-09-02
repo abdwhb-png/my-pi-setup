@@ -35,7 +35,7 @@ async function createBoundRuntime(
   const settingsManager = codingAgent.SettingsManager.inMemory({
     subagents: {
       agentOverrides: {
-        "brainstorm-code-scout": { model: "brainstorm-test/mock" },
+        "brainstorm-scout": { model: "brainstorm-test/mock" },
       },
     },
   } as any);
@@ -704,7 +704,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         join(isolatedAgentDir, "settings.json"),
         JSON.stringify({
           subagents: {
-            agentOverrides: { "brainstorm-code-scout": { model: "brainstorm-test/mock" } },
+            agentOverrides: { "brainstorm-scout": { model: "brainstorm-test/mock" } },
           },
         }),
       );
@@ -794,7 +794,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         expect(requests[0]).toMatchObject({
           ownerRunId: naturalRunId,
           nodeId: "verify_local_code_supported",
-          agent: "brainstorm-code-scout",
+          agent: "brainstorm-scout",
           context: "fresh",
           result: { kind: "structured" },
         });

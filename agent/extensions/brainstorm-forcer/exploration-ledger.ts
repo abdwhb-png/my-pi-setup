@@ -55,9 +55,19 @@ const DIRECT_EVIDENCE_TOOLS = new Set([
     "fetch_content",
 ]);
 
-const DERIVED_EVIDENCE_TOOLS = new Set(["ctx_execute", "ctx_batch_execute"]);
+const DERIVED_EVIDENCE_TOOLS = new Set([
+    "ctx_execute",
+    "ctx_batch_execute",
+    // Task 7 — Think-in-Code parity: the native execute tools replace the
+    // legacy MCP `ctx_execute`/`ctx_batch_execute` aliases while preserving
+    // the same derived-evidence semantics (analyzer output is bounded and
+    // re-derived, never direct).
+    "think_execute",
+    "think_batch_execute",
+]);
 
 const SECONDARY_EVIDENCE_TOOLS = new Set([
+    "brainstorm_delegate_research",
     "web_search",
     "source_check",
     "context7_query-docs",
@@ -77,11 +87,21 @@ function classifyEvidenceSource(
     reviewer: boolean,
 ): EvidenceSourceKind {
     if (toolName === "ctx_search") return "indexed";
+    // Task 7 — Think-in-Code parity: the native FTS5-backed `think_search`
+    // and `think_index` tools also return indexed evidence (the analyzer
+    // never exposes raw archive bytes to the LLM context).
+    if (toolName === "think_search" || toolName === "think_index")
+        return "indexed";
     if (reviewer) return "reviewer";
     if (toolName === "subagent" || SECONDARY_EVIDENCE_TOOLS.has(toolName))
         return "secondary";
     if (DERIVED_EVIDENCE_TOOLS.has(toolName)) return "derived";
-    if (toolName === "ctx_execute_file")
+    // Both the legacy MCP `ctx_execute_file` and the native
+    // `think_execute_file` are classified as direct only when the captured
+    // record carries at least one source reference (e.g. the file path that
+    // was realpathed under `ctx.cwd`). Without a reference, the analyzer
+    // output is treated as derived.
+    if (toolName === "ctx_execute_file" || toolName === "think_execute_file")
         return sourceRefs.length > 0 ? "direct" : "derived";
     return DIRECT_EVIDENCE_TOOLS.has(toolName) ? "direct" : "ineligible";
 }
@@ -362,7 +382,7 @@ function isReviewerMetadata(value: unknown): boolean {
 
 const VERIFIER_AGENTS = new Set([
     "pi-expert",
-    "brainstorm-code-scout",
+    "brainstorm-scout",
     "factual-researcher",
     "performance-reviewer",
 ]);
@@ -772,7 +792,7 @@ function extractSourceRefs(
         "cwd",
     ]);
     const urlKeys = new Set(["url", "urls"]);
-    const labelKeys = new Set(["source", "sources"]);
+    const labelKeys = new Set(["source", "sources", "sourceRefs"]);
     const identifierKeys = new Set(["responseId"]);
     const add = (
         value: string,

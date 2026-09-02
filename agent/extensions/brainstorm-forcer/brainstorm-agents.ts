@@ -1,18 +1,19 @@
-import { type WorkflowAgentEntry } from "../_shared/subagents/workflow-agents";
+import {
+    createWorkflowAgentGate,
+    type WorkflowAgentEntry,
+} from "../_shared/subagents/workflow-agents";
 
 /**
- * Definition of the Brainstorm Forcer local-code verifier, written to the
- * shared agent dir only while a brainstorm run is active so it is not
- * discoverable or dispatchable by other sessions. Settings.json
- * `agentOverrides` (model, fallbacks, ...) are applied by static discovery.
+ * Brainstorm Forcer's single local-code scout. Its definition exists in the
+ * shared agent directory only while at least one brainstorm run is active.
+ * Settings.json `agentOverrides` supply model and fallback configuration.
  */
-
 const BRAINSTORM_AGENT_ENTRIES: readonly WorkflowAgentEntry[] = [
     {
-        name: "brainstorm-code-scout",
+        name: "brainstorm-scout",
         markdown: `---
-name: brainstorm-code-scout
-description: Read-only local code verifier for Brainstorm Forcer evidence checks.
+name: brainstorm-scout
+description: Read-only local code researcher and verifier for Brainstorm Forcer.
 tools: "@inspect, @lens"
 thinking: high
 systemPromptMode: replace
@@ -22,7 +23,7 @@ defaultContext: fresh
 acceptanceRole: read-only
 ---
 
-You verify local-code claims for Brainstorm Forcer. Inspect only the cited files and their directly relevant dependencies. Do not modify files, run shell commands, or delegate. Return concise, evidence-backed findings that strictly match the requested structured output schema.
+You research and verify local-code claims for Brainstorm Forcer. Inspect only the requested scope and directly relevant dependencies. Separate observed facts from interpretation, report precise source references and unresolved gaps, and obey the requested structured output schema. Do not modify files, run shell commands, or delegate.
 `,
     },
 ];
@@ -35,4 +36,11 @@ export function getBrainstormAgentEntry(
     name: string,
 ): WorkflowAgentEntry | undefined {
     return BRAINSTORM_AGENT_ENTRIES.find((entry) => entry.name === name);
+}
+
+export function createBrainstormAgentGate(): {
+    acquire(): void;
+    release(): void;
+} {
+    return createWorkflowAgentGate(BRAINSTORM_AGENT_ENTRIES);
 }

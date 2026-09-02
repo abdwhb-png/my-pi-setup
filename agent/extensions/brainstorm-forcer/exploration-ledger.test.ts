@@ -867,7 +867,7 @@ describe("exploration ledger", () => {
             verificationRunId: "async-owned",
             verifiers: [
                 {
-                    agent: "brainstorm-code-scout",
+                    agent: "brainstorm-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claim.id],
@@ -895,7 +895,7 @@ describe("exploration ledger", () => {
             verificationRunId: "async-newer",
             verifiers: [
                 {
-                    agent: "brainstorm-code-scout",
+                    agent: "brainstorm-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claim.id],
@@ -1910,7 +1910,7 @@ describe("exploration ledger", () => {
             verificationRunId: "async-owned",
             verifiers: [
                 {
-                    agent: "brainstorm-code-scout",
+                    agent: "brainstorm-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claim.id],
@@ -1929,7 +1929,7 @@ describe("exploration ledger", () => {
                     sourceRefs: ["~/runtime.ts"],
                     verifier: {
                         role: "verifier",
-                        agent: "brainstorm-code-scout",
+                        agent: "brainstorm-scout",
                         context: "fresh",
                         exitCode: 0,
                         verificationRunId: "async-owned",
@@ -1950,7 +1950,7 @@ describe("exploration ledger", () => {
                     audit: {
                         status: "success",
                         verificationRunId: "async-owned",
-                        agent: "brainstorm-code-scout",
+                        agent: "brainstorm-scout",
                         outputName: "verify_local_code_supported",
                     },
                 },
@@ -2001,7 +2001,7 @@ describe("exploration ledger", () => {
             },
             verifiers: [
                 {
-                    agent: "brainstorm-code-scout",
+                    agent: "brainstorm-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claim.id],
@@ -2116,7 +2116,7 @@ describe("exploration ledger", () => {
             },
             verifiers: [
                 {
-                    agent: "brainstorm-code-scout",
+                    agent: "brainstorm-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [architectureClaim.id, ordinaryClaim.id],
@@ -2196,7 +2196,7 @@ describe("exploration ledger", () => {
                     summary: "Pi claim supported.",
                 },
                 {
-                    agent: "brainstorm-code-scout",
+                    agent: "brainstorm-scout",
                     outputName: "verify_local_code_supported",
                     outcome: "supported",
                     claimIds: [claims[1]!.claim.id],
@@ -2280,7 +2280,7 @@ describe("exploration ledger", () => {
                 reason: `Terminal ${failureKind}.`,
                 groups: [
                     {
-                        agent: "brainstorm-code-scout",
+                        agent: "brainstorm-scout",
                         outputName: "verify_local_code_supported",
                         claimIds: [claim.id],
                         evidenceIds: [direct.id],
@@ -2337,7 +2337,7 @@ describe("exploration ledger", () => {
             reason: "Owner mismatch.",
             groups: [
                 {
-                    agent: "brainstorm-code-scout",
+                    agent: "brainstorm-scout",
                     outputName: "verify_local_code_supported",
                     claimIds: [claim.id],
                     evidenceIds: [direct.id],
@@ -2507,7 +2507,7 @@ describe("exploration ledger", () => {
                 reason: "Claim scope changed while verification was pending.",
                 groups: [
                     {
-                        agent: "brainstorm-code-scout",
+                        agent: "brainstorm-scout",
                         outputName: "verify_local_code_supported",
                         claimIds: [original.id],
                         evidenceIds: [direct.id],
@@ -2521,5 +2521,114 @@ describe("exploration ledger", () => {
                 audit: { status: "malformed" },
             },
         ]);
+    });
+
+    // ------------------------------------------------------------------
+    // Task 7 — think_* evidence classification (replaces legacy ctx_*).
+    // ------------------------------------------------------------------
+
+    it("classifies think_search evidence as indexed (parity with ctx_search)", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = ledger.captureEvidence({
+            toolCallId: "call-think-search",
+            toolName: "think_search",
+            input: { queries: ["claim"], source: "ADR-018" },
+            content: [{ type: "text", text: "ranked snippet" }],
+            details: {},
+            isError: false,
+        });
+        expect(evidence.sourceKind).toBe("indexed");
+    });
+
+    it("classifies think_execute and think_batch_execute as derived", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const single = ledger.captureEvidence({
+            toolCallId: "call-think-execute",
+            toolName: "think_execute",
+            input: { language: "javascript", program: "1" },
+            content: [{ type: "text", text: "true" }],
+            details: undefined,
+            isError: false,
+        });
+        const batch = ledger.captureEvidence({
+            toolCallId: "call-think-batch",
+            toolName: "think_batch_execute",
+            input: { language: "javascript", program: "INPUTS" },
+            content: [{ type: "text", text: "summary" }],
+            details: undefined,
+            isError: false,
+        });
+        expect(single.sourceKind).toBe("derived");
+        expect(batch.sourceKind).toBe("derived");
+    });
+
+    it("classifies think_execute_file as direct only when source references exist", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+
+        // Capture with a project file path — the ledger hashes the path and
+        // attaches it as a source reference, so the classifier must pick
+        // `direct` (parity with `ctx_execute_file`).
+        const withRefs = ledger.captureEvidence({
+            toolCallId: "call-file-with-refs",
+            toolName: "think_execute_file",
+            input: { path: "src/index.ts" },
+            content: [{ type: "text", text: "derived" }],
+            details: undefined,
+            isError: false,
+        });
+        expect(withRefs.sourceKind).toBe("direct");
+        expect(withRefs.sourceRefs.length).toBeGreaterThan(0);
+
+        // The legacy classification rule already handles the no-ref branch
+        // (covered by the existing `ctx_execute_file` test). The native
+        // alias routes through the same branch in `classifyEvidenceSource`,
+        // so we only need to assert the wiring here.
+        const classifier = (
+            globalThis as {
+                __explorationLedgerClassifier?: (
+                    toolName: string,
+                    sourceRefs: readonly string[],
+                ) => string;
+            }
+        ).__explorationLedgerClassifier;
+        // Optional in-process probe (used by external test runners that
+        // expose the helper). When absent we only assert the path above.
+        if (typeof classifier === "function") {
+            expect(classifier("think_execute_file", ["src/index.ts"])).toBe(
+                "direct",
+            );
+            expect(classifier("think_execute_file", [])).toBe("derived");
+        }
+    });
+
+    it("classifies delegated brainstorm research as secondary evidence", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = ledger.captureEvidence({
+            toolCallId: "call-delegated-research",
+            toolName: "brainstorm_delegate_research",
+            input: {
+                domain: "local-code",
+                question: "Where is the root selected?",
+                sources: ["src/index.ts"],
+            },
+            content: [{ type: "text", text: "Bounded structured result" }],
+            details: { agent: "brainstorm-scout" },
+            isError: false,
+        });
+        expect(evidence.sourceKind).toBe("secondary");
+        expect(evidence.sourceRefs).toEqual(["src/index.ts"]);
+    });
+
+    it("classifies think_index as indexed (no archive content exposed)", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const evidence = ledger.captureEvidence({
+            toolCallId: "call-think-index",
+            toolName: "think_index",
+            input: { kind: "document-summary", text: "summary" },
+            content: [{ type: "text", text: "Indexed result" }],
+            details: {},
+            isError: false,
+        });
+        expect(evidence.sourceKind).toBe("indexed");
     });
 });

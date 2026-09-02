@@ -45,13 +45,13 @@ describe("verification routing", () => {
         ]);
         expect(VERIFICATION_ROUTING).toEqual({
             pi: "pi-expert",
-            "local-code": "brainstorm-code-scout",
+            "local-code": "brainstorm-scout",
             external: "factual-researcher",
             performance: "performance-reviewer",
         });
         expect([...VERIFIER_AGENT_ALLOWLIST]).toEqual([
             "pi-expert",
-            "brainstorm-code-scout",
+            "brainstorm-scout",
             "factual-researcher",
             "performance-reviewer",
         ]);
@@ -65,6 +65,26 @@ describe("verification routing", () => {
         });
         for (const tool of ["write", "edit", "bash", "safe_bash", "subagent"])
             expect(ceiling.allowedTools).not.toContain(tool);
+    });
+
+    it("includes think_search in the read-only allowlist (no think execute tools)", () => {
+        // Task 7 contract: read-only verifier tools may inspect the Think-in-
+        // Code FTS5 index via `think_search` (no filesystem, no execution),
+        // but they must NEVER receive the three execute tools. Adding
+        // `think_execute`/`think_execute_file`/`think_batch_execute` to the
+        // allowlist would silently widen the capability ceiling and let
+        // verifiers mutate project state through the analyzer broker.
+        expect(READONLY_VERIFIER_TOOLS).toContain("think_search");
+        for (const tool of [
+            "think_execute",
+            "think_execute_file",
+            "think_batch_execute",
+            "think_index",
+        ]) {
+            expect(READONLY_VERIFIER_TOOLS).not.toContain(tool);
+        }
+        // Sanity: ctx_search parity still holds alongside think_search.
+        expect(READONLY_VERIFIER_TOOLS).toContain("ctx_search");
     });
 
     it("keeps the documented local-code route aligned with the closed routing contract", async () => {
@@ -85,7 +105,7 @@ describe("verification routing", () => {
             ),
         ]);
         for (const document of [readme, skill]) {
-            expect(document).toMatch(/\|\s*`local-code`\s*\|\s*`brainstorm-code-scout`\s*\|/);
+            expect(document).toMatch(/\|\s*`local-code`\s*\|\s*`brainstorm-scout`\s*\|/);
             expect(document).not.toMatch(/\|\s*`local-code`\s*\|\s*`scout`\s*\|/);
         }
         const [beforeHistorical, historicalAndAfter = ""] = adr.split(
@@ -99,7 +119,7 @@ describe("verification routing", () => {
         const activeSections = `${beforeHistorical}\n${afterHistorical}`;
         expect(activeSections).toContain("pi-subagents/delegation");
         expect(activeSections).toContain("external-runs");
-        expect(activeSections).toContain("brainstorm-code-scout");
+        expect(activeSections).toContain("brainstorm-scout");
         expect(activeSections).not.toMatch(/\bRPC\b|package lifecycle artifacts/i);
         expect(historicalAndAfter).toMatch(/removed RPC v1[\s\S]*lifecycle artifacts/i);
     });
@@ -148,7 +168,7 @@ describe("verification plan", () => {
         expect(nodes).toHaveLength(2);
         expect(nodes[0]).toMatchObject({
             role: "verifier",
-            agent: "brainstorm-code-scout",
+            agent: "brainstorm-scout",
             outputName: "verify_local_code_supported",
             schema: VERIFIER_OUTPUT_SCHEMA,
         });

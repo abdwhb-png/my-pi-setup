@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Value } from "typebox/value";
 import { resolveSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
 import { snapshotExternalRuns } from "pi-subagents/external-runs";
@@ -279,7 +279,7 @@ describe("brainstorm-forcer redesign", () => {
   });
 
   it("uses the dedicated local-code verifier when another discovered agent shares scout's local name", async () => {
-    const sessionId = "brainstorm-code-scout-preflight";
+    const sessionId = "brainstorm-scout-preflight";
     const root = await mkdtemp(join(tmpdir(), "brainstorm-agent-collision-"));
     const agentsDir = join(root, ".pi", "agents");
     const manager = createCapabilityCeilingManager();
@@ -289,8 +289,8 @@ describe("brainstorm-forcer redesign", () => {
       "---\nname: scout\npackage: code-analysis\ndescription: Colliding project scout\ntools: '@inspect'\n---\n",
     );
     await writeFile(
-      join(agentsDir, "brainstorm-code-scout.md"),
-      getBrainstormAgentEntry("brainstorm-code-scout")!.markdown,
+      join(agentsDir, "brainstorm-scout.md"),
+      getBrainstormAgentEntry("brainstorm-scout")!.markdown,
     );
     manager.register(sessionId);
     try {
@@ -307,15 +307,29 @@ describe("brainstorm-forcer redesign", () => {
         message: expect.stringContaining("Ambiguous agent name 'scout'"),
       });
       await expect(
-        preflightVerifierAgents(sessionId, root, ["brainstorm-code-scout"]),
+        preflightVerifierAgents(sessionId, root, ["brainstorm-scout"]),
       ).resolves.toEqual([
-        expect.objectContaining({ agent: "brainstorm-code-scout", ok: true }),
+        expect.objectContaining({ agent: "brainstorm-scout", ok: true }),
       ]);
     } finally {
       manager.dispose();
       await rm(root, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it("keeps only brainstorm-scout discoverable during an active run", async () => {
+    const { pi, commands, handlers } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    expect(
+      await readdir(join(isolatedAgentDir!, "agents")),
+    ).toEqual(["brainstorm-scout.md"]);
+
+    await handlers.get("session_shutdown")!({}, ctx);
+    expect(await readdir(join(isolatedAgentDir!, "agents"))).toEqual([]);
+  });
 
   it("registers command, hooks, and renderer", () => {
     const { pi, tools, commands, handlers, renderers } = createMockAPI();
@@ -332,6 +346,68 @@ describe("brainstorm-forcer redesign", () => {
     expect(tools.get("brainstorm_run_verification")!.executionMode).toBe(
       "sequential",
     );
+  });
+
+  it("delegates bounded local research only to brainstorm-scout", async () => {
+    const api = createMockAPI();
+    const ctx = createMockContext();
+    const requests: Array<Record<string, unknown>> = [];
+    const preflightAgents: string[][] = [];
+    api.events.on("prompt-template:subagent:request", (raw) => {
+      const request = raw as Record<string, unknown>;
+      requests.push(request);
+      api.events.emit("prompt-template:subagent:response", {
+        requestId: request.requestId,
+        ownerRunId: request.ownerRunId,
+        nodeId: request.nodeId,
+        status: "completed",
+        agent: request.agent,
+        exitCode: 0,
+        result: {
+          kind: "structured",
+          value: {
+            summary: "Found the topic boundary.",
+            findings: [
+              {
+                finding: "Discovery fixes the canonical topic.",
+                sourceRefs: ["agent/extensions/brainstorm-forcer/index.ts:700"],
+              },
+            ],
+            gaps: [],
+          },
+        },
+      });
+    });
+    brainstormForcer(api.pi, {
+      preflight: async (_sessionId, _cwd, agents) => {
+        preflightAgents.push([...agents]);
+        return agents.map((agent) => ({ agent, ok: true }));
+      },
+    });
+    await api.commands.get("brainstorm")!.handler("topic", ctx);
+
+    const result = await api.tools.get("brainstorm_delegate_research")!.execute(
+      "research-1",
+      {
+        domain: "local-code",
+        question: "Where is the artifact topic fixed?",
+        sources: ["agent/extensions/brainstorm-forcer/index.ts"],
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(preflightAgents).toEqual([["brainstorm-scout"]]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      agent: "brainstorm-scout",
+      context: "fresh",
+    });
+    expect(result.details).toMatchObject({
+      agent: "brainstorm-scout",
+      result: { summary: "Found the topic boundary." },
+    });
   });
 
   it("abandons verification launch when branch ownership changes during preflight", async () => {
@@ -564,6 +640,24 @@ describe("brainstorm-forcer redesign", () => {
     ).toBe(false);
   });
 
+  it("requires a bounded canonical topic in the Discovery schema", () => {
+    const { pi, tools } = createMockAPI();
+    brainstormForcer(pi);
+    const schema = tools.get("brainstorm_submit_discovery")!.parameters;
+    const discovery = {
+      filesAccessed: ["index.ts"],
+      keyFindings: ["Topic is fixed at Discovery submission."],
+      gaps: [],
+    };
+    expect(Value.Check(schema, discovery)).toBe(false);
+    expect(
+      Value.Check(schema, { ...discovery, topic: "controlled-research" }),
+    ).toBe(true);
+    expect(
+      Value.Check(schema, { ...discovery, topic: "x".repeat(121) }),
+    ).toBe(false);
+  });
+
   it("registers one structured artifact submission tool per phase", () => {
     const { pi, tools } = createMockAPI();
     brainstormForcer(pi);
@@ -603,6 +697,47 @@ describe("brainstorm-forcer redesign", () => {
       const path = result.details.artifact.path as string;
       expect(path).toMatch(/docs\/brainstorms\/.+\/01-discovery-r001\.md$/);
       expect(await readFile(join(projectRoot, path), "utf8")).toContain("## Key Findings\n\n- Transitions are user commands only.");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the Discovery topic for the artifact root even after context injection", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-topic-"));
+    try {
+      const { pi, tools, commands, handlers } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      await commands.get("brainstorm")!.handler(
+        "Long initial prompt that must not become the artifact directory name",
+        ctx,
+      );
+
+      await handlers.get("context")!({ messages: [] }, ctx);
+      const result = await tools.get("brainstorm_submit_discovery")!.execute(
+        "topic-call",
+        {
+          topic: "controlled-brainstorm-research",
+          filesAccessed: ["agent/extensions/brainstorm-forcer/index.ts"],
+          keyFindings: ["Discovery owns the canonical topic."],
+          gaps: [],
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      expect(result.details.artifact.path).toContain(
+        "-controlled-brainstorm-research/",
+      );
+      expect(result.details.artifact.path).not.toContain("long-initial-prompt");
+      const manifest = JSON.parse(
+        await readFile(
+          join(projectRoot, dirname(result.details.artifact.path), "manifest.json"),
+          "utf8",
+        ),
+      );
+      expect(manifest.topic).toBe("controlled-brainstorm-research");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -1173,7 +1308,9 @@ describe("brainstorm-forcer redesign", () => {
       expect(first.messages).toHaveLength(1);
       expect(first.messages[0]).toMatchObject({ role: "custom", customType: "brainstorm-forcer-status", display: false });
       expect(first.messages[0].content).toContain("brainstorm_submit_discovery");
-      expect(first.messages[0].content).toContain("docs/brainstorms/");
+      expect(first.messages[0].content).toContain(
+        "Artifacts root: pending Discovery topic",
+      );
 
       const second = await context({ messages: first.messages }, ctx);
       expect(second.messages.filter((message: any) => message.customType === "brainstorm-forcer-status")).toHaveLength(1);
@@ -1259,6 +1396,27 @@ describe("brainstorm-forcer redesign", () => {
       const status = await second.handlers.get("context")!({ messages: [] }, secondContext);
       expect(status.messages[0].content).toContain("01-discovery-r001.md");
       expect(status.messages[0].content).toContain("Phase: Discovery");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a pending artifact root before Discovery fixes the topic", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-pending-root-"));
+    try {
+      const { pi, commands } = createMockAPI();
+      const ctx = createMockContext(undefined, projectRoot);
+      brainstormForcer(pi);
+      const command = commands.get("brainstorm")!;
+      await command.handler("Long opening prompt", ctx);
+
+      await command.handler("artifacts", ctx);
+
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        "Brainstorm artifacts: pending Discovery topic\nNo artifacts submitted yet.",
+        "info",
+      );
+      expect(await readdir(projectRoot)).toEqual([]);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -2080,6 +2238,8 @@ describe("brainstorm-forcer redesign", () => {
     expect(result.systemPrompt).toContain("Current phase: DISCOVERY");
     expect(result.systemPrompt).toContain("bundled skill `brainstorm-forcer`");
     expect(result.systemPrompt).toContain("brainstorm_submit_discovery");
+    expect(result.systemPrompt).toContain("canonical topic");
+    expect(result.systemPrompt).toContain("brainstorm_delegate_research");
     expect(result.systemPrompt).toContain("brainstorm_transition");
     expect(result.systemPrompt).toContain("explicit user approval");
     expect(result.systemPrompt).toContain("Do not start the next phase before the transition succeeds");
@@ -2100,6 +2260,9 @@ describe("brainstorm-forcer redesign", () => {
     );
 
     for (const expected of [
+      "brainstorm_delegate_research",
+      "brainstorm-scout",
+      "factual-researcher",
       "brainstorm_record_claim",
       "brainstorm_run_verification",
       "brainstorm_request_waiver",
@@ -2179,6 +2342,44 @@ describe("brainstorm-forcer redesign", () => {
     });
     expect(JSON.stringify(ledgerEntry)).not.toContain("must-not-persist");
     expect(JSON.stringify(ledgerEntry)).not.toContain("raw tool output");
+    expect(result.content.at(-1).text).toContain("Captured as EV-001");
+  });
+
+  it("captures delegated Exploring research as secondary EV evidence", async () => {
+    const { pi, handlers, commands, entries } = createMockAPI();
+    const ctx = createMockContext();
+    brainstormForcer(pi);
+    await commands.get("brainstorm")!.handler("topic", ctx);
+    await commands.get("brainstorm")!.handler("phase exploring", ctx);
+
+    const result = await handlers.get("tool_result")!(
+      {
+        type: "tool_result",
+        toolCallId: "delegated-research-1",
+        toolName: "brainstorm_delegate_research",
+        input: {
+          domain: "local-code",
+          question: "Where is topic fixed?",
+          sources: ["agent/extensions/brainstorm-forcer/index.ts"],
+        },
+        content: [{ type: "text", text: "Bounded structured research." }],
+        details: { agent: "brainstorm-scout" },
+        isError: false,
+      },
+      ctx,
+    );
+
+    expect(
+      entries.find(
+        (entry) => entry.customType === "brainstorm-forcer-ledger",
+      )?.data,
+    ).toMatchObject({
+      record: {
+        id: "EV-001",
+        toolName: "brainstorm_delegate_research",
+        sourceKind: "secondary",
+      },
+    });
     expect(result.content.at(-1).text).toContain("Captured as EV-001");
   });
 
@@ -2355,14 +2556,14 @@ describe("brainstorm-forcer redesign", () => {
     expect(request).toMatchObject({
       ownerRunId: runId,
       nodeId: "verify_local_code_supported",
-      agent: "brainstorm-code-scout",
+      agent: "brainstorm-scout",
       context: "fresh",
       result: { kind: "structured" },
     });
     expect(request).not.toHaveProperty("chain");
     expect(request).not.toHaveProperty("tasks");
     expect(request).not.toHaveProperty("parallel");
-    expect(selectedPreflightAgents).toEqual(["brainstorm-code-scout"]);
+    expect(selectedPreflightAgents).toEqual(["brainstorm-scout"]);
     expect(entries.at(-1)).toMatchObject({
       customType: "brainstorm-forcer",
       data: {
@@ -2398,7 +2599,7 @@ describe("brainstorm-forcer redesign", () => {
       {
         id: "EV-002",
         sourceKind: "secondary",
-        verifier: { agent: "brainstorm-code-scout", role: "verifier" },
+        verifier: { agent: "brainstorm-scout", role: "verifier" },
       },
       {
         id: "RV-001",
@@ -2435,7 +2636,7 @@ describe("brainstorm-forcer redesign", () => {
       undefined,
       ctx,
     );
-    expect(selectedPreflightAgents).toEqual(["brainstorm-code-scout", "architect"]);
+    expect(selectedPreflightAgents).toEqual(["brainstorm-scout", "architect"]);
     const activeRequest = delegationRequests.at(-1)!;
     await commands.get("brainstorm")!.handler("stop", ctx);
     expect(delegationCancellations.at(-1)).toEqual({

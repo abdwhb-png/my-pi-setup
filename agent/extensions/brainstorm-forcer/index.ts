@@ -28,11 +28,10 @@ import {
 } from "pi-subagents/capability-ceiling";
 import { Type } from "typebox";
 import { createWidget, type WidgetHandle } from "../_shared/fancy-footer";
-import { registerWorkflowAgents } from "../_shared/subagents/workflow-agents";
 import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import { createUiColors } from "../_shared/ui/ui-colors";
 import { createBrainstormArtifactStore } from "./artifacts";
-import { getBrainstormAgentEntry } from "./brainstorm-agents";
+import { createBrainstormAgentGate } from "./brainstorm-agents";
 import {
     createExplorationLedger,
     isExplorationRecord,
@@ -40,6 +39,12 @@ import {
     type RecordVerificationCompletionInput,
     type RecordVerificationFailureInput,
 } from "./exploration-ledger";
+import {
+    BRAINSTORM_RESEARCH_DOMAINS,
+    buildResearchDelegation,
+    type BrainstormResearchResult,
+} from "./research";
+import { createResearchRunner } from "./research-runner";
 import {
     ARTIFACT_REVIEW_OVERLAY_OPTIONS,
     ArtifactReviewView,
@@ -105,7 +110,10 @@ const PHASE_SUBMISSION_TOOLS: Record<Phase, string> = {
     documenting: "brainstorm_submit_design",
 };
 
+const DELEGATED_RESEARCH_TOOL = "brainstorm_delegate_research";
+
 const EXPLORING_WORKFLOW_TOOLS = new Set([
+    DELEGATED_RESEARCH_TOOL,
     "brainstorm_record_claim",
     "brainstorm_run_verification",
     "brainstorm_request_waiver",
@@ -249,6 +257,23 @@ function markdownSections(
     ]);
 }
 
+function renderResearchResult(
+    agent: string,
+    result: BrainstormResearchResult,
+): string {
+    return [
+        `Delegated research by ${agent}.`,
+        `Summary: ${result.summary}`,
+        "Findings:",
+        ...result.findings.map(
+            (finding) =>
+                `- ${finding.finding} [${finding.sourceRefs.join(", ")}]`,
+        ),
+        "Gaps:",
+        ...markdownList(result.gaps),
+    ].join("\n");
+}
+
 type ToolGroups = {
     research: Set<string>;
     questioning: Set<string>;
@@ -326,6 +351,11 @@ function canUseTool(
     pendingVerification?: PendingVerificationRun | null,
 ): boolean {
     if (toolName === "brainstorm_transition") return true;
+    if (toolName === DELEGATED_RESEARCH_TOOL)
+        return (
+            (phase === "discovery" || phase === "exploring") &&
+            !pendingVerification
+        );
     if (phase === "exploring" && EXPLORING_WORKFLOW_TOOLS.has(toolName))
         return true;
     if (Object.values(PHASE_SUBMISSION_TOOLS).includes(toolName))
@@ -360,11 +390,11 @@ function pendingVerificationToolBlockReason(
 function phaseRestrictionSummary(phase: Phase): string {
     switch (phase) {
         case "discovery":
-            return "Discovery phase. Any non-mutating tool is allowed. Mutation blocked. Gather evidence + produce Research Summary.";
+            return "Discovery phase. Any non-mutating tool is allowed. Mutation blocked. Gather evidence, set a canonical topic, and produce Research Summary. Use brainstorm_delegate_research for bounded local-code or external research.";
         case "understanding":
             return "Understanding phase. Any non-mutating tool is allowed; prefer ask_user_question to refine requirements. Mutation blocked.";
         case "exploring":
-            return "Exploring phase. Allowed non-mutating results become EV-* records. Qualify CL-* claims, run dedicated structured verification, obtain user-approved waivers, and submit 2-3 claim-linked approaches. Direct subagent and subagent_wait calls are blocked; inspect or cancel the coordinator through /brainstorm status or /brainstorm stop. Mutation is blocked.";
+            return "Exploring phase. Allowed non-mutating results become EV-* records. Delegate bounded local-code/external research through brainstorm_delegate_research, qualify CL-* claims, run dedicated structured verification, obtain user-approved waivers, and submit 2-3 claim-linked approaches. Direct subagent and subagent_wait calls are blocked; inspect or cancel the coordinator through /brainstorm status or /brainstorm stop. Mutation is blocked.";
         case "presenting":
             return "Presenting phase. Any non-mutating tool is allowed. Present design sections, validate with user. Mutation blocked.";
         case "documenting":
@@ -400,7 +430,7 @@ function phasePrompt(
             return [
                 `Current topic: ${topic.raw}`,
                 `Current phase: DISCOVERY`,
-                `Use the bundled skill \`brainstorm-forcer\` and research tools to understand the codebase and produce a Research Summary with Files Accessed / Key Findings / Gaps.`,
+                `Use the bundled skill \`brainstorm-forcer\` and research tools to understand the codebase. Use \`brainstorm_delegate_research\` for bounded local-code or external investigation that would pollute main context. After minimum evidence, choose a concise canonical topic that describes the design subject rather than copying the opening prompt, then submit Topic / Files Accessed / Key Findings / Gaps.`,
                 ...phaseControl,
                 evidenceLine,
             ].join("\n\n");
@@ -418,9 +448,10 @@ function phasePrompt(
                 `Current topic: ${topic.raw}`,
                 `Current phase: EXPLORING`,
                 `Follow the bundled skill \`brainstorm-forcer\`. Identify each decision-relevant assumption and classify it as empirical, design-choice, or future-contingency. Do not write code.`,
-                `Verify empirical assumptions with direct read/code/LSP/AST/test/API/official-documentation tools. Indexed or secondary retrieval does not replace direct evidence.`,
+                `Use \`brainstorm_delegate_research\` when bounded investigation should stay out of main context: local-code routes only to \`brainstorm-scout\`; external routes only to \`factual-researcher\`. Generic scout/researcher agents remain unavailable.`,
+                `Verify empirical assumptions with direct read/code/LSP/AST/test/API/official-documentation tools. Delegated, indexed, or secondary retrieval does not replace direct evidence.`,
                 `Allowed Exploring tool results are captured automatically as EV-* records. Use \`brainstorm_record_claim\` to create CL-* records with verificationDomain and architectureImpact; never invent evidence identifiers. Direct proof uses a strict tool allowlist; unknown tools and user input are ineligible.`,
-                `Critical claims supported by \`ctx_search\` need direct corroboration. Failed, stale, indexed-only, secondary, or verifier evidence cannot independently verify a critical empirical claim.`,
+                `Critical claims supported by \`ctx_search\`/\`think_search\` need direct corroboration. Failed, stale, indexed-only, secondary, or verifier evidence cannot independently verify a critical empirical claim.`,
                 `Call \`brainstorm_run_verification\` with only the selected claimIds. It coordinates dedicated foreground leaves through pi-subagents structured delegation, routes verifier groups in parallel, and adds an architect advisory only for architecture-impacting claims. Do not call \`subagent\` or \`subagent_wait\` directly. Use \`/brainstorm status\` to inspect the owned run and \`/brainstorm stop\` to cancel its exact active attempts.`,
                 `\`ask_user_question\` remains blocked until terminal verification processing records the required RV-* audit.`,
                 `Use \`brainstorm_request_waiver\` only for an unresolved critical claim. The user must approve the documented waiver; a waiver also requires later successful verification.`,
@@ -575,6 +606,7 @@ export type BrainstormForcerDependencies = Readonly<{
  */
 export const BRAINSTORM_WORKFLOW_TOOLS = [
     "brainstorm_submit_discovery",
+    "brainstorm_delegate_research",
     "brainstorm_submit_understanding",
     "brainstorm_record_claim",
     "brainstorm_run_verification",
@@ -593,6 +625,7 @@ export default function brainstormForcer(
 
     let activePhase: Phase | null = null;
     let topic: TopicState = { raw: "", display: "" };
+    let topicConfirmed = false;
     let evidence = EMPTY_EVIDENCE();
     let groups: ToolGroups = {
         research: new Set(),
@@ -613,10 +646,12 @@ export default function brainstormForcer(
     let lastTerminalRunId: string | null = null;
     let activeContext: ExtensionContext | null = null;
     let launchInProgress = false;
-    let localCodeVerifierDispose: (() => void) | null = null;
+    let agentGateAcquired = false;
     const earlyCompletionEvents: VerificationCoordinatorCompletion[] = [];
     const processingRunIds = new Set<string>();
     const ceilingManager = createCapabilityCeilingManager();
+    const agentGate = createBrainstormAgentGate();
+    let researchRunner = createResearchRunner(pi.events);
     const verificationCoordinator = createVerificationCoordinator(pi.events);
     const runPreflight = dependencies.preflight ?? preflightVerifierAgents;
     const unsubscribeCompletion = verificationCoordinator.onComplete((data) => {
@@ -680,12 +715,84 @@ export default function brainstormForcer(
     });
 
     pi.registerTool({
+        name: DELEGATED_RESEARCH_TOOL,
+        label: "Delegate Brainstorm Research",
+        description:
+            "Delegate one bounded local-code or external research question without loading raw investigation into the main context.",
+        executionMode: "sequential",
+        parameters: Type.Object(
+            {
+                domain: StringEnum(BRAINSTORM_RESEARCH_DOMAINS),
+                question: Type.String({ minLength: 1, maxLength: 1_000 }),
+                sources: Type.Array(
+                    Type.String({ minLength: 1, maxLength: 256 }),
+                    { maxItems: 8 },
+                ),
+            },
+            { additionalProperties: false },
+        ),
+        async execute(_id, params, signal, _update, ctx) {
+            if (activePhase !== "discovery" && activePhase !== "exploring")
+                throw new Error(
+                    `Delegated research is unavailable during ${activePhase ?? "inactive"} phase.`,
+                );
+            if (pendingVerification)
+                throw new Error(
+                    `Delegated research is blocked while verification run ${pendingVerification.runId} is pending.`,
+                );
+            const launchRunId = runId;
+            const launchPhase = activePhase;
+            const sessionId = ctx.sessionManager.getSessionId();
+            if (!sessionId)
+                throw new Error(
+                    "Delegated research requires an active Pi session.",
+                );
+            const delegation = buildResearchDelegation(params);
+            const preflight = await runPreflight(sessionId, ctx.cwd, [
+                delegation.agent,
+            ]);
+            if (runId !== launchRunId || activePhase !== launchPhase)
+                throw new Error(
+                    "Research launch ownership changed during preflight.",
+                );
+            if (
+                preflight.length !== 1 ||
+                preflight[0]?.agent !== delegation.agent ||
+                !preflight[0].ok
+            )
+                throw new Error(
+                    `Research preflight failed for ${delegation.agent}: ${preflight[0]?.message ?? "unavailable"}.`,
+                );
+            const result = await researchRunner.run({
+                ownerRunId: launchRunId,
+                cwd: ctx.cwd,
+                input: params,
+                signal,
+            });
+            if (runId !== launchRunId || activePhase !== launchPhase)
+                throw new Error(
+                    "Research result arrived after brainstorm ownership changed.",
+                );
+            return {
+                content: [
+                    {
+                        type: "text" as const,
+                        text: renderResearchResult(delegation.agent, result),
+                    },
+                ],
+                details: { agent: delegation.agent, result },
+            };
+        },
+    });
+
+    pi.registerTool({
         name: "brainstorm_submit_discovery",
         label: "Submit Brainstorm Discovery",
         description:
             "Write the structured Discovery artifact for the active brainstorming run.",
         parameters: Type.Object(
             {
+                topic: Type.String({ minLength: 1, maxLength: 120 }),
                 filesAccessed: Type.Array(Type.String({ minLength: 1 }), {
                     minItems: 1,
                 }),
@@ -701,8 +808,25 @@ export default function brainstormForcer(
                 throw new Error(
                     `Discovery artifact is unavailable during ${activePhase ?? "inactive"} phase.`,
                 );
+            // Pi validates `topic` before execute. The fallback keeps direct
+            // extension-unit calls compatible with pre-topic fixtures.
+            const canonicalTopic = params.topic ?? topic.raw;
+            if (topicConfirmed && canonicalTopic !== topic.raw)
+                throw new Error(
+                    `Brainstorm topic is already fixed as ${topic.raw}. Start a new brainstorm to change it.`,
+                );
+            const previousTopic = topic;
+            topic = {
+                raw: canonicalTopic,
+                display: summarizeTopicForUi(canonicalTopic),
+            };
+            topicConfirmed = true;
             const markdown = [
                 "# Discovery",
+                "",
+                "## Topic",
+                "",
+                canonicalTopic,
                 "",
                 "## Files Accessed",
                 "",
@@ -718,14 +842,23 @@ export default function brainstormForcer(
                     ? params.gaps.map((item) => `- ${item}`)
                     : ["- None."]),
             ].join("\n");
-            return submitArtifact(
-                "discovery",
-                "brainstorm_submit_discovery",
-                markdown,
-                true,
-                undefined,
-                ctx,
-            );
+            try {
+                return submitArtifact(
+                    "discovery",
+                    "brainstorm_submit_discovery",
+                    markdown,
+                    true,
+                    undefined,
+                    ctx,
+                );
+            } catch (error) {
+                if (!artifacts.discovery) {
+                    topic = previousTopic;
+                    topicConfirmed = false;
+                    artifactStore = null;
+                }
+                throw error;
+            }
         },
     });
 
@@ -1440,6 +1573,15 @@ export default function brainstormForcer(
     function getArtifactStore(ctx: ExtensionContext) {
         if (!runId || !activePhase)
             throw new Error("No active brainstorming run.");
+        if (!topicConfirmed) {
+            if (activePhase === "discovery")
+                throw new Error(
+                    "Artifact root is pending until Discovery submits a canonical topic.",
+                );
+            // Explicit phase overrides may bypass Discovery. Preserve that
+            // compatibility by fixing the original command topic on first use.
+            topicConfirmed = true;
+        }
         const persistedDate =
             typeof startedAt === "string"
                 ? startedAt.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
@@ -2166,9 +2308,22 @@ export default function brainstormForcer(
         await processOwnedTerminal(pending, raw.terminal, ctx);
     }
 
+    function releaseAgentGate(): void {
+        if (!agentGateAcquired) return;
+        agentGate.release();
+        agentGateAcquired = false;
+    }
+
+    function acquireAgentGate(): void {
+        if (agentGateAcquired) return;
+        agentGate.acquire();
+        agentGateAcquired = true;
+    }
+
     function resetState() {
         activePhase = null;
         topic = { raw: "", display: "" };
+        topicConfirmed = false;
         evidence = EMPTY_EVIDENCE();
         runId = "";
         startedAt = "";
@@ -2180,8 +2335,9 @@ export default function brainstormForcer(
         lastTerminalRunId = null;
         processingRunIds.clear();
         earlyCompletionEvents.length = 0;
-        localCodeVerifierDispose?.();
-        localCodeVerifierDispose = null;
+        researchRunner.dispose();
+        researchRunner = createResearchRunner(pi.events);
+        releaseAgentGate();
         ceilingManager.dispose();
         refreshGroups();
         // Release the workflow lease so the brainstorm tools leave the active
@@ -2297,6 +2453,7 @@ export default function brainstormForcer(
             active: true as const,
             phase: activePhase,
             topic,
+            topicConfirmed,
             evidence,
             runId,
             startedAt,
@@ -2395,6 +2552,7 @@ export default function brainstormForcer(
                   active?: boolean;
                   phase?: string;
                   topic?: TopicState | string;
+                  topicConfirmed?: boolean;
                   evidence?: Evidence;
                   runId?: string;
                   startedAt?: string;
@@ -2414,11 +2572,15 @@ export default function brainstormForcer(
                           display: summarizeTopicForUi(restoredTopic),
                       }
                     : (restoredTopic ?? { raw: "", display: "" });
+            topicConfirmed =
+                data.topicConfirmed ??
+                Object.keys(data.artifacts ?? {}).length > 0;
             evidence = data.evidence ?? EMPTY_EVIDENCE();
             runId = data.runId ?? `brainstorm-${randomUUID()}`;
             startedAt = data.startedAt ?? new Date().toISOString();
             artifacts = data.artifacts ?? {};
             artifactStore = null;
+            acquireAgentGate();
             explorationLedger = createExplorationLedger({
                 runId,
                 initialRecords: restoredLedgerRecords(ctx, runId),
@@ -2551,6 +2713,7 @@ export default function brainstormForcer(
         activeContext = ctx;
         activePhase = "discovery";
         topic = { raw: topicText, display: summarizeTopicForUi(topicText) };
+        topicConfirmed = false;
         evidence = EMPTY_EVIDENCE();
         runId = `brainstorm-${randomUUID()}`;
         startedAt = new Date().toISOString();
@@ -2558,11 +2721,8 @@ export default function brainstormForcer(
         artifacts = {};
         explorationLedger = createExplorationLedger({ runId });
         ceilingManager.register(ctx.sessionManager.getSessionId() ?? "");
-        localCodeVerifierDispose?.();
-        const localCodeScout = getBrainstormAgentEntry("brainstorm-code-scout");
-        localCodeVerifierDispose = registerWorkflowAgents([
-            localCodeScout!,
-        ]).dispose;
+        releaseAgentGate();
+        acquireAgentGate();
         refreshGroups();
         saveState(ctx);
         ctx.ui.notify(
@@ -2760,6 +2920,13 @@ export default function brainstormForcer(
                     ctx.ui.notify("No active brainstorming session.", "info");
                     return;
                 }
+                if (!topicConfirmed) {
+                    ctx.ui.notify(
+                        "Brainstorm artifacts: pending Discovery topic\nNo artifacts submitted yet.",
+                        "info",
+                    );
+                    return;
+                }
                 const manifest = getArtifactStore(ctx).getManifest();
                 const revisions = manifest.revisions.map(
                     (revision) =>
@@ -2933,7 +3100,9 @@ export default function brainstormForcer(
                 message.customType !== "brainstorm-forcer-status",
         );
         if (!activePhase) return { messages };
-        const manifest = getArtifactStore(ctx).getManifest();
+        const manifest = topicConfirmed
+            ? getArtifactStore(ctx).getManifest()
+            : undefined;
         const activeArtifacts = PHASES.flatMap((phase) => {
             const checkpoint = artifacts[phase];
             return checkpoint
@@ -2942,7 +3111,7 @@ export default function brainstormForcer(
                   ]
                 : [];
         });
-        const staleArtifacts = manifest.revisions
+        const staleArtifacts = (manifest?.revisions ?? [])
             .filter((revision) => revision.status === "stale")
             .map(
                 (revision) =>
@@ -2955,7 +3124,7 @@ export default function brainstormForcer(
             `Phase: ${PHASE_LABELS[activePhase]} (${PHASES.indexOf(activePhase) + 1}/${PHASES.length})`,
             `Required submission tool: ${expectedSubmissionTool(activePhase)}`,
             `Transition tool: brainstorm_transition (next|previous|status; no force or skipping)`,
-            `Artifacts root: ${manifest.root}`,
+            `Artifacts root: ${manifest?.root ?? "pending Discovery topic"}`,
             `Current gate: ${blocker ?? "ready for next transition"}`,
             ...(activePhase === "exploring"
                 ? [
@@ -2981,7 +3150,11 @@ export default function brainstormForcer(
                     customType: "brainstorm-forcer-status",
                     content,
                     display: false,
-                    details: { phase: activePhase, runId, root: manifest.root },
+                    details: {
+                        phase: activePhase,
+                        runId,
+                        root: manifest?.root,
+                    },
                     timestamp: Date.now(),
                 },
             ],
@@ -3020,6 +3193,8 @@ export default function brainstormForcer(
         widget = null;
         widgetText = null;
         ceilingManager.dispose();
+        researchRunner.dispose();
+        releaseAgentGate();
         unsubscribeCompletion();
         verificationCoordinator.dispose();
         activeContext = null;
@@ -3092,7 +3267,8 @@ export default function brainstormForcer(
 
         if (
             activePhase === "exploring" &&
-            !event.toolName.startsWith("brainstorm_") &&
+            (!event.toolName.startsWith("brainstorm_") ||
+                event.toolName === DELEGATED_RESEARCH_TOOL) &&
             !EXPLORING_ORCHESTRATION_TOOLS.has(event.toolName) &&
             canUseTool(
                 activePhase,

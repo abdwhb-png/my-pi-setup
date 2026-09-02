@@ -51,7 +51,7 @@ export const ARCHITECTURAL_STATUSES = [
  */
 export const VERIFICATION_ROUTING = Object.freeze({
     pi: "pi-expert",
-    "local-code": "brainstorm-code-scout",
+    "local-code": "brainstorm-scout",
     external: "factual-researcher",
     performance: "performance-reviewer",
 }) as Readonly<Record<VerificationDomain, string>>;
@@ -63,7 +63,7 @@ export const VERIFICATION_ROUTING = Object.freeze({
  */
 export const VERIFIER_AGENT_ALLOWLIST = Object.freeze([
     "pi-expert",
-    "brainstorm-code-scout",
+    "brainstorm-scout",
     "factual-researcher",
     "performance-reviewer",
 ]);
@@ -110,6 +110,11 @@ export const READONLY_VERIFIER_TOOLS = Object.freeze([
     "session_search",
     "source_check",
     "symbol_search",
+    // Task 7 — Think-in-Code parity: verifiers may query the FTS5 index
+    // through `think_search` (no filesystem, no execution, no analyzer
+    // broker). The three execute tools and the bounded indexer are
+    // intentionally absent so verifiers remain non-writing.
+    "think_search",
     "web_search",
 ]);
 
