@@ -14,7 +14,7 @@ import { buildFollowUp, SUBAGENT_PROGRESS_MARKER } from "./guard.ts";
 const ACTIVE_SUBAGENT_RUNS_REGISTRY_KEY = "pi-subagents.active-runs.v1";
 const GUARD_EXTENSION_PATH = resolve(
 	homedir(),
-	".pi/agent/extensions/subagent-wait-guard/index.ts",
+	".pi/agent/extensions/pi-subagents-addons/subagent-wait-guard/index.ts",
 );
 const PI_SUBAGENTS_SOURCE_PATH = resolve(
 	homedir(),
