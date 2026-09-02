@@ -22,7 +22,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
-    Container,
     Key,
     Text,
     matchesKey,
@@ -407,42 +406,40 @@ type ContextViewData = {
     session: { totalTokens: number; totalCost: number };
 };
 
-class ContextView implements Component {
+export class ContextView implements Component {
     private theme: any;
-    private onDone: () => void;
-    private data: ContextViewData;
-    private container: Container;
-    private body: Text;
+    private readonly tui: TUI;
+    private readonly onDone: () => void;
+    private readonly data: ContextViewData;
+    private readonly topBorder: DynamicBorder;
+    private readonly heading: Text;
+    private readonly spacer: Text;
+    private readonly body: Text;
+    private readonly footer: Text;
+    private readonly bottomBorder: DynamicBorder;
     private cachedWidth?: number;
+    private scrollOffset = 0;
+    private maxScroll = 0;
+    private viewportRows = 1;
 
     constructor(
-        _tui: TUI,
+        tui: TUI,
         theme: any,
         data: ContextViewData,
         onDone: () => void,
     ) {
         this.theme = theme;
+        this.tui = tui;
         this.data = data;
         this.onDone = onDone;
 
         const colors = createUiColors(theme);
-        this.container = new Container();
-        this.container.addChild(new DynamicBorder((s) => colors.primary(s)));
-        this.container.addChild(
-            new Text(
-                colors.primary(theme.bold("Context")) +
-                    colors.subtle("  (Esc/q/Enter to close)"),
-                1,
-                0,
-            ),
-        );
-        this.container.addChild(new Text("", 1, 0));
-
+        this.topBorder = new DynamicBorder((s) => colors.primary(s));
+        this.heading = new Text(colors.primary(theme.bold("Context")), 1, 0);
+        this.spacer = new Text("", 1, 0);
         this.body = new Text("", 1, 0);
-        this.container.addChild(this.body);
-
-        this.container.addChild(new Text("", 1, 0));
-        this.container.addChild(new DynamicBorder((s) => colors.primary(s)));
+        this.footer = new Text("", 1, 0);
+        this.bottomBorder = new DynamicBorder((s) => colors.primary(s));
     }
 
     private rebuild(width: number): void {
@@ -597,26 +594,100 @@ class ContextView implements Component {
         this.cachedWidth = width;
     }
 
+    private setScrollOffset(offset: number): void {
+        const next = Math.max(0, Math.min(this.maxScroll, offset));
+        if (next === this.scrollOffset) return;
+        this.scrollOffset = next;
+        this.tui.requestRender();
+    }
+
     handleInput(data: string): void {
         if (
             matchesKey(data, Key.escape) ||
             matchesKey(data, Key.ctrl("c")) ||
-            data.toLowerCase() === "q" ||
-            data === "\r"
+            matchesKey(data, "q") ||
+            matchesKey(data, Key.enter)
         ) {
             this.onDone();
             return;
         }
+
+        if (matchesKey(data, Key.up)) {
+            this.setScrollOffset(this.scrollOffset - 1);
+        } else if (matchesKey(data, Key.down)) {
+            this.setScrollOffset(this.scrollOffset + 1);
+        } else if (matchesKey(data, Key.pageUp)) {
+            this.setScrollOffset(this.scrollOffset - this.viewportRows);
+        } else if (matchesKey(data, Key.pageDown)) {
+            this.setScrollOffset(this.scrollOffset + this.viewportRows);
+        } else if (matchesKey(data, Key.home)) {
+            this.setScrollOffset(0);
+        } else if (matchesKey(data, Key.end)) {
+            this.setScrollOffset(this.maxScroll);
+        }
     }
 
     invalidate(): void {
-        this.container.invalidate();
+        this.topBorder.invalidate();
+        this.heading.invalidate();
+        this.spacer.invalidate();
+        this.body.invalidate();
+        this.footer.invalidate();
+        this.bottomBorder.invalidate();
         this.cachedWidth = undefined;
     }
 
     render(width: number): string[] {
         if (this.cachedWidth !== width) this.rebuild(width);
-        return this.container.render(width);
+
+        const top = [
+            ...this.topBorder.render(width),
+            ...this.heading.render(width),
+            ...this.spacer.render(width),
+        ];
+        const body = this.body.render(width);
+        const bottomBorder = this.bottomBorder.render(width);
+
+        this.footer.setText(
+            createUiColors(this.theme).subtle(
+                "↑↓/PgUp/PgDn/Home/End scroll · Esc/q/Enter close",
+            ),
+        );
+        let bottom = [...this.footer.render(width), ...bottomBorder];
+        this.viewportRows = Math.max(
+            1,
+            this.tui.terminal.rows - top.length - bottom.length,
+        );
+        this.maxScroll = Math.max(0, body.length - this.viewportRows);
+        this.scrollOffset = Math.min(this.scrollOffset, this.maxScroll);
+
+        if (this.maxScroll > 0) {
+            const end = Math.min(
+                body.length,
+                this.scrollOffset + this.viewportRows,
+            );
+            this.footer.setText(
+                createUiColors(this.theme).subtle(
+                    `lines ${this.scrollOffset + 1}–${end} of ${body.length} · ↑↓/PgUp/PgDn/Home/End · Esc close`,
+                ),
+            );
+            bottom = [...this.footer.render(width), ...bottomBorder];
+            this.viewportRows = Math.max(
+                1,
+                this.tui.terminal.rows - top.length - bottom.length,
+            );
+            this.maxScroll = Math.max(0, body.length - this.viewportRows);
+            this.scrollOffset = Math.min(this.scrollOffset, this.maxScroll);
+        }
+
+        return [
+            ...top,
+            ...body.slice(
+                this.scrollOffset,
+                this.scrollOffset + this.viewportRows,
+            ),
+            ...bottom,
+        ];
     }
 }
 

@@ -4,9 +4,66 @@ import {
     buildContextSendMessage,
     buildToolsListSnippet,
     calculateExtensionFiles,
+    ContextView,
     getSkillPathFromCommand,
-    TOOLS_LIST_HEADING,
 } from '../context.ts';
+
+describe('ContextView', () => {
+    it('scrolls overflowing context with legacy and Kitty navigation keys', () => {
+        let renderRequests = 0;
+        const tui = {
+            terminal: { rows: 10 },
+            requestRender: () => {
+                renderRequests++;
+            },
+        };
+        const theme = {
+            fg: (_color: string, text: string) => text,
+            bold: (text: string) => text,
+        };
+        const view = new ContextView(
+            tui as never,
+            theme as never,
+            {
+                usage: null,
+                model: null,
+                agentFiles: [],
+                extensions: Array.from(
+                    { length: 20 },
+                    (_, index) => `extension-${index + 1}`,
+                ),
+                tools: Array.from(
+                    { length: 20 },
+                    (_, index) => `tool-${index + 1}`,
+                ),
+                skills: Array.from(
+                    { length: 20 },
+                    (_, index) => `skill-${index + 1}`,
+                ),
+                loadedSkills: [],
+                session: { totalTokens: 0, totalCost: 0 },
+            },
+            () => {},
+        );
+
+        const initial = view.render(48).join('\n');
+        expect(initial).toContain('Window:');
+        expect(initial).not.toContain('skill-20');
+
+        view.handleInput('\x1b[6~');
+        const paged = view.render(48).join('\n');
+        expect(paged).not.toBe(initial);
+        expect(renderRequests).toBe(1);
+
+        view.handleInput('\x1b[57424u');
+        const atEnd = view.render(48).join('\n');
+        expect(atEnd).toContain('skill-20');
+        expect(renderRequests).toBe(2);
+
+        view.handleInput('\x1b[57424u');
+        expect(renderRequests).toBe(2);
+    });
+});
 
 describe('calculateExtensionFiles', () => {
     it('should correctly identify extension files from commands', () => {

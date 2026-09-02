@@ -121,7 +121,7 @@ After implementation is stable:
 - Follow the existing code style and patterns in the project. Consistency is more important than personal preference.
 - Write clear, concise code with meaningful variable and function names. Avoid unnecessary complexity.
 - Document any non-obvious logic with comments. Assume the reader is familiar with the codebase but not with your specific implementation.
-- Use `oxlint` (check oxlint skill) for linting (e.g. `bun run lint` or `bunx oxlint`).
+- Use `oxlint` (check oxlint skill) through the project's package scripts. Prefer `bun run lint`; do not use `bunx oxlint` for a repo-owned dependency because it can resolve a cached version with different native bindings.
 - Avoid duplicating code. If you find yourself copying and pasting, consider refactoring to create reusable functions or modules.
 - Avoid running `dev` or `build` commands. If you really need to, ask first.
 - Some skills like `pi-extensions` and `pi-cli` are under ~/.pi/agent/skills so consider that folder as well when you are looking for skills.
@@ -148,6 +148,12 @@ Some extensions bridge pi's generic TypeScript types (e.g. `ToolDefinition<TDeta
 
 - `bun run lint` (no `--deny-warnings`): warnings print but do not block. Use this for routine checks.
 - `bun run lint:check` (with `--deny-warnings`): exits non-zero on any warning. Use this only as a strict gate when you need zero-tolerance.
+
+## Shell working directory and package binaries
+
+Every shell-tool call starts an independent process. A prior `cd` never selects the working directory for a later call. Select the package root in the same invocation, such as `bun --cwd=~/.pi/agent run lint` or `cd ~/.pi/agent && bun run lint`; an absolute executable path does not change how relative target paths resolve.
+
+Use package scripts for package-wide checks. Bun resolves their local binaries from `node_modules/.bin`. Invoke a local binary directly only when a package script cannot express a required focused check, and still select its package root in that invocation.
 
 **Test Driven Development (TDD) is mandatory for any code changes.** Follow the TDD cycle: Write a failing test → Write minimal code to pass the test → Refactor → Run the test suite to confirm all tests pass (follow `tdd` skill).
 

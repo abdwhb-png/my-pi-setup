@@ -9,6 +9,7 @@
 - Always use direct imperative address directed at the executing agent:
   - Incorrect (3rd person): "Models naturally amplify claims while discarding limits. The model must not execute actions while discarding constraints."
   - Correct (Direct imperative): "Weld limits to permissions: state capabilities alongside their non-negotiable boundaries. Never state a finding without its error margin or caveats."
+- Treat every shell-tool call as an independent process: explicitly select target package's working directory before package-manager commands or relative paths.
 
 ## Stack preferences
 
