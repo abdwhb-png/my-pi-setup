@@ -149,6 +149,7 @@ export function createToolGroupsExtension(
                 const parsed = parseRoleToolPolicy(payload);
                 if (parsed) {
                     roleToolPolicy = parsed;
+                    expandAliases(undefined);
                     enforceConfiguredPolicy();
                 }
             },
@@ -210,7 +211,7 @@ export function createToolGroupsExtension(
 
         function expandAliases(
             _event: unknown,
-            ctx: ExtensionContext,
+            ctx?: ExtensionContext,
         ): { action: "continue" } | void {
             const active = pi.getActiveTools();
             const hasAliases = active.some((name) =>
@@ -234,7 +235,7 @@ export function createToolGroupsExtension(
             );
             pi.setActiveTools(reconciled);
 
-            reportDiagnostics(result.diagnostics, ctx);
+            if (ctx) reportDiagnostics(result.diagnostics, ctx);
         }
 
         /**

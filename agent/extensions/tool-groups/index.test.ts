@@ -182,6 +182,33 @@ describe('tool-groups extension', () => {
         );
     });
 
+    it('resolves aliases synchronously for an all-tools role policy', () => {
+        const pi = makeMockPi();
+        const factory = createToolGroupsExtension(() => ({
+            groups: { inspect: ['read', 'ls'] },
+        }));
+        factory(pi as never);
+
+        pi.setActiveTools(pi.getAllTools().map((tool) => tool.name));
+        pi.events.emit('pi-roles:tool-policy', {
+            version: 1,
+            roleName: 'pi-agent',
+            mode: 'all',
+            toolNames: [],
+        });
+
+        expect(pi.getActiveTools()).toEqual([
+            'read',
+            'edit',
+            'write',
+            'ls',
+            'bash',
+        ]);
+        expect(pi.getActiveTools().every((name) => !name.startsWith('@'))).toBe(
+            true,
+        );
+    });
+
     it('removes and blocks a late tool outside the active role policy', () => {
         const pi = makeMockPi(['@inspect']);
         const factory = createToolGroupsExtension(() => ({

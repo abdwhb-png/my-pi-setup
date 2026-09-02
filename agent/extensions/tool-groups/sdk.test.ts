@@ -14,6 +14,7 @@ import {
     InMemoryCredentialStore,
     InMemoryModelsStore,
 } from '@earendil-works/pi-ai';
+import { Type } from '@sinclair/typebox';
 
 const { createToolGroupsExtension: createRuntimeToolGroupsExtension } =
     await import('./index.ts');
@@ -154,6 +155,84 @@ describe('tool-groups SDK integration', () => {
             expect(activeAtPolicyPublication).toEqual(['read', 'ls']);
             expect(
                 activeAtPolicyPublication!.every(
+                    (name) => !name.startsWith('@'),
+                ),
+            ).toBe(true);
+            session.dispose();
+        } finally {
+            await rm(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not capture aliases when an in-flight tool switches to an all-tools role', async () => {
+        const tmpDir = await mkdtemp(join(tmpdir(), 'tool-groups-role-all-'));
+        try {
+            const settings = SettingsManager.inMemory({});
+            const modelRuntime = await createInMemoryModelRuntime();
+            const sessionManager = SessionManager.inMemory(tmpDir);
+
+            const loader = new DefaultResourceLoader({
+                cwd: tmpDir,
+                agentDir: tmpDir,
+                settingsManager: settings,
+                extensionFactories: [
+                    createToolGroupsExtension(() => ({
+                        groups: { inspect: ['read', 'ls'] },
+                    })),
+                    (pi) => {
+                        pi.registerTool({
+                            name: 'switch_role_probe',
+                            label: 'Switch Role Probe',
+                            description: 'Switch to an all-tools role while executing',
+                            parameters: Type.Object({}),
+                            execute: async () => {
+                                pi.setActiveTools(
+                                    pi.getAllTools().map((tool) => tool.name),
+                                );
+                                pi.events.emit('pi-roles:tool-policy', {
+                                    version: 1,
+                                    roleName: 'pi-agent',
+                                    mode: 'all',
+                                    toolNames: [],
+                                });
+                                return {
+                                    content: [{ type: 'text', text: 'switched' }],
+                                    details: {},
+                                };
+                            },
+                        });
+                    },
+                ],
+                noExtensions: true,
+                noSkills: true,
+                noThemes: true,
+                noPromptTemplates: true,
+                noContextFiles: true,
+            });
+            await loader.reload();
+
+            const { session } = await createAgentSession({
+                cwd: tmpDir,
+                agentDir: tmpDir,
+                tools: ['@inspect', 'read', 'ls', 'switch_role_probe'],
+                settingsManager: settings,
+                sessionManager,
+                modelRuntime,
+                resourceLoader: loader,
+            });
+
+            await session.bindExtensions({ mode: 'print' });
+            session.setActiveToolsByName(['switch_role_probe']);
+            const tool = session.state.tools.find(
+                (candidate) => candidate.name === 'switch_role_probe',
+            );
+            expect(tool).toBeDefined();
+
+            const result = await tool!.execute('call_probe', {});
+
+            expect(result.addedToolNames).not.toContain('@inspect');
+            expect(
+                result.addedToolNames?.every(
                     (name) => !name.startsWith('@'),
                 ),
             ).toBe(true);
