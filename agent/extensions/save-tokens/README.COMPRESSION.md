@@ -78,13 +78,15 @@ safety guard (`maxFallbackBytes`), never a policy decision.
 
 ### Minimum savings floor
 
-`minSavingsPct` (0–100, default `0` = disabled) rejects a compressed result
-when the backend shrinks the original too little to be worth replacing it.
-Today any strictly-shorter output replaces the original, so a 2% reduction
-wins. With a floor set, a result whose final returned text (including any
-aggregate prefix and archive note) saves less than `minSavingsPct` percent is
-**skipped** — the original tool result stays intact and telemetry records a
-`below_min_savings` skip. Configure under `saveTokens.compressor`.
+`minSavingsPct` (0–100, default `0` = disabled) rejects any compressed
+result — backend or deterministic cap — when it shrinks the original too little
+to be worth replacing. Today any strictly-shorter output replaces the original,
+so a 2% reduction wins. With a floor set, a result whose final returned text
+(including any aggregate prefix and archive note) saves less than
+`minSavingsPct` percent is **skipped** — the original tool result stays intact
+and telemetry records a `below_min_savings` skip. One helper
+(`computeSavedPct`/`belowMinSavings` in `tool-results/core.ts`) guards both
+paths. Configure under `saveTokens.compressor`.
 
 ### Truncation toggle
 

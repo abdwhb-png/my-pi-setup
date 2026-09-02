@@ -882,6 +882,83 @@ describe('minSavingsPct savings floor', () => {
 });
 
 // ---------------------------------------------------------------------------
+// minSavingsPct — also gates deterministic cap (global floor)
+// ---------------------------------------------------------------------------
+
+describe('minSavingsPct floor on deterministic cap (global)', () => {
+    const MODEL = {
+        provider: 'anthropic',
+        id: 'claude-sonnet-4-6',
+        contextWindow: 200000,
+    };
+
+    it('rejects a cap result saving below the floor (find path)', async () => {
+        const { estimateTokens } = await import('./token-estimator');
+        const observations: CompressionObservation[] = [];
+        // Build input whose token budget trims only ~10% so savedPct < 20.
+        const longText = Array.from({ length: 1200 }, (_, i) => `line ${String(i).padStart(4, '0')} - ${'x'.repeat(30)}`).join('\n');
+        const origTokens = estimateTokens(longText);
+        // Budget just below original -> cap trims small slice, saving ~5-12%.
+        const budget = Math.max(1, origTokens - 120);
+        const handler = createToolResultHandler({
+            backend: null,
+            archiveOriginal: async () => '/tmp/archive/cap-floor-a.txt',
+            capFallbackTokens: budget,
+            minSavingsPct: 20,
+            aggregates: false,
+            capErrors: false,
+            onObservation: (e) => observations.push(e),
+        });
+        const event: ToolResultEvent = {
+            type: 'tool_result',
+            toolCallId: 'cap-floor-1',
+            toolName: 'find',
+            content: [{ type: 'text' as const, text: longText }],
+            isError: false,
+            input: { path: '/repo' },
+            details: undefined,
+        };
+        const result = await handler(event, MODEL, undefined);
+        expect(result).toBeUndefined();
+        expect(observations.some((o) => o.kind === 'skipped' && o.reason === 'below_min_savings')).toBe(true);
+        expect(observations.some((o) => o.kind === 'compressed')).toBe(false);
+    });
+
+    it('rejects cap via error route when saving below floor', async () => {
+        const { estimateTokens } = await import('./token-estimator');
+        const observations: CompressionObservation[] = [];
+        const longText = Array.from({ length: 1200 }, (_, i) => `err line ${i} ${'y'.repeat(30)}`).join('\n');
+        const origTokens = estimateTokens(longText);
+        const budget = Math.max(1, origTokens - 100);
+        const handler = createToolResultHandler({
+            backend: {
+                id: 'headroom' as const,
+                compress: () => Promise.resolve({ output: 'unused' }),
+            },
+            archiveOriginal: async () => '/tmp/archive/cap-floor-err.txt',
+            capFallbackTokens: budget,
+            minSavingsPct: 20,
+            aggregates: false,
+            capErrors: true,
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
+            onObservation: (e) => observations.push(e),
+        });
+        const event: ToolResultEvent = {
+            type: 'tool_result',
+            toolCallId: 'cap-floor-err-1',
+            toolName: 'bash',
+            content: [{ type: 'text' as const, text: longText }],
+            isError: true,
+            input: { command: 'failing-cmd' },
+            details: undefined,
+        };
+        const result = await handler(event, MODEL, undefined);
+        expect(result).toBeUndefined();
+        expect(observations.some((o) => o.kind === 'skipped' && o.reason === 'below_min_savings')).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
 // truncationEnabled — deterministic cap toggle, decoupled from archiveOriginal
 // ---------------------------------------------------------------------------
 
@@ -997,4 +1074,122 @@ describe('truncationEnabled cap toggle', () => {
         expect(result).toBeUndefined();
         expect(archived).toBe(false);
     });
+});
+
+// ---------------------------------------------------------------------------
+// Task 7 — think_* tools must be skipped (no modification, no observation)
+// ---------------------------------------------------------------------------
+
+describe('think_* tool results never enter the compression pipeline', () => {
+    // Task 7 migration contract: save-tokens uses an exact tool-name allowlist.
+    // The five native Think-in-Code tools (`think_execute`, `think_execute_file`,
+    // `think_batch_execute`, `think_index`, `think_search`) are pre-reduced by
+    // their own sandbox/analyzer pipeline and must therefore NOT be re-post-
+    // compressed by save-tokens. This preserves the context-reduction objective
+    // and prevents double-compression that would erase archive references and
+    // provenance metadata.
+    const THINK_TOOLS = [
+        'think_execute',
+        'think_execute_file',
+        'think_batch_execute',
+        'think_index',
+        'think_search',
+    ] as const;
+
+    const MODEL = {
+        provider: 'anthropic',
+        id: 'claude-sonnet-4-6',
+        contextWindow: 200000,
+    };
+
+    function makeHandler(
+        observations: CompressionObservation[],
+        backendCalls: { calls: number },
+    ) {
+        return createToolResultHandler({
+            // A backend is configured so the test cannot pass by accident
+            // through the "no backend -> early return" branch. If the think_*
+            // tools are correctly outside the allowlist, the backend must
+            // never be invoked and no observation must be emitted.
+            backend: {
+                id: 'headroom' as const,
+                compress: () => {
+                    backendCalls.calls += 1;
+                    return Promise.resolve({ output: 'should-never-run' });
+                },
+            },
+            minTokensByGroup: { shell: 0, read: 0, search: 0 },
+            enabled: true,
+            excludeTools: [],
+            archiveOriginal: undefined,
+            aggregates: true,
+            capErrors: true,
+            onObservation: (event) => observations.push(event),
+        });
+    }
+
+    for (const toolName of THINK_TOOLS) {
+        it(`returns no modification for ${toolName} and records no observation`, async () => {
+            const observations: CompressionObservation[] = [];
+            const backendCalls = { calls: 0 };
+            const handler = makeHandler(observations, backendCalls);
+            const event: ToolResultEvent = {
+                type: 'tool_result',
+                toolCallId: `tc-${toolName}`,
+                toolName,
+                // Large text — would normally trigger every compression
+                // path. The think_* allowlist must short-circuit before any
+                // token-budget, cap, or backend check runs.
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: 'A'.repeat(200_000),
+                    },
+                ],
+                isError: false,
+                input: {},
+                details: undefined,
+            };
+
+            const result = await handler(event, MODEL, undefined);
+
+            // 1. No modification: the handler must return undefined so Pi
+            //    keeps the think_* tool result verbatim (including its own
+            //    archive references and provenance metadata).
+            expect(result).toBeUndefined();
+            // 2. No compression observation: telemetry must not record a
+            //    compressed/skipped/failed event for think_* tools because
+            //    they are outside the save-tokens contract entirely.
+            expect(observations).toEqual([]);
+            // 3. Backend must never be invoked: proves the allowlist is the
+            //    gate, not an incidental early-return after a backend call.
+            expect(backendCalls.calls).toBe(0);
+        });
+
+        it(`returns no modification for ${toolName} even when it is an error`, async () => {
+            const observations: CompressionObservation[] = [];
+            const backendCalls = { calls: 0 };
+            const handler = makeHandler(observations, backendCalls);
+            const event: ToolResultEvent = {
+                type: 'tool_result',
+                toolCallId: `tc-err-${toolName}`,
+                toolName,
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: 'error: ' + 'B'.repeat(50_000),
+                    },
+                ],
+                isError: true,
+                input: {},
+                details: undefined,
+            };
+
+            const result = await handler(event, MODEL, undefined);
+
+            expect(result).toBeUndefined();
+            expect(observations).toEqual([]);
+            expect(backendCalls.calls).toBe(0);
+        });
+    }
 });

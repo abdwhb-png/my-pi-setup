@@ -278,6 +278,17 @@ function observationMeta(
     return meta;
 }
 
+/** Shared savings math — single source for backend + cap floor (global). */
+export function computeSavedPct(originalLength: number, compressedLength: number): number {
+    if (originalLength <= 0) return 0;
+    const savedBytes = Math.max(0, originalLength - compressedLength);
+    return Math.round((savedBytes / originalLength) * 100);
+}
+
+export function belowMinSavings(savedPct: number, minSavingsPct: number | undefined): boolean {
+    return minSavingsPct !== undefined && minSavingsPct > 0 && savedPct < minSavingsPct;
+}
+
 async function maybeCreateArchivedCap(
     text: string,
     event: ToolResultEvent,
@@ -345,10 +356,20 @@ async function maybeCreateArchivedCap(
     const originalLength = text.length;
     const compressedLength = outputText.length;
     const savedBytes = Math.max(0, originalLength - compressedLength);
-    const savedPct =
-        originalLength > 0
-            ? Math.round((savedBytes / originalLength) * 100)
-            : 0;
+    const savedPct = computeSavedPct(originalLength, compressedLength);
+    if (belowMinSavings(savedPct, options?.minSavingsPct)) {
+        options.onObservation?.({
+            kind: "skipped",
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            originalLength,
+            compressedLength: 0,
+            reason: "below_min_savings",
+            subject,
+            ...meta,
+        });
+        return null;
+    }
 
     options.onObservation?.({
         kind: "compressed",
@@ -696,16 +717,8 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                 0,
                 originalLength - finalCompressedLength,
             );
-            const savedPct =
-                originalLength > 0
-                    ? Math.round((savedBytes / originalLength) * 100)
-                    : 0;
-
-            // §floor — reject near-identical backend output. When the savings
-            // floor is configured and not met, keep the original intact (same
-            // fail-open semantics as `not_smaller`): no cap/archive fallback.
-            const floorPct = options?.minSavingsPct;
-            if (floorPct !== undefined && floorPct > 0 && savedPct < floorPct) {
+            const savedPct = computeSavedPct(originalLength, finalCompressedLength);
+            if (belowMinSavings(savedPct, options?.minSavingsPct)) {
                 options?.onObservation?.({
                     kind: "skipped",
                     toolCallId: event.toolCallId,
