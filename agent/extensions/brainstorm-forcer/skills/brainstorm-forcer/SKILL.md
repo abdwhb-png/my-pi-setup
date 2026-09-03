@@ -80,7 +80,7 @@ Follow this order:
    ```
 
    Verification is required for critical empirical claims, contradictory evidence, `architectureImpact: true`, or approved waivers. Closed routing, fresh read-only delegation, optional architect scope, and EV/RV audit belong to the tool. Never call `subagent` or `subagent_wait` directly and never construct `chain`, `tasks`, or `parallel` payloads.
-9. While verification is pending, follow semantic status and `/brainstorm status`. Use `/brainstorm stop` to cancel owned attempts. Do not call `ask_user_question` until terminal RV processing completes.
+9. While research or verification is pending, let native pi-subagents lifecycle provide progress, Fleet visibility, transcripts, stop controls, and completion delivery. Follow semantic status and `/brainstorm status`; `/brainstorm stop` also cancels the owned verification run. Do not call `ask_user_question` until terminal RV processing completes.
 10. For an unresolved critical claim, use `brainstorm_request_waiver`. User approval and later successful verification remain mandatory.
 11. Before recommending, summarize evidence, Verified/Falsified/Unresolved assumptions, impact on trade-offs, failure conditions, and residual risks.
 12. Ask exactly one dedicated `ask_user_question` final-choice question after all required reviews succeed. Preserve its exact answer and `EV-*` ID.

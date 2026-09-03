@@ -250,13 +250,12 @@ export type ArchitectCompletionResult = Readonly<
 >;
 
 /**
- * Structurally compatible with pi-subagents 0.50 `SubagentCapabilityCeiling`.
- * `denyExtensions: false` keeps ambient/configured/MCP provider extensions
- * loadable (required by factual-research routes); `allowedTools` restricts
- * which tool NAMES the child may call.
+ * Structurally compatible with pi-subagents `SubagentCapabilityCeiling`.
+ * Tool-group aliases are resolved inside each child, so this ceiling limits
+ * only agent identities while extensionBindings carry the concrete tool policy.
  */
 export interface CapabilityCeiling {
-    readonly allowedTools: readonly string[];
+    readonly allowedAgents: readonly string[];
     readonly denyExtensions: false;
 }
 
@@ -369,6 +368,7 @@ function renderVerifierTask(group: VerificationGroup): string {
               )
             : ["- (none — gather primary evidence first)"];
     return [
+        "Read-only verification. Do not modify any files.",
         `Verify the following claims in the "${group.domain}" domain.`,
         `Expected aggregate outcome: ${group.outcome}.`,
         "Return strict structured output only (outcome, claimIds, evidenceIds, summary).",
@@ -641,16 +641,15 @@ export function verifyArchitectCompletion(
 }
 
 /**
- * Build the read-only capability ceiling T3 registers before spawning any
- * verifier. `denyExtensions: false` keeps web/docs provider extensions
- * loadable (factual-research routes need them); `allowedTools` pins the exact
- * tool-name allowlist, neutralizing per-agent tool overrides (e.g. scout's
- * declared `write`/`bash`) while letting provider tools that match the
- * allowlist survive.
+ * Restrict native verification to its dedicated agents. Tool access is
+ * enforced after alias expansion by the private child policy binding.
  */
 export function buildVerifierCapabilityCeiling(): CapabilityCeiling {
     return {
-        allowedTools: uniqueSorted([...READONLY_VERIFIER_TOOLS]),
+        allowedAgents: uniqueSorted([
+            ...VERIFIER_AGENT_ALLOWLIST,
+            ARCHITECT_AGENT,
+        ]),
         denyExtensions: false,
     };
 }

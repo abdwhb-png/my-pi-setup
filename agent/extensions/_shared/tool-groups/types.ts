@@ -6,10 +6,21 @@
  */
 
 /** Prefix that distinguishes a group alias from a bare tool name. */
-export const TOOL_GROUP_PREFIX = '@';
+export const TOOL_GROUP_PREFIX = "@";
 
 /** Carries an aliased CLI allowlist past Pi's pre-extension registry filter. */
-export const TOOL_GROUPS_REQUESTED_TOOLS_ENV = 'PI_TOOL_GROUPS_REQUESTED_TOOLS';
+export const TOOL_GROUPS_REQUESTED_TOOLS_ENV = "PI_TOOL_GROUPS_REQUESTED_TOOLS";
+
+/** Carries namespaced extension-owned metadata into a pi-subagents child. */
+export const SUBAGENT_EXTENSION_BINDINGS_ENV = "PI_SUBAGENT_EXTENSION_BINDINGS";
+
+/** Binding namespace used to restrict a child after alias expansion. */
+export const TOOL_GROUPS_CHILD_POLICY_BINDING = "tool-groups.policy/1";
+
+/** Concrete child tool policy transported through extensionBindings. */
+export interface ToolGroupsChildPolicy {
+    readonly allowedTools: readonly string[];
+}
 
 /** Shape persisted in settings.json / tool-groups.json. */
 export interface ToolGroupsConfig {
@@ -21,10 +32,10 @@ export interface ToolGroupsConfig {
 
 /** Diagnostic code for tool-group resolution. */
 export type ToolGroupDiagnosticCode =
-    | 'cycle'
-    | 'missing-group'
-    | 'unknown-tool'
-    | 'unmatched-pattern';
+    | "cycle"
+    | "missing-group"
+    | "unknown-tool"
+    | "unmatched-pattern";
 
 /** A single diagnostic emitted during alias resolution. */
 export interface ToolGroupDiagnostic {

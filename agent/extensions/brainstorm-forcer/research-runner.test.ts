@@ -1,56 +1,70 @@
 import { describe, expect, it } from "bun:test";
+import {
+    SUBAGENT_ASYNC_COMPLETE_EVENT,
+    SUBAGENT_RPC_REPLY_EVENT_PREFIX,
+    SUBAGENT_RPC_REQUEST_EVENT,
+} from "../_shared/subagents/rpc-client";
 import { createResearchRunner } from "./research-runner";
-
-const REQUEST = "prompt-template:subagent:request";
-const RESPONSE = "prompt-template:subagent:response";
 
 function createEvents() {
     const listeners = new Map<string, Set<(value: unknown) => void>>();
+    const emitted: Array<{ event: string; data: unknown }> = [];
     return {
+        emitted,
         on(event: string, handler: (value: unknown) => void) {
             const handlers = listeners.get(event) ?? new Set();
             handlers.add(handler);
             listeners.set(event, handlers);
             return () => handlers.delete(handler);
         },
-        emit(event: string, value: unknown) {
-            for (const handler of listeners.get(event) ?? []) handler(value);
+        emit(event: string, data: unknown) {
+            emitted.push({ event, data });
+            for (const handler of listeners.get(event) ?? []) handler(data);
         },
     };
 }
 
-describe("brainstorm research runner", () => {
-    it("returns only a correlated structured result from the routed agent", async () => {
-        const events = createEvents();
-        const requests: Array<Record<string, unknown>> = [];
-        events.on(REQUEST, (value) => {
-            const request = value as Record<string, unknown>;
-            requests.push(request);
-            events.emit(RESPONSE, {
+function installRpc(events: ReturnType<typeof createEvents>): void {
+    let nextRun = 0;
+    events.on(SUBAGENT_RPC_REQUEST_EVENT, (value) => {
+        const request = value as {
+            requestId: string;
+            method: string;
+        };
+        nextRun += 1;
+        queueMicrotask(() =>
+            events.emit(`${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`, {
+                version: 1,
                 requestId: request.requestId,
-                ownerRunId: request.ownerRunId,
-                nodeId: request.nodeId,
-                status: "completed",
-                agent: request.agent,
-                exitCode: 0,
-                result: {
-                    kind: "structured",
-                    value: {
-                        summary: "Found root selection.",
-                        findings: [
-                            {
-                                finding: "Discovery topic selects root.",
-                                sourceRefs: ["index.ts:700"],
-                            },
-                        ],
-                        gaps: [],
-                    },
+                method: request.method,
+                success: true,
+                data: {
+                    text: `started native-research-${nextRun}`,
+                    details: { asyncId: `native-research-${nextRun}` },
                 },
-            });
-        });
+            }),
+        );
+    });
+}
+
+const validResult = {
+    summary: "Found root selection.",
+    findings: [
+        {
+            finding: "Discovery topic selects root.",
+            sourceRefs: ["index.ts:700"],
+        },
+    ],
+    gaps: [],
+};
+
+describe("brainstorm research runner", () => {
+    it("spawns routed research through native async pi-subagents", async () => {
+        const events = createEvents();
+        installRpc(events);
         const runner = createResearchRunner(events);
 
-        const result = await runner.run({
+        const receipt = await runner.start({
             ownerRunId: "brainstorm-1",
             cwd: "/tmp/project",
             input: {
@@ -60,62 +74,132 @@ describe("brainstorm research runner", () => {
             },
         });
 
-        const second = await runner.run({
+        const rpcRequest = events.emitted.find(
+            ({ event }) => event === SUBAGENT_RPC_REQUEST_EVENT,
+        )!.data as Record<string, any>;
+        expect(rpcRequest).toMatchObject({
+            method: "spawn",
+            source: { extension: "brainstorm-forcer" },
+            params: {
+                agent: "brainstorm-scout",
+                context: "fresh",
+                cwd: "/tmp/project",
+                artifacts: false,
+                outputSchema: expect.any(Object),
+            },
+        });
+        expect(rpcRequest.params.task).toContain("Where is root selected?");
+        expect(receipt).toEqual({
+            runId: "native-research-1",
+            agent: "brainstorm-scout",
+        });
+        runner.dispose();
+    });
+
+    it("emits one correlated validated terminal result", async () => {
+        const events = createEvents();
+        installRpc(events);
+        const runner = createResearchRunner(events);
+        const completions: unknown[] = [];
+        runner.onComplete((completion) => completions.push(completion));
+        const receipt = await runner.start({
             ownerRunId: "brainstorm-1",
             cwd: "/tmp/project",
             input: {
                 domain: "local-code",
-                question: "Which topic reaches the store?",
+                question: "Where is root selected?",
                 sources: ["index.ts"],
             },
         });
 
-        expect(requests).toHaveLength(2);
-        expect(requests[0]).toMatchObject({
-            agent: "brainstorm-scout",
-            context: "fresh",
-            ownerRunId: "brainstorm-1",
+        events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+            id: "other-run",
+            success: true,
+            results: [{ agent: "brainstorm-scout", structuredOutput: validResult }],
         });
-        expect(requests[0]!.nodeId).not.toBe(requests[1]!.nodeId);
-        expect(result.summary).toBe("Found root selection.");
-        expect(second.summary).toBe("Found root selection.");
+        events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+            id: receipt.runId,
+            success: true,
+            results: [
+                {
+                    agent: "brainstorm-scout",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: validResult,
+                },
+            ],
+        });
+        events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+            id: receipt.runId,
+            success: true,
+            results: [{ agent: "brainstorm-scout", structuredOutput: validResult }],
+        });
+
+        expect(completions).toEqual([
+            {
+                runId: receipt.runId,
+                terminal: { kind: "complete", result: validResult },
+            },
+        ]);
         runner.dispose();
     });
 
-    it("rejects malformed structured output", async () => {
+    it("turns malformed structured output into a terminal failure", async () => {
         const events = createEvents();
-        events.on(REQUEST, (value) => {
-            const request = value as Record<string, unknown>;
-            events.emit(RESPONSE, {
-                requestId: request.requestId,
-                ownerRunId: request.ownerRunId,
-                nodeId: request.nodeId,
-                status: "completed",
-                agent: request.agent,
-                exitCode: 0,
-                result: {
-                    kind: "structured",
-                    value: {
+        installRpc(events);
+        const runner = createResearchRunner(events);
+        const completions: any[] = [];
+        runner.onComplete((completion) => completions.push(completion));
+        const receipt = await runner.start({
+            ownerRunId: "brainstorm-2",
+            cwd: "/tmp/project",
+            input: {
+                domain: "external",
+                question: "What is guaranteed?",
+                sources: [],
+            },
+        });
+
+        events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+            id: receipt.runId,
+            success: true,
+            results: [
+                {
+                    agent: "factual-researcher",
+                    structuredOutput: {
                         summary: "No sources.",
                         findings: [{ finding: "Unsupported", sourceRefs: [] }],
                         gaps: [],
                     },
                 },
-            });
+            ],
         });
+
+        expect(completions).toHaveLength(1);
+        expect(completions[0]).toMatchObject({
+            runId: receipt.runId,
+            terminal: { kind: "failure" },
+        });
+        expect(completions[0].terminal.reason).toContain("source reference");
+        runner.dispose();
+    });
+
+    it("stops native research through RPC", async () => {
+        const events = createEvents();
+        installRpc(events);
         const runner = createResearchRunner(events);
 
-        await expect(
-            runner.run({
-                ownerRunId: "brainstorm-2",
-                cwd: "/tmp/project",
-                input: {
-                    domain: "external",
-                    question: "What is guaranteed?",
-                    sources: [],
-                },
-            }),
-        ).rejects.toThrow("source reference");
+        await runner.stop("native-research-1");
+
+        const stop = events.emitted.find(
+            ({ event, data }) =>
+                event === SUBAGENT_RPC_REQUEST_EVENT &&
+                (data as { method?: string }).method === "stop",
+        )!.data;
+        expect(stop).toMatchObject({
+            method: "stop",
+            params: { id: "native-research-1" },
+        });
         runner.dispose();
     });
 });

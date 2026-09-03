@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; Brainstorm-owned subagent control mechanics superseded by [ADR-021](./ADR-021-native-pi-subagents-lifecycle-for-brainstorm.md).
 
 ## Date
 

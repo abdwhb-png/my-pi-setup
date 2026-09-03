@@ -2146,6 +2146,167 @@ describe("exploration ledger", () => {
         );
     });
 
+    it("restores one architect scope shared across verifier groups", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-multi-group" });
+        const domains = ["pi", "local-code", "external"] as const;
+        const items = domains.map((domain, index) => {
+            const evidence = ledger.captureEvidence({
+                toolCallId: `call-${index + 1}`,
+                toolName: "read",
+                input: { path: `source-${index + 1}.ts` },
+                content: [{ type: "text", text: "source" }],
+                details: undefined,
+                isError: false,
+            });
+            const claim = ledger.recordClaim({
+                assertion: `Architecture claim ${index + 1} is supported.`,
+                classification: "empirical",
+                critical: false,
+                verdict: "verified",
+                evidenceIds: [evidence.id],
+                contradictoryEvidenceIds: [],
+                impact: `Impact ${index + 1}.`,
+                mitigation: `Mitigation ${index + 1}.`,
+                verificationDomain: domain,
+                architectureImpact: index < 2,
+            });
+            return { claim, evidence };
+        });
+        const claimIds = items.slice(0, 2).map(({ claim }) => claim.id);
+        const evidenceIds = items
+            .slice(0, 2)
+            .map(({ evidence }) => evidence.id);
+
+        const completion = ledger.recordVerificationCompletion({
+            verificationRunId: "async-multi-group",
+            architect: {
+                agent: "architect",
+                outputName: "architect_advisory",
+                status: "watch",
+                claimIds,
+                evidenceIds,
+                risks: ["Keep the shared boundary explicit."],
+                summary: "One advisory covers both verifier groups.",
+            },
+            verifiers: [
+                {
+                    agent: "pi-expert",
+                    outputName: "verify_pi_supported",
+                    outcome: "supported",
+                    claimIds: [items[0]!.claim.id],
+                    evidenceIds: [items[0]!.evidence.id],
+                    summary: "Pi claim supported.",
+                },
+                {
+                    agent: "brainstorm-scout",
+                    outputName: "verify_local_code_supported",
+                    outcome: "supported",
+                    claimIds: [items[1]!.claim.id],
+                    evidenceIds: [items[1]!.evidence.id],
+                    summary: "Local claim supported.",
+                },
+            ],
+        });
+        const gateBlockers = (records: readonly ExplorationRecord[]) =>
+            createExplorationLedger({
+                runId: "brainstorm-multi-group",
+                initialRecords: records,
+            }).getGateBlockers({
+                approachClaimIds: [claimIds],
+                recommendationClaimIds: claimIds,
+                userChoice: "Choose A",
+            });
+        const records = ledger.getRecords();
+
+        expect(gateBlockers(records)).not.toContainEqual(
+            expect.stringContaining("inconsistent architect audit scope"),
+        );
+
+        const firstReview = completion.reviews[0]!;
+        const mismatchedReview: ReviewRecord = {
+            ...firstReview,
+            audit: {
+                ...firstReview.audit,
+                architect: {
+                    ...firstReview.audit.architect!,
+                    status: "block",
+                },
+            },
+        };
+        const mismatchedRecords = records.map((record) =>
+            record.id === firstReview.id ? mismatchedReview : record,
+        );
+        expect(gateBlockers(mismatchedRecords)).toContain(
+            `Restored review ${firstReview.id} has inconsistent architect audit scope.`,
+        );
+
+        const architectEvidence = completion.architectEvidence!;
+        const expandedClaimIds = [...claimIds, items[2]!.claim.id];
+        const expandedEvidenceIds = [...evidenceIds, items[2]!.evidence.id];
+        const expandedArchitectEvidence: ExplorationRecord = {
+            ...architectEvidence,
+            verifier: {
+                ...architectEvidence.verifier!,
+                referencedClaimIds: expandedClaimIds,
+                referencedEvidenceIds: expandedEvidenceIds,
+            },
+        };
+        const expandedReviews: ReviewRecord[] = completion.reviews.map(
+            (review) => ({
+                ...review,
+                audit: {
+                    ...review.audit,
+                    architect: {
+                        ...review.audit.architect!,
+                        claimIds: expandedClaimIds,
+                        evidenceIds: expandedEvidenceIds,
+                    },
+                },
+            }),
+        );
+        const expandedReviewById = new Map(
+            expandedReviews.map((review) => [review.id, review]),
+        );
+        const expandedRecords = records.map((record) =>
+            record.id === architectEvidence.id
+                ? expandedArchitectEvidence
+                : (expandedReviewById.get(record.id) ?? record),
+        );
+        expect(gateBlockers(expandedRecords)).toContainEqual(
+            expect.stringContaining("inconsistent architect audit scope"),
+        );
+
+        const secondReview = completion.reviews[1]!;
+        const alternateArchitectEvidence: ExplorationRecord = {
+            ...architectEvidence,
+            id: "EV-999",
+            sequence: secondReview.sequence - 1,
+            verifier: {
+                ...architectEvidence.verifier!,
+                outputName: "architect_advisory_alternate",
+            },
+        };
+        const alternateReview: ReviewRecord = {
+            ...secondReview,
+            audit: {
+                ...secondReview.audit,
+                architect: {
+                    ...secondReview.audit.architect!,
+                    evidenceId: alternateArchitectEvidence.id,
+                },
+            },
+        };
+        const conflictingRecords = [
+            ...records.map((record) =>
+                record.id === secondReview.id ? alternateReview : record,
+            ),
+            alternateArchitectEvidence,
+        ];
+        expect(gateBlockers(conflictingRecords)).toContainEqual(
+            expect.stringContaining("inconsistent architect audit scope"),
+        );
+    });
+
     it("scopes architect advisory failures per verifier review and restores them", () => {
         const ledger = createExplorationLedger({ runId: "brainstorm-advisory" });
         const claims = [

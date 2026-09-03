@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; foreground delegation and external-run lifecycle superseded by [ADR-021](./ADR-021-native-pi-subagents-lifecycle-for-brainstorm.md).
 
 ## Date
 
@@ -57,12 +57,12 @@ policy selection to the LLM and duplicate security and validation logic.
 Every new claim supplies a closed `verificationDomain` and
 `architectureImpact`. Routing is fixed:
 
-| Domain        | Verifier                |
-| ------------- | ----------------------- |
-| `pi`          | `pi-expert`             |
-| `local-code`  | `brainstorm-code-scout` |
-| `external`    | `factual-researcher`    |
-| `performance` | `performance-reviewer`  |
+| Domain        | Verifier               |
+| ------------- | ---------------------- |
+| `pi`          | `pi-expert`            |
+| `local-code`  | `brainstorm-scout`     |
+| `external`    | `factual-researcher`   |
+| `performance` | `performance-reviewer` |
 
 `code-reviewer` and generic `reviewer` are intentionally excluded from new
 brainstorming routes. `worker`, `oracle`, and arbitrary agent names are also
@@ -86,7 +86,7 @@ Before spawning, derive the stable unique agent sequence from the selected
 chain. Public preflight checks exactly those verifiers and adds `architect` only
 when the selected chain contains that step. An unavailable unused agent cannot
 block another domain. The local-code route is the dedicated unambiguous
-`brainstorm-code-scout`, never a bare `scout` name.
+`brainstorm-scout`, never a bare `scout` name.
 
 Use `pi-subagents/delegation` for top-level fresh structured requests and
 correlate terminal responses by the exact `{ requestId, ownerRunId, nodeId }`

@@ -57,14 +57,13 @@ describe("verification routing", () => {
         ]);
     });
 
-    it("keeps the capability ceiling read-only while provider extensions remain loadable", () => {
+    it("limits verifier agent identities without filtering unresolved tool aliases", () => {
         const ceiling = buildVerifierCapabilityCeiling();
         expect(ceiling).toEqual({
-            allowedTools: [...READONLY_VERIFIER_TOOLS],
+            allowedAgents: [...VERIFIER_AGENT_ALLOWLIST, ARCHITECT_AGENT].sort(),
             denyExtensions: false,
         });
-        for (const tool of ["write", "edit", "bash", "safe_bash", "subagent"])
-            expect(ceiling.allowedTools).not.toContain(tool);
+        expect(ceiling).not.toHaveProperty("allowedTools");
     });
 
     it("includes think_search in the read-only allowlist (no think execute tools)", () => {
@@ -90,7 +89,10 @@ describe("verification routing", () => {
     it("keeps the documented local-code route aligned with the closed routing contract", async () => {
         const [readme, skill, adr] = await Promise.all([
             readFile(join(import.meta.dir, "README.md"), "utf8"),
-            readFile(join(import.meta.dir, "skills", "brainstorm-forcer", "SKILL.md"), "utf8"),
+            readFile(
+                join(import.meta.dir, "skills", "brainstorm-forcer", "SKILL.md"),
+                "utf8",
+            ),
             readFile(
                 join(
                     import.meta.dir,
@@ -99,7 +101,7 @@ describe("verification routing", () => {
                     "..",
                     "docs",
                     "adr",
-                    "ADR-008-domain-routed-asynchronous-brainstorm-verification.md",
+                    "ADR-021-native-pi-subagents-lifecycle-for-brainstorm.md",
                 ),
                 "utf8",
             ),
@@ -108,20 +110,13 @@ describe("verification routing", () => {
             expect(document).toMatch(/\|\s*`local-code`\s*\|\s*`brainstorm-scout`\s*\|/);
             expect(document).not.toMatch(/\|\s*`local-code`\s*\|\s*`scout`\s*\|/);
         }
-        const [beforeHistorical, historicalAndAfter = ""] = adr.split(
-            "### Historical protocol note",
-            2,
+        expect(adr).toContain("public in-process pi-subagents RPC");
+        expect(adr).toContain("subagent:async-complete");
+        expect(adr).toContain("brainstorm-scout");
+        expect(adr).toContain(
+            "agent/extensions/_shared/subagents/rpc-client.ts",
         );
-        const [, afterHistorical = ""] = historicalAndAfter.split(
-            "### Structured result and ledger policy",
-            2,
-        );
-        const activeSections = `${beforeHistorical}\n${afterHistorical}`;
-        expect(activeSections).toContain("pi-subagents/delegation");
-        expect(activeSections).toContain("external-runs");
-        expect(activeSections).toContain("brainstorm-scout");
-        expect(activeSections).not.toMatch(/\bRPC\b|package lifecycle artifacts/i);
-        expect(historicalAndAfter).toMatch(/removed RPC v1[\s\S]*lifecycle artifacts/i);
+        expect(adr).toContain("does not migrate `sdd-orchestrator`");
     });
 });
 
@@ -186,6 +181,25 @@ describe("verification plan", () => {
         const serialized = JSON.stringify(nodes);
         for (const legacy of ["\"chain\"", "\"tasks\"", "\"parallel\"", "\"acceptance\""])
             expect(serialized).not.toContain(legacy);
+    });
+
+    it("marks verifier tasks as read-only even when claims mention write operations", () => {
+        const { nodes } = buildVerificationPlan({
+            runId: "run",
+            claims: [
+                claim(
+                    "CL-001",
+                    "pi",
+                    "supported",
+                    [],
+                    "The sandbox exposes explicit read/write policies.",
+                ),
+            ],
+        });
+
+        expect(nodes[0]?.task).toStartWith(
+            "Read-only verification. Do not modify any files.",
+        );
     });
 
     it("omits the architect node for ordinary claims and is order-stable", () => {

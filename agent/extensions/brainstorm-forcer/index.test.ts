@@ -11,7 +11,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Value } from "typebox/value";
 import { resolveSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
-import { snapshotExternalRuns } from "pi-subagents/external-runs";
+import {
+  SUBAGENT_ASYNC_COMPLETE_EVENT,
+  SUBAGENT_RPC_REPLY_EVENT_PREFIX,
+  SUBAGENT_RPC_REQUEST_EVENT,
+} from "../_shared/subagents/rpc-client";
 import { getBrainstormAgentEntry } from "./brainstorm-agents";
 
 const {
@@ -65,6 +69,27 @@ function createMockAPI(sessionManager?: SessionManager) {
       for (const handler of [...(eventListeners.get(event) ?? [])]) handler(data);
     },
   };
+  const subagentRpcRequests: Array<Record<string, any>> = [];
+  let subagentRunSequence = 0;
+  events.on(SUBAGENT_RPC_REQUEST_EVENT, (value) => {
+    const request = value as Record<string, any>;
+    subagentRpcRequests.push(request);
+    const asyncId = `native-test-run-${++subagentRunSequence}`;
+    queueMicrotask(() =>
+      events.emit(`${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`, {
+        version: 1,
+        requestId: request.requestId,
+        method: request.method,
+        success: true,
+        data: {
+          text: request.method === "spawn" ? `Async started: ${asyncId}` : "ok",
+          details: request.method === "spawn" ? { asyncId } : {},
+        },
+      }),
+    );
+  });
+  const completeSubagentRun = (runId: string, completion: Record<string, unknown>) =>
+    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { id: runId, ...completion });
   const toolInfo = [
     { name: "read" },
     { name: "grep" },
@@ -108,7 +133,19 @@ function createMockAPI(sessionManager?: SessionManager) {
     events,
   } as unknown as ExtensionAPI;
 
-  return { pi, commands, tools, handlers, entries, renderers, sentUserMessages, sentMessages, events };
+  return {
+    pi,
+    commands,
+    tools,
+    handlers,
+    entries,
+    renderers,
+    sentUserMessages,
+    sentMessages,
+    events,
+    subagentRpcRequests,
+    completeSubagentRun,
+  };
 }
 
 function createMockContext(
@@ -348,36 +385,10 @@ describe("brainstorm-forcer redesign", () => {
     );
   });
 
-  it("delegates bounded local research only to brainstorm-scout", async () => {
+  it("delegates bounded local research through native pi-subagents lifecycle", async () => {
     const api = createMockAPI();
     const ctx = createMockContext();
-    const requests: Array<Record<string, unknown>> = [];
     const preflightAgents: string[][] = [];
-    api.events.on("prompt-template:subagent:request", (raw) => {
-      const request = raw as Record<string, unknown>;
-      requests.push(request);
-      api.events.emit("prompt-template:subagent:response", {
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-        status: "completed",
-        agent: request.agent,
-        exitCode: 0,
-        result: {
-          kind: "structured",
-          value: {
-            summary: "Found the topic boundary.",
-            findings: [
-              {
-                finding: "Discovery fixes the canonical topic.",
-                sourceRefs: ["agent/extensions/brainstorm-forcer/index.ts:700"],
-              },
-            ],
-            gaps: [],
-          },
-        },
-      });
-    });
     brainstormForcer(api.pi, {
       preflight: async (_sessionId, _cwd, agents) => {
         preflightAgents.push([...agents]);
@@ -399,26 +410,32 @@ describe("brainstorm-forcer redesign", () => {
     );
 
     expect(preflightAgents).toEqual([["brainstorm-scout"]]);
-    expect(requests).toHaveLength(1);
-    expect(requests[0]).toMatchObject({
-      agent: "brainstorm-scout",
-      context: "fresh",
+    const request = api.subagentRpcRequests.find(
+      (candidate) => candidate.method === "spawn",
+    );
+    expect(request).toMatchObject({
+      source: { extension: "brainstorm-forcer" },
+      method: "spawn",
+      params: {
+        agent: "brainstorm-scout",
+        context: "fresh",
+        cwd: ctx.cwd,
+        artifacts: false,
+      },
     });
-    expect(result.details).toMatchObject({
+    expect(result.details).toEqual({
+      status: "pending",
+      runId: "native-test-run-1",
       agent: "brainstorm-scout",
-      result: { summary: "Found the topic boundary." },
     });
+    expect(result.content[0].text).toContain("pi-subagents owns progress");
   });
 
   it("abandons verification launch when branch ownership changes during preflight", async () => {
     const api = createMockAPI();
     const ctx = createMockContext();
-    const requests: Array<Record<string, unknown>> = [];
     let leafId = "branch-a";
     (ctx.sessionManager as any).getLeafId = () => leafId;
-    api.events.on("prompt-template:subagent:request", (raw) => {
-      requests.push(raw as Record<string, unknown>);
-    });
     brainstormForcer(api.pi, {
       preflight: async (_sessionId, _cwd, agents) => {
         leafId = "branch-b";
@@ -436,7 +453,7 @@ describe("brainstorm-forcer redesign", () => {
         ctx,
       ),
     ).rejects.toThrow("launch ownership changed");
-    expect(requests).toEqual([]);
+    expect(api.subagentRpcRequests).toEqual([]);
     expect(
       (
         api.entries
@@ -446,17 +463,9 @@ describe("brainstorm-forcer redesign", () => {
     ).toBeNull();
   });
 
-  it("rolls back a started verification when persisting pending state fails", async () => {
+  it("stops a native verification when persisting pending state fails", async () => {
     const api = createMockAPI();
     const ctx = createMockContext();
-    const requests: Array<Record<string, unknown>> = [];
-    const cancellations: Array<Record<string, unknown>> = [];
-    api.events.on("prompt-template:subagent:request", (raw) => {
-      requests.push(raw as Record<string, unknown>);
-    });
-    api.events.on("prompt-template:subagent:cancel", (raw) => {
-      cancellations.push(raw as Record<string, unknown>);
-    });
     brainstormForcer(api.pi, {
       preflight: async (_sessionId, _cwd, agents) =>
         agents.map((agent) => ({ agent, ok: true })),
@@ -478,26 +487,15 @@ describe("brainstorm-forcer redesign", () => {
         ctx,
       ),
     ).rejects.toThrow("Injected pending-state persistence failure.");
-    const request = requests[0]!;
-    expect(cancellations).toEqual([
-      {
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-      },
+    expect(api.subagentRpcRequests.map(({ method }) => method)).toEqual([
+      "spawn",
+      "stop",
     ]);
-    expect(snapshotExternalRuns(ctx.sessionManager.getSessionFile()!)).toEqual([]);
-
-    const entriesAfterFailure = api.entries.length;
-    api.events.emit("prompt-template:subagent:response", {
-      requestId: request.requestId,
-      ownerRunId: request.ownerRunId,
-      nodeId: request.nodeId,
-      status: "completed",
-      result: { kind: "structured", value: {} },
+    expect(api.subagentRpcRequests[1]).toMatchObject({
+      method: "stop",
+      params: { id: "native-test-run-1" },
     });
-    await Bun.sleep(0);
-    expect(api.entries).toHaveLength(entriesAfterFailure);
+
     (api.pi as any).appendEntry = appendEntry;
     await expect(
       api.tools.get("brainstorm_run_verification")!.execute(
@@ -511,26 +509,16 @@ describe("brainstorm-forcer redesign", () => {
     await api.commands.get("brainstorm")!.handler("stop", ctx);
   });
 
-  it("stops the old structured run before session_tree restores branch state", async () => {
+  it("stops the old native run before session_tree restores branch state", async () => {
     const api = createMockAPI();
     const ctx = createMockContext();
     let leafId = "branch-a";
     (ctx.sessionManager as any).getLeafId = () => leafId;
-    const requests: Array<Record<string, unknown>> = [];
-    const cancellations: Array<Record<string, unknown>> = [];
-    api.events.on("prompt-template:subagent:request", (raw) => {
-      requests.push(raw as Record<string, unknown>);
-    });
-    api.events.on("prompt-template:subagent:cancel", (raw) => {
-      cancellations.push(raw as Record<string, unknown>);
-    });
     brainstormForcer(api.pi, {
       preflight: async (_sessionId, _cwd, agents) =>
         agents.map((agent) => ({ agent, ok: true })),
     });
     await enterPendingLocalCodeVerification(api, ctx);
-    const request = requests[0]!;
-    const entriesBeforeTree = api.entries.length;
     leafId = "branch-b";
 
     await api.handlers.get("session_tree")!(
@@ -538,38 +526,19 @@ describe("brainstorm-forcer redesign", () => {
       ctx,
     );
 
-    expect(cancellations).toEqual([
-      {
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-      },
-    ]);
-    expect(snapshotExternalRuns(ctx.sessionManager.getSessionFile()!)).toEqual([]);
-    api.events.emit("prompt-template:subagent:response", {
-      requestId: request.requestId,
-      ownerRunId: request.ownerRunId,
-      nodeId: request.nodeId,
-      status: "completed",
-      result: { kind: "structured", value: {} },
+    expect(api.subagentRpcRequests.at(-1)).toMatchObject({
+      method: "stop",
+      params: { id: "native-test-run-1" },
     });
-    await Bun.sleep(0);
-    expect(api.entries).toHaveLength(entriesBeforeTree);
   });
 
-  it("stops a structured verifier when branch ownership changes after launch", async () => {
+  it("stops a native verifier when branch ownership changes after launch", async () => {
     const api = createMockAPI();
     const ctx = createMockContext();
     let leafId = "branch-a";
     (ctx.sessionManager as any).getLeafId = () => leafId;
-    const requests: Array<Record<string, unknown>> = [];
-    const cancellations: Array<Record<string, unknown>> = [];
-    api.events.on("prompt-template:subagent:request", (raw) => {
-      requests.push(raw as Record<string, unknown>);
-      leafId = "branch-b";
-    });
-    api.events.on("prompt-template:subagent:cancel", (raw) => {
-      cancellations.push(raw as Record<string, unknown>);
+    api.events.on(SUBAGENT_RPC_REQUEST_EVENT, (raw) => {
+      if ((raw as Record<string, unknown>).method === "spawn") leafId = "branch-b";
     });
     brainstormForcer(api.pi, {
       preflight: async (_sessionId, _cwd, agents) =>
@@ -586,15 +555,10 @@ describe("brainstorm-forcer redesign", () => {
         ctx,
       ),
     ).rejects.toThrow("launch ownership changed");
-    const request = requests[0]!;
-    expect(cancellations).toEqual([
-      {
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-      },
+    expect(api.subagentRpcRequests.map(({ method }) => method)).toEqual([
+      "spawn",
+      "stop",
     ]);
-    expect(snapshotExternalRuns(ctx.sessionManager.getSessionFile()!)).toEqual([]);
     expect(
       api.entries
         .filter((entry) => entry.customType === "brainstorm-forcer")
@@ -2489,17 +2453,10 @@ describe("brainstorm-forcer redesign", () => {
     });
   });
 
-  it("runs one owned structured verification and appends EV/RV only from its exact completion", async () => {
-    const { pi, handlers, commands, tools, entries, events } = createMockAPI();
+  it("runs one owned native verification and appends EV/RV from its exact completion", async () => {
+    const api = createMockAPI();
+    const { pi, handlers, commands, tools, entries } = api;
     const ctx = createMockContext();
-    const delegationRequests: Array<Record<string, unknown>> = [];
-    const delegationCancellations: Array<Record<string, unknown>> = [];
-    events.on("prompt-template:subagent:request", (raw) => {
-      delegationRequests.push(raw as Record<string, unknown>);
-    });
-    events.on("prompt-template:subagent:cancel", (raw) => {
-      delegationCancellations.push(raw as Record<string, unknown>);
-    });
     let selectedPreflightAgents: readonly string[] | undefined;
     brainstormForcer(pi, {
       preflight: async (_sessionId, _cwd, agents) => {
@@ -2552,17 +2509,15 @@ describe("brainstorm-forcer redesign", () => {
       claimIds: ["CL-001"],
     });
     const runId = launch.details.runId as string;
-    const request = delegationRequests[0];
+    const request = api.subagentRpcRequests.find(
+      (candidate) => candidate.method === "spawn",
+    );
     expect(request).toMatchObject({
-      ownerRunId: runId,
-      nodeId: "verify_local_code_supported",
-      agent: "brainstorm-scout",
-      context: "fresh",
-      result: { kind: "structured" },
+      method: "spawn",
+      source: { extension: "brainstorm-forcer" },
+      params: { context: "fresh", artifacts: true },
     });
-    expect(request).not.toHaveProperty("chain");
-    expect(request).not.toHaveProperty("tasks");
-    expect(request).not.toHaveProperty("parallel");
+    expect(request?.params.workflowScript).toContain("verify_local_code_supported");
     expect(selectedPreflightAgents).toEqual(["brainstorm-scout"]);
     expect(entries.at(-1)).toMatchObject({
       customType: "brainstorm-forcer",
@@ -2574,20 +2529,22 @@ describe("brainstorm-forcer redesign", () => {
       },
     });
 
-    events.emit("prompt-template:subagent:response", {
-      requestId: request.requestId,
-      ownerRunId: runId,
-      nodeId: request.nodeId,
-      status: "completed",
-      result: {
-        kind: "structured",
-        value: {
-          outcome: "supported",
-          claimIds: ["CL-001"],
-          evidenceIds: ["EV-001"],
-          summary: "The transition gate is centralized.",
+    api.completeSubagentRun(runId, {
+      success: true,
+      results: [
+        {
+          workflowKey: "verify_local_code_supported",
+          agent: "brainstorm-scout",
+          status: "completed",
+          success: true,
+          structuredOutput: {
+            outcome: "supported",
+            claimIds: ["CL-001"],
+            evidenceIds: ["EV-001"],
+            summary: "The transition gate is centralized.",
+          },
         },
-      },
+      ],
     });
     await Bun.sleep(0);
 
@@ -2637,13 +2594,15 @@ describe("brainstorm-forcer redesign", () => {
       ctx,
     );
     expect(selectedPreflightAgents).toEqual(["brainstorm-scout", "architect"]);
-    const activeRequest = delegationRequests.at(-1)!;
+    const architectureRunId = api.subagentRpcRequests
+      .filter((candidate) => candidate.method === "spawn")
+      .at(-1)!.params;
     await commands.get("brainstorm")!.handler("stop", ctx);
-    expect(delegationCancellations.at(-1)).toEqual({
-      requestId: activeRequest.requestId,
-      ownerRunId: activeRequest.ownerRunId,
-      nodeId: activeRequest.nodeId,
+    expect(api.subagentRpcRequests.at(-1)).toMatchObject({
+      method: "stop",
+      params: { id: expect.any(String) },
     });
+    expect(architectureRunId.workflowScript).toContain("architect_advisory");
   });
 
   it("recovers a verifier completion atomically across terminal journal, EV, RV, and snapshot failures", async () => {
@@ -2651,10 +2610,6 @@ describe("brainstorm-forcer redesign", () => {
       const sessionManager = SessionManager.inMemory(process.cwd());
       const first = createMockAPI(sessionManager);
       const firstContext = createSessionManagerContext(sessionManager);
-      const requests: Array<Record<string, unknown>> = [];
-      first.events.on("prompt-template:subagent:request", (raw) => {
-        requests.push(raw as Record<string, unknown>);
-      });
       brainstormForcer(first.pi, {
         preflight: async (_sessionId, _cwd, agents) =>
           agents.map((agent) => ({ agent, ok: true })),
@@ -2682,22 +2637,27 @@ describe("brainstorm-forcer redesign", () => {
         appendEntry(customType, data);
       };
 
-      const request = requests[0]!;
-      first.events.emit("prompt-template:subagent:response", {
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-        status: "completed",
-        result: {
-          kind: "structured",
-          value: {
-            outcome: "supported",
-            claimIds: ["CL-001"],
-            evidenceIds: ["EV-001"],
-            summary: "The transition gate is centralized.",
+      const nativeRunId = first.subagentRpcRequests.find(
+        (candidate) => candidate.method === "spawn",
+      )!.params ? "native-test-run-1" : "";
+      const nativeCompletion = {
+        success: true,
+        results: [
+          {
+            workflowKey: "verify_local_code_supported",
+            agent: "brainstorm-scout",
+            status: "completed",
+            success: true,
+            structuredOutput: {
+              outcome: "supported",
+              claimIds: ["CL-001"],
+              evidenceIds: ["EV-001"],
+              summary: "The transition gate is centralized.",
+            },
           },
-        },
-      });
+        ],
+      };
+      first.completeSubagentRun(nativeRunId, nativeCompletion);
       await Bun.sleep(0);
       expect(injected, boundary).toBe(true);
 
@@ -2708,6 +2668,8 @@ describe("brainstorm-forcer redesign", () => {
         { type: "session_start" },
         restoredContext,
       );
+      restored.completeSubagentRun(nativeRunId, nativeCompletion);
+      await Bun.sleep(0);
 
       const terminalRecords = sessionManager
         .getBranch()
@@ -2719,8 +2681,8 @@ describe("brainstorm-forcer redesign", () => {
         .map((entry) => (entry as any).data.record)
         .filter(
           (record) =>
-            record?.verifier?.verificationRunId === request.ownerRunId ||
-            record?.audit?.verificationRunId === request.ownerRunId,
+            record?.verifier?.verificationRunId === nativeRunId ||
+            record?.audit?.verificationRunId === nativeRunId,
         );
       const verifierEvidence = terminalRecords.filter(
         (record) => record?.kind === "evidence",
@@ -2758,10 +2720,6 @@ describe("brainstorm-forcer redesign", () => {
       const sessionManager = SessionManager.inMemory(process.cwd());
       const first = createMockAPI(sessionManager);
       const firstContext = createSessionManagerContext(sessionManager);
-      const requests: Array<Record<string, unknown>> = [];
-      first.events.on("prompt-template:subagent:request", (raw) => {
-        requests.push(raw as Record<string, unknown>);
-      });
       brainstormForcer(first.pi, {
         preflight: async (_sessionId, _cwd, agents) =>
           agents.map((agent) => ({ agent, ok: true })),
@@ -2792,7 +2750,13 @@ describe("brainstorm-forcer redesign", () => {
         undefined,
         firstContext,
       );
-      expect(requests).toHaveLength(2);
+      const nativeRunId = "native-test-run-1";
+      expect(first.subagentRpcRequests[0]?.params.workflowScript).toContain(
+        "verify_local_code_supported",
+      );
+      expect(first.subagentRpcRequests[0]?.params.workflowScript).toContain(
+        "verify_external_supported",
+      );
 
       const initialAppend = (first.pi as any).appendEntry;
       let initialInjected = false;
@@ -2813,16 +2777,28 @@ describe("brainstorm-forcer redesign", () => {
         initialAppend(customType, data);
       };
 
-      for (const request of requests) {
-        first.events.emit("prompt-template:subagent:response", {
-          requestId: request.requestId,
-          ownerRunId: request.ownerRunId,
-          nodeId: request.nodeId,
-          status: "timed_out",
-          error: "deadline exceeded",
-          result: { kind: "text", text: "" },
-        });
-      }
+      const nativeCompletion = {
+        success: false,
+        timedOut: true,
+        summary: "deadline exceeded",
+        results: [
+          {
+            workflowKey: "verify_local_code_supported",
+            agent: "brainstorm-scout",
+            status: "timed_out",
+            success: false,
+            output: "deadline exceeded",
+          },
+          {
+            workflowKey: "verify_external_supported",
+            agent: "factual-researcher",
+            status: "timed_out",
+            success: false,
+            output: "deadline exceeded",
+          },
+        ],
+      };
+      first.completeSubagentRun(nativeRunId, nativeCompletion);
       await Bun.sleep(0);
       expect(initialInjected, boundary).toBe(true);
 
@@ -2848,6 +2824,8 @@ describe("brainstorm-forcer redesign", () => {
         { type: "session_start" },
         firstReloadContext,
       );
+      firstReload.completeSubagentRun(nativeRunId, nativeCompletion);
+      await Bun.sleep(0);
 
       if (boundary === "reload-rv2") {
         expect(reloadInjected).toBe(true);
@@ -2884,11 +2862,9 @@ describe("brainstorm-forcer redesign", () => {
       expect(
         failureReviews.map((data) => customRecordId(data)).sort(),
       ).toEqual(["RV-001", "RV-002"]);
-      expect(
-        failureReviews.map(customRecordAuditStatus),
-      ).toEqual([
-        boundary === "commit" ? "failed" : "timeout",
-        boundary === "commit" ? "failed" : "timeout",
+      expect(failureReviews.map(customRecordAuditStatus)).toEqual([
+        "timeout",
+        "timeout",
       ]);
       expect(
         (
@@ -2924,10 +2900,6 @@ describe("brainstorm-forcer redesign", () => {
     ] as const) {
       const api = createMockAPI();
       const ctx = createMockContext();
-      const requests: Array<Record<string, unknown>> = [];
-      api.events.on("prompt-template:subagent:request", (raw) => {
-        requests.push(raw as Record<string, unknown>);
-      });
       brainstormForcer(api.pi, {
         preflight: async (_sessionId, _cwd, agents) =>
           agents.map((agent) => ({ agent, ok: true })),
@@ -2959,16 +2931,22 @@ describe("brainstorm-forcer redesign", () => {
         ctx,
       );
 
-      for (const request of requests) {
-        api.events.emit("prompt-template:subagent:response", {
-          requestId: request.requestId,
-          ownerRunId: request.ownerRunId,
-          nodeId: request.nodeId,
-          status: scenario.status,
-          ...(scenario.error ? { error: scenario.error } : {}),
-          result: scenario.result ?? { kind: "text", text: "" },
-        });
-      }
+      api.completeSubagentRun("native-test-run-1", {
+        success: scenario.status === "completed",
+        ...(scenario.status === "timed_out" ? { timedOut: true } : {}),
+        ...(scenario.error ? { summary: scenario.error } : {}),
+        results: ["verify_local_code_supported", "verify_external_supported"].map(
+          (workflowKey) => ({
+            workflowKey,
+            status: scenario.status,
+            success: scenario.status === "completed",
+            ...(scenario.error ? { output: scenario.error } : {}),
+            ...(scenario.result
+              ? { structuredOutput: scenario.result.value }
+              : {}),
+          }),
+        ),
+      });
       await Bun.sleep(0);
 
       const failureReviews = api.entries
@@ -3008,27 +2986,27 @@ describe("brainstorm-forcer redesign", () => {
     ] as const) {
       const api = createMockAPI();
       const ctx = createMockContext();
-      const delegationRequests: Array<Record<string, unknown>> = [];
-      const delegationCancellations: Array<Record<string, unknown>> = [];
-      api.events.on("prompt-template:subagent:request", (raw) => {
-        delegationRequests.push(raw as Record<string, unknown>);
-      });
-      api.events.on("prompt-template:subagent:cancel", (raw) => {
-        delegationCancellations.push(raw as Record<string, unknown>);
-      });
       brainstormForcer(api.pi, {
         preflight: async (_sessionId, _cwd, agents) =>
           agents.map((agent) => ({ agent, ok: true })),
       });
       await enterPendingLocalCodeVerification(api, ctx);
-      const request = delegationRequests[0]!;
-      api.events.emit("prompt-template:subagent:response", {
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-        status: scenario.status,
-        ...(scenario.error ? { error: scenario.error } : {}),
-        result: scenario.result ?? { kind: "text", text: "" },
+      api.completeSubagentRun("native-test-run-1", {
+        success: scenario.status === "completed",
+        ...(scenario.status === "timed_out" ? { timedOut: true } : {}),
+        ...(scenario.error ? { summary: scenario.error } : {}),
+        results: [
+          {
+            workflowKey: "verify_local_code_supported",
+            agent: "brainstorm-scout",
+            status: scenario.status,
+            success: scenario.status === "completed",
+            ...(scenario.error ? { output: scenario.error } : {}),
+            ...(scenario.result
+              ? { structuredOutput: scenario.result.value }
+              : {}),
+          },
+        ],
       });
       await Bun.sleep(0);
 
@@ -3044,22 +3022,16 @@ describe("brainstorm-forcer redesign", () => {
         customType: "brainstorm-forcer",
         data: { pendingVerification: null },
       });
-      expect(snapshotExternalRuns(ctx.sessionManager.getSessionFile()!)).toEqual([]);
-      expect(delegationCancellations, scenario.name).toEqual([]);
+      expect(
+        api.subagentRpcRequests.filter(({ method }) => method === "stop"),
+        scenario.name,
+      ).toEqual([]);
     }
   });
 
-  it("keeps successful structured verifier RV audits when the architect advisory fails", async () => {
+  it("keeps successful native verifier RV audits when the architect advisory fails", async () => {
     const api = createMockAPI();
     const ctx = createMockContext();
-    const delegationRequests: Array<Record<string, unknown>> = [];
-    const delegationCancellations: Array<Record<string, unknown>> = [];
-    api.events.on("prompt-template:subagent:request", (raw) => {
-      delegationRequests.push(raw as Record<string, unknown>);
-    });
-    api.events.on("prompt-template:subagent:cancel", (raw) => {
-      delegationCancellations.push(raw as Record<string, unknown>);
-    });
     brainstormForcer(api.pi, {
       preflight: async (_sessionId, _cwd, agents) =>
         agents.map((agent) => ({ agent, ok: true })),
@@ -3090,39 +3062,45 @@ describe("brainstorm-forcer redesign", () => {
       undefined,
       ctx,
     );
-    expect(delegationRequests).toHaveLength(2);
-    for (const request of delegationRequests) {
-      const claimId = request.nodeId === "verify_pi_supported" ? "CL-002" : "CL-001";
-      api.events.emit("prompt-template:subagent:response", {
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-        status: "completed",
-        result: {
-          kind: "structured",
-          value: {
+    expect(api.subagentRpcRequests[0]?.params.workflowScript).toContain(
+      "architect_advisory",
+    );
+    api.completeSubagentRun("native-test-run-1", {
+      success: false,
+      summary: "architect unavailable",
+      results: [
+        {
+          workflowKey: "verify_local_code_supported",
+          agent: "brainstorm-scout",
+          status: "completed",
+          success: true,
+          structuredOutput: {
             outcome: "supported",
-            claimIds: [claimId],
+            claimIds: ["CL-001"],
             evidenceIds: ["EV-001"],
-            summary: `${claimId} is supported.`,
+            summary: "CL-001 is supported.",
           },
         },
-      });
-    }
-    await Bun.sleep(0);
-    await Bun.sleep(0);
-    const architectRequest = delegationRequests[2]!;
-    expect(architectRequest).toMatchObject({
-      nodeId: "architect_advisory",
-      agent: "architect",
-    });
-    api.events.emit("prompt-template:subagent:response", {
-      requestId: architectRequest.requestId,
-      ownerRunId: architectRequest.ownerRunId,
-      nodeId: architectRequest.nodeId,
-      status: "failed",
-      error: "architect unavailable",
-      result: { kind: "text", text: "" },
+        {
+          workflowKey: "verify_pi_supported",
+          agent: "pi-expert",
+          status: "completed",
+          success: true,
+          structuredOutput: {
+            outcome: "supported",
+            claimIds: ["CL-002"],
+            evidenceIds: ["EV-001"],
+            summary: "CL-002 is supported.",
+          },
+        },
+        {
+          workflowKey: "architect_advisory",
+          agent: "architect",
+          status: "failed",
+          success: false,
+          output: "architect unavailable",
+        },
+      ],
     });
     await Bun.sleep(0);
 
@@ -3148,24 +3126,17 @@ describe("brainstorm-forcer redesign", () => {
       customType: "brainstorm-forcer",
       data: { pendingVerification: null },
     });
-    expect(snapshotExternalRuns(ctx.sessionManager.getSessionFile()!)).toEqual([]);
-    expect(delegationCancellations).toEqual([]);
+    expect(
+      api.subagentRpcRequests.filter(({ method }) => method === "stop"),
+    ).toEqual([]);
   });
 
-  it("cancels every owned child and removes the Fleet projection on session shutdown", async () => {
+  it("leaves native verification lifecycle owned by pi-subagents on session shutdown", async () => {
     const api = createMockAPI();
-    const { pi, handlers, tools, events, entries } = api;
+    const { pi, handlers, tools, entries } = api;
     const sessionId = "brainstorm-owner-uuid";
     const sessionFile = join(tmpdir(), "brainstorm-owner-session.jsonl");
     const ctx = createMockContext(undefined, process.cwd(), sessionId, sessionFile);
-    const delegationRequests: Array<Record<string, unknown>> = [];
-    const delegationCancellations: Array<Record<string, unknown>> = [];
-    events.on("prompt-template:subagent:request", (raw) => {
-      delegationRequests.push(raw as Record<string, unknown>);
-    });
-    events.on("prompt-template:subagent:cancel", (raw) => {
-      delegationCancellations.push(raw as Record<string, unknown>);
-    });
     brainstormForcer(pi, {
       preflight: async (_sessionId, _cwd, agents) =>
         agents.map((agent) => ({ agent, ok: true })),
@@ -3198,37 +3169,21 @@ describe("brainstorm-forcer redesign", () => {
       undefined,
       ctx,
     );
-    const runId = launch.details.runId as string;
-    expect(delegationRequests).toHaveLength(2);
-    expect(snapshotExternalRuns(sessionFile)).toHaveLength(1);
+    expect(launch.details.runId).toBe("native-test-run-1");
+    const entriesAfterLaunch = entries.length;
 
     await handlers.get("session_shutdown")!({ type: "session_shutdown" }, ctx);
 
-    expect(delegationCancellations).toEqual(
-      delegationRequests.map((request) => ({
-        requestId: request.requestId,
-        ownerRunId: runId,
-        nodeId: request.nodeId,
-      })),
-    );
-    expect(snapshotExternalRuns(sessionFile)).toEqual([]);
-    const entriesAfterShutdown = entries.length;
-    for (const request of delegationRequests) {
-      events.emit("prompt-template:subagent:response", {
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-        status: "completed",
-        result: {
-          kind: "structured",
-          value: { outcome: "supported", claimIds: [], evidenceIds: [] },
-        },
-      });
-    }
+    expect(
+      api.subagentRpcRequests.filter(({ method }) => method === "stop"),
+    ).toEqual([]);
+    api.completeSubagentRun("native-test-run-1", {
+      success: false,
+      summary: "late completion",
+      results: [],
+    });
     await Bun.sleep(0);
-    expect(delegationRequests).toHaveLength(2);
-    expect(entries).toHaveLength(entriesAfterShutdown);
-    expect(snapshotExternalRuns(sessionFile)).toEqual([]);
+    expect(entries).toHaveLength(entriesAfterLaunch);
   });
 
   it("quarantines a legacy UUID-only pending snapshot on restore", async () => {

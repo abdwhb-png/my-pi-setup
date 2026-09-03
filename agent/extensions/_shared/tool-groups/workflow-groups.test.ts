@@ -13,8 +13,8 @@ import { SDD_WORKFLOW_TOOLS } from '../../sdd-orchestrator/extension-tools';
 import { createVisibilityBroker } from './broker.ts';
 
 describe('BRAINSTORM_WORKFLOW_TOOLS', () => {
-    it('contains exactly 9 brainstorm_* members', () => {
-        expect(BRAINSTORM_WORKFLOW_TOOLS.length).toBe(9);
+    it('contains exactly 10 brainstorm_* members', () => {
+        expect(BRAINSTORM_WORKFLOW_TOOLS.length).toBe(10);
         for (const name of BRAINSTORM_WORKFLOW_TOOLS) {
             expect(name.startsWith('brainstorm_')).toBe(true);
         }

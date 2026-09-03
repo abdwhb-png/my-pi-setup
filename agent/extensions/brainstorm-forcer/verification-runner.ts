@@ -1,17 +1,14 @@
-import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
-import type { SubagentDelegationRequest } from "pi-subagents/delegation";
 import {
-    registerExternalRun,
-    unregisterExternalRun,
-} from "pi-subagents/external-runs";
-import {
-    DelegationClient,
-    DelegationDeadlineError,
-    type DelegationClientOptions,
-} from "../_shared/subagents/delegation-client";
+    SubagentRpcClient,
+    type SubagentAsyncCompletion,
+    type SubagentRpcClientOptions,
+    type SubagentRpcEventBus,
+} from "../_shared/subagents/rpc-client";
+import { TOOL_GROUPS_CHILD_POLICY_BINDING } from "../_shared/tool-groups/types";
 import {
     ARCHITECT_AGENT,
+    READONLY_VERIFIER_TOOLS,
     VERIFICATION_DOMAINS,
     VERIFICATION_OUTCOMES,
     VERIFIER_AGENT_ALLOWLIST,
@@ -20,10 +17,7 @@ import {
     type VerificationPlanNode,
 } from "./verification";
 
-export interface EventBusLike {
-    on(event: string, handler: (data: unknown) => void): (() => void) | void;
-    emit(event: string, data: unknown): void;
-}
+export type EventBusLike = SubagentRpcEventBus;
 
 type PendingVerificationStepBase = Readonly<{
     outputName: string;
@@ -41,7 +35,6 @@ export type PendingVerificationStep = Readonly<
     | (PendingVerificationStepBase & { role: "architect" })
 >;
 
-/** Durable metadata only. Active foreground attempts live in one extension context. */
 export type PendingVerificationRun = Readonly<{
     runId: string;
     ownerSessionId: string;
@@ -113,7 +106,6 @@ export function isPendingVerificationRun(
         return false;
     }
     const claimIds = pending.claimIds;
-
     const outputNames = new Set<string>();
     let architectCount = 0;
     for (const rawStep of pending.expectedSteps) {
@@ -161,7 +153,6 @@ export type VerificationDelegationNode = VerificationPlanNode;
 export type VerificationCoordinatorInput = Readonly<{
     ownerRunId: string;
     sessionId: string;
-    /** Fleet indexes current sessions by their persisted session-file path. */
     sessionFile: string;
     cwd: string;
     label: string;
@@ -173,87 +164,222 @@ export type VerificationCoordinatorCompletion = Readonly<{
     terminal: Exclude<OwnedTerminalCompletion, { kind: "unrelated" }>;
 }>;
 
+export type AttachedVerificationNode = Readonly<{
+    role: "verifier" | "architect";
+    outputName: string;
+}>;
+
 type CoordinatorRun = {
-    input: VerificationCoordinatorInput;
-    externalRunSessionId: string;
+    nodes: readonly AttachedVerificationNode[];
     state: "running" | "completed" | "failed" | "stopped";
-    activeRequestIds: Set<string>;
     terminal?: Exclude<OwnedTerminalCompletion, { kind: "unrelated" }>;
 };
 
 const TERMINAL_RUN_CACHE_LIMIT = 32;
-
-/** Matches pi-subagents' documented 30-minute foreground default, explicitly. */
+const EARLY_COMPLETION_LIMIT = 16;
 const VERIFICATION_CHILD_TIMEOUT_MS = 30 * 60 * 1_000;
-/** Lets the child publish its terminal event before local recovery owns cleanup. */
-const VERIFICATION_DEADLINE_GRACE_MS = 5_000;
 
 export type VerificationCoordinatorDependencies = Readonly<{
-    registerExternalRun?: typeof registerExternalRun;
-    unregisterExternalRun?: typeof unregisterExternalRun;
-    /** Test seam; production uses the bounded child timeout above. */
     childTimeoutMs?: number;
-    /** Test seam; must retain a positive local grace beyond the child timeout. */
-    deadlineGraceMs?: number;
-    /** Test seam for a deterministic DelegationClient deadline signal. */
-    createDeadlineSignal?: DelegationClientOptions["createDeadlineSignal"];
+    rpc?: SubagentRpcClient;
+    rpcOptions?: Omit<SubagentRpcClientOptions, "sourceExtension">;
 }>;
 
-function structuredResult(response: {
-    result?:
-        | { kind: "text"; text: string }
-        | { kind: "structured"; value: unknown };
-}): unknown {
-    return response.result?.kind === "structured"
-        ? response.result.value
+function workflowItem(
+    node: VerificationDelegationNode,
+    timeoutMs: number,
+): Record<string, unknown> {
+    return {
+        key: node.outputName,
+        agent: node.agent,
+        task: node.task,
+        context: "fresh",
+        artifacts: true,
+        timeoutMs,
+        outputSchema: node.schema,
+        extensionBindings: {
+            [TOOL_GROUPS_CHILD_POLICY_BINDING]: {
+                allowedTools: [...READONLY_VERIFIER_TOOLS, "structured_output"],
+            },
+        },
+        acceptance: false,
+    };
+}
+
+export function buildVerificationWorkflowScript(
+    nodes: readonly VerificationDelegationNode[],
+    timeoutMs = VERIFICATION_CHILD_TIMEOUT_MS,
+): string {
+    const verifiers = nodes.filter((node) => node.role === "verifier");
+    const architect = nodes.find((node) => node.role === "architect");
+    const lines = [
+        `const verifierItems = ${JSON.stringify(verifiers.map((node) => workflowItem(node, timeoutMs)))};`,
+        "const verifierResults = await runs.all(verifierItems);",
+        "for (let index = 0; index < verifierResults.length; index += 1) {",
+        "  if (!verifierResults[index].ok) return { verifierResults };",
+        "}",
+    ];
+    if (architect) {
+        lines.push(
+            `let architectTask = ${JSON.stringify(architect.task)};`,
+            "for (let index = 0; index < verifierResults.length; index += 1) {",
+            '  const marker = "{outputs." + verifierItems[index].key + "}";',
+            "  architectTask = architectTask.replaceAll(marker, JSON.stringify(verifierResults[index].structuredOutput));",
+            "}",
+            `const architectResult = await runs.run(${JSON.stringify(architect.outputName)}, ${JSON.stringify(
+                { ...workflowItem(architect, timeoutMs), task: undefined },
+            )
+                .replace('"task":undefined,', "")
+                .replace(',"task":undefined', "")});`,
+            "return { verifierResults, architectResult };",
+        );
+        const architectItem = JSON.stringify({
+            ...workflowItem(architect, timeoutMs),
+            task: "__ARCHITECT_TASK__",
+        }).replace('"__ARCHITECT_TASK__"', "architectTask");
+        lines[lines.length - 2] =
+            `const architectResult = await runs.run(${JSON.stringify(architect.outputName)}, ${architectItem});`;
+    } else {
+        lines.push("return { verifierResults }; ");
+    }
+    return lines.join("\n");
+}
+
+function asyncRunId(value: {
+    details?: Record<string, unknown>;
+}): string | undefined {
+    const candidate = value.details?.asyncId;
+    return typeof candidate === "string" && candidate.trim()
+        ? candidate
         : undefined;
 }
 
-function renderDependentTask(
-    task: string,
-    outputs: Readonly<Record<string, unknown>>,
-): string {
-    let rendered = task;
-    for (const [name, value] of Object.entries(outputs)) {
-        rendered = rendered.replaceAll(
-            `{outputs.${name}}`,
-            JSON.stringify(value),
-        );
-    }
-    return rendered;
+function successfulResult(result: Record<string, unknown>): boolean {
+    return (
+        result.success !== false &&
+        result.status !== "failed" &&
+        result.status !== "stopped" &&
+        result.status !== "timed_out" &&
+        Object.hasOwn(result, "structuredOutput")
+    );
 }
 
-/** Runs Brainstorm leaves through the public 0.50 structured delegation API. */
+function failureReason(
+    completion: SubagentAsyncCompletion,
+    result?: Record<string, unknown>,
+): string {
+    for (const candidate of [
+        result?.error,
+        result?.output,
+        completion.summary,
+        completion.state,
+    ]) {
+        if (typeof candidate === "string" && candidate.trim()) return candidate;
+    }
+    return `Native verification run ${completion.id} failed.`;
+}
+
+function malformedCompletion(
+    reason: string,
+): Exclude<OwnedTerminalCompletion, { kind: "unrelated" }> {
+    return { kind: "failure", failureKind: "malformed", reason };
+}
+
+function terminalFromCompletion(
+    run: CoordinatorRun,
+    completion: SubagentAsyncCompletion,
+): Exclude<OwnedTerminalCompletion, { kind: "unrelated" }> {
+    const results = completion.results ?? [];
+    const expectedKeys = run.nodes.map((node) => node.outputName);
+    const expectedKeySet = new Set(expectedKeys);
+    if (expectedKeySet.size !== expectedKeys.length) {
+        return malformedCompletion(
+            "Verification contains duplicate expected workflow keys.",
+        );
+    }
+
+    const byKey = new Map<string, Record<string, unknown>>();
+    for (const result of results) {
+        const key = result.workflowKey;
+        if (typeof key !== "string" || !expectedKeySet.has(key)) {
+            return malformedCompletion(
+                "Verification returned an unexpected workflow key.",
+            );
+        }
+        if (byKey.has(key)) {
+            return malformedCompletion(
+                `Verification returned duplicate workflow key "${key}".`,
+            );
+        }
+        byKey.set(key, result);
+    }
+    const missingKeys = expectedKeys.filter((key) => !byKey.has(key));
+    if (missingKeys.length > 0) {
+        return malformedCompletion(
+            `Verification omitted workflow key(s): ${missingKeys.join(", ")}.`,
+        );
+    }
+
+    const outputs: Record<string, unknown> = {};
+    const verifierNodes = run.nodes.filter((node) => node.role === "verifier");
+    const architectNode = run.nodes.find((node) => node.role === "architect");
+    for (const node of verifierNodes) {
+        const result = byKey.get(node.outputName);
+        if (!result || !successfulResult(result)) {
+            const reason = failureReason(completion, result);
+            return {
+                kind: "failure",
+                failureKind:
+                    completion.timedOut === true || /timed?\s*out/i.test(reason)
+                        ? "timeout"
+                        : "failed",
+                reason,
+                ...(Object.keys(outputs).length > 0
+                    ? { completedStructuredOutputs: outputs }
+                    : {}),
+            };
+        }
+        outputs[node.outputName] = result.structuredOutput;
+    }
+    if (architectNode) {
+        const result = byKey.get(architectNode.outputName);
+        if (!result || !successfulResult(result)) {
+            const reason = failureReason(completion, result);
+            return {
+                kind: "failure",
+                failureKind:
+                    completion.timedOut === true || /timed?\s*out/i.test(reason)
+                        ? "timeout"
+                        : "failed",
+                reason,
+                completedStructuredOutputs: outputs,
+                failedAdvisoryOutputName: architectNode.outputName,
+            };
+        }
+        outputs[architectNode.outputName] = result.structuredOutput;
+    }
+    return { kind: "complete", structuredOutputs: outputs };
+}
+
 export function createVerificationCoordinator(
     events: EventBusLike,
     dependencies: VerificationCoordinatorDependencies = {},
 ) {
-    const registerFleetRun =
-        dependencies.registerExternalRun ?? registerExternalRun;
-    const unregisterFleetRun =
-        dependencies.unregisterExternalRun ?? unregisterExternalRun;
     const childTimeoutMs =
         dependencies.childTimeoutMs ?? VERIFICATION_CHILD_TIMEOUT_MS;
-    const deadlineGraceMs =
-        dependencies.deadlineGraceMs ?? VERIFICATION_DEADLINE_GRACE_MS;
-    const client = new DelegationClient(
-        {
-            on(event, handler) {
-                return events.on(event, handler) ?? (() => undefined);
-            },
-            emit(event, data) {
-                events.emit(event, data);
-            },
-        },
-        {
-            createDeadlineSignal: dependencies.createDeadlineSignal,
-        },
-    );
+    const ownsRpc = dependencies.rpc === undefined;
+    const rpc =
+        dependencies.rpc ??
+        new SubagentRpcClient(events, {
+            sourceExtension: "brainstorm-forcer",
+            ...dependencies.rpcOptions,
+        });
     const runs = new Map<string, CoordinatorRun>();
+    const terminalRunIds: string[] = [];
+    const earlyCompletions = new Map<string, SubagentAsyncCompletion>();
     const completionHandlers = new Set<
         (completion: VerificationCoordinatorCompletion) => void
     >();
-    const terminalRunIds: string[] = [];
     let disposed = false;
 
     function retainTerminalRun(runId: string): void {
@@ -264,149 +390,33 @@ export function createVerificationCoordinator(
         }
     }
 
-    function publishCompletion(
-        runId: string,
-        terminal: Exclude<OwnedTerminalCompletion, { kind: "unrelated" }>,
-    ): void {
-        const run = runs.get(runId);
-        if (!run || run.terminal) return;
+    function processCompletion(completion: SubagentAsyncCompletion): boolean {
+        const run = runs.get(completion.id);
+        if (!run || run.state !== "running") return false;
+        const terminal = terminalFromCompletion(run, completion);
         run.terminal = terminal;
         run.state = terminal.kind === "complete" ? "completed" : "failed";
-        unregisterFleetRun(run.externalRunSessionId, runId);
-        retainTerminalRun(runId);
-        for (const handler of completionHandlers) handler({ runId, terminal });
-    }
-
-    async function runNode(
-        runId: string,
-        node: VerificationDelegationNode,
-        cwd: string,
-        outputs: Readonly<Record<string, unknown>>,
-    ): Promise<unknown> {
-        const run = runs.get(runId);
-        if (!run || run.state !== "running") {
-            throw new Error(`Verification run ${runId} is not active.`);
+        earlyCompletions.delete(completion.id);
+        retainTerminalRun(completion.id);
+        for (const handler of completionHandlers) {
+            handler({ runId: completion.id, terminal });
         }
-        const requestId = `${runId}:${node.outputName}:${randomUUID()}`;
-        const request: SubagentDelegationRequest = {
-            requestId,
-            ownerRunId: runId,
-            nodeId: node.outputName,
-            agent: node.agent,
-            task: renderDependentTask(node.task, outputs),
-            context: "fresh",
-            cwd,
-            artifacts: true,
-            timeoutMs: childTimeoutMs,
-            result: { kind: "structured", schema: node.schema },
-        };
-        run.activeRequestIds.add(requestId);
-        try {
-            const response = await client.run(request, {
-                deadlineMs: childTimeoutMs + deadlineGraceMs,
-            });
-            const value = structuredResult(response);
-            if (response.status !== "completed" || value === undefined) {
-                const error = new Error(
-                    response.error ??
-                        `Delegation ${requestId} ended with ${response.status}.`,
-                );
-                Object.assign(error, { delegationStatus: response.status });
-                throw error;
-            }
-            return value;
-        } finally {
-            run.activeRequestIds.delete(requestId);
-        }
-    }
-
-    async function execute(runId: string): Promise<void> {
-        const run = runs.get(runId);
-        if (!run) return;
-        const verifierNodes = run.input.nodes.filter(
-            (node) => node.role === "verifier",
-        );
-        const architectNodes = run.input.nodes.filter(
-            (node) => node.role === "architect",
-        );
-        const outputs: Record<string, unknown> = {};
-        try {
-            const settled = await Promise.allSettled(
-                verifierNodes.map(async (node) => ({
-                    node,
-                    value: await runNode(runId, node, run.input.cwd, outputs),
-                })),
-            );
-            for (const item of settled) {
-                if (item.status === "fulfilled") {
-                    outputs[item.value.node.outputName] = item.value.value;
-                }
-            }
-            const rejected = settled.find(
-                (item): item is PromiseRejectedResult =>
-                    item.status === "rejected",
-            );
-            if (rejected) throw rejected.reason;
-
-            for (const node of architectNodes) {
-                outputs[node.outputName] = await runNode(
-                    runId,
-                    node,
-                    run.input.cwd,
-                    outputs,
-                );
-            }
-            if (run.state === "running") {
-                publishCompletion(runId, {
-                    kind: "complete",
-                    structuredOutputs: outputs,
-                });
-            }
-        } catch (error) {
-            if (run.state !== "running") return;
-            const reason =
-                error instanceof Error ? error.message : String(error);
-            const delegationStatus =
-                error instanceof Error && "delegationStatus" in error
-                    ? String(error.delegationStatus)
-                    : undefined;
-            const failedArchitect = architectNodes.find(
-                (node) => !Object.hasOwn(outputs, node.outputName),
-            );
-            publishCompletion(runId, {
-                kind: "failure",
-                failureKind:
-                    error instanceof DelegationDeadlineError ||
-                    delegationStatus === "timed_out"
-                        ? "timeout"
-                        : "failed",
-                reason,
-                ...(Object.keys(outputs).length > 0
-                    ? { completedStructuredOutputs: outputs }
-                    : {}),
-                ...(failedArchitect &&
-                Object.keys(outputs).length === verifierNodes.length
-                    ? { failedAdvisoryOutputName: failedArchitect.outputName }
-                    : {}),
-            });
-        }
-    }
-
-    function stop(runId: string): boolean {
-        const run = runs.get(runId);
-        if (!run || run.state !== "running") return false;
-        run.state = "stopped";
-        const activeRequestIds = [...run.activeRequestIds];
-        run.activeRequestIds.clear();
-        for (const requestId of activeRequestIds)
-            client.cancelAndDetach(requestId);
-        unregisterFleetRun(run.externalRunSessionId, runId);
-        retainTerminalRun(runId);
         return true;
     }
 
+    const unsubscribeCompletion = rpc.onAsyncComplete((completion) => {
+        if (processCompletion(completion)) return;
+        if (earlyCompletions.size >= EARLY_COMPLETION_LIMIT) {
+            const oldest = earlyCompletions.keys().next().value;
+            if (typeof oldest === "string") earlyCompletions.delete(oldest);
+        }
+        earlyCompletions.set(completion.id, completion);
+    });
+
     return {
-        start(input: VerificationCoordinatorInput) {
+        async start(
+            input: VerificationCoordinatorInput,
+        ): Promise<{ runId: string }> {
             if (disposed)
                 throw new Error("Verification coordinator is disposed.");
             if (!input.nodes.length)
@@ -415,33 +425,60 @@ export function createVerificationCoordinator(
                 throw new Error(
                     "Verification requires an absolute persisted session file.",
                 );
-            const runId = `verification-${randomUUID()}`;
-            const run: CoordinatorRun = {
-                input,
-                externalRunSessionId: input.sessionFile,
-                state: "running",
-                activeRequestIds: new Set(),
-            };
-            registerFleetRun({
-                id: runId,
-                sessionId: run.externalRunSessionId,
-                source: "brainstorm-forcer",
-                label: input.label,
-                state: "running",
-                startedAt: Date.now(),
-                currentAction: `Running ${input.nodes.length} verification node(s)`,
+            const response = await rpc.spawn({
+                workflowScript: buildVerificationWorkflowScript(
+                    input.nodes,
+                    childTimeoutMs,
+                ),
+                cwd: input.cwd,
+                context: "fresh",
+                artifacts: true,
+                mission: false,
             });
-            runs.set(runId, run);
-            void execute(runId);
+            const runId = asyncRunId(response);
+            if (!runId) {
+                throw new Error(
+                    "Native Brainstorm verification launch did not return an async run id.",
+                );
+            }
+            runs.set(runId, { nodes: input.nodes, state: "running" });
+            const early = earlyCompletions.get(runId);
+            if (early) processCompletion(early);
             return { runId };
         },
-        stop,
+        attach(
+            runId: string,
+            nodes: readonly AttachedVerificationNode[],
+        ): void {
+            if (disposed)
+                throw new Error("Verification coordinator is disposed.");
+            if (!runId.trim() || nodes.length === 0)
+                throw new Error(
+                    "Restored verification requires a run id and expected nodes.",
+                );
+            if (runs.has(runId)) return;
+            runs.set(runId, { nodes, state: "running" });
+            const early = earlyCompletions.get(runId);
+            if (early) processCompletion(early);
+        },
+        async stop(runId: string): Promise<boolean> {
+            const run = runs.get(runId);
+            if (!run || run.state !== "running") return false;
+            const result = await rpc.stop({ id: runId });
+            if (result.isError === true) return false;
+            if (runs.get(runId) !== run || run.state !== "running")
+                return false;
+            run.state = "stopped";
+            earlyCompletions.delete(runId);
+            retainTerminalRun(runId);
+            return true;
+        },
         status(runId: string) {
             const run = runs.get(runId);
             return run
                 ? {
                       state: run.state,
-                      activeRequests: run.activeRequestIds.size,
+                      activeRequests: run.state === "running" ? 1 : 0,
                       terminal: run.terminal,
                   }
                 : undefined;
@@ -455,14 +492,12 @@ export function createVerificationCoordinator(
         dispose(): void {
             if (disposed) return;
             disposed = true;
-            for (const [runId, run] of runs) {
-                if (run.state === "running") stop(runId);
-                unregisterFleetRun(run.externalRunSessionId, runId);
-            }
+            unsubscribeCompletion();
             runs.clear();
             terminalRunIds.length = 0;
+            earlyCompletions.clear();
             completionHandlers.clear();
-            client.dispose();
+            if (ownsRpc) rpc.dispose();
         },
     };
 }

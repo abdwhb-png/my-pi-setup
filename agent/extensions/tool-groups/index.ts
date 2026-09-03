@@ -11,11 +11,45 @@ import { loadToolGroupsConfig } from "../_shared/tool-groups/config.ts";
 import { isToolGroupsPackageLast } from "../_shared/tool-groups/package-order.ts";
 import { resolveToolAliases } from "../_shared/tool-groups/resolver.ts";
 import {
+    SUBAGENT_EXTENSION_BINDINGS_ENV,
     TOOL_GROUP_PREFIX,
+    TOOL_GROUPS_CHILD_POLICY_BINDING,
     TOOL_GROUPS_REQUESTED_TOOLS_ENV,
+    type ToolGroupsChildPolicy,
     type ToolGroupsConfig,
     type ToolGroupDiagnostic,
 } from "../_shared/tool-groups/types.ts";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function loadChildToolPolicyFromEnv(): ToolGroupsChildPolicy | undefined {
+    const raw = process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
+    if (!raw) return undefined;
+
+    try {
+        const bindings: unknown = JSON.parse(raw);
+        if (!isRecord(bindings)) return { allowedTools: [] };
+        const policy = bindings[TOOL_GROUPS_CHILD_POLICY_BINDING];
+        if (policy === undefined) return undefined;
+        if (!isRecord(policy) || !Array.isArray(policy.allowedTools)) {
+            return { allowedTools: [] };
+        }
+        const allowedTools = policy.allowedTools;
+        if (
+            allowedTools.length > 256 ||
+            allowedTools.some(
+                (name) => typeof name !== "string" || !name.trim(),
+            )
+        ) {
+            return { allowedTools: [] };
+        }
+        return { allowedTools: [...new Set(allowedTools)] };
+    } catch {
+        return { allowedTools: [] };
+    }
+}
 
 function loadRequestedToolsFromEnv(): string[] | undefined {
     const raw = process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV];
@@ -108,6 +142,9 @@ function parseRoleToolPolicy(value: unknown): RoleToolPolicy | undefined {
 export function createToolGroupsExtension(
     loadConfig: (cwd: string) => ToolGroupsConfig = loadToolGroupsConfig,
     loadRequestedTools: () => string[] | undefined = loadRequestedToolsFromEnv,
+    loadChildToolPolicy: () =>
+        | ToolGroupsChildPolicy
+        | undefined = loadChildToolPolicyFromEnv,
 ): ExtensionFactory {
     return (pi: ExtensionAPI) => {
         const cwd =
@@ -117,9 +154,17 @@ export function createToolGroupsExtension(
         const config = loadConfig(cwd);
         const groups = config.groups;
         const requestedTools = loadRequestedTools();
+        const childToolPolicy = loadChildToolPolicy();
+        const childAllowedTools = childToolPolicy
+            ? new Set(childToolPolicy.allowedTools)
+            : undefined;
         const resolveMcp = buildMcpResolver(cwd);
 
-        if (Object.keys(groups).length === 0 && !requestedTools?.length) {
+        if (
+            Object.keys(groups).length === 0 &&
+            !requestedTools?.length &&
+            !childToolPolicy
+        ) {
             return;
         }
 
@@ -195,8 +240,10 @@ export function createToolGroupsExtension(
                 resolveMcp,
             );
 
-            const candidates = requested.names.filter((name) =>
-                allowedNames.has(name),
+            const candidates = requested.names.filter(
+                (name) =>
+                    allowedNames.has(name) &&
+                    (!childAllowedTools || childAllowedTools.has(name)),
             );
             // Workflow-group members are only visible while their workflow owns
             // the session; the broker strips them otherwise (sole chokepoint).
@@ -274,6 +321,20 @@ export function createToolGroupsExtension(
                     : [...cliToolPolicy];
             }
 
+            if (childAllowedTools) {
+                if (!names) {
+                    const resolvedActive = resolveToolAliases(
+                        pi.getActiveTools(),
+                        allToolNames,
+                        groups,
+                        resolveMcp,
+                    );
+                    names = resolvedActive.names;
+                    diagnostics.push(...resolvedActive.diagnostics);
+                }
+                names = names.filter((name) => childAllowedTools.has(name));
+            }
+
             if (!names) return undefined;
 
             const broker = getSharedVisibilityBroker();
@@ -283,6 +344,7 @@ export function createToolGroupsExtension(
                     if (
                         broker.isMemberOf(activeWorkflow, name) &&
                         (!cliAllowed || cliAllowed.has(name)) &&
+                        (!childAllowedTools || childAllowedTools.has(name)) &&
                         !names.includes(name)
                     ) {
                         names.push(name);
@@ -348,6 +410,12 @@ export function createToolGroupsExtension(
             const policy = resolveConfiguredPolicy();
             if (!policy || policy.names.includes(event.toolName)) {
                 return undefined;
+            }
+            if (!roleToolPolicy && childAllowedTools) {
+                return {
+                    block: true as const,
+                    reason: `Tool "${event.toolName}" is not allowed by child tool policy.`,
+                };
             }
             const roleName = roleToolPolicy?.roleName ?? "CLI tool policy";
             return {

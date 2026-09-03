@@ -42,7 +42,6 @@ import {
 import {
     BRAINSTORM_RESEARCH_DOMAINS,
     buildResearchDelegation,
-    type BrainstormResearchResult,
 } from "./research";
 import { createResearchRunner } from "./research-runner";
 import {
@@ -255,23 +254,6 @@ function markdownSections(
         ...(section.feedback ? ["", `**Feedback:** ${section.feedback}`] : []),
         "",
     ]);
-}
-
-function renderResearchResult(
-    agent: string,
-    result: BrainstormResearchResult,
-): string {
-    return [
-        `Delegated research by ${agent}.`,
-        `Summary: ${result.summary}`,
-        "Findings:",
-        ...result.findings.map(
-            (finding) =>
-                `- ${finding.finding} [${finding.sourceRefs.join(", ")}]`,
-        ),
-        "Gaps:",
-        ...markdownList(result.gaps),
-    ].join("\n");
 }
 
 type ToolGroups = {
@@ -763,24 +745,30 @@ export default function brainstormForcer(
                 throw new Error(
                     `Research preflight failed for ${delegation.agent}: ${preflight[0]?.message ?? "unavailable"}.`,
                 );
-            const result = await researchRunner.run({
+            const receipt = await researchRunner.start({
                 ownerRunId: launchRunId,
                 cwd: ctx.cwd,
                 input: params,
                 signal,
             });
-            if (runId !== launchRunId || activePhase !== launchPhase)
+            if (runId !== launchRunId || activePhase !== launchPhase) {
+                await researchRunner.stop(receipt.runId);
                 throw new Error(
-                    "Research result arrived after brainstorm ownership changed.",
+                    "Research launch ownership changed before persistence.",
                 );
+            }
             return {
                 content: [
                     {
                         type: "text" as const,
-                        text: renderResearchResult(delegation.agent, result),
+                        text: `Research started: ${receipt.runId} with ${receipt.agent}. pi-subagents owns progress, Fleet status, transcripts, stop controls, and completion delivery.`,
                     },
                 ],
-                details: { agent: delegation.agent, result },
+                details: {
+                    status: "pending",
+                    runId: receipt.runId,
+                    agent: receipt.agent,
+                },
             };
         },
     });
@@ -1003,7 +991,7 @@ export default function brainstormForcer(
                 content: [
                     {
                         type: "text" as const,
-                        text: `Verification started: ${pending.runId} for ${pending.claimIds.join(", ")}.`,
+                        text: `Verification started: ${pending.runId} for ${pending.claimIds.join(", ")}. pi-subagents owns progress, Fleet status, transcripts, stop controls, and completion delivery.`,
                     },
                 ],
                 details: {
@@ -1791,7 +1779,7 @@ export default function brainstormForcer(
         const pendingBeforeLaunch = pendingVerification;
         let receipt: { runId: string } | undefined;
         try {
-            receipt = verificationCoordinator.start({
+            receipt = await verificationCoordinator.start({
                 ownerRunId: brainstormRunId,
                 sessionId,
                 sessionFile,
@@ -1800,7 +1788,7 @@ export default function brainstormForcer(
                 nodes,
             });
             if (!ownsLaunch()) {
-                verificationCoordinator.stop(receipt.runId);
+                await verificationCoordinator.stop(receipt.runId);
                 assertLaunchOwnership();
             }
             const pending: PendingVerificationRun = {
@@ -1823,7 +1811,7 @@ export default function brainstormForcer(
                 await handleAsyncCompletion(completion);
             return pending;
         } catch (error) {
-            if (receipt) verificationCoordinator.stop(receipt.runId);
+            if (receipt) await verificationCoordinator.stop(receipt.runId);
             pendingVerification = pendingBeforeLaunch;
             throw error;
         } finally {
@@ -2676,11 +2664,12 @@ export default function brainstormForcer(
             pendingVerification === pending && activeContext === ctx;
         if (!stillOwnsPending()) return;
         if (terminalRecoveryBlockedRunId === pending.runId) return;
-        auditVerificationFailure(
-            pending,
-            "failed",
-            "Verification was interrupted by an extension reload; foreground delegation attempts are not recoverable across extension contexts.",
-            ctx,
+        verificationCoordinator.attach(
+            pending.runId,
+            pending.expectedSteps.map((step) => ({
+                role: step.role,
+                outputName: step.outputName,
+            })),
         );
     }
 
@@ -2941,7 +2930,9 @@ export default function brainstormForcer(
 
             if (raw === "stop" || raw === "off" || raw === "quit") {
                 if (pendingVerification)
-                    verificationCoordinator.stop(pendingVerification.runId);
+                    await verificationCoordinator.stop(
+                        pendingVerification.runId,
+                    );
                 resetState();
                 saveState(ctx);
                 ctx.ui.notify("Brainstorming mode off.", "info");
@@ -3181,7 +3172,7 @@ export default function brainstormForcer(
 
     pi.on("session_tree", async (_event, ctx) => {
         const oldPending = pendingVerification;
-        if (oldPending) verificationCoordinator.stop(oldPending.runId);
+        if (oldPending) await verificationCoordinator.stop(oldPending.runId);
         activeContext = ctx;
         restoreState(ctx);
         updateWidget(ctx);

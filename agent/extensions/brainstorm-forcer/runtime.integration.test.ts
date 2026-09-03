@@ -18,10 +18,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
-
-const DELEGATION_REQUEST_EVENT = "prompt-template:subagent:request";
-const DELEGATION_RESPONSE_EVENT = "prompt-template:subagent:response";
-const DELEGATION_CANCEL_EVENT = "prompt-template:subagent:cancel";
+import {
+  SUBAGENT_ASYNC_COMPLETE_EVENT,
+  SUBAGENT_RPC_REPLY_EVENT_PREFIX,
+  SUBAGENT_RPC_REQUEST_EVENT,
+} from "../_shared/subagents/rpc-client";
 const HARNESS_RUNTIME_ENV = "BRAINSTORM_FORCER_HARNESS_RUNTIME";
 
 async function createBoundRuntime(
@@ -55,7 +56,17 @@ async function createBoundRuntime(
     settingsManager,
     resourceLoader: loader,
   });
-  expect(result.extensionsResult.errors).toHaveLength(0);
+  if (result.extensionsResult.errors.length > 0) {
+    throw new Error(
+      `Extension load failed: ${result.extensionsResult.errors
+        .map((error) =>
+          error instanceof Error
+            ? error.stack ?? error.message
+            : JSON.stringify(error),
+        )
+        .join("\n")}`,
+    );
+  }
   const errors: unknown[] = [];
   await result.session.bindExtensions({
     onError: (error) => errors.push(error),
@@ -281,6 +292,23 @@ async function installStructuredMockPi(
 }
 
 function installRuntimeFixtures(pi: ExtensionAPI): void {
+  let nativeRunSequence = 0;
+  pi.events.on(SUBAGENT_RPC_REQUEST_EVENT, (raw) => {
+    const request = raw as { requestId: string; method: string };
+    const asyncId = `native-runtime-${++nativeRunSequence}`;
+    queueMicrotask(() =>
+      pi.events.emit(`${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`, {
+        version: 1,
+        requestId: request.requestId,
+        method: request.method,
+        success: true,
+        data: {
+          text: request.method === "spawn" ? `Async started: ${asyncId}` : "ok",
+          details: request.method === "spawn" ? { asyncId } : {},
+        },
+      }),
+    );
+  });
   pi.registerTool({
     name: "ask_user_question",
     label: "Ask user question fixture",
@@ -315,7 +343,6 @@ function installRuntimeFixtures(pi: ExtensionAPI): void {
       };
     },
   });
-  pi.events.on(DELEGATION_REQUEST_EVENT, () => undefined);
 }
 
 function installHarnessStreamCompatibility(session: {
@@ -397,28 +424,14 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
           configurable: true,
           value: () => sessionFile,
         });
-        await writeFile(join(session.cwd, "evidence.txt"), "The transition gate is centralized.");
-        await session.session.prompt("/brainstorm arm Runtime policy");
-        await session.session.prompt("/brainstorm phase exploring");
+        const launch = await launchRuntimeVerification(
+          session.session,
+          session.cwd,
+        );
+        expect(launch.details).toMatchObject({ status: "pending" });
 
         await session.run(
-          harness.when("Exercise pending verification.", [
-            harness.calls("read", { path: "evidence.txt" }),
-            harness.calls("brainstorm_record_claim", {
-              assertion: "The transition gate is centralized.",
-              classification: "empirical",
-              critical: true,
-              verdict: "verified",
-              evidenceIds: ["EV-001"],
-              contradictoryEvidenceIds: [],
-              impact: "Controls all forward transitions.",
-              verificationDomain: "local-code",
-              architectureImpact: false,
-              mitigation: "Keep one shared blocker.",
-            }),
-            harness.calls("brainstorm_run_verification", {
-              claimIds: ["CL-001"],
-            }),
+          harness.when("Ask before verification completes.", [
             harness.calls("ask_user_question", { questions: [] }),
             harness.says("Question deferred until verification ends."),
           ]),
@@ -431,14 +444,14 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
           input: { questions: [] },
         });
         expect(calls[0]?.blockReason).toMatch(
-          /ask_user_question is blocked while verification run verification-[\w-]+ is pending/,
+          /ask_user_question is blocked while verification run native-runtime-[\w-]+ is pending/,
         );
 
         const results = session.events.toolResultsFor("ask_user_question");
         expect(results).toHaveLength(1);
         expect(results[0]?.isError).toBe(true);
         expect(results[0]?.text).toMatch(
-          /ask_user_question is blocked while verification run verification-[\w-]+ is pending/,
+          /ask_user_question is blocked while verification run native-runtime-[\w-]+ is pending/,
         );
 
         const wrappedQuestionTool = session.session.agent.state.tools.find(
@@ -687,19 +700,18 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
       ]);
       const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
-      const [
-        { default: brainstormForcer },
-        codingAgent,
-        { getModel },
-        harness,
-        { default: subagentsExtension },
-      ] = await Promise.all([
-        import("./index"),
+      const [codingAgent, { getModel }, harness] = await Promise.all([
         import("@earendil-works/pi-coding-agent"),
         import("@earendil-works/pi-ai/compat"),
         import(harnessPackage),
-        import("pi-subagents"),
       ]);
+      const subagentsExtensionPath = join(
+        dirname(fileURLToPath(import.meta.resolve("pi-subagents"))),
+        "src",
+        "extension",
+        "index.ts",
+      );
+      const { default: brainstormForcer } = await import("./index");
       await writeFile(
         join(isolatedAgentDir, "settings.json"),
         JSON.stringify({
@@ -723,9 +735,8 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         evidenceIds: ["EV-001"],
         summary: "The exact package contract supports the claim.",
       });
-      const requests: Array<Record<string, unknown>> = [];
-      const responses: Array<Record<string, unknown>> = [];
-      const cancellations: Array<Record<string, unknown>> = [];
+      const rpcRequests: Array<Record<string, unknown>> = [];
+      const asyncCompletions: Array<Record<string, unknown>> = [];
       const runtime = await createBoundRuntime(
         codingAgent,
         model,
@@ -754,19 +765,12 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
                 },
               ],
             }),
-          (pi) =>
-            subagentsExtension(
-              pi as unknown as Parameters<typeof subagentsExtension>[0],
-            ),
           (pi) => {
-            pi.events.on(DELEGATION_REQUEST_EVENT, (event) =>
-              requests.push(event as Record<string, unknown>),
+            pi.events.on(SUBAGENT_RPC_REQUEST_EVENT, (event) =>
+              rpcRequests.push(event as Record<string, unknown>),
             );
-            pi.events.on(DELEGATION_RESPONSE_EVENT, (event) =>
-              responses.push(event as Record<string, unknown>),
-            );
-            pi.events.on(DELEGATION_CANCEL_EVENT, (event) =>
-              cancellations.push(event as Record<string, unknown>),
+            pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (event) =>
+              asyncCompletions.push(event as Record<string, unknown>),
             );
           },
           (pi) =>
@@ -775,13 +779,16 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
                 agents.map((agent) => ({ agent, ok: true })),
             }),
         ],
+        [subagentsExtensionPath],
       );
       try {
         const launch = await launchRuntimeVerification(runtime.session, cwd);
         const naturalRunId = (launch.details as { runId: string }).runId;
         await waitForRuntime(
           () =>
-            responses.length === 1 &&
+            asyncCompletions.some(
+              (completion) => completion.id === naturalRunId,
+            ) &&
             sessionManager.getEntries().some(
               (entry) =>
                 entry.type === "custom" &&
@@ -789,22 +796,31 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
                 (entry.data as any).record?.audit?.verificationRunId ===
                   naturalRunId,
             ),
-          "Structured delegation completion was not audited.",
+          "Native pi-subagents completion was not audited.",
         );
-        expect(requests[0]).toMatchObject({
-          ownerRunId: naturalRunId,
-          nodeId: "verify_local_code_supported",
-          agent: "brainstorm-scout",
-          context: "fresh",
-          result: { kind: "structured" },
+        expect(rpcRequests[0]).toMatchObject({
+          method: "spawn",
+          source: { extension: "brainstorm-forcer" },
+          params: {
+            cwd,
+            context: "fresh",
+            artifacts: true,
+            mission: false,
+          },
         });
-        expect(requests[0]).not.toHaveProperty("chain");
-        expect(responses[0]).toMatchObject({
-          requestId: requests[0]!.requestId,
-          ownerRunId: naturalRunId,
-          nodeId: requests[0]!.nodeId,
-          status: "completed",
-          result: { kind: "structured" },
+        expect(
+          (rpcRequests[0] as any).params.workflowScript,
+        ).toContain("verify_local_code_supported");
+        expect(asyncCompletions[0]).toMatchObject({
+          id: naturalRunId,
+          success: true,
+          results: [
+            {
+              workflowKey: "verify_local_code_supported",
+              status: "completed",
+              structuredOutput: { outcome: "supported" },
+            },
+          ],
         });
 
         child.mockPi.reset();
@@ -834,18 +850,20 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         );
         const stoppedRunId = (stoppedLaunch.details as { runId: string }).runId;
         await waitForRuntime(
-          () => requests.length === 2,
-          "Second structured delegation attempt did not start.",
+          () => rpcRequests.filter((request) => request.method === "spawn").length === 2,
+          "Second native workflow did not start.",
         );
         await runtime.session.prompt("/brainstorm stop");
         await waitForRuntime(
-          () => cancellations.length === 1,
-          "Exact structured delegation cancellation was not emitted.",
+          () => rpcRequests.some((request) => request.method === "stop"),
+          "Native workflow stop request was not emitted.",
         );
-        expect(cancellations[0]).toEqual({
-          requestId: requests[1]!.requestId,
-          ownerRunId: stoppedRunId,
-          nodeId: requests[1]!.nodeId,
+        expect(
+          rpcRequests.find((request) => request.method === "stop"),
+        ).toMatchObject({
+          method: "stop",
+          params: { id: stoppedRunId },
+          source: { extension: "brainstorm-forcer" },
         });
         expect(runtime.errors).toHaveLength(0);
       } finally {

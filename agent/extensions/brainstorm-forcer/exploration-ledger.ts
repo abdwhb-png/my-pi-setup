@@ -1114,6 +1114,23 @@ export function createExplorationLedger(options: LedgerOptions) {
     const restoredClaimsById = new Map(
         claimRecords.map((record) => [record.id, record]),
     );
+    const successfulVerifierReviewsByRunId = new Map<
+        string,
+        VerifierReviewRecord[]
+    >();
+    for (const review of reviewRecords) {
+        if (!isVerifierReview(review) || review.audit.status !== "success")
+            continue;
+        const runReviews =
+            successfulVerifierReviewsByRunId.get(
+                review.audit.verificationRunId,
+            ) ?? [];
+        runReviews.push(review);
+        successfulVerifierReviewsByRunId.set(
+            review.audit.verificationRunId,
+            runReviews,
+        );
+    }
     for (const evidence of evidenceRecords) {
         const auditMetadata = evidence.reviewer ?? evidence.verifier;
         if (!auditMetadata) continue;
@@ -1204,41 +1221,75 @@ export function createExplorationLedger(options: LedgerOptions) {
                 );
         }
         if (isVerifierReview(review) && review.audit.architect) {
+            const architectAudit = review.audit.architect;
             const architectEvidence = restoredEvidenceById.get(
-                review.audit.architect.evidenceId,
+                architectAudit.evidenceId,
             );
             if (!architectEvidence)
                 addRestorationBlocker(
-                    `Restored review ${review.id} references unknown architect evidence ${review.audit.architect.evidenceId}.`,
+                    `Restored review ${review.id} references unknown architect evidence ${architectAudit.evidenceId}.`,
                 );
             else if (architectEvidence.sequence >= review.sequence)
                 addRestorationBlocker(
-                    `Restored review ${review.id} references non-prior architect evidence ${review.audit.architect.evidenceId}.`,
+                    `Restored review ${review.id} references non-prior architect evidence ${architectAudit.evidenceId}.`,
                 );
-            else if (
-                architectEvidence.verifier?.role !== "architect" ||
-                architectEvidence.verifier.verificationRunId !==
-                    review.audit.verificationRunId ||
-                architectEvidence.verifier.architecturalStatus !==
-                    review.audit.architect.status ||
-                !sameIds(
-                    architectEvidence.verifier.referencedClaimIds,
-                    review.audit.architect.claimIds,
-                ) ||
-                !sameIds(
-                    architectEvidence.verifier.referencedEvidenceIds,
-                    review.audit.architect.evidenceIds,
-                ) ||
-                !review.audit.architect.claimIds.every((claimId) =>
-                    review.claimIds.includes(claimId),
-                ) ||
-                !review.audit.architect.evidenceIds.every((evidenceId) =>
-                    review.primaryEvidenceIds.includes(evidenceId),
+            else {
+                const runReviews =
+                    successfulVerifierReviewsByRunId.get(
+                        review.audit.verificationRunId,
+                    ) ?? [];
+                const runClaimIds = new Set(
+                    runReviews.flatMap((candidate) => candidate.claimIds),
+                );
+                const runEvidenceIds = new Set(
+                    runReviews.flatMap(
+                        (candidate) => candidate.primaryEvidenceIds,
+                    ),
+                );
+                const runArchitectAudits = runReviews.flatMap((candidate) =>
+                    candidate.audit.architect
+                        ? [candidate.audit.architect]
+                        : [],
+                );
+                if (
+                    architectEvidence.verifier?.role !== "architect" ||
+                    architectEvidence.verifier.verificationRunId !==
+                        review.audit.verificationRunId ||
+                    architectEvidence.verifier.architecturalStatus !==
+                        architectAudit.status ||
+                    !sameIds(
+                        architectEvidence.verifier.referencedClaimIds,
+                        architectAudit.claimIds,
+                    ) ||
+                    !sameIds(
+                        architectEvidence.verifier.referencedEvidenceIds,
+                        architectAudit.evidenceIds,
+                    ) ||
+                    !architectAudit.claimIds.every((claimId) =>
+                        runClaimIds.has(claimId),
+                    ) ||
+                    !architectAudit.evidenceIds.every((evidenceId) =>
+                        runEvidenceIds.has(evidenceId),
+                    ) ||
+                    !runArchitectAudits.every(
+                        (candidate) =>
+                            candidate.evidenceId ===
+                                architectAudit.evidenceId &&
+                            candidate.status === architectAudit.status &&
+                            sameIds(
+                                candidate.claimIds,
+                                architectAudit.claimIds,
+                            ) &&
+                            sameIds(
+                                candidate.evidenceIds,
+                                architectAudit.evidenceIds,
+                            ),
+                    )
                 )
-            )
-                addRestorationBlocker(
-                    `Restored review ${review.id} has inconsistent architect audit scope.`,
-                );
+                    addRestorationBlocker(
+                        `Restored review ${review.id} has inconsistent architect audit scope.`,
+                    );
+            }
         }
         if (
             isVerifierReview(review) &&

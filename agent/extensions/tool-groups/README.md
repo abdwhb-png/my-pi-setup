@@ -137,6 +137,10 @@ supported list syntax.
   wrapper also clears inherited stale bridge state for later Pi launches.
 - Startup resolves the deferred list against the complete registry and
   intersects it with restrictions made by earlier `session_start` handlers.
+- A pi-subagents child may receive a private `tool-groups.policy/1`
+  `extensionBindings` entry with concrete `allowedTools`. After alias
+  expansion, startup and `tool_call` enforcement intersect active tools with
+  that list. Malformed policy data fails closed.
 - Calling a placeholder directly throws. It has no prompt guidance.
 - Expansion preserves first-occurrence order and removes duplicates.
 - Diagnostics are deduplicated by code, group, and member. New diagnostics use

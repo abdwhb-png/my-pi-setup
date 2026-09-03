@@ -1,4 +1,8 @@
 import { describe, expect, it, mock } from 'bun:test';
+import {
+    SUBAGENT_EXTENSION_BINDINGS_ENV,
+    TOOL_GROUPS_CHILD_POLICY_BINDING,
+} from '../_shared/tool-groups/types.ts';
 
 // No module mock needed: createToolGroupsExtension accepts injected loadConfig,
 // and importing index.ts involves no config I/O until the returned factory
@@ -12,8 +16,14 @@ function createToolGroupsExtension(
     loadRequestedTools: Parameters<
         typeof createRuntimeToolGroupsExtension
     >[1] = () => undefined,
+    loadChildPolicy: () => { allowedTools: readonly string[] } | undefined = () =>
+        undefined,
 ): ReturnType<typeof createRuntimeToolGroupsExtension> {
-    return createRuntimeToolGroupsExtension(loadConfig, loadRequestedTools);
+    return createRuntimeToolGroupsExtension(
+        loadConfig,
+        loadRequestedTools,
+        loadChildPolicy,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +346,106 @@ describe('tool-groups extension', () => {
         handler({ type: 'session_start', reason: 'startup' }, makeMockCtx());
 
         expect(pi.getActiveTools()).toEqual(['read']);
+    });
+
+    it('filters resolved child aliases through a private concrete tool policy', () => {
+        const pi = makeMockPi(['read', 'write_report', 'structured_output']);
+        pi.registerTool({ name: 'write_report' });
+        pi.registerTool({ name: 'structured_output' });
+        const factory = createToolGroupsExtension(
+            () => ({
+                groups: { review: ['read', 'write_report'] },
+            }),
+            () => ['@review', 'structured_output'],
+            () => ({ allowedTools: ['read', 'structured_output'] }),
+        );
+        factory(pi as never);
+
+        const ctx = makeMockCtx();
+        pi._handlers.get('session_start')!(
+            { type: 'session_start', reason: 'startup' },
+            ctx,
+        );
+
+        expect(pi.getActiveTools()).toEqual(['read', 'structured_output']);
+        expect(
+            pi._handlers.get('tool_call')!(
+                { type: 'tool_call', toolName: 'write_report' },
+                ctx,
+            ),
+        ).toEqual({
+            block: true,
+            reason: 'Tool "write_report" is not allowed by child tool policy.',
+        });
+        expect(
+            pi._handlers.get('tool_call')!(
+                { type: 'tool_call', toolName: 'read' },
+                ctx,
+            ),
+        ).toBeUndefined();
+    });
+
+    it('loads the concrete child policy from pi-subagents extensionBindings', () => {
+        const previous = process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
+        process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = JSON.stringify({
+            [TOOL_GROUPS_CHILD_POLICY_BINDING]: {
+                allowedTools: ['read', 'structured_output'],
+            },
+        });
+        try {
+            const pi = makeMockPi([
+                'read',
+                'write_report',
+                'structured_output',
+            ]);
+            pi.registerTool({ name: 'write_report' });
+            pi.registerTool({ name: 'structured_output' });
+            const factory = createRuntimeToolGroupsExtension(
+                () => ({ groups: { review: ['read', 'write_report'] } }),
+                () => ['@review', 'structured_output'],
+            );
+            factory(pi as never);
+
+            pi._handlers.get('session_start')!(
+                { type: 'session_start', reason: 'startup' },
+                makeMockCtx(),
+            );
+
+            expect(pi.getActiveTools()).toEqual([
+                'read',
+                'structured_output',
+            ]);
+        } finally {
+            if (previous === undefined)
+                delete process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
+            else process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = previous;
+        }
+    });
+
+    it('fails closed when its child policy binding is malformed', () => {
+        const previous = process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
+        process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = JSON.stringify({
+            [TOOL_GROUPS_CHILD_POLICY_BINDING]: { allowedTools: 'read' },
+        });
+        try {
+            const pi = makeMockPi(['read', 'write']);
+            const factory = createRuntimeToolGroupsExtension(
+                () => ({ groups: { inspect: ['read'] } }),
+                () => ['@inspect'],
+            );
+            factory(pi as never);
+
+            pi._handlers.get('session_start')!(
+                { type: 'session_start', reason: 'startup' },
+                makeMockCtx(),
+            );
+
+            expect(pi.getActiveTools()).toEqual([]);
+        } finally {
+            if (previous === undefined)
+                delete process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
+            else process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = previous;
+        }
     });
 
     it("input handler expands and returns {action:'continue'}", () => {

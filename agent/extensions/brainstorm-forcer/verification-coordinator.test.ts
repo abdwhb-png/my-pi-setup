@@ -1,15 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "bun:test";
 import {
-    SUBAGENT_DELEGATION_CANCEL_EVENT,
-    SUBAGENT_DELEGATION_REQUEST_EVENT,
-    SUBAGENT_DELEGATION_RESPONSE_EVENT,
-    type SubagentDelegationRequest,
-} from "pi-subagents/delegation";
-import {
-    snapshotExternalRuns,
-    unregisterExternalRun,
-} from "pi-subagents/external-runs";
+    SUBAGENT_ASYNC_COMPLETE_EVENT,
+    SUBAGENT_RPC_REPLY_EVENT_PREFIX,
+    SUBAGENT_RPC_REQUEST_EVENT,
+} from "../_shared/subagents/rpc-client";
 import {
     createVerificationCoordinator,
     type EventBusLike,
@@ -64,379 +58,400 @@ function architect(): VerificationDelegationNode {
     };
 }
 
-function requests(
-    emitted: readonly { event: string; data: unknown }[],
-): SubagentDelegationRequest[] {
-    return emitted
-        .filter(({ event }) => event === SUBAGENT_DELEGATION_REQUEST_EVENT)
-        .map(({ data }) => data as SubagentDelegationRequest);
-}
-
-async function eventually(predicate: () => boolean): Promise<void> {
-    for (let attempt = 0; attempt < 32; attempt += 1) {
-        if (predicate()) return;
-        await Promise.resolve();
-    }
-    throw new Error("Expected asynchronous coordinator work to settle.");
-}
-
-function respond(
-    events: EventBusLike,
-    request: SubagentDelegationRequest,
-    value: unknown,
+function installRpc(
+    bridge: ReturnType<typeof createEvents>,
+    asyncId = "native-verification-1",
+    options: {
+        stopResult?: { text: string; isError?: boolean };
+        onStopRequest?: () => void;
+    } = {},
 ): void {
-    events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-        status: "completed",
-        result: { kind: "structured", value },
+    bridge.events.on(SUBAGENT_RPC_REQUEST_EVENT, (value) => {
+        const request = value as { requestId: string; method: string };
+        if (request.method === "stop") options.onStopRequest?.();
+        queueMicrotask(() =>
+            bridge.events.emit(
+                `${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${request.requestId}`,
+                {
+                    version: 1,
+                    requestId: request.requestId,
+                    method: request.method,
+                    success: true,
+                    data:
+                        request.method === "stop" && options.stopResult
+                            ? options.stopResult
+                            : {
+                                  text: "started",
+                                  details: { asyncId },
+                              },
+                },
+            ),
+        );
     });
 }
 
-describe("verification coordinator 0.50", () => {
-    it("projects exactly one complete Fleet run under its session file, never the Brainstorm UUID", () => {
+function spawnRequest(bridge: ReturnType<typeof createEvents>) {
+    return bridge.emitted.find(
+        ({ event, data }) =>
+            event === SUBAGENT_RPC_REQUEST_EVENT &&
+            (data as { method?: string }).method === "spawn",
+    )!.data as Record<string, any>;
+}
+
+describe("native verification coordinator", () => {
+    it("spawns one native async workflow with parallel verifiers then architect", async () => {
         const bridge = createEvents();
-        const coordinator = createVerificationCoordinator(bridge.events);
-        const uuid = `brainstorm-${randomUUID()}`;
-        const sessionFile = `/tmp/${randomUUID()}.jsonl`;
-
-        try {
-            const receipt = coordinator.start({
-                ownerRunId: "brainstorm-run",
-                sessionId: uuid,
-                sessionFile,
-                cwd: "/repo",
-                label: "Brainstorm verification",
-                nodes: [verifier("first")],
-            });
-
-            const snapshot = snapshotExternalRuns(sessionFile);
-            expect(snapshot).toHaveLength(1);
-            expect(snapshot[0]).toEqual(
-                expect.objectContaining({
-                    id: receipt.runId,
-                    sessionId: sessionFile,
-                    source: "brainstorm-forcer",
-                    label: "Brainstorm verification",
-                    state: "running",
-                    currentAction: "Running 1 verification node(s)",
-                    startedAt: expect.any(Number),
-                }),
-            );
-            expect(Object.keys(snapshot[0]!).toSorted()).toEqual([
-                "currentAction",
-                "id",
-                "label",
-                "sessionId",
-                "source",
-                "startedAt",
-                "state",
-            ]);
-            expect(snapshotExternalRuns(uuid)).toEqual([]);
-        } finally {
-            coordinator.dispose();
-        }
-    });
-
-    it("requires an absolute persisted session file instead of using the session UUID", () => {
-        const bridge = createEvents();
-        const coordinator = createVerificationCoordinator(bridge.events);
-        const sessionId = `brainstorm-${randomUUID()}`;
-
-        try {
-            expect(() =>
-                coordinator.start({
-                    ownerRunId: "brainstorm-run",
-                    sessionId,
-                    sessionFile: "relative-session.jsonl",
-                    cwd: "/repo",
-                    label: "Brainstorm verification",
-                    nodes: [verifier("first")],
-                }),
-            ).toThrow("absolute persisted session file");
-            expect(snapshotExternalRuns(sessionId)).toEqual([]);
-            expect(requests(bridge.emitted)).toEqual([]);
-        } finally {
-            coordinator.dispose();
-        }
-    });
-
-    it("emits both verifiers before responses, then gives the architect both structured outputs", async () => {
-        const bridge = createEvents();
-        const coordinator = createVerificationCoordinator(bridge.events);
-        const sessionFile = `/tmp/${randomUUID()}.jsonl`;
-
-        try {
-            coordinator.start({
-                ownerRunId: "brainstorm-run",
-                sessionId: `brainstorm-${randomUUID()}`,
-                sessionFile,
-                cwd: "/repo",
-                label: "Brainstorm verification",
-                nodes: [
-                    verifier("first"),
-                    verifier("second", "pi-expert"),
-                    architect(),
-                ],
-            });
-
-            const verifierRequests = requests(bridge.emitted);
-            expect(verifierRequests).toHaveLength(2);
-            expect(verifierRequests.map((request) => request.nodeId)).toEqual([
-                "first",
-                "second",
-            ]);
-
-            respond(bridge.events, verifierRequests[0]!, { verdict: "one" });
-            respond(bridge.events, verifierRequests[1]!, { verdict: "two" });
-            await eventually(() => requests(bridge.emitted).length === 3);
-
-            const architectRequest = requests(bridge.emitted)[2]!;
-            expect(architectRequest).toMatchObject({
-                nodeId: "architecture_advisory",
-                agent: "architect",
-            });
-            expect(architectRequest.task).toContain('{"verdict":"one"}');
-            expect(architectRequest.task).toContain('{"verdict":"two"}');
-
-            respond(bridge.events, architectRequest, { status: "clear" });
-            await eventually(() =>
-                coordinator.status(architectRequest.ownerRunId)?.state ===
-                "completed",
-            );
-        } finally {
-            coordinator.dispose();
-        }
-    });
-
-    it("stops every active child using its exact delegation tuple", () => {
-        const bridge = createEvents();
+        installRpc(bridge);
         const coordinator = createVerificationCoordinator(bridge.events);
 
-        try {
-            const receipt = coordinator.start({
-                ownerRunId: "brainstorm-run",
-                sessionId: `brainstorm-${randomUUID()}`,
-                sessionFile: `/tmp/${randomUUID()}.jsonl`,
-                cwd: "/repo",
-                label: "Brainstorm verification",
-                nodes: [verifier("first"), verifier("second", "pi-expert")],
-            });
-            const active = requests(bridge.emitted);
-            expect(active).toHaveLength(2);
-
-            expect(coordinator.stop(receipt.runId)).toBe(true);
-            const cancellations = bridge.emitted
-                .filter(({ event }) => event === SUBAGENT_DELEGATION_CANCEL_EVENT)
-                .map(({ data }) => data);
-            expect(cancellations).toEqual(
-                active.map((request) => ({
-                    requestId: request.requestId,
-                    ownerRunId: receipt.runId,
-                    nodeId: request.nodeId,
-                })),
-            );
-        } finally {
-            coordinator.dispose();
-        }
-    });
-
-    it("times out silent verifier children, cancels their exact tuples, and never launches the architect", async () => {
-        const bridge = createEvents();
-        const deadlineControllers: AbortController[] = [];
-        const deadlineMs: number[] = [];
-        const unregisterCalls: Array<readonly [string, string]> = [];
-        const sessionFile = `/tmp/${randomUUID()}.jsonl`;
-        const coordinator = createVerificationCoordinator(bridge.events, {
-            childTimeoutMs: 8,
-            deadlineGraceMs: 2,
-            createDeadlineSignal(milliseconds) {
-                deadlineMs.push(milliseconds);
-                const controller = new AbortController();
-                deadlineControllers.push(controller);
-                return controller.signal;
-            },
-            unregisterExternalRun(sessionId, runId) {
-                unregisterCalls.push([sessionId, runId]);
-                return unregisterExternalRun(sessionId, runId);
-            },
-        });
-
-        try {
-            const receipt = coordinator.start({
-                ownerRunId: "brainstorm-run",
-                sessionId: `brainstorm-${randomUUID()}`,
-                sessionFile,
-                cwd: "/repo",
-                label: "Brainstorm verification",
-                nodes: [verifier("first"), verifier("second", "pi-expert"), architect()],
-            });
-            const active = requests(bridge.emitted);
-            expect(active).toHaveLength(2);
-            expect(active.map((request) => request.timeoutMs)).toEqual([8, 8]);
-            expect(deadlineMs).toEqual([10, 10]);
-
-            for (const controller of deadlineControllers) controller.abort();
-            await eventually(() =>
-                coordinator.status(receipt.runId)?.state === "failed",
-            );
-
-            expect(coordinator.status(receipt.runId)).toEqual({
-                state: "failed",
-                activeRequests: 0,
-                terminal: expect.objectContaining({
-                    kind: "failure",
-                    failureKind: "timeout",
-                }),
-            });
-            expect(requests(bridge.emitted)).toHaveLength(2);
-            expect(
-                bridge.emitted
-                    .filter(({ event }) => event === SUBAGENT_DELEGATION_CANCEL_EVENT)
-                    .map(({ data }) => data),
-            ).toEqual(
-                active.map((request) => ({
-                    requestId: request.requestId,
-                    ownerRunId: receipt.runId,
-                    nodeId: request.nodeId,
-                })),
-            );
-            expect(unregisterCalls).toEqual([[sessionFile, receipt.runId]]);
-            expect(snapshotExternalRuns(sessionFile)).toEqual([]);
-        } finally {
-            coordinator.dispose();
-        }
-    });
-
-    it("does not retain completed Fleet projections beyond the registry limit", async () => {
-        const bridge = createEvents();
-        const coordinator = createVerificationCoordinator(bridge.events);
-        const sessionFile = `/tmp/${randomUUID()}.jsonl`;
-        const receiptIds: string[] = [];
-
-        try {
-            for (let index = 0; index <= 100; index += 1) {
-                const receipt = coordinator.start({
-                    ownerRunId: "brainstorm-run",
-                    sessionId: `brainstorm-${randomUUID()}`,
-                    sessionFile,
-                    cwd: "/repo",
-                    label: "Brainstorm verification",
-                    nodes: [verifier(`verification_${index}`)],
-                });
-                receiptIds.push(receipt.runId);
-                const request = requests(bridge.emitted).at(-1)!;
-                respond(bridge.events, request, { index });
-                await eventually(() =>
-                    coordinator.status(receipt.runId)?.state === "completed",
-                );
-            }
-
-            expect(snapshotExternalRuns(sessionFile)).toEqual([]);
-            expect(
-                receiptIds.slice(0, 69).map((runId) => coordinator.status(runId)),
-            ).toEqual(Array.from({ length: 69 }, () => undefined));
-            expect(
-                receiptIds.slice(69).map((runId) => coordinator.status(runId)),
-            ).toEqual(
-                Array.from({ length: 32 }, () =>
-                    expect.objectContaining({
-                        state: "completed",
-                        activeRequests: 0,
-                    }),
-                ),
-            );
-        } finally {
-            coordinator.dispose();
-            for (const runId of receiptIds) unregisterExternalRun(sessionFile, runId);
-        }
-    });
-
-    it("leaves no local run or delegation when Fleet registration rejects", () => {
-        const bridge = createEvents();
-        let rejectedRunId: string | undefined;
-        const coordinator = createVerificationCoordinator(bridge.events, {
-            registerExternalRun(input) {
-                rejectedRunId = input.id;
-                throw new Error("Injected Fleet registration failure.");
-            },
-        });
-
-        expect(() =>
-            coordinator.start({
-                ownerRunId: "brainstorm-run",
-                sessionId: `brainstorm-${randomUUID()}`,
-                sessionFile: `/tmp/${randomUUID()}.jsonl`,
-                cwd: "/repo",
-                label: "Brainstorm verification",
-                nodes: [verifier("first")],
-            }),
-        ).toThrow("Injected Fleet registration failure.");
-        expect(rejectedRunId).toBeDefined();
-        expect(coordinator.status(rejectedRunId!)).toBeUndefined();
-        expect(coordinator.stop(rejectedRunId!)).toBe(false);
-        expect(() => coordinator.dispose()).not.toThrow();
-        expect(
-            bridge.emitted.filter(
-                ({ event }) => event === SUBAGENT_DELEGATION_REQUEST_EVENT,
-            ),
-        ).toEqual([]);
-    });
-
-    it("dispose cancels every child and removes Fleet projection without leaving later work active", () => {
-        const bridge = createEvents();
-        const coordinator = createVerificationCoordinator(bridge.events);
-        const sessionFile = `/tmp/${randomUUID()}.jsonl`;
-        const receipt = coordinator.start({
+        const receipt = await coordinator.start({
             ownerRunId: "brainstorm-run",
-            sessionId: `brainstorm-${randomUUID()}`,
-            sessionFile,
+            sessionId: "session-current",
+            sessionFile: "/tmp/session-current.jsonl",
             cwd: "/repo",
             label: "Brainstorm verification",
-            nodes: [verifier("first"), verifier("second", "pi-expert")],
+            nodes: [verifier("first"), verifier("second", "pi-expert"), architect()],
         });
-        const active = requests(bridge.emitted);
 
+        expect(receipt).toEqual({ runId: "native-verification-1" });
+        const request = spawnRequest(bridge);
+        expect(request).toMatchObject({
+            source: { extension: "brainstorm-forcer" },
+            method: "spawn",
+            params: {
+                cwd: "/repo",
+                context: "fresh",
+                artifacts: true,
+                mission: false,
+            },
+        });
+        const workflowScript = request.params.workflowScript as string;
+        expect(typeof workflowScript).toBe("string");
+        expect(workflowScript).toContain("runs.all");
+        expect(workflowScript).toContain("runs.run");
+        expect(workflowScript).toContain("brainstorm-scout");
+        expect(workflowScript).toContain("pi-expert");
+        expect(workflowScript).toContain("architect");
+        expect(workflowScript).toContain('"extensionBindings"');
+        expect(workflowScript).toContain('"tool-groups.policy/1"');
+        expect(workflowScript).toContain('"allowedTools"');
+        expect(workflowScript).toContain('"structured_output"');
+        expect(workflowScript.indexOf("runs.all")).toBeLessThan(
+            workflowScript.indexOf("runs.run"),
+        );
         coordinator.dispose();
-
-        expect(
-            bridge.emitted.filter(
-                ({ event }) => event === SUBAGENT_DELEGATION_CANCEL_EVENT,
-            ),
-        ).toHaveLength(active.length);
-        expect(snapshotExternalRuns(sessionFile)).toEqual([]);
-        expect(coordinator.stop(receipt.runId)).toBe(false);
     });
 
-    it("detaches stopped children even when no terminal response arrives", async () => {
+    it("maps correlated native child outputs to existing terminal contract", async () => {
         const bridge = createEvents();
+        installRpc(bridge);
         const coordinator = createVerificationCoordinator(bridge.events);
-        const receipt = coordinator.start({
+        const completions: unknown[] = [];
+        coordinator.onComplete((completion) => completions.push(completion));
+        const receipt = await coordinator.start({
             ownerRunId: "brainstorm-run",
-            sessionId: `brainstorm-${randomUUID()}`,
-            sessionFile: `/tmp/${randomUUID()}.jsonl`,
+            sessionId: "session-current",
+            sessionFile: "/tmp/session-current.jsonl",
             cwd: "/repo",
             label: "Brainstorm verification",
-            nodes: [verifier("first"), verifier("second", "pi-expert")],
+            nodes: [verifier("first"), verifier("second", "pi-expert"), architect()],
         });
-        const active = requests(bridge.emitted);
+        const first = { outcome: "supported" };
+        const second = { outcome: "falsified" };
+        const advisory = { status: "watch" };
 
-        expect(coordinator.stop(receipt.runId)).toBe(true);
+        bridge.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+            id: "unrelated-run",
+            success: true,
+            results: [],
+        });
+        bridge.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+            id: receipt.runId,
+            success: true,
+            results: [
+                {
+                    workflowKey: "first",
+                    agent: "brainstorm-scout",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: first,
+                },
+                {
+                    workflowKey: "second",
+                    agent: "pi-expert",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: second,
+                },
+                {
+                    workflowKey: "architecture_advisory",
+                    agent: "architect",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: advisory,
+                },
+            ],
+        });
+
+        expect(completions).toEqual([
+            {
+                runId: receipt.runId,
+                terminal: {
+                    kind: "complete",
+                    structuredOutputs: {
+                        first,
+                        second,
+                        architecture_advisory: advisory,
+                    },
+                },
+            },
+        ]);
         expect(coordinator.status(receipt.runId)).toMatchObject({
-            state: "stopped",
+            state: "completed",
             activeRequests: 0,
         });
-        await Promise.resolve();
-        expect(coordinator.status(receipt.runId)).toMatchObject({
-            state: "stopped",
-            activeRequests: 0,
+        coordinator.dispose();
+    });
+
+    it("preserves verifier outputs when only architect fails", async () => {
+        const bridge = createEvents();
+        installRpc(bridge);
+        const coordinator = createVerificationCoordinator(bridge.events);
+        const completions: any[] = [];
+        coordinator.onComplete((completion) => completions.push(completion));
+        const receipt = await coordinator.start({
+            ownerRunId: "brainstorm-run",
+            sessionId: "session-current",
+            sessionFile: "/tmp/session-current.jsonl",
+            cwd: "/repo",
+            label: "Brainstorm verification",
+            nodes: [verifier("first"), architect()],
         });
+        const first = { outcome: "supported" };
+
+        bridge.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+            id: receipt.runId,
+            success: false,
+            summary: "architect failed",
+            results: [
+                {
+                    workflowKey: "first",
+                    agent: "brainstorm-scout",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: first,
+                },
+                {
+                    workflowKey: "architecture_advisory",
+                    agent: "architect",
+                    status: "failed",
+                    success: false,
+                    output: "architect failed",
+                },
+            ],
+        });
+
+        expect(completions[0]).toEqual({
+            runId: receipt.runId,
+            terminal: {
+                kind: "failure",
+                failureKind: "failed",
+                reason: "architect failed",
+                completedStructuredOutputs: { first },
+                failedAdvisoryOutputName: "architecture_advisory",
+            },
+        });
+        coordinator.dispose();
+    });
+
+    it("reattaches persisted native workflow ownership after extension reload", () => {
+        const bridge = createEvents();
+        const coordinator = createVerificationCoordinator(bridge.events);
+        const completions: unknown[] = [];
+        coordinator.onComplete((completion) => completions.push(completion));
+
+        coordinator.attach("native-restored-1", [
+            { role: "verifier", outputName: "first" },
+            { role: "architect", outputName: "architecture_advisory" },
+        ]);
+        bridge.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+            id: "native-restored-1",
+            success: true,
+            results: [
+                {
+                    workflowKey: "first",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: { outcome: "supported" },
+                },
+                {
+                    workflowKey: "architecture_advisory",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: { status: "pass" },
+                },
+            ],
+        });
+
+        expect(completions).toEqual([
+            {
+                runId: "native-restored-1",
+                terminal: {
+                    kind: "complete",
+                    structuredOutputs: {
+                        first: { outcome: "supported" },
+                        architecture_advisory: { status: "pass" },
+                    },
+                },
+            },
+        ]);
+        coordinator.dispose();
+    });
+
+    it("rejects missing, duplicate, and extra workflow result keys as malformed", async () => {
+        const variants = [
+            [],
+            [
+                {
+                    workflowKey: "first",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: { outcome: "supported" },
+                },
+                {
+                    workflowKey: "first",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: { outcome: "falsified" },
+                },
+            ],
+            [
+                {
+                    workflowKey: "first",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: { outcome: "supported" },
+                },
+                {
+                    workflowKey: "unexpected",
+                    status: "completed",
+                    success: true,
+                    structuredOutput: { outcome: "supported" },
+                },
+            ],
+        ];
+
+        for (const [index, results] of variants.entries()) {
+            const bridge = createEvents();
+            const runId = `native-malformed-${index}`;
+            installRpc(bridge, runId);
+            const coordinator = createVerificationCoordinator(bridge.events);
+            const completions: any[] = [];
+            coordinator.onComplete((completion) => completions.push(completion));
+            await coordinator.start({
+                ownerRunId: "brainstorm-run",
+                sessionId: "session-current",
+                sessionFile: "/tmp/session-current.jsonl",
+                cwd: "/repo",
+                label: "Brainstorm verification",
+                nodes: [verifier("first")],
+            });
+
+            bridge.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+                id: runId,
+                success: true,
+                results,
+            });
+
+            expect(completions[0]?.terminal).toMatchObject({
+                kind: "failure",
+                failureKind: "malformed",
+            });
+            coordinator.dispose();
+        }
+    });
+
+    it("stops a native workflow through pi-subagents RPC", async () => {
+        const bridge = createEvents();
+        installRpc(bridge);
+        const coordinator = createVerificationCoordinator(bridge.events);
+        const receipt = await coordinator.start({
+            ownerRunId: "brainstorm-run",
+            sessionId: "session-current",
+            sessionFile: "/tmp/session-current.jsonl",
+            cwd: "/repo",
+            label: "Brainstorm verification",
+            nodes: [verifier("first")],
+        });
+
+        await expect(coordinator.stop(receipt.runId)).resolves.toBe(true);
         expect(
-            bridge.emitted.filter(
-                ({ event }) => event === SUBAGENT_DELEGATION_CANCEL_EVENT,
-            ),
-        ).toHaveLength(active.length);
+            bridge.emitted.find(
+                ({ event, data }) =>
+                    event === SUBAGENT_RPC_REQUEST_EVENT &&
+                    (data as { method?: string }).method === "stop",
+            )?.data,
+        ).toMatchObject({ method: "stop", params: { id: receipt.runId } });
+        expect(coordinator.status(receipt.runId)).toMatchObject({
+            state: "stopped",
+        });
+        coordinator.dispose();
+    });
+
+    it("keeps a native workflow running when stop is rejected", async () => {
+        const bridge = createEvents();
+        installRpc(bridge, "native-verification-1", {
+            stopResult: { text: "stop rejected", isError: true },
+        });
+        const coordinator = createVerificationCoordinator(bridge.events);
+        const receipt = await coordinator.start({
+            ownerRunId: "brainstorm-run",
+            sessionId: "session-current",
+            sessionFile: "/tmp/session-current.jsonl",
+            cwd: "/repo",
+            label: "Brainstorm verification",
+            nodes: [verifier("first")],
+        });
+
+        await expect(coordinator.stop(receipt.runId)).resolves.toBe(false);
+        expect(coordinator.status(receipt.runId)).toMatchObject({
+            state: "running",
+        });
+        coordinator.dispose();
+    });
+
+    it("preserves terminal completion when it races with stop", async () => {
+        const bridge = createEvents();
+        const runId = "native-verification-race";
+        installRpc(bridge, runId, {
+            onStopRequest: () =>
+                bridge.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+                    id: runId,
+                    success: true,
+                    results: [
+                        {
+                            workflowKey: "first",
+                            status: "completed",
+                            success: true,
+                            structuredOutput: { outcome: "supported" },
+                        },
+                    ],
+                }),
+        });
+        const coordinator = createVerificationCoordinator(bridge.events);
+        const receipt = await coordinator.start({
+            ownerRunId: "brainstorm-run",
+            sessionId: "session-current",
+            sessionFile: "/tmp/session-current.jsonl",
+            cwd: "/repo",
+            label: "Brainstorm verification",
+            nodes: [verifier("first")],
+        });
+
+        await expect(coordinator.stop(receipt.runId)).resolves.toBe(false);
+        expect(coordinator.status(receipt.runId)).toMatchObject({
+            state: "completed",
+        });
         coordinator.dispose();
     });
 });
