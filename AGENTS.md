@@ -1,179 +1,87 @@
-# AGENTS.md
+# .pi/AGENTS.md
 
-This is the local installation of my [pi](https://pi.dev/) agent harness.
+Apply these instructions only when working in the local Pi harness repository. Use [ABOUT-PI.md](./docs/ABOUT-PI.md) when a task requires a general Pi architecture overview.
+
+## Context
+
+This is the local installation of my [pi](https://pi.dev/) agent harness. Interpret `pi` as the Pi agent harness, not Raspberry Pi.
 I'm working on it to customize it for my needs. This file contains instructions for how to use and modify the harness, as well as guidelines for code style, testing, and inter-agent communication.
 
 While using pi myself, I installed some packages but noticed that they are not as good as I want. So I will be forking them, modifying them, and adding new features. This file will contain instructions for how to do that.
 
-Always answer in the language user/I use.
+## Pi repository invariants
 
-## Invariants in your role and thinking
+- Never patch the global Bun installation to fix a Pi package issue. Prefer a Pi extension, wrapper, explicit finalizer, or repository-managed symlink.
+- Use the `pi-extensions` skill for Pi package and extension development and the `pi-cli` skill for Pi command-line flags or automation.
+- Before trusting a Pi package E2E result, verify the concrete package root resolved at runtime: installed `node_modules`, Git clone, or local path.
+- Treat `agent/settings.json` as the model-configuration source of truth for `pi-subagents` unless the configured model is factually unavailable in the harness.
+- **NEVER SPECULATE ON PI TYPES**: Inspect Pi's installed source or exported types before using a framework type or property. Never speculate about Pi internals or repair uncertainty with unsupported casts. That ensure the correct types are imported.
+- Interract autonomously with `pi-expert` subagent as an explorer for clarification on pi.
 
-In order to help me at the best of your ability I never want you to guess anything. You must always explicitly refer to the available contexts to determine which direction to take.
+## Workspace boundaries
 
-Any modifications you need to make should take into account that an LLM is not reliable, and it's better to use skills and tools that work programmatically rather than only relying on the LLM's judgment.
+- `~/.pi/agent/` contains the installed harness logic and global Pi resources.
+- `~/projects/pi-integrations/` coordinates independent custom extension repositories; it is not a production-code monorepo.
+- `~/projects/shared-services/` contains cross-project infrastructure and external forks, not Pi extensions.
+- Keep each independent project in its own repository with its own package metadata, tests, documentation, and tooling. Integrate it through a clear package or import path instead of copying it into `~/.pi/agent/`.
 
-**Consider everything you know false until it is factually verified with supporting evidence.** You do not speculate, and you do not assume. You must always verify your assumptions, and if you cannot verify them, you must notify it.
-
-## Context about pi
-
-Always refer to the [ABOUT-PI.md](./docs/ABOUT-PI.md) file for an overview of the pi agent harness, its features, and how it can be customized with extensions, skills, prompt templates, and themes. This will help you understand the capabilities of the harness and how to leverage them effectively in your work.
-
-**Pi Packages**: Pi packages bundle extensions, skills, prompt templates, and themes so you can share them through npm or git. A package can declare resources in package.json under the pi key, or use conventional directories. Refer to the [pi package documentation](https://pi.dev/docs/latest/packages) for details on how to structure and publish your own packages.
-
-**Pi Extensions**: Extensions are TypeScript modules that extend pi's behavior. They can subscribe to lifecycle events, register custom tools callable by the LLM, add commands, and more. Refer to the [pi extensions documentation](https://pi.dev/docs/latest/extensions) for how to create and use extensions.
-Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi/extensions/ (project-local) for auto-discovery. Use pi -e ./path.ts only for quick tests. Extensions in auto-discovered locations can be hot-reloaded with /reload.
-
-**Pi Sessions**: Sessions auto-save to `~/.pi/agent/sessions/`, organized by working directory. Each session is a JSONL file with a tree structure. Refer to the [pi sessions documentation](https://pi.dev/docs/latest/sessions) for how to work with sessions.
-
-## General Instructions
-
-- "pi" always stand for pi agent harness, not Rasberry Pi or something else.
-- Never patch the global Bun installation to fix Pi package issues; prefer harness-level solutions such as Pi extensions, wrappers, explicit finalizers, and repo-managed symlinks.
-- Always use `pi-extensions` skill for pi packages and extensions development.
-- Use the `pi-cli` skill for any questions regarding the `pi` command-line interface, flags, and automation.
-- Always provide factual and accurate information. If you are unsure about something, search for reliable sources before taking action or providing an answer.
-- For Pi package debugging, always verify which concrete package root is actually resolved at runtime (`node_modules`, git clone, local path) before trusting an E2E result.
-- **Tool groups:** Prefer existing tool groups from `agent/tool-groups.json` when configuring tools for agents, roles, extensions, or subagent overrides. Use aliases such as `@inspect`, `@review`, `@implement`, or `@lens` instead of repeating their individual members, and verify that the selected group resolves to the capabilities the task needs. If the same useful combination recurs, add or refine a named group in the dedicated configuration rather than duplicating the list. Enumerate individual tools only when no existing group fits or when a security boundary requires an exact least-privilege allowlist; document that exception so the narrower configuration remains intentional and maintainable.
-- **Contextual tool availability:** Workflow-, phase-, role-, or specialist-specific tools must be hidden from the active LLM tool schema by default. Expose them only after an explicit current-session entry action (for example `/sdd start`, `/sdd resume`, or starting brainstorm), preserve them only while that workflow remains actionable, and remove them on stop, completion, cancellation, reset, or unrelated session reload. Do not infer current-session ownership from globally durable work. Keep hard `tool_call` execution gates because visibility is not enforcement. Tests must verify both the hidden baseline and explicit activation through the real Pi runtime boundary, not only mocked `ExtensionAPI` objects.
-- **Cross-extension visibility state:** Pi loads extension entrypoints through separate Jiti instances with `moduleCache:false`; never use a normal module singleton for state shared across extensions. Use a runtime-safe process-global registry (`globalThis` with `Symbol.for(...)`) or Pi's shared event bus, and never key shared workflow leases by `ExtensionAPI` wrapper identity because every extension receives a distinct wrapper.
-- **Portable home paths:** Persist and document paths under the user home as `~/…`; expand them with `homedir()` before filesystem or child-process I/O. Never hardcode `/home/<user>` in tracked files. Tests must use `homedir()` or disposable fixtures, never the real home directory.
-- **TUI keyboard input:** In `Component.handleInput()`, recognize every key supported by `@earendil-works/pi-tui` with `matchesKey()` and `Key` instead of comparing raw terminal strings or escape sequences. This applies to navigation, dismissal, and printable shortcuts (`Esc`, arrows, Page Up/Down, `q`, `j`, etc.). A raw comparison is allowed only when the installed Pi TUI API cannot represent the input; document that exception and test it explicitly. Any key that mutates visible component state must also call `tui.requestRender()`. Regression tests must exercise both legacy terminal sequences and Kitty CSI-u encodings for special/navigation keys and assert the observable render or close result.
-- When working on pi-subagents config, consider the agent/settings.json model setup as the source of truth for model configuration unless a model is factually unavailable in the harness.
-
-**NEVER SPECULATE ON PI TYPES**: Always refer to the pi types in the harness or in the pi packages. Never assume a type or a property exists without verifying it in the codebase. That ensure you always import the correct types or built a specific type for your needs based on pi's actual types. If you cannot find the type, ask `pi-expert` for clarification.
-
-## Folder structure
-
-- `~/.pi/agent/`: Core logic and functionality of the pi harness. Most of your changes will be here.
-- `~/projects/pi-integrations/`: Coordination root for custom extensions and packages to integrate with the pi harness.
-  - Each project lives in its own subfolder, for example `~/projects/pi-integrations/my-extension/`.
-  - Each subfolder is intended to become an independent Git repository.
-  - The root of `pi-integrations` only holds the coordination layer (README, conventions, indexes, shared templates, and submodule entries).
-- `~/projects/shared-services/`: Infrastructure and infrastructure-adjacent services shared across projects (CLIProxy for model providers, compression benchmarks and services, dev-services compose files, community forks like `pi-lens`). Each subfolder is an independent concern and should not be mixed with pi-harness agent logic.
-
-**Notes:**
-
-- `pi-integrations` is a parent workspace, not a monorepo for production code.
-- `shared-services` hosts cross-project infrastructure and forks that are consumed by pi-harness projects but are not pi extensions themselves — keep them out of `pi-integrations/`.
-- Every project under `pi-integrations/` or `shared-services/` must keep its own package metadata, tests, docs, and tooling when relevant.
-- If a project is forked or customized, keep it as its own repository and reference it from the parent folder as a submodule or managed dependency.
-- Do not mix multiple independent projects in the same subfolder.
-- When integrating a project into the pi harness, prefer a clear import path from its own repository rather than copying code into `~/.pi/agent/`.
-
-## Mandatory Workflow — Any Code Changes
-
-You must follow these 3 phases **in order**, without skipping any. Each phase contains checklist steps. You only move on to the next phase when all the steps in the current phase are completed.
-
-### Phase 1 — Discovery (before writing a single line of code)
-
-Discover the project you will be working on:
-
-1. Read the configuration files of the existing project — package manager, test framework, linter, tsconfig
-2. Check the existing imports and conventions (e.g., `bun:test` vs. `vitest`, `bunfig.toml`)
-3. Identify the file(s) to modify or create, and their dependencies
-4. Verify that you understand the build/test infrastructure before writing any code
-
-**⚠ If it's a fork**, these steps are MANDATORY:
-
-- Check the package manager (bun, pnpm, npm) — never assume, read the config files
-- Check the test framework used — look at the imports in the existing tests
-- Check if the project has build/lint/typecheck scripts in package.json
-- Checks tsconfig.json for compilation rules
-
-### Phase 2 — Implementation (Required TDD)
-
-1. **Write test first** (RED): a test that fails for the target functionality
-2. **Write minimal code** (GREEN): just enough to pass the test
-3. **Refactor** (REFACTOR): cleans up without breaking the tests
-4. Run only the focused tests covering the current RED/GREEN/REFACTOR cycle. Do not run formatting, global lint, global typecheck, full tests, or `lens_diagnostics` mode `full` during implementation.
-
-Absolute rule: **no production line without a test that fails first.**
-
-### Validation cadence
-
-During implementation:
-
-- Run the smallest focused test after each substantive edit.
-- Run LSP diagnostics only on changed files.
-- Do not format between edits.
-- Do not run `lens_diagnostics` mode `full`.
-- Use cache-only `lens_diagnostics` modes `delta` or `all` only when needed.
-
-After implementation is stable:
-
-- Format task files once.
-- Run LSP diagnostics on changed files, focused lint, and focused tests covering the changed behavior.
-- Keep validation scoped to the task by default. Do not run project-wide typecheck, lint, full tests, builds, or expensive diagnostics merely because those commands exist.
-- Broaden validation only when the user explicitly requests it, the repository's documented CI or contribution contract requires it for this change, or the change is genuinely transversal/high-risk and focused checks cannot establish correctness. State the reason before running a broad check.
-- If a later edit invalidates a completed check, rerun only the affected check.
-
-### Phase 3 — Verification (Required before declaring complete)
-
-1. Run LSP diagnostics on every changed source file.
-2. Run the narrowest available typecheck and linter scope covering the changed files.
-3. Run focused tests covering the changed behavior and its directly affected directory or module.
-4. Verify that no unwanted artifacts are being tracked (lock files from the wrong package manager, build folders, etc.).
-5. Run project-wide gates only under the explicit broad-validation conditions above.
-
-**Rule**: fix task-caused failures before declaring complete. Report unrelated or pre-existing failures without expanding scope unless the user asks you to fix them.
-
-## Coding guidelines
+## Guidelines and Best Practices
 
 - Follow the existing code style and patterns in the project. Consistency is more important than personal preference.
 - Write clear, concise code with meaningful variable and function names. Avoid unnecessary complexity.
 - Document any non-obvious logic with comments. Assume the reader is familiar with the codebase but not with your specific implementation.
-- Use `oxlint` (check oxlint skill) through the project's package scripts. Prefer `bun run lint`; do not use `bunx oxlint` for a repo-owned dependency because it can resolve a cached version with different native bindings.
 - Avoid duplicating code. If you find yourself copying and pasting, consider refactoring to create reusable functions or modules.
-- Avoid running `dev` or `build` commands. If you really need to, ask first.
-- Some skills like `pi-extensions` and `pi-cli` are under ~/.pi/agent/skills so consider that folder as well when you are looking for skills.
+- Pi loads extension entrypoints through separate Jiti instances with `moduleCache:false`. Share cross-extension state through a process-global registry using `globalThis` with `Symbol.for(...)` or through Pi's shared event bus; never rely on a normal module singleton or key state by `ExtensionAPI` wrapper identity.
 
 **Important** Remember to avoid duplication, that's the most common source of silent errors and maintenance issues. Always prefer importing real modules over copying code.
 
-## Lint warnings from package boundary code
+### Paths and TUI input
 
-Some extensions bridge pi's generic TypeScript types (e.g. `ToolDefinition<TDetails>` where `TDetails` defaults to `unknown`). These generics are inherent to the pi framework — we cannot change them and `unknown` is an intentional part of pi's API contract.
+- Persist and document home-relative paths as `~/…`; expand them with `homedir()` before filesystem or child-process I/O. Never hardcode `/home/<user>` in tracked files or tests.
+- In `Component.handleInput()`, recognize supported `@earendil-works/pi-tui` keys with `matchesKey()` and `Key`, not raw terminal strings. Document and test any unavoidable raw comparison.
+- After an input mutates visible component state, call `tui.requestRender()`. Test legacy terminal sequences and Kitty CSI-u encodings for special and navigation keys.
 
-**When you encounter an oxlint warning and cannot eliminate it without breaking typecheck, inspect the type origin:**
+### Tool groups and contextual visibility
 
-1. If the type comes from `@earendil-works/pi-coding-agent` or another package we don't own → this is a **package boundary warning**.
-2. If you can replace `unknown` with a concrete pi-exported type (`GrepToolDetails`, `FindToolDetails`, etc.) → do that instead. Check the actual `.d.ts` files in `node_modules/@earendil-works/pi-coding-agent/dist/` — do not guess.
-3. If the pi type is **not re-exported** from the public entrypoint (e.g. `ToolRenderContext`) or the generic cannot be eliminated → the warning is intentional. Wrap the line in a `// oxlint-disable-next-line <rule>` comment with a brief rationale.
+- Prefer named groups from `agent/tool-groups.json` when configuring tools for agents, roles, extensions, or subagent overrides. Use aliases such as `@inspect`, `@review`, `@implement`, or `@lens` when an existing group fits.
+- Enumerate individual tools only when no group fits or a security boundary requires an exact least-privilege allowlist. Document that exception.
+- Hide workflow-, phase-, role-, and specialist-specific tools from the active LLM schema by default. Expose them only after an explicit current-session entry action and remove them on stop, completion, cancellation, reset, or unrelated reload.
+- Keep hard `tool_call` execution gates because visibility is not enforcement. Test both the hidden baseline and explicit activation through the real Pi runtime boundary.
 
-**Rule of thumb:** If the only way to silence the warning would break `bun run typecheck` or `bun test`, then the warning is a package-boundary cost that we accept. Do not chase zero warnings at the expense of type safety.
+## Package commands and linting
 
-**Verified examples of accepted warnings:**
+- Treat every shell call as an independent process. Select the package root in the same invocation, for example `bun --cwd=~/.pi/agent run lint` or `cd ~/.pi/agent && bun run lint`.
+- Use package scripts for package-wide checks so Bun resolves repository-owned binaries from `node_modules/.bin`. Invoke a local binary directly only when no script can express the focused check.
+- Run oxlint through the repository script: use `bun run lint`, not `bunx oxlint`, because the latter may resolve a cached binary with incompatible native bindings.
+- Use `bun run lint` for routine checks. It reports warnings without blocking.
+- Use `bun run lint:check` only when a strict zero-warning gate is required; it passes `--deny-warnings` and exits non-zero on warnings.
+- Do not run `dev` or `build` merely as a routine post-edit check. Run them when the task, repository contract, or required validation actually depends on them.
 
-- `makeRenderResult` in `pi-overrides/index.ts` uses `any` for the generic `F extends (...args: any[])`, `unknown` in the return cast, and `as never` for the inner call — all necessary because `ToolRenderContext` is not publicly exported and pi's generics default to `unknown`.
+### Package-boundary lint warnings
 
-## Lint execution
+Some Pi APIs intentionally expose generics that default to `unknown`. When oxlint reports a warning at a package boundary:
 
-- `bun run lint` (no `--deny-warnings`): warnings print but do not block. Use this for routine checks.
-- `bun run lint:check` (with `--deny-warnings`): exits non-zero on any warning. Use this only as a strict gate when you need zero-tolerance.
+1. Inspect the type origin in `@earendil-works/pi-coding-agent` or the owning package.
+2. Replace `unknown` with a concrete publicly exported Pi type such as `GrepToolDetails` or `FindToolDetails` when one exists.
+3. Inspect the installed `.d.ts` files under `node_modules/@earendil-works/pi-coding-agent/dist/`; never guess the type.
+4. If the required type is not exported or the generic cannot be eliminated without breaking typecheck, add a narrow `// oxlint-disable-next-line <rule>` with a short package-boundary rationale.
 
-## Shell working directory and package binaries
+Do not chase zero warnings at the expense of type safety. For example, `makeRenderResult` in `pi-overrides/index.ts` requires boundary casts because `ToolRenderContext` is not publicly exported.
 
-Every shell-tool call starts an independent process. A prior `cd` never selects the working directory for a later call. Select the package root in the same invocation, such as `bun --cwd=~/.pi/agent run lint` or `cd ~/.pi/agent && bun run lint`; an absolute executable path does not change how relative target paths resolve.
+## Pi extension tests
 
-Use package scripts for package-wide checks. Bun resolves their local binaries from `node_modules/.bin`. Invoke a local binary directly only when a package script cannot express a required focused check, and still select its package root in that invocation.
+### Runner and imports
 
-**Test Driven Development (TDD) is mandatory for any code changes.** Follow the TDD cycle: Write a failing test → Write minimal code to pass the test → Refactor → Run the test suite to confirm all tests pass (follow `tdd` skill).
-
-<test-driven-development>
-
-### Test Framework
-
-- **`bun test` is prefered when applicable.** Use bun's native test runner (`bun:test` imports) for all testing — it's 10x faster startup and 2.5-8x faster execution than vitest. Never use manual console.log test harnesses.
-- **Run the agent test suite with `agent/` as Bun's working directory.** Bun loads `bunfig.toml` from the process `cwd`; it does not discover a nested config from a positional test path. From `~/.pi/agent`, use `bun test --isolate`. From `~/.pi`, use `bun --cwd=~/.pi/agent test --isolate`. Do not use `bun test agent` from the parent directory: that bypasses `agent/bunfig.toml` and discovers vendored tests under `agent/git/**`.
-- Import the module under test directly — **never copy-paste functions** into the test file. Testing copies of code instead of real imports is the most common silent failure pattern: the copy diverges from the source, and errors like missing dependencies or broken imports go undetected.
-- If an import cannot be resolved by the test runner (e.g. pi extension packages requiring jiti), **mock it with `mock.module()`** — do not inline a copy. The goal is to exercise the real module and catch resolution errors at test time.
-
-## Mocking pi extensions
-
-When a module imports from pi packages that require jiti (e.g., `@plannotator/pi-extension`, `@earendil-works/pi-coding-agent`), use bun's `mock.module()` to stub them:
+- Prefer `bun:test` when applicable. Never create manual `console.log` test harnesses.
+- Run the agent test suite with `agent/` as Bun's working directory so it loads `agent/bunfig.toml`:
+  - From `~/.pi/agent`: `bun test --isolate`.
+  - From `~/.pi`: `bun --cwd=~/.pi/agent test --isolate`.
+  - Never use `bun test agent` from the parent directory; it bypasses `agent/bunfig.toml` and discovers vendored tests under `agent/git/**`.
+- Import the real module under test. Never copy implementation functions into a test.
+- If a Pi package import requires Jiti and cannot load directly, use `mock.module()` and dynamically import the real module after installing the mock.
 
 ```ts
-import { mock, describe, it, expect } from "bun:test";
+import { expect, mock, test } from "bun:test";
 
 mock.module("@plannotator/pi-extension/plannotator-browser.js", () => ({
   openPlanReviewBrowser: mock(),
@@ -181,68 +89,47 @@ mock.module("@plannotator/pi-extension/plannotator-browser.js", () => ({
   hasPlanBrowserHtml: mock().mockReturnValue(false),
 }));
 
-// ⚠️ mock.module() is NOT hoisted — use dynamic import after setting up the mock
 const { validatePlanPath } = await import("./index.ts");
 ```
 
-Key difference from vitest's `vi.mock()`: bun's `mock.module()` executes in order, not hoisted. Static `import` after `mock.module()` won't see the mock — you must use `await import(...)` after the mock setup.
+`mock.module()` is not hoisted. A static import does not reliably observe a mock registered earlier in source order; use `await import(...)` after mock setup.
 
-This catches import errors, type mismatches, and structural issues while keeping tests fast and isolated from the pi runtime.
+### Test placement
 
-## When to use `@abdwhb-png/pi-test-harness` vs. plain `bun:test`
+- For a single-file extension directly under `agent/extensions/`, place tests in `agent/extensions/__tests__/`; otherwise Pi may auto-discover the test as an extension.
+- For a directory-form extension, Pi loads only its `index.ts`, so tests may live beside its source files.
 
-`@abdwhb-png/pi-test-harness` boots a real Pi session (jiti, tool wrapping, hook runner, event bus) — that cost is justified only when the test must exercise real runtime behavior. It is **not** a default; it is a targeted tool. Refer to the `pi-test-harness` skill for the full API.
+### Plain `bun:test` versus `@abdwhb-png/pi-test-harness`
 
-**Use `bun:test` + `mock.module()` (default) when:**
+Use `bun:test` with `mock.module()` for pure helpers, configuration parsing, string or JSON transforms, isolated import verification, and type-shape checks.
 
-- Testing **pure helpers / pure logic** (string transforms, JSON shaping, schema validation, math, config parsing) — even if they live in an extension file.
-- Testing **imports in isolation** — `mock.module()` + `await import()` catches resolution/type/structural errors without paying for a session.
-- Testing **type shapes** — `tsc --noEmit` or `expectTypeOf` needs no runtime at all.
+Use `@abdwhb-png/pi-test-harness` only when the test must exercise real Pi runtime wiring, including:
 
-**Reach for `pi-test-harness` when the test must exercise real Pi runtime wiring that mocks cannot reproduce faithfully:**
+- the `pi.registerTool(...)` execution pipeline;
+- blocking or mutation through `tool_call` or `tool_result` hooks;
+- multi-turn agent flow or `turn_end` and `agent_end` gates;
+- branching through `ctx.ui.confirm`, `select`, `input`, or `editor` using `mockUI`;
+- an extension that spawns `pi` and requires the harness PATH shim.
 
-- A `pi.registerTool(...)` whose `execute()` depends on the real tool-wrapping pipeline (params validation, `beforeExecute`, `renderResult` overrides).
-- A `pi.on("tool_call" | "tool_result", ...)` hook that **blocks** or **mutates** calls — the harness records the canonical outcome as `blocked`/`blockReason` on the `ToolCallRecord` and `isError`/result text on the `ToolResultRecord`; `ToolBlockedError` is not promised by normal Pi 0.83 runs.
-- Multi-turn agent flow where one tool's output feeds the next call, or where `turn_end` / `agent_end` hooks gate the next step.
-- `ctx.ui.confirm / select / input / editor` interactions that branch extension logic — driven via `mockUI`, asserted via `t.events.uiCallsFor(...)`.
-- An extension that **spawns `pi` as a subprocess** — only `createMockPi()` provides the PATH shim.
+If removing Pi's runtime would allow the test to pass without exercising the defect, use the harness. Otherwise prefer plain `bun:test`.
 
-**Rule of thumb:** if dropping Pi's runtime would make the test trivially pass without exercising the bug you are guarding against → use the harness. Otherwise plain `bun:test` is faster and sufficient.
+Harness limitations and release boundaries:
 
-**Caveats:**
+- `MockUIConfig` does not cover `ctx.ui.custom(...)`; test overlay handlers in isolation.
+- Upstream harness CI is Vitest-only. Smoke-test the first `bun:test` integration before relying on Bun-specific process-exit or PATH-shim behavior.
+- `verifySandboxInstall` performs `npm pack` and `npm install`; use it as a release gate, not a routine per-change check.
 
-- `MockUIConfig` does **not** cover `ctx.ui.custom(...)` — TUI-overlay extensions cannot be driven through the harness; fall back to testing the handler function in isolation.
-- The harness upstream CI is Vitest-only. Running under `bun:test` works in theory; smoke-test the first harness-based test you add to confirm `bun` compatibility for your specific extension (process-exit timing for `safeRmSync`, `child_process.spawn` PATH-shim behavior).
-- Like any integrated layer, `verifySandboxInstall` is a release gate (one test per publish), not a per-PR loop — its `npm pack` + `npm install` cost is real.
+## Model configuration verification
 
-</test-driven-development>
+Before adding or changing an ai provider model, verify  `contextWindow`, `maxTokens`, cost, input modalities, and reasoning support against the provider's current official documentation or API, or a trusted aggregator such as the OpenRouter API.
 
-# More Resources
+1. Identify the underlying provider model rather than inferring from a local alias.
+2. Verify context length, maximum output, and modalities from the source.
+3. Record subscription/OAuth models as zero marginal API cost only when that billing assumption is confirmed; use the relevant provider pricing for OpenCode Go and OpenRouter models.
+4. Never copy specifications from another model or assume default token limits.
+5. **Do not guess model specs:** Assuming `contextWindow: 1000000` or `maxTokens: 8192` as defaults is incorrect. Each model has specific, documented limits.
 
-<model-config-verification>
-
-# ⚠️ Model Configuration — Factual Verification Required
-
-**Whenever you add or configure a model in `models.json` (contextWindow, maxTokens, cost, input modes, reasoning), you MUST verify the specs factually against the provider's official documentation, API, or trusted aggregator (e.g. OpenRouter API).**
-
-This applies to models from:
-
-- OpenCode Go (`ocg/`): check OpenCode docs
-- OpenRouter pool (`or/` aliases): check OpenRouter API (`https://openrouter.ai/api/v1/models`)
-- OAuth providers (Antigravity, Codex, etc.): check the underlying provider's official docs (Anthropic, Google, OpenAI, etc.) or OpenRouter for the closest equivalent model
-
-**Process:**
-
-1. Identify the underlying model (e.g., `claude-sonnet-4-6` → `anthropic/claude-sonnet-4.6` on OpenRouter)
-2. Query the provider's API or documentation for context length, max output tokens, supported input modalities
-3. Pricing: OAuth models are $0 (already covered by subscription); OpenCode Go uses the Go pricing; OpenRouter pool uses OpenRouter pricing
-4. Never copy-paste specs from one model to another without verifying — even within the same provider family
-
-**Anti-pattern: guessing specs.** Do not assume `contextWindow: 1000000` or `maxTokens: 8192` as defaults. Each model has specific, documented limits.
-
-</model-config-verification>
-
-### ANTI PATTERNS
+## ANTI PATTERNS
 
 - **Guess or Speculate about PI framework internals:** Avoid making assumptions about the internal behavior or structure of the PI framework. **Solution:** Ask `pi-expert` or refer to the official documentation.
 - **Speculating with casts and generic gymnastics where the real fix is simpler**. **Solution:** Let TypeScript infer the parameter types directly from the framework's types. For example, if a pi extension tool expects `ToolDefinition` from `@earendil-works/pi-coding-agent`, do not cast or wrap it in a generic. Import the type and use it directly (e.g., `import type { ToolDefinition } from "@earendil-works/pi-coding-agent";`).
@@ -251,6 +138,7 @@ This applies to models from:
   - **Single-file extensions** (a `.ts` directly under `agent/extensions/`): pi auto-discovers any `.ts` file there, so placing a test file next to it would be loaded as an extension and fail. **Place tests in `agent/extensions/__tests__/`** instead.
   - **Directory-form extensions** (a subfolder like `agent/extensions/my-ext/`): pi only loads `index.ts` from the subfolder. Test files can sit alongside source files safely.
 
-## Additional Resources
+## Additional resources
 
-- **Mandatory additional memory layer:** Always consider [MEMORY](./MEMORY.md) as a source of truth for past interactions, context, and user preferences. Use it to inform your decisions and avoid repeating past mistakes.
+- Consider [MEMORY.md](./MEMORY.md) when past Pi decisions or user preferences could affect the task.
+- Skills specific to Pi may also exist under `agent/skills`.
