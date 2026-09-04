@@ -41,6 +41,8 @@ Actions:
 
 Every matching group is evaluated, so allowing one group cannot bypass another matching group's `ask` or `deny` policy.
 
+The `safe_bash` tool description and `promptSnippet` always reflect live state: `Mode`, per-group `allow`/`ask`/`deny(default)`, `AllowedShell` bypass list, and `native-redirect` status. `before_agent_start` and `/safe-bash reload` refresh it, so the LLM sees what will be blocked before calling `rm` or equivalents.
+
 `allowDangerous` is removed and ignored. `safeBash.mode` remains unchanged: `replace` removes raw `bash`, while `coexist` exposes both tools.
 
 ## Telemetry configuration
