@@ -116,14 +116,23 @@ function hasCurrentRoleSave(
 ): boolean {
     const activation = activeRoleActivation(entries);
     if (!activation || activation.name !== expectedRole) return false;
-    for (let index = activation.index + 1; index < entries.length; index += 1) {
+
+    const activationTimes = new Set<number>();
+    const savedActivationTimes = new Set<number>();
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
         const entry = entries[index];
-        if (!Value.Check(SavedEntrySchema, entry)) continue;
+        if (Value.Check(ActiveRoleEntrySchema, entry)) {
+            if (entry.data.name !== expectedRole) return false;
+            activationTimes.add(entry.data.appliedAt);
+            if (savedActivationTimes.has(entry.data.appliedAt)) return true;
+            continue;
+        }
         if (
-            entry.data.role === activation.name &&
-            entry.data.roleAppliedAt === activation.appliedAt
+            Value.Check(SavedEntrySchema, entry) &&
+            entry.data.role === expectedRole
         ) {
-            return true;
+            savedActivationTimes.add(entry.data.roleAppliedAt);
+            if (activationTimes.has(entry.data.roleAppliedAt)) return true;
         }
     }
     return false;
@@ -166,11 +175,15 @@ function requireSave(
     states: Map<string, GuardState>,
     ctx: ExtensionContext,
 ): void {
-    if (!guardedRole(ctx)) return;
+    const role = guardedRole(ctx);
+    if (!role) return;
     const id = sessionIdentity(ctx);
     const previous = states.get(id);
     states.set(id, {
-        saveRequired: true,
+        saveRequired: !hasCurrentRoleSave(
+            ctx.sessionManager.getEntries(),
+            role.name,
+        ),
         pendingFollowUp: false,
         interventions: previous?.interventions ?? 0,
     });

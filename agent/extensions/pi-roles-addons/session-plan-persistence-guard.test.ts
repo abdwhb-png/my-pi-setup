@@ -224,6 +224,141 @@ describe("session plan persistence guard", () => {
         ).toEqual({ allow: true });
     });
 
+    it("allows leaving after reload re-applies the same role with a saved plan", () => {
+        const { entries } = setup();
+        entries.push(
+            {
+                type: "custom",
+                customType: "pi-roles:active-role",
+                data: {
+                    name: "quick-planner",
+                    source: "user",
+                    path: "/roles/quick-planner.md",
+                    appliedAt: 100,
+                },
+            },
+            {
+                type: "custom",
+                customType: "session-plan-persistence-guard:saved",
+                data: {
+                    role: "quick-planner",
+                    roleAppliedAt: 100,
+                },
+            },
+            {
+                type: "custom",
+                customType: "pi-roles:active-role",
+                data: {
+                    name: "quick-planner",
+                    source: "user",
+                    path: "/roles/quick-planner.md",
+                    appliedAt: 200,
+                },
+            },
+        );
+        const policy = registerRoleTransitionPolicy.mock.calls[0]?.[0];
+
+        expect(
+            policy({
+                from: {
+                    name: "quick-planner",
+                    handoffGuard: "session-plan-persistence",
+                },
+                to: { name: "pi-agent" },
+                sessionEntries: entries,
+            }),
+        ).toEqual({ allow: true });
+    });
+
+    it("allows final prose after reload restores a role with a saved plan", () => {
+        getActiveRole.mockReturnValue({
+            name: "quick-planner",
+            path: "/roles/quick-planner.md",
+            appliedAt: 200,
+        });
+        const { ctx, entries, handlers } = setup();
+        entries.push(
+            {
+                type: "custom",
+                customType: "pi-roles:active-role",
+                data: {
+                    name: "quick-planner",
+                    source: "user",
+                    path: "/roles/quick-planner.md",
+                    appliedAt: 100,
+                },
+            },
+            {
+                type: "custom",
+                customType: "session-plan-persistence-guard:saved",
+                data: {
+                    role: "quick-planner",
+                    roleAppliedAt: 100,
+                },
+            },
+            {
+                type: "custom",
+                customType: "pi-roles:active-role",
+                data: {
+                    name: "quick-planner",
+                    source: "user",
+                    path: "/roles/quick-planner.md",
+                    appliedAt: 200,
+                },
+            },
+        );
+
+        handlers.get("before_agent_start")!({}, ctx);
+
+        expect(
+            handlers.get("message_end")!(
+                { message: assistantText("implementation handoff") },
+                ctx,
+            ),
+        ).toBeUndefined();
+    });
+
+    it("requires a new save after leaving and re-entering the planning role", () => {
+        const { entries } = setup();
+        entries.push(
+            {
+                type: "custom",
+                customType: "pi-roles:active-role",
+                data: { name: "quick-planner", appliedAt: 100 },
+            },
+            {
+                type: "custom",
+                customType: "session-plan-persistence-guard:saved",
+                data: { role: "quick-planner", roleAppliedAt: 100 },
+            },
+            {
+                type: "custom",
+                customType: "pi-roles:active-role",
+                data: { name: "pi-agent", appliedAt: 150 },
+            },
+            {
+                type: "custom",
+                customType: "pi-roles:active-role",
+                data: { name: "quick-planner", appliedAt: 200 },
+            },
+        );
+        const policy = registerRoleTransitionPolicy.mock.calls[0]?.[0];
+
+        expect(
+            policy({
+                from: {
+                    name: "quick-planner",
+                    handoffGuard: "session-plan-persistence",
+                },
+                to: { name: "pi-agent" },
+                sessionEntries: entries,
+            }),
+        ).toEqual({
+            allow: false,
+            reason: expect.stringContaining("session_plan"),
+        });
+    });
+
     it("does not accept history, failed saves, or roles without opt-in", () => {
         const { ctx, entries, handlers } = setup();
         handlers.get("before_agent_start")!({}, ctx);

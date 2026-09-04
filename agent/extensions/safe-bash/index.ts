@@ -30,14 +30,18 @@ import {
     bashWithStdinSchema,
     killActiveBashProcesses,
 } from "../_shared/bash/exec";
-import {
-    inspectDangerousMatches,
-    redirectShellCommandWithPolicy,
-} from "../_shared/bash/guard";
 import { createBashPrefixRenderer } from "../_shared/bash/prefix-renderer";
-import { applyFirstRewrite, loadBashRewrites } from "../_shared/bash/rewrites";
-import { createSharedBashOperations } from "../_shared/bash/sandbox-execution-broker";
+import { loadBashRewrites } from "../_shared/bash/rewrites";
 import { appendCompressionFooter } from "../_shared/compression-render";
+import {
+    claimSafeExecutionBroker,
+    getSafeExecutionService,
+    publishSafeExecutionError,
+    publishSafeExecutionService,
+    releaseSafeExecutionBroker,
+} from "../_shared/safe-execution/broker.ts";
+import { createSafeExecutionService } from "../_shared/safe-execution/core.ts";
+import { isSafeExecutionError } from "../_shared/safe-execution/failure.ts";
 import { applyMode, restoreBash, shouldBlockBashCall } from "./apply-mode.ts";
 import { registerSafeBashAuditCommand } from "./audit-command.ts";
 import {
@@ -46,10 +50,7 @@ import {
     type SafeBashGuardPolicy,
     type SafeBashMode,
 } from "./config.ts";
-import {
-    authorizeDangerousMatches,
-    GuardSessionApprovals,
-} from "./guard-policy.ts";
+import { GuardSessionApprovals } from "./guard-policy.ts";
 import {
     createSafeBashTelemetryRecorder,
     type SafeBashTelemetryRecorder,
@@ -80,6 +81,17 @@ export default function (pi: ExtensionAPI) {
     let telemetryRecorder: SafeBashTelemetryRecorder | null = null;
     let telemetrySequence = 0;
     let auditRecommendationTurnActive = false;
+    const safeExecutionOwner = Symbol("safe-bash-extension-owner");
+    const safeExecutionService = createSafeExecutionService({
+        approvals: guardSessionApprovals,
+        getAllowedShellCommands: () => currentAllowedShellCommands,
+        getGuardPolicy: () => currentGuardPolicy,
+        getRewriteRules: () => currentRewriteRules,
+        getTelemetryRecorder: () => telemetryRecorder,
+        shouldEnforceNativeTools,
+    });
+    claimSafeExecutionBroker(safeExecutionOwner);
+    publishSafeExecutionService(safeExecutionOwner, safeExecutionService);
 
     /** Reload config from settings.json and apply the mode to the active tools. */
     function reloadConfig(cwd: string): SafeBashMode {
@@ -166,77 +178,30 @@ export default function (pi: ExtensionAPI) {
             return component;
         },
         async execute(toolCallId, params, signal, onUpdate, ctx) {
-            const authorization = await authorizeDangerousMatches(
-                inspectDangerousMatches(params.command),
-                currentGuardPolicy,
-                ctx,
-                guardSessionApprovals,
-            );
-            const danger = authorization.match ?? null;
-            if (!authorization.allowed && danger) {
-                await telemetryRecorder?.record({
-                    toolCallId,
-                    command: params.command,
-                    match: danger,
-                    outcome: "blocked",
-                    reason: authorization.reason,
-                });
-                throw new Error(authorization.reason ?? danger.message);
-            }
-            const redirect = redirectShellCommandWithPolicy(
-                params.command,
-                shouldEnforceNativeTools(),
-                currentAllowedShellCommands,
-            );
-            if (redirect) {
-                await telemetryRecorder?.record({
-                    toolCallId,
-                    command: params.command,
-                    match: null,
-                    decision: "blocked",
-                    outcome: "blocked",
-                    groupId: "native-tool-redirect",
-                    reason: redirect,
-                });
-                throw new Error(redirect);
-            }
-            const executionDefinition = createBashToolDefinition(ctx.cwd, {
-                operations: createSharedBashOperations({
-                    stdin: params.stdin,
-                    rewriteCommand: (command) =>
-                        applyFirstRewrite(
-                            command,
-                            "safe_bash",
-                            currentRewriteRules,
-                        ),
-                }),
-            });
             try {
-                const result = await executionDefinition.execute(
+                return await getSafeExecutionService().execute({
                     toolCallId,
-                    { command: params.command, timeout: params.timeout },
+                    origin: "safe_bash",
+                    command: params.command,
+                    timeout: params.timeout,
+                    stdin: params.stdin,
                     signal,
                     onUpdate,
                     ctx,
-                );
-                await telemetryRecorder?.record({
-                    toolCallId,
-                    command: params.command,
-                    match: danger,
-                    decision: danger ? "allowed" : undefined,
-                    outcome: "succeeded",
                 });
-                return result;
             } catch (error) {
-                await telemetryRecorder?.record({
-                    toolCallId,
-                    command: params.command,
-                    match: danger,
-                    decision: danger ? "allowed" : undefined,
-                    outcome: signal?.aborted ? "aborted" : "failed",
-                    error:
-                        error instanceof Error ? error.message : String(error),
-                });
+                if (isSafeExecutionError(error)) {
+                    const kind = error.getKind();
+                    if (
+                        kind === "bash_exit" ||
+                        kind === "bash_timeout" ||
+                        kind === "bash_aborted"
+                    ) {
+                        throw new Error(error.getRaw() || error.message, {
+                            cause: error,
+                        });
+                    }
+                }
                 throw error;
             }
         },
@@ -248,8 +213,17 @@ export default function (pi: ExtensionAPI) {
         telemetrySequence = 0;
         auditRecommendationTurnActive = false;
         guardSessionApprovals.clear();
-        reloadConfig(ctx.cwd);
-        await initializeTelemetry(ctx);
+        try {
+            reloadConfig(ctx.cwd);
+            await initializeTelemetry(ctx);
+            publishSafeExecutionService(
+                safeExecutionOwner,
+                safeExecutionService,
+            );
+        } catch (error) {
+            publishSafeExecutionError(safeExecutionOwner, error);
+            throw error;
+        }
     });
 
     // Hard guarantee: even if the LLM references `bash` from earlier history,
@@ -280,6 +254,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("session_shutdown", async () => {
+        releaseSafeExecutionBroker(safeExecutionOwner);
         auditRecommendationTurnActive = false;
         guardSessionApprovals.clear();
         killActiveBashProcesses();

@@ -82,6 +82,14 @@ describe('safe_bash explicit stdin', () => {
     });
 
     it('fails closed when sandbox execution is unavailable', async () => {
+        // The sandbox broker uses a typed `SandboxUnavailableError` with a
+        // closed enum kind and a process-global brand. The safe-execution
+        // classifier recognizes the brand and surfaces a bounded actionable
+        // reason (one of: uninitialized / disabled / initialization failed)
+        // without ever forwarding the publisher's arbitrary raw
+        // initialization error text. Project policy preserves actionable
+        // failure evidence; this path must not be flattened to a generic
+        // 'Command failed' reason.
         await expect(
             registerExtension({ execution: 'missing' }).execute(
                 'call-uninitialized',
@@ -106,6 +114,35 @@ describe('safe_bash explicit stdin', () => {
         );
 
         expect(createOperations).toHaveBeenCalledTimes(1);
+    });
+
+    it('surfaces stdout and stderr when a command exits nonzero', async () => {
+        let error: unknown;
+        try {
+            await registerExtension().execute(
+                'call-failed-output',
+                {
+                    command:
+                        "printf 'SAFE_BASH_STDOUT_MARKER\\n'; printf 'SAFE_BASH_STDERR_MARKER\\n' >&2; exit 23",
+                },
+                undefined,
+                undefined,
+                context,
+            );
+        } catch (cause) {
+            error = cause;
+        }
+
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain(
+            'SAFE_BASH_STDOUT_MARKER',
+        );
+        expect((error as Error).message).toContain(
+            'SAFE_BASH_STDERR_MARKER',
+        );
+        expect((error as Error).message).toContain(
+            'Command exited with code 23',
+        );
     });
 
     it('pipes exact stdin through the real bash definition', async () => {
