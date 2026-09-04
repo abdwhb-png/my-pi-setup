@@ -24,6 +24,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import { getActivePolicy } from "../_shared/audit-mode/audit-state";
 import { appendCompressionFooter } from "../_shared/compression-render";
 import { expandHomePath } from "../_shared/home-path.ts";
+import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
 import {
     loadFileResolverConfig,
     setFileResolverConfig,
@@ -251,6 +252,7 @@ function makeRenderResult<F extends (...args: any[]) => Component>(
             options.isPartial,
         );
     };
+    // SAFETY: Pi does not export ToolRenderContext; F is the original renderResult signature wrapped without changing its call contract.
     // oxlint-disable-next-line typescript/no-restricted-types, typescript/no-unsafe-type-assertion
     return wrap as unknown as F;
 }
@@ -409,6 +411,7 @@ export default function piOverrides(pi: ExtensionAPI): void {
     piFileResolver(pi);
     registerPromptThinking(pi);
     let rescuedSkills: RescuedSkill[] = [];
+    let sessionCwd = process.cwd();
     pi.registerCommand("validate-skills", {
         description:
             "Report BOM and frontmatter problems in discoverable skills",
@@ -510,7 +513,17 @@ export default function piOverrides(pi: ExtensionAPI): void {
             if (!skill) return undefined;
 
             return {
-                content: [{ type: "text", text: skill.content }],
+                content: [
+                    {
+                        type: "text",
+                        text: requestMarkdownLinkTransform(pi.events, {
+                            sourcePath: skill.path,
+                            content: skill.content,
+                            cwd: sessionCwd,
+                            sourceKind: "bom-skill-fallback",
+                        }),
+                    },
+                ],
                 details: undefined,
                 isError: false,
             };
@@ -553,6 +566,7 @@ export default function piOverrides(pi: ExtensionAPI): void {
     });
 
     pi.on("session_start", async (_event, ctx) => {
+        sessionCwd = ctx.cwd;
         restoreCompactSessionNameState(ctx.sessionManager.getEntries());
         const trusted =
             typeof ctx.isProjectTrusted === "function" &&

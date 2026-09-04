@@ -3,8 +3,11 @@ import {
     defineTool,
     type AgentToolResult,
     type ExtensionAPI,
+    type ExtensionCommandContext,
+    type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
 import {
     buildSkillList,
     findSkill,
@@ -150,6 +153,7 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
             params: { name: string },
             _signal: AbortSignal | undefined,
             _onUpdate: unknown,
+            context: ExtensionContext,
         ): Promise<AgentToolResult<undefined>> {
             refreshSkillList();
             const skill = findSkill(skillList, params.name);
@@ -169,7 +173,12 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
             let content: string;
             try {
                 const buf = await readFile(skill.path);
-                content = buf.toString("utf-8");
+                content = requestMarkdownLinkTransform(pi.events, {
+                    sourcePath: skill.path,
+                    content: buf.toString("utf-8"),
+                    cwd: context.cwd,
+                    sourceKind: "load-skill-tool",
+                });
             } catch (err) {
                 return {
                     content: [
@@ -222,7 +231,7 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
                     }))
                     .slice(0, 30);
             },
-            handler: async (args: string) => {
+            handler: async (args: string, context: ExtensionCommandContext) => {
                 const names = args.trim().split(/\s+/).filter(Boolean);
                 if (names.length === 0) {
                     return;
@@ -239,7 +248,15 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
                     try {
                         // oxlint-disable-next-line eslint/no-await-in-loop -- sequential load by design
                         const buf = await readFile(skill.path);
-                        const content = buf.toString("utf-8");
+                        const content = requestMarkdownLinkTransform(
+                            pi.events,
+                            {
+                                sourcePath: skill.path,
+                                content: buf.toString("utf-8"),
+                                cwd: context.cwd,
+                                sourceKind: "load-skills-command",
+                            },
+                        );
 
                         pi.sendMessage(
                             {

@@ -1,5 +1,16 @@
-import { describe, it, expect } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
 import {
+    createEventBus,
+    type ExtensionAPI,
+} from '@earendil-works/pi-coding-agent';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+    isMarkdownLinkTransformRequest,
+    MARKDOWN_LINKS_TRANSFORM_EVENT,
+} from '../_shared/markdown-links.ts';
+import contextExtension, {
     appendToolsListPrompt,
     buildContextSendMessage,
     buildToolsListSnippet,
@@ -286,6 +297,55 @@ describe('appendToolsListPrompt', () => {
             [{ name: 'bash', description: 'Run commands' }],
         );
         expect(result).toBe(defaultPrompt);
+    });
+});
+
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+    for (const directory of temporaryDirectories.splice(0)) {
+        rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+describe('context-send command', () => {
+    it('requests source-aware Markdown rewriting before sending files', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'context-send-markdown-'));
+        temporaryDirectories.push(root);
+        const nested = join(root, 'nested');
+        mkdirSync(nested);
+        const agentsPath = join(root, 'AGENTS.md');
+        writeFileSync(agentsPath, 'Read [guide](guide.md)');
+        writeFileSync(join(root, 'guide.md'), 'guide');
+        const commands = new Map<string, (args: string, context: any) => unknown>();
+        const sentMessages: Array<{ content: string }> = [];
+        const events = createEventBus();
+        const pi = {
+            events,
+            on: mock(() => {}),
+            registerCommand(
+                name: string,
+                command: { handler: (args: string, context: any) => unknown },
+            ) {
+                commands.set(name, command.handler);
+            },
+            sendMessage(message: { content: string }) {
+                sentMessages.push(message);
+            },
+        };
+        events.on(MARKDOWN_LINKS_TRANSFORM_EVENT, (value) => {
+            if (!isMarkdownLinkTransformRequest(value)) return;
+            if (value.sourcePath !== agentsPath) return;
+            expect(value.sourceKind).toBe('context-send-command');
+            value.result = `Read [guide](${join(root, 'guide.md')})`;
+        });
+        contextExtension(pi as unknown as ExtensionAPI);
+
+        await commands.get('context-send')?.('', { cwd: nested });
+
+        expect(sentMessages.at(-1)?.content).toContain(
+            `Read [guide](${join(root, 'guide.md')})`,
+        );
     });
 });
 

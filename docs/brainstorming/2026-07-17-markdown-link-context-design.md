@@ -3,8 +3,11 @@
 # Markdown Link Context Extension
 
 **Date:** 2026-07-17  
-**Status:** Accepted design  
+**Status:** Superseded by [ADR-022](../adr/ADR-022-source-aware-markdown-link-rewriting.md)
+
 **Target:** `agent/extensions/markdown-links/`
+
+ADR-022 replaces recursive linked-content injection with source-aware destination rewriting. This file remains historical context only.
 
 ## Context
 

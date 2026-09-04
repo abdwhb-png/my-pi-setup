@@ -11,6 +11,10 @@ import {
     resetAuditState,
     setActiveProfile,
 } from '../_shared/audit-mode/audit-state';
+import {
+    isMarkdownLinkTransformRequest,
+    MARKDOWN_LINKS_TRANSFORM_EVENT,
+} from '../_shared/markdown-links.ts';
 
 const {
     createFindToolDefinition,
@@ -80,7 +84,20 @@ function createMockExtensionApi(
     >();
     let activeTools: string[] = ['read', 'bash', 'edit', 'write'];
     let sessionName = initialSessionName;
+    const eventHandlers = new Map<string, Set<(value: unknown) => void>>();
+    const events = {
+        emit(channel: string, value: unknown) {
+            for (const handler of eventHandlers.get(channel) ?? []) handler(value);
+        },
+        on(channel: string, handler: (value: unknown) => void) {
+            const registered = eventHandlers.get(channel) ?? new Set();
+            registered.add(handler);
+            eventHandlers.set(channel, registered);
+            return () => registered.delete(handler);
+        },
+    };
     const pi = {
+        events,
         on(
             event: string,
             handler: (event: object, ctx: object) => Promise<unknown> | unknown,
@@ -216,10 +233,19 @@ describe('pi-overrides', () => {
             const skillPath = nodePath.join(skillDir, 'SKILL.md');
             await writeFile(
                 skillPath,
-                '\uFEFF---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n',
+                '\uFEFF---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n\nRead [guide](guide.md).\n',
             );
 
             const { pi, handlers } = createMockExtensionApi();
+            pi.events.on(MARKDOWN_LINKS_TRANSFORM_EVENT, (value) => {
+                if (!isMarkdownLinkTransformRequest(value)) return;
+                expect(value.sourcePath).toBe(skillPath);
+                expect(value.sourceKind).toBe('bom-skill-fallback');
+                value.result = value.content.replace(
+                    'guide.md',
+                    nodePath.join(skillDir, 'guide.md'),
+                );
+            });
             piOverrides(pi);
             await handlers.get('session_start')?.(
                 {},
@@ -248,7 +274,7 @@ describe('pi-overrides', () => {
                 content: [
                     {
                         type: 'text',
-                        text: '---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n',
+                        text: `---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n\nRead [guide](${nodePath.join(skillDir, 'guide.md')}).\n`,
                     },
                 ],
                 details: undefined,

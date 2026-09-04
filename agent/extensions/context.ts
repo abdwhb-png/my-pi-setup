@@ -28,6 +28,7 @@ import {
     type Component,
     type TUI,
 } from "@earendil-works/pi-tui";
+import { requestMarkdownLinkTransform } from "./_shared/markdown-links.ts";
 import { createUiColors } from "./_shared/ui/ui-colors.ts";
 
 function formatUsd(cost: number): string {
@@ -929,7 +930,15 @@ export default function contextExtension(pi: ExtensionAPI) {
             }
 
             const content = buildContextSendMessage(
-                files.map((f) => ({ path: f.path, content: f.content })),
+                files.map((file) => ({
+                    path: file.path,
+                    content: requestMarkdownLinkTransform(pi.events, {
+                        sourcePath: file.path,
+                        content: file.content,
+                        cwd: ctx.cwd,
+                        sourceKind: "context-send-command",
+                    }),
+                })),
             );
             pi.sendMessage(
                 {

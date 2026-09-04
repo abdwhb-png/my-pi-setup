@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { ExtensionAPI, SlashCommandInfo, SourceInfo, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  createEventBus,
+  type ExtensionAPI,
+  type SlashCommandInfo,
+  type SourceInfo,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import {
+  isMarkdownLinkTransformRequest,
+  MARKDOWN_LINKS_TRANSFORM_EVENT,
+} from "../_shared/markdown-links.ts";
 import piSkillLoader from "./index";
 
 function makeSourceInfo(overrides: Partial<SourceInfo> = {}): SourceInfo {
@@ -33,13 +43,15 @@ function createMockAPI(customCommands?: SlashCommandInfo[]) {
   const registeredCommands = new Map<string, {
     description?: string;
     getArgumentCompletions?: (prefix: string) => { value: string; label: string; description?: string }[] | null;
-    handler: (args: string) => Promise<void>;
+    handler: (args: string, ctx?: { cwd: string }) => Promise<void>;
   }>();
   let activeTools: string[] = ["read", "edit", "write"];
   const sentMessages: Array<{ customType: string; content: string; display: boolean }> = [];
   const handlers = new Map<string, (event: object, ctx?: object) => Promise<void> | void>();
+  const events = createEventBus();
 
   const pi = {
+    events,
     getCommands: () => commands,
     registerTool(tool: ToolDefinition) {
       registeredTools.set(tool.name, tool);
@@ -96,7 +108,7 @@ async function execTool(
     params,
     undefined,
     undefined,
-    {} as any,
+    { cwd: "/workspace" } as any,
   );
   return result.content.find((c) => c.type === "text")?.text as string ?? "";
 }
@@ -213,6 +225,23 @@ describe("pi-skill-loader", () => {
       expect(text).toContain("Write tests first.");
     });
 
+    it("requests source-aware Markdown rewriting for loaded content", async () => {
+      readFileMock.mockResolvedValue(Buffer.from("Read [guide](guide.md)"));
+      const { pi, registeredTools, handlers } = createMockAPI();
+      pi.events.on(MARKDOWN_LINKS_TRANSFORM_EVENT, (value) => {
+        if (!isMarkdownLinkTransformRequest(value)) return;
+        expect(value.sourcePath).toBe("/skills/tdd/SKILL.md");
+        expect(value.sourceKind).toBe("load-skill-tool");
+        value.result = "Read [guide](/skills/tdd/guide.md)";
+      });
+      piSkillLoader(pi);
+      await handlers.get("session_start")?.({}, {});
+
+      const text = await execTool(registeredTools.get("load_skill"), "load_skill", { name: "tdd" });
+
+      expect(text).toBe("Read [guide](/skills/tdd/guide.md)");
+    });
+
     it("returns error when skill file cannot be read", async () => {
       readFileMock.mockRejectedValue(new Error("ENOENT: no such file"));
 
@@ -289,11 +318,31 @@ describe("pi-skill-loader", () => {
       const cmd = registeredCommands.get("load-skills");
       if (!cmd?.handler) throw new Error("load-skills not registered");
 
-      await cmd.handler("tdd bun-test");
+      await cmd.handler("tdd bun-test", { cwd: "/workspace" });
 
       expect(sentMessages.length).toBe(2);
       expect(sentMessages[0].content).toContain("# TDD Skill");
       expect(sentMessages[1].content).toContain("# Bun Test Skill");
+    });
+
+    it("rewrites Markdown before /load-skills sends it", async () => {
+      readFileMock.mockResolvedValue(Buffer.from("Read [guide](guide.md)"));
+      const { pi, registeredCommands, sentMessages, handlers } = createMockAPI();
+      pi.events.on(MARKDOWN_LINKS_TRANSFORM_EVENT, (value) => {
+        if (!isMarkdownLinkTransformRequest(value)) return;
+        expect(value.sourceKind).toBe("load-skills-command");
+        value.result = "Read [guide](/skills/tdd/guide.md)";
+      });
+      piSkillLoader(pi);
+      await handlers.get("session_start")?.({}, {});
+
+      const cmd = registeredCommands.get("load-skills");
+      if (!cmd?.handler) throw new Error("load-skills not registered");
+      await cmd.handler("tdd", { cwd: "/workspace" });
+
+      expect(sentMessages[0].content).toContain(
+        "Read [guide](/skills/tdd/guide.md)",
+      );
     });
 
     it("handler skips unknown skills silently", async () => {
@@ -306,7 +355,7 @@ describe("pi-skill-loader", () => {
       const cmd = registeredCommands.get("load-skills");
       if (!cmd?.handler) throw new Error("load-skills not registered");
 
-      await cmd.handler("nonexistent tdd");
+      await cmd.handler("nonexistent tdd", { cwd: "/workspace" });
 
       expect(sentMessages.length).toBe(1);
       expect(sentMessages[0].content).toContain("# TDD Skill");

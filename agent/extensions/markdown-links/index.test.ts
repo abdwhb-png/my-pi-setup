@@ -1,265 +1,391 @@
-import { describe, expect, it } from 'bun:test';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
-    default as markdownLinksExtension,
-    discoverMarkdownRoots,
+    createEventBus,
+    type ExtensionAPI,
+    type SlashCommandInfo,
+} from "@earendil-works/pi-coding-agent";
+import {
+    mkdirSync,
+    mkdtempSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
+import markdownLinksExtension, {
     expandAllowedRoots,
-    extractMarkdownLinks,
     loadMarkdownLinksConfig,
-    resolveLinkedMarkdownFiles,
-    resolveLocalMarkdownDestination,
-} from './index.ts';
+} from "./index.ts";
 
-describe('extractMarkdownLinks', () => {
-    it('collects local inline Markdown link destinations', async () => {
-        const links = await extractMarkdownLinks(
-            '[ABOUT-PI.md](../docs/ABOUT-PI.md)',
-        );
-        expect(links).toEqual(['../docs/ABOUT-PI.md']);
-    });
+const temporaryDirectories: string[] = [];
 
-    it('resolves reference links through their definitions', async () => {
-        const links = await extractMarkdownLinks(
-            '[ABOUT-PI.md][about]\n\n[about]: ../docs/ABOUT-PI.md',
-        );
-        expect(links).toEqual(['../docs/ABOUT-PI.md']);
-    });
+function makeTempDir(): string {
+    const directory = mkdtempSync(join(tmpdir(), "markdown-links-index-"));
+    temporaryDirectories.push(directory);
+    return directory;
+}
 
-    it('ignores images, inline code, and fenced code links', async () => {
-        const links = await extractMarkdownLinks(
-            '![image](asset.md) `[code](code.md)`\n\n```md\n[ignored](ignored.md)\n```\n\n[ok](ok.md)',
-        );
-        expect(links).toEqual(['ok.md']);
-    });
+afterEach(() => {
+    for (const directory of temporaryDirectories.splice(0)) {
+        rmSync(directory, { recursive: true, force: true });
+    }
+});
 
-    it('resolves only local Markdown destinations relative to source file', () => {
-        const source = '/workspace/project/AGENTS.md';
+function createHarness(commands: SlashCommandInfo[] = []) {
+    const handlers = new Map<string, Array<(event: any, context: any) => any>>();
+    const commandHandlers = new Map<string, (args: string, context: any) => any>();
+    const events = createEventBus();
+    const pi = {
+        events,
+        getCommands: () => commands,
+        on: mock((name: string, handler: (event: any, context: any) => any) => {
+            const registered = handlers.get(name) ?? [];
+            registered.push(handler);
+            handlers.set(name, registered);
+        }),
+        registerCommand: mock(
+            (
+                name: string,
+                command: { handler: (args: string, context: any) => any },
+            ) => {
+                commandHandlers.set(name, command.handler);
+            },
+        ),
+    };
+    markdownLinksExtension(pi as unknown as ExtensionAPI);
 
-        expect(
-            resolveLocalMarkdownDestination(
-                '../docs/ABOUT-PI.md#context',
-                source,
-            ),
-        ).toBe('/workspace/docs/ABOUT-PI.md');
-        expect(
-            resolveLocalMarkdownDestination(
-                'https://example.com/docs.md',
-                source,
-            ),
-        ).toBeNull();
-        expect(
-            resolveLocalMarkdownDestination('./notes.txt', source),
-        ).toBeNull();
-    });
+    return {
+        pi,
+        async fire(name: string, event: any, context: any = {}) {
+            let result: unknown;
+            for (const handler of handlers.get(name) ?? []) {
+                result = await handler(event, context);
+            }
+            return result;
+        },
+        status: commandHandlers.get("markdown-links:status")!,
+    };
+}
 
-    it('loads recursively linked files under allowed roots', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'pi-markdown-links-'));
-        const docs = join(root, 'docs');
-        await mkdir(docs);
-        const sourcePath = join(root, 'AGENTS.md');
-        const linkedPath = join(docs, 'guide.md');
-        await writeFile(sourcePath, '[guide](docs/guide.md)');
-        await writeFile(linkedPath, '# Guide');
+function promptCommand(name: string, path: string): SlashCommandInfo {
+    return {
+        name,
+        source: "prompt",
+        sourceInfo: {
+            path,
+            source: "prompt",
+            scope: "project",
+            origin: "top-level",
+        },
+    };
+}
 
-        const result = await resolveLinkedMarkdownFiles(
-            [{ path: sourcePath, content: '[guide](docs/guide.md)' }],
-            { allowedRoots: [root] },
-        );
-
-        expect(result.files).toEqual([
-            { path: linkedPath, content: '# Guide' },
-        ]);
-    });
-
-    it('loads global config and lets project values override it', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'pi-markdown-links-'));
-        const agentDir = join(root, 'agent');
-        const projectDir = join(root, 'project');
-        await mkdir(agentDir);
-        await mkdir(join(projectDir, '.pi'), { recursive: true });
-        await writeFile(
-            join(agentDir, 'settings.json'),
+describe("Markdown links configuration", () => {
+    it("loads only allowedRoots and lets trusted project settings override global settings", async () => {
+        const root = makeTempDir();
+        const agentDir = join(root, "agent");
+        const cwd = join(root, "project");
+        mkdirSync(agentDir);
+        mkdirSync(join(cwd, ".pi"), { recursive: true });
+        writeFileSync(
+            join(agentDir, "settings.json"),
             JSON.stringify({
                 markdownLinks: {
-                    maxDepth: 4,
-                    maxBytes: 1000,
-                    scope: 'context',
+                    allowedRoots: ["$agentDir"],
+                    scope: "context",
+                    maxDepth: 1,
                 },
             }),
         );
-        await writeFile(
-            join(projectDir, '.pi', 'settings.json'),
-            JSON.stringify({ markdownLinks: { maxDepth: 2 } }),
+        writeFileSync(
+            join(cwd, ".pi", "settings.json"),
+            JSON.stringify({
+                markdownLinks: { allowedRoots: ["$cwd", "$sourceDir"] },
+            }),
         );
 
-        const trustedConfig = await loadMarkdownLinksConfig(
-            projectDir,
-            agentDir,
-            true,
-        );
-        expect(trustedConfig).toEqual({
-            maxDepth: 2,
-            maxBytes: 1000,
-            scope: 'context',
-            allowedRoots: ['$cwd', '$agentDir', '$agentDir/..', '$contextDirs'],
-        });
-        const untrustedConfig = await loadMarkdownLinksConfig(
-            projectDir,
-            agentDir,
-            false,
-        );
-        expect(untrustedConfig).toEqual({
-            maxDepth: 4,
-            maxBytes: 1000,
-            scope: 'context',
-            allowedRoots: ['$cwd', '$agentDir', '$agentDir/..', '$contextDirs'],
-        });
+        await expect(
+            loadMarkdownLinksConfig(cwd, agentDir, true),
+        ).resolves.toEqual({ allowedRoots: ["$cwd", "$sourceDir"] });
+        await expect(
+            loadMarkdownLinksConfig(cwd, agentDir, false),
+        ).resolves.toEqual({ allowedRoots: ["$agentDir"] });
     });
 
-    it('expands configured allowed-root tokens', () => {
+    it("expands source roots and keeps $contextDirs as a backward alias", () => {
         expect(
             expandAllowedRoots({
                 patterns: [
-                    '$cwd',
-                    '$agentDir',
-                    '$agentDir/..',
-                    '$contextDirs',
-                    '~/docs',
+                    "$cwd",
+                    "$agentDir",
+                    "$agentDir/..",
+                    "$sourceDir",
+                    "$contextDirs",
+                    "~/docs",
                 ],
-                cwd: '/workspace/project',
-                agentDir: '/home/user/.pi/agent',
-                contextDirs: ['/workspace', '/workspace/project'],
-                homeDir: '/home/user',
+                cwd: "/workspace/project",
+                agentDir: "/home/user/.pi/agent",
+                sourcePath: "/workspace/project/.pi/prompts/debug.md",
+                homeDir: "/home/user",
             }),
         ).toEqual([
-            '/workspace/project',
-            '/home/user/.pi/agent',
-            '/home/user/.pi',
-            '/workspace',
-            '/workspace/project',
-            '/home/user/docs',
+            "/workspace/project",
+            "/home/user/.pi/agent",
+            "/home/user/.pi",
+            "/workspace/project/.pi/prompts",
+            "/workspace/project/.pi/prompts",
+            "/home/user/docs",
         ]);
     });
+});
 
-    it('includes trusted SYSTEM and APPEND_SYSTEM files in all scope', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'pi-markdown-links-'));
-        const agentDir = join(root, 'agent');
-        const projectDir = join(root, 'project');
-        await mkdir(join(projectDir, '.pi'), { recursive: true });
-        await mkdir(agentDir);
-        await writeFile(join(projectDir, '.pi', 'SYSTEM.md'), '# System');
-        await writeFile(
-            join(projectDir, '.pi', 'APPEND_SYSTEM.md'),
-            '# Append',
+describe("markdownLinksExtension", () => {
+    it("serves source-aware transformations through the shared event", async () => {
+        const root = makeTempDir();
+        const sourcePath = join(root, "docs", "guide.md");
+        mkdirSync(join(root, "docs"));
+        writeFileSync(join(root, "docs", "setup.json"), "{}");
+        const harness = createHarness();
+        await harness.fire(
+            "session_start",
+            { type: "session_start", reason: "startup" },
+            { cwd: root, isProjectTrusted: () => true },
         );
 
-        const roots = await discoverMarkdownRoots({
-            cwd: projectDir,
-            agentDir,
-            trusted: true,
-            scope: 'all',
-            contextFiles: [
-                { path: join(projectDir, 'AGENTS.md'), content: '# Agents' },
-            ],
+        const transformed = requestMarkdownLinkTransform(harness.pi.events, {
+            sourcePath,
+            content: "Read [setup](setup.json)",
+            cwd: root,
+            sourceKind: "context",
         });
 
-        expect(roots).toEqual([
-            { path: join(projectDir, 'AGENTS.md'), content: '# Agents' },
-            { path: join(projectDir, '.pi', 'SYSTEM.md'), content: '# System' },
-            {
-                path: join(projectDir, '.pi', 'APPEND_SYSTEM.md'),
-                content: '# Append',
-            },
-        ]);
+        expect(transformed).toBe(
+            `Read [setup](${join(root, "docs", "setup.json")})`,
+        );
+        expect(transformed).not.toContain("{}");
     });
 
-    it('skips cycles and enforces depth and byte limits', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'pi-markdown-links-'));
-        const firstPath = join(root, 'first.md');
-        const secondPath = join(root, 'second.md');
-        await writeFile(firstPath, '[second](second.md)');
-        await writeFile(secondPath, '[first](first.md)');
-
-        const result = await resolveLinkedMarkdownFiles(
-            [{ path: firstPath, content: '[second](second.md)' }],
-            { allowedRoots: [root], maxDepth: 1, maxBytes: 1 },
+    it("rewrites complete Markdown read results and leaves partial reads unchanged", async () => {
+        const root = makeTempDir();
+        const sourcePath = join(root, "README.markdown");
+        const targetPath = join(root, "guide.md");
+        writeFileSync(targetPath, "guide");
+        const harness = createHarness();
+        await harness.fire(
+            "session_start",
+            { type: "session_start", reason: "startup" },
+            { cwd: root, isProjectTrusted: () => true },
         );
 
-        expect(result.files).toEqual([]);
-        expect(result.skipped).toContain('second.md: size limit exceeded');
-    });
-
-    it('registers a status command', async () => {
-        let statusHandler:
-            | ((args: string, context: unknown) => void | Promise<void>)
-            | undefined;
-        const pi = {
-            on() {},
-            registerCommand(
-                name: string,
-                command: {
-                    handler: (
-                        args: string,
-                        context: unknown,
-                    ) => void | Promise<void>;
-                },
-            ) {
-                if (name === 'markdown-links:status')
-                    statusHandler = command.handler;
-            },
-        } as unknown as ExtensionAPI;
-        markdownLinksExtension(pi);
-
-        let notice = '';
-        await statusHandler?.('', {
-            ui: {
-                notify(message: string) {
-                    notice = message;
-                },
-            },
-        });
-
-        expect(notice).toContain('No scan data yet');
-    });
-
-    it('injects linked files into the system prompt before agent start', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'pi-markdown-links-'));
-        const sourcePath = join(root, 'AGENTS.md');
-        const linkedPath = join(root, 'guide.md');
-        await writeFile(linkedPath, '# Guide');
-
-        let beforeAgentStart:
-            | ((event: unknown, context: unknown) => Promise<unknown>)
-            | undefined;
-        const pi = {
-            on(
-                event: string,
-                handler: (event: unknown, context: unknown) => Promise<unknown>,
-            ) {
-                if (event === 'before_agent_start') beforeAgentStart = handler;
-            },
-            registerCommand() {},
-        } as unknown as ExtensionAPI;
-        markdownLinksExtension(pi);
-
-        const result = await beforeAgentStart?.(
+        const complete = await harness.fire(
+            "tool_result",
             {
-                systemPrompt: 'Base prompt',
+                type: "tool_result",
+                toolName: "read",
+                toolCallId: "read-1",
+                input: { path: sourcePath },
+                content: [{ type: "text", text: "[guide](guide.md)" }],
+                details: undefined,
+                isError: false,
+            },
+            { cwd: root },
+        );
+        const partial = await harness.fire(
+            "tool_result",
+            {
+                type: "tool_result",
+                toolName: "read",
+                toolCallId: "read-2",
+                input: { path: sourcePath, offset: 2 },
+                content: [{ type: "text", text: "[guide](guide.md)" }],
+                details: undefined,
+                isError: false,
+            },
+            { cwd: root },
+        );
+
+        expect(complete).toEqual({
+            content: [{ type: "text", text: `[guide](${targetPath})` }],
+        });
+        expect(partial).toBeUndefined();
+    });
+
+    it("rewrites known SYSTEM, APPEND_SYSTEM, and context-file blocks in place", async () => {
+        const root = makeTempDir();
+        const projectPi = join(root, ".pi");
+        mkdirSync(projectPi);
+        writeFileSync(join(projectPi, "system-guide.md"), "SYSTEM TARGET");
+        writeFileSync(join(projectPi, "append-guide.md"), "APPEND TARGET");
+        writeFileSync(join(root, "context-guide.md"), "CONTEXT TARGET");
+        const systemPath = join(projectPi, "SYSTEM.md");
+        const appendPath = join(projectPi, "APPEND_SYSTEM.md");
+        const contextPath = join(root, "AGENTS.md");
+        const system = "System [guide](system-guide.md)";
+        const append = "Append [guide](append-guide.md)";
+        const context = "Context [guide](context-guide.md)";
+        writeFileSync(systemPath, system);
+        writeFileSync(appendPath, append);
+        writeFileSync(contextPath, context);
+        const harness = createHarness();
+        const extensionContext = {
+            cwd: root,
+            isProjectTrusted: () => true,
+        };
+        await harness.fire(
+            "session_start",
+            { type: "session_start", reason: "startup" },
+            extensionContext,
+        );
+
+        const result = (await harness.fire(
+            "before_agent_start",
+            {
+                type: "before_agent_start",
+                prompt: "User prompt",
+                systemPrompt: [
+                    system,
+                    append,
+                    `<project_instructions path="${contextPath}">\n${context}\n</project_instructions>`,
+                ].join("\n\n"),
                 systemPromptOptions: {
                     cwd: root,
-                    contextFiles: [
-                        { path: sourcePath, content: '[guide](guide.md)' },
-                    ],
+                    customPrompt: system,
+                    appendSystemPrompt: append,
+                    contextFiles: [{ path: contextPath, content: context }],
                 },
             },
-            {},
+            extensionContext,
+        )) as { systemPrompt: string };
+
+        expect(result.systemPrompt).toContain(
+            `System [guide](${join(projectPi, "system-guide.md")})`,
+        );
+        expect(result.systemPrompt).toContain(
+            `Append [guide](${join(projectPi, "append-guide.md")})`,
+        );
+        expect(result.systemPrompt).toContain(
+            `Context [guide](${join(root, "context-guide.md")})`,
+        );
+        expect(result.systemPrompt).not.toContain("SYSTEM TARGET");
+    });
+
+    it("rewrites only static links from an invoked prompt template", async () => {
+        const root = makeTempDir();
+        const promptDir = join(root, ".pi", "prompts");
+        mkdirSync(promptDir, { recursive: true });
+        const sourcePath = join(promptDir, "browser-debug.md");
+        const guidePath = join(promptDir, "guide.md");
+        writeFileSync(guidePath, "guide");
+        writeFileSync(join(promptDir, "argument.md"), "argument");
+        writeFileSync(
+            sourcePath,
+            "---\ndescription: Debug\n---\n\nStatic [guide](guide.md)\n$ARGUMENTS",
+        );
+        const harness = createHarness([
+            promptCommand("browser-debug", sourcePath),
+        ]);
+        const context = { cwd: root, isProjectTrusted: () => true };
+        await harness.fire(
+            "session_start",
+            { type: "session_start", reason: "startup" },
+            context,
+        );
+        await harness.fire(
+            "input",
+            {
+                type: "input",
+                text: "/browser-debug [argument](argument.md)",
+                source: "interactive",
+            },
+            context,
+        );
+        await harness.fire(
+            "before_agent_start",
+            {
+                type: "before_agent_start",
+                prompt: "Static [guide](guide.md)\n[argument](argument.md)",
+                systemPrompt: "System",
+                systemPromptOptions: { cwd: root },
+            },
+            context,
         );
 
-        const prompt = (result as { systemPrompt: string }).systemPrompt;
-        expect(prompt).toContain('# Guide');
-        expect(prompt).toContain(linkedPath);
+        const result = (await harness.fire(
+            "message_end",
+            {
+                type: "message_end",
+                message: {
+                    role: "user",
+                    content: "Static [guide](guide.md)\n[argument](argument.md)",
+                    timestamp: 1,
+                },
+            },
+            context,
+        )) as { message: { content: string } };
+
+        expect(result.message.content).toBe(
+            `Static [guide](${guidePath})\n[argument](argument.md)`,
+        );
+    });
+
+    it("rewrites only the body of loaded skill messages", async () => {
+        const root = makeTempDir();
+        const skillDir = join(root, "skill");
+        mkdirSync(skillDir);
+        const skillPath = join(skillDir, "SKILL.md");
+        const guidePath = join(skillDir, "guide.md");
+        writeFileSync(guidePath, "guide");
+        const harness = createHarness();
+        const context = { cwd: root, isProjectTrusted: () => true };
+        await harness.fire(
+            "session_start",
+            { type: "session_start", reason: "startup" },
+            context,
+        );
+
+        const result = (await harness.fire(
+            "message_end",
+            {
+                type: "message_end",
+                message: {
+                    role: "user",
+                    content: `<skill name="demo" location="${skillPath}">\nRead [guide](guide.md)\n</skill>\n[argument](argument.md)`,
+                    timestamp: 1,
+                },
+            },
+            context,
+        )) as { message: { content: string } };
+
+        expect(result.message.content).toBe(
+            `<skill name="demo" location="${skillPath}">\nRead [guide](${guidePath})\n</skill>\n[argument](argument.md)`,
+        );
+    });
+
+    it("reports bounded diagnostics without injecting target content", async () => {
+        const root = makeTempDir();
+        const sourcePath = join(root, "README.md");
+        const harness = createHarness();
+        const context = { cwd: root, isProjectTrusted: () => true };
+        await harness.fire(
+            "session_start",
+            { type: "session_start", reason: "startup" },
+            context,
+        );
+        requestMarkdownLinkTransform(harness.pi.events, {
+            sourcePath,
+            content: "[missing](missing.md)",
+            cwd: root,
+            sourceKind: "context",
+        });
+        let notice = "";
+
+        await harness.status("", {
+            ui: { notify: (message: string) => (notice = message) },
+        });
+
+        expect(notice).toContain("rewritten: 0");
+        expect(notice).toContain("missing");
+        expect(notice).not.toContain("No scan data yet");
     });
 });
