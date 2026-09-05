@@ -1,19 +1,23 @@
 {
-	"name": "pi-extension-sandbox",
-	"private": true,
-	"version": "1.0.0",
-	"type": "module",
-	"scripts": {
-		"clean": "echo 'nothing to clean'",
-		"build": "echo 'nothing to build'",
-		"check": "echo 'nothing to check'"
-	},
-	"pi": {
-		"extensions": [
-			"./index.ts"
-		]
-	},
-	"dependencies": {
-		"@anthropic-ai/sandbox-runtime": "^0.0.65"
-	}
+    "name": "pi-extension-sandbox",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "clean": "echo 'nothing to clean'",
+        "build": "echo 'nothing to build'",
+        "check": "echo 'nothing to check'"
+    },
+    "pi": {
+        "extensions": [
+            "./index.ts"
+        ]
+    },
+    "dependencies": {
+        "@bsull/eryx": "0.6.0",
+        "@jitl/quickjs-ng-wasmfile-release-sync": "0.32.0",
+        "@sebastianwessel/quickjs": "3.1.0",
+        "@typescript/native": "npm:typescript@7.0.2",
+        "typescript": "6.0.3"
+    }
 }

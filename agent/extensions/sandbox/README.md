@@ -1,220 +1,104 @@
 # sandbox
 
-OS-level sandboxing for Bash commands using a sandbox runtime library.
-Enforces filesystem and network restrictions at the OS level
-(sandbox-exec on macOS, bubblewrap on Linux). The extension owns the
-broad Bash sandbox broker and the strict analysis-sandbox broker used
-by Think-in-Code.
+Linux OS-level sandboxing for Pi Bash execution and Think-in-Code analysis.
+The extension invokes the provenance-pinned Zerobox fork at
+`~/.pi/bin/zerobox`; it never resolves a sandbox binary from `PATH` or a
+development checkout.
 
-The extension owns two process-global brokers:
+## Lifecycle and fail-closed publication
 
-1. **Bash execution broker** (`Symbol.for("pi.sandbox-bash-execution.v1")`),
-   shared by `bash`, `safe_bash`, and interactive user Bash. Enabled
-   state uses sandbox operations. Explicit disabled state uses local
-   operations. Missing, uninitialized, unsupported, or failed state
-   blocks execution instead of silently falling back locally.
-2. **Strict analysis broker**
-   (`agent/extensions/_shared/analysis/sandbox-analysis-broker.ts`),
-   used by `think_execute`, `think_execute_file`, and
-   `think_batch_execute`. Different policy: empty allowed domains, no
-   project cwd mount, empty environment, no writable path.
+The extension owns the process-global Bash and analysis brokers. On enable it
+validates configuration, probes the managed binary, creates the Bash session
+lease, constructs the analysis service, and then publishes both services in
+one synchronous transaction. During transitions both brokers are
+uninitialized; initialization failures publish bounded error states. There is
+no local fallback after an enable failure.
 
-The two brokers never share policy. The Bash broker intentionally
-allows selected network destinations, local binding, and all Unix
-sockets; reusing it for the analyzer would expose the analyzer to the
-public network and the host's Docker socket.
+Bash has one private lease per session. Each analysis request has a new lease.
+Leases live below `~/.pi/zbx/`, use owner-only permissions, contain an explicit
+owner marker, and are the only paths eligible for stale cleanup. The launcher
+uses protocol-v1 JSONL on FD 3: only `child_started` makes a process ready;
+setup errors, corrupt status, premature EOF, and impossible ordering fail
+closed. `HOME` and `TMPDIR` point into the lease and `ZEROBOX_HOME` remains a
+launcher-only variable. The host-side managed TCP bridge receives read-only
+access to the dedicated `zerobox-home/tmp/runs` subtree; target writes,
+profiles, and all other lease control data remain denied.
 
-The Bash broker is **disabled by default**. Enable with `/sandbox on`
-or set `"sandbox.enabled": true` in settings. The strict analysis
-broker is owned by Think-in-Code and follows its own lifecycle; it
-fails closed when the runtime is missing or `--no-sandbox` is in
-effect.
+## Commands and persistence
 
-## Commands
+| Command        | Description                                   |
+| -------------- | --------------------------------------------- |
+| `/sandbox`     | Show current status and configuration         |
+| `/sandbox on`  | Enable both sandbox services for this session |
+| `/sandbox off` | Disable both services for this session        |
 
-| Command        | Description                           |
-| -------------- | ------------------------------------- |
-| `/sandbox`     | Show current status and configuration |
-| `/sandbox on`  | Enable sandboxing for this session    |
-| `/sandbox off` | Disable sandboxing for this session   |
+The Bash sandbox is disabled by default. The effective `enabled` value uses, in
+descending priority: `--no-sandbox`, `PI_SANDBOX_SESSION_STATUS`, the session's
+`sandbox-state.<sessionKey>.json`, project config, global config, then the built-in
+default. Static security fields continue to come from project/global config. The
+former directory-wide `sandbox-state.json` is intentionally ignored because Pi
+stores multiple sessions in one directory and the legacy state cannot be
+attributed safely. `sessionKey` is the SHA-256 digest of Pi's public session ID.
 
-When you run `/sandbox on` or `/sandbox off`, the new status is
-persisted to `<sessionDir>/sandbox-state.json` so it survives a reload
-of the same session. The Bash broker is **disabled by default** for
-new sessions. Enable it explicitly per session, or set
-`"sandbox.enabled": true` in settings.
-
-## Per-session persistence and subagent propagation
-
-The sandbox status is resolved at `session_start` using this priority
-chain (highest wins):
-
-1. `--no-sandbox` CLI flag — explicit disable for this run
-2. `PI_SANDBOX_SESSION_STATUS` env var — `enabled` or `disabled`
-3. `<sessionDir>/sandbox-state.json` — last toggle in this session
-4. `<cwd>/.pi/settings.json` or `<cwd>/.pi/sandbox.json` — project config
-5. `~/.pi/agent/settings.json` or `~/.pi/agent/sandbox.json` — global config
-6. Built-in default (`enabled: false`)
-
-When a parent process toggles `/sandbox on|off`, the extension also
-sets `PI_SANDBOX_SESSION_STATUS` in the live process environment.
-Subagent child Pi processes inherit that env at spawn, so they pick
-up the parent's status on their own `session_start`. The persisted
-`sandbox-state.json` is the durable record across restarts.
-
-Only the `enabled` flag is overridden by these layers. The merged
-`network` and `filesystem` config always comes from the static
-settings files — security-relevant fields stay project-controlled.
-
-## Security warning
-
-Disabling the sandbox is a security risk (bash runs with full system
-access). The extension surfaces this in two ways:
-
-- **Footer widget** is always visible. `on` shows `🛡️ sandbox: on` in
-  accent color; `off` shows `⚠ sandbox: off` in warning color so a
-  disabled sandbox is never silent.
-- **`session_start` notification** is emitted with level `warning` when
-  the resolved status comes from any explicit layer (env, session
-  file, project, global, `--no-sandbox`) and `enabled` is false.
-  Default-off (no override, no config) stays quiet — there is nothing
-  to warn about.
-- **`/sandbox off`** emits a warning notify before applying the
-  toggle, since the new state will persist for the session.
-
-## Configuration
-
-Configs are merged (project overrides global):
-
-- `~/.pi/agent/settings.json` under `sandbox` (global)
-- `<cwd>/.pi/settings.json` under `sandbox` (project-local)
+## Supported configuration
 
 ```json
 {
+    "enabled": true,
     "network": {
-        "allowedDomains": [
-            "github.com",
-            "*.github.com",
-            "lfs.github.com",
-            "api.github.com",
-            "npmjs.org",
-            "*.npmjs.org"
-        ],
-        "deniedDomains": ["malicious.com"],
-        "allowUnixSockets": ["/var/run/docker.sock"],
-        "allowLocalBinding": false
+        "allowedDomains": ["github.com", "*.github.com", "localhost:8317"],
+        "deniedDomains": []
     },
     "filesystem": {
-        "denyRead": ["~/.ssh"],
         "allowRead": [],
-        "allowWrite": [".", "src/", "test/", "/tmp"],
-        "denyWrite": [".env", "config/production.json"]
+        "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg"],
+        "allowWrite": ["."],
+        "denyWrite": [".env"]
     },
-    "ignoreViolations": {
-        "*": ["/usr/bin", "/System"],
-        "git push": ["/usr/bin/nc"],
-        "npm": ["/private/tmp"]
-    },
-    "enableWeakerNestedSandbox": false,
-    "enableWeakerNetworkIsolation": false,
-    "allowAppleEvents": false
-}
-```
-
-Legacy compatibility is still kept for:
-
-- `~/.pi/agent/sandbox.json`
-- `<cwd>/.pi/sandbox.json`
-
-Set `"sandbox.enabled": true` in settings to auto-enable on session
-start.
-
-## Flags
-
-| Flag           | Description                                 |
-| -------------- | ------------------------------------------- |
-| `--no-sandbox` | Force disable sandboxing (overrides config) |
-
-## Strict analysis broker (Think-in-Code)
-
-The analysis broker is initialized with a fixed, downward-only policy:
-
-```jsonc
-{
-    "network": {
-        "allowedDomains": [],
-        "strictAllowlist": true,
-        "allowLocalBinding": false,
-        "allowAllUnixSockets": false
-    },
-    "filesystem": {
-        "allowWrite": [],
-        "allowRead": [
-            // Outer runtime libraries and sandbox package assets only.
-            // The project cwd is NEVER mounted.
-        ]
+    "environment": {
+        "allowedVariables": [],
+        "deniedVariables": [],
+        "variables": {}
     }
 }
 ```
 
-The host initializes its own process-local `SandboxManager` with an
-empty environment, no credentials, no writable path, and read access
-only to required system runtime files and the sandbox package assets.
-Linux `prlimit` enforces CPU/address-space limits; the parent wall
-timer kills the whole process group. Inner QuickJS/Eryx limits and
-output byte counting provide independent enforcement.
+Project settings override global settings. The preferred locations are the
+`sandbox` keys in `<cwd>/.pi/settings.json` and
+`~/.pi/agent/settings.json`; legacy `sandbox.json` files remain readable.
 
-### Fixed worker dispatch
+Version 1 is Linux-only. It supports exact filesystem paths, public-domain
+outbound allowlists, port-scoped loopback, deny-all networking, private temp,
+environment filtering, nested-user-namespace blocking, and process-tree
+termination. Managed networking rejects UDP and raw IP sockets at seccomp and
+keeps host Unix sockets inaccessible. Dynamic filesystem globs, inbound
+binding, arbitrary Unix
+sockets, ASRT-only fields, macOS, and Windows are rejected before publication.
 
-The model cannot select a binary, entrypoint, environment variable,
-shell fragment, working directory, or filesystem path on the
-analyzer. Only two fixed worker IDs exist: `quickjs` (JavaScript and
-TypeScript via `@sebastianwessel/quickjs`) and `python` (Python via
-`@bsull/eryx` in a dedicated Node JSPI worker). Process-group
-cleanup, concurrency semaphore of two, hard limit clamps, protocol
-validation, and bounded capture are enforced by the analysis broker.
+## Strict analysis service
 
-`--no-sandbox`, missing bubblewrap/prlimit/Node JSPI, host crash,
-protocol corruption, or runtime initialization failure publishes an
-unavailable/error broker state. No unsandboxed fallback exists.
+The model selects only a language and program. The host selects a fixed
+QuickJS or Node/Eryx worker, invokes it as structured `file`/`args` through
+Zerobox, and sends model data over a private FIFO only after the status channel
+confirms `child_started`. The analysis policy has no project mount, no inherited
+environment, no network, and no writable path outside its lease. Linux
+`prlimit`, parent wall-time/output limits, process-group cleanup, and the inner
+WASM runtime provide independent limits.
 
 ## Exact dependencies
 
-Pinned at exact versions in `agent/extensions/sandbox/package.json`:
+The sandbox package keeps both requested compiler generations:
 
-- `@anthropic-ai/sandbox-runtime@0.0.74` — outer Linux isolation
-  (bubblewrap + seccomp-BPF). Exact-pinned after an upstream review
-  accepted its sub-seven-day release age and proxy/abort/attribution
-  fixes.
-- `@sebastianwessel/quickjs@3.1.0` — JavaScript/TypeScript analyzer.
-- `@bsull/eryx@0.6.0` — Python analyzer.
+- `typescript@6.0.3` for the QuickJS programmatic transform API;
+- `@typescript/native` as `npm:typescript@7.0.2` for the TypeScript 7 native
+  compiler.
 
-Other runtime requirements:
+The `agent` package itself contains only `typescript@7.0.2`.
+`@sebastianwessel/quickjs@3.1.0`,
+`@jitl/quickjs-ng-wasmfile-release-sync@0.32.0`, and
+`@bsull/eryx@0.6.0` are exact-pinned. ASRT is not installed.
 
-- Linux: `bubblewrap`, `socat`, `ripgrep`, `prlimit`
-- `/usr/bin/node` with `--experimental-wasm-jspi` for the Python
-  analyzer (Eryx documents JSPI but not Bun support)
-- macOS: uses built-in sandbox-exec
-
-The dependency-contract test in
-`agent/extensions/sandbox/dependency-contract.test.ts` runs an
-executable smoke at install time. A missing capability publishes an
-unavailable broker state and fail-closes the analysis service.
-
-## No-network analyzer policy
-
-The analyzer network access is **always disabled**:
-
-- `allowedDomains: []`
-- `strictAllowlist: true`
-- `allowLocalBinding: false`
-- `allowAllUnixSockets: false`
-- Outer sandbox runs with an empty environment and no writable path.
-
-There is no `think_fetch_and_index`. Existing web and MCP tools retain
-fetching. The Bash broker's network policy is intentionally separate
-and is not reused by the analyzer.
-
-## Attribution
-
-Based on [pi-mono example extension](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/examples/extensions/sandbox/).
+Operational requirements are Linux, `/usr/bin/mkfifo`, `/usr/bin/prlimit`, and
+`/usr/bin/node` with JSPI support. The managed Zerobox version, hash, source
+commit, engine commit, and ordered patch hashes are recorded in
+`runtime/zerobox-provenance.json` and verified by executable tests.

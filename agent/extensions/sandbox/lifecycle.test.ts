@@ -13,9 +13,20 @@ import type {
 
 const initialize = mock(async (): Promise<void> => undefined);
 const reset = mock(async (): Promise<void> => undefined);
-const wrapWithSandbox = mock(async (command: string) => command);
-const cleanupAfterCommand = mock(() => undefined);
+const createZeroboxBackend = mock(() => ({}));
+const createSandboxService = mock(() => ({
+    probe: initialize,
+    startBashSession: initialize,
+    prepareBash: mock(async () => {
+        throw new Error("not exercised");
+    }),
+    prepareAnalysis: mock(async () => {
+        throw new Error("not exercised");
+    }),
+    shutdown: reset,
+}));
 const analysisShutdown = mock(async () => undefined);
+const analysisPreflight = mock(async (): Promise<void> => undefined);
 const createAnalysisSandboxService = mock(() => ({
     run: mock(async () => ({
         output: "ok",
@@ -24,6 +35,7 @@ const createAnalysisSandboxService = mock(() => ({
         durationMs: 1,
         truncated: false,
     })),
+    preflight: analysisPreflight,
     shutdown: analysisShutdown,
 }));
 
@@ -33,14 +45,8 @@ const capturedWidgetDef: {
     } | null;
 } = { def: null };
 
-mock.module("@anthropic-ai/sandbox-runtime", () => ({
-    SandboxManager: {
-        initialize,
-        reset,
-        wrapWithSandbox,
-        cleanupAfterCommand,
-    },
-}));
+mock.module("./runtime/zerobox-backend.ts", () => ({ createZeroboxBackend }));
+mock.module("./runtime/service.ts", () => ({ createSandboxService }));
 mock.module("./analysis/client.ts", () => ({
     createAnalysisSandboxService,
 }));
@@ -60,12 +66,13 @@ mock.module("../_shared/fancy-footer.ts", () => ({
     },
 }));
 
-const {
-    default: sandboxExtension,
-} = await import("./index.ts");
+const { default: sandboxExtension, sessionStateFilename } = await import(
+    "./index.ts"
+);
 const {
     createSharedBashOperations,
     getSandboxExecutionState,
+    isSandboxUnavailableError,
 } = await import("../_shared/bash/sandbox-execution-broker.ts");
 const {
     getAnalysisSandboxBrokerState,
@@ -115,6 +122,7 @@ function registerSandbox() {
 function context(
     cwd: string,
     sessionDir?: string,
+    sessionId = "session-a",
 ): ExtensionContext {
     const notify = mock((_message: string, _level?: string) => undefined);
     (context as unknown as { notify?: typeof notify }).notify = notify;
@@ -123,7 +131,10 @@ function context(
         hasUI: false,
         ui: { notify },
         sessionManager: sessionDir
-            ? ({ getSessionDir: () => sessionDir } as unknown as ExtensionContext["sessionManager"])
+            ? ({
+                  getSessionDir: () => sessionDir,
+                  getSessionId: () => sessionId,
+              } as unknown as ExtensionContext["sessionManager"])
             : undefined,
     } as unknown as ExtensionContext;
 }
@@ -163,6 +174,7 @@ function renderWidget(): string | null {
 }
 
 const ENV_KEY = "PI_SANDBOX_SESSION_STATUS";
+const SESSION_ID = "session-a";
 
 describe("sandbox lifecycle", () => {
     let cwd: string;
@@ -179,6 +191,8 @@ describe("sandbox lifecycle", () => {
         reset.mockReset();
         reset.mockImplementation(async () => undefined);
         analysisShutdown.mockClear();
+        analysisPreflight.mockReset();
+        analysisPreflight.mockImplementation(async () => undefined);
         createAnalysisSandboxService.mockClear();
         capturedWidgetDef.def = null;
         delete process.env[ENV_KEY];
@@ -210,6 +224,66 @@ describe("sandbox lifecycle", () => {
         expect(getAnalysisSandboxBrokerState()).toBe("uninitialized");
     });
 
+    it("keeps both brokers unpublished until Analysis preflight succeeds", async () => {
+        const preflight = deferred();
+        analysisPreflight.mockImplementation(() => preflight.promise);
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+
+        const starting = registered.handlers.get("session_start")?.({}, ctx);
+        await Bun.sleep(10);
+        expect(getSandboxExecutionState()).toBe("uninitialized");
+        expect(getAnalysisSandboxBrokerState()).toBe("uninitialized");
+
+        preflight.reject(new Error("analysis preflight failed"));
+        await starting;
+        expect(getSandboxExecutionState()).toBe("error");
+        expect(getAnalysisSandboxBrokerState()).toBe("error");
+        expect(analysisShutdown).toHaveBeenCalledTimes(1);
+        expect(reset).toHaveBeenCalledTimes(1);
+    });
+
+    it("retains a failed candidate cleanup for the next transition", async () => {
+        analysisPreflight.mockRejectedValueOnce(new Error("preflight failed"));
+        reset.mockRejectedValueOnce(new Error("candidate cleanup failed"));
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+
+        await registered.handlers.get("session_start")?.({}, ctx);
+        expect(getSandboxExecutionState()).toBe("error");
+        expect(reset).toHaveBeenCalledTimes(1);
+
+        await registered.commands.get("sandbox")?.("off", ctx);
+        expect(reset).toHaveBeenCalledTimes(2);
+        expect(getSandboxExecutionState()).toBe("disabled");
+    });
+
+    it("surfaces and retries cleanup failure after invalid configuration", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+
+        await writeFile(
+            join(cwd, ".pi", "sandbox.json"),
+            JSON.stringify({
+                enabled: true,
+                network: { allowedDomains: ["127.0.0.1"] },
+            }),
+        );
+        reset.mockRejectedValueOnce(new Error("config cleanup failed"));
+
+        await registered.handlers.get("session_start")?.({}, ctx);
+        expect(getSandboxExecutionState()).toBe("error");
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            expect.stringContaining("cleanup failed: config cleanup failed"),
+            "error",
+        ]);
+
+        await registered.commands.get("sandbox")?.("off", ctx);
+        expect(reset).toHaveBeenCalledTimes(2);
+        expect(getSandboxExecutionState()).toBe("disabled");
+    });
+
     it("blocks execution while sandbox on and off transitions are pending", async () => {
         await writeFile(
             join(cwd, ".pi", "sandbox.json"),
@@ -239,6 +313,80 @@ describe("sandbox lifecycle", () => {
         expect(getSandboxExecutionState()).toBe("disabled");
     });
 
+    it("keeps a later off request authoritative over an in-flight enable", async () => {
+        await writeFile(
+            join(cwd, ".pi", "sandbox.json"),
+            JSON.stringify({ enabled: false }),
+        );
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+
+        const preflight = deferred();
+        analysisPreflight.mockImplementationOnce(() => preflight.promise);
+        const enabling = registered.commands.get("sandbox")?.("on", ctx);
+        await Bun.sleep(10);
+        const disabling = registered.commands.get("sandbox")?.("off", ctx);
+        await disabling;
+        expect(getSandboxExecutionState()).toBe("disabled");
+
+        preflight.resolve();
+        await enabling;
+        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(analysisShutdown).toHaveBeenCalledTimes(1);
+        expect(reset).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaces cleanup failure from an in-flight candidate before disabling", async () => {
+        await writeFile(
+            join(cwd, ".pi", "sandbox.json"),
+            JSON.stringify({ enabled: false }),
+        );
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+
+        const preflight = deferred();
+        analysisPreflight.mockImplementationOnce(() => preflight.promise);
+        reset.mockRejectedValueOnce(new Error("late candidate cleanup failed"));
+        const enabling = registered.commands.get("sandbox")?.("on", ctx);
+        await Bun.sleep(10);
+
+        await registered.commands.get("sandbox")?.("off", ctx);
+        expect(reset).toHaveBeenCalledTimes(1);
+        expect(getSandboxExecutionState()).toBe("error");
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            expect.stringContaining("late candidate cleanup failed"),
+            "error",
+        ]);
+
+        preflight.resolve();
+        await enabling;
+        expect(reset).toHaveBeenCalledTimes(2);
+        expect(getSandboxExecutionState()).toBe("error");
+
+        await registered.commands.get("sandbox")?.("off", ctx);
+        expect(getSandboxExecutionState()).toBe("disabled");
+    });
+
+    it("does not publish a candidate after session shutdown supersedes startup", async () => {
+        const preflight = deferred();
+        analysisPreflight.mockImplementationOnce(() => preflight.promise);
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+
+        const starting = registered.handlers.get("session_start")?.({}, ctx);
+        await Bun.sleep(10);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+        expect(getSandboxExecutionState()).toBe("uninitialized");
+
+        preflight.resolve();
+        await starting;
+        expect(getSandboxExecutionState()).toBe("uninitialized");
+        expect(analysisShutdown).toHaveBeenCalledTimes(1);
+        expect(reset).toHaveBeenCalledTimes(1);
+    });
+
     it("publishes error instead of local execution when reset fails", async () => {
         const registered = registerSandbox();
         const ctx = context(cwd);
@@ -248,22 +396,70 @@ describe("sandbox lifecycle", () => {
         await registered.commands.get("sandbox")?.("off", ctx);
 
         expect(getSandboxExecutionState()).toBe("error");
-        await expectUnavailable("reset failed");
+        let captured: unknown;
+        try {
+            await createSharedBashOperations().exec(...execArgs);
+            throw new Error("expected reset-failed to fail");
+        } catch (error) {
+            captured = error;
+        }
+        // Exact bounded public reason — the security contract never
+        // forwards the publisher's raw reset-failure text.
+        expect(captured).toBeInstanceOf(Error);
+        if (!(captured instanceof Error)) {
+            throw new Error("captured was not an Error");
+        }
+        expect(captured.message).toBe(
+            "Sandbox execution unavailable: initialization failed",
+        );
+        // Provenance: the error is the typed SandboxUnavailableError
+        // with the closed-set kind carried on the non-enumerable `kind`
+        // slot.
+        expect(isSandboxUnavailableError(captured)).toBe(true);
+        if (isSandboxUnavailableError(captured)) {
+            expect(captured.getKind()).toBe("initialization-failed");
+        }
+        // The raw reset secret (the publisher's raw error message) MUST
+        // NEVER reach the surfaced message nor a JSON dump. It is held
+        // only on the non-enumerable `initError` slot for telemetry,
+        // accessible via the typed accessor.
+        const serialized = JSON.stringify(captured);
+        expect(captured.message).not.toContain("reset failed");
+        expect(serialized).not.toContain("reset failed");
+
+        await registered.commands.get("sandbox")?.("off", ctx);
+        expect(reset).toHaveBeenCalledTimes(2);
+        expect(getSandboxExecutionState()).toBe("disabled");
     });
 
-    it("does not let stale shutdown reset the current owner runtime", async () => {
+    it("supports Pi's awaited shutdown-old then start-new reload sequence", async () => {
         const first = registerSandbox();
         const ctx = context(cwd);
         await first.handlers.get("session_start")?.({}, ctx);
+        await first.handlers.get("session_shutdown")?.({}, ctx);
+        expect(getSandboxExecutionState()).toBe("uninitialized");
 
         const second = registerSandbox();
         await second.handlers.get("session_start")?.({}, ctx);
-        reset.mockClear();
 
-        await first.handlers.get("session_shutdown")?.({}, ctx);
-
-        expect(reset).not.toHaveBeenCalled();
+        expect(reset).toHaveBeenCalledTimes(1);
         expect(getSandboxExecutionState()).toBe("enabled");
+    });
+
+    it("keeps ownership and retries when session shutdown cleanup fails", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        reset.mockRejectedValueOnce(new Error("shutdown cleanup failed"));
+
+        await expect(
+            registered.handlers.get("session_shutdown")?.({}, ctx),
+        ).rejects.toThrow("shutdown cleanup failed");
+        expect(getSandboxExecutionState()).toBe("error");
+
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+        expect(reset).toHaveBeenCalledTimes(2);
+        expect(getSandboxExecutionState()).toBe("uninitialized");
     });
 });
 
@@ -271,6 +467,9 @@ describe("sandbox per-session persistence and propagation", () => {
     let cwd: string;
     let sessionDir: string;
     let originalEnv: string | undefined;
+
+    const stateFile = (sessionId = SESSION_ID): string =>
+        join(sessionDir, sessionStateFilename(sessionId));
 
     beforeEach(async () => {
         cwd = await mkdtemp(join(tmpdir(), "sandbox-persist-"));
@@ -285,6 +484,8 @@ describe("sandbox per-session persistence and propagation", () => {
         reset.mockReset();
         reset.mockImplementation(async () => undefined);
         analysisShutdown.mockClear();
+        analysisPreflight.mockReset();
+        analysisPreflight.mockImplementation(async () => undefined);
         createAnalysisSandboxService.mockClear();
         capturedWidgetDef.def = null;
         originalEnv = process.env[ENV_KEY];
@@ -298,9 +499,9 @@ describe("sandbox per-session persistence and propagation", () => {
         else process.env[ENV_KEY] = originalEnv;
     });
 
-    it("restores the sandbox status from sandbox-state.json on reload", async () => {
+    it("restores the sandbox status from its session-scoped state file", async () => {
         await writeFile(
-            join(sessionDir, "sandbox-state.json"),
+            stateFile(),
             JSON.stringify({ enabled: false, updatedAt: "2026-01-01T00:00:00.000Z" }),
         );
         const registered = registerSandbox();
@@ -324,7 +525,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
     it("PI_SANDBOX_SESSION_STATUS=disabled forces disabled and overrides file", async () => {
         await writeFile(
-            join(sessionDir, "sandbox-state.json"),
+            stateFile(),
             JSON.stringify({ enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" }),
         );
         process.env[ENV_KEY] = "disabled";
@@ -356,7 +557,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
     it("--no-sandbox flag wins over session file and emits warning", async () => {
         await writeFile(
-            join(sessionDir, "sandbox-state.json"),
+            stateFile(),
             JSON.stringify({ enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" }),
         );
         const handlers = new Map<string, Handler>();
@@ -374,7 +575,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
         expect(getSandboxExecutionState()).toBe("disabled");
         const fileExists = await readFile(
-            join(sessionDir, "sandbox-state.json"),
+            stateFile(),
             "utf-8",
         ).then(
             () => true,
@@ -399,9 +600,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
         expect(getSandboxExecutionState()).toBe("disabled");
         expect(process.env[ENV_KEY]).toBe("disabled");
-        const saved = JSON.parse(
-            await readFile(join(sessionDir, "sandbox-state.json"), "utf-8"),
-        );
+        const saved = JSON.parse(await readFile(stateFile(), "utf-8"));
         expect(saved.enabled).toBe(false);
         expect(typeof saved.updatedAt).toBe("string");
 
@@ -416,7 +615,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
     it("/sandbox on persists file and sets env var", async () => {
         await writeFile(
-            join(sessionDir, "sandbox-state.json"),
+            stateFile(),
             JSON.stringify({ enabled: false, updatedAt: "2026-01-01T00:00:00.000Z" }),
         );
         const registered = registerSandbox();
@@ -427,10 +626,37 @@ describe("sandbox per-session persistence and propagation", () => {
 
         expect(getSandboxExecutionState()).toBe("enabled");
         expect(process.env[ENV_KEY]).toBe("enabled");
-        const saved = JSON.parse(
-            await readFile(join(sessionDir, "sandbox-state.json"), "utf-8"),
-        );
+        const saved = JSON.parse(await readFile(stateFile(), "utf-8"));
         expect(saved.enabled).toBe(true);
+    });
+
+    it("does not leak a session toggle into the next Pi session", async () => {
+        const first = registerSandbox();
+        const firstContext = context(cwd, sessionDir, SESSION_ID);
+        await first.handlers.get("session_start")?.({}, firstContext);
+        await first.commands.get("sandbox")?.("off", firstContext);
+        expect(process.env[ENV_KEY]).toBe("disabled");
+
+        await first.handlers.get("session_shutdown")?.({}, firstContext);
+        expect(process.env[ENV_KEY]).toBeUndefined();
+
+        const second = registerSandbox();
+        await second.handlers
+            .get("session_start")
+            ?.({}, context(cwd, sessionDir, "session-b"));
+        expect(getSandboxExecutionState()).toBe("enabled");
+    });
+
+    it("restores a genuinely inherited session override after shutdown", async () => {
+        process.env[ENV_KEY] = "disabled";
+        const registered = registerSandbox();
+        const ctx = context(cwd, sessionDir);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await registered.commands.get("sandbox")?.("on", ctx);
+        expect(process.env[ENV_KEY]).toBe("enabled");
+
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+        expect(process.env[ENV_KEY]).toBe("disabled");
     });
 
     it("subagent child sees env var and applies it on its own session_start", async () => {

@@ -1,0 +1,78 @@
+{
+    "schemaVersion": 1,
+    "recordedAt": "2026-09-05",
+    "replayCommand": "ASRT_PACKAGE_ROOT=/absolute/path/to/@anthropic-ai/sandbox-runtime-0.0.74 bun extensions/sandbox/runtime/legacy-asrt-deny-characterization.ts",
+    "host": {
+        "platform": "linux",
+        "arch": "x64",
+        "kernel": "Linux 6.18.33.2-microsoft-standard-WSL2 x86_64 GNU/Linux"
+    },
+    "asrt": {
+        "name": "@anthropic-ai/sandbox-runtime",
+        "version": "0.0.74",
+        "packageJsonSha256": "56b6e8e64776210c40f5029df175bf168b6515d624aa52166a0480643accce76",
+        "entrypointSha256": "febc550020ba8a69ac730337f6518409a5eb4e44a42c2814006a23fbc8a828d8"
+    },
+    "results": [
+        {
+            "pattern": ".env",
+            "target": ".env",
+            "existedBeforeWrap": false,
+            "existedAfterWrap": false,
+            "targetWriteExit": 1,
+            "controlWriteExit": 0,
+            "targetContent": "",
+            "controlContent": "control-payload",
+            "wrapperExit": 0,
+            "stderr": "/usr/bin/bash: line 1: $WORKDIR/.env: Permission denied\n"
+        },
+        {
+            "pattern": ".env.*",
+            "target": ".env.local",
+            "existedBeforeWrap": false,
+            "existedAfterWrap": false,
+            "targetWriteExit": 0,
+            "controlWriteExit": 0,
+            "targetContent": "target-payload",
+            "controlContent": "control-payload",
+            "wrapperExit": 0,
+            "stderr": ""
+        },
+        {
+            "pattern": "*.pem",
+            "target": "late.pem",
+            "existedBeforeWrap": false,
+            "existedAfterWrap": false,
+            "targetWriteExit": 0,
+            "controlWriteExit": 0,
+            "targetContent": "target-payload",
+            "controlContent": "control-payload",
+            "wrapperExit": 0,
+            "stderr": ""
+        },
+        {
+            "pattern": "*.key",
+            "target": "late.key",
+            "existedBeforeWrap": false,
+            "existedAfterWrap": false,
+            "targetWriteExit": 0,
+            "controlWriteExit": 0,
+            "targetContent": "target-payload",
+            "controlContent": "control-payload",
+            "wrapperExit": 0,
+            "stderr": ""
+        },
+        {
+            "pattern": "*/node_modules/*",
+            "target": "pkg/node_modules/late.txt",
+            "existedBeforeWrap": false,
+            "existedAfterWrap": false,
+            "targetWriteExit": 0,
+            "controlWriteExit": 0,
+            "targetContent": "target-payload",
+            "controlContent": "control-payload",
+            "wrapperExit": 0,
+            "stderr": ""
+        }
+    ]
+}

@@ -6,7 +6,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 
-import { getSandboxExecutionState } from '../_shared/bash/sandbox-execution-broker';
+import {
+    getSandboxExecutionState,
+    isSandboxUnavailableError,
+} from '../_shared/bash/sandbox-execution-broker';
+import {
+    getAnalysisSandboxBrokerState,
+    getAnalysisSandboxService,
+} from '../_shared/analysis/sandbox-analysis-broker';
 import sandboxExtension from './index';
 
 type BashTool = {
@@ -28,9 +35,11 @@ type SessionStartHandler = (
 function registerSandbox(options: { noSandbox?: boolean } = {}): {
     tool: BashTool;
     start: SessionStartHandler;
+    stop?: SessionStartHandler;
 } {
     let tool: BashTool | undefined;
     let start: SessionStartHandler | undefined;
+    let stop: SessionStartHandler | undefined;
     const pi = {
         registerFlag: () => undefined,
         registerTool: (definition: BashTool) => {
@@ -39,6 +48,7 @@ function registerSandbox(options: { noSandbox?: boolean } = {}): {
         registerCommand: () => undefined,
         on: (event: string, handler: SessionStartHandler) => {
             if (event === 'session_start') start = handler;
+            if (event === 'session_shutdown') stop = handler;
         },
         getFlag: () => options.noSandbox ?? true,
     } as unknown as ExtensionAPI;
@@ -46,7 +56,7 @@ function registerSandbox(options: { noSandbox?: boolean } = {}): {
     sandboxExtension(pi);
     if (!tool) throw new Error('sandbox bash was not registered');
     if (!start) throw new Error('sandbox session_start was not registered');
-    return { tool, start };
+    return { tool, start, stop };
 }
 
 const context = {
@@ -69,6 +79,14 @@ describe('sandbox-owned bash explicit stdin', () => {
     it('publishes explicit disabled state', async () => {
         await disabledSandbox();
         expect(getSandboxExecutionState()).toBe('disabled');
+        expect(getAnalysisSandboxBrokerState()).toBe('error');
+        await expect(
+            getAnalysisSandboxService().run({
+                id: 'disabled-analysis',
+                language: 'javascript',
+                program: 'export default 1',
+            }),
+        ).rejects.toThrow('Analysis sandbox unavailable: initialization failed');
     });
 
     it('publishes error state for malformed project config', async () => {
@@ -81,15 +99,47 @@ describe('sandbox-owned bash explicit stdin', () => {
             const registered = registerSandbox({ noSandbox: false });
             await registered.start({}, malformedContext);
             expect(getSandboxExecutionState()).toBe('error');
-            await expect(
-                registered.tool.execute(
+            let captured: unknown;
+            try {
+                await registered.tool.execute(
                     'call-malformed-config',
                     { command: 'printf should-not-run' },
                     undefined,
                     undefined,
                     malformedContext,
-                ),
-            ).rejects.toThrow('Could not parse sandbox config');
+                );
+                throw new Error('expected malformed-config to fail');
+            } catch (error) {
+                captured = error;
+            }
+            // Exact bounded public reason — the security contract never
+            // forwards the publisher's raw parse error text.
+            expect(captured).toBeInstanceOf(Error);
+            if (!(captured instanceof Error)) {
+                throw new Error('captured was not an Error');
+            }
+            expect(captured.message).toBe(
+                'Sandbox execution unavailable: initialization failed',
+            );
+            // Provenance: the error is the typed SandboxUnavailableError
+            // with the closed-set kind carried on the non-enumerable
+            // `kind` slot.
+            expect(isSandboxUnavailableError(captured)).toBe(true);
+            if (isSandboxUnavailableError(captured)) {
+                expect(captured.getKind()).toBe('initialization-failed');
+            }
+            // The raw parse secret (the publisher's raw error message)
+            // MUST NEVER reach the surfaced message nor a JSON dump.
+            // It is held only on the non-enumerable `initError` slot for
+            // telemetry, accessible via the typed accessor.
+            const serialized = JSON.stringify(captured);
+            expect(captured.message).not.toContain('Could not parse');
+            expect(captured.message).not.toContain('sandbox.json');
+            expect(captured.message).not.toContain('Unexpected');
+            expect(captured.message).not.toContain('JSON');
+            expect(serialized).not.toContain('Could not parse');
+            expect(serialized).not.toContain('sandbox.json');
+            expect(serialized).not.toContain('Unexpected');
         } finally {
             await rm(cwd, { recursive: true, force: true });
         }
@@ -127,4 +177,37 @@ describe('sandbox-owned bash explicit stdin', () => {
 
         expect(result.content).toEqual([{ type: 'text', text: 'closed' }]);
     });
+
+    it('publishes and executes through the real managed Zerobox backend', async () => {
+        const cwd = await mkdtemp(join(import.meta.dir, '.sandbox-real-index-'));
+        await mkdir(join(cwd, '.pi'));
+        await writeFile(
+            join(cwd, '.pi', 'sandbox.json'),
+            JSON.stringify({
+                enabled: true,
+                filesystem: { allowWrite: ['.'], denyWrite: ['.env'] },
+                network: { allowedDomains: [], deniedDomains: [] },
+            }),
+        );
+        const realContext = { ...context, cwd } as ExtensionContext;
+        const registered = registerSandbox({ noSandbox: false });
+        try {
+            await registered.start({}, realContext);
+            expect(getSandboxExecutionState()).toBe('enabled');
+            expect(getAnalysisSandboxBrokerState()).toBe('enabled');
+            const result = await registered.tool.execute(
+                'call-real-zerobox',
+                { command: 'printf zerobox-index' },
+                undefined,
+                undefined,
+                realContext,
+            );
+            expect(result.content).toEqual([
+                { type: 'text', text: 'zerobox-index' },
+            ]);
+        } finally {
+            await registered.stop?.({}, realContext);
+            await rm(cwd, { recursive: true, force: true });
+        }
+    }, 30_000);
 });
