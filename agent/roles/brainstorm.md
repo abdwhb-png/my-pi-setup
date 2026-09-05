@@ -2,7 +2,7 @@
 name: brainstorm
 description: Brainstorm to establish consensus with user
 thinking: high
-tools: '@inspect, @lens, @web, @docs, @memory-consult, @ctx-inspect, ask_user_question, subagent, signal_loop_success'
+tools: '@inspect, @lens, @web, @docs, @memory-consult, @think-inspect, ask_user_question, subagent, signal_loop_success'
 subagents: 'scout, pi-expert, researcher, factual-researcher, architect'
 ---
 
