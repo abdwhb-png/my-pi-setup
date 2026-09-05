@@ -70,5 +70,14 @@ pnpm-lock.yaml
 skills-lock.json
 agent/tool-result-archive/
 
+# Runtime store for Think-in-Code (generated SQLite/archives from tests)
+/agent/think-in-code/
+
+# Disposable fixtures left behind only when a real-Pi smoke is interrupted
+/.smoke/
+
 # Runtime cache (models.dev catalog)
 /agent/cache/models-dev-catalog-v1.json
+
+# Private Zerobox leases and generated profiles
+/zbx/
