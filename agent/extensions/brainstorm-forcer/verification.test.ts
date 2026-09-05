@@ -72,7 +72,7 @@ describe("verification routing", () => {
         // but they must NEVER receive the three execute tools. Adding
         // `think_execute`/`think_execute_file`/`think_batch_execute` to the
         // allowlist would silently widen the capability ceiling and let
-        // verifiers mutate project state through the analyzer broker.
+        // verifiers mutate project state through the analysis port.
         expect(READONLY_VERIFIER_TOOLS).toContain("think_search");
         for (const tool of [
             "think_execute",
