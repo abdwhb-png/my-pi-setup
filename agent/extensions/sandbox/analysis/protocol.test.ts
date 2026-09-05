@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+    ANALYSIS_AGGREGATE_INPUT_BYTES,
     ANALYSIS_LIMITS,
+    ANALYSIS_PROGRAM_ALLOWANCE_BYTES,
+    ANALYSIS_REQUEST_OVERHEAD_BYTES,
+    ANALYSIS_SERIALIZED_REQUEST_BYTES,
     normalizeAnalysisRequest,
     parseAnalysisHostResponse,
     parseAnalysisRequest,
@@ -112,6 +116,78 @@ describe("analysis protocol", () => {
                 program: "x".repeat(ANALYSIS_LIMITS.inputBytes + 1),
             }),
         ).toThrow("input exceeds");
+    });
+
+    it("accepts an exact 64 MiB FILE_CONTENT payload but rejects one byte more", () => {
+        const exact = "A".repeat(ANALYSIS_LIMITS.inputBytes);
+        const programPrefix = "export default FILE_CONTENT.length;";
+        const program = `${programPrefix}/*${"x".repeat(
+            ANALYSIS_PROGRAM_ALLOWANCE_BYTES -
+                Buffer.byteLength(programPrefix, "utf8") -
+                4,
+        )}*/`;
+        expect(Buffer.byteLength(program, "utf8")).toBe(
+            ANALYSIS_PROGRAM_ALLOWANCE_BYTES,
+        );
+        const normalized = normalizeAnalysisRequest({
+            id: "file-exact",
+            language: "javascript",
+            program,
+            bindings: {
+                FILE_CONTENT: exact,
+                FILE_PATH: `/${"p".repeat(4095)}`,
+            },
+        });
+        expect(normalized.bindings.FILE_CONTENT).toBe(exact);
+        expect(() =>
+            normalizeAnalysisRequest({
+                id: "file-over",
+                language: "javascript",
+                program: "export default FILE_CONTENT.length",
+                bindings: {
+                    FILE_CONTENT: `${exact}A`,
+                    FILE_PATH: "/project/file.txt",
+                },
+            }),
+        ).toThrow("input exceeds");
+    });
+
+    it("rejects multiple large bindings at the aggregate request boundary", () => {
+        const large = "A".repeat(40 * 1024 * 1024);
+        expect(() =>
+            normalizeAnalysisRequest({
+                id: "aggregate-over",
+                language: "javascript",
+                program: "export default [LEFT.length, RIGHT.length]",
+                bindings: {
+                    LEFT: large,
+                    RIGHT: large,
+                },
+            }),
+        ).toThrow("aggregate input exceeds");
+    });
+
+    it("bounds the fully serialized worker request including JSON escaping and framing", () => {
+        expect(ANALYSIS_SERIALIZED_REQUEST_BYTES).toBe(
+            ANALYSIS_AGGREGATE_INPUT_BYTES * 6 +
+                ANALYSIS_REQUEST_OVERHEAD_BYTES,
+        );
+        const escaped = "\u0000".repeat(1024);
+        const normalized = normalizeAnalysisRequest({
+            id: "serialized-bound",
+            language: "javascript",
+            program: "export default CONTROL.length",
+            bindings: { CONTROL: escaped },
+        });
+        const logicalBytes = Buffer.byteLength(escaped, "utf8");
+        const serializedBytes = Buffer.byteLength(
+            JSON.stringify(normalized),
+            "utf8",
+        );
+        expect(serializedBytes).toBeGreaterThan(logicalBytes * 5);
+        expect(serializedBytes).toBeLessThanOrEqual(
+            ANALYSIS_SERIALIZED_REQUEST_BYTES,
+        );
     });
 
     it("parses untrusted JSON without unsafe casts", () => {

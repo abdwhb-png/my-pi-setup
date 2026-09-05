@@ -8,6 +8,25 @@ export const ANALYSIS_LIMITS = Object.freeze({
     outputBytes: 32 * 1024 ** 2,
 });
 
+/** Public Think tool ceiling reserved for the analyzer program. */
+export const ANALYSIS_PROGRAM_ALLOWANCE_BYTES = 64 * 1024;
+
+/** Bounded allowance for binding names, paths, and request framing. */
+export const ANALYSIS_REQUEST_OVERHEAD_BYTES = 64 * 1024;
+
+export const ANALYSIS_AGGREGATE_INPUT_BYTES =
+    ANALYSIS_LIMITS.inputBytes +
+    ANALYSIS_PROGRAM_ALLOWANCE_BYTES +
+    ANALYSIS_REQUEST_OVERHEAD_BYTES;
+
+/**
+ * Absolute UTF-8 ceiling for the normalized JSON sent to a worker.
+ * JSON may encode one logical byte as a six-byte `\\u00xx` escape; the
+ * additional allowance covers the fixed request object and punctuation.
+ */
+export const ANALYSIS_SERIALIZED_REQUEST_BYTES =
+    ANALYSIS_AGGREGATE_INPUT_BYTES * 6 + ANALYSIS_REQUEST_OVERHEAD_BYTES;
+
 export const ANALYSIS_MAX_CONCURRENCY = 2;
 
 export function analysisHostResponseBudget(outputBytes: number): number {
@@ -300,10 +319,32 @@ function inputBytes(
     program: string,
     bindings: Readonly<Record<string, AnalysisBindingValue>>,
 ): number {
+    // The limit is applied to each logical payload rather than the JSON
+    // envelope. In particular, FILE_CONTENT is the source-file boundary:
+    // adding a few bytes of program/binding framing must not make an exact
+    // 64 MiB file fail validation. The serialized request still remains
+    // bounded by the fixed worker command and the file coordinator's source
+    // check rejects FILE_CONTENT + 1 before archive/analysis.
+    let largest = Buffer.byteLength(program, "utf8");
+    for (const value of Object.values(bindings)) {
+        const payload =
+            typeof value === "string" ? value : JSON.stringify(value);
+        largest = Math.max(largest, Buffer.byteLength(payload, "utf8"));
+    }
+    return largest;
+}
+
+function aggregateInputBytes(
+    program: string,
+    bindings: Readonly<Record<string, AnalysisBindingValue>>,
+): number {
     let total = Buffer.byteLength(program, "utf8");
     for (const [name, value] of Object.entries(bindings)) {
-        total += Buffer.byteLength(name, "utf8");
-        total += Buffer.byteLength(JSON.stringify(value), "utf8");
+        const payload =
+            typeof value === "string" ? value : JSON.stringify(value);
+        total +=
+            Buffer.byteLength(name, "utf8") +
+            Buffer.byteLength(payload, "utf8");
     }
     return total;
 }
@@ -391,14 +432,20 @@ export function normalizeAnalysisRequest(
         throw new Error("Analysis program must be a non-empty string");
     }
     const bindings = normalizeBindings(request.bindings, request.language);
-    const bytes = inputBytes(request.program, bindings);
-    if (bytes > ANALYSIS_LIMITS.inputBytes) {
+    const largestPayloadBytes = inputBytes(request.program, bindings);
+    if (largestPayloadBytes > ANALYSIS_LIMITS.inputBytes) {
         throw new Error(
             `Analysis input exceeds ${ANALYSIS_LIMITS.inputBytes} UTF-8 bytes`,
         );
     }
+    const aggregateBytes = aggregateInputBytes(request.program, bindings);
+    if (aggregateBytes > ANALYSIS_AGGREGATE_INPUT_BYTES) {
+        throw new Error(
+            `Analysis aggregate input exceeds ${ANALYSIS_AGGREGATE_INPUT_BYTES} UTF-8 bytes`,
+        );
+    }
 
-    return {
+    const normalized: NormalizedAnalysisRequest = {
         id: request.id,
         language: request.language,
         worker: workerForLanguage(request.language),
@@ -428,4 +475,14 @@ export function normalizeAnalysisRequest(
             ),
         },
     };
+    const serializedBytes = Buffer.byteLength(
+        JSON.stringify(normalized),
+        "utf8",
+    );
+    if (serializedBytes > ANALYSIS_SERIALIZED_REQUEST_BYTES) {
+        throw new Error(
+            `Analysis serialized input exceeds ${ANALYSIS_SERIALIZED_REQUEST_BYTES} UTF-8 bytes`,
+        );
+    }
+    return normalized;
 }
