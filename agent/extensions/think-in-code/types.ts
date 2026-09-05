@@ -10,7 +10,7 @@
 import type {
     AnalysisLanguage,
     AnalysisResult,
-} from "../sandbox/analysis/protocol.ts";
+} from "../_shared/sandbox-runtime/analysis-protocol.ts";
 
 export type ThinkLanguage = AnalysisLanguage;
 

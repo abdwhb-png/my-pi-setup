@@ -1,27 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import {
-  claimAnalysisSandboxBroker,
-  publishAnalysisSandboxService,
-  releaseAnalysisSandboxBroker,
-} from "../_shared/analysis/sandbox-analysis-broker.ts";
-import {
-  claimSafeExecutionBroker,
-  publishSafeExecutionService,
-  releaseSafeExecutionBroker,
-} from "../_shared/safe-execution/broker.ts";
-import type { SafeExecutionService } from "../_shared/safe-execution/core.ts";
-import type { AnalysisSandboxService } from "../sandbox/analysis/client.ts";
+import type { CommandExecutionService } from "../_shared/command-execution/core.ts";
+import type { AnalysisSandboxPort } from "../_shared/sandbox-runtime/index.ts";
 
+import type { ThinkCommandOperation } from "./command-policy.ts";
 import { DEFAULT_THINK_IN_CODE_CONFIG } from "./config.ts";
 import { ThinkStore } from "./storage/store.ts";
 import { ThinkCoordinator } from "./coordinator.ts";
-
-const ownerSymbol = Symbol("pipe-id-regression");
 
 function ctx(cwd: string): ExtensionContext {
   return { cwd, hasUI: false, ui: {} } as unknown as ExtensionContext;
@@ -32,16 +21,9 @@ describe("Defect 1 RED: pipe-form Pi toolCallId through public execution boundar
   let store: ThinkStore | undefined;
   let coordinator: ThinkCoordinator | undefined;
 
-  beforeEach(() => {
-    claimSafeExecutionBroker(ownerSymbol);
-    claimAnalysisSandboxBroker(ownerSymbol);
-  });
-
   afterEach(async () => {
     coordinator?.close();
     store?.close();
-    releaseSafeExecutionBroker(ownerSymbol);
-    releaseAnalysisSandboxBroker(ownerSymbol);
     if (home) await rm(home, { recursive: true, force: true });
     home = undefined;
     store = undefined;
@@ -54,13 +36,13 @@ describe("Defect 1 RED: pipe-form Pi toolCallId through public execution boundar
     const storeRoot = join(home, "store");
     await mkdir(storeRoot, { recursive: true });
     const capturedIds: string[] = [];
-    const safeExec: SafeExecutionService = {
+    const safeExec: CommandExecutionService<ThinkCommandOperation> = {
       execute: mock(async () => ({
         content: [{ type: "text" as const, text: "payload-bytes" }],
         details: undefined,
       })),
     };
-    const analysis: AnalysisSandboxService = {
+    const analysis: AnalysisSandboxPort = {
       run: mock(async (req) => {
         capturedIds.push(req.id);
         return {
@@ -73,10 +55,8 @@ describe("Defect 1 RED: pipe-form Pi toolCallId through public execution boundar
       }),
       shutdown: async () => undefined,
     };
-    publishSafeExecutionService(ownerSymbol, safeExec);
-    publishAnalysisSandboxService(ownerSymbol, analysis);
     store = new ThinkStore({ config: DEFAULT_THINK_IN_CODE_CONFIG, storeRoot, canonicalPath: "/workspace/proj" });
-    coordinator = new ThinkCoordinator({ store, config: DEFAULT_THINK_IN_CODE_CONFIG });
+    coordinator = new ThinkCoordinator({ store, config: DEFAULT_THINK_IN_CODE_CONFIG, commandExecution: safeExec, getAnalysisPort: () => analysis });
 
     const result = await coordinator.execute(
       {
@@ -112,23 +92,21 @@ describe("Defect 1 RED: pipe-form Pi toolCallId through public execution boundar
     const storeRoot = join(home, "store");
     await mkdir(storeRoot, { recursive: true });
     const capturedIds: string[] = [];
-    const safeExec: SafeExecutionService = {
+    const safeExec: CommandExecutionService<ThinkCommandOperation> = {
       execute: mock(async () => ({
         content: [{ type: "text" as const, text: "x" }],
         details: undefined,
       })),
     };
-    const analysis: AnalysisSandboxService = {
+    const analysis: AnalysisSandboxPort = {
       run: mock(async (req) => {
         capturedIds.push(req.id);
         return { output: "FILE_DERIVED", stderr: "", runtime: "quickjs" as const, durationMs: 1, truncated: false };
       }),
       shutdown: async () => undefined,
     };
-    publishSafeExecutionService(ownerSymbol, safeExec);
-    publishAnalysisSandboxService(ownerSymbol, analysis);
     store = new ThinkStore({ config: DEFAULT_THINK_IN_CODE_CONFIG, storeRoot, canonicalPath: "/workspace/proj" });
-    coordinator = new ThinkCoordinator({ store, config: DEFAULT_THINK_IN_CODE_CONFIG });
+    coordinator = new ThinkCoordinator({ store, config: DEFAULT_THINK_IN_CODE_CONFIG, commandExecution: safeExec, getAnalysisPort: () => analysis });
     await Bun.write(join(home, "data.txt"), "hello file");
     const result = await coordinator.executeFile(
       { id: PI_PIPE_ID, path: "data.txt", language: "javascript", program: "return FILE_CONTENT" },
@@ -146,23 +124,21 @@ describe("Defect 1 RED: pipe-form Pi toolCallId through public execution boundar
     const storeRoot = join(home, "store");
     await mkdir(storeRoot, { recursive: true });
     const capturedIds: string[] = [];
-    const safeExec: SafeExecutionService = {
+    const safeExec: CommandExecutionService<ThinkCommandOperation> = {
       execute: mock(async () => ({
         content: [{ type: "text" as const, text: "out" }],
         details: undefined,
       })),
     };
-    const analysis: AnalysisSandboxService = {
+    const analysis: AnalysisSandboxPort = {
       run: mock(async (req) => {
         capturedIds.push(req.id);
         return { output: "BATCH_DERIVED", stderr: "", runtime: "quickjs" as const, durationMs: 1, truncated: false };
       }),
       shutdown: async () => undefined,
     };
-    publishSafeExecutionService(ownerSymbol, safeExec);
-    publishAnalysisSandboxService(ownerSymbol, analysis);
     store = new ThinkStore({ config: DEFAULT_THINK_IN_CODE_CONFIG, storeRoot, canonicalPath: "/workspace/proj" });
-    coordinator = new ThinkCoordinator({ store, config: DEFAULT_THINK_IN_CODE_CONFIG });
+    coordinator = new ThinkCoordinator({ store, config: DEFAULT_THINK_IN_CODE_CONFIG, commandExecution: safeExec, getAnalysisPort: () => analysis });
     const result = await coordinator.batchExecute(
       { id: PI_PIPE_ID, language: "javascript", program: "return INPUTS", items: [{ id: "a", command: "echo 1" }] },
       ctx("/workspace/proj"),

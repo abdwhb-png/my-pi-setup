@@ -19,7 +19,7 @@ import {
     type ChildExecutionInput,
     type AnalysisHostDependencies,
 } from "./host.ts";
-import { normalizeAnalysisRequest } from "./protocol.ts";
+import { normalizeAnalysisRequest } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 
 function deferred<T>() {
     let resolve!: (value: T | PromiseLike<T>) => void;

@@ -11,9 +11,9 @@ import {
     type AnalysisRequest,
     type AnalysisResult,
     type NormalizedAnalysisRequest,
-} from "./protocol.ts";
+} from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 
-export { analysisHostResponseBudget } from "./protocol.ts";
+export { analysisHostResponseBudget } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 
 export type AnalysisHostRunner = (
     request: NormalizedAnalysisRequest,

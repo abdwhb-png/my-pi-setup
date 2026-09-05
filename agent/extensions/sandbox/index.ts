@@ -1,8 +1,10 @@
 /**
- * Sandbox Extension - OS-level sandboxing for bash commands
+ * Sandbox Extension - OS-level isolation runtime for Bash operations and
+ * analysis workers.
  *
  * Uses the managed Zerobox fork to enforce filesystem, network, environment,
- * and process restrictions on Linux.
+ * and process restrictions on Linux. Bash tool registration belongs to the
+ * separate bash-execution extension.
  *
  * Config files (merged, project takes precedence):
  * - ~/.pi/agent/settings.json under key "sandbox" (global)
@@ -50,29 +52,19 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
     type BashOperations,
-    createBashTool,
-    createBashToolDefinition,
     getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { claimAnalysisSandboxBroker } from "../_shared/analysis/sandbox-analysis-broker.ts";
 import {
-    bashWithStdinSchema,
-    createBashOperations,
-    killActiveBashProcesses,
-} from "../_shared/bash/exec";
-import { createBashPrefixRenderer } from "../_shared/bash/prefix-renderer";
-import { applyFirstRewrite, loadBashRewrites } from "../_shared/bash/rewrites";
-import {
-    claimSandboxExecutionBroker,
-    createSharedBashOperations,
-    type SharedBashOperationsOptions,
-} from "../_shared/bash/sandbox-execution-broker";
-import { appendCompressionFooter } from "../_shared/compression-render";
+    createBashProcessSupervisor,
+    type BashProcessSupervisor,
+} from "../_shared/command-execution/exec";
 import { createWidget } from "../_shared/fancy-footer";
 import {
-    publishSandboxPair,
-    releaseSandboxPair,
-} from "../_shared/safe-execution/atomic-sandbox-publication.ts";
+    claimSandboxRuntime,
+    publishSandboxRuntime,
+    releaseSandboxRuntime,
+    type SandboxBashOperationOptions,
+} from "../_shared/sandbox-runtime/index.ts";
 import { createUiColors, type UiColorsCreation } from "../_shared/ui/ui-colors";
 import {
     createAnalysisSandboxService,
@@ -420,9 +412,10 @@ function deepMerge(
 
 export function createSandboxedBashOps(
     service: SandboxService,
-    options: SharedBashOperationsOptions = {},
+    supervisor: BashProcessSupervisor,
+    options: SandboxBashOperationOptions = {},
 ): BashOperations {
-    return createBashOperations({
+    return supervisor.createOperations({
         stdin: options.stdin,
         detached: true,
         rewriteCommand: options.rewriteCommand,
@@ -439,10 +432,9 @@ export function createSandboxedBashOps(
 }
 
 export default function (pi: ExtensionAPI) {
-    const brokerOwner = Symbol("sandbox-extension-owner");
-    const analysisBrokerOwner = Symbol("sandbox-analysis-extension-owner");
-    claimSandboxExecutionBroker(brokerOwner);
-    claimAnalysisSandboxBroker(analysisBrokerOwner);
+    const runtimeOwner = Symbol("sandbox-extension-owner");
+    const bashProcessSupervisor = createBashProcessSupervisor();
+    claimSandboxRuntime(runtimeOwner);
     const inheritedSessionStatus = process.env[ENV_SESSION_STATUS];
     let ownedSessionStatus: "enabled" | "disabled" | undefined;
 
@@ -460,39 +452,24 @@ export default function (pi: ExtensionAPI) {
 
     let transitionGeneration = 0;
     const beginTransition = (): number | undefined => {
-        const published = publishSandboxPair(brokerOwner, analysisBrokerOwner, {
-            bash: { state: "uninitialized" },
-            analysis: { state: "uninitialized" },
+        transitionGeneration += 1;
+        const generation = transitionGeneration;
+        const published = publishSandboxRuntime(runtimeOwner, {
+            state: "uninitialized",
         });
         if (!published) return undefined;
-        transitionGeneration += 1;
-        return transitionGeneration;
+        return generation;
     };
     const isCurrentTransition = (generation: number): boolean =>
         transitionGeneration === generation;
-    const publishDisabled = (reason: string) =>
-        publishSandboxPair(brokerOwner, analysisBrokerOwner, {
-            bash: {
-                state: "disabled",
-                createOperations: (options) =>
-                    createBashOperations({
-                        stdin: options.stdin,
-                        rewriteCommand: options.rewriteCommand,
-                    }),
-            },
-            analysis: { state: "error", error: reason },
-        });
+    const publishDisabled = () =>
+        publishSandboxRuntime(runtimeOwner, { state: "disabled" });
     const publishError = (error: unknown) =>
-        publishSandboxPair(brokerOwner, analysisBrokerOwner, {
-            bash: {
-                state: "error",
-                error: error instanceof Error ? error.message : String(error),
-            },
-            analysis: {
-                state: "error",
-                error: error instanceof Error ? error.message : String(error),
-            },
-        });
+        publishSandboxRuntime(
+            runtimeOwner,
+            { state: "error" },
+            error instanceof Error ? error.message : String(error),
+        );
     let sandboxService: SandboxService | null = null;
     let analysisService: AnalysisSandboxService | null = null;
     const pendingSandboxCleanup = new Set<SandboxService>();
@@ -664,21 +641,16 @@ export default function (pi: ExtensionAPI) {
             if (!isCurrentTransition(generation)) {
                 return abandonStaleCandidate();
             }
-            const published = publishSandboxPair(
-                brokerOwner,
-                analysisBrokerOwner,
-                {
-                    bash: {
-                        state: "enabled",
-                        createOperations: (options) =>
-                            createSandboxedBashOps(candidateSandbox, options),
-                    },
-                    analysis: {
-                        state: "enabled",
-                        service: candidateAnalysis,
-                    },
-                },
-            );
+            const published = publishSandboxRuntime(runtimeOwner, {
+                state: "enabled",
+                createBashOperations: (options) =>
+                    createSandboxedBashOps(
+                        candidateSandbox,
+                        bashProcessSupervisor,
+                        options,
+                    ),
+                analysis: candidateAnalysis,
+            });
             if (!published) {
                 await cleanupCandidates(candidateSandbox, candidateAnalysis);
                 return false;
@@ -705,11 +677,7 @@ export default function (pi: ExtensionAPI) {
         default: false,
     });
 
-    let projectCwd = process.cwd();
-    let cachedBash = createBashTool(projectCwd);
-    let bashDef = createBashToolDefinition(projectCwd);
     let sandboxEnabled = false;
-    let rewriteRules = loadBashRewrites(projectCwd).rules;
     let sandboxFooterState: SandboxFooterState = "off";
     const w = createWidget(pi, {
         id: WIDGET_ID,
@@ -749,56 +717,11 @@ export default function (pi: ExtensionAPI) {
         ownedSessionStatus = status;
     }
 
-    pi.registerTool({
-        ...cachedBash,
-        parameters: bashWithStdinSchema,
-        label: "bash (sandboxed)",
-        // Show 🛡️ prefix when sandbox active, no prefix when disabled
-        renderCall: createBashPrefixRenderer(() =>
-            sandboxEnabled ? "🛡️" : "",
-        ),
-        renderResult: (
-            result: Parameters<NonNullable<typeof bashDef.renderResult>>[0],
-            options: Parameters<NonNullable<typeof bashDef.renderResult>>[1],
-            theme: Parameters<NonNullable<typeof bashDef.renderResult>>[2],
-            context: Parameters<NonNullable<typeof bashDef.renderResult>>[3],
-        ) => {
-            const component = bashDef.renderResult!(
-                result,
-                options,
-                theme,
-                context,
-            );
-            if (!options.isPartial) {
-                appendCompressionFooter(component, result.details, theme);
-            }
-            return component;
-        },
-        async execute(id, params, signal, onUpdate, _ctx) {
-            const input = { command: params.command, timeout: params.timeout };
-            const operations = createSharedBashOperations({
-                stdin: params.stdin,
-                rewriteCommand: (command) =>
-                    applyFirstRewrite(command, "bash", rewriteRules),
-            });
-            const sharedBash = createBashTool(projectCwd, { operations });
-            return sharedBash.execute(id, input, signal, onUpdate);
-        },
-    });
-
-    pi.on("user_bash", () => ({
-        operations: createSharedBashOperations(),
-    }));
-
     pi.on("session_start", async (_event, ctx) => {
-        projectCwd = ctx.cwd;
-        cachedBash = createBashTool(projectCwd);
-        bashDef = createBashToolDefinition(projectCwd);
-        rewriteRules = loadBashRewrites(projectCwd).rules;
         const noSandbox = pi.getFlag("no-sandbox") as boolean;
         const generation = beginTransition();
         if (generation === undefined) return;
-        killActiveBashProcesses();
+        bashProcessSupervisor.shutdown();
 
         if (noSandbox) {
             sandboxEnabled = false;
@@ -815,7 +738,7 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
             if (!isCurrentTransition(generation)) return;
-            publishDisabled("disabled via --no-sandbox");
+            publishDisabled();
             updateSandboxStatus(ctx, "off");
             ctx.ui.notify(
                 `⚠ Sandbox disabled via --no-sandbox — bash commands run unsandboxed.`,
@@ -870,7 +793,7 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
             if (!isCurrentTransition(generation)) return;
-            publishDisabled(`disabled (${source})`);
+            publishDisabled();
             updateSandboxStatus(ctx, "off");
             if (explicitlyDisabled(resolved)) {
                 ctx.ui.notify(
@@ -912,22 +835,21 @@ export default function (pi: ExtensionAPI) {
 
     pi.on("session_shutdown", async () => {
         const generation = beginTransition();
-        if (generation === undefined) {
-            restoreSessionStatus();
-            return;
-        }
-        killActiveBashProcesses();
+        bashProcessSupervisor.shutdown();
         try {
             await shutdownServices();
         } catch (error) {
-            if (!isCurrentTransition(generation)) return;
-            publishError(error);
+            if (generation !== undefined && isCurrentTransition(generation)) {
+                publishError(error);
+            }
             throw error;
         } finally {
             restoreSessionStatus();
         }
-        if (!isCurrentTransition(generation)) return;
-        releaseSandboxPair(brokerOwner, analysisBrokerOwner);
+        if (generation === undefined || !isCurrentTransition(generation)) {
+            return;
+        }
+        releaseSandboxRuntime(runtimeOwner);
     });
 
     pi.registerCommand("sandbox", {
@@ -1003,7 +925,7 @@ export default function (pi: ExtensionAPI) {
                 sandboxEnabled = false;
                 const generation = beginTransition();
                 if (generation === undefined) return;
-                killActiveBashProcesses();
+                bashProcessSupervisor.shutdown();
                 try {
                     await shutdownServices();
                 } catch (error) {
@@ -1017,7 +939,7 @@ export default function (pi: ExtensionAPI) {
                     return;
                 }
                 if (!isCurrentTransition(generation)) return;
-                publishDisabled("sandbox disabled by command");
+                publishDisabled();
                 updateSandboxStatus(ctx, "off");
                 persistSessionStatus(ctx, "disabled");
                 ctx.ui.notify("Sandbox disabled", "info");

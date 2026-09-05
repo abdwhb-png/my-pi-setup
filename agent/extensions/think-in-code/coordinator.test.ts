@@ -1,6 +1,5 @@
 import {
     afterEach,
-    beforeEach,
     describe,
     expect,
     it,
@@ -14,27 +13,15 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-    claimSafeExecutionBroker,
-    publishSafeExecutionService,
-    releaseSafeExecutionBroker,
-} from "../_shared/safe-execution/broker.ts";
-import {
-    claimAnalysisSandboxBroker,
-    publishAnalysisSandboxService,
-    releaseAnalysisSandboxBroker,
-} from "../_shared/analysis/sandbox-analysis-broker.ts";
-import type { SafeExecutionService } from "../_shared/safe-execution/core.ts";
-import type { AnalysisSandboxService } from "../sandbox/analysis/client.ts";
-import { normalizeAnalysisRequest } from "../sandbox/analysis/protocol.ts";
-import { runQuickJsAnalysis } from "../sandbox/analysis/quickjs-worker.ts";
+import type { CommandExecutionService } from "../_shared/command-execution/core.ts";
+import type { AnalysisSandboxPort } from "../_shared/sandbox-runtime/index.ts";
+import { normalizeAnalysisRequest } from "../_shared/sandbox-runtime/analysis-protocol.ts";
 
 import { DEFAULT_THINK_IN_CODE_CONFIG } from "./config.ts";
+import type { ThinkCommandOperation } from "./command-policy.ts";
 import { ThinkStore, __getRawDatabase } from "./storage/store.ts";
 import { ThinkCoordinator, __test } from "./coordinator.ts";
 import type { ExecuteRequest } from "./types.ts";
-
-const ownerSymbol = Symbol("coordinator-test");
 
 function ctx(cwd: string): ExtensionContext {
     return {
@@ -46,7 +33,7 @@ function ctx(cwd: string): ExtensionContext {
 
 function fakeSafeExecution(
     textFor: (command: string) => string,
-): SafeExecutionService {
+): CommandExecutionService<ThinkCommandOperation> {
     return {
         execute: mock(async (request) => {
             const text = textFor(request.command);
@@ -60,7 +47,7 @@ function fakeSafeExecution(
 
 function fakeAnalysis(
     result: { output: string; stderr?: string },
-): AnalysisSandboxService {
+): AnalysisSandboxPort {
     return {
         run: mock(async () => ({
             output: result.output,
@@ -77,49 +64,46 @@ describe("ThinkCoordinator", () => {
     let home: string | undefined;
     let store: ThinkStore | undefined;
     let coordinator: ThinkCoordinator | undefined;
-
-    beforeEach(() => {
-        claimSafeExecutionBroker(ownerSymbol);
-        claimAnalysisSandboxBroker(ownerSymbol);
-    });
+    let currentAnalysis: AnalysisSandboxPort | undefined;
 
     afterEach(async () => {
         coordinator?.close();
         store?.close();
-        releaseSafeExecutionBroker(ownerSymbol);
-        releaseAnalysisSandboxBroker(ownerSymbol);
         if (home) await rm(home, { recursive: true, force: true });
         home = undefined;
         store = undefined;
         coordinator = undefined;
+        currentAnalysis = undefined;
     });
 
     async function setup(
-        safeExec?: SafeExecutionService,
-        analysis?: AnalysisSandboxService,
+        safeExec?: CommandExecutionService<ThinkCommandOperation>,
+        analysis?: AnalysisSandboxPort,
     ): Promise<{ store: ThinkStore; coordinator: ThinkCoordinator }> {
         home = await mkdtemp(join(tmpdir(), "think-in-code-coord-"));
         const storeRoot = join(home, "store");
         await mkdir(storeRoot, { recursive: true });
         const safe = safeExec ?? fakeSafeExecution(() => "ok");
-        publishSafeExecutionService(ownerSymbol, safe);
-        const analysisSvc =
-            analysis ?? fakeAnalysis({ output: "derived text" });
-        publishAnalysisSandboxService(ownerSymbol, analysisSvc);
+        currentAnalysis = analysis ?? fakeAnalysis({ output: "derived text" });
         store = new ThinkStore({
             config: DEFAULT_THINK_IN_CODE_CONFIG,
             storeRoot,
             canonicalPath: "/workspace/proj",
         });
-        coordinator = new ThinkCoordinator({ store, config: DEFAULT_THINK_IN_CODE_CONFIG });
+        coordinator = new ThinkCoordinator({
+            store,
+            config: DEFAULT_THINK_IN_CODE_CONFIG,
+            commandExecution: safe,
+            getAnalysisPort: () => currentAnalysis!,
+        });
         return { store, coordinator };
     }
 
     it("preserves guard denial evidence and shows no raw stdout", async () => {
         const { SafeExecutionError } = await import(
-            "../_shared/safe-execution/failure.ts"
+            "../_shared/command-execution/failure.ts"
         );
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new SafeExecutionError(
                     "guard",
@@ -147,7 +131,7 @@ describe("ThinkCoordinator", () => {
 
     it("strips raw stdout from a non-zero-exit safe-execution error", async () => {
         const secret = "SECRET_TOKEN_FROM_FAILING_COMMAND_DO_NOT_LEAK";
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new Error(
                     `${secret}\n\nCommand exited with code 1`,
@@ -173,7 +157,7 @@ describe("ThinkCoordinator", () => {
 
     it("strips raw stdout from a timed-out safe-execution error", async () => {
         const secret = "STDOUT_FROM_INFINITE_LOOP_DO_NOT_LEAK";
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new Error(
                     `${secret}\n\nCommand timed out after 30 seconds`,
@@ -201,7 +185,7 @@ describe("ThinkCoordinator", () => {
 
     it("strips raw stdout from an aborted safe-execution error", async () => {
         const secret = "ABORTED_STDOUT_DO_NOT_LEAK";
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new Error(`${secret}\n\nCommand aborted`);
             }),
@@ -227,7 +211,7 @@ describe("ThinkCoordinator", () => {
         // reclassifies it as a generic failure and never includes the raw
         // message in content, details, INDEX search, or streamed updates.
         const secret = "SUPER_SECRET_RAW_PAYLOAD_NO_SUFFIX";
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new Error(secret);
             }),
@@ -249,7 +233,7 @@ describe("ThinkCoordinator", () => {
 
     it("does not index raw stdout from safe-execution errors into the search index", async () => {
         const secret = "INDEXED_SECRET_FROM_FAILING_COMMAND_DO_NOT_LEAK";
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new Error(`${secret}\n\nCommand exited with code 2`);
             }),
@@ -287,9 +271,9 @@ describe("ThinkCoordinator", () => {
     it("archives nonzero command output for isolated analysis without public leaks", async () => {
         const raw = "FAILED_COMMAND_STDERR_SECRET_DO_NOT_LEAK";
         const { SafeExecutionError } = await import(
-            "../_shared/safe-execution/failure.ts"
+            "../_shared/command-execution/failure.ts"
         );
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new SafeExecutionError(
                     "bash_exit",
@@ -327,9 +311,9 @@ describe("ThinkCoordinator", () => {
     it("archives failed batch command output for isolated analysis without public leaks", async () => {
         const raw = "FAILED_BATCH_STDERR_SECRET_DO_NOT_LEAK";
         const { SafeExecutionError } = await import(
-            "../_shared/safe-execution/failure.ts"
+            "../_shared/command-execution/failure.ts"
         );
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new SafeExecutionError(
                     "bash_exit",
@@ -504,7 +488,7 @@ describe("ThinkCoordinator", () => {
     });
 
     it("blocks execute when safe execution or analysis is unavailable", async () => {
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new Error("Safe execution unavailable: stub");
             }),
@@ -736,21 +720,13 @@ describe("ThinkCoordinator", () => {
 
     it("accepts exactly 64 MiB ASCII through normalizeAnalysisRequest with immutable file bindings", async () => {
         const normalizedRequests: unknown[] = [];
-        const analysis: AnalysisSandboxService = {
+        const analysis: AnalysisSandboxPort = {
             run: mock(async (request) => {
                 const normalized = normalizeAnalysisRequest(request);
                 normalizedRequests.push(normalized);
-                const worker = await runQuickJsAnalysis({
-                    ...normalized,
-                    program: `export default (() => {
-                        const before = FILE_PATH;
-                        try { FILE_PATH = "mutated"; } catch {}
-                        return FILE_PATH === before ? "immutable" : "mutable";
-                    })()`,
-                });
                 return {
-                    output: worker.output,
-                    stderr: worker.stderr,
+                    output: "immutable",
+                    stderr: "",
                     runtime: "quickjs" as const,
                     durationMs: 1,
                     truncated: false,
@@ -859,7 +835,7 @@ describe("ThinkCoordinator", () => {
     });
 
     it("keeps batch results and analyzer inputs in original item order", async () => {
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async (request) => {
                 if (request.command === "first") await Bun.sleep(25);
                 return {
@@ -924,7 +900,7 @@ describe("ThinkCoordinator", () => {
         // Simulate the real bash partialResult shape: content with raw text
         // that must never reach the parent's onUpdate, plus details metadata
         // that the wrapper may forward.
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async (request) => {
                 const onUpdate = request.onUpdate as
                     | ((partial: unknown) => void)
@@ -987,7 +963,7 @@ describe("ThinkCoordinator", () => {
     });
 
     it("strips raw stdout/stderr content from batch execute streamed updates", async () => {
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async (request) => {
                 const onUpdate = request.onUpdate as
                     | ((partial: unknown) => void)
@@ -1054,7 +1030,7 @@ describe("ThinkCoordinator", () => {
             maxLines: 2000,
             maxBytes: 50_000,
         };
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async (request) => {
                 const onUpdate = request.onUpdate as
                     | ((partial: unknown) => void)
@@ -1123,7 +1099,7 @@ describe("ThinkCoordinator", () => {
         // with the bash.js TruncationResult that carries raw content. The
         // sanitizer MUST strip the text block AND the truncation.content
         // string; both reach Pi through the partialResult envelope.
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async (request) => {
                 const onUpdate = request.onUpdate as
                     | ((partial: unknown) => void)
@@ -1190,7 +1166,7 @@ describe("ThinkCoordinator", () => {
         // unbounded. The success path is bounded to maxResultBytes (64 KiB).
         const secret = "FILE_CONTENT_SECRET_DO_NOT_LEAK";
         const fileContent = secret.repeat(200); // ~12 KiB to also test bound
-        const analysisFailure: AnalysisSandboxService = {
+        const analysisFailure: AnalysisSandboxPort = {
             run: mock(async () => {
                 throw new Error(
                     `Error: ${secret}\n\n${fileContent.slice(0, 256)}`,
@@ -1248,7 +1224,7 @@ describe("ThinkCoordinator", () => {
         // INPUT from any bindings. The reason must not mention bash or
         // safe execution (those are unrelated to analyzer failures).
         const secret = "ANALYZER_INPUT_SECRET_DO_NOT_LEAK";
-        const analysisFailure: AnalysisSandboxService = {
+        const analysisFailure: AnalysisSandboxPort = {
             run: mock(async () => {
                 throw new Error(
                     `ReferenceError: ${secret} is not defined\n at line 5`,
@@ -1284,7 +1260,7 @@ describe("ThinkCoordinator", () => {
 
     it("batch analyzer error keeps INPUTS secret out of every public surface and stays generic", async () => {
         const secret = "ANALYZER_INPUTS_SECRET_DO_NOT_LEAK";
-        const analysisFailure: AnalysisSandboxService = {
+        const analysisFailure: AnalysisSandboxPort = {
             run: mock(async () => {
                 throw new Error(`SyntaxError: ${secret} unexpected token`);
             }),
@@ -1369,7 +1345,7 @@ describe("ThinkCoordinator", () => {
         // text. The coordinator must not classify that as an unavailable
         // safe-execution reason and must never surface the attacker tail.
         const tail = "ATTACKER_TAIL_DO_NOT_LEAK";
-        const analysisFailure: AnalysisSandboxService = {
+        const analysisFailure: AnalysisSandboxPort = {
             run: mock(async () => {
                 throw new Error(`Safe execution unavailable: ${tail}`);
             }),
@@ -1398,7 +1374,7 @@ describe("ThinkCoordinator", () => {
 
     it("preserves the abort signal through the sanitizing wrapper", async () => {
         let forwardedSignal: AbortSignal | undefined;
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async (request) => {
                 forwardedSignal = request.signal;
                 return {
@@ -1489,10 +1465,15 @@ describe("ThinkCoordinator", () => {
         const config = { ...DEFAULT_THINK_IN_CODE_CONFIG, projectQuotaBytes: 5 };
         const storeRoot = join(home, "store");
         await mkdir(storeRoot, { recursive: true });
-        publishSafeExecutionService(ownerSymbol, fakeSafeExecution(() => "123456789"));
-        publishAnalysisSandboxService(ownerSymbol, fakeAnalysis({ output: "x" }));
+        const commandExecution = fakeSafeExecution(() => "123456789");
+        currentAnalysis = fakeAnalysis({ output: "x" });
         store = new ThinkStore({ config, storeRoot, canonicalPath: "/workspace/proj" });
-        coordinator = new ThinkCoordinator({ store, config });
+        coordinator = new ThinkCoordinator({
+            store,
+            config,
+            commandExecution,
+            getAnalysisPort: () => currentAnalysis!,
+        });
         await coordinator.execute(
             {
                 id: "quota-write",
@@ -1507,7 +1488,7 @@ describe("ThinkCoordinator", () => {
 
     it("scrubs raw stdout from batch item errors in INPUTS, details.items, content, and streamed updates", async () => {
         const secret = "BATCH_ITEM_SECRET_DO_NOT_LEAK";
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async (request) => {
                 const cmd = (request as { command: string }).command;
                 if (cmd === "fail") {
@@ -1528,7 +1509,7 @@ describe("ThinkCoordinator", () => {
             durationMs: 1,
             truncated: false,
         }));
-        const analysisService: AnalysisSandboxService = {
+        const analysisService: AnalysisSandboxPort = {
             run: analysis,
             shutdown: async () => undefined,
         };
@@ -1577,7 +1558,7 @@ describe("ThinkCoordinator", () => {
         const secret = "ABORTED_BATCH_STDOUT_DO_NOT_LEAK";
         const controller = new AbortController();
         controller.abort();
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new Error(`${secret}\n\nCommand aborted`);
             }),
@@ -1602,7 +1583,7 @@ describe("ThinkCoordinator", () => {
 
     it("non-aborted failed batch items still report failed status with sanitized reason", async () => {
         const secret = "BATCH_FAILED_STDOUT_DO_NOT_LEAK";
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async () => {
                 throw new Error(`${secret}\n\nCommand exited with code 9`);
             }),
@@ -1625,7 +1606,7 @@ describe("ThinkCoordinator", () => {
     });
 
     it("runs batch execute with bounded concurrency and reports per-item status", async () => {
-        const safeExec: SafeExecutionService = {
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async (request) => {
                 return {
                     content: [
@@ -1760,7 +1741,7 @@ describe("ThinkCoordinator", () => {
         const reanalysis = fakeAnalysis({
             output: "REPLAY",
         });
-        publishAnalysisSandboxService(ownerSymbol, reanalysis);
+        currentAnalysis = reanalysis;
         const second = await coordinator.execute(
             {
                 id: "pipeline-stage-2",

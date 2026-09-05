@@ -60,22 +60,10 @@ describe("Defect 2 RED: store search FTS5 safe query construction", () => {
 
   it("coordinator search with hyphenated query via coordinator must also be safe (integration)", async () => {
     const { ThinkCoordinator } = await import("../coordinator.ts");
-    const { claimSafeExecutionBroker, publishSafeExecutionService, releaseSafeExecutionBroker } = await import("../../_shared/safe-execution/broker.ts");
-    const { claimAnalysisSandboxBroker, publishAnalysisSandboxService, releaseAnalysisSandboxBroker } = await import("../../_shared/analysis/sandbox-analysis-broker.ts");
-    const owner = Symbol("fts-coord");
-    claimSafeExecutionBroker(owner);
-    claimAnalysisSandboxBroker(owner);
-    publishSafeExecutionService(owner, { execute: async () => ({ content: [{ type: "text", text: "x" }], details: undefined }) } as never);
-    publishAnalysisSandboxService(owner, { run: async () => ({ output: "y", stderr: "", runtime: "quickjs", durationMs: 1, truncated: false }), shutdown: async () => {} } as never);
-    try {
-      const s2 = await harness();
-      const coord = new ThinkCoordinator({ store: s2, config: DEFAULT_THINK_IN_CODE_CONFIG });
-      const r = coord.search({ id: "s1", query: "alpha-2847", limit: 5 });
-      expect(r.details.blockedReason).toBeUndefined();
-      expect(r.content[0]?.text).toBeDefined();
-    } finally {
-      releaseSafeExecutionBroker(owner);
-      releaseAnalysisSandboxBroker(owner);
-    }
+    const s2 = await harness();
+    const coord = new ThinkCoordinator({ store: s2, config: DEFAULT_THINK_IN_CODE_CONFIG });
+    const r = coord.search({ id: "s1", query: "alpha-2847", limit: 5 });
+    expect(r.details.blockedReason).toBeUndefined();
+    expect(r.content[0]?.text).toBeDefined();
   });
 });

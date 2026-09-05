@@ -68,6 +68,88 @@ describe("think-in-code config", () => {
         expect(normalized.network).toBe(false);
     });
 
+    it("owns an independent deny-default command policy and telemetry", () => {
+        const normalized = normalizeThinkInCodeConfig({
+            commandPolicy: {
+                guardPolicy: { sudo: "allow", unknown: "allow" },
+                allowedShellCommands: ["grep", 42],
+                rewrites: [
+                    {
+                        match: "^npm test$",
+                        rewrite: "bun test",
+                        tools: ["think_execute", "bash"],
+                    },
+                ],
+            },
+            telemetry: {
+                enabled: false,
+                retentionDays: 7,
+                captureCommand: false,
+                maxCommandLength: 500,
+                auditDays: 5,
+                auditLimit: 20,
+            },
+        });
+
+        expect(normalized.commandPolicy).toEqual({
+            guardPolicy: { sudo: "allow" },
+            allowedShellCommands: ["grep"],
+            rewrites: [
+                {
+                    match: "^npm test$",
+                    rewrite: "bun test",
+                    tools: ["think_execute"],
+                },
+            ],
+        });
+        expect(normalized.telemetry).toMatchObject({
+            enabled: false,
+            retentionDays: 7,
+            captureCommand: false,
+            maxCommandLength: 500,
+            auditDays: 5,
+            auditLimit: 20,
+        });
+    });
+
+    it("never widens the fixed Think audit bounds", () => {
+        const normalized = normalizeThinkInCodeConfig({
+            telemetry: {
+                retentionDays: 31,
+                maxCommandLength: 10_001,
+                auditDays: 31,
+                auditLimit: 101,
+            },
+        });
+
+        expect(normalized.telemetry.retentionDays).toBe(30);
+        expect(normalized.telemetry.maxCommandLength).toBe(10_000);
+        expect(normalized.telemetry.auditDays).toBe(30);
+        expect(normalized.telemetry.auditLimit).toBe(100);
+    });
+
+    it("never falls back to safeBash policy", () => {
+        const settings = {
+            getGlobalSettings: () => ({
+                safeBash: {
+                    guardPolicy: { sudo: "allow" },
+                    allowedShellCommands: ["grep"],
+                },
+            }),
+            getProjectSettings: () => ({}),
+        } as unknown as SettingsManager;
+
+        const loaded = loadThinkInCodeConfig(
+            "/workspace/project",
+            undefined,
+            settings,
+        );
+
+        expect(loaded.commandPolicy).toEqual(
+            DEFAULT_THINK_IN_CODE_CONFIG.commandPolicy,
+        );
+    });
+
     it("loads downward project overlays through the shared verified loader", () => {
         const settings = {
             getGlobalSettings: () => ({
@@ -80,6 +162,45 @@ describe("think-in-code config", () => {
         const loaded = loadThinkInCodeConfig("/workspace/project", undefined, settings);
         expect(loaded.maxResultBytes).toBe(4096);
         expect(loaded.batchConcurrency).toBe(2);
+    });
+
+    it("merges partial project policy and telemetry overlays without resetting global fields", () => {
+        const settings = {
+            getGlobalSettings: () => ({
+                thinkInCode: {
+                    commandPolicy: {
+                        allowedShellCommands: ["grep"],
+                        rewrites: [
+                            {
+                                match: "^npm test$",
+                                rewrite: "bun test",
+                                tools: ["think_execute"],
+                            },
+                        ],
+                    },
+                    telemetry: { retentionDays: 7, captureCommand: false },
+                },
+            }),
+            getProjectSettings: () => ({
+                thinkInCode: {
+                    commandPolicy: { guardPolicy: { sudo: "allow" } },
+                    telemetry: { auditLimit: 25 },
+                },
+            }),
+        } as unknown as SettingsManager;
+
+        const loaded = loadThinkInCodeConfig(
+            "/workspace/project",
+            undefined,
+            settings,
+        );
+
+        expect(loaded.commandPolicy.allowedShellCommands).toEqual(["grep"]);
+        expect(loaded.commandPolicy.guardPolicy).toEqual({ sudo: "allow" });
+        expect(loaded.commandPolicy.rewrites).toHaveLength(1);
+        expect(loaded.telemetry.retentionDays).toBe(7);
+        expect(loaded.telemetry.captureCommand).toBe(false);
+        expect(loaded.telemetry.auditLimit).toBe(25);
     });
 
     it("places the project store under the resolved home root", () => {

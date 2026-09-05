@@ -5,7 +5,7 @@ import {
     parseAnalysisRequest,
     type AnalysisBindingValue,
     type NormalizedAnalysisRequest,
-} from "./protocol.ts";
+} from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 
 export interface AnalysisWorkerResult {
     output: string;

@@ -156,7 +156,7 @@ describe("Task 7 think_* group resolution", () => {
 
     it("atlas/herdr/debug roles resolve to all five think_* tools via @think", () => {
         // Execution-capable roles get the combined @think group, so the
-        // analyzer broker is reachable. Least privilege is preserved by NOT
+        // analysis port is reachable. Least privilege is preserved by NOT
         // handing them the legacy mcp:ctx_* tools.
         const atlasResult = resolveToolAliases(
             ["@inspect", "@lens", "@think", "@docs", "@memory-consult", "safe_bash", "subagent"],

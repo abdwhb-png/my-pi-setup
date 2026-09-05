@@ -1,0 +1,9 @@
+{
+  "name": "bash-execution",
+  "version": "1.0.0",
+  "description": "Unified Pi ownership for bash, user_bash, and safe_bash",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

@@ -10,7 +10,7 @@ import {
 import type {
     AnalysisResult,
     NormalizedAnalysisRequest,
-} from "./protocol.ts";
+} from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 
 function deferred<T>() {
     let resolve!: (value: T) => void;

@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 
-import { createBashOperations } from "../../_shared/bash/exec.ts";
+import { createBashOperations } from "../../_shared/command-execution/exec.ts";
 import { SandboxExecutionError, type SandboxCommand } from "./contracts.ts";
 import { createPrivateTempLease } from "./private-temp.ts";
 import { validatePiSandboxConfig } from "./policies.ts";

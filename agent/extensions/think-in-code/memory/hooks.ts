@@ -55,8 +55,8 @@ interface HookOptions {
 }
 
 export class HookState {
-    readonly #store: ThinkStore;
-    readonly #tokenBudget: number;
+    #store: ThinkStore;
+    #tokenBudget: number;
     readonly #captureMaxChars: number;
     readonly #appendEntry?: HookOptions["appendEntry"];
     readonly #emittedEntries: Array<{
@@ -78,8 +78,15 @@ export class HookState {
         this.#appendEntry = options.appendEntry;
     }
 
+    rebind(store: ThinkStore, tokenBudget = 1500): void {
+        this.shutdown();
+        this.#store = store;
+        this.#tokenBudget = tokenBudget;
+    }
+
     start(sessionId: string, entries: readonly CustomEntryLike[] = []): void {
         this.#sessionId = sessionId;
+        this.#currentTurn = 0;
         this.#buffer = new CaptureBuffer(
             this.#store,
             sessionId,

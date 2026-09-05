@@ -18,8 +18,6 @@
  */
 
 import {
-    afterEach,
-    beforeEach,
     describe,
     expect,
     it,
@@ -30,28 +28,18 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-    claimAnalysisSandboxBroker,
-    publishAnalysisSandboxService,
-    releaseAnalysisSandboxBroker,
-} from "../_shared/analysis/sandbox-analysis-broker.ts";
-import {
-    claimSafeExecutionBroker,
-    publishSafeExecutionService,
-    releaseSafeExecutionBroker,
-} from "../_shared/safe-execution/broker.ts";
-import type { AnalysisSandboxService } from "../sandbox/analysis/client.ts";
-import type { AnalysisRequest, AnalysisResult } from "../sandbox/analysis/protocol.ts";
-import type { SafeExecutionService } from "../_shared/safe-execution/core.ts";
+import type { AnalysisSandboxPort } from "../_shared/sandbox-runtime/index.ts";
+import type { AnalysisRequest, AnalysisResult } from "../_shared/sandbox-runtime/analysis-protocol.ts";
+import type { CommandExecutionService } from "../_shared/command-execution/core.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
+import type { ThinkCommandOperation } from "./command-policy.ts";
 import { DEFAULT_THINK_IN_CODE_CONFIG } from "./config.ts";
 import { ThinkCoordinator } from "./coordinator.ts";
 import { ThinkStore } from "./storage/store.ts";
 import { TOOL_NAMES } from "./types.ts";
 import { buildToolHandlers, SCHEMAS } from "./tools.ts";
 
-const ownerSymbol = Symbol("parity-test");
 const MAX_DERIVED_BYTES = 64 * 1024;
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
 
@@ -76,7 +64,7 @@ function ctx(cwd: string): ExtensionContext {
 
 function makeSafeExec(
     textFor: (command: string) => string,
-): SafeExecutionService {
+): CommandExecutionService<ThinkCommandOperation> {
     return {
         execute: mock(async (request) => ({
             content: [{ type: "text" as const, text: textFor(request.command) }],
@@ -87,7 +75,7 @@ function makeSafeExec(
 
 function makeAnalysis(
     output: (request: AnalysisRequest) => string,
-): AnalysisSandboxService {
+): AnalysisSandboxPort {
     return {
         run: mock(async (request: AnalysisRequest): Promise<AnalysisResult> => ({
             output: output(request),
@@ -105,14 +93,14 @@ interface Harness {
     store: ThinkStore;
     coordinator: ThinkCoordinator;
     handlers: ReturnType<typeof buildToolHandlers>;
-    safeExec: SafeExecutionService;
-    analysis: AnalysisSandboxService;
+    safeExec: CommandExecutionService<ThinkCommandOperation>;
+    analysis: AnalysisSandboxPort;
     cleanup(): Promise<void>;
 }
 
 async function setup(
-    safeExec?: SafeExecutionService,
-    analysis?: AnalysisSandboxService,
+    safeExec?: CommandExecutionService<ThinkCommandOperation>,
+    analysis?: AnalysisSandboxPort,
 ): Promise<Harness> {
     const home = await mkdtemp(join(tmpdir(), "think-in-code-parity-"));
     const storeRoot = join(home, "store");
@@ -120,8 +108,6 @@ async function setup(
     const safe = safeExec ?? makeSafeExec(() => "ok");
     const analysisSvc =
         analysis ?? makeAnalysis((request) => textBinding(request.bindings, "INPUT"));
-    publishSafeExecutionService(ownerSymbol, safe);
-    publishAnalysisSandboxService(ownerSymbol, analysisSvc);
     const store = new ThinkStore({
         config: DEFAULT_THINK_IN_CODE_CONFIG,
         storeRoot,
@@ -130,6 +116,8 @@ async function setup(
     const coordinator = new ThinkCoordinator({
         store,
         config: DEFAULT_THINK_IN_CODE_CONFIG,
+        commandExecution: safe,
+        getAnalysisPort: () => analysisSvc,
     });
     const handlers = buildToolHandlers(coordinator);
     return {
@@ -146,16 +134,6 @@ async function setup(
         },
     };
 }
-
-beforeEach(() => {
-    claimSafeExecutionBroker(ownerSymbol);
-    claimAnalysisSandboxBroker(ownerSymbol);
-});
-
-afterEach(() => {
-    releaseSafeExecutionBroker(ownerSymbol);
-    releaseAnalysisSandboxBroker(ownerSymbol);
-});
 
 describe("Think-in-Code parity fixtures", () => {
     it("aggregates a large JSON log into a bounded summary (size and content)", async () => {
@@ -316,7 +294,7 @@ describe("Think-in-Code parity fixtures", () => {
     });
 
     it("runs a multi-command batch with per-item status and bounded concurrency", async () => {
-        const safe: SafeExecutionService = {
+        const safe: CommandExecutionService<ThinkCommandOperation> = {
             execute: mock(async (request) => ({
                 content: [
                     {

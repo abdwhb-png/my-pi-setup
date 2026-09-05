@@ -70,14 +70,11 @@ const { default: sandboxExtension, sessionStateFilename } = await import(
     "./index.ts"
 );
 const {
-    createSharedBashOperations,
-    getSandboxExecutionState,
+    createSandboxBashOperations,
+    getSandboxAnalysisPort,
+    getSandboxRuntime,
     isSandboxUnavailableError,
-} = await import("../_shared/bash/sandbox-execution-broker.ts");
-const {
-    getAnalysisSandboxBrokerState,
-    getAnalysisSandboxService,
-} = await import("../_shared/analysis/sandbox-analysis-broker.ts");
+} = await import("../_shared/sandbox-runtime/index.ts");
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<void>;
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void>;
@@ -155,7 +152,7 @@ const execArgs = [
 async function expectUnavailable(reason: string): Promise<void> {
     let error: unknown;
     try {
-        await createSharedBashOperations().exec(...execArgs);
+        await createSandboxBashOperations().exec(...execArgs);
     } catch (caught) {
         error = caught;
     }
@@ -209,10 +206,10 @@ describe("sandbox lifecycle", () => {
 
         await registered.handlers.get("session_start")?.({}, ctx);
 
-        expect(getAnalysisSandboxBrokerState()).toBe("enabled");
+        expect(getSandboxRuntime().state).toBe("enabled");
         expect(createAnalysisSandboxService).toHaveBeenCalledTimes(1);
         await expect(
-            getAnalysisSandboxService().run({
+            getSandboxAnalysisPort().run({
                 id: "analysis-call",
                 language: "javascript",
                 program: "export default 1",
@@ -221,7 +218,7 @@ describe("sandbox lifecycle", () => {
 
         await registered.handlers.get("session_shutdown")?.({}, ctx);
         expect(analysisShutdown).toHaveBeenCalledTimes(1);
-        expect(getAnalysisSandboxBrokerState()).toBe("uninitialized");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
     });
 
     it("keeps both brokers unpublished until Analysis preflight succeeds", async () => {
@@ -232,13 +229,13 @@ describe("sandbox lifecycle", () => {
 
         const starting = registered.handlers.get("session_start")?.({}, ctx);
         await Bun.sleep(10);
-        expect(getSandboxExecutionState()).toBe("uninitialized");
-        expect(getAnalysisSandboxBrokerState()).toBe("uninitialized");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
 
         preflight.reject(new Error("analysis preflight failed"));
         await starting;
-        expect(getSandboxExecutionState()).toBe("error");
-        expect(getAnalysisSandboxBrokerState()).toBe("error");
+        expect(getSandboxRuntime().state).toBe("error");
+        expect(getSandboxRuntime().state).toBe("error");
         expect(analysisShutdown).toHaveBeenCalledTimes(1);
         expect(reset).toHaveBeenCalledTimes(1);
     });
@@ -250,12 +247,12 @@ describe("sandbox lifecycle", () => {
         const ctx = context(cwd);
 
         await registered.handlers.get("session_start")?.({}, ctx);
-        expect(getSandboxExecutionState()).toBe("error");
+        expect(getSandboxRuntime().state).toBe("error");
         expect(reset).toHaveBeenCalledTimes(1);
 
         await registered.commands.get("sandbox")?.("off", ctx);
         expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
     });
 
     it("surfaces and retries cleanup failure after invalid configuration", async () => {
@@ -273,7 +270,7 @@ describe("sandbox lifecycle", () => {
         reset.mockRejectedValueOnce(new Error("config cleanup failed"));
 
         await registered.handlers.get("session_start")?.({}, ctx);
-        expect(getSandboxExecutionState()).toBe("error");
+        expect(getSandboxRuntime().state).toBe("error");
         expect(notifyCalls(ctx).at(-1)).toEqual([
             expect.stringContaining("cleanup failed: config cleanup failed"),
             "error",
@@ -281,7 +278,7 @@ describe("sandbox lifecycle", () => {
 
         await registered.commands.get("sandbox")?.("off", ctx);
         expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
     });
 
     it("blocks execution while sandbox on and off transitions are pending", async () => {
@@ -292,25 +289,25 @@ describe("sandbox lifecycle", () => {
         const registered = registerSandbox();
         const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
 
         const enabling = deferred();
         initialize.mockImplementation(() => enabling.promise);
         const enableTransition = registered.commands.get("sandbox")?.("on", ctx);
-        expect(getSandboxExecutionState()).toBe("uninitialized");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
         await expectUnavailable("uninitialized");
         enabling.resolve();
         await enableTransition;
-        expect(getSandboxExecutionState()).toBe("enabled");
+        expect(getSandboxRuntime().state).toBe("enabled");
 
         const disabling = deferred();
         reset.mockImplementation(() => disabling.promise);
         const disableTransition = registered.commands.get("sandbox")?.("off", ctx);
-        expect(getSandboxExecutionState()).toBe("uninitialized");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
         await expectUnavailable("uninitialized");
         disabling.resolve();
         await disableTransition;
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
     });
 
     it("keeps a later off request authoritative over an in-flight enable", async () => {
@@ -328,11 +325,11 @@ describe("sandbox lifecycle", () => {
         await Bun.sleep(10);
         const disabling = registered.commands.get("sandbox")?.("off", ctx);
         await disabling;
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
 
         preflight.resolve();
         await enabling;
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
         expect(analysisShutdown).toHaveBeenCalledTimes(1);
         expect(reset).toHaveBeenCalledTimes(1);
     });
@@ -354,7 +351,7 @@ describe("sandbox lifecycle", () => {
 
         await registered.commands.get("sandbox")?.("off", ctx);
         expect(reset).toHaveBeenCalledTimes(1);
-        expect(getSandboxExecutionState()).toBe("error");
+        expect(getSandboxRuntime().state).toBe("error");
         expect(notifyCalls(ctx).at(-1)).toEqual([
             expect.stringContaining("late candidate cleanup failed"),
             "error",
@@ -363,10 +360,10 @@ describe("sandbox lifecycle", () => {
         preflight.resolve();
         await enabling;
         expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxExecutionState()).toBe("error");
+        expect(getSandboxRuntime().state).toBe("error");
 
         await registered.commands.get("sandbox")?.("off", ctx);
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
     });
 
     it("does not publish a candidate after session shutdown supersedes startup", async () => {
@@ -378,11 +375,11 @@ describe("sandbox lifecycle", () => {
         const starting = registered.handlers.get("session_start")?.({}, ctx);
         await Bun.sleep(10);
         await registered.handlers.get("session_shutdown")?.({}, ctx);
-        expect(getSandboxExecutionState()).toBe("uninitialized");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
 
         preflight.resolve();
         await starting;
-        expect(getSandboxExecutionState()).toBe("uninitialized");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
         expect(analysisShutdown).toHaveBeenCalledTimes(1);
         expect(reset).toHaveBeenCalledTimes(1);
     });
@@ -395,10 +392,10 @@ describe("sandbox lifecycle", () => {
 
         await registered.commands.get("sandbox")?.("off", ctx);
 
-        expect(getSandboxExecutionState()).toBe("error");
+        expect(getSandboxRuntime().state).toBe("error");
         let captured: unknown;
         try {
-            await createSharedBashOperations().exec(...execArgs);
+            await createSandboxBashOperations().exec(...execArgs);
             throw new Error("expected reset-failed to fail");
         } catch (error) {
             captured = error;
@@ -429,7 +426,7 @@ describe("sandbox lifecycle", () => {
 
         await registered.commands.get("sandbox")?.("off", ctx);
         expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
     });
 
     it("supports Pi's awaited shutdown-old then start-new reload sequence", async () => {
@@ -437,13 +434,32 @@ describe("sandbox lifecycle", () => {
         const ctx = context(cwd);
         await first.handlers.get("session_start")?.({}, ctx);
         await first.handlers.get("session_shutdown")?.({}, ctx);
-        expect(getSandboxExecutionState()).toBe("uninitialized");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
 
         const second = registerSandbox();
         await second.handlers.get("session_start")?.({}, ctx);
 
         expect(reset).toHaveBeenCalledTimes(1);
-        expect(getSandboxExecutionState()).toBe("enabled");
+        expect(getSandboxRuntime().state).toBe("enabled");
+    });
+
+    it("cleans an obsolete instance without disturbing the newer runtime", async () => {
+        const first = registerSandbox();
+        const ctx = context(cwd);
+        await first.handlers.get("session_start")?.({}, ctx);
+
+        const second = registerSandbox();
+        await second.handlers.get("session_start")?.({}, ctx);
+        const currentRuntime = getSandboxRuntime();
+        expect(currentRuntime.state).toBe("enabled");
+
+        await first.handlers.get("session_shutdown")?.({}, ctx);
+
+        expect(reset).toHaveBeenCalledTimes(1);
+        expect(analysisShutdown).toHaveBeenCalledTimes(1);
+        expect(getSandboxRuntime()).toBe(currentRuntime);
+
+        await second.handlers.get("session_shutdown")?.({}, ctx);
     });
 
     it("keeps ownership and retries when session shutdown cleanup fails", async () => {
@@ -455,11 +471,11 @@ describe("sandbox lifecycle", () => {
         await expect(
             registered.handlers.get("session_shutdown")?.({}, ctx),
         ).rejects.toThrow("shutdown cleanup failed");
-        expect(getSandboxExecutionState()).toBe("error");
+        expect(getSandboxRuntime().state).toBe("error");
 
         await registered.handlers.get("session_shutdown")?.({}, ctx);
         expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxExecutionState()).toBe("uninitialized");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
     });
 });
 
@@ -509,7 +525,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
         await registered.handlers.get("session_start")?.({}, ctx);
 
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
         const widget = renderWidget();
         expect(widget).not.toBeNull();
         expect(widget).toContain("⚠");
@@ -535,7 +551,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
         await registered.handlers.get("session_start")?.({}, ctx);
 
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
         const calls = notifyCalls(ctx);
         const warningCalls = calls.filter(([, level]) => level === "warning");
         expect(warningCalls.some(([m]) => m.includes("env"))).toBe(true);
@@ -573,7 +589,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
         await handlers.get("session_start")?.({}, ctx);
 
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
         const fileExists = await readFile(
             stateFile(),
             "utf-8",
@@ -598,7 +614,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
         await registered.commands.get("sandbox")?.("off", ctx);
 
-        expect(getSandboxExecutionState()).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("disabled");
         expect(process.env[ENV_KEY]).toBe("disabled");
         const saved = JSON.parse(await readFile(stateFile(), "utf-8"));
         expect(saved.enabled).toBe(false);
@@ -624,7 +640,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
         await registered.commands.get("sandbox")?.("on", ctx);
 
-        expect(getSandboxExecutionState()).toBe("enabled");
+        expect(getSandboxRuntime().state).toBe("enabled");
         expect(process.env[ENV_KEY]).toBe("enabled");
         const saved = JSON.parse(await readFile(stateFile(), "utf-8"));
         expect(saved.enabled).toBe(true);
@@ -644,7 +660,7 @@ describe("sandbox per-session persistence and propagation", () => {
         await second.handlers
             .get("session_start")
             ?.({}, context(cwd, sessionDir, "session-b"));
-        expect(getSandboxExecutionState()).toBe("enabled");
+        expect(getSandboxRuntime().state).toBe("enabled");
     });
 
     it("restores a genuinely inherited session override after shutdown", async () => {
@@ -670,7 +686,7 @@ describe("sandbox per-session persistence and propagation", () => {
 
             await registered.handlers.get("session_start")?.({}, ctx);
 
-            expect(getSandboxExecutionState()).toBe("disabled");
+            expect(getSandboxRuntime().state).toBe("disabled");
             const widget = renderWidget();
             expect(widget).toContain("⚠");
         } finally {

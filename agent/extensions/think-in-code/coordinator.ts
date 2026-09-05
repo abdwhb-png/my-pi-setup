@@ -27,22 +27,29 @@ import type {
     TruncationResult,
 } from "@earendil-works/pi-coding-agent";
 
-import { getAnalysisSandboxService } from "../_shared/analysis/sandbox-analysis-broker.ts";
-import { getSafeExecutionService } from "../_shared/safe-execution/broker.ts";
 import type {
-    SafeExecutionResult,
-    SafeExecutionUpdateCallback,
-} from "../_shared/safe-execution/core.ts";
+    CommandExecutionResult,
+    CommandExecutionService,
+    CommandExecutionUpdateCallback,
+} from "../_shared/command-execution/core.ts";
 import {
     isSafeExecutionError,
     toPublicFailure,
-} from "../_shared/safe-execution/failure.ts";
+} from "../_shared/command-execution/failure.ts";
 import {
     toSafeAnalysisId,
     type AnalysisBindingValue,
     type AnalysisResult,
-} from "../sandbox/analysis/protocol.ts";
+} from "../_shared/sandbox-runtime/analysis-protocol.ts";
+import {
+    getSandboxAnalysisPort,
+    type AnalysisSandboxPort,
+} from "../_shared/sandbox-runtime/index.ts";
 
+import {
+    createThinkCommandExecution,
+    type ThinkCommandOperation,
+} from "./command-policy.ts";
 import type { ThinkInCodeConfig } from "./config.ts";
 import { runRetention } from "./storage/retention.ts";
 import type { ThinkStore } from "./storage/store.ts";
@@ -63,6 +70,8 @@ const SCHEMA_VERSION = 1;
 export interface CoordinatorDeps {
     store: ThinkStore;
     config: ThinkInCodeConfig;
+    commandExecution?: CommandExecutionService<ThinkCommandOperation>;
+    getAnalysisPort?: () => AnalysisSandboxPort;
 }
 
 /**
@@ -224,11 +233,20 @@ function fileFailureReason(error: unknown, requestPath: string): string {
 export class ThinkCoordinator {
     readonly #store: ThinkStore;
     readonly #config: ThinkInCodeConfig;
+    readonly #commandExecution: CommandExecutionService<ThinkCommandOperation>;
+    readonly #getAnalysisPort: () => AnalysisSandboxPort;
     #closed = false;
 
     constructor(deps: CoordinatorDeps) {
         this.#store = deps.store;
         this.#config = deps.config;
+        this.#commandExecution =
+            deps.commandExecution ??
+            createThinkCommandExecution({
+                getConfig: () => this.#config,
+                getTelemetryRecorder: () => null,
+            }).service;
+        this.#getAnalysisPort = deps.getAnalysisPort ?? getSandboxAnalysisPort;
     }
 
     get store(): ThinkStore {
@@ -280,20 +298,19 @@ export class ThinkCoordinator {
             timeout?: number,
             stdin?: string,
         ): Promise<void> => {
-            const safeExecution = getSafeExecutionService();
+            const commandExecution = this.#commandExecution;
             try {
-                const result: SafeExecutionResult = await safeExecution.execute(
-                    {
+                const result: CommandExecutionResult =
+                    await commandExecution.execute({
                         toolCallId: request.id,
-                        origin: "think_execute",
+                        operation: "think_execute",
                         command,
                         timeout,
                         stdin,
                         signal: runtime.signal,
                         onUpdate: sanitizeStreamingUpdate(runtime.onUpdate),
                         ctx,
-                    },
-                );
+                    });
                 this.#captureCommandInput({
                     data: extractText(result),
                     archiveIds,
@@ -386,7 +403,7 @@ export class ThinkCoordinator {
 
         if (!blockedReason && sourceInputs.length > 0) {
             try {
-                const analysis = getAnalysisSandboxService();
+                const analysis = this.#getAnalysisPort();
                 const archivePayload = sourceInputs.map((input) => ({
                     id: input.archiveId,
                     byteCount: input.byteCount,
@@ -568,7 +585,7 @@ export class ThinkCoordinator {
                     archiveIds.push(archive.id);
                 }
                 try {
-                    const analysis = getAnalysisSandboxService();
+                    const analysis = this.#getAnalysisPort();
                     derivedResult = await analysis.run(
                         {
                             id: toSafeAnalysisId(request.id),
@@ -669,7 +686,7 @@ export class ThinkCoordinator {
             );
         }
 
-        const safeExecution = getSafeExecutionService();
+        const commandExecution = this.#commandExecution;
         const concurrency = Math.min(
             this.#config.batchConcurrency,
             request.items.length,
@@ -683,9 +700,9 @@ export class ThinkCoordinator {
                         const next = queue.shift();
                         if (!next) return;
                         try {
-                            const result = await safeExecution.execute({
+                            const result = await commandExecution.execute({
                                 toolCallId: `${request.id}:${next.item.id}`,
-                                origin: "think_batch_execute",
+                                operation: "think_batch_execute",
                                 command: next.item.command,
                                 timeout: next.item.timeout,
                                 stdin: next.item.stdin,
@@ -750,7 +767,7 @@ export class ThinkCoordinator {
         );
 
         try {
-            const analysis = getAnalysisSandboxService();
+            const analysis = this.#getAnalysisPort();
             derivedResult = await analysis.run(
                 {
                     id: toSafeAnalysisId(request.id),
@@ -1035,7 +1052,7 @@ export class ThinkCoordinator {
     }
 }
 
-function extractText(result: SafeExecutionResult): string {
+function extractText(result: CommandExecutionResult): string {
     const parts: string[] = [];
     for (const block of result.content) {
         if (block.type === "text") {
@@ -1064,7 +1081,7 @@ function extractText(result: SafeExecutionResult): string {
  */
 function sanitizeStreamingUpdate(
     parent: ThinkUpdateCallback | undefined,
-): SafeExecutionUpdateCallback | undefined {
+): CommandExecutionUpdateCallback | undefined {
     if (!parent) return undefined;
     return (partialResult) => {
         const safe = partialResult as {

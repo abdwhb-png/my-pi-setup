@@ -16,6 +16,7 @@ output_dir="$(cd "$output_dir" && pwd)"
 fixture_root="$(mktemp -d "$pi_root/.smoke/think-real-pi-XXXXXX")"
 project="$fixture_root/project"
 sessions="$fixture_root/sessions"
+bash_sessions="$fixture_root/bash-sessions"
 trace="$output_dir/provider-trace.jsonl"
 pi_command="$pi_root/bin/pi"
 real_pi_bun="$script_dir/real-pi-bun.ts"
@@ -32,7 +33,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$project/.pi/extensions" "$sessions"
+mkdir -p "$project/.pi/extensions" "$sessions" "$bash_sessions"
 ln -s "$agent_root/node_modules" "$project/node_modules"
 cp "$script_dir/provider.ts" "$project/.pi/extensions/smoke-provider.ts"
 printf 'FILE SMOKE PAYLOAD\n' >"$project/fixture.txt"
@@ -40,6 +41,10 @@ printf '%s\n' '{' \
     '  "sandbox": {' \
     '    "enabled": true,' \
     '    "network": { "allowedDomains": [], "deniedDomains": [] }' \
+    '  },' \
+    '  "safeBash": {' \
+    '    "mode": "coexist",' \
+    '    "telemetry": { "enabled": false }' \
     '  }' \
     '}' >"$project/.pi/settings.json"
 
@@ -61,6 +66,16 @@ common=(
     --offline
 )
 
+bash_common=(
+    --provider think-smoke
+    --model smoke
+    --tools bash,safe_bash
+    --dangerously-skip-permissions
+    --verbose
+    --approve
+    --offline
+)
+
 (
     cd "$project"
     PI_REAL_BIN="$real_pi_bun" \
@@ -70,6 +85,26 @@ common=(
         >"$output_dir/functional-events.jsonl" \
         2>"$output_dir/functional-stderr.log"
 )
+
+(
+    cd "$project"
+    PI_REAL_BIN="$real_pi_bun" \
+        THINK_SMOKE_PHASE=bash-architecture THINK_SMOKE_TRACE="$trace" \
+        "$pi_command" --mode json --print --session-dir "$bash_sessions" \
+        "${bash_common[@]}" "Run the Bash Execution architecture smoke." \
+        >"$output_dir/bash-events.jsonl" \
+        2>"$output_dir/bash-stderr.log"
+)
+
+if ! jq -e '
+    select(.phase == "bash-architecture" and .label == "bash-complete")
+    | (.tools | sort) == ["bash", "safe_bash"]
+      and ([.toolResults[] | select(.toolName == "bash" or .toolName == "safe_bash")] | length) == 2
+      and all(.toolResults[]; .isError != true)
+' "$trace" >/dev/null; then
+    echo "Bash Execution architecture smoke did not complete through both tools" >&2
+    exit 1
+fi
 
 session="$(find "$sessions" -maxdepth 1 -type f -name '*.jsonl' -print -quit)"
 if [[ -z "$session" ]]; then

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { fileURLToPath } from "node:url";
 
-import type { AnalysisRequest } from "./protocol.ts";
+import type { AnalysisRequest } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 
 type PythonWorkerResponse =
     | { ok: true; result: { output: string; stderr: string } }

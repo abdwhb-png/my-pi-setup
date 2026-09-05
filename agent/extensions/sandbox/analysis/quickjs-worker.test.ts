@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "bun:test";
 
-import { normalizeAnalysisRequest } from "./protocol.ts";
+import { normalizeAnalysisRequest } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 import { runQuickJsAnalysis } from "./quickjs-worker.ts";
 
 describe("QuickJS analysis worker", () => {

@@ -44,6 +44,7 @@ function traceContext(context: Context, label: string): void {
         .filter((message) => message?.role === "toolResult")
         .map((message) => ({
             toolName: message?.toolName,
+            isError: message?.isError,
             details: message?.details,
         }));
     appendFileSync(
@@ -128,6 +129,23 @@ export default function register(pi: ExtensionAPI): void {
             maxTokens: model.maxTokens,
         })),
     });
+
+    if (phase === "bash-architecture") {
+        const sandboxProbe =
+            'test ! -e "$HOME/.pi/agent/settings.json" && printf zerobox';
+        faux.setResponses([
+            traced("bash-start", () =>
+                tool("bash", { command: sandboxProbe }, "smoke-bash"),
+            ),
+            traced("after-bash", () =>
+                tool("safe_bash", { command: sandboxProbe }, "smoke-safe-bash"),
+            ),
+            traced("bash-complete", () =>
+                fauxAssistantMessage("bash architecture smoke complete"),
+            ),
+        ]);
+        return;
+    }
 
     if (phase === "functional") {
         faux.setResponses([

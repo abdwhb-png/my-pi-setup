@@ -2,7 +2,7 @@
  * Real Pi-runtime integration tests for the Think-in-Code native extension.
  *
  * These tests use `@abdwhb-png/pi-test-harness` to boot a real Pi 0.84.2
- * session and verify the full extension wiring (broker publication, tool
+ * session and verify the full extension wiring (sandbox runtime publication, tool
  * registration, hook ordering, abort propagation, one outer result, no
  * nested safe_bash result, no save-tokens mutation, one-shot compaction
  * restore). They complement the unit tests under `tools.test.ts` and
@@ -11,7 +11,7 @@
  *
  * Per the AGENTS.md plan, sandbox, safe-bash, Think-in-Code, and a
  * Context-Mode-name fixture are all loaded into the same session. The
- * brokers (safe-execution + analysis-sandbox) are pre-published with
+ * sandbox runtime is pre-published with
  * deterministic mocks so the runtime wiring is exercised without spinning
  * up real Linux isolation.
  */
@@ -27,7 +27,10 @@ import {
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+    BashOperations,
+    ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import {
     calls,
     createTestSession,
@@ -37,27 +40,20 @@ import {
     type TestSession,
 } from "@abdwhb-png/pi-test-harness";
 
-import thinkInCodeExtension from "./index.ts";
+import { registerThinkInCode } from "./index.ts";
+import { hashProjectPath } from "./config.ts";
+import { readRecentThinkTelemetry } from "./telemetry/storage.ts";
 import {
-    claimAnalysisSandboxBroker,
-    publishAnalysisSandboxService,
-    releaseAnalysisSandboxBroker,
-} from "../_shared/analysis/sandbox-analysis-broker.ts";
-import {
-    claimSafeExecutionBroker,
-    publishSafeExecutionService,
-    releaseSafeExecutionBroker,
-} from "../_shared/safe-execution/broker.ts";
-import type { AnalysisSandboxService } from "../sandbox/analysis/client.ts";
+    claimSandboxRuntime,
+    publishSandboxRuntime,
+    releaseSandboxRuntime,
+    type AnalysisSandboxPort,
+} from "../_shared/sandbox-runtime/index.ts";
 import type {
     AnalysisBindingValue,
     AnalysisRequest,
     AnalysisResult,
-} from "../sandbox/analysis/protocol.ts";
-import type { SafeExecutionRequest, SafeExecutionService } from "../_shared/safe-execution/core.ts";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { BashToolDetails } from "@earendil-works/pi-coding-agent";
-
+} from "../_shared/sandbox-runtime/analysis-protocol.ts";
 
 const THINK_TOOL_NAMES = [
     "think_execute",
@@ -73,12 +69,12 @@ let ownerSymbol: symbol | undefined;
 let previousHome: string | undefined;
 
 interface BrokerState {
-    safeExec: SafeExecutionService;
-    analysis: AnalysisSandboxService;
+    bashOperations: BashOperations;
+    analysis: AnalysisSandboxPort;
     safeExecCalls: Array<{
-        origin: string;
         command: string;
-        toolCallId: string;
+        cwd: string;
+        signal?: AbortSignal;
     }>;
     analysisCalls: Array<{
         language: string;
@@ -90,25 +86,18 @@ interface BrokerState {
 function makeBrokerState(): BrokerState {
     const safeExecCalls: BrokerState["safeExecCalls"] = [];
     const analysisCalls: BrokerState["analysisCalls"] = [];
-    const safeExec: SafeExecutionService = {
-        execute: mock(async (request) => {
+    const bashOperations: BashOperations = {
+        exec: mock(async (command, cwd, options) => {
             safeExecCalls.push({
-                origin: request.origin,
-                command: request.command,
-                toolCallId: request.toolCallId,
+                command,
+                cwd,
+                ...(options.signal ? { signal: options.signal } : {}),
             });
-            return {
-                content: [
-                    {
-                        type: "text" as const,
-                        text: `safe-bash-result:${request.command}`,
-                    },
-                ],
-                details: undefined,
-            };
+            options.onData(Buffer.from(`safe-bash-result:${command}`));
+            return { exitCode: 0 };
         }),
     };
-    const analysis: AnalysisSandboxService = {
+    const analysis: AnalysisSandboxPort = {
         run: mock(async (request: AnalysisRequest): Promise<AnalysisResult> => {
             analysisCalls.push({
                 language: request.language,
@@ -131,27 +120,31 @@ function makeBrokerState(): BrokerState {
         }),
         shutdown: async () => undefined,
     };
-    return { safeExec, analysis, safeExecCalls, analysisCalls };
+    return { bashOperations, analysis, safeExecCalls, analysisCalls };
 }
 
 function installBrokers(state: BrokerState): symbol {
     const owner = Symbol("think-in-code-runtime-integration");
-    claimSafeExecutionBroker(owner);
-    claimAnalysisSandboxBroker(owner);
-    publishSafeExecutionService(owner, state.safeExec);
-    publishAnalysisSandboxService(owner, state.analysis);
+    claimSandboxRuntime(owner);
+    publishSandboxRuntime(owner, {
+        state: "enabled",
+        createBashOperations: () => state.bashOperations,
+        analysis: state.analysis,
+    });
     return owner;
 }
 
 function releaseBrokers(owner: symbol): void {
-    releaseSafeExecutionBroker(owner);
-    releaseAnalysisSandboxBroker(owner);
+    releaseSandboxRuntime(owner);
 }
 
 function thinkInCodeFactory(state: BrokerState): (pi: ExtensionAPI) => void {
     return (pi: ExtensionAPI) => {
         ownerSymbol = installBrokers(state);
-        thinkInCodeExtension(pi);
+        registerThinkInCode(pi, {
+            resolveRoot: () =>
+                join(testHome!, ".pi", "agent", "think-in-code"),
+        });
     };
 }
 
@@ -338,15 +331,32 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(session.events.toolResultsFor("think_execute")).toHaveLength(1);
         expect(session.events.toolResultsFor("safe_bash")).toHaveLength(0);
 
-        // Both brokers were hit with the correct origin/provenance.
+        // Both sandbox runtime ports were hit with the expected payload.
         expect(state.safeExecCalls).toHaveLength(1);
-        expect(state.safeExecCalls[0]?.origin).toBe("think_execute");
         expect(state.safeExecCalls[0]?.command).toBe("echo hello");
         expect(state.analysisCalls).toHaveLength(1);
         expect(state.analysisCalls[0]?.language).toBe("javascript");
         expect(state.analysisCalls[0]?.bindings.INPUT).toBe(
             "safe-bash-result:echo hello",
         );
+        const telemetry = await readRecentThinkTelemetry(
+            join(
+                home,
+                ".pi",
+                "agent",
+                "think-in-code",
+                "projects",
+                hashProjectPath(home),
+                "telemetry",
+            ),
+            { days: 30, project: home },
+        );
+        expect(telemetry).toHaveLength(1);
+        expect(telemetry[0]).toMatchObject({
+            origin: "think_execute",
+            command: "echo hello",
+            outcome: "succeeded",
+        });
     });
 
     it("preserves hook order: before_agent_start → tool_call → tool_result → turn_end", async () => {
@@ -412,33 +422,33 @@ describe("think-in-code real Pi runtime wiring", () => {
         sessions.push(session);
         await session.session.agent.waitForIdle();
 
-        // RED: real abort contract — the slow service hangs until the
+        // Real abort contract: the slow Bash operation hangs until the
         // runtime's AbortSignal aborts. The harness drives the abort by
         // calling `session.session.abort()` while the tool is in flight.
         const abortObserved: AbortSignal[] = [];
-        const slowSafe: SafeExecutionService = {
-            execute: mock(
-                (request: SafeExecutionRequest): Promise<AgentToolResult<BashToolDetails | undefined>> =>
-                    new Promise<AgentToolResult<BashToolDetails | undefined>>((_resolve, reject) => {
-                        const signal = request.signal;
+        const slowBash: BashOperations = {
+            exec: mock(
+                (_command, _cwd, options): Promise<{ exitCode: number | null }> =>
+                    new Promise<{ exitCode: number | null }>((_resolve, reject) => {
+                        const signal = options.signal;
                         if (!signal) {
-                            reject(new Error("safe_bash request missing AbortSignal"));
+                            reject(new Error("Bash operation missing AbortSignal"));
                             return;
                         }
                         abortObserved.push(signal);
                         if (signal.aborted) {
-                            reject(new Error("safe_bash request aborted"));
+                            reject(new Error("Bash operation aborted"));
                             return;
                         }
                         signal.addEventListener(
                             "abort",
-                            () => reject(new Error("safe_bash request aborted")),
+                            () => reject(new Error("Bash operation aborted")),
                             { once: true },
                         );
                     }),
             ),
         };
-        const slowAnalysis: AnalysisSandboxService = {
+        const slowAnalysis: AnalysisSandboxPort = {
             run: mock(
                 (_request: AnalysisRequest, signal?: AbortSignal): Promise<AnalysisResult> =>
                     new Promise<AnalysisResult>((_resolve, reject) => {
@@ -458,8 +468,11 @@ describe("think-in-code real Pi runtime wiring", () => {
         };
         const owner = ownerSymbol;
         if (owner) {
-            publishSafeExecutionService(owner, slowSafe);
-            publishAnalysisSandboxService(owner, slowAnalysis);
+            publishSandboxRuntime(owner, {
+                state: "enabled",
+                createBashOperations: () => slowBash,
+                analysis: slowAnalysis,
+            });
         }
 
         const runPromise = session.run(

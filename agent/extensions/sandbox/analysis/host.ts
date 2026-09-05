@@ -7,6 +7,13 @@ import { realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+    analysisHostResponseBudget,
+    parseAnalysisRequest,
+    type AnalysisHostResponse,
+    type AnalysisResult,
+    type NormalizedAnalysisRequest,
+} from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 import type { SandboxNodeEnvironment } from "../node-shim";
 import {
     SandboxExecutionError,
@@ -20,13 +27,6 @@ import {
 } from "../runtime/service.ts";
 import { createZeroboxInputChannel } from "../runtime/status-channel.ts";
 import { createZeroboxBackend } from "../runtime/zerobox-backend.ts";
-import {
-    analysisHostResponseBudget,
-    parseAnalysisRequest,
-    type AnalysisHostResponse,
-    type AnalysisResult,
-    type NormalizedAnalysisRequest,
-} from "./protocol.ts";
 
 export interface ChildExecutionInput extends SandboxSpawnSpec {
     stdin: string;
@@ -124,8 +124,12 @@ export function fixedWorkerCommand(
 }
 
 function readableWorkerPaths(dependencies: AnalysisHostDependencies): string[] {
+    const sharedRuntimeRoot = fileURLToPath(
+        new URL("../../_shared/sandbox-runtime/", import.meta.url),
+    );
     return [
         dependencies.sandboxRoot,
+        sharedRuntimeRoot,
         dependencies.bunPath,
         dependencies.nodePath,
         dependencies.prlimitPath,

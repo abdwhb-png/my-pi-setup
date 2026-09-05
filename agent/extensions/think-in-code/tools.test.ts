@@ -1,6 +1,5 @@
 import {
     afterEach,
-    beforeEach,
     describe,
     expect,
     it,
@@ -11,31 +10,20 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-    claimSafeExecutionBroker,
-    publishSafeExecutionService,
-    releaseSafeExecutionBroker,
-} from "../_shared/safe-execution/broker.ts";
-import {
-    claimAnalysisSandboxBroker,
-    publishAnalysisSandboxService,
-    releaseAnalysisSandboxBroker,
-} from "../_shared/analysis/sandbox-analysis-broker.ts";
-import type { SafeExecutionService } from "../_shared/safe-execution/core.ts";
-import type { AnalysisSandboxService } from "../sandbox/analysis/client.ts";
+import type { CommandExecutionService } from "../_shared/command-execution/core.ts";
+import type { AnalysisSandboxPort } from "../_shared/sandbox-runtime/index.ts";
 
+import type { ThinkCommandOperation } from "./command-policy.ts";
 import { DEFAULT_THINK_IN_CODE_CONFIG } from "./config.ts";
 import { ThinkStore } from "./storage/store.ts";
 import { ThinkCoordinator } from "./coordinator.ts";
 import { buildToolHandlers, SCHEMAS } from "./tools.ts";
 
-const ownerSymbol = Symbol("tools-test");
-
 function ctx(cwd: string): ExtensionContext {
     return { cwd, hasUI: false, ui: {} } as unknown as ExtensionContext;
 }
 
-function fakeSafeExecution(text: string): SafeExecutionService {
+function fakeSafeExecution(text: string): CommandExecutionService<ThinkCommandOperation> {
     return {
         execute: mock(async () => ({
             content: [{ type: "text" as const, text }],
@@ -44,7 +32,7 @@ function fakeSafeExecution(text: string): SafeExecutionService {
     };
 }
 
-function fakeAnalysis(output: string): AnalysisSandboxService {
+function fakeAnalysis(output: string): AnalysisSandboxPort {
     return {
         run: mock(async () => ({
             output,
@@ -61,35 +49,31 @@ describe("think_* tool handlers", () => {
     let home: string | undefined;
     let coordinator: ThinkCoordinator | undefined;
 
-    beforeEach(() => {
-        claimSafeExecutionBroker(ownerSymbol);
-        claimAnalysisSandboxBroker(ownerSymbol);
-    });
-
     afterEach(async () => {
         coordinator?.close();
-        releaseSafeExecutionBroker(ownerSymbol);
-        releaseAnalysisSandboxBroker(ownerSymbol);
         if (home) await rm(home, { recursive: true, force: true });
         home = undefined;
         coordinator = undefined;
     });
 
     async function setup(
-        safeExec: SafeExecutionService = fakeSafeExecution("ok"),
-        analysis: AnalysisSandboxService = fakeAnalysis("DERIVED"),
+        safeExec: CommandExecutionService<ThinkCommandOperation> = fakeSafeExecution("ok"),
+        analysis: AnalysisSandboxPort = fakeAnalysis("DERIVED"),
     ): Promise<{ coordinator: ThinkCoordinator; handlers: ReturnType<typeof buildToolHandlers> }> {
         home = await mkdtemp(join(tmpdir(), "think-in-code-tools-"));
         const storeRoot = join(home, "store");
         await mkdir(storeRoot, { recursive: true });
-        publishSafeExecutionService(ownerSymbol, safeExec);
-        publishAnalysisSandboxService(ownerSymbol, analysis);
         const store = new ThinkStore({
             config: DEFAULT_THINK_IN_CODE_CONFIG,
             storeRoot,
             canonicalPath: "/workspace/proj",
         });
-        coordinator = new ThinkCoordinator({ store, config: DEFAULT_THINK_IN_CODE_CONFIG });
+        coordinator = new ThinkCoordinator({
+            store,
+            config: DEFAULT_THINK_IN_CODE_CONFIG,
+            commandExecution: safeExec,
+            getAnalysisPort: () => analysis,
+        });
         const handlers = buildToolHandlers(coordinator);
         return { coordinator, handlers };
     }
