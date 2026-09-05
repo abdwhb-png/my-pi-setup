@@ -214,6 +214,16 @@ Pi runtime validation runs under Bun via
 exercised by the focused tests under
 `agent/extensions/sandbox/analysis/`.
 
+The explicit end-to-end acceptance gate lives beside this extension under
+`e2e/real-pi/`. It starts the installed Pi CLI with normal extension discovery,
+a persistent JSONL session, the real Zerobox analysis backend, and real RPC
+compaction. It is intentionally excluded from routine `bun test` discovery:
+
+```bash
+./agent/extensions/think-in-code/e2e/real-pi/run.sh \
+  /tmp/think-in-code-real-pi-evidence
+```
+
 ## No-network policy
 
 The analyzer network access is **always disabled**. Its fixed Zerobox policy
