@@ -19,28 +19,31 @@ Four deep boundaries, each owned by one module:
 | Command execution | `agent/extensions/_shared/command-execution/` | Generic guard, native-tool redirect, rewrite, execution and supervision primitives. Every consumer injects its policy, approvals, telemetry and operation resolver. |
 | Sandbox contract | `agent/extensions/_shared/sandbox-runtime/` | Versioned `pi.sandbox-runtime.v2` snapshot, owner-token publication, Bash-operation factory and `AnalysisSandboxPort`. |
 | Sandbox implementation | `agent/extensions/sandbox/` | Zerobox lifecycle and strict QuickJS/Python worker dispatch. It publishes Bash and analysis together and registers no Bash tool. |
-| Think-in-Code | `agent/extensions/think-in-code/` | Independent command policy and telemetry, five tool orchestrators, per-project SQLite FTS5 store, raw archives, session capture and one-shot restore. |
+| Think-in-Code | `agent/extensions/think-in-code/` | Independent command policy and telemetry, three public tools, per-project SQLite FTS5 store, raw archives, adaptive routing, session capture and one-shot restore. |
 
 Think-in-Code imports only the shared command-execution and Sandbox contracts.
 It never imports Safe Bash or a Sandbox implementation module.
 
 ## Tools
 
-Five native Pi tools are registered:
+Three native Pi tools are registered:
 
-- `think_execute` — run a command, inline content, or analyze prior
-  archive IDs through the sandboxed analyzer. Raw output is archived
-  and never returned to the LLM.
-- `think_execute_file` — read one project file (≤ 64 MiB) and analyze
-  it through the analyzer with `FILE_CONTENT` / `FILE_PATH` bindings.
-  The worker process receives no filesystem mount.
-- `think_batch_execute` — run up to 16 commands (global concurrency 2),
-  archive every result, then run one analyzer over a structured
-  `INPUTS` array. Per-item blocked/failed status is preserved.
-- `think_index` — index bounded text or existing archive IDs (after
-  redaction). Never reads a host path.
+- `think_execute` — derive a bounded answer through one explicit `action`:
+  `command`, `content`, `archives`, `file`, or `batch`. File analysis exposes
+  `FILE_CONTENT` / `FILE_PATH`; batch analysis accepts up to 16 commands with
+  global concurrency 2 and exposes ordered `INPUTS`. Raw source bytes are
+  archived; analyzer output is model-controlled and becomes the tool result.
+- `think_note` — index one concise, redacted conclusion. `source` and `text`
+  are required. Optional `archiveIds` record provenance and are never used as
+  note text. Notes are capped by the effective `indexedSnippetChars` limit.
 - `think_search` — search the FTS5 index. Returns bounded ranked
   snippets plus archive/document IDs. Never returns raw archive bytes.
+
+Successful, non-empty `command`, `content`, `archives`, and `batch` results are
+indexed automatically. `action=file` output is not auto-indexed because an
+arbitrary analyzer program can copy, transform, or encode `FILE_CONTENT`.
+Review the result and use `think_note` to retain a concise conclusion. Blocked,
+failed, and empty analyses are not indexed.
 
 A single `think_execute` invocation produces exactly one outer tool result.
 Its inner command execution is a direct call to the shared executor configured
@@ -239,8 +242,8 @@ fetching. The `thinkInCode.network` configuration key is locked to
 
 | Group            | Members                                                      |
 | ---------------- | ------------------------------------------------------------ |
-| `@think-inspect` | `think_index`, `think_search`                                |
-| `@think-exec`    | `think_execute`, `think_execute_file`, `think_batch_execute` |
+| `@think-inspect` | `think_note`, `think_search`                                 |
+| `@think-exec`    | `think_execute`                                              |
 | `@think`         | `@think-inspect`, `@think-exec`                              |
 
 Planning/research roles use `@think-inspect`. Execution-capable roles
@@ -251,8 +254,19 @@ reach the analysis port. Verifiers in
 any execute tool. The legacy `@ctx-inspect`, `@ctx-exec`, and `@ctx`
 group definitions were removed at Task 9 cutover.
 
-The `saveTokens` allowlist excludes all five `think_*` names so
+The `saveTokens` allowlist excludes all three `think_*` names so
 post-compression does not erase the pre-reduced result.
+
+## Adaptive routing
+
+The `context` hook injects one hidden, ephemeral routing message based on the
+currently active Think tools. Inspect-only roles receive guidance only for
+`think_note` and `think_search`; execute-only roles receive the action contract;
+full roles receive both. The message distinguishes Pi Lens inspection of current
+source and diagnostics from `think_search` recall of prior indexed analyses.
+It also keeps ordinary reads and shell calls for short fixed observations and
+normal edit tools for mutations. A custom role system prompt cannot suppress
+this hook-provided routing context.
 
 ## Storage
 
@@ -277,7 +291,7 @@ Mode databases under `~/.pi/context-mode/`.
 
 Command telemetry for the same canonical project is stored separately under
 `~/.pi/agent/think-in-code/projects/<project-hash>/telemetry/`. It records only
-`think_execute` and `think_batch_execute` events, redacts captured commands,
+command and batch execution events, redacts captured commands,
 limits them to 10,000 characters, uses directory/file modes `0700`/`0600`, and
 never changes an execution decision when writing fails. An interactive session
 receives at most one telemetry warning.

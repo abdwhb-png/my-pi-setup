@@ -62,6 +62,7 @@ interface MockPi {
 
 function createMockPi(
     initialEntries: SessionEntry[] = [],
+    initialActiveTools: string[] = [],
 ): MockPi {
     const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
     const appendedEntries: Array<{
@@ -69,6 +70,7 @@ function createMockPi(
         data: unknown;
     }> = [];
     const sessionEntries: SessionEntry[] = [...initialEntries];
+    let activeTools = [...initialActiveTools];
 
     function getEntries(): SessionEntry[] {
         return [...sessionEntries];
@@ -105,8 +107,10 @@ function createMockPi(
         registerMessageRenderer: () => undefined,
         registerEntryRenderer: () => undefined,
         registerMarkdownTransformer: () => undefined,
-        setActiveTools: () => undefined,
-        getActiveTools: () => [],
+        setActiveTools: (tools: string[]) => {
+            activeTools = [...tools];
+        },
+        getActiveTools: () => [...activeTools],
         getAllTools: () => [],
         getCommands: () => [],
         setModel: async () => true,
@@ -148,6 +152,13 @@ function makeCtx(sessionId: string): ExtensionContext {
     } as unknown as ExtensionContext;
 }
 
+function messageContent(message: AgentMessage | undefined): string {
+    const content = (
+        message as unknown as { content?: unknown } | undefined
+    )?.content;
+    return typeof content === "string" ? content : "";
+}
+
 async function setupHome(): Promise<string> {
     const home = await mkdtemp(join(tmpdir(), "think-in-code-int-"));
     const storeRoot = join(home, "store");
@@ -177,6 +188,113 @@ describe("registerHooks integration", () => {
         stores = [];
         for (const home of homes) await rm(home, { recursive: true, force: true });
         homes = [];
+    });
+
+    it("injects one compact inspect-only routing message without execute guidance", async () => {
+        const home = await setupHome();
+        homes.push(home);
+        const store = await setupStore(home);
+        stores.push(store);
+        const mock = createMockPi([], ["think_note", "think_search"]);
+        hookStates.push(
+            registerHooks(mock.api, {
+                store,
+                sessionIdAt: () => "routing-inspect",
+            }),
+        );
+        const messages = [
+            {
+                role: "custom",
+                customType: "think-in-code:routing",
+                content: "stale",
+                display: false,
+                timestamp: 1,
+            },
+        ] as AgentMessage[];
+
+        await mock.handlers.get("context")!(
+            { type: "context", messages } as ContextEvent,
+            makeCtx("routing-inspect"),
+        );
+
+        const routing = messages.filter(
+            (message) =>
+                "customType" in message &&
+                message.customType === "think-in-code:routing",
+        );
+        expect(routing).toHaveLength(1);
+        const content = messageContent(routing[0]);
+        expect(content.length).toBeLessThanOrEqual(450);
+        expect(content).toContain("think_search");
+        expect(content).toContain("think_note");
+        expect(content).toContain("pi-lens");
+        expect(content).not.toContain("think_execute");
+        expect(content).not.toContain("action=");
+        expect(routing[0]).toMatchObject({ display: false });
+    });
+
+    it("adapts routing to execute-only and full Think tool visibility", async () => {
+        const home = await setupHome();
+        homes.push(home);
+        const store = await setupStore(home);
+        stores.push(store);
+        const mock = createMockPi([], ["think_execute"]);
+        hookStates.push(
+            registerHooks(mock.api, {
+                store,
+                sessionIdAt: () => "routing-adaptive",
+            }),
+        );
+
+        const executeOnly: AgentMessage[] = [];
+        await mock.handlers.get("context")!(
+            { type: "context", messages: executeOnly } as ContextEvent,
+            makeCtx("routing-adaptive"),
+        );
+        const executeText = messageContent(executeOnly[0]);
+        expect(executeText).toContain("think_execute");
+        expect(executeText).toContain("action=file");
+        expect(executeText).not.toContain("think_search");
+        expect(executeText).not.toContain("think_note");
+
+        mock.api.setActiveTools([
+            "think_execute",
+            "think_note",
+            "think_search",
+        ]);
+        const full: AgentMessage[] = [];
+        await mock.handlers.get("context")!(
+            { type: "context", messages: full } as ContextEvent,
+            makeCtx("routing-adaptive"),
+        );
+        const fullText = messageContent(full[0]);
+        expect(fullText.length).toBeLessThanOrEqual(900);
+        expect(fullText).toContain("think_search");
+        expect(fullText).toContain("think_note");
+        expect(fullText).toContain("action=batch");
+        expect(fullText).toContain("pi-lens");
+    });
+
+    it("does not inject routing when no Think tool is active", async () => {
+        const home = await setupHome();
+        homes.push(home);
+        const store = await setupStore(home);
+        stores.push(store);
+        const mock = createMockPi();
+        hookStates.push(
+            registerHooks(mock.api, {
+                store,
+                sessionIdAt: () => "routing-none",
+            }),
+        );
+        const messages: AgentMessage[] = [];
+
+        await mock.handlers.get("context")!(
+            { type: "context", messages } as ContextEvent,
+            makeCtx("routing-none"),
+        );
+
+        expect(messages).toHaveLength(0);
     });
 
     it("captures two consecutive turns under the actual Pi session id", async () => {
@@ -629,8 +747,9 @@ describe("registerHooks integration", () => {
         );
         await mock.handlers.get("tool_call")!({
             type: "tool_call",
-            toolName: "think_batch_execute",
+            toolName: "think_execute",
             input: {
+                action: "batch",
                 language: "javascript",
                 program: "1",
                 items: [{ id: "a", command: "ls" }],
@@ -638,7 +757,7 @@ describe("registerHooks integration", () => {
         }, makeCtx(sessionId));
         await mock.handlers.get("tool_result")!({
             type: "tool_result",
-            toolName: "think_batch_execute",
+            toolName: "think_execute",
             isError: false,
             content: [{ type: "text", text: "partial" }],
             details: {
@@ -715,7 +834,7 @@ describe("registerHooks integration", () => {
         expect(parsed.priority).toBe(0);
     });
 
-    it("gates the snapshot restore on the compaction entry id and persists versioned custom entries", async () => {
+    it("gates snapshot restore, coexists with routing, and persists versioned custom entries", async () => {
         const home = await setupHome();
         homes.push(home);
         const store = await setupStore(home);
@@ -783,17 +902,28 @@ describe("registerHooks integration", () => {
             reason: "manual",
             willRetry: false,
         } as SessionCompactEvent, makeCtx(sessionId));
+        mock.api.setActiveTools(["think_search"]);
 
         const injectedMessages: AgentMessage[] = [];
         await mock.handlers.get("context")!({
             type: "context",
             messages: injectedMessages,
         } as ContextEvent, makeCtx(sessionId));
-        expect(injectedMessages).toHaveLength(1);
-        expect(injectedMessages[0]).toMatchObject({
-            role: "custom",
-            display: false,
-        });
+        expect(injectedMessages).toHaveLength(2);
+        expect(
+            injectedMessages.filter(
+                (message) =>
+                    "customType" in message &&
+                    message.customType === "think-in-code:routing",
+            ),
+        ).toHaveLength(1);
+        expect(
+            injectedMessages.filter(
+                (message) =>
+                    "customType" in message &&
+                    message.customType === "think-in-code:snapshot",
+            ),
+        ).toHaveLength(1);
 
         // Second context call: no re-injection (one-shot, persisted via
         // SNAPSHOT_CONSUMED_TYPE custom entry).
@@ -802,7 +932,12 @@ describe("registerHooks integration", () => {
             type: "context",
             messages: secondMessages,
         } as ContextEvent, makeCtx(sessionId));
-        expect(secondMessages).toHaveLength(0);
+        expect(secondMessages).toHaveLength(1);
+        expect(secondMessages[0]).toMatchObject({
+            role: "custom",
+            customType: "think-in-code:routing",
+            display: false,
+        });
 
         // Custom entries persisted via appendEntry are versioned.
         const types = mock.appendedEntries.map((entry) => entry.customType).sort();

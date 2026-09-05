@@ -20,11 +20,9 @@ if (!isStringArray(rawGroupValues)) {
 const AVAILABLE: string[] = [
     ...new Set<string>([
         ...rawGroupValues,
-        "think_index",
+        "think_note",
         "think_search",
         "think_execute",
-        "think_execute_file",
-        "think_batch_execute",
         "ask_user_question",
         "subagent",
         "todo",
@@ -40,30 +38,24 @@ const AVAILABLE: string[] = [
 ].filter((n: string) => !n.startsWith("@"));
 
 describe("Task 7 think_* group resolution", () => {
-    it("resolves @think-inspect to think_index + think_search", () => {
+    it("resolves @think-inspect to think_note + think_search", () => {
         const result = resolveToolAliases(["@think-inspect"], AVAILABLE, GROUPS);
-        expect(result.names).toEqual(["think_index", "think_search"]);
+        expect(result.names).toEqual(["think_note", "think_search"]);
         expect(result.diagnostics).toEqual([]);
     });
 
-    it("resolves @think-exec to the three execute tools", () => {
+    it("resolves @think-exec to the unified execute tool", () => {
         const result = resolveToolAliases(["@think-exec"], AVAILABLE, GROUPS);
-        expect(result.names).toEqual([
-            "think_execute",
-            "think_execute_file",
-            "think_batch_execute",
-        ]);
+        expect(result.names).toEqual(["think_execute"]);
         expect(result.diagnostics).toEqual([]);
     });
 
-    it("resolves @think to all five think tools", () => {
+    it("resolves @think to all three think tools", () => {
         const result = resolveToolAliases(["@think"], AVAILABLE, GROUPS);
         expect(result.names).toEqual([
-            "think_index",
+            "think_note",
             "think_search",
             "think_execute",
-            "think_execute_file",
-            "think_batch_execute",
         ]);
         expect(result.diagnostics).toEqual([]);
     });
@@ -75,10 +67,8 @@ describe("Task 7 think_* group resolution", () => {
         const result = resolveToolAliases(planTools, AVAILABLE, GROUPS);
         // Must not contain any think_execute tool (least-privilege)
         expect(result.names).not.toContain("think_execute");
-        expect(result.names).not.toContain("think_execute_file");
-        expect(result.names).not.toContain("think_batch_execute");
-        // Must contain think_index + think_search (inspection only)
-        expect(result.names).toContain("think_index");
+        // Must contain think_note + think_search (inspection only)
+        expect(result.names).toContain("think_note");
         expect(result.names).toContain("think_search");
         expect(result.diagnostics).toEqual([]);
     });
@@ -89,11 +79,9 @@ describe("Task 7 think_* group resolution", () => {
             .map((s) => s.trim());
         const result = resolveToolAliases(atlasTools, AVAILABLE, GROUPS);
         // @think composes both sub-groups — full tool access is intended
-        expect(result.names).toContain("think_index");
+        expect(result.names).toContain("think_note");
         expect(result.names).toContain("think_search");
         expect(result.names).toContain("think_execute");
-        expect(result.names).toContain("think_execute_file");
-        expect(result.names).toContain("think_batch_execute");
         expect(result.diagnostics).toEqual([]);
     });
 
@@ -149,12 +137,10 @@ describe("Task 7 think_* group resolution", () => {
         );
         for (const r of [planResult, askResult]) {
             expect(r.names).not.toContain("think_execute");
-            expect(r.names).not.toContain("think_execute_file");
-            expect(r.names).not.toContain("think_batch_execute");
         }
     });
 
-    it("atlas/herdr/debug roles resolve to all five think_* tools via @think", () => {
+    it("atlas/herdr/debug roles resolve to all three think_* tools via @think", () => {
         // Execution-capable roles get the combined @think group, so the
         // analysis port is reachable. Least privilege is preserved by NOT
         // handing them the legacy mcp:ctx_* tools.
@@ -169,11 +155,9 @@ describe("Task 7 think_* group resolution", () => {
             GROUPS,
         );
         for (const r of [atlasResult, debugResult]) {
-            expect(r.names).toContain("think_index");
+            expect(r.names).toContain("think_note");
             expect(r.names).toContain("think_search");
             expect(r.names).toContain("think_execute");
-            expect(r.names).toContain("think_execute_file");
-            expect(r.names).toContain("think_batch_execute");
             // Legacy MCP tools must NOT leak through.
             for (const legacy of [
                 "mcp:ctx_index",
@@ -188,13 +172,13 @@ describe("Task 7 think_* group resolution", () => {
         }
     });
 
-    it("resolves @review to think_index + think_search instead of legacy mcp:ctx_* tools", () => {
+    it("resolves @review to think_note + think_search instead of legacy mcp:ctx_* tools", () => {
         // The `@review` group is consumed by `api-reviewer`, `style-reviewer`,
         // and every `review-max` consumer (architect, code-reviewer,
         // performance-reviewer, security-reviewer, oh-my-oracle,
         // plan-reviewer). At cutover, the legacy `mcp:ctx_index`,
         // `mcp:ctx_search`, and `mcp:ctx_fetch_and_index` tools disappear and
-        // the native `think_index` / `think_search` tools take their place.
+        // the native `think_note` / `think_search` tools take their place.
         // The group must therefore expose Think-in-Code FTS5 access instead
         // of the legacy MCP bridge.
         const reviewResult = resolveToolAliases(
@@ -204,7 +188,7 @@ describe("Task 7 think_* group resolution", () => {
         );
         expect(reviewResult.diagnostics).toEqual([]);
         // Native FTS5 access must be present.
-        expect(reviewResult.names).toContain("think_index");
+        expect(reviewResult.names).toContain("think_note");
         expect(reviewResult.names).toContain("think_search");
         // Legacy MCP tools must NOT leak through.
         for (const legacy of [
@@ -216,16 +200,12 @@ describe("Task 7 think_* group resolution", () => {
         }
         // The reviewer group must not gain any executable think_* tool —
         // reviewers inspect evidence, they do not run analyzers.
-        for (const executable of [
-            "think_execute",
-            "think_execute_file",
-            "think_batch_execute",
-        ]) {
+        for (const executable of ["think_execute"]) {
             expect(reviewResult.names).not.toContain(executable);
         }
     });
 
-    it("resolves @review-max to think_index + think_search without executable think_*", () => {
+    it("resolves @review-max to think_note + think_search without executable think_*", () => {
         // `@review-max` composes `@review` plus report-write and docs tools.
         // The same think-inspect boundary applies: it must surface the
         // native FTS5 tools without any executable think_* tool, so the
@@ -236,7 +216,7 @@ describe("Task 7 think_* group resolution", () => {
             GROUPS,
         );
         expect(reviewMaxResult.diagnostics).toEqual([]);
-        expect(reviewMaxResult.names).toContain("think_index");
+        expect(reviewMaxResult.names).toContain("think_note");
         expect(reviewMaxResult.names).toContain("think_search");
         for (const legacy of [
             "mcp:ctx_index",
@@ -248,16 +228,12 @@ describe("Task 7 think_* group resolution", () => {
         ]) {
             expect(reviewMaxResult.names).not.toContain(legacy);
         }
-        for (const executable of [
-            "think_execute",
-            "think_execute_file",
-            "think_batch_execute",
-        ]) {
+        for (const executable of ["think_execute"]) {
             expect(reviewMaxResult.names).not.toContain(executable);
         }
     });
 
-    it("validates every review/review-max agent consumer resolves without mcp:ctx_* and gains think_index/think_search", () => {
+    it("validates every review/review-max agent consumer resolves without mcp:ctx_* and gains think_note/think_search", () => {
         // Cross-agent smoke: every agent frontmatter that references
         // `@review` or `@review-max` must resolve cleanly. This is the
         // counterpart to the role-file smoke earlier in this suite; without
@@ -311,7 +287,7 @@ describe("Task 7 think_* group resolution", () => {
                 // Native FTS5 access must be present in every review-capable
                 // agent — replacing what was previously the legacy MCP
                 // bridge.
-                expect(result.names).toContain("think_index");
+                expect(result.names).toContain("think_note");
                 expect(result.names).toContain("think_search");
                 // No legacy MCP tool may leak through into a review-capable
                 // agent.

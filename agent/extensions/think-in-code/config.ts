@@ -81,9 +81,9 @@ export interface ThinkInCodeConfig {
     indexedSnippetChars: number;
     /** Maximum derived text returned to Pi by any single think_* tool. */
     maxResultBytes: number;
-    /** Concurrent command executions for think_batch_execute. Hard ceiling 2. */
+    /** Concurrent commands for think_execute action=batch. Hard ceiling 2. */
     batchConcurrency: number;
-    /** Maximum number of commands in a think_batch_execute call. */
+    /** Maximum commands in one think_execute action=batch call. */
     maxBatchCommands: number;
     /**
      * Network access for the analyzer / archive pipeline.

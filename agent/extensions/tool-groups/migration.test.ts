@@ -283,8 +283,7 @@ describe('tool-groups configuration invariants', () => {
         // Task 9 cutover removed the `context-mode` MCP block from mcp.json
         // and the `npm:context-mode` package from settings.json. Role and
         // agent consumers must now resolve Think-in-Code native tools
-        // (`think_index`, `think_search`, `think_execute`,
-        // `think_execute_file`, `think_batch_execute`) instead of the
+        // (`think_note`, `think_search`, `think_execute`) instead of the
         // legacy `mcp:ctx_*` MCP bridge. This test enforces both
         // invariants: no `context-mode` MCP server, and no `@ctx*` /
         // `ctx*` group definitions in tool-groups.json.

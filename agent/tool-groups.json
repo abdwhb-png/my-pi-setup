@@ -38,19 +38,22 @@
         ],
         "lens": ["lens_diagnostics", "ast_grep_dump", "@lens-inspect"],
         "lens-write": ["@lens", "ast_grep_replace", "lens_diagnostic_mark"],
-        "ctx-inspect": [
-            "mcp:ctx_index",
-            "mcp:ctx_search",
-            "mcp:ctx_fetch_and_index"
+        "think-inspect": [
+            "think_note",
+            "think_search"
         ],
-        "ctx-exec": [
-            "mcp:ctx_batch_execute",
-            "mcp:ctx_execute",
-            "mcp:ctx_execute_file"
+        "think-exec": [
+            "think_execute"
         ],
-        "ctx": [
-            "@ctx-inspect",
-            "@ctx-exec"
+        "think": [
+            "@think-inspect",
+            "@think-exec"
+        ],
+        "ssh-tools": [
+            "ssh_read",
+            "ssh_write",
+            "ssh_edit",
+            "ssh_bash"
         ],
         "subagents": [
             "subagent",
@@ -61,7 +64,7 @@
         "review": [
             "@inspect",
             "@lens",
-            "@ctx-inspect",
+            "@think-inspect",
             "contact_supervisor"
         ],
         "review-max": [

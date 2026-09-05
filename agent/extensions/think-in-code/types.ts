@@ -14,6 +14,13 @@ import type {
 
 export type ThinkLanguage = AnalysisLanguage;
 
+export type ThinkExecuteAction =
+    | "command"
+    | "content"
+    | "archives"
+    | "file"
+    | "batch";
+
 export interface ExecuteSourceCommand {
     kind: "command";
     command: string;
@@ -118,9 +125,7 @@ export interface ToolExecutionDetails {
 
 export const TOOL_NAMES = Object.freeze({
     execute: "think_execute",
-    executeFile: "think_execute_file",
-    batchExecute: "think_batch_execute",
-    index: "think_index",
+    note: "think_note",
     search: "think_search",
 });
 
@@ -128,8 +133,6 @@ export type ThinkToolName = (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES];
 
 export const THINK_TOOL_NAMES: readonly ThinkToolName[] = Object.freeze([
     TOOL_NAMES.execute,
-    TOOL_NAMES.executeFile,
-    TOOL_NAMES.batchExecute,
-    TOOL_NAMES.index,
+    TOOL_NAMES.note,
     TOOL_NAMES.search,
 ]);

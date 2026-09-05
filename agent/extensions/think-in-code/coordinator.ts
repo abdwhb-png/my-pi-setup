@@ -1,16 +1,14 @@
 /**
  * Think-in-Code coordinator.
  *
- * Owns the policy and orchestration for the five `think_*` tools:
- *   - think_execute: command | content | archives + analyzer
- *   - think_execute_file: read a single project file + analyzer
- *   - think_batch_execute: up to 16 commands (global concurrency 2) + analyzer
- *   - think_index: explicit bounded text / archive IDs
+ * Owns the policy and orchestration for the three public `think_*` tools:
+ *   - think_execute: command | content | archives | file | batch + analyzer
+ *   - think_note: explicit bounded text with optional archive provenance
  *   - think_search: bounded snippets + archive IDs (never raw bytes)
  *
- * Raw output never enters the Pi tool result. It is archived, indexed in
- * redacted form, and reanalyzable via archive IDs. The LLM only sees the
- * analyzer's bounded derived output.
+ * Raw sources remain in archives and are reanalyzable via archive IDs. The
+ * LLM sees only bounded analyzer output, which remains model-controlled and
+ * can contain source bytes when a program deliberately copies them.
  *
  * Capture/index failures are fail-open but visible in tool details.
  * Safe-execution and analysis-sandbox failures are fail-closed.
@@ -270,6 +268,35 @@ export class ThinkCoordinator {
         }
     }
 
+    #indexDerivedResult(input: {
+        kind: IndexRequest["kind"];
+        source: string;
+        derivedResult: AnalysisResult | null;
+        archiveIds: readonly string[];
+        blockedReason?: string;
+        indexWarnings: string[];
+    }): void {
+        if (
+            input.blockedReason ||
+            !input.derivedResult ||
+            input.derivedResult.output.trim().length === 0
+        ) {
+            return;
+        }
+        try {
+            this.#store.index({
+                kind: input.kind,
+                source: input.source,
+                text: input.derivedResult.output,
+                archiveIds: input.archiveIds,
+            });
+        } catch (error) {
+            input.indexWarnings.push(
+                error instanceof Error ? error.message : String(error),
+            );
+        }
+    }
+
     async execute(
         request: ExecuteRequest,
         ctx: ExtensionContext,
@@ -444,28 +471,22 @@ export class ThinkCoordinator {
             if (analysisArchive) archiveIds.push(analysisArchive.id);
         }
 
-        // Index a bounded summary so future searches hit the row even when the
-        // archive was created from a command (no inline text).
-        if (!blockedReason && archiveIds.length > 0) {
-            try {
-                this.#store.index({
-                    kind:
-                        request.source.kind === "archives"
-                            ? "analysis-summary"
-                            : "command-summary",
-                    source:
-                        request.source.kind === "command"
-                            ? request.source.command
-                            : request.id,
-                    text: derivedResult?.output ?? `${archiveIds[0]}`,
-                    archiveIds,
-                });
-            } catch (error) {
-                indexWarnings.push(
-                    error instanceof Error ? error.message : String(error),
-                );
-            }
-        }
+        this.#indexDerivedResult({
+            kind:
+                request.source.kind === "command"
+                    ? "command-summary"
+                    : request.source.kind === "content"
+                      ? "document-summary"
+                      : "analysis-summary",
+            source:
+                request.source.kind === "command"
+                    ? request.source.command
+                    : request.id,
+            derivedResult,
+            archiveIds,
+            blockedReason,
+            indexWarnings,
+        });
 
         const derivedBytes = derivedResult
             ? Buffer.byteLength(derivedResult.output, "utf8")
@@ -626,6 +647,12 @@ export class ThinkCoordinator {
             // request-path-only public reason.
             blockedReason = fileFailureReason(error, request.path);
         }
+
+        // File programs receive raw FILE_CONTENT and are intentionally
+        // arbitrary. Their output cannot be proven derived rather than a
+        // copied, transformed, or encoded form of the source, so persisting it
+        // automatically would violate the raw-archive boundary. Callers can
+        // persist a reviewed conclusion explicitly through `think_note`.
 
         const text = boundedDerivedText(
             derivedResult,
@@ -814,20 +841,14 @@ export class ThinkCoordinator {
             blockedReason = analyzerFailureReason(error, request.language);
         }
 
-        try {
-            if (archiveIds.length > 0) {
-                this.#store.index({
-                    kind: "analysis-summary",
-                    source: request.id,
-                    text: derivedResult?.output ?? `${archiveIds[0]}`,
-                    archiveIds,
-                });
-            }
-        } catch (error) {
-            indexWarnings.push(
-                error instanceof Error ? error.message : String(error),
-            );
-        }
+        this.#indexDerivedResult({
+            kind: "analysis-summary",
+            source: request.id,
+            derivedResult,
+            archiveIds,
+            blockedReason,
+            indexWarnings,
+        });
 
         const derivedText = boundedDerivedText(
             derivedResult,
@@ -877,9 +898,7 @@ export class ThinkCoordinator {
 
         try {
             if (request.text === undefined && !request.archiveIds?.length) {
-                throw new Error(
-                    "think_index requires either text or archiveIds",
-                );
+                throw new Error("Indexing requires either text or archiveIds");
             }
             if (request.archiveIds) {
                 for (const id of request.archiveIds) {

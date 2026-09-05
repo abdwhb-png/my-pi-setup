@@ -30,7 +30,7 @@ describe("capture classification", () => {
     it("classifies failed batch items and failed diagnostics as blockers", () => {
         expect(
             classifyToolResult({
-                toolName: "think_batch_execute",
+                toolName: "think_execute",
                 isError: false,
                 details: { items: [{ id: "a", status: "failed", error: "exit 1" }] },
             }).priority,

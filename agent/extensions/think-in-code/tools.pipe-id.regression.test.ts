@@ -51,7 +51,12 @@ describe("Defect 1 RED: tools layer pipe ID mapping through public execution bou
     });
     const handlers = buildToolHandlers(coord);
     const result = (await handlers.execute(
-      { language: "javascript", program: "return INPUT", command: "echo hi" },
+      {
+        action: "command",
+        language: "javascript",
+        program: "return INPUT",
+        command: "echo hi",
+      },
       ctx("/proj"),
       { toolCallId: PI_PIPE_ID },
     )) as { content: { text: string }[]; details: { blockedReason?: string; derivedBytes: number } };

@@ -6,7 +6,8 @@ import {
     mock,
 } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { validateToolArguments } from "@earendil-works/pi-ai";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -78,45 +79,91 @@ describe("think_* tool handlers", () => {
         return { coordinator, handlers };
     }
 
+    it("publishes three schemas with one portable execute action discriminator", () => {
+        expect(Object.keys(SCHEMAS)).toEqual(["execute", "note", "search"]);
+
+        const executeSchema = SCHEMAS.execute as {
+            properties?: Record<string, unknown>;
+        };
+        expect(executeSchema.properties?.action).toMatchObject({
+            type: "string",
+            enum: ["command", "content", "archives", "file", "batch"],
+        });
+        expect(executeSchema.properties?.action).not.toHaveProperty("anyOf");
+    });
+
+    it("keeps the complete public schema below the five-tool context budget", () => {
+        expect(JSON.stringify(SCHEMAS).length).toBeLessThan(2_600);
+        expect(
+            JSON.stringify({ note: SCHEMAS.note, search: SCHEMAS.search })
+                .length,
+        ).toBeLessThanOrEqual(512);
+    });
+
     it("publishes provider-portable string enums in all public schemas", () => {
-        expect(Object.keys(SCHEMAS)).toEqual([
-            "execute",
-            "executeFile",
-            "batchExecute",
-            "index",
-            "search",
-        ]);
+        expect(Object.keys(SCHEMAS)).toEqual(["execute", "note", "search"]);
 
         const expectedLanguageSchema = {
             type: "string",
             enum: ["javascript", "typescript", "python"],
         };
-        for (const schemaKey of [
-            "execute",
-            "executeFile",
-            "batchExecute",
-        ] as const) {
-            const schema = SCHEMAS[schemaKey] as {
-                properties?: Record<string, unknown>;
-            };
-            expect(schema.properties?.language).toMatchObject(
-                expectedLanguageSchema,
-            );
-            expect(schema.properties?.language).not.toHaveProperty("anyOf");
-        }
-
-        const indexSchema = SCHEMAS.index as {
+        const executeSchema = SCHEMAS.execute as {
             properties?: Record<string, unknown>;
         };
-        expect(indexSchema.properties?.kind).toMatchObject({
-            type: "string",
-            enum: [
-                "command-summary",
-                "analysis-summary",
-                "document-summary",
-            ],
+        expect(executeSchema.properties?.language).toMatchObject(
+            expectedLanguageSchema,
+        );
+        expect(executeSchema.properties?.language).not.toHaveProperty("anyOf");
+
+        const noteSchema = SCHEMAS.note as {
+            properties?: Record<string, unknown>;
+        };
+        expect(noteSchema.properties).not.toHaveProperty("kind");
+    });
+
+    it("rejects additional properties in every public and nested object schema", () => {
+        const expectRejected = (
+            name: string,
+            schema: (typeof SCHEMAS)[keyof typeof SCHEMAS],
+            args: Record<string, unknown>,
+        ): void => {
+            expect(() =>
+                validateToolArguments(
+                    { name, description: "test", parameters: schema },
+                    { type: "toolCall", id: "test", name, arguments: args },
+                ),
+            ).toThrow(/Validation failed/);
+        };
+        const execute = {
+            action: "command",
+            language: "javascript",
+            program: "export default INPUT.length",
+            command: "printf test",
+        };
+
+        expectRejected("think_execute", SCHEMAS.execute, {
+            ...execute,
+            network: true,
         });
-        expect(indexSchema.properties?.kind).not.toHaveProperty("anyOf");
+        expectRejected("think_execute", SCHEMAS.execute, {
+                ...execute,
+                limits: { wallTimeMs: 100, fetch: true },
+            });
+        expectRejected("think_execute", SCHEMAS.execute, {
+                action: "batch",
+                language: "javascript",
+                program: "export default INPUTS.length",
+                items: [{ id: "one", command: "printf test", network: true }],
+            });
+        expectRejected("think_note", SCHEMAS.note, {
+                source: "review",
+                text: "conclusion",
+                fetch: true,
+            });
+        expectRejected("think_search", SCHEMAS.search, {
+                query: "conclusion",
+                network: true,
+            });
     });
 
     it("does not expose a model-supplied tool call id in public schemas", async () => {
@@ -127,35 +174,28 @@ describe("think_* tool handlers", () => {
     });
 
     it("documents the analyzer program syntax so callers use ES module export", () => {
-        for (const schemaKey of ["execute", "executeFile", "batchExecute"] as const) {
-            const schema = SCHEMAS[schemaKey] as {
-                properties?: Record<string, { description?: string }>;
-            };
-            const program = schema.properties?.program;
-            expect(program?.description).toBeDefined();
-            // The description must warn that top-level return is invalid and
-            // that ES module export default is required for JavaScript and
-            // TypeScript, and that Python binds `result` directly.
-            expect(program?.description).toMatch(/export default/i);
-            expect(program?.description).toMatch(/python/i);
-            expect(program?.description).toMatch(/result/i);
-        }
+        const schema = SCHEMAS.execute as {
+            properties?: Record<string, { description?: string }>;
+        };
+        const program = schema.properties?.program;
+        expect(program?.description).toBeDefined();
+        // The description must warn that top-level return is invalid and
+        // that ES module export default is required for JavaScript and
+        // TypeScript, and that Python binds `result` directly.
+        expect(program?.description).toMatch(/export default/i);
+        expect(program?.description).toMatch(/python/i);
+        expect(program?.description).toMatch(/result/i);
         // language descriptions must enumerate javascript / typescript / python
-        for (const schemaKey of ["execute", "executeFile", "batchExecute"] as const) {
-            const schema = SCHEMAS[schemaKey] as {
-                properties?: Record<string, { description?: string }>;
-            };
-            const language = schema.properties?.language;
-            expect(language?.description).toBeDefined();
-        }
+        expect(schema.properties?.language?.description).toBeDefined();
     });
 
-    it("rejects execute when more than one source is provided", async () => {
+    it("rejects fields that do not belong to the selected action", async () => {
         const { handlers } = await setup();
         await expect(
             handlers.execute(
                 {
                     id: "x",
+                    action: "command",
                     language: "javascript",
                     program: "1",
                     command: "echo",
@@ -163,21 +203,22 @@ describe("think_* tool handlers", () => {
                 },
                 ctx("/workspace/proj"),
             ),
-        ).rejects.toThrow(/exactly one source/);
+        ).rejects.toThrow(/command does not accept content/);
     });
 
-    it("rejects execute when no source is provided", async () => {
+    it("rejects execute when the selected action has no source", async () => {
         const { handlers } = await setup();
         await expect(
             handlers.execute(
                 {
                     id: "x",
+                    action: "command",
                     language: "javascript",
                     program: "1",
                 },
                 ctx("/workspace/proj"),
             ),
-        ).rejects.toThrow(/exactly one source/);
+        ).rejects.toThrow(/command must be a string/);
     });
 
     it("rejects unknown languages", async () => {
@@ -186,6 +227,7 @@ describe("think_* tool handlers", () => {
             handlers.execute(
                 {
                     id: "x",
+                    action: "content",
                     language: "ruby",
                     program: "1",
                     content: "hi",
@@ -202,9 +244,10 @@ describe("think_* tool handlers", () => {
             command: "echo",
         }));
         await expect(
-            handlers.batchExecute(
+            handlers.execute(
                 {
                     id: "x",
+                    action: "batch",
                     language: "javascript",
                     program: "1",
                     items,
@@ -214,13 +257,13 @@ describe("think_* tool handlers", () => {
         ).rejects.toThrow(/Batch execute exceeds/);
     });
 
-    it("rejects invalid archive IDs in think_index", async () => {
+    it("rejects invalid archive provenance in think_note", async () => {
         const { handlers } = await setup();
         await expect(
-            handlers.index({
+            handlers.note({
                 id: "x",
-                kind: "command-summary",
                 source: "echo",
+                text: "derived note",
                 archiveIds: ["bad id with spaces"],
             }),
         ).rejects.toThrow(/invalid archive id/);
@@ -232,6 +275,7 @@ describe("think_* tool handlers", () => {
             handlers.execute(
                 {
                     id: "x",
+                    action: "content",
                     language: "javascript",
                     program: "1",
                     content: "hi",
@@ -240,6 +284,17 @@ describe("think_* tool handlers", () => {
                 ctx("/workspace/proj"),
             ),
         ).rejects.toThrow(/Fetch\/network/);
+    });
+
+    it("rejects unexpected fields on think_search", async () => {
+        const { handlers } = await setup();
+        await expect(
+            handlers.search({
+                id: "x",
+                query: "anything",
+                network: true,
+            }),
+        ).rejects.toThrow(/think_search does not accept network/);
     });
 
     it("limits think_search to 20 results", async () => {
@@ -259,12 +314,13 @@ describe("think_* tool handlers", () => {
         expect(result.details.archiveIds.length).toBeLessThanOrEqual(20);
     });
 
-    it("returns bounded derived text from think_execute and never raw output", async () => {
+    it("returns bounded analyzer text instead of command output", async () => {
         const safeExec = fakeSafeExecution("leak-text-payload");
-        const { handlers } = await setup(safeExec);
+        const { handlers, coordinator } = await setup(safeExec);
         const result = (await handlers.execute(
             {
                 id: "x",
+                action: "command",
                 language: "javascript",
                 program: "INPUT",
                 command: "echo",
@@ -273,14 +329,19 @@ describe("think_* tool handlers", () => {
         )) as { content: { text: string }[]; details: { derivedBytes: number } };
         expect(result.content[0]?.text).toBe("DERIVED");
         expect(result.details.derivedBytes).toBe(7);
+        expect(coordinator.store.search("DERIVED", 5)).toHaveLength(1);
     });
 
-    it("runs think_batch_execute through the shared safe execution", async () => {
+    it("runs think_execute action=batch through the shared safe execution", async () => {
         const safeExec = fakeSafeExecution("batch-output");
-        const { handlers } = await setup(safeExec);
-        const result = (await handlers.batchExecute(
+        const { handlers, coordinator } = await setup(
+            safeExec,
+            fakeAnalysis("batch-derived-marker"),
+        );
+        const result = (await handlers.execute(
             {
                 id: "x",
+                action: "batch",
                 language: "javascript",
                 program: "INPUTS",
                 items: [
@@ -296,17 +357,112 @@ describe("think_* tool handlers", () => {
         expect(result.details.items.every((i) => i.status === "succeeded")).toBe(
             true,
         );
+        expect(coordinator.store.search("batch-derived-marker", 5)).toHaveLength(
+            1,
+        );
     });
 
-    it("think_index without text or archiveIds is rejected", async () => {
+    it("does not auto-index arbitrary file analysis output", async () => {
+        const { handlers, coordinator } = await setup(
+            fakeSafeExecution("unused"),
+            fakeAnalysis("raw-file-payload"),
+        );
+        await writeFile(join(home!, "fixture.txt"), "raw-file-payload", "utf8");
+
+        await handlers.execute(
+            {
+                action: "file",
+                language: "javascript",
+                program: "export default FILE_CONTENT",
+                path: "fixture.txt",
+            },
+            ctx(home!),
+            { toolCallId: "file-analysis-call" },
+        );
+
+        expect(coordinator.store.search("raw-file-payload", 5)).toEqual([]);
+    });
+
+    it("does not index an empty successful analysis", async () => {
+        const { handlers, coordinator } = await setup(
+            fakeSafeExecution("unused"),
+            fakeAnalysis(" \n "),
+        );
+
+        await handlers.execute(
+            {
+                id: "empty-derived",
+                action: "content",
+                language: "javascript",
+                program: "export default ''",
+                content: "raw-source-marker",
+            },
+            ctx("/workspace/proj"),
+        );
+
+        expect(coordinator.store.search("raw-source-marker", 5)).toEqual([]);
+    });
+
+    it("does not index archive identifiers when batch analysis fails", async () => {
+        const failingAnalysis: AnalysisSandboxPort = {
+            run: mock(async () => {
+                throw new Error("analysis failed");
+            }),
+            shutdown: async () => undefined,
+        };
+        const { handlers, coordinator } = await setup(
+            fakeSafeExecution("batch-source"),
+            failingAnalysis,
+        );
+
+        const result = (await handlers.execute(
+            {
+                action: "batch",
+                language: "javascript",
+                program: "export default INPUTS",
+                items: [{ id: "one", command: "echo one" }],
+            },
+            ctx(home!),
+            { toolCallId: "failed-batch-call" },
+        )) as { details: { archiveIds: readonly string[] } };
+
+        const archivedId = result.details.archiveIds[0]!;
+        expect(coordinator.store.search(archivedId, 5)).toHaveLength(0);
+    });
+
+    it("think_note always requires explicit text", async () => {
         const { handlers } = await setup();
         await expect(
-            handlers.index({
+            handlers.note({
                 id: "x",
-                kind: "command-summary",
                 source: "echo",
             }),
-        ).rejects.toThrow(/think_index requires either text or archiveIds/);
+        ).rejects.toThrow(/text must be a string/);
+    });
+
+    it("rejects legacy index fields on think_note", async () => {
+        const { handlers } = await setup();
+        await expect(
+            handlers.note({
+                id: "x",
+                source: "legacy-note",
+                text: "concise conclusion",
+                kind: "analysis-summary",
+            }),
+        ).rejects.toThrow(/think_note does not accept kind/);
+    });
+
+    it("rejects notes larger than the effective indexed text limit", async () => {
+        const { handlers } = await setup();
+        await expect(
+            handlers.note({
+                id: "x",
+                source: "bounded-note",
+                text: "x".repeat(
+                    DEFAULT_THINK_IN_CODE_CONFIG.indexedSnippetChars + 1,
+                ),
+            }),
+        ).rejects.toThrow(/1024 characters/);
     });
 
     it("forwards Pi's real toolCallId and sanitizes the progress callback before safe execution", async () => {
@@ -315,6 +471,7 @@ describe("think_* tool handlers", () => {
         const progressFn = () => undefined;
         await handlers.execute(
             {
+                action: "command",
                 language: "javascript",
                 program: "INPUT",
                 command: "echo hi",
@@ -346,6 +503,7 @@ describe("think_* tool handlers", () => {
         // First call archives the command output as a side-effect.
         const first = (await handlers.execute(
             {
+                action: "command",
                 language: "javascript",
                 program: "INPUT",
                 command: "echo primary",
@@ -359,6 +517,7 @@ describe("think_* tool handlers", () => {
         // never sees the raw bytes — only the bounded analyzer view.
         const result = (await handlers.execute(
             {
+                action: "archives",
                 language: "javascript",
                 program: "INPUT",
                 archiveIds: [sourceArchiveId],
@@ -369,5 +528,6 @@ describe("think_* tool handlers", () => {
         expect(result.content[0]?.text).toBe("DERIVED");
         const storeAfter = coordinator.store;
         expect(storeAfter.archiveBytes()).toBeGreaterThan(0);
+        expect(storeAfter.search("DERIVED", 5).length).toBeGreaterThanOrEqual(2);
     });
 });

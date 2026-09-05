@@ -1,11 +1,9 @@
 /**
  * Think-in-Code native extension.
  *
- * Registers five native Pi tools:
- *   - think_execute: command | content | archives + analyzer
- *   - think_execute_file: a single project file + analyzer
- *   - think_batch_execute: up to 16 commands (concurrency 2) + analyzer
- *   - think_index: explicit text or archive IDs (redacted before storage)
+ * Registers three native Pi tools:
+ *   - think_execute: command | content | archives | file | batch + analyzer
+ *   - think_note: one concise durable conclusion with optional provenance
  *   - think_search: bounded snippets + archive IDs
  *
  * The extension owns its store and coordinator lifecycle:
@@ -45,7 +43,7 @@ import {
     type ThinkTelemetryRecorder,
 } from "./telemetry/recorder.ts";
 import { purgeExpiredThinkTelemetry } from "./telemetry/storage.ts";
-import { buildToolHandlers, SCHEMAS } from "./tools.ts";
+import { buildToolHandlers, createThinkSchemas } from "./tools.ts";
 import { THINK_TOOL_NAMES, TOOL_NAMES } from "./types.ts";
 
 export interface ThinkInCodeRegistrationOptions {
@@ -140,7 +138,11 @@ export function registerThinkInCode(
 
     function registerTools(): void {
         if (!coordinator) return;
-        const handlers = buildToolHandlers(coordinator);
+        const handlers = buildToolHandlers(
+            coordinator,
+            config.indexedSnippetChars,
+        );
+        const schemas = createThinkSchemas(config.indexedSnippetChars);
         const adaptCtx = (
             ctx: ExtensionContext,
             signal: AbortSignal | undefined,
@@ -157,8 +159,8 @@ export function registerThinkInCode(
             name: TOOL_NAMES.execute,
             label: "🧠 Think Execute",
             description:
-                "Run a command, inline content, or analyze prior archive IDs through the sandboxed analyzer. Returns bounded derived text; raw output is archived, not exposed.",
-            parameters: SCHEMAS.execute,
+                "Analyze one source with action=command|content|archives|file|batch. Return a bounded derivation, never copied raw input. File results require think_note for durable indexing.",
+            parameters: schemas.execute,
             async execute(toolCallId, params, signal, onUpdate, ctx) {
                 return asResult(
                     handlers.execute(
@@ -170,46 +172,14 @@ export function registerThinkInCode(
             },
         });
         pi.registerTool({
-            name: TOOL_NAMES.executeFile,
-            label: "🧠 Think Execute File",
+            name: TOOL_NAMES.note,
+            label: "🧠 Think Note",
             description:
-                "Read a single project file (under ctx.cwd, ≤ 64 MiB) and analyze it through the sandboxed analyzer with FILE_CONTENT/FILE_PATH bindings. Worker never receives a filesystem mount.",
-            parameters: SCHEMAS.executeFile,
-            async execute(toolCallId, params, signal, onUpdate, ctx) {
-                return asResult(
-                    handlers.executeFile(
-                        params as Record<string, unknown>,
-                        adaptCtx(ctx, signal),
-                        { toolCallId, signal, onUpdate },
-                    ),
-                );
-            },
-        });
-        pi.registerTool({
-            name: TOOL_NAMES.batchExecute,
-            label: "🧠 Think Batch",
-            description:
-                "Run up to 16 commands (global concurrency 2) through the shared safe execution service, archive every result, then run one analyzer over the structured INPUTS array. Per-item blocked/failed status is preserved; raw output never enters the LLM context.",
-            parameters: SCHEMAS.batchExecute,
-            async execute(toolCallId, params, signal, onUpdate, ctx) {
-                return asResult(
-                    handlers.batchExecute(
-                        params as Record<string, unknown>,
-                        adaptCtx(ctx, signal),
-                        { toolCallId, signal, onUpdate },
-                    ),
-                );
-            },
-        });
-        pi.registerTool({
-            name: TOOL_NAMES.index,
-            label: "🧠 Think Index",
-            description:
-                "Index bounded text or existing archive IDs (after redaction). Never reads a host path.",
-            parameters: SCHEMAS.index,
+                "Store one concise redacted note. source and text are required; archiveIds may link provenance but are never used as note text.",
+            parameters: schemas.note,
             async execute(toolCallId, params, _signal, _onUpdate, _ctx) {
                 return asResult(
-                    handlers.index({
+                    handlers.note({
                         ...(params as Record<string, unknown>),
                         id: toolCallId,
                     }),
@@ -220,8 +190,8 @@ export function registerThinkInCode(
             name: TOOL_NAMES.search,
             label: "🧠 Think Search",
             description:
-                "Search the FTS5 index. Returns bounded ranked snippets plus archive/document IDs. Never returns raw archive bytes. Follow-up analysis uses think_execute with archive IDs.",
-            parameters: SCHEMAS.search,
+                "Search prior indexed analyses and notes. Returns bounded ranked snippets plus archive/document IDs, never raw archive bytes. Reanalyze returned archives with think_execute action=archives.",
+            parameters: schemas.search,
             async execute(toolCallId, params, _signal, _onUpdate, _ctx) {
                 return asResult(
                     handlers.search({

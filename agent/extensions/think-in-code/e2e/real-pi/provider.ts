@@ -153,6 +153,7 @@ export default function register(pi: ExtensionAPI): void {
                 tool(
                     "think_execute",
                     {
+                        action: "content",
                         language: "javascript",
                         content: "alpha beta gamma",
                         program: "export default INPUT.split(/\\s+/).length",
@@ -162,8 +163,9 @@ export default function register(pi: ExtensionAPI): void {
             ),
             traced("after-execute", () =>
                 tool(
-                    "think_execute_file",
+                    "think_execute",
                     {
+                        action: "file",
                         path: "fixture.txt",
                         language: "javascript",
                         program: "export default FILE_CONTENT.toUpperCase()",
@@ -173,8 +175,9 @@ export default function register(pi: ExtensionAPI): void {
             ),
             traced("after-file", () =>
                 tool(
-                    "think_batch_execute",
+                    "think_execute",
                     {
+                        action: "batch",
                         language: "javascript",
                         program:
                             "export default INPUTS.map((item) => item.output).join('|')",
@@ -185,9 +188,8 @@ export default function register(pi: ExtensionAPI): void {
             ),
             traced("after-batch", () =>
                 tool(
-                    "think_index",
+                    "think_note",
                     {
-                        kind: "document-summary",
                         source: "smoke-fixture",
                         text: "needle-verification durable index entry",
                     },
@@ -212,6 +214,7 @@ export default function register(pi: ExtensionAPI): void {
                 return tool(
                     "think_execute",
                     {
+                        action: "archives",
                         language: "javascript",
                         archiveIds: [id],
                         program: "export default INPUT.length",

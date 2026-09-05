@@ -25,9 +25,22 @@ remains an acceptance task rather than completed evidence.
 [ADR-024](./ADR-024-bash-execution-ownership-and-sandbox-runtime.md)
 supersedes the shared Safe Bash service, separate analysis broker, and mixed
 telemetry ownership described in this ADR's Architecture, Exact dependencies,
-and Migration sections. Think-in-Code keeps its five tools, store, workers,
+and Migration sections. Think-in-Code keeps its three public tools, store, workers,
 redaction, capture, and restore behavior, but owns its command policy,
 telemetry, and `/think-audit` lifecycle.
+
+## Public interface amendment (2026-09-05)
+
+Replace the original five-tool surface with three public tools. Route
+`command`, `content`, `archives`, `file`, and `batch` through the required
+`think_execute.action` discriminator. Keep `think_note` and `think_search`
+separate so Pi's name-level active-tool policy can distinguish execution,
+indexed writes, and indexed reads. Successful non-empty analyses auto-index
+their derived output except for `action=file`; arbitrary file programs can copy
+or transform `FILE_CONTENT`, so reviewed file conclusions require an explicit
+`think_note`. Blocked, failed, and empty analyses do not index. The `context`
+hook injects a hidden routing message derived from the currently active tools,
+including the Pi Lens versus indexed-recall boundary.
 
 ## Context
 
@@ -68,9 +81,8 @@ separately launched Pi CLI process.
 ## Decision
 
 Replace Context Mode with a native extension,
-`agent/extensions/think-in-code`, that registers five native Pi tools
-(`think_execute`, `think_execute_file`, `think_batch_execute`,
-`think_index`, `think_search`) and persists project-local evidence in a
+`agent/extensions/think-in-code`, that registers three native Pi tools
+(`think_execute`, `think_note`, `think_search`) and persists project-local evidence in a
 per-project SQLite FTS5 store + raw archive directory.
 
 The decision is recorded as ADR-019 because the Task 9 implementation
@@ -200,7 +212,7 @@ cutover: planning/research roles use `@think-inspect`,
 execution-capable roles (`atlas-orchestrator`, `herdr-orchestrator`,
 `debug`) use `@think`, the verifier allowlist in
 `brainstorm-forcer/verification.ts` includes `think_search` but never
-any execute tool, and the `saveTokens` allowlist excludes all five
+    any execute tool, and the `saveTokens` allowlist excludes all three
 `think_*` names so post-compression does not erase the pre-reduced
 result.
 
@@ -262,13 +274,15 @@ its pre-existing tool registration from leaking through
 `mcp:ctx_*` references still in `tool-groups.json` until those are
 also migrated. The narrow cutover removes the source of the leak.
 
-### Add a single `think_*` tool that wraps Context Mode internally
+### Expose every operation through one `think_*` tool
 
-Rejected. One tool would still leak raw output through its result
-unless the wrapper itself archives before returning, which is
-exactly what the new pipeline does — but spread across five tools
-with no coordination. Five tools make the source/derived contract
-explicit at the tool boundary.
+Rejected after the interface amendment. `think_execute` unifies the five
+analysis source actions because they share one execution permission class.
+`think_note` and `think_search` remain separate because writing durable notes,
+reading indexed evidence, and running analyzers have distinct least-privilege
+boundaries. One universal tool would prevent roles from expressing those
+boundaries through Pi's name-level active-tool policy while saving little
+schema context.
 
 ## Consequences
 
@@ -285,10 +299,10 @@ explicit at the tool boundary.
 - Capture failures never block unrelated Pi operation.
 - The shared safe-execution broker removes the duplicate pipeline
   that previously diverged from `safe_bash` policy.
-- Five native tools integrate with the existing tool-groups policy
+- Three native tools integrate with the existing tool-groups policy
   surface (`@think-inspect`, `@think-exec`, `@think`) without
   requiring a private MCP bridge.
-- Focused automated gates prove the five tools, broker contracts, bounded
+- Focused automated gates prove the three tools, broker contracts, bounded
   results, storage, role policies, and deterministic scenarios. A separate
   real-Pi smoke remains required for final end-to-end acceptance.
 
@@ -319,41 +333,25 @@ explicit at the tool boundary.
 
 Verified on 2026-09-05:
 
-1. The focused Think suite passed 173 tests with 1,134 assertions across 16
-   files.
-2. The Think + shared safe-execution + analysis gate passed 206 tests with
-   1,242 assertions across 21 files.
-3. The final sandbox migration gate passed 207 tests with 875 assertions across
-   21 files, including real Linux Zerobox contract coverage without security
-   skips.
-4. Configuration inspection confirms the five native tools and `@think*`
-   groups are present, while `npm:context-mode`, its MCP server, and active
-   `@ctx*` groups are absent.
-
-The following are not yet accepted evidence:
-
-1. `runtime.integration.test.ts` uses Pi's harness with injected services; it
-   does not prove normal extension discovery with real safe-bash and sandbox
-   brokers in a separately launched Pi process.
-2. Compaction hooks are covered with a mocked extension API, but no durable
-   artifact proves a real CLI compaction and exactly one subsequent hidden
-   restoration at the provider-request boundary. The injected `context` message
-   is in-memory and is not necessarily persisted in session JSONL; JSONL can
-   prove only the snapshot/ready/consumed markers unless the provider request is
-   separately instrumented.
-3. The `think_execute_file` suite does not yet demonstrate every promised case:
-   missing file, symlink variants, binary input, and both sides of the exact
-   64 MiB boundary.
-4. Public tool schemas still express string enums through
-   `Type.Union([Type.Literal(...)])`. The Pi runtime accepts generic `TSchema`,
-   but the documented multi-provider portability convention uses `StringEnum`
-   from `@earendil-works/pi-ai`.
-5. No durable real-Pi smoke records startup diagnostics, archive IDs, byte
-   reduction, sandbox denial, restoration count, and exact command results.
-6. Global typecheck, lint, and full-suite status must be recorded after the
-   remaining changes. Current unrelated dirty-worktree diagnostics must be
-   distinguished from task-caused failures rather than described as a green
-   global gate.
+1. The focused Think suite passed 212 tests with 1,234 assertions across 23
+   files. It covers the three-tool registration, portable `StringEnum` schemas,
+   strict action validation, auto-indexing, adaptive routing, snapshot
+   coexistence, file boundaries, storage, telemetry, and role groups.
+2. The real-Pi smoke passed through a separately launched offline Pi process
+   and wrote evidence to `/tmp/think-in-code-real-pi-evidence`.
+3. The serialized three-tool schema is 2,392 characters, below the 2,600
+   regression ceiling and the previous five-tool surface. The strict
+   inspect-only schema is 504 characters.
+4. Focused TypeScript validation reports no errors in the changed Think,
+   Brainstorm, Save Tokens, role, or tool-group files. The project-wide
+   typecheck still reports 20 errors outside this change.
+5. The focused production lint has no errors. Existing warnings remain. The
+   project-wide lint is not a green gate because the repository already contains
+   warnings outside this change.
+6. The project-wide test run reached 4,075 passing tests, 43 failures, and 2
+   errors across 292 files. The two Think 64 MiB boundary failures from that
+   concurrent run pass when rerun in isolation; the remaining global failures
+   are not accepted as evidence for this interface amendment.
 
 No `bun run check`, `bun run check:parse`, or build command runs
 without separate user approval (D14).

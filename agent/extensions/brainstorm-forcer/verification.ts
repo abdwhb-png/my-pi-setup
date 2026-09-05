@@ -112,8 +112,8 @@ export const READONLY_VERIFIER_TOOLS = Object.freeze([
     "symbol_search",
     // Task 7 — Think-in-Code parity: verifiers may query the FTS5 index
     // through `think_search` (no filesystem, no execution, no analyzer
-    // broker). The three execute tools and the bounded indexer are
-    // intentionally absent so verifiers remain non-writing.
+    // broker). `think_execute` and the note writer are intentionally absent
+    // so verifiers remain non-writing.
     "think_search",
     "web_search",
 ]);

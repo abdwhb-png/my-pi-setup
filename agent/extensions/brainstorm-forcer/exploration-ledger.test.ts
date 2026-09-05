@@ -2701,20 +2701,24 @@ describe("exploration ledger", () => {
         expect(evidence.sourceKind).toBe("indexed");
     });
 
-    it("classifies think_execute and think_batch_execute as derived", () => {
+    it("classifies think_execute command and batch actions as derived", () => {
         const ledger = createExplorationLedger({ runId: "brainstorm-test" });
         const single = ledger.captureEvidence({
             toolCallId: "call-think-execute",
             toolName: "think_execute",
-            input: { language: "javascript", program: "1" },
+            input: { action: "command", language: "javascript", program: "1" },
             content: [{ type: "text", text: "true" }],
             details: undefined,
             isError: false,
         });
         const batch = ledger.captureEvidence({
             toolCallId: "call-think-batch",
-            toolName: "think_batch_execute",
-            input: { language: "javascript", program: "INPUTS" },
+            toolName: "think_execute",
+            input: {
+                action: "batch",
+                language: "javascript",
+                program: "INPUTS",
+            },
             content: [{ type: "text", text: "summary" }],
             details: undefined,
             isError: false,
@@ -2723,43 +2727,84 @@ describe("exploration ledger", () => {
         expect(batch.sourceKind).toBe("derived");
     });
 
-    it("classifies think_execute_file as direct only when source references exist", () => {
+    it("classifies think_execute action=file as derived even with source references", () => {
         const ledger = createExplorationLedger({ runId: "brainstorm-test" });
 
-        // Capture with a project file path — the ledger hashes the path and
-        // attaches it as a source reference, so the classifier must pick
-        // `direct` (parity with `ctx_execute_file`).
+        // The requested path remains useful provenance, but analyzer output
+        // is not direct inspection evidence.
         const withRefs = ledger.captureEvidence({
             toolCallId: "call-file-with-refs",
-            toolName: "think_execute_file",
-            input: { path: "src/index.ts" },
+            toolName: "think_execute",
+            input: { action: "file", path: "src/index.ts" },
             content: [{ type: "text", text: "derived" }],
             details: undefined,
             isError: false,
         });
-        expect(withRefs.sourceKind).toBe("direct");
+        expect(withRefs.sourceKind).toBe("derived");
         expect(withRefs.sourceRefs.length).toBeGreaterThan(0);
 
-        // The legacy classification rule already handles the no-ref branch
-        // (covered by the existing `ctx_execute_file` test). The native
-        // alias routes through the same branch in `classifyEvidenceSource`,
-        // so we only need to assert the wiring here.
-        const classifier = (
-            globalThis as {
-                __explorationLedgerClassifier?: (
-                    toolName: string,
-                    sourceRefs: readonly string[],
-                ) => string;
-            }
-        ).__explorationLedgerClassifier;
-        // Optional in-process probe (used by external test runners that
-        // expose the helper). When absent we only assert the path above.
-        if (typeof classifier === "function") {
-            expect(classifier("think_execute_file", ["src/index.ts"])).toBe(
-                "direct",
-            );
-            expect(classifier("think_execute_file", [])).toBe("derived");
-        }
+        const withoutRefs = ledger.captureEvidence({
+            toolCallId: "call-file-without-refs",
+            toolName: "think_execute",
+            input: { action: "file" },
+            content: [{ type: "text", text: "derived" }],
+            details: undefined,
+            isError: false,
+        });
+        expect(withoutRefs.sourceKind).toBe("derived");
+    });
+
+    it("rejects blocked think_execute file output as empirical evidence", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const blocked = ledger.captureEvidence({
+            toolCallId: "call-blocked-file",
+            toolName: "think_execute",
+            input: { action: "file", path: "src/missing.ts" },
+            content: [{ type: "text", text: "Path escapes project root" }],
+            details: { blockedReason: "Path escapes project root" },
+            isError: false,
+        });
+
+        expect(blocked).toMatchObject({
+            status: "error",
+            sourceKind: "derived",
+        });
+        expect(() =>
+            ledger.recordClaim({
+                assertion: "The missing file proves the critical claim.",
+                classification: "empirical",
+                critical: true,
+                verdict: "verified",
+                evidenceIds: [blocked.id],
+                contradictoryEvidenceIds: [],
+                impact: "Could validate a claim without reading its source.",
+                verificationDomain: "local-code",
+                architectureImpact: false,
+                mitigation: "Require successful direct inspection evidence.",
+            }),
+        ).toThrow("successful eligible evidence");
+    });
+
+    it("marks partially failed think_execute batches as error evidence", () => {
+        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
+        const failedBatch = ledger.captureEvidence({
+            toolCallId: "call-failed-batch",
+            toolName: "think_execute",
+            input: { action: "batch" },
+            content: [{ type: "text", text: "partial summary" }],
+            details: {
+                items: [
+                    { id: "ok", status: "succeeded" },
+                    { id: "blocked", status: "failed" },
+                ],
+            },
+            isError: false,
+        });
+
+        expect(failedBatch).toMatchObject({
+            status: "error",
+            sourceKind: "derived",
+        });
     });
 
     it("classifies delegated brainstorm research as secondary evidence", () => {
@@ -2780,12 +2825,12 @@ describe("exploration ledger", () => {
         expect(evidence.sourceRefs).toEqual(["src/index.ts"]);
     });
 
-    it("classifies think_index as indexed (no archive content exposed)", () => {
+    it("classifies think_note as indexed (no archive content exposed)", () => {
         const ledger = createExplorationLedger({ runId: "brainstorm-test" });
         const evidence = ledger.captureEvidence({
-            toolCallId: "call-think-index",
-            toolName: "think_index",
-            input: { kind: "document-summary", text: "summary" },
+            toolCallId: "call-think-note",
+            toolName: "think_note",
+            input: { source: "finding", text: "summary" },
             content: [{ type: "text", text: "Indexed result" }],
             details: {},
             isError: false,

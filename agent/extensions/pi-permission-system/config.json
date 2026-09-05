@@ -2,12 +2,9 @@
     "authorizerChain": [
         "pi-dangerous-mode"
     ],
-    "yoloMode": true,
+    "yoloMode": false,
     "shellTools": {
         "safe_bash": {
-            "commandArgument": "command"
-        },
-        "hypa_shell": {
             "commandArgument": "command"
         }
     },
@@ -54,29 +51,31 @@
         "write": {
             "*": "allow",
             "node_modules/*": "deny",
+            "*/.pi/agent/git/*": "deny",
+            "*/.pi/agent/npm/*": "deny",
             "AGENTS.md": "ask",
-            "*/agent/settings.json": "ask",
-            "*/agent/pi-hermes-memory": "ask"
+            "*/.pi/agent/settings.json": "ask",
+            "*/.pi/agent/sessions/*": "ask",
+            "*/.pi/agent/pi-hermes-memory": "ask"
         },
         "edit": {
             "*": "allow",
             "node_modules/*": "deny",
+            "*/.pi/agent/git/*": "deny",
+            "*/.pi/agent/npm/*": "deny",
             "AGENTS.md": "ask",
-            "*/agent/settings.json": "ask",
-            "*/agent/pi-hermes-memory": "ask"
+            "*/.pi/agent/settings.json": "ask",
+            "*/.pi/agent/sessions/*": "ask",
+            "*/.pi/agent/pi-hermes-memory": "ask"
         },
         "external_directory": {
             "*": "ask",
             "/tmp/*": "allow",
-            "~/tmp/pi-*/*": "allow",
+            "/tmp/pi-*/*": "allow",
             "~/.pi/*": "allow",
-            "~/.bun/install/global/node_modules/@earendil-works": "allow",
             "~/.bun/install/global/node_modules/@earendil-works/*": "allow",
-            "~/.agents/skills/*": "allow",
             "~/.agents/*": "allow",
-            "~/projects/*": "allow",
-            "~/projects/pi-integrations/*": "allow",
-            "~/projects/shared-services/*": "allow"
+            "~/projects/*": "allow"
         }
     }
 }

@@ -58,11 +58,8 @@ const DIRECT_EVIDENCE_TOOLS = new Set([
 const DERIVED_EVIDENCE_TOOLS = new Set([
     "ctx_execute",
     "ctx_batch_execute",
-    // Task 7 — Think-in-Code parity: the native execute tools replace the
-    // legacy MCP `ctx_execute`/`ctx_batch_execute` aliases while preserving
-    // the same derived-evidence semantics (analyzer output is bounded and
-    // re-derived, never direct).
-    "think_execute",
+    // Historical persisted evidence remains readable after the unified-tool
+    // cutover.
     "think_batch_execute",
 ]);
 
@@ -88,14 +85,22 @@ function classifyEvidenceSource(
 ): EvidenceSourceKind {
     if (toolName === "ctx_search") return "indexed";
     // Task 7 — Think-in-Code parity: the native FTS5-backed `think_search`
-    // and `think_index` tools also return indexed evidence (the analyzer
+    // and `think_note` tools also return indexed evidence (the analyzer
     // never exposes raw archive bytes to the LLM context).
-    if (toolName === "think_search" || toolName === "think_index")
+    if (
+        toolName === "think_search" ||
+        toolName === "think_note" ||
+        toolName === "think_index"
+    )
         return "indexed";
     if (reviewer) return "reviewer";
     if (toolName === "subagent" || SECONDARY_EVIDENCE_TOOLS.has(toolName))
         return "secondary";
     if (DERIVED_EVIDENCE_TOOLS.has(toolName)) return "derived";
+    // `think_execute` always returns analyzer output. A file path proves only
+    // which source was requested, not that the derived claim directly
+    // reflects bytes that were successfully inspected.
+    if (toolName === "think_execute") return "derived";
     // Both the legacy MCP `ctx_execute_file` and the native
     // `think_execute_file` are classified as direct only when the captured
     // record carries at least one source reference (e.g. the file path that
@@ -1344,6 +1349,17 @@ export function createExplorationLedger(options: LedgerOptions) {
             evidenceCount += 1;
             const sourceRefs = extractSourceRefs(capture.input, homeDir);
             const details = asRecord(capture.details);
+            const blockedReason = details?.blockedReason;
+            const executionBlocked =
+                capture.toolName === "think_execute" &&
+                typeof blockedReason === "string" &&
+                blockedReason.trim().length > 0;
+            const executionBatchFailed =
+                capture.toolName === "think_execute" &&
+                Array.isArray(details?.items) &&
+                details.items.some(
+                    (item) => asRecord(item)?.status !== "succeeded",
+                );
             const result = Array.isArray(details?.results)
                 ? asRecord(details.results[0])
                 : undefined;
@@ -1394,7 +1410,10 @@ export function createExplorationLedger(options: LedgerOptions) {
                 phase: "exploring",
                 sequence: ++sequence,
                 toolName: capture.toolName,
-                status: capture.isError ? "error" : "success",
+                status:
+                    capture.isError || executionBlocked || executionBatchFailed
+                        ? "error"
+                        : "success",
                 timestamp: now(),
                 sourceRefs,
                 inputHash: sha256(capture.input),

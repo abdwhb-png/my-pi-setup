@@ -57,9 +57,7 @@ import type {
 
 const THINK_TOOL_NAMES = [
     "think_execute",
-    "think_execute_file",
-    "think_batch_execute",
-    "think_index",
+    "think_note",
     "think_search",
 ] as const;
 
@@ -204,7 +202,7 @@ afterEach(() => {
 });
 
 describe("think-in-code real Pi runtime wiring", () => {
-    it("registers exactly the five native think_* tools", async () => {
+    it("registers exactly the three native think_* tools", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();
         const session = await createTestSession({
@@ -226,7 +224,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         for (const name of THINK_TOOL_NAMES) {
             expect(registered).toContain(name);
         }
-        // 5 native Think tools are registered; the 5 think_* names are the
+        // 3 native Think tools are registered; the 3 think_* names are the
         // contract — neither `safe_bash` nor any `mcp:ctx_*` should be
         // registered by Think-in-Code itself.
         for (const name of THINK_TOOL_NAMES) {
@@ -251,6 +249,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         await session.run(
             when("Probe argument validation", [
                 calls("think_execute", {
+                    action: "content",
                     language: "ruby",
                     program: "1+1",
                     content: "inline",
@@ -289,6 +288,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         await session.run(
             when("Try to fetch the web", [
                 calls("think_execute", {
+                    action: "content",
                     language: "javascript",
                     program: "1",
                     content: "x",
@@ -297,10 +297,39 @@ describe("think-in-code real Pi runtime wiring", () => {
                 says("Fetch rejected."),
             ]),
         );
+        await session.run(
+            when("Try to fetch while noting", [
+                calls("think_note", {
+                    source: "review",
+                    text: "bounded conclusion",
+                    fetch: { url: "https://example.com" },
+                }),
+                says("Fetch rejected."),
+            ]),
+        );
+        await session.run(
+            when("Try network search", [
+                calls("think_search", {
+                    query: "bounded conclusion",
+                    network: true,
+                }),
+                says("Network rejected."),
+            ]),
+        );
 
-        const result = session.events.toolResultsFor("think_execute")[0];
-        expect(result?.isError).toBe(true);
-        expect(result?.text.toLowerCase()).toContain("fetch/network");
+        const results = [
+            session.events.toolResultsFor("think_execute")[0],
+            session.events.toolResultsFor("think_note")[0],
+            session.events.toolResultsFor("think_search")[0],
+        ];
+        expect(results.every((result) => result?.isError === true)).toBe(true);
+        expect(
+            results.every((result) =>
+                result?.text
+                    .toLowerCase()
+                    .includes("must not have additional properties"),
+            ),
+        ).toBe(true);
         expect(state.analysisCalls.length).toBe(0);
     });
 
@@ -318,6 +347,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         await session.run(
             when("Run a single command", [
                 calls("think_execute", {
+                    action: "command",
                     language: "javascript",
                     program: "INPUT",
                     command: "echo hello",
@@ -393,6 +423,7 @@ describe("think-in-code real Pi runtime wiring", () => {
             await session.run(
                 when("Verify hook order", [
                     calls("think_execute", {
+                        action: "content",
                         language: "javascript",
                         program: "1",
                         content: "payload",
@@ -478,6 +509,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         const runPromise = session.run(
             when("Call and then abort", [
                 calls("think_execute", {
+                    action: "command",
                     language: "javascript",
                     program: "INPUT",
                     command: "echo hang",
@@ -542,6 +574,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         await session.run(
             when("Run only via think_execute", [
                 calls("think_execute", {
+                    action: "command",
                     language: "javascript",
                     program: "INPUT",
                     command: "ls",
@@ -557,7 +590,7 @@ describe("think-in-code real Pi runtime wiring", () => {
             .toHaveLength(0);
     });
 
-    it("exercises think_execute_file with a real file under the project root", async () => {
+    it("exercises think_execute action=file with a real file under the project root", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();
         const session = await createTestSession({
@@ -574,7 +607,8 @@ describe("think-in-code real Pi runtime wiring", () => {
 
         await session.run(
             when("Analyze a file", [
-                calls("think_execute_file", {
+                calls("think_execute", {
+                    action: "file",
                     path: "data.json",
                     language: "javascript",
                     program: "FILE_CONTENT",
@@ -583,7 +617,7 @@ describe("think-in-code real Pi runtime wiring", () => {
             ]),
         );
 
-        expect(session.events.toolResultsFor("think_execute_file")).toHaveLength(
+        expect(session.events.toolResultsFor("think_execute")).toHaveLength(
             1,
         );
         expect(state.analysisCalls).toHaveLength(1);
@@ -593,7 +627,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(state.analysisCalls[0]?.bindings.FILE_PATH).toBe(projectFile);
     });
 
-    it("runs think_batch_execute with per-item status, ordered inputs, bounded concurrency", async () => {
+    it("runs think_execute action=batch with per-item status, ordered inputs, bounded concurrency", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();
         const session = await createTestSession({
@@ -606,7 +640,8 @@ describe("think-in-code real Pi runtime wiring", () => {
 
         await session.run(
             when("Run a batch of commands", [
-                calls("think_batch_execute", {
+                calls("think_execute", {
+                    action: "batch",
                     language: "javascript",
                     program: "INPUTS",
                     items: [
@@ -619,8 +654,8 @@ describe("think-in-code real Pi runtime wiring", () => {
             ]),
         );
 
-        // One outer result for think_batch_execute; per-item statuses inside.
-        const results = session.events.toolResultsFor("think_batch_execute");
+        // One outer result for think_execute; per-item statuses inside.
+        const results = session.events.toolResultsFor("think_execute");
         expect(results).toHaveLength(1);
         const details = results[0]?.details as
             | { items?: Array<{ id: string; status: string }> }
@@ -649,7 +684,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(session.events.toolResultsFor("safe_bash")).toHaveLength(0);
     });
 
-    it("runs think_index + think_search as bounded FTS5 operations", async () => {
+    it("runs think_note + think_search as bounded FTS5 operations", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();
         const session = await createTestSession({
@@ -662,13 +697,11 @@ describe("think-in-code real Pi runtime wiring", () => {
 
         await session.run(
             when("Index and then search", [
-                calls("think_index", {
-                    kind: "document-summary",
+                calls("think_note", {
                     source: "doc-a",
                     text: "fence_marker_alpha document body",
                 }),
-                calls("think_index", {
-                    kind: "document-summary",
+                calls("think_note", {
                     source: "doc-b",
                     text: "another body with fence_marker_beta",
                 }),
@@ -708,6 +741,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         await session.run(
             when("Capture state", [
                 calls("think_execute", {
+                    action: "command",
                     language: "javascript",
                     program: "INPUT",
                     command: "echo capture",

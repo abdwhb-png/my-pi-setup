@@ -160,6 +160,7 @@ describe("Think-in-Code parity fixtures", () => {
         try {
             const result = (await harness.handlers.execute(
                 {
+                    action: "command",
                     language: "javascript",
                     program: "INPUT",
                     command: "cat huge.json",
@@ -215,6 +216,7 @@ describe("Think-in-Code parity fixtures", () => {
         try {
             const result = (await harness.handlers.execute(
                 {
+                    action: "command",
                     language: "javascript",
                     program: "INPUT",
                     command: "cat app.log",
@@ -325,9 +327,9 @@ describe("Think-in-Code parity fixtures", () => {
                 { id: "i3", command: "echo 3" },
                 { id: "i4", command: "echo 4" },
             ];
-            const result = (await harness.handlers.batchExecute(
+            const result = (await harness.handlers.execute(
                 {
-                    id: "parity-batch",
+                    action: "batch",
                     language: "javascript",
                     program: "INPUTS",
                     items,
@@ -425,6 +427,7 @@ describe("Think-in-Code parity fixtures", () => {
         try {
             const first = (await harness.handlers.execute(
                 {
+                    action: "command",
                     language: "javascript",
                     program: "INPUT",
                     command: "echo secret",
@@ -437,6 +440,7 @@ describe("Think-in-Code parity fixtures", () => {
             // Second call: re-analyze via the archive source.
             const second = (await harness.handlers.execute(
                 {
+                    action: "archives",
                     language: "javascript",
                     program: "INPUT",
                     archiveIds: [sourceArchiveId!],
@@ -468,6 +472,7 @@ describe("Think-in-Code parity fixtures", () => {
             await expect(
                 harness.handlers.execute(
                     {
+                        action: "content",
                         language: "javascript",
                         program: "1",
                         content: "hi",
@@ -528,6 +533,7 @@ describe("Think-in-Code parity fixtures", () => {
         try {
             const result = (await harness.handlers.execute(
                 {
+                    action: "command",
                     language: "javascript",
                     program: "1",
                     command: "echo",
@@ -577,7 +583,7 @@ describe("Think-in-Code parity fixtures", () => {
         }
     });
 
-    it("rejects think_execute with more than one source (command + content + archives)", async () => {
+    it("rejects fields from another think_execute action", async () => {
         const harness = await setup();
         try {
             // Generate an archive ID so the third source is non-empty.
@@ -588,6 +594,7 @@ describe("Think-in-Code parity fixtures", () => {
             await expect(
                 harness.handlers.execute(
                     {
+                        action: "command",
                         language: "javascript",
                         program: "1",
                         command: "echo",
@@ -597,7 +604,7 @@ describe("Think-in-Code parity fixtures", () => {
                     ctx("/workspace/parity"),
                     { toolCallId: "parity-multi-source" },
                 ),
-            ).rejects.toThrow(/exactly one source/);
+            ).rejects.toThrow(/action command does not accept content/);
         } finally {
             await harness.cleanup();
         }
@@ -609,13 +616,14 @@ describe("Think-in-Code parity fixtures", () => {
             await expect(
                 harness.handlers.execute(
                     {
+                        action: "command",
                         language: "javascript",
                         program: "1",
                     },
                     ctx("/workspace/parity"),
                     { toolCallId: "parity-no-source" },
                 ),
-            ).rejects.toThrow(/exactly one source/);
+            ).rejects.toThrow(/command must be a string/);
         } finally {
             await harness.cleanup();
         }
@@ -629,14 +637,15 @@ describe("Think-in-Code parity fixtures", () => {
                 command: `echo ${i}`,
             }));
             await expect(
-                harness.handlers.batchExecute(
+                harness.handlers.execute(
                     {
-                        id: "parity-overflow",
+                        action: "batch",
                         language: "javascript",
                         program: "1",
                         items,
                     },
                     ctx("/workspace/parity"),
+                    { toolCallId: "parity-overflow" },
                 ),
             ).rejects.toThrow(/Batch execute exceeds/);
         } finally {
@@ -644,12 +653,10 @@ describe("Think-in-Code parity fixtures", () => {
         }
     });
 
-    it("registered tool names match the contract: five think_* tools", () => {
+    it("registered tool names match the contract: three think_* tools", () => {
         expect(Object.values(TOOL_NAMES).sort()).toEqual([
-            "think_batch_execute",
             "think_execute",
-            "think_execute_file",
-            "think_index",
+            "think_note",
             "think_search",
         ]);
     });
@@ -659,9 +666,7 @@ describe("Think-in-Code parity fixtures", () => {
         // not a supported parameter on any think_* tool; the rejection
         // belongs to the handler, not the schema.
         expect(typeof SCHEMAS.execute).toBe("object");
-        expect(typeof SCHEMAS.executeFile).toBe("object");
-        expect(typeof SCHEMAS.batchExecute).toBe("object");
-        expect(typeof SCHEMAS.index).toBe("object");
+        expect(typeof SCHEMAS.note).toBe("object");
         expect(typeof SCHEMAS.search).toBe("object");
     });
 });

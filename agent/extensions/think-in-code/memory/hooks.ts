@@ -1,5 +1,6 @@
 /** Session capture and one-shot post-compaction restore hooks. */
 
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type {
     ExtensionContext,
     ExtensionAPI,
@@ -23,7 +24,39 @@ import {
 
 const SNAPSHOT_READY_TYPE = "think-in-code:snapshot:ready";
 const SNAPSHOT_CONSUMED_TYPE = "think-in-code:snapshot:consumed";
+const ROUTING_ENTRY_TYPE = "think-in-code:routing";
 const CUSTOM_ENTRY_VERSION = 1;
+
+export function buildThinkRoutingMessage(
+    activeToolNames: readonly string[],
+): string | undefined {
+    const active = new Set(activeToolNames);
+    const canExecute = active.has("think_execute");
+    const canNote = active.has("think_note");
+    const canSearch = active.has("think_search");
+    if (!canExecute && !canNote && !canSearch) return undefined;
+
+    const inspect: string[] = [];
+    if (canSearch) {
+        inspect.push(
+            "Use think_search for prior indexed analyses and notes, not for current source discovery.",
+        );
+    }
+    if (canNote) {
+        inspect.push(
+            "Use think_note to retain a concise durable conclusion with its source; archiveIds are provenance only.",
+        );
+    }
+    if (!canExecute) {
+        return `Think-in-Code inspection routing: Use pi-lens for current source, symbols, references, and diagnostics. ${inspect.join(" ")}`;
+    }
+
+    const execute = `Use think_execute when code should derive a bounded answer without putting raw or large bytes in context: action=command for one command, action=file for one project file, action=batch for up to 16 commands, action=content for inline data, and action=archives to reanalyze prior captures. Successful non-empty command, content, archives, and batch results are indexed automatically; file results are not auto-indexed${canNote ? " and reviewed conclusions can be retained with think_note" : ""}.`;
+    if (!canNote && !canSearch) {
+        return `Think-in-Code execution routing: ${execute} Use pi-lens for current source structure; use ordinary read/bash for short fixed observations and normal edit tools for mutations.`;
+    }
+    return `Think-in-Code routing: Use pi-lens for current source, symbols, references, and diagnostics. ${inspect.join(" ")} ${execute} Use ordinary read/bash for short fixed observations and normal edit tools for mutations.`;
+}
 
 type CustomEntryLike = Pick<SessionEntry, "type"> & {
     customType?: string;
@@ -350,6 +383,25 @@ export function registerHooks(
     });
     pi.on("context", (event) => {
         try {
+            for (let i = event.messages.length - 1; i >= 0; i -= 1) {
+                const message = event.messages[i] as AgentMessage & {
+                    customType?: string;
+                };
+                if (message.customType === ROUTING_ENTRY_TYPE) {
+                    event.messages.splice(i, 1);
+                }
+            }
+            const routing = buildThinkRoutingMessage(pi.getActiveTools());
+            if (routing) {
+                event.messages.push({
+                    role: "custom",
+                    customType: ROUTING_ENTRY_TYPE,
+                    content: routing,
+                    display: false,
+                    details: { adaptiveToolRouting: true },
+                    timestamp: Date.now(),
+                });
+            }
             const snapshot = state.peekSnapshot(sessionId);
             if (!snapshot) return;
             event.messages.push({

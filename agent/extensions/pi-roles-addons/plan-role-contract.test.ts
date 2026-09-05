@@ -46,6 +46,4 @@ test("planning roles do not gain executable think groups (least-privilege)", () 
     expect(tools("brainstorm")).not.toContain("@think-exec");
     expect(tools("ask")).not.toContain("@think-exec");
     expect(tools("plan")).not.toContain("think_execute");
-    expect(tools("plan")).not.toContain("think_execute_file");
-    expect(tools("plan")).not.toContain("think_batch_execute");
 });

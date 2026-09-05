@@ -1,10 +1,9 @@
 /**
- * Tool registration for the five native `think_*` tools.
+ * Tool contracts for the three native `think_*` tools.
  *
- * Each tool calls the ThinkCoordinator and returns bounded derived text plus
- * structured `details`. Raw command output, archive bytes, and file contents
- * are NEVER returned to the LLM — they exist only inside the archive and
- * are reanalyzable via archive IDs.
+ * Each tool calls the ThinkCoordinator and returns bounded analyzer text plus
+ * structured `details`. Raw sources remain in archives unless the caller's
+ * analyzer program deliberately copies them into its public result.
  *
  * Schema validation rejects multiple sources, unknown languages, over-limit
  * batch size, invalid archive IDs, excessive result limits, and any fetch or
@@ -18,8 +17,8 @@ import { Type, type TSchema } from "typebox";
 import { ThinkCoordinator } from "./coordinator.ts";
 import type { ThinkUpdateCallback } from "./coordinator.ts";
 import {
-    type IndexRequest,
     THINK_TOOL_NAMES,
+    type ThinkExecuteAction,
     type ThinkLanguage,
     TOOL_NAMES,
 } from "./types.ts";
@@ -29,16 +28,19 @@ const SUPPORTED_LANGUAGES: readonly ThinkLanguage[] = [
     "typescript",
     "python",
 ];
-const INDEX_KINDS: readonly IndexRequest["kind"][] = [
-    "command-summary",
-    "analysis-summary",
-    "document-summary",
+const EXECUTE_ACTIONS: readonly ThinkExecuteAction[] = [
+    "command",
+    "content",
+    "archives",
+    "file",
+    "batch",
 ];
 
 const MAX_PROGRAM_BYTES = 64 * 1024;
 const MAX_INLINE_CONTENT_BYTES = 64 * 1024 * 1024;
 const ARCHIVE_ID_PATTERN = "^[A-Za-z0-9_-]{8,128}$";
 const MAX_SEARCH_LIMIT = 20;
+const DEFAULT_MAX_NOTE_CHARS = 1024;
 
 // Language and program guidance. The JavaScript/TypeScript analyzer runs the
 // program as an ES module; valid programs MUST use `export default <value>`
@@ -46,9 +48,9 @@ const MAX_SEARCH_LIMIT = 20;
 // program as a top-level statement block and reads `result` as the return
 // value (assign to `result`, do not use `return` at module top level).
 const LANGUAGE_DESCRIPTION =
-    "Analyzer language. `javascript` and `typescript` execute as a QuickJS ES module — bindings are exposed as `const` locals and the program MUST use `export default <value>` to return its derived text. `python` runs as an Eryx JSPI sandbox — bindings become locals and the program MUST assign to a top-level `result` variable; the assignment's value becomes the returned derived text.";
+    "Analyzer language. JavaScript/TypeScript run as QuickJS ES modules: bindings are const locals and output requires `export default <value>`. Python runs in Eryx: bindings are locals and output requires top-level `result = <value>`.";
 const PROGRAM_DESCRIPTION =
-    "Analyzer source. JavaScript/TypeScript MUST use `export default <value>` because the program is loaded as an ES module — top-level `return` is a SyntaxError. Python MUST assign to a top-level `result = <value>` variable. Bindings (INPUT, INPUTS, FILE_CONTENT, FILE_PATH, ARCHIVES, ARCHIVE_IDS, plus caller-supplied names) are exposed as locals with frozen objects and no network, filesystem, process, or fetch access.";
+    "Sandboxed analyzer source. Return only a bounded derivation, never raw bindings. JavaScript/TypeScript require `export default <value>`; Python requires top-level `result = <value>`. Bindings: INPUT, INPUTS, FILE_CONTENT, FILE_PATH, ARCHIVES, ARCHIVE_IDS and caller strings.";
 
 function requireLanguage(value: unknown): ThinkLanguage {
     if (
@@ -72,6 +74,20 @@ function boundedString(name: string, value: unknown, maxBytes: number): string {
     return value;
 }
 
+function boundedCharacters(
+    name: string,
+    value: unknown,
+    maxCharacters: number,
+): string {
+    if (typeof value !== "string") {
+        throw new Error(`${name} must be a string`);
+    }
+    if (Array.from(value).length > maxCharacters) {
+        throw new Error(`${name} exceeds ${maxCharacters} characters`);
+    }
+    return value;
+}
+
 function requireArchiveIds(value: unknown, label: string): string[] {
     if (!Array.isArray(value) || value.length === 0) {
         throw new Error(`${label} must be a non-empty array`);
@@ -86,11 +102,6 @@ function requireArchiveIds(value: unknown, label: string): string[] {
         throw new Error(`${label} contains an invalid archive id`);
     }
     return value as string[];
-}
-
-function rejectFetch(value: unknown): void {
-    if (value === undefined || value === null) return;
-    throw new Error("Fetch/network parameters are not supported");
 }
 
 function buildLimits(value: unknown):
@@ -133,76 +144,88 @@ function buildLimits(value: unknown):
     return out;
 }
 
-const executeSchema: TSchema = Type.Object({
-    language: StringEnum(SUPPORTED_LANGUAGES, {
-        description: LANGUAGE_DESCRIPTION,
-    }),
-    program: Type.String({
-        minLength: 1,
-        maxLength: MAX_PROGRAM_BYTES,
-        description: PROGRAM_DESCRIPTION,
-    }),
-    command: Type.Optional(Type.String()),
-    timeout: Type.Optional(Type.Number()),
-    stdin: Type.Optional(Type.String()),
-    content: Type.Optional(Type.String()),
-    archiveIds: Type.Optional(Type.Array(Type.String())),
-    limits: Type.Optional(
-        Type.Object({
-            wallTimeMs: Type.Optional(Type.Number()),
-            cpuSeconds: Type.Optional(Type.Number()),
-            memoryBytes: Type.Optional(Type.Number()),
-            outputBytes: Type.Optional(Type.Number()),
-        }),
-    ),
-    bindings: Type.Optional(Type.Record(Type.String(), Type.String())),
-    fetch: Type.Optional(Type.Unknown()),
-});
+const batchItemSchema = Type.Object(
+    {
+        id: Type.String({ minLength: 1, maxLength: 128 }),
+        command: Type.String({ minLength: 1, maxLength: 4096 }),
+        timeout: Type.Optional(Type.Number()),
+        stdin: Type.Optional(Type.String()),
+    },
+    { additionalProperties: false },
+);
+const searchSchema: TSchema = Type.Object(
+    {
+        query: Type.String({ minLength: 1, maxLength: 1024 }),
+        limit: Type.Optional(
+            Type.Number({ minimum: 1, maximum: MAX_SEARCH_LIMIT }),
+        ),
+    },
+    { additionalProperties: false },
+);
 
-const executeFileSchema: TSchema = Type.Object({
-    path: Type.String({ minLength: 1, maxLength: 4096 }),
-    language: StringEnum(SUPPORTED_LANGUAGES, {
-        description: LANGUAGE_DESCRIPTION,
-    }),
-    program: Type.String({
-        minLength: 1,
-        maxLength: MAX_PROGRAM_BYTES,
-        description: PROGRAM_DESCRIPTION,
-    }),
-    bindings: Type.Optional(Type.Record(Type.String(), Type.String())),
-});
-
-const batchItemSchema = Type.Object({
-    id: Type.String({ minLength: 1, maxLength: 128 }),
-    command: Type.String({ minLength: 1, maxLength: 4096 }),
-    timeout: Type.Optional(Type.Number()),
-    stdin: Type.Optional(Type.String()),
-});
-const batchExecuteSchema: TSchema = Type.Object({
-    language: StringEnum(SUPPORTED_LANGUAGES, {
-        description: LANGUAGE_DESCRIPTION,
-    }),
-    program: Type.String({
-        minLength: 1,
-        maxLength: MAX_PROGRAM_BYTES,
-        description: PROGRAM_DESCRIPTION,
-    }),
-    items: Type.Array(batchItemSchema, { minItems: 1, maxItems: 16 }),
-});
-
-const indexSchema: TSchema = Type.Object({
-    kind: StringEnum(INDEX_KINDS),
-    source: Type.String({ minLength: 1, maxLength: 4096 }),
-    text: Type.Optional(Type.String({ maxLength: MAX_INLINE_CONTENT_BYTES })),
-    archiveIds: Type.Optional(Type.Array(Type.String())),
-});
-
-const searchSchema: TSchema = Type.Object({
-    query: Type.String({ minLength: 1, maxLength: 1024 }),
-    limit: Type.Optional(
-        Type.Number({ minimum: 1, maximum: MAX_SEARCH_LIMIT }),
-    ),
-});
+export function createThinkSchemas(
+    maxNoteChars = DEFAULT_MAX_NOTE_CHARS,
+): Readonly<{ execute: TSchema; note: TSchema; search: TSchema }> {
+    const executeSchema: TSchema = Type.Object(
+        {
+            action: StringEnum(EXECUTE_ACTIONS, {
+                description:
+                    "Input source to analyze: one command, inline content, prior archives, one project file, or a command batch.",
+            }),
+            language: StringEnum(SUPPORTED_LANGUAGES, {
+                description: LANGUAGE_DESCRIPTION,
+            }),
+            program: Type.String({
+                minLength: 1,
+                maxLength: MAX_PROGRAM_BYTES,
+                description: PROGRAM_DESCRIPTION,
+            }),
+            command: Type.Optional(
+                Type.String({ minLength: 1, maxLength: 4096 }),
+            ),
+            timeout: Type.Optional(Type.Number()),
+            stdin: Type.Optional(Type.String()),
+            content: Type.Optional(
+                Type.String({ maxLength: MAX_INLINE_CONTENT_BYTES }),
+            ),
+            archiveIds: Type.Optional(
+                Type.Array(Type.String({ pattern: ARCHIVE_ID_PATTERN })),
+            ),
+            path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+            items: Type.Optional(
+                Type.Array(batchItemSchema, { minItems: 1, maxItems: 16 }),
+            ),
+            limits: Type.Optional(
+                Type.Object(
+                    {
+                        wallTimeMs: Type.Optional(Type.Number()),
+                        cpuSeconds: Type.Optional(Type.Number()),
+                        memoryBytes: Type.Optional(Type.Number()),
+                        outputBytes: Type.Optional(Type.Number()),
+                    },
+                    { additionalProperties: false },
+                ),
+            ),
+            bindings: Type.Optional(Type.Record(Type.String(), Type.String())),
+        },
+        { additionalProperties: false },
+    );
+    const noteSchema: TSchema = Type.Object(
+        {
+            source: Type.String({ minLength: 1, maxLength: 4096 }),
+            text: Type.String({ minLength: 1, maxLength: maxNoteChars }),
+            archiveIds: Type.Optional(
+                Type.Array(Type.String({ pattern: ARCHIVE_ID_PATTERN })),
+            ),
+        },
+        { additionalProperties: false },
+    );
+    return Object.freeze({
+        execute: executeSchema,
+        note: noteSchema,
+        search: searchSchema,
+    });
+}
 
 export interface ToolRuntime {
     toolCallId: string;
@@ -216,25 +239,71 @@ export interface ToolHandlers {
         ctx: ExtensionContext,
         runtime?: ToolRuntime,
     ): Promise<unknown>;
-    executeFile(
-        args: unknown,
-        ctx: ExtensionContext,
-        runtime?: ToolRuntime,
-    ): Promise<unknown>;
-    batchExecute(
-        args: unknown,
-        ctx: ExtensionContext,
-        runtime?: ToolRuntime,
-    ): Promise<unknown>;
-    index(args: unknown): Promise<unknown>;
+    note(args: unknown): Promise<unknown>;
     search(args: unknown): Promise<unknown>;
 }
 
-export function buildToolHandlers(coordinator: ThinkCoordinator): ToolHandlers {
+function requireAction(value: unknown): ThinkExecuteAction {
+    if (
+        typeof value !== "string" ||
+        !EXECUTE_ACTIONS.includes(value as ThinkExecuteAction)
+    ) {
+        throw new Error(
+            `Unsupported think_execute action: ${String(value)}. Expected one of ${EXECUTE_ACTIONS.join(", ")}.`,
+        );
+    }
+    return value as ThinkExecuteAction;
+}
+
+function rejectUnexpectedFields(
+    obj: Record<string, unknown>,
+    action: ThinkExecuteAction,
+): void {
+    if ("fetch" in obj || "network" in obj) {
+        throw new Error("Fetch/network parameters are not supported");
+    }
+    const common = ["id", "action", "language", "program"];
+    const byAction: Record<ThinkExecuteAction, readonly string[]> = {
+        command: ["command", "timeout", "stdin", "limits", "bindings"],
+        content: ["content", "limits", "bindings"],
+        archives: ["archiveIds", "limits", "bindings"],
+        file: ["path", "bindings"],
+        batch: ["items"],
+    };
+    const allowed = new Set([...common, ...byAction[action]]);
+    const unexpected = Object.keys(obj).find((key) => !allowed.has(key));
+    if (unexpected) {
+        throw new Error(
+            `think_execute action ${action} does not accept ${unexpected}`,
+        );
+    }
+}
+
+function rejectUnexpectedNoteFields(obj: Record<string, unknown>): void {
+    const allowed = new Set(["id", "source", "text", "archiveIds"]);
+    const unexpected = Object.keys(obj).find((key) => !allowed.has(key));
+    if (unexpected) {
+        throw new Error(`think_note does not accept ${unexpected}`);
+    }
+}
+
+function rejectUnexpectedSearchFields(obj: Record<string, unknown>): void {
+    const allowed = new Set(["id", "query", "limit"]);
+    const unexpected = Object.keys(obj).find((key) => !allowed.has(key));
+    if (unexpected) {
+        throw new Error(`think_search does not accept ${unexpected}`);
+    }
+}
+
+export function buildToolHandlers(
+    coordinator: ThinkCoordinator,
+    maxNoteChars = DEFAULT_MAX_NOTE_CHARS,
+): ToolHandlers {
     return {
         async execute(args, ctx, runtime) {
             const obj = args as Record<string, unknown>;
-            rejectFetch(obj.fetch);
+            const action = requireAction(obj.action);
+            rejectUnexpectedFields(obj, action);
             const id = runtime?.toolCallId ?? boundedString("id", obj.id, 128);
             const language = requireLanguage(obj.language);
             const program = boundedString(
@@ -242,22 +311,45 @@ export function buildToolHandlers(coordinator: ThinkCoordinator): ToolHandlers {
                 obj.program,
                 MAX_PROGRAM_BYTES,
             );
-            const limits = buildLimits(obj.limits);
 
-            // Exactly one source is required.
-            const sources = [
-                typeof obj.command === "string",
-                typeof obj.content === "string",
-                Array.isArray(obj.archiveIds) && obj.archiveIds.length > 0,
-            ].filter(Boolean).length;
-            if (sources !== 1) {
-                throw new Error(
-                    "think_execute requires exactly one source: command, content, or archiveIds",
+            if (action === "file") {
+                return coordinator.executeFile(
+                    {
+                        id,
+                        language,
+                        program,
+                        path: boundedString("path", obj.path, 4096),
+                        bindings: obj.bindings as
+                            | Record<string, string>
+                            | undefined,
+                    },
+                    ctx,
+                    runtime,
+                );
+            }
+            if (action === "batch") {
+                if (!Array.isArray(obj.items) || obj.items.length === 0) {
+                    throw new Error("items must be a non-empty array");
+                }
+                return coordinator.batchExecute(
+                    {
+                        id,
+                        language,
+                        program,
+                        items: obj.items as Array<{
+                            id: string;
+                            command: string;
+                            timeout?: number;
+                            stdin?: string;
+                        }>,
+                    },
+                    ctx,
+                    runtime,
                 );
             }
 
             const source =
-                obj.command !== undefined
+                action === "command"
                     ? {
                           kind: "command" as const,
                           command: boundedString("command", obj.command, 4096),
@@ -270,7 +362,7 @@ export function buildToolHandlers(coordinator: ThinkCoordinator): ToolHandlers {
                                   ? boundedString("stdin", obj.stdin, 1_048_576)
                                   : undefined,
                       }
-                    : obj.content !== undefined
+                    : action === "content"
                       ? {
                             kind: "content" as const,
                             content: boundedString(
@@ -292,7 +384,7 @@ export function buildToolHandlers(coordinator: ThinkCoordinator): ToolHandlers {
                     language,
                     program,
                     source,
-                    limits,
+                    limits: buildLimits(obj.limits),
                     bindings: obj.bindings as
                         | Record<string, string>
                         | undefined,
@@ -301,94 +393,25 @@ export function buildToolHandlers(coordinator: ThinkCoordinator): ToolHandlers {
                 runtime,
             );
         },
-        async executeFile(args, ctx, runtime) {
+        async note(args) {
             const obj = args as Record<string, unknown>;
-            const id = runtime?.toolCallId ?? boundedString("id", obj.id, 128);
-            const language = requireLanguage(obj.language);
-            const program = boundedString(
-                "program",
-                obj.program,
-                MAX_PROGRAM_BYTES,
-            );
-            return coordinator.executeFile(
-                {
-                    id,
-                    language,
-                    program,
-                    path: boundedString("path", obj.path, 4096),
-                    bindings: obj.bindings as
-                        | Record<string, string>
-                        | undefined,
-                },
-                ctx,
-                runtime,
-            );
-        },
-        async batchExecute(args, ctx, runtime) {
-            const obj = args as Record<string, unknown>;
-            const id = runtime?.toolCallId ?? boundedString("id", obj.id, 128);
-            const language = requireLanguage(obj.language);
-            const program = boundedString(
-                "program",
-                obj.program,
-                MAX_PROGRAM_BYTES,
-            );
-            if (!Array.isArray(obj.items) || obj.items.length === 0) {
-                throw new Error("items must be a non-empty array");
-            }
-            return coordinator.batchExecute(
-                {
-                    id,
-                    language,
-                    program,
-                    items: obj.items as Array<{
-                        id: string;
-                        command: string;
-                        timeout?: number;
-                        stdin?: string;
-                    }>,
-                },
-                ctx,
-                runtime,
-            );
-        },
-        async index(args) {
-            const obj = args as Record<string, unknown>;
+            rejectUnexpectedNoteFields(obj);
             const id = boundedString("id", obj.id, 128);
-            const kind = obj.kind;
-            if (
-                kind !== "command-summary" &&
-                kind !== "analysis-summary" &&
-                kind !== "document-summary"
-            ) {
-                throw new Error("index kind must be a known summary type");
-            }
             const archiveIds =
                 obj.archiveIds === undefined
                     ? undefined
                     : requireArchiveIds(obj.archiveIds, "archiveIds");
-            const text =
-                typeof obj.text === "string"
-                    ? boundedString("text", obj.text, MAX_INLINE_CONTENT_BYTES)
-                    : undefined;
-            if (
-                text === undefined &&
-                (archiveIds === undefined || archiveIds.length === 0)
-            ) {
-                throw new Error(
-                    "think_index requires either text or archiveIds",
-                );
-            }
             return coordinator.index({
                 id,
-                kind,
+                kind: "document-summary",
                 source: boundedString("source", obj.source, 4096),
-                text,
+                text: boundedCharacters("text", obj.text, maxNoteChars),
                 archiveIds,
             });
         },
         async search(args) {
             const obj = args as Record<string, unknown>;
+            rejectUnexpectedSearchFields(obj);
             const id = boundedString("id", obj.id, 128);
             return coordinator.search({
                 id,
@@ -399,12 +422,6 @@ export function buildToolHandlers(coordinator: ThinkCoordinator): ToolHandlers {
     };
 }
 
-export const SCHEMAS = Object.freeze({
-    execute: executeSchema,
-    executeFile: executeFileSchema,
-    batchExecute: batchExecuteSchema,
-    index: indexSchema,
-    search: searchSchema,
-});
+export const SCHEMAS = createThinkSchemas();
 
 export { THINK_TOOL_NAMES, TOOL_NAMES };

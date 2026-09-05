@@ -1082,17 +1082,15 @@ describe('truncationEnabled cap toggle', () => {
 
 describe('think_* tool results never enter the compression pipeline', () => {
     // Task 7 migration contract: save-tokens uses an exact tool-name allowlist.
-    // The five native Think-in-Code tools (`think_execute`, `think_execute_file`,
-    // `think_batch_execute`, `think_index`, `think_search`) are pre-reduced by
+    // The three native Think-in-Code tools (`think_execute`, `think_note`,
+    // `think_search`) are pre-reduced by
     // their own sandbox/analyzer pipeline and must therefore NOT be re-post-
     // compressed by save-tokens. This preserves the context-reduction objective
     // and prevents double-compression that would erase archive references and
     // provenance metadata.
     const THINK_TOOLS = [
         'think_execute',
-        'think_execute_file',
-        'think_batch_execute',
-        'think_index',
+        'think_note',
         'think_search',
     ] as const;
 
