@@ -241,9 +241,7 @@ function orderMetrics(
     } else if (cwd && path.startsWith(cwd + "/")) {
         target = path.slice(cwd.length + 1);
     }
-    const segments = target
-        .split("/")
-        .filter((s) => s.length > 0 && s !== ".");
+    const segments = target.split("/").filter((s) => s.length > 0 && s !== ".");
     const hidden = segments.filter((s) => s.startsWith(".")).length;
     return { hidden, depth: segments.length };
 }
@@ -290,17 +288,12 @@ export function orderCacheMatches(
     if (isBareName) {
         const lowerQuery = query.toLowerCase();
         const exact = files.filter(
-            (f) =>
-                (f.split("/").pop() ?? "").toLowerCase() === lowerQuery,
+            (f) => (f.split("/").pop() ?? "").toLowerCase() === lowerQuery,
         );
         matches =
             exact.length > 0
                 ? exact
-                : fuzzyFilter(
-                      files,
-                      query,
-                      (f) => f.split("/").pop() ?? "",
-                  );
+                : fuzzyFilter(files, query, (f) => f.split("/").pop() ?? "");
     } else {
         matches = fuzzyFilter(files, query, (f) => f);
     }

@@ -279,14 +279,30 @@ describe('tool-groups configuration invariants', () => {
         expect(validateProtectedBoundaries(readConfiguredGroups())).toEqual([]);
     });
 
-    it('registers context-mode tools directly for granular role access', () => {
+    it('no longer registers context-mode tools after Task 9 cutover', () => {
+        // Task 9 cutover removed the `context-mode` MCP block from mcp.json
+        // and the `npm:context-mode` package from settings.json. Role and
+        // agent consumers must now resolve Think-in-Code native tools
+        // (`think_index`, `think_search`, `think_execute`,
+        // `think_execute_file`, `think_batch_execute`) instead of the
+        // legacy `mcp:ctx_*` MCP bridge. This test enforces both
+        // invariants: no `context-mode` MCP server, and no `@ctx*` /
+        // `ctx*` group definitions in tool-groups.json.
         const mcpConfig = JSON.parse(
             readFileSync(join(agentDir(), 'mcp.json'), 'utf8'),
         ) as {
-            mcpServers?: Record<string, { directTools?: boolean | string[] }>;
+            mcpServers?: Record<string, unknown>;
         };
 
-        expect(mcpConfig.mcpServers?.['context-mode']?.directTools).toBe(true);
+        expect(mcpConfig.mcpServers?.['context-mode']).toBeUndefined();
+
+        const groups = JSON.parse(
+            readFileSync(join(agentDir(), 'tool-groups.json'), 'utf8'),
+        ) as { groups?: Record<string, readonly string[]> };
+
+        expect(groups.groups?.['ctx-inspect']).toBeUndefined();
+        expect(groups.groups?.['ctx-exec']).toBeUndefined();
+        expect(groups.groups?.['ctx']).toBeUndefined();
     });
 
     it('keeps role tool-policy enforcement active in dangerous mode', () => {

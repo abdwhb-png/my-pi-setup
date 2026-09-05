@@ -4,9 +4,9 @@
  * Combines multiple extensions into a single auto-discoverable module:
  */
 
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import piGhost from './pi-ghost';
-import quitAndDelete from './quit-and-delete';
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import piGhost from "./pi-ghost";
+import quitAndDelete from "./quit-and-delete";
 
 export default function ogulcancelikExtensions(pi: ExtensionAPI) {
     piGhost(pi);

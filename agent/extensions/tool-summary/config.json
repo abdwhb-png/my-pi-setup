@@ -1,6 +1,8 @@
 {
     "tools": [
-        "@ctx-exec",
-        "@subagents"
+        "@think-exec",
+        "@subagents",
+        "write_plan",
+        "edit_plan"
     ]
 }

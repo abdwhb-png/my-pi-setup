@@ -9,6 +9,8 @@
         "test:coverage": "bun test --isolate --coverage",
         "fmt": "oxfmt extensions/**/*.ts",
         "fmt:check": "oxfmt --check extensions/**/*.ts",
+        "fmt:files": "oxfmt",
+        "fmt:files:check": "oxfmt --check",
         "lint-staged": "oxfmt --no-error-on-unmatched-pattern",
         "lint": "oxlint .",
         "lint:check": "oxlint . --deny-warnings",
@@ -41,7 +43,6 @@
         "@types/node-notifier": "8.0.5",
         "oxfmt": "^0.57.0",
         "oxlint": "^1.70.0",
-        "typescript": "^6.0.3",
-        "typescript-7": "npm:typescript@rc"
+        "typescript": "7.0.2"
     }
 }

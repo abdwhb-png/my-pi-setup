@@ -61,7 +61,7 @@ test('planning base and plan role keep Plannotator planning separate from SDD an
         '@web',
         '@docs',
         '@memory-consult',
-        '@ctx-inspect',
+        '@think-inspect',
         '@subagents',
         'ask_user_question',
         'write_plan',
