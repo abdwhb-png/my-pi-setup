@@ -1,8 +1,15 @@
 # safe-bash
 
-`safe_bash` adds dangerous-command policy before using the sandbox extension's shared Bash execution path. It records local, redacted attempt telemetry for later review.
+`safe_bash` is the policy submodule of the `bash-execution` extension. It adds
+dangerous-command policy before resolving Bash operations through the shared
+Sandbox runtime contract and records local, redacted attempt telemetry for
+later review. It exports installation functions and is not a Pi extension
+entrypoint.
 
-With sandbox enabled, both `bash` and `safe_bash` use OS-level isolation. `/sandbox off` or `--no-sandbox` explicitly selects local execution for both tools. Missing, uninitialized, or failed sandbox execution state blocks both tools instead of falling back locally.
+With Sandbox enabled, `bash`, `user_bash`, and `safe_bash` use Zerobox.
+`/sandbox off` or `--no-sandbox` explicitly selects the local adapter owned by
+`bash-execution`. Missing, uninitialized, or failed Sandbox runtime state blocks
+all three surfaces instead of falling back locally.
 
 Pattern matching cannot prove a command harmless, and processes running as the same OS user can modify local telemetry.
 

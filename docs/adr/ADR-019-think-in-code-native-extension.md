@@ -20,6 +20,15 @@ are green, but no durable artifact was found for the originally claimed
 end-to-end smoke through a separately launched Pi CLI process. That smoke
 remains an acceptance task rather than completed evidence.
 
+## Ownership amendment (2026-09-05)
+
+[ADR-024](./ADR-024-bash-execution-ownership-and-sandbox-runtime.md)
+supersedes the shared Safe Bash service, separate analysis broker, and mixed
+telemetry ownership described in this ADR's Architecture, Exact dependencies,
+and Migration sections. Think-in-Code keeps its five tools, store, workers,
+redaction, capture, and restore behavior, but owns its command policy,
+telemetry, and `/think-audit` lifecycle.
+
 ## Context
 
 Pi relied on the `context-mode` MCP server to reduce data entering the

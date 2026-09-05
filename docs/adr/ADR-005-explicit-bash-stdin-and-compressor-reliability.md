@@ -7,6 +7,11 @@
 > transport safety guard `maxFallbackBytes`. See `README.COMPRESSION.md` and
 > `benchmarks/reports/token-calibration.md`.
 
+> **Ownership update (2026-09-05)**: [ADR-024](./ADR-024-bash-execution-ownership-and-sandbox-runtime.md)
+> supersedes §2's extension ownership. `bash-execution` now owns `bash`,
+> `user_bash`, and `safe_bash`; the stdin and compression decisions remain
+> accepted.
+
 ## Status
 
 Accepted

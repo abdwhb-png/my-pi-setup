@@ -25,6 +25,11 @@ The runtime migration described below is implemented and accepted. ADR-019
 remains the record for the unchanged Think-in-Code architecture, while this ADR
 supersedes its ASRT-specific backend sections.
 
+[ADR-024](./ADR-024-bash-execution-ownership-and-sandbox-runtime.md)
+supersedes this ADR's Bash registration, local fallback, and separate broker
+ownership. The Zerobox profiles, leases, isolation guarantees, worker
+implementation, and managed binary decision remain accepted.
+
 ## Accepted fork release
 
 The implementation pins this accepted source-first Zerobox release with an

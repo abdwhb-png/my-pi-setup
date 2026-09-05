@@ -1,5 +1,10 @@
 # ADR-014: Safe-bash bypass telemetry and recommendation audit
 
+> **Ownership update (2026-09-05)**: [ADR-024](./ADR-024-bash-execution-ownership-and-sandbox-runtime.md)
+> supersedes the shared-service ownership and mixed Think telemetry portions.
+> Safe Bash retains its guard policy, `safe_bash` events, and
+> `/safe-bash-audit`; Think now owns a separate policy and journal.
+
 ## Status
 
 Accepted

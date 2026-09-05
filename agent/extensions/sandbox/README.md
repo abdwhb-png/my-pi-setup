@@ -1,18 +1,24 @@
 # sandbox
 
-Linux OS-level sandboxing for Pi Bash execution and Think-in-Code analysis.
+Linux OS-level Zerobox runtime for Bash consumers and Think-in-Code analysis.
 The extension invokes the provenance-pinned Zerobox fork at
 `~/.pi/bin/zerobox`; it never resolves a sandbox binary from `PATH` or a
 development checkout.
 
+Sandbox registers no `bash`, `safe_bash`, or `user_bash` surface. The
+`bash-execution` extension owns those Pi interfaces and consumes the runtime
+contract published here.
+
 ## Lifecycle and fail-closed publication
 
-The extension owns the process-global Bash and analysis brokers. On enable it
+The extension owns one tagged process-global Sandbox runtime at
+`Symbol.for("pi.sandbox-runtime.v2")`. On enable it
 validates configuration, probes the managed binary, creates the Bash session
 lease, constructs the analysis service, and then publishes both services in
-one synchronous transaction. During transitions both brokers are
-uninitialized; initialization failures publish bounded error states. There is
-no local fallback after an enable failure.
+one synchronous assignment. During transitions the runtime is `uninitialized`;
+initialization failures publish a bounded `error` state. Owner tokens prevent a
+stale reloaded instance from publishing or releasing the current runtime.
+Sandbox never supplies a local fallback.
 
 Bash has one private lease per session. Each analysis request has a new lease.
 Leases live below `~/.pi/zbx/`, use owner-only permissions, contain an explicit
@@ -29,10 +35,10 @@ profiles, and all other lease control data remain denied.
 | Command        | Description                                   |
 | -------------- | --------------------------------------------- |
 | `/sandbox`     | Show current status and configuration         |
-| `/sandbox on`  | Enable both sandbox services for this session |
-| `/sandbox off` | Disable both services for this session        |
+| `/sandbox on`  | Enable the Sandbox runtime for this session   |
+| `/sandbox off` | Publish an explicit disabled runtime state    |
 
-The Bash sandbox is disabled by default. The effective `enabled` value uses, in
+The Sandbox runtime is disabled by default. The effective `enabled` value uses, in
 descending priority: `--no-sandbox`, `PI_SANDBOX_SESSION_STATUS`, the session's
 `sandbox-state.<sessionKey>.json`, project config, global config, then the built-in
 default. Static security fields continue to come from project/global config. The
