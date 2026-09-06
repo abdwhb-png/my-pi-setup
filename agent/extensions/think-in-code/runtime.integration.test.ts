@@ -24,7 +24,7 @@ import {
     it,
     mock,
 } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -43,6 +43,7 @@ import {
 import { registerThinkInCode } from "./index.ts";
 import { hashProjectPath } from "./config.ts";
 import { readRecentThinkTelemetry } from "./telemetry/storage.ts";
+import { createToolGroupsExtension } from "../tool-groups/index.ts";
 import {
     claimSandboxRuntime,
     publishSandboxRuntime,
@@ -173,6 +174,22 @@ function collectToolNames(session: TestSession): string[] {
     return [...seen];
 }
 
+function collectToolDescriptions(session: TestSession): Map<string, string> {
+    const tools = (session.session as unknown as {
+        agent?: {
+            state?: { tools?: Array<{ name?: string; description?: string }> };
+        };
+    }).agent?.state?.tools;
+    return new Map(
+        (tools ?? [])
+            .filter(
+                (tool): tool is { name: string; description?: string } =>
+                    typeof tool.name === "string",
+            )
+            .map((tool) => [tool.name, tool.description ?? ""]),
+    );
+}
+
 beforeAll(() => {
     createHarnessProject();
 });
@@ -235,6 +252,31 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(registered).not.toContain("mcp:ctx_execute");
     });
 
+    it("describes when to use every Think tool autonomously", async () => {
+        const state = makeBrokerState();
+        const home = createHarnessProject();
+        const session = await createTestSession({
+            cwd: home,
+            extensionFactories: [thinkInCodeFactory(state)],
+            mockTools: { bash: "ok", read: "ok", write: "ok", edit: "ok" },
+        });
+        sessions.push(session);
+        await session.session.agent.waitForIdle();
+
+        const descriptions = collectToolDescriptions(session);
+        expect(descriptions.get("think_execute")).toMatch(/use autonomously/i);
+        expect(descriptions.get("think_execute")).toMatch(
+            /filter|parse|aggregate|extract|compare|summar/i,
+        );
+        expect(descriptions.get("think_execute")).toMatch(/large|raw/i);
+        expect(descriptions.get("think_search")).toMatch(/prior indexed/i);
+        expect(descriptions.get("think_search")).toMatch(
+            /never.*current source/i,
+        );
+        expect(descriptions.get("think_note")).toMatch(/reviewed conclusion/i);
+        expect(descriptions.get("think_note")).toMatch(/do not store raw/i);
+    });
+
     it("hides sandbox-backed execution while keeping index tools active when sandbox is disabled", async () => {
         const home = createHarnessProject();
         const session = await createTestSession({
@@ -279,6 +321,131 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(activeToolDescriptions?.join(" ")).not.toContain(
             "think_execute",
         );
+    });
+
+    it("removes think_execute again after a role reactivates every registered tool", async () => {
+        const home = createHarnessProject();
+        const session = await createTestSession({
+            cwd: home,
+            extensionFactories: [
+                (pi: ExtensionAPI) => {
+                    ownerSymbol = Symbol("think-in-code-disabled-role-runtime");
+                    claimSandboxRuntime(ownerSymbol);
+                    publishSandboxRuntime(ownerSymbol, { state: "disabled" });
+                    registerThinkInCode(pi, {
+                        resolveRoot: () =>
+                            join(
+                                testHome!,
+                                ".pi",
+                                "agent",
+                                "think-in-code",
+                            ),
+                    });
+                },
+                createToolGroupsExtension(
+                    () => ({
+                        groups: {
+                            "think-inspect": ["think_note", "think_search"],
+                            "think-exec": ["think_execute"],
+                        },
+                    }),
+                    () => undefined,
+                    () => undefined,
+                ),
+                (pi: ExtensionAPI) => {
+                    pi.on("before_agent_start", () => {
+                        pi.setActiveTools(
+                            pi.getAllTools().map((tool) => tool.name),
+                        );
+                        pi.events.emit("pi-roles:tool-policy", {
+                            version: 1,
+                            roleName: "pi-agent",
+                            mode: "all",
+                            toolNames: [],
+                        });
+                    });
+                },
+            ],
+            mockTools: { bash: "ok", read: "ok", write: "ok", edit: "ok" },
+        });
+        sessions.push(session);
+        await session.session.agent.waitForIdle();
+
+        await session.run(
+            when("Continue after the role switch", [says("Continuing.")]),
+        );
+
+        expect(collectToolNames(session)).not.toContain("think_execute");
+        expect(collectToolNames(session)).toContain("think_search");
+        expect(collectToolNames(session)).toContain("think_note");
+    });
+
+    it("blocks a stale think_execute call before it can archive input when sandbox is disabled", async () => {
+        const home = createHarnessProject();
+        const session = await createTestSession({
+            cwd: home,
+            extensionFactories: [
+                (pi: ExtensionAPI) => {
+                    ownerSymbol = Symbol("think-in-code-disabled-gate-runtime");
+                    claimSandboxRuntime(ownerSymbol);
+                    publishSandboxRuntime(ownerSymbol, { state: "disabled" });
+                    registerThinkInCode(pi, {
+                        resolveRoot: () =>
+                            join(
+                                testHome!,
+                                ".pi",
+                                "agent",
+                                "think-in-code",
+                            ),
+                    });
+                },
+                (pi: ExtensionAPI) => {
+                    pi.on("before_agent_start", () => {
+                        // Reproduce a stale or late visibility writer without
+                        // publishing the role-policy event.
+                        pi.setActiveTools(
+                            pi.getAllTools().map((tool) => tool.name),
+                        );
+                    });
+                },
+            ],
+            mockTools: { bash: "ok", read: "ok", write: "ok", edit: "ok" },
+        });
+        sessions.push(session);
+        await session.session.agent.waitForIdle();
+        writeFileSync(join(home, "package.json"), '{"private":true}\n');
+
+        await session.run(
+            when("Attempt the stale tool", [
+                calls("think_execute", {
+                    action: "file",
+                    language: "javascript",
+                    program: "export default FILE_CONTENT.length",
+                    path: "package.json",
+                }),
+                says("Continuing without it."),
+            ]),
+        );
+
+        const results = session.events.toolResultsFor("think_execute");
+        expect(results).toHaveLength(1);
+        expect(results[0]?.isError).toBe(true);
+        expect(results[0]?.content).toEqual([
+            {
+                type: "text",
+                text: "Sandbox execution unavailable: disabled",
+            },
+        ]);
+        const archiveRoot = join(
+            testHome!,
+            ".pi",
+            "agent",
+            "think-in-code",
+            "projects",
+            hashProjectPath(home),
+            "archives",
+        );
+        expect(readdirSync(archiveRoot)).toEqual([]);
     });
 
     it("resynchronizes think_execute before each turn when sandbox availability changes", async () => {

@@ -1710,13 +1710,45 @@ describe("ThinkCoordinator", () => {
             query: "vite hmr",
         });
         expect(noMatch.content[0]?.text).toBe(
-            "No matches in 1 indexed document",
+            "No relevant historical matches in 1 indexed document",
         );
         expect(noMatch.details).toMatchObject({
             hitCount: 0,
             indexedDocumentCount: 1,
             corpusEmpty: false,
+            searchMode: "none",
+            queryTokenCount: 2,
+            topMatchedTokenCount: 0,
         });
+    });
+
+    it("rejects historical results that match only generic fragments of a long query", async () => {
+        const { coordinator, store } = await setup();
+        store.index({
+            kind: "document-summary",
+            source: "unrelated-dashboard",
+            text: "dashboard test dev services status",
+        });
+        store.index({
+            kind: "document-summary",
+            source: "relevant-cli-contract",
+            text: "CLI facade Job module resolution contracts",
+        });
+
+        const result = coordinator.search({
+            id: "search-relevance",
+            query: "apps cli test Job type module resolution dev-services contracts",
+            limit: 10,
+        });
+
+        expect(result.details.hitCount).toBe(1);
+        expect(result.details).toMatchObject({
+            searchMode: "relaxed",
+            queryTokenCount: 10,
+            topMatchedTokenCount: 5,
+        });
+        expect(result.content[0]?.text).toContain("relevant-cli-contract");
+        expect(result.content[0]?.text).not.toContain("unrelated-dashboard");
     });
 
     it("protects INPUTS from caller overrides in batch execute", async () => {

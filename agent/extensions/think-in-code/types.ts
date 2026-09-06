@@ -118,6 +118,12 @@ export interface ToolExecutionDetails {
     indexedDocumentCount?: number;
     /** True when think_search ran against a project store with no documents. */
     corpusEmpty?: boolean;
+    /** Search strategy used for the returned hits. */
+    searchMode?: "strict" | "relaxed" | "none";
+    /** Unique normalized tokens in the search query. */
+    queryTokenCount?: number;
+    /** Query tokens matched by the strongest returned hit. */
+    topMatchedTokenCount?: number;
     sourceBytes: number;
     derivedBytes: number;
     language: ThinkLanguage;

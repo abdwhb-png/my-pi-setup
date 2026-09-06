@@ -23,7 +23,11 @@ import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { getSandboxRuntime } from "../_shared/sandbox-runtime/index.ts";
+import {
+    getSandboxRuntime,
+    SandboxUnavailableError,
+    type SandboxUnavailableKind,
+} from "../_shared/sandbox-runtime/index.ts";
 import { registerThinkAuditCommand } from "./audit-command.ts";
 import {
     createThinkCommandExecution,
@@ -51,6 +55,20 @@ export interface ThinkInCodeRegistrationOptions {
     resolveRoot?: () => string;
 }
 
+const ROLE_TOOL_POLICY_EVENT = "pi-roles:tool-policy";
+
+function sandboxUnavailableReason(): string | undefined {
+    const runtime = getSandboxRuntime();
+    if (runtime.state === "enabled") return undefined;
+    const kind: SandboxUnavailableKind =
+        runtime.state === "disabled"
+            ? "disabled"
+            : runtime.state === "error"
+              ? "initialization-failed"
+              : "uninitialized";
+    return new SandboxUnavailableError(kind).message;
+}
+
 export function registerThinkInCode(
     pi: ExtensionAPI,
     options: ThinkInCodeRegistrationOptions = {},
@@ -67,6 +85,7 @@ export function registerThinkInCode(
     let telemetryWarningReported = false;
     let auditRecommendationTurnActive = false;
     let restoreExecuteWhenSandboxAvailable = false;
+    let rolePolicyListenerRegistered = false;
 
     function syncSandboxToolVisibility(): void {
         const activeTools = new Set(pi.getActiveTools());
@@ -177,7 +196,7 @@ export function registerThinkInCode(
             name: TOOL_NAMES.execute,
             label: "🧠 Think Execute",
             description:
-                "Analyze one source with action=command|content|archives|file|batch. Return a bounded derivation, never copied raw input. File results require think_note for durable indexing.",
+                "Use autonomously when large or raw command output, a project file, inline content, prior Think archives, or up to 16 command outputs must be filtered, parsed, aggregated, extracted, compared, or summarized without entering model context. Returns only a bounded derivation; never use it to edit files. File derivations are not indexed automatically; retain a reviewed conclusion with think_note when useful.",
             parameters: schemas.execute,
             async execute(toolCallId, params, signal, onUpdate, ctx) {
                 return asResult(
@@ -193,7 +212,7 @@ export function registerThinkInCode(
             name: TOOL_NAMES.note,
             label: "🧠 Think Note",
             description:
-                "Store one concise redacted note. source and text are required; archiveIds may link provenance but are never used as note text.",
+                "Use autonomously to retain one concise, reviewed conclusion worth reusing later. Provide its source and optional archiveIds for provenance. Do not store raw output, secrets, tentative observations, or routine progress.",
             parameters: schemas.note,
             async execute(toolCallId, params, _signal, _onUpdate, _ctx) {
                 return asResult(
@@ -208,7 +227,7 @@ export function registerThinkInCode(
             name: TOOL_NAMES.search,
             label: "🧠 Think Search",
             description:
-                "Search prior indexed analyses and notes. Returns bounded ranked snippets plus archive/document IDs and distinguishes an empty project corpus from zero matches. Never returns raw archive bytes.",
+                "Use autonomously to recall relevant conclusions from prior indexed Think analyses and notes for this project. Never use it to discover or inspect current source. If it reports no relevant historical matches, continue with current-source tools instead of retrying equivalent queries. Returns only bounded snippets and provenance IDs, never raw archive bytes.",
             parameters: schemas.search,
             async execute(toolCallId, params, _signal, _onUpdate, _ctx) {
                 return asResult(
@@ -230,17 +249,31 @@ export function registerThinkInCode(
         telemetryWarningReported = false;
         auditRecommendationTurnActive = false;
         commandExecution?.approvals.clear();
+        if (!rolePolicyListenerRegistered) {
+            // Register after all extension factories have loaded so this
+            // capability filter runs after role/tool-group policy listeners.
+            pi.events.on(ROLE_TOOL_POLICY_EVENT, () => {
+                syncSandboxToolVisibility();
+            });
+            rolePolicyListenerRegistered = true;
+        }
         await openStore(ctx);
         registerTools();
         syncSandboxToolVisibility();
     });
 
-    pi.on("tool_call", async () => {
-        if (!auditRecommendationTurnActive) return undefined;
-        return {
-            block: true as const,
-            reason: "think audit is recommendation-only; all tool execution is disabled for this analysis turn.",
-        };
+    pi.on("tool_call", async (event) => {
+        if (auditRecommendationTurnActive) {
+            return {
+                block: true as const,
+                reason: "think audit is recommendation-only; all tool execution is disabled for this analysis turn.",
+            };
+        }
+        if (event.toolName !== TOOL_NAMES.execute) return undefined;
+        const reason = sandboxUnavailableReason();
+        if (!reason) return undefined;
+        syncSandboxToolVisibility();
+        return { block: true as const, reason };
     });
 
     pi.on("agent_end", () => {

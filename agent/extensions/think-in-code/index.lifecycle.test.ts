@@ -46,6 +46,7 @@ describe("think-in-code extension lifecycle", () => {
         await mkdir(secondProject);
 
         const handlers = new Map<string, EventHandler[]>();
+        const eventHandlers = new Map<string, EventHandler[]>();
         let activeTools = ["think_execute", "think_note", "think_search"];
         const pi = {
             on: (name: string, handler: EventHandler) => {
@@ -58,6 +59,20 @@ describe("think-in-code extension lifecycle", () => {
             getActiveTools: () => activeTools,
             setActiveTools: (names: string[]) => {
                 activeTools = [...names];
+            },
+            events: {
+                on: (name: string, handler: EventHandler) => {
+                    eventHandlers.set(name, [
+                        ...(eventHandlers.get(name) ?? []),
+                        handler,
+                    ]);
+                    return () => undefined;
+                },
+                emit: (name: string, payload: unknown) => {
+                    for (const handler of eventHandlers.get(name) ?? []) {
+                        handler(payload);
+                    }
+                },
             },
         } as unknown as ExtensionAPI;
         registerThinkInCode(pi, { resolveRoot: () => root });

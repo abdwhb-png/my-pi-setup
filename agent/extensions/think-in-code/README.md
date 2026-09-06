@@ -19,7 +19,7 @@ Four deep boundaries, each owned by one module:
 | Command execution | `agent/extensions/_shared/command-execution/` | Generic guard, native-tool redirect, rewrite, execution and supervision primitives. Every consumer injects its policy, approvals, telemetry and operation resolver. |
 | Sandbox contract | `agent/extensions/_shared/sandbox-runtime/` | Versioned `pi.sandbox-runtime.v2` snapshot, owner-token publication, Bash-operation factory and `AnalysisSandboxPort`. |
 | Sandbox implementation | `agent/extensions/sandbox/` | Zerobox lifecycle and strict QuickJS/Python worker dispatch. It publishes Bash and analysis together and registers no Bash tool. |
-| Think-in-Code | `agent/extensions/think-in-code/` | Independent command policy and telemetry, three public tools, per-project SQLite FTS5 store, raw archives, adaptive routing, session capture and one-shot restore. |
+| Think-in-Code | `agent/extensions/think-in-code/` | Independent command policy and telemetry, three public tools, per-project SQLite FTS5 store, raw archives, concise system guidance, session capture and one-shot restore. |
 
 Think-in-Code imports only the shared command-execution and Sandbox contracts.
 It never imports Safe Bash or a Sandbox implementation module.
@@ -36,16 +36,21 @@ Three native Pi tools are registered:
 - `think_note` — index one concise, redacted conclusion. `source` and `text`
   are required. Optional `archiveIds` record provenance and are never used as
   note text. Notes are capped by the effective `indexedSnippetChars` limit.
-- `think_search` — search the FTS5 index. Returns bounded ranked
-  snippets plus archive/document IDs. Its details include `hitCount`,
-  `indexedDocumentCount`, and `corpusEmpty`, and its message distinguishes an
-  empty project corpus from zero matches. It never returns raw archive bytes.
+- `think_search` — search the FTS5 index. It first requires all query terms,
+  then accepts relaxed candidates only when at least half of the unique terms
+  match. Returns bounded ranked snippets plus archive/document IDs. Its details
+  include hit counts, corpus state, search mode and term coverage. Its message
+  distinguishes an empty corpus from no relevant historical match. It never
+  returns raw archive bytes.
 
 `think_execute` is active only while the shared Sandbox runtime reports
 `enabled`. Think-in-Code removes it from the active tool schema for
-`uninitialized`, `disabled`, and `error` states, then restores it before a
-later turn if Sandbox becomes available again. `think_note` and `think_search`
-remain active because they use only the project store.
+`uninitialized`, `disabled`, and `error` states. It re-applies that filter after
+role-policy events so a role that activates all registered tools cannot expose
+disabled execution. A `tool_call` gate independently blocks stale or injected
+calls before input is read, executed, archived or indexed. The tool is restored
+before a later turn if Sandbox becomes available again. `think_note` and
+`think_search` remain active because they use only the project store.
 
 Successful, non-empty `command`, `content`, `archives`, and `batch` results are
 indexed automatically. `action=file` output is not auto-indexed because an
@@ -265,21 +270,19 @@ group definitions were removed at Task 9 cutover.
 The `saveTokens` allowlist excludes all three `think_*` names so
 post-compression does not erase the pre-reduced result.
 
-## Adaptive routing
+## System guidance
 
-The `context` hook injects one hidden, ephemeral routing message based on the
-currently active Think tools. Inspect-only roles receive guidance only for
-`think_note` and `think_search`; execute-only roles receive the action contract;
-full roles receive both. The message distinguishes Pi Lens inspection of current
-source and diagnostics from `think_search` recall of prior indexed analyses.
-It also keeps ordinary reads and shell calls for short fixed observations and
-normal edit tools for mutations. A custom role system prompt cannot suppress
-this hook-provided routing context.
+The `before_agent_start` hook adds one short `Think-in-Code:` line to the system
+prompt. It names only active Think tools, states each tool's distinct purpose,
+asks the model to use matching tools autonomously, and forbids narrating tool
+routing. Any prior Think instruction is replaced, so there is at most one per
+turn.
 
-Before each agent turn, Think-in-Code synchronizes `think_execute` visibility
-with the current Sandbox runtime. This happens before the routing message is
-built, so a disabled Sandbox yields inspect-only guidance and never recommends
-an unavailable execution action.
+The `context` hook no longer injects routing guidance after every tool result.
+It only removes legacy routing messages and performs the one-shot snapshot
+restore after compaction. Each registered tool carries its full autonomous-use
+guidance in its own description, which reaches the model only while that tool is
+active.
 
 ## Storage
 

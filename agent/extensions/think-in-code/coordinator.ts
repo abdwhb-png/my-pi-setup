@@ -50,7 +50,7 @@ import {
 } from "./command-policy.ts";
 import type { ThinkInCodeConfig } from "./config.ts";
 import { runRetention } from "./storage/retention.ts";
-import type { ThinkStore } from "./storage/store.ts";
+import { normalizeFtsTokens, type ThinkStore } from "./storage/store.ts";
 import type {
     BatchExecuteItem,
     BatchExecuteSummary,
@@ -962,6 +962,7 @@ export class ThinkCoordinator {
         this.#assertOpen();
         const startedAt = performance.now();
         const limit = Math.min(request.limit ?? 20, 20);
+        const queryTokenCount = normalizeFtsTokens(request.query).length;
         try {
             const hits = this.#store.search(request.query, limit);
             const indexedDocumentCount = this.#store.countDocuments();
@@ -970,6 +971,7 @@ export class ThinkCoordinator {
                     return [
                         `${index + 1}. document ${hit.documentId} (score=${hit.score.toFixed(3)})`,
                         `   source: ${hit.source}`,
+                        `   relevance: ${hit.matchMode}, ${hit.matchedTokenCount}/${hit.queryTokenCount} query terms`,
                         `   snippet: ${hit.snippet}`,
                         `   archiveIds: ${hit.archiveIds.join(", ") || "(none)"}`,
                     ].join("\n");
@@ -979,7 +981,7 @@ export class ThinkCoordinator {
                 summary ||
                 (indexedDocumentCount === 0
                     ? "No Think documents indexed for this project"
-                    : `No matches in ${indexedDocumentCount} indexed ${indexedDocumentCount === 1 ? "document" : "documents"}`);
+                    : `No relevant historical matches in ${indexedDocumentCount} indexed ${indexedDocumentCount === 1 ? "document" : "documents"}`);
             return {
                 content: [
                     {
@@ -992,6 +994,18 @@ export class ThinkCoordinator {
                     hitCount: hits.length,
                     indexedDocumentCount,
                     corpusEmpty: indexedDocumentCount === 0,
+                    searchMode:
+                        hits.length === 0
+                            ? "none"
+                            : hits.some((hit) => hit.matchMode === "relaxed")
+                              ? "relaxed"
+                              : "strict",
+                    queryTokenCount,
+                    topMatchedTokenCount: hits.reduce(
+                        (highest, hit) =>
+                            Math.max(highest, hit.matchedTokenCount),
+                        0,
+                    ),
                     sourceBytes: Buffer.byteLength(summary, "utf8"),
                     derivedBytes: Buffer.byteLength(responseText, "utf8"),
                     language: "javascript",

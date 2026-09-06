@@ -13,8 +13,9 @@
  *     marker tied to the compaction entry id,
  *   - versioned extension-private custom entries persist across reload/fork
  *     /tree reconstruction and keep the snapshot consumed,
- *   - the context hook pushes exactly one hidden custom agent message and
- *     never re-injects a snapshot that was already consumed.
+ *   - one concise instruction is injected through the per-turn system prompt,
+ *     while the context hook only restores a snapshot after compaction,
+ *   - a consumed snapshot is never re-injected.
  *   - tool results with `blockedReason`, failed batch items, or diagnostic
  *     failures are captured as blockers independently of Pi's `isError`.
  *
@@ -152,13 +153,6 @@ function makeCtx(sessionId: string): ExtensionContext {
     } as unknown as ExtensionContext;
 }
 
-function messageContent(message: AgentMessage | undefined): string {
-    const content = (
-        message as unknown as { content?: unknown } | undefined
-    )?.content;
-    return typeof content === "string" ? content : "";
-}
-
 async function setupHome(): Promise<string> {
     const home = await mkdtemp(join(tmpdir(), "think-in-code-int-"));
     const storeRoot = join(home, "store");
@@ -190,7 +184,47 @@ describe("registerHooks integration", () => {
         homes = [];
     });
 
-    it("injects one compact inspect-only routing message without execute guidance", async () => {
+    it("injects one precise Think instruction through the system prompt, not context messages", async () => {
+        const home = await setupHome();
+        homes.push(home);
+        const store = await setupStore(home);
+        stores.push(store);
+        const mock = createMockPi(
+            [],
+            ["think_execute", "think_note", "think_search"],
+        );
+        hookStates.push(
+            registerHooks(mock.api, {
+                store,
+                sessionIdAt: () => "routing-inspect",
+            }),
+        );
+        const result = (await mock.handlers.get("before_agent_start")!(
+            {
+                type: "before_agent_start",
+                prompt: "Inspect the project",
+                systemPrompt: "Base system prompt",
+            },
+            makeCtx("routing-inspect"),
+        )) as { systemPrompt?: string };
+
+        expect(result.systemPrompt).toContain("Base system prompt");
+        expect(result.systemPrompt).toContain("think_execute");
+        expect(result.systemPrompt).toContain("think_search");
+        expect(result.systemPrompt).toContain("think_note");
+        expect(result.systemPrompt).toContain("autonomously");
+        expect(result.systemPrompt).toContain("do not narrate tool routing");
+        expect(result.systemPrompt!.length).toBeLessThanOrEqual(500);
+
+        const messages: AgentMessage[] = [];
+        await mock.handlers.get("context")!(
+            { type: "context", messages } as ContextEvent,
+            makeCtx("routing-inspect"),
+        );
+        expect(messages).toEqual([]);
+    });
+
+    it("omits unavailable Think capabilities from the system instruction", async () => {
         const home = await setupHome();
         homes.push(home);
         const store = await setupStore(home);
@@ -199,102 +233,55 @@ describe("registerHooks integration", () => {
         hookStates.push(
             registerHooks(mock.api, {
                 store,
-                sessionIdAt: () => "routing-inspect",
-            }),
-        );
-        const messages = [
-            {
-                role: "custom",
-                customType: "think-in-code:routing",
-                content: "stale",
-                display: false,
-                timestamp: 1,
-            },
-        ] as AgentMessage[];
-
-        await mock.handlers.get("context")!(
-            { type: "context", messages } as ContextEvent,
-            makeCtx("routing-inspect"),
-        );
-
-        const routing = messages.filter(
-            (message) =>
-                "customType" in message &&
-                message.customType === "think-in-code:routing",
-        );
-        expect(routing).toHaveLength(1);
-        const content = messageContent(routing[0]);
-        expect(content.length).toBeLessThanOrEqual(450);
-        expect(content).toContain("think_search");
-        expect(content).toContain("think_note");
-        expect(content).toContain("pi-lens");
-        expect(content).not.toContain("think_execute");
-        expect(content).not.toContain("action=");
-        expect(routing[0]).toMatchObject({ display: false });
-    });
-
-    it("adapts routing to execute-only and full Think tool visibility", async () => {
-        const home = await setupHome();
-        homes.push(home);
-        const store = await setupStore(home);
-        stores.push(store);
-        const mock = createMockPi([], ["think_execute"]);
-        hookStates.push(
-            registerHooks(mock.api, {
-                store,
                 sessionIdAt: () => "routing-adaptive",
             }),
         );
 
-        const executeOnly: AgentMessage[] = [];
-        await mock.handlers.get("context")!(
-            { type: "context", messages: executeOnly } as ContextEvent,
+        const result = (await mock.handlers.get("before_agent_start")!(
+            {
+                type: "before_agent_start",
+                prompt: "Inspect the project",
+                systemPrompt: "Base system prompt",
+            },
             makeCtx("routing-adaptive"),
-        );
-        const executeText = messageContent(executeOnly[0]);
-        expect(executeText).toContain("think_execute");
-        expect(executeText).toContain("action=file");
-        expect(executeText).not.toContain("think_search");
-        expect(executeText).not.toContain("think_note");
+        )) as { systemPrompt?: string };
 
-        mock.api.setActiveTools([
-            "think_execute",
-            "think_note",
-            "think_search",
-        ]);
-        const full: AgentMessage[] = [];
-        await mock.handlers.get("context")!(
-            { type: "context", messages: full } as ContextEvent,
-            makeCtx("routing-adaptive"),
-        );
-        const fullText = messageContent(full[0]);
-        expect(fullText.length).toBeLessThanOrEqual(900);
-        expect(fullText).toContain("think_search");
-        expect(fullText).toContain("think_note");
-        expect(fullText).toContain("action=batch");
-        expect(fullText).toContain("pi-lens");
+        expect(result.systemPrompt).toContain("think_search");
+        expect(result.systemPrompt).toContain("think_note");
+        expect(result.systemPrompt).not.toContain("think_execute");
+        expect(result.systemPrompt).not.toContain("action=");
     });
 
-    it("does not inject routing when no Think tool is active", async () => {
+    it("keeps at most one Think instruction when the system prompt is rebuilt", async () => {
         const home = await setupHome();
         homes.push(home);
         const store = await setupStore(home);
         stores.push(store);
-        const mock = createMockPi();
+        const mock = createMockPi([], ["think_note", "think_search"]);
         hookStates.push(
             registerHooks(mock.api, {
                 store,
                 sessionIdAt: () => "routing-none",
             }),
         );
-        const messages: AgentMessage[] = [];
-
-        await mock.handlers.get("context")!(
-            { type: "context", messages } as ContextEvent,
+        const first = (await mock.handlers.get("before_agent_start")!(
+            {
+                type: "before_agent_start",
+                prompt: "First",
+                systemPrompt: "Base system prompt",
+            },
             makeCtx("routing-none"),
-        );
+        )) as { systemPrompt: string };
+        const second = (await mock.handlers.get("before_agent_start")!(
+            {
+                type: "before_agent_start",
+                prompt: "Second",
+                systemPrompt: first.systemPrompt,
+            },
+            makeCtx("routing-none"),
+        )) as { systemPrompt: string };
 
-        expect(messages).toHaveLength(0);
+        expect(second.systemPrompt.match(/Think-in-Code:/g)).toHaveLength(1);
     });
 
     it("captures two consecutive turns under the actual Pi session id", async () => {
@@ -834,7 +821,7 @@ describe("registerHooks integration", () => {
         expect(parsed.priority).toBe(0);
     });
 
-    it("gates snapshot restore, coexists with routing, and persists versioned custom entries", async () => {
+    it("gates snapshot restore without recurring routing messages and persists versioned custom entries", async () => {
         const home = await setupHome();
         homes.push(home);
         const store = await setupStore(home);
@@ -909,14 +896,7 @@ describe("registerHooks integration", () => {
             type: "context",
             messages: injectedMessages,
         } as ContextEvent, makeCtx(sessionId));
-        expect(injectedMessages).toHaveLength(2);
-        expect(
-            injectedMessages.filter(
-                (message) =>
-                    "customType" in message &&
-                    message.customType === "think-in-code:routing",
-            ),
-        ).toHaveLength(1);
+        expect(injectedMessages).toHaveLength(1);
         expect(
             injectedMessages.filter(
                 (message) =>
@@ -932,12 +912,7 @@ describe("registerHooks integration", () => {
             type: "context",
             messages: secondMessages,
         } as ContextEvent, makeCtx(sessionId));
-        expect(secondMessages).toHaveLength(1);
-        expect(secondMessages[0]).toMatchObject({
-            role: "custom",
-            customType: "think-in-code:routing",
-            display: false,
-        });
+        expect(secondMessages).toHaveLength(0);
 
         // Custom entries persisted via appendEntry are versioned.
         const types = mock.appendedEntries.map((entry) => entry.customType).sort();

@@ -84,6 +84,9 @@ export interface SearchHit {
     snippet: string;
     source: string;
     score: number;
+    matchMode: "strict" | "relaxed";
+    matchedTokenCount: number;
+    queryTokenCount: number;
     archiveIds: readonly string[];
 }
 
@@ -346,13 +349,25 @@ export class ThinkStore {
 
     search(query: string, limit = 20): SearchHit[] {
         this.#assertOpen();
-        const safeQuery = buildSafeFtsQuery(query);
-        if (safeQuery === null) return [];
-        const hits = this.#database
-            .query(
-                `SELECT d.id AS document_id,
+        const queryTokens = normalizeFtsTokens(query);
+        const ftsTokens = normalizeFtsLiterals(query);
+        if (queryTokens.length === 0 || ftsTokens.length === 0) return [];
+        type SearchRow = {
+            document_id: number;
+            source: string;
+            kind: string;
+            snippet: string;
+            score: number;
+            redacted_text: string;
+        };
+        const queryRows = (safeQuery: string, rowLimit: number): SearchRow[] =>
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- bun:sqlite returns rows through an untyped package boundary.
+            this.#database
+                .query(
+                    `SELECT d.id AS document_id,
                         d.source AS source,
                         d.kind AS kind,
+                        d.redacted_text AS redacted_text,
                         snippet(fts_documents, 0, '<<', '>>', '...', ${this.#config.searchSnippetChars}) AS snippet,
                         bm25(fts_documents) AS score
                    FROM fts_documents
@@ -360,16 +375,61 @@ export class ThinkStore {
                   WHERE fts_documents MATCH ?
                   ORDER BY score ASC
                   LIMIT ?`,
-            )
-            .all(safeQuery, limit) as Array<{
-            document_id: number;
-            source: string;
-            kind: string;
-            snippet: string;
-            score: number;
-        }>;
+                )
+                .all(safeQuery, rowLimit) as SearchRow[];
+
+        const strictQuery = buildFtsQuery(ftsTokens, "AND");
+        const strictRows = queryRows(strictQuery, limit);
+        const selected: Array<{
+            row: SearchRow;
+            matchMode: "strict" | "relaxed";
+            matchedTokenCount: number;
+        }> = strictRows.map((row) => ({
+            row,
+            matchMode: "strict" as const,
+            matchedTokenCount: queryTokens.length,
+        }));
+
+        if (selected.length < limit && queryTokens.length > 1) {
+            const selectedIds = new Set(
+                selected.map(({ row }) => row.document_id),
+            );
+            const relaxedQuery = buildFtsQuery(ftsTokens, "OR");
+            const candidateLimit = Math.min(200, Math.max(limit * 8, 50));
+            const minimumMatches = Math.max(
+                2,
+                Math.ceil(queryTokens.length / 2),
+            );
+            const relaxed = queryRows(relaxedQuery, candidateLimit)
+                .filter((row) => !selectedIds.has(row.document_id))
+                .map((row) => {
+                    const documentTokens = new Set(
+                        normalizeFtsTokens(row.redacted_text),
+                    );
+                    const matchedTokenCount = queryTokens.filter((token) =>
+                        documentTokens.has(token),
+                    ).length;
+                    return {
+                        row,
+                        matchMode: "relaxed" as const,
+                        matchedTokenCount,
+                    };
+                })
+                .filter(
+                    ({ matchedTokenCount }) =>
+                        matchedTokenCount >= minimumMatches,
+                )
+                .toSorted(
+                    (left, right) =>
+                        right.matchedTokenCount - left.matchedTokenCount ||
+                        left.row.score - right.row.score,
+                );
+            selected.push(...relaxed.slice(0, limit - selected.length));
+        }
+
+        const hits = selected;
         if (hits.length === 0) return [];
-        const ids = hits.map((h) => h.document_id);
+        const ids = hits.map(({ row }) => row.document_id);
         const idListJson = JSON.stringify(ids);
         const archiveRows = this.#database
             .query(
@@ -387,12 +447,15 @@ export class ThinkStore {
             list.push(row.archive_id);
             byDoc.set(row.document_id, list);
         }
-        return hits.map((hit) => ({
-            documentId: hit.document_id,
-            source: hit.source,
-            snippet: hit.snippet,
-            score: hit.score,
-            archiveIds: byDoc.get(hit.document_id) ?? [],
+        return hits.map(({ row, matchMode, matchedTokenCount }) => ({
+            documentId: row.document_id,
+            source: row.source,
+            snippet: row.snippet,
+            score: row.score,
+            matchMode,
+            matchedTokenCount,
+            queryTokenCount: queryTokens.length,
+            archiveIds: byDoc.get(row.document_id) ?? [],
         }));
     }
 
@@ -666,31 +729,38 @@ export function openThinkStore(options: CreateThinkStoreOptions): ThinkStore {
 }
 
 /**
- * Centralized safe FTS5 query construction. We escape every `"` by
- * doubling it and wrap each normalized token in double-quotes so hyphenated
- * or operator-bearing input (alpha-2847, OR, NEAR/, *, colons) is treated
- * as a literal token rather than FTS syntax. Normalized tokens are split on
- * non-alphanumeric/underscore; empty-token queries return null (no throw,
- * no injection) so callers get an empty result set with bounded snippets.
- * Preserves bm25 ranking over the literal tokens.
+ * Centralized safe FTS5 tokenization and query construction. Every normalized
+ * alphanumeric token is quoted, so hyphens, underscores, operators, stars,
+ * and colons remain data rather than FTS syntax. Search first requires all
+ * terms, then admits OR candidates only when at least half of the unique query
+ * terms match. This preserves recall without returning documents that share
+ * only one generic fragment with a long query.
  */
 function escapeFtsLiteral(token: string): string {
     return `"${token.replace(/"/g, '""')}"`;
 }
 
-export function buildSafeFtsQuery(raw: string): string | null {
-    if (typeof raw !== "string") return null;
+export function normalizeFtsTokens(raw: string): string[] {
+    return normalizeSearchTokens(raw, /[^A-Za-z0-9]+/);
+}
+
+function normalizeFtsLiterals(raw: string): string[] {
+    return normalizeSearchTokens(raw, /[^A-Za-z0-9_]+/);
+}
+
+function normalizeSearchTokens(raw: string, separator: RegExp): string[] {
+    if (typeof raw !== "string") return [];
     const trimmed = raw.trim();
-    if (trimmed.length === 0) return null;
+    if (trimmed.length === 0) return [];
     // Split on anything that is not a letter/digit/underscore, drop empties,
     // lowercase for case-insensitive FTS matching (FTS5 unicode61 is case-
     // insensitive but lowercasing keeps tests deterministic).
     const tokens = trimmed
-        .split(/[^A-Za-z0-9_]+/)
+        .split(separator)
         .map((t) => t.trim())
         .filter((t) => t.length > 0)
         .map((t) => t.toLowerCase());
-    if (tokens.length === 0) return null;
+    if (tokens.length === 0) return [];
     // Deduplicate while preserving order, cap tokens to avoid huge queries.
     const seen = new Set<string>();
     const uniq: string[] = [];
@@ -701,7 +771,19 @@ export function buildSafeFtsQuery(raw: string): string | null {
             if (uniq.length >= 20) break;
         }
     }
-    return uniq.map(escapeFtsLiteral).join(" OR ");
+    return uniq;
+}
+
+function buildFtsQuery(
+    tokens: readonly string[],
+    operator: "AND" | "OR",
+): string {
+    return tokens.map(escapeFtsLiteral).join(` ${operator} `);
+}
+
+export function buildSafeFtsQuery(raw: string): string | null {
+    const tokens = normalizeFtsLiterals(raw);
+    return tokens.length > 0 ? buildFtsQuery(tokens, "OR") : null;
 }
 
 export const __test = {
@@ -712,6 +794,7 @@ export const __test = {
     ensureFile,
     assertNoSymlink,
     buildSafeFtsQuery,
+    normalizeFtsTokens,
 };
 
 const THINK_STORE_RAW_HANDLES = new WeakMap<ThinkStore, Database>();
