@@ -22,8 +22,8 @@ describe("Defect 2 RED: store search FTS5 safe query construction", () => {
     const storeRoot = join(home, "store");
     await mkdir(storeRoot, { recursive: true });
     store = new ThinkStore({ config: DEFAULT_THINK_IN_CODE_CONFIG, storeRoot, canonicalPath: "/proj" });
-    store.index({ kind: "document-summary", source: "s1", text: "alpha-2847 beta-9921 gamma-7411 deterministic content" });
-    store.index({ kind: "document-summary", source: "s2", text: "alpha beta deterministic other" });
+    store.index({ kind: "analysis-summary", source: "s1", text: "alpha-2847 beta-9921 gamma-7411 deterministic content" });
+    store.index({ kind: "analysis-summary", source: "s2", text: "alpha beta deterministic other" });
     return store;
   }
 
@@ -62,7 +62,7 @@ describe("Defect 2 RED: store search FTS5 safe query construction", () => {
     const { ThinkCoordinator } = await import("../coordinator.ts");
     const s2 = await harness();
     const coord = new ThinkCoordinator({ store: s2, config: DEFAULT_THINK_IN_CODE_CONFIG });
-    const r = coord.search({ id: "s1", query: "alpha-2847", limit: 5 });
+    const r = coord.searchArtifacts({ id: "s1", query: "alpha-2847", limit: 5 });
     expect(r.details.blockedReason).toBeUndefined();
     expect(r.content[0]?.text).toBeDefined();
   });

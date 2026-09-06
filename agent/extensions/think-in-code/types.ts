@@ -90,7 +90,7 @@ export interface BatchExecuteSummary {
 
 export interface IndexRequest {
     id: string;
-    kind: "command-summary" | "analysis-summary" | "document-summary";
+    kind: "command-summary" | "analysis-summary";
     source: string;
     text?: string;
     archiveIds?: readonly string[];
@@ -117,11 +117,11 @@ export interface ToolExecutionDetails {
     action?: ThinkExecuteAction;
     sourceStatus?: "succeeded" | "failed" | "mixed";
     resultBytes?: number;
-    /** Search hits returned by think_search. Omitted for non-search tools. */
+    /** Search hits returned by think_artifact_search. Omitted for non-search tools. */
     hitCount?: number;
     /** Searchable documents in the current project store. */
     indexedDocumentCount?: number;
-    /** True when think_search ran against a project store with no documents. */
+    /** True when artifact search ran against an empty artifact corpus. */
     corpusEmpty?: boolean;
     /** Search strategy used for the returned hits. */
     searchMode?: "strict" | "relaxed" | "none";
@@ -142,14 +142,12 @@ export interface ToolExecutionDetails {
 
 export const TOOL_NAMES = Object.freeze({
     execute: "think_execute",
-    note: "think_note",
-    search: "think_search",
+    artifactSearch: "think_artifact_search",
 });
 
 export type ThinkToolName = (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES];
 
 export const THINK_TOOL_NAMES: readonly ThinkToolName[] = Object.freeze([
     TOOL_NAMES.execute,
-    TOOL_NAMES.note,
-    TOOL_NAMES.search,
+    TOOL_NAMES.artifactSearch,
 ]);

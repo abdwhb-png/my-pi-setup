@@ -84,14 +84,9 @@ function classifyEvidenceSource(
     reviewer: boolean,
 ): EvidenceSourceKind {
     if (toolName === "ctx_search") return "indexed";
-    // Task 7 — Think-in-Code parity: the native FTS5-backed `think_search`
-    // and `think_note` tools also return indexed evidence (the analyzer
-    // never exposes raw archive bytes to the LLM context).
-    if (
-        toolName === "think_search" ||
-        toolName === "think_note" ||
-        toolName === "think_index"
-    )
+    // Think artifact search returns indexed execution evidence without raw
+    // archive bytes. It is not a general memory source.
+    if (toolName === "think_artifact_search" || toolName === "think_index")
         return "indexed";
     if (reviewer) return "reviewer";
     if (toolName === "subagent" || SECONDARY_EVIDENCE_TOOLS.has(toolName))

@@ -66,16 +66,9 @@ describe("verification routing", () => {
         expect(ceiling).not.toHaveProperty("allowedTools");
     });
 
-    it("includes think_search in the read-only allowlist (no think execute tools)", () => {
-        // Task 7 contract: read-only verifier tools may inspect the Think-in-
-        // Code FTS5 index via `think_search` (no filesystem, no execution),
-        // but they must NEVER receive the analyzer or note writer. Adding
-        // either would widen the verifier capability ceiling.
-        expect(READONLY_VERIFIER_TOOLS).toContain("think_search");
-        for (const tool of ["think_execute", "think_note"]) {
-            expect(READONLY_VERIFIER_TOOLS).not.toContain(tool);
-        }
-        // Sanity: ctx_search parity still holds alongside think_search.
+    it("includes artifact search in the read-only allowlist without Think execution", () => {
+        expect(READONLY_VERIFIER_TOOLS).toContain("think_artifact_search");
+        expect(READONLY_VERIFIER_TOOLS).not.toContain("think_execute");
         expect(READONLY_VERIFIER_TOOLS).toContain("ctx_search");
     });
 

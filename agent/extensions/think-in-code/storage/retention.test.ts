@@ -12,7 +12,7 @@ import {
     DEFAULT_THINK_IN_CODE_CONFIG,
     type ThinkInCodeConfig,
 } from "../config.ts";
-import { ThinkStore } from "./store.ts";
+import { ThinkStore, __getRawDatabase } from "./store.ts";
 import { runRetention } from "./retention.ts";
 
 interface RetentionHarness {
@@ -78,6 +78,65 @@ describe("runRetention", () => {
         expect(await Bun.file(oldArchive.archivePath).exists()).toBe(false);
         // Fresh archive should still be readable.
         expect(await Bun.file(freshArchive.archivePath).exists()).toBe(true);
+    });
+
+    it("deletes expired documents, FTS rows, receipts, and snapshots", async () => {
+        harness = await makeRetentionHarness();
+        let now = 1_700_000_000_000;
+        const store = new ThinkStore({
+            config: DEFAULT_THINK_IN_CODE_CONFIG,
+            storeRoot: harness.storeRoot,
+            canonicalPath: "/workspace/proj",
+            now: () => now,
+        });
+        store.index({
+            kind: "analysis-summary",
+            source: "think_execute:content:success",
+            text: "expired-derivation-marker",
+        });
+        const db = __getRawDatabase(store);
+        const legacy = db
+            .query(
+                `INSERT INTO documents (kind, source, redacted_text, byte_count, created_at)
+                 VALUES ('document-summary', 'legacy-note', 'expired legacy note', 19, ?)
+                 RETURNING id`,
+            )
+            .get(now) as { id: number };
+        db.query(
+            "INSERT INTO fts_documents (rowid, redacted_text) VALUES (?, ?)",
+        ).run(legacy.id, "expired legacy note");
+        store.recordSessionEvent({
+            sessionId: "session-expired",
+            turnIndex: 0,
+            kind: "think-in-code:execution-receipt",
+            payload: { status: "success" },
+        });
+        store.saveSnapshot({
+            sessionId: "session-expired",
+            turnIndex: 0,
+            content: "expired receipt snapshot",
+        });
+
+        now += 24 * 60 * 60 * 1000 + 1;
+        const report = runRetention(store, DEFAULT_THINK_IN_CODE_CONFIG, {
+            now: () => now,
+        });
+        expect(report).toMatchObject({
+            documentsDeleted: 2,
+            sessionEventsDeleted: 1,
+            snapshotsDeleted: 1,
+        });
+        for (const table of [
+            "documents",
+            "fts_documents",
+            "session_events",
+            "snapshots",
+        ]) {
+            expect(
+                db.query(`SELECT COUNT(*) AS count FROM ${table}`).get(),
+            ).toEqual({ count: 0 });
+        }
+        store.close();
     });
 
     it("evicts oldest archives first when over the project quota", async () => {

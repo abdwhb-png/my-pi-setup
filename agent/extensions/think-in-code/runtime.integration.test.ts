@@ -59,8 +59,7 @@ import type {
 
 const THINK_TOOL_NAMES = [
     "think_execute",
-    "think_note",
-    "think_search",
+    "think_artifact_search",
 ] as const;
 
 const sessions: TestSession[] = [];
@@ -110,8 +109,11 @@ function makeBrokerState(): BrokerState {
                     (value: unknown): value is string => typeof value === "string" && value.length > 0,
                 ) ?? "";
             const runtime = request.language === "python" ? "python" : "quickjs";
+            const marker = first.includes("fence_marker")
+                ? " · fence_marker"
+                : "";
             return {
-                output: `DERIVED[${request.language}]: ${first.slice(0, 32)}`,
+                output: `DERIVED[${request.language}]: ${first.length} bytes${marker}`,
                 stderr: "",
                 runtime,
                 durationMs: 1,
@@ -220,7 +222,7 @@ afterEach(() => {
 });
 
 describe("think-in-code real Pi runtime wiring", () => {
-    it("registers exactly the three native think_* tools", async () => {
+    it("registers exactly the two native think_* tools", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();
         const session = await createTestSession({
@@ -242,7 +244,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         for (const name of THINK_TOOL_NAMES) {
             expect(registered).toContain(name);
         }
-        // 3 native Think tools are registered; the 3 think_* names are the
+        // Two native Think tools are registered; these names are the
         // contract — neither `safe_bash` nor any `mcp:ctx_*` should be
         // registered by Think-in-Code itself.
         for (const name of THINK_TOOL_NAMES) {
@@ -270,12 +272,8 @@ describe("think-in-code real Pi runtime wiring", () => {
             /filter|parse|aggregate|extract|compare|summar/i,
         );
         expect(descriptions.get("think_execute")).toMatch(/large|raw/i);
-        expect(descriptions.get("think_search")).toMatch(/prior indexed/i);
-        expect(descriptions.get("think_search")).toMatch(
-            /never.*current source/i,
-        );
-        expect(descriptions.get("think_note")).toMatch(/reviewed conclusion/i);
-        expect(descriptions.get("think_note")).toMatch(/do not store raw/i);
+        expect(descriptions.get("think_artifact_search")).toMatch(/non-expired derivations/i);
+        expect(descriptions.get("think_artifact_search")).toMatch(/never.*general memory/i);
     });
 
     it("hides sandbox-backed execution while keeping index tools active when sandbox is disabled", async () => {
@@ -309,19 +307,8 @@ describe("think-in-code real Pi runtime wiring", () => {
         await session.session.agent.waitForIdle();
 
         const active = collectToolNames(session);
-        expect(active).toContain("think_note");
-        expect(active).toContain("think_search");
+        expect(active).toContain("think_artifact_search");
         expect(active).not.toContain("think_execute");
-        const activeToolDescriptions = (
-            session.session as unknown as {
-                agent?: {
-                    state?: { tools?: Array<{ description?: string }> };
-                };
-            }
-        ).agent?.state?.tools?.map((tool) => tool.description ?? "");
-        expect(activeToolDescriptions?.join(" ")).not.toContain(
-            "think_execute",
-        );
     });
 
     it("removes think_execute again after a role reactivates every registered tool", async () => {
@@ -346,7 +333,7 @@ describe("think-in-code real Pi runtime wiring", () => {
                 createToolGroupsExtension(
                     () => ({
                         groups: {
-                            "think-inspect": ["think_note", "think_search"],
+                            "think-inspect": ["think_artifact_search"],
                             "think-exec": ["think_execute"],
                         },
                     }),
@@ -377,8 +364,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         );
 
         expect(collectToolNames(session)).not.toContain("think_execute");
-        expect(collectToolNames(session)).toContain("think_search");
-        expect(collectToolNames(session)).toContain("think_note");
+        expect(collectToolNames(session)).toContain("think_artifact_search");
     });
 
     it("blocks a stale think_execute call before it can archive input when sandbox is disabled", async () => {
@@ -466,7 +452,7 @@ describe("think-in-code real Pi runtime wiring", () => {
             when("Continue without sandbox", [says("Using inspection only.")]),
         );
         expect(collectToolNames(session)).not.toContain("think_execute");
-        expect(collectToolNames(session)).toContain("think_search");
+        expect(collectToolNames(session)).toContain("think_artifact_search");
 
         publishSandboxRuntime(ownerSymbol!, {
             state: "enabled",
@@ -542,18 +528,8 @@ describe("think-in-code real Pi runtime wiring", () => {
             ]),
         );
         await session.run(
-            when("Try to fetch while noting", [
-                calls("think_note", {
-                    source: "review",
-                    text: "bounded conclusion",
-                    fetch: { url: "https://example.com" },
-                }),
-                says("Fetch rejected."),
-            ]),
-        );
-        await session.run(
             when("Try network search", [
-                calls("think_search", {
+                calls("think_artifact_search", {
                     query: "bounded conclusion",
                     network: true,
                 }),
@@ -563,8 +539,7 @@ describe("think-in-code real Pi runtime wiring", () => {
 
         const results = [
             session.events.toolResultsFor("think_execute")[0],
-            session.events.toolResultsFor("think_note")[0],
-            session.events.toolResultsFor("think_search")[0],
+            session.events.toolResultsFor("think_artifact_search")[0],
         ];
         expect(results.every((result) => result?.isError === true)).toBe(true);
         expect(
@@ -990,7 +965,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(session.events.toolResultsFor("safe_bash")).toHaveLength(0);
     });
 
-    it("runs think_note + think_search as bounded FTS5 operations", async () => {
+    it("searches only bounded artifacts produced by think_execute", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();
         const session = await createTestSession({
@@ -1002,21 +977,25 @@ describe("think-in-code real Pi runtime wiring", () => {
         await session.session.agent.waitForIdle();
 
         await session.run(
-            when("Index and then search", [
-                calls("think_note", {
-                    source: "doc-a",
-                    text: "fence_marker_alpha document body",
+            when("Execute and then search", [
+                calls("think_execute", {
+                    action: "content",
+                    language: "javascript",
+                    program: "export default INPUT",
+                    content: "fence_marker_alpha document body",
                 }),
-                calls("think_note", {
-                    source: "doc-b",
-                    text: "another body with fence_marker_beta",
+                calls("think_execute", {
+                    action: "content",
+                    language: "javascript",
+                    program: "export default INPUT",
+                    content: "fence_marker_beta document body",
                 }),
-                calls("think_search", { query: "fence_marker", limit: 5 }),
+                calls("think_artifact_search", { query: "fence_marker", limit: 5 }),
                 says("Done."),
             ]),
         );
 
-        const searchResult = session.events.toolResultsFor("think_search")[0];
+        const searchResult = session.events.toolResultsFor("think_artifact_search")[0];
         expect(searchResult).toBeDefined();
         const text = searchResult?.text ?? "";
         expect(text).toContain("fence_marker");

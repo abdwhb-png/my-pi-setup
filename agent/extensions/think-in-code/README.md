@@ -3,8 +3,8 @@
 Native Pi extension that evaluates commands through its own command policy,
 runs them through shared command-execution primitives and the published
 Sandbox runtime, analyzes raw data inside a strict two-layer sandbox, persists
-searchable project-local evidence, and restores a deterministic
-post-compaction snapshot.
+temporary execution artifacts, and restores one bounded post-compaction
+execution receipt. Hermes remains the only durable general memory.
 
 This extension replaces the legacy `npm:context-mode` MCP server. See
 [ADR-019](../../../../docs/adr/ADR-019-think-in-code-native-extension.md)
@@ -19,23 +19,23 @@ Four deep boundaries, each owned by one module:
 | Command execution      | `agent/extensions/_shared/command-execution/` | Generic guard, native-tool redirect, rewrite, execution and supervision primitives. Every consumer injects its policy, approvals, telemetry and operation resolver.       |
 | Sandbox contract       | `agent/extensions/_shared/sandbox-runtime/`   | Versioned `pi.sandbox-runtime.v2` snapshot, owner-token publication, Bash-operation factory and `AnalysisSandboxPort`.                                                    |
 | Sandbox implementation | `agent/extensions/sandbox/`                   | Zerobox lifecycle and strict QuickJS/Python worker dispatch. It publishes Bash and analysis together and registers no Bash tool.                                          |
-| Think-in-Code          | `agent/extensions/think-in-code/`             | Independent command policy and telemetry, three public tools, per-project SQLite FTS5 store, raw archives, concise system guidance, session capture and one-shot restore. |
+| Think-in-Code          | `agent/extensions/think-in-code/`             | Independent command policy and telemetry, two public tools, temporary per-project SQLite FTS5 artifacts, raw archives, concise system guidance, execution-receipt capture and one-shot restore. |
 
 Think-in-Code imports only the shared command-execution and Sandbox contracts.
 It never imports Safe Bash or a Sandbox implementation module.
 
 ## Tools
 
-Three native Pi tools are registered:
+Two native Pi tools are registered:
 
 - `think_execute` — derive a bounded answer through one explicit `action`:
   `command`, `content`, `archives`, `file`, or `batch`. Its action-specific
-  bindings are documented below. Raw source bytes are archived; analyzer output
-  is model-controlled and becomes the tool result.
-- `think_note` — index one concise, redacted conclusion. `source` and `text`
-  are required. Optional `archiveIds` record provenance and are never used as
-  note text. Notes are capped by the effective `indexedSnippetChars` limit.
-- `think_search` — search the FTS5 index. It first requires all query terms,
+  bindings are documented below. Raw source bytes are archived. Analyzer output
+  becomes the tool result only after the coordinator rejects direct source
+  echoes.
+- `think_artifact_search` — search only non-expired derivations and metadata
+  produced by `think_execute`. It accepts a query and optional limit, never
+  free-form text to persist. It first requires all query terms,
   then accepts relaxed candidates only when at least half of the unique terms
   match. Returns bounded ranked snippets plus archive/document IDs. Its details
   include hit counts, corpus state, search mode and term coverage. Its message
@@ -48,14 +48,13 @@ Three native Pi tools are registered:
 role-policy events so a role that activates all registered tools cannot expose
 disabled execution. A `tool_call` gate independently blocks stale or injected
 calls before input is read, executed, archived or indexed. The tool is restored
-before a later turn if Sandbox becomes available again. `think_note` and
-`think_search` remain active because they use only the project store.
+before a later turn if Sandbox becomes available again.
+`think_artifact_search` remains active because it uses only the project store.
 
-Successful, non-empty `command`, `content`, `archives`, and `batch` results are
-indexed automatically. `action=file` output is not auto-indexed because an
-arbitrary analyzer program can copy, transform, or encode `FILE_CONTENT`.
-Review the result and use `think_note` to retain a concise conclusion. Blocked,
-failed, and empty analyses are not indexed.
+Every successful, non-empty derivation from `command`, `content`, `archives`,
+`file`, or `batch` is indexed automatically with its status and archive IDs.
+Blocked, terminally failed, and empty analyses are not indexed. There is no
+general-purpose Think note or memory writer.
 
 A single `think_execute` invocation produces exactly one outer tool result.
 Its inner command execution is a direct call to the shared executor configured
@@ -64,7 +63,8 @@ does not appear as a nested result.
 
 Every normal result has two text content blocks. The first is compact JSON with
 `status` (`success` or `partial`), `action`, `sourceStatus`, `sourceBytes`,
-`resultBytes`, `truncated`, and `archiveIds`. Batch headers also include
+`resultBytes`, `truncated`, `archiveIds`, and `indexStatus` (`indexed` or
+`failed`). Batch headers also include
 `total`, `succeeded`, `failed`, and `blocked`. The second block is the bounded
 derivation. A failed command that produced analyzable output returns `partial`.
 
@@ -74,6 +74,8 @@ Terminal source, file, store, or analysis failures throw, so Pi emits
 `restore_sandbox`, `change_command`, `change_program`, `change_source`,
 `repair_store`, or `retry`. A batch whose items all fail without output stops
 before analysis, creates no analysis archive, and indexes nothing.
+`think_artifact_search` store failures also throw safe JSON with
+`code:"artifact-search-failed"` and `recovery:"repair_store"`.
 
 ### Streaming progress and the raw-output boundary
 
@@ -161,9 +163,14 @@ supplied and is expected to see reflected back.
 
 Source/store/archive validation errors thrown out of
 `coordinator.execute` (e.g. `Archive not found: <id>`,
-`Invalid archive id: <id>`, `Unsupported source kind`) likewise
+`Archive expired: <id>`, `Invalid archive id: <id>`, `Unsupported source kind`) likewise
 reach the model through safe terminal JSON with `change_source` or
 `repair_store` recovery.
+
+After a successful analyzer run, Think rejects exact source copies, outputs
+that embed a complete source, and substantial direct source extracts. Rejected
+outputs use `analysis-source-echo` with `change_program`; they are neither
+archived as analysis output nor indexed nor returned.
 
 ### Cross-extension failure identity
 
@@ -180,12 +187,6 @@ failures with `Symbol.for("pi.sandbox-runtime.SandboxExecutionError.v2")`.
 Each guard validates a closed-set kind or code in addition to the non-enumerable
 brand. Runtime diagnostics and raw errors remain non-enumerable and never
 become model-facing reasons.
-
-### Compaction and restore
-
-`session_before_compact` builds a deterministic snapshot capped at
-1,500 estimated tokens using Pi's exported `estimateTokens`. Priority
-order (high → low):
 
 ### Analyzer program syntax
 
@@ -278,7 +279,7 @@ fetching. The `thinkInCode.network` configuration key is locked to
 
 | Group            | Members                         |
 | ---------------- | ------------------------------- |
-| `@think-inspect` | `think_note`, `think_search`    |
+| `@think-inspect` | `think_artifact_search`         |
 | `@think-exec`    | `think_execute`                 |
 | `@think`         | `@think-inspect`, `@think-exec` |
 
@@ -286,11 +287,11 @@ Planning/research roles use `@think-inspect`. Execution-capable roles
 (`atlas-orchestrator`, `herdr-orchestrator`, `debug`) use `@think`.
 The granular split preserves least-privilege: planning agents cannot
 reach the analysis port. Verifiers in
-`brainstorm-forcer/verification.ts` may call `think_search` but never
+`brainstorm-forcer/verification.ts` may call `think_artifact_search` but never
 any execute tool. The legacy `@ctx-inspect`, `@ctx-exec`, and `@ctx`
 group definitions were removed at Task 9 cutover.
 
-The `saveTokens` allowlist excludes all three `think_*` names so
+The `saveTokens` allowlist excludes both `think_*` names so
 post-compression does not erase the pre-reduced result.
 
 ## System guidance
@@ -321,8 +322,8 @@ Per-project stores live under
   an impossible hash/path mismatch on reopen
 
 Raw archives are stored **unredacted** so later isolated analysis
-remains lossless. Metadata, indexed text, snippets, and session
-snapshots are redacted and bounded before persistence or LLM
+remains lossless. Metadata, indexed derivations, snippets, and execution
+receipts are redacted and bounded before persistence or LLM
 exposure (`agent/extensions/_shared/redaction.ts`).
 
 The store never opens, migrates, moves, or deletes existing Context
@@ -337,7 +338,8 @@ receives at most one telemetry warning.
 
 ## Retention
 
-- 24-hour TTL on every archive row/file.
+- 24-hour TTL on archive rows/files, indexed documents/FTS rows, execution
+  receipts, and snapshots. Expired archives cannot be read before cleanup.
 - 512 MiB per-project quota with oldest-first eviction.
 - Retention runs on session start and after every archive write.
 - Think command telemetry is retained for at most 30 days and cleaned on
@@ -346,25 +348,17 @@ receives at most one telemetry warning.
 
 ## Compaction and restore
 
-`session_before_compact` builds a deterministic snapshot capped at
-1,500 estimated tokens using Pi's exported `estimateTokens`. Priority
-order (high → low):
-
-1. Unresolved blockers and errors
-2. User decisions and corrections
-3. Active objective and open actions
-4. Verified facts (file paths, command outcomes, archive references)
-
-Completed and noisy events are dropped. Archive references are always
-preserved (they are opaque IDs, not raw bytes). No tool-routing
-directive is ever emitted. The snapshot is persisted in SQLite and
-published as a custom entry, then marked ready with the compaction
-entry id.
+`session_before_compact` builds a JSON execution receipt capped strictly at
+2,048 UTF-8 bytes. It contains only recent `think_execute` status, action,
+safe error and recovery data, bounded derivation, index status, and archive IDs. It never
+captures prompts, objectives, decisions, rules, claims, or unrelated tools.
+The receipt is persisted in SQLite, published as a custom entry, then marked
+ready with the compaction entry id.
 
 For `think_execute`, capture reads the machine header directly from `content`.
 It therefore preserves `success`, `partial`, byte counts, action, and archive
 references even when provider serialization omits `details`. Terminal JSON
-errors are captured as blockers by their safe code and reason.
+errors retain only their safe code, reason, and recovery action.
 
 The `context` hook appends one hidden custom agent message to
 `event.messages` and immediately marks the snapshot consumed. Reload,
@@ -431,7 +425,8 @@ but every tool call is blocked until that turn ends.
 - Command authorization and analyzer isolation are **fail-closed**.
 - An explicitly disabled Sandbox runtime blocks Think command execution; local
   fallback belongs only to Bash Execution.
-- Capture/index failures are **fail-open and visible** in tool details.
+- Capture failures are **fail-open**. Index failures are **fail-open** and
+  visible in the first `content` block through `indexStatus:"failed"`.
 - No fetch or network path exists; the analyzer cannot reach the
   network.
 - The model cannot select a binary, environment variable, working
@@ -497,6 +492,6 @@ global symbols and entrypoints. Stop every Pi process and start a fresh one.
 | `storage/schema.ts`    | SQLite schema, versioned migration        |
 | `storage/store.ts`     | ThinkStore: archive/index/search API      |
 | `storage/retention.ts` | Retention policy                          |
-| `memory/capture.ts`    | Session state capture                     |
-| `memory/snapshot.ts`   | Deterministic 1500-token snapshot builder |
+| `memory/capture.ts`    | Think execution receipt capture           |
+| `memory/snapshot.ts`   | Deterministic 2 KB receipt builder         |
 | `memory/hooks.ts`      | Hook registration and one-shot restore    |

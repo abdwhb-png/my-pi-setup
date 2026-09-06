@@ -1,10 +1,9 @@
 /**
  * Think-in-Code native extension.
  *
- * Registers three native Pi tools:
+ * Registers two native Pi tools:
  *   - think_execute: command | content | archives | file | batch + analyzer
- *   - think_note: one concise durable conclusion with optional provenance
- *   - think_search: bounded snippets + archive IDs
+ *   - think_artifact_search: bounded temporary execution artifacts
  *
  * The extension owns its store and coordinator lifecycle:
  *   - session_start: open the per-project store, run retention, recover any
@@ -42,6 +41,12 @@ import {
 } from "./config.ts";
 import { ThinkCoordinator } from "./coordinator.ts";
 import { registerHooks, type HookState } from "./memory/hooks.ts";
+import {
+    renderThinkArtifactSearchCall,
+    renderThinkArtifactSearchResult,
+    renderThinkExecuteCall,
+    renderThinkExecuteResult,
+} from "./render.ts";
 import { ThinkStore } from "./storage/store.ts";
 import {
     createThinkTelemetryRecorder,
@@ -175,11 +180,8 @@ export function registerThinkInCode(
 
     function registerTools(): void {
         if (!coordinator) return;
-        const handlers = buildToolHandlers(
-            coordinator,
-            config.indexedSnippetChars,
-        );
-        const schemas = createThinkSchemas(config.indexedSnippetChars);
+        const handlers = buildToolHandlers(coordinator);
+        const schemas = createThinkSchemas();
         const adaptCtx = (
             ctx: ExtensionContext,
             signal: AbortSignal | undefined,
@@ -196,8 +198,17 @@ export function registerThinkInCode(
             name: TOOL_NAMES.execute,
             label: "🧠 Think Execute",
             description:
-                "Use autonomously when large or raw command output, a project file, inline content, prior Think archives, or up to 16 command outputs must be filtered, parsed, aggregated, extracted, compared, or summarized without entering model context. Normal results contain a compact JSON status header (success or partial) followed by the bounded derivation; terminal failures set isError and return a safe JSON code, reason, and recovery. Never use it to edit files. File derivations are not indexed automatically; retain a reviewed conclusion with think_note when useful.",
+                "Use autonomously when large or raw command output, a project file, inline content, prior Think archives, or up to 16 command outputs must be filtered, parsed, aggregated, extracted, compared, or summarized without entering model context. Normal results contain a compact JSON status header, including indexStatus, followed by the bounded derivation. Direct source echoes and terminal failures set isError and return a safe JSON code, reason, and recovery. Never use it to edit files or as general memory. Produced derivations are indexed temporarily for artifact search.",
             parameters: schemas.execute,
+            renderCall: renderThinkExecuteCall,
+            renderResult: (result, renderOptions, theme, renderContext) =>
+                renderThinkExecuteResult(
+                    result,
+                    renderOptions,
+                    theme,
+                    renderContext,
+                    config.retentionHours,
+                ),
             async execute(toolCallId, params, signal, onUpdate, ctx) {
                 return asResult(
                     handlers.execute(
@@ -209,29 +220,23 @@ export function registerThinkInCode(
             },
         });
         pi.registerTool({
-            name: TOOL_NAMES.note,
-            label: "🧠 Think Note",
+            name: TOOL_NAMES.artifactSearch,
+            label: "🧠 Think Artifact Search",
             description:
-                "Use autonomously to retain one concise, reviewed conclusion worth reusing later. Provide its source and optional archiveIds for provenance. Do not store raw output, secrets, tentative observations, or routine progress.",
-            parameters: schemas.note,
+                "Search only non-expired derivations and metadata produced by think_execute in this project. Never use it as general memory or to inspect current source. Returns bounded snippets and archive IDs, never raw archive bytes. Store failures set isError and return a safe code and recovery.",
+            parameters: schemas.artifactSearch,
+            renderCall: renderThinkArtifactSearchCall,
+            renderResult: (result, renderOptions, theme, renderContext) =>
+                renderThinkArtifactSearchResult(
+                    result,
+                    renderOptions,
+                    theme,
+                    renderContext,
+                    config.retentionHours,
+                ),
             async execute(toolCallId, params, _signal, _onUpdate, _ctx) {
                 return asResult(
-                    handlers.note({
-                        ...(params as Record<string, unknown>),
-                        id: toolCallId,
-                    }),
-                );
-            },
-        });
-        pi.registerTool({
-            name: TOOL_NAMES.search,
-            label: "🧠 Think Search",
-            description:
-                "Use autonomously to recall relevant conclusions from prior indexed Think analyses and notes for this project. Never use it to discover or inspect current source. If it reports no relevant historical matches, continue with current-source tools instead of retrying equivalent queries. Returns only bounded snippets and provenance IDs, never raw archive bytes.",
-            parameters: schemas.search,
-            async execute(toolCallId, params, _signal, _onUpdate, _ctx) {
-                return asResult(
-                    handlers.search({
+                    handlers.artifactSearch({
                         ...(params as Record<string, unknown>),
                         id: toolCallId,
                     }),

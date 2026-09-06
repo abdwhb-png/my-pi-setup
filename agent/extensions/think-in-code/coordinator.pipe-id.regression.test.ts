@@ -70,7 +70,7 @@ describe("Defect 1 RED: pipe-form Pi toolCallId through public execution boundar
 
     // Must not be blocked by Invalid analysis request id
     expect(result.details.blockedReason).toBeUndefined();
-    expect(result.content[0]?.text).toBe("DERIVED_PIPE_OK");
+    expect(result.content[1]?.text).toBe("DERIVED_PIPE_OK");
     expect(result.details.derivedBytes).toBeGreaterThan(0);
     expect(capturedIds.length).toBe(1);
     const seen = capturedIds[0]!;

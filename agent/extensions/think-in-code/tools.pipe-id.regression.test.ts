@@ -61,7 +61,7 @@ describe("Defect 1 RED: tools layer pipe ID mapping through public execution bou
       { toolCallId: PI_PIPE_ID },
     )) as { content: { text: string }[]; details: { blockedReason?: string; derivedBytes: number } };
     expect(result.details.blockedReason).toBeUndefined();
-    expect(result.content[0]?.text).toBe("DERIVED_VIA_TOOLS");
+    expect(result.content[1]?.text).toBe("DERIVED_VIA_TOOLS");
     expect(result.details.derivedBytes).toBeGreaterThan(0);
     expect(captured[0]).toMatch(/^[A-Za-z0-9._-]{1,128}$/);
     expect(captured[0]).not.toContain("|");

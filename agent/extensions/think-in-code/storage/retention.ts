@@ -18,6 +18,9 @@ export interface RetentionReport {
     expiredDeleted: number;
     quotaEvicted: number;
     bytesReclaimed: number;
+    documentsDeleted: number;
+    sessionEventsDeleted: number;
+    snapshotsDeleted: number;
     ranAt: number;
 }
 
@@ -37,6 +40,7 @@ export function runRetention(
 ): RetentionReport {
     const now = options.now ?? Date.now;
     const ranAt = now();
+    const expiredState = store.deleteExpiredState(ranAt);
     const expiredIds = store.expiredArchiveIds(ranAt);
     const expiredBytes = store.deleteArchives(expiredIds);
     let quotaEvicted = 0;
@@ -50,6 +54,7 @@ export function runRetention(
         expiredDeleted: expiredIds.length,
         quotaEvicted,
         bytesReclaimed: expiredBytes + quotaBytes,
+        ...expiredState,
         ranAt,
     };
 }

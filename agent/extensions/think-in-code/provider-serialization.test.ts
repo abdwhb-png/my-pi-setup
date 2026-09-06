@@ -54,6 +54,7 @@ test("OpenAI completions sends the Think public content without details", () => 
             resultBytes: 2,
             truncated: false,
             archiveIds: ["raw-archive", "derived-archive"],
+            indexStatus: "indexed",
         },
         "14",
     );
@@ -84,6 +85,7 @@ test("OpenAI completions sends the Think public content without details", () => 
                 resultBytes: 2,
                 truncated: false,
                 archiveIds: ["raw-archive", "derived-archive"],
+                indexStatus: "indexed",
             })}\n14`,
             tool_call_id: "call-1",
         },

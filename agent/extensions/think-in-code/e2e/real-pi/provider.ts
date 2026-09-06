@@ -33,14 +33,9 @@ function textOf(content: OpaqueValue): string {
 
 function traceContext(context: Context, label: string): void {
     if (!tracePath) return;
-    const snapshots = context.messages
-        .filter((message) => message.role === "user")
-        .map((message) => textOf(message.content))
-        .filter((text) =>
-            /^\[(?:blocker|decision|objective|verified|claim|note)\] t\d/m.test(
-                text,
-            ),
-        );
+    const receipts = context.messages
+        .map((message) => textOf(property(message, "content")))
+        .filter((text) => text.includes('"type":"think-execution-receipts"'));
     const toolResults = context.messages
         .filter((message) => message.role === "toolResult")
         .map((message) => ({
@@ -60,10 +55,11 @@ function traceContext(context: Context, label: string): void {
                     ?.map((candidate) => candidate.name)
                     .filter((name) => name.startsWith("ctx_")) ?? [],
             toolResults,
-            snapshotMessageCount: snapshots.length,
-            snapshotEstimatedTokens: snapshots.map((text) =>
-                Math.ceil(text.length / 4),
+            snapshotMessageCount: receipts.length,
+            snapshotBytes: receipts.map((text) =>
+                Buffer.byteLength(text, "utf8"),
             ),
+            snapshotContents: receipts,
         })}\n`,
     );
 }
@@ -209,17 +205,20 @@ export default function register(pi: ExtensionAPI): void {
             ),
             traced("after-batch", () =>
                 tool(
-                    "think_note",
+                    "think_execute",
                     {
-                        source: "smoke-fixture",
-                        text: "needle-verification durable index entry",
+                        action: "content",
+                        language: "javascript",
+                        content: "artifact seed",
+                        program:
+                            'export default "needle-verification execution artifact"',
                     },
                     "smoke-index",
                 ),
             ),
             traced("after-index", () =>
                 tool(
-                    "think_search",
+                    "think_artifact_search",
                     { query: "needle-verification", limit: 5 },
                     "smoke-search",
                 ),

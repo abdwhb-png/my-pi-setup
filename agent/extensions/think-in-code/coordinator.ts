@@ -1,16 +1,15 @@
 /**
  * Think-in-Code coordinator.
  *
- * Owns the policy and orchestration for the three public `think_*` tools:
+ * Owns the policy and orchestration for the two public `think_*` tools:
  *   - think_execute: command | content | archives | file | batch + analyzer
- *   - think_note: explicit bounded text with optional archive provenance
- *   - think_search: bounded snippets + archive IDs (never raw bytes)
+ *   - think_artifact_search: bounded technical derivations + archive IDs
  *
  * Raw sources remain in archives and are reanalyzable via archive IDs. The
- * LLM sees only bounded analyzer output, which remains model-controlled and
- * can contain source bytes when a program deliberately copies them.
+ * LLM sees only bounded analyzer output. Direct source echoes are rejected
+ * before the result can be archived, indexed, or returned.
  *
- * Capture/index failures are fail-open but visible in tool details.
+ * Capture/index failures are fail-open; index status is visible in content.
  * Safe-execution and analysis-sandbox failures are fail-closed.
  */
 
@@ -51,6 +50,7 @@ import {
 } from "./command-policy.ts";
 import type { ThinkInCodeConfig } from "./config.ts";
 import {
+    createThinkArtifactSearchError,
     createThinkExecuteContent,
     createThinkExecutionError,
     isThinkExecutionError,
@@ -66,6 +66,7 @@ import type {
     ExecuteRequest,
     IndexRequest,
     SearchRequest,
+    ThinkExecuteAction,
     ThinkLanguage,
     ToolExecutionDetails,
 } from "./types.ts";
@@ -169,13 +170,15 @@ function sourceFailureError(
     const storeFailure = /sqlite|database|corrupt|archive data/i.test(reason);
     const code = reason.startsWith("Invalid archive id:")
         ? "invalid-archive-id"
-        : reason.startsWith("Archive not found:")
-          ? "archive-not-found"
-          : action === "file"
-            ? "file-unreadable"
-            : storeFailure
-              ? "store-read-failed"
-              : "source-unavailable";
+        : reason.startsWith("Archive expired:")
+          ? "archive-expired"
+          : reason.startsWith("Archive not found:")
+            ? "archive-not-found"
+            : action === "file"
+              ? "file-unreadable"
+              : storeFailure
+                ? "store-read-failed"
+                : "source-unavailable";
     return createThinkExecutionError({
         action,
         stage: storeFailure ? "store" : "source",
@@ -372,28 +375,31 @@ export class ThinkCoordinator {
 
     #indexDerivedResult(input: {
         kind: IndexRequest["kind"];
-        source: string;
+        action: ThinkExecuteAction;
+        status: "success" | "partial";
         derivedResult: AnalysisResult | null;
         archiveIds: readonly string[];
         indexWarnings: string[];
-    }): void {
+    }): "indexed" | "failed" {
         if (
             !input.derivedResult ||
             input.derivedResult.output.trim().length === 0
         ) {
-            return;
+            return "failed";
         }
         try {
             this.#store.index({
                 kind: input.kind,
-                source: input.source,
+                source: `think_execute:${input.action}:${input.status}`,
                 text: input.derivedResult.output,
                 archiveIds: input.archiveIds,
             });
+            return "indexed";
         } catch (error) {
             input.indexWarnings.push(
                 error instanceof Error ? error.message : String(error),
             );
+            return "failed";
         }
     }
 
@@ -565,6 +571,11 @@ export class ThinkCoordinator {
                 recovery: "change_program",
             });
         }
+        assertNoDirectSourceEcho(
+            request.source.kind,
+            derivedResult.output,
+            sourceInputs.map((input) => input.data),
+        );
 
         if (derivedResult) {
             const analysisArchive = this.#archiveSafely({
@@ -575,17 +586,14 @@ export class ThinkCoordinator {
             if (analysisArchive) archiveIds.push(analysisArchive.id);
         }
 
-        this.#indexDerivedResult({
+        const status = sourceStatus === "succeeded" ? "success" : "partial";
+        const indexStatus = this.#indexDerivedResult({
             kind:
                 request.source.kind === "command"
                     ? "command-summary"
-                    : request.source.kind === "content"
-                      ? "document-summary"
-                      : "analysis-summary",
-            source:
-                request.source.kind === "command"
-                    ? request.source.command
-                    : request.id,
+                    : "analysis-summary",
+            action: request.source.kind,
+            status,
             derivedResult,
             archiveIds,
             indexWarnings,
@@ -601,7 +609,6 @@ export class ThinkCoordinator {
             derivedResult,
             this.#config.maxResultBytes,
         );
-        const status = sourceStatus === "succeeded" ? "success" : "partial";
         const details: ToolExecutionDetails = {
             archiveIds,
             status,
@@ -627,6 +634,7 @@ export class ThinkCoordinator {
                     resultBytes: derivedBytes,
                     truncated,
                     archiveIds,
+                    indexStatus,
                 },
                 text,
             ),
@@ -753,6 +761,9 @@ export class ThinkCoordinator {
                         recovery: "change_program",
                     });
                 }
+                assertNoDirectSourceEcho("file", derivedResult.output, [
+                    content,
+                ]);
                 const analysisArchive = this.#archiveSafely({
                     kind: "analysis-output",
                     data: derivedResult.output,
@@ -773,11 +784,16 @@ export class ThinkCoordinator {
             );
         }
 
-        // File programs receive raw FILE_CONTENT and are intentionally
-        // arbitrary. Their output cannot be proven derived rather than a
-        // copied, transformed, or encoded form of the source, so persisting it
-        // automatically would violate the raw-archive boundary. Callers can
-        // persist a reviewed conclusion explicitly through `think_note`.
+        // Persist only the analyzer's bounded/redacted derivation. Raw file
+        // bytes remain confined to the archive and never enter FTS.
+        const indexStatus = this.#indexDerivedResult({
+            kind: "analysis-summary",
+            action: "file",
+            status: "success",
+            derivedResult,
+            archiveIds,
+            indexWarnings,
+        });
 
         const text = boundedDerivedText(
             derivedResult,
@@ -813,6 +829,7 @@ export class ThinkCoordinator {
                     resultBytes: fileDerivedBytes,
                     truncated: details.truncated,
                     archiveIds,
+                    indexStatus,
                 },
                 text,
             ),
@@ -1015,6 +1032,13 @@ export class ThinkCoordinator {
                 recovery: "change_program",
             });
         }
+        assertNoDirectSourceEcho(
+            "batch",
+            derivedResult.output,
+            orderedItems.flatMap((item) =>
+                item.output === undefined ? [] : [item.output],
+            ),
+        );
         const analysisArchive = this.#archiveSafely({
             kind: "analysis-output",
             data: derivedResult.output,
@@ -1022,9 +1046,11 @@ export class ThinkCoordinator {
         });
         if (analysisArchive) archiveIds.push(analysisArchive.id);
 
-        this.#indexDerivedResult({
+        const status = sourceStatus === "succeeded" ? "success" : "partial";
+        const indexStatus = this.#indexDerivedResult({
             kind: "analysis-summary",
-            source: request.id,
+            action: "batch",
+            status,
             derivedResult,
             archiveIds,
             indexWarnings,
@@ -1037,7 +1063,6 @@ export class ThinkCoordinator {
         const derivedBytes = derivedResult
             ? Buffer.byteLength(derivedResult.output, "utf8")
             : 0;
-        const status = sourceStatus === "succeeded" ? "success" : "partial";
         const details: ToolExecutionDetails & {
             items: BatchExecuteSummary["items"];
         } = {
@@ -1068,6 +1093,7 @@ export class ThinkCoordinator {
                     resultBytes: derivedBytes,
                     truncated: details.truncated,
                     archiveIds,
+                    indexStatus,
                     total: orderedItems.length,
                     succeeded,
                     failed,
@@ -1079,77 +1105,7 @@ export class ThinkCoordinator {
         };
     }
 
-    index(request: IndexRequest): {
-        content: { type: "text"; text: string }[];
-        details: ToolExecutionDetails;
-    } {
-        this.#assertOpen();
-        const startedAt = performance.now();
-        const captureWarnings: string[] = [];
-        const indexWarnings: string[] = [];
-        const archiveIds: string[] = [];
-        let blockedReason: string | undefined;
-
-        try {
-            if (request.text === undefined && !request.archiveIds?.length) {
-                throw new Error("Indexing requires either text or archiveIds");
-            }
-            if (request.archiveIds) {
-                for (const id of request.archiveIds) {
-                    if (!verifyArchiveId(id)) {
-                        throw new Error(`Invalid archive id: ${id}`);
-                    }
-                    archiveIds.push(id);
-                }
-            }
-            const result = this.#store.index({
-                kind: request.kind,
-                source: request.source,
-                text: request.text ?? `${archiveIds[0]}`,
-                archiveIds,
-            });
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `indexed document ${result.documentId} (${result.byteCount} bytes)`,
-                    },
-                ],
-                details: {
-                    archiveIds,
-                    sourceBytes: result.byteCount,
-                    derivedBytes: result.byteCount,
-                    language: "javascript",
-                    runtime: "none",
-                    elapsedMs: Math.round(performance.now() - startedAt),
-                    truncated: false,
-                    captureWarnings,
-                    indexWarnings,
-                    blockedReason,
-                },
-            };
-        } catch (error) {
-            blockedReason =
-                error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: blockedReason }],
-                details: {
-                    archiveIds,
-                    sourceBytes: 0,
-                    derivedBytes: 0,
-                    language: "javascript",
-                    runtime: "none",
-                    elapsedMs: Math.round(performance.now() - startedAt),
-                    truncated: false,
-                    captureWarnings,
-                    indexWarnings,
-                    blockedReason,
-                },
-            };
-        }
-    }
-
-    search(request: SearchRequest): {
+    searchArtifacts(request: SearchRequest): {
         content: { type: "text"; text: string }[];
         details: ToolExecutionDetails;
     } {
@@ -1163,7 +1119,7 @@ export class ThinkCoordinator {
             const summary = hits
                 .map((hit, index) => {
                     return [
-                        `${index + 1}. document ${hit.documentId} (score=${hit.score.toFixed(3)})`,
+                        `${index + 1}. artifact ${hit.documentId} (score=${hit.score.toFixed(3)})`,
                         `   source: ${hit.source}`,
                         `   relevance: ${hit.matchMode}, ${hit.matchedTokenCount}/${hit.queryTokenCount} query terms`,
                         `   snippet: ${hit.snippet}`,
@@ -1174,8 +1130,8 @@ export class ThinkCoordinator {
             const responseText =
                 summary ||
                 (indexedDocumentCount === 0
-                    ? "No Think documents indexed for this project"
-                    : `No relevant historical matches in ${indexedDocumentCount} indexed ${indexedDocumentCount === 1 ? "document" : "documents"}`);
+                    ? "No Think execution artifacts indexed for this project"
+                    : `No matching Think execution artifacts in ${indexedDocumentCount} indexed ${indexedDocumentCount === 1 ? "artifact" : "artifacts"}`);
             return {
                 content: [
                     {
@@ -1210,24 +1166,12 @@ export class ThinkCoordinator {
                     indexWarnings: [],
                 },
             };
-        } catch (error) {
-            const reason =
-                error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: reason }],
-                details: {
-                    archiveIds: [],
-                    sourceBytes: 0,
-                    derivedBytes: 0,
-                    language: "javascript",
-                    runtime: "none",
-                    elapsedMs: Math.round(performance.now() - startedAt),
-                    truncated: false,
-                    captureWarnings: [],
-                    indexWarnings: [],
-                    blockedReason: reason,
-                },
-            };
+        } catch {
+            throw createThinkArtifactSearchError({
+                code: "artifact-search-failed",
+                reason: "Artifact search unavailable",
+                recovery: "repair_store",
+            });
         }
     }
 
@@ -1386,6 +1330,38 @@ function boundedDerivedText(
     return truncated;
 }
 
+const MIN_EMBEDDED_SOURCE_BYTES = 32;
+
+function assertNoDirectSourceEcho(
+    action: ThinkExecuteAction,
+    derivedOutput: string,
+    sources: readonly string[],
+): void {
+    const derived = derivedOutput.trim();
+    if (derived.length === 0) return;
+    const derivedBytes = Buffer.byteLength(derived, "utf8");
+    for (const rawSource of sources) {
+        const source = rawSource.trim();
+        if (source.length === 0) continue;
+        const exactEcho = derived === source;
+        const escapedSource = JSON.stringify(rawSource).slice(1, -1);
+        const embedsSource = [rawSource, source, escapedSource].some(
+            (candidate) => candidate.length > 0 && derived.includes(candidate),
+        );
+        const extractsSource =
+            derivedBytes >= MIN_EMBEDDED_SOURCE_BYTES &&
+            source.includes(derived);
+        if (!exactEcho && !embedsSource && !extractsSource) continue;
+        throw createThinkExecutionError({
+            action,
+            stage: "analysis",
+            code: "analysis-source-echo",
+            reason: "Analysis result directly reproduces source data",
+            recovery: "change_program",
+        });
+    }
+}
+
 function relativeTo(base: string, target: string): string {
     if (target.startsWith(base + "/")) {
         return target.slice(base.length + 1);
@@ -1401,6 +1377,7 @@ export const __test = {
     SCHEMA_VERSION,
     verifyArchiveId,
     boundedDerivedText,
+    assertNoDirectSourceEcho,
     fileFailureReason,
     readBoundedFile,
 };

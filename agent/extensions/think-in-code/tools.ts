@@ -1,10 +1,9 @@
 /**
- * Tool contracts for the three native `think_*` tools.
+ * Tool contracts for the two native `think_*` tools.
  *
  * Each tool calls the ThinkCoordinator and returns an LLM-visible status
- * header followed by bounded analyzer text. Raw sources remain in archives
- * unless the caller's analyzer program deliberately copies them into its
- * public result.
+ * header followed by bounded analyzer text. Raw sources remain in archives;
+ * direct analyzer echoes are rejected before they reach a public result.
  *
  * Schema validation rejects multiple sources, unknown languages, over-limit
  * batch size, invalid archive IDs, excessive result limits, and any fetch or
@@ -41,7 +40,6 @@ const MAX_PROGRAM_BYTES = 64 * 1024;
 const MAX_INLINE_CONTENT_BYTES = 64 * 1024 * 1024;
 const ARCHIVE_ID_PATTERN = "^[A-Za-z0-9_-]{8,128}$";
 const MAX_SEARCH_LIMIT = 20;
-const DEFAULT_MAX_NOTE_CHARS = 1024;
 
 // Language and program guidance. The JavaScript/TypeScript analyzer runs the
 // program as an ES module; valid programs MUST use `export default <value>`
@@ -71,20 +69,6 @@ function boundedString(name: string, value: unknown, maxBytes: number): string {
     }
     if (Buffer.byteLength(value, "utf8") > maxBytes) {
         throw new Error(`${name} exceeds ${maxBytes} UTF-8 bytes`);
-    }
-    return value;
-}
-
-function boundedCharacters(
-    name: string,
-    value: unknown,
-    maxCharacters: number,
-): string {
-    if (typeof value !== "string") {
-        throw new Error(`${name} must be a string`);
-    }
-    if (Array.from(value).length > maxCharacters) {
-        throw new Error(`${name} exceeds ${maxCharacters} characters`);
     }
     return value;
 }
@@ -164,9 +148,10 @@ const searchSchema: TSchema = Type.Object(
     { additionalProperties: false },
 );
 
-export function createThinkSchemas(
-    maxNoteChars = DEFAULT_MAX_NOTE_CHARS,
-): Readonly<{ execute: TSchema; note: TSchema; search: TSchema }> {
+export function createThinkSchemas(): Readonly<{
+    execute: TSchema;
+    artifactSearch: TSchema;
+}> {
     const executeSchema: TSchema = Type.Object(
         {
             action: StringEnum(EXECUTE_ACTIONS, {
@@ -211,20 +196,9 @@ export function createThinkSchemas(
         },
         { additionalProperties: false },
     );
-    const noteSchema: TSchema = Type.Object(
-        {
-            source: Type.String({ minLength: 1, maxLength: 4096 }),
-            text: Type.String({ minLength: 1, maxLength: maxNoteChars }),
-            archiveIds: Type.Optional(
-                Type.Array(Type.String({ pattern: ARCHIVE_ID_PATTERN })),
-            ),
-        },
-        { additionalProperties: false },
-    );
     return Object.freeze({
         execute: executeSchema,
-        note: noteSchema,
-        search: searchSchema,
+        artifactSearch: searchSchema,
     });
 }
 
@@ -240,8 +214,7 @@ export interface ToolHandlers {
         ctx: ExtensionContext,
         runtime?: ToolRuntime,
     ): Promise<unknown>;
-    note(args: unknown): Promise<unknown>;
-    search(args: unknown): Promise<unknown>;
+    artifactSearch(args: unknown): Promise<unknown>;
 }
 
 function requireAction(value: unknown): ThinkExecuteAction {
@@ -280,26 +253,17 @@ function rejectUnexpectedFields(
     }
 }
 
-function rejectUnexpectedNoteFields(obj: Record<string, unknown>): void {
-    const allowed = new Set(["id", "source", "text", "archiveIds"]);
-    const unexpected = Object.keys(obj).find((key) => !allowed.has(key));
-    if (unexpected) {
-        throw new Error(`think_note does not accept ${unexpected}`);
-    }
-}
-
-function rejectUnexpectedSearchFields(obj: Record<string, unknown>): void {
+function rejectUnexpectedArtifactSearchFields(
+    obj: Record<string, unknown>,
+): void {
     const allowed = new Set(["id", "query", "limit"]);
     const unexpected = Object.keys(obj).find((key) => !allowed.has(key));
     if (unexpected) {
-        throw new Error(`think_search does not accept ${unexpected}`);
+        throw new Error(`think_artifact_search does not accept ${unexpected}`);
     }
 }
 
-export function buildToolHandlers(
-    coordinator: ThinkCoordinator,
-    maxNoteChars = DEFAULT_MAX_NOTE_CHARS,
-): ToolHandlers {
+export function buildToolHandlers(coordinator: ThinkCoordinator): ToolHandlers {
     return {
         async execute(args, ctx, runtime) {
             const obj = args as Record<string, unknown>;
@@ -394,27 +358,11 @@ export function buildToolHandlers(
                 runtime,
             );
         },
-        async note(args) {
+        async artifactSearch(args) {
             const obj = args as Record<string, unknown>;
-            rejectUnexpectedNoteFields(obj);
+            rejectUnexpectedArtifactSearchFields(obj);
             const id = boundedString("id", obj.id, 128);
-            const archiveIds =
-                obj.archiveIds === undefined
-                    ? undefined
-                    : requireArchiveIds(obj.archiveIds, "archiveIds");
-            return coordinator.index({
-                id,
-                kind: "document-summary",
-                source: boundedString("source", obj.source, 4096),
-                text: boundedCharacters("text", obj.text, maxNoteChars),
-                archiveIds,
-            });
-        },
-        async search(args) {
-            const obj = args as Record<string, unknown>;
-            rejectUnexpectedSearchFields(obj);
-            const id = boundedString("id", obj.id, 128);
-            return coordinator.search({
+            return coordinator.searchArtifacts({
                 id,
                 query: boundedString("query", obj.query, 1024),
                 limit: typeof obj.limit === "number" ? obj.limit : undefined,

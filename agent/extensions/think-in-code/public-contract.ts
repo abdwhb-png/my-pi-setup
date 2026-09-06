@@ -4,6 +4,7 @@ import type { ThinkExecuteAction } from "./types.ts";
 
 export type ThinkResultStatus = "success" | "partial";
 export type ThinkSourceStatus = "succeeded" | "failed" | "mixed";
+export type ThinkIndexStatus = "indexed" | "failed" | "unknown";
 export type ThinkFailureStage = "source" | "analysis" | "store";
 export type ThinkRecovery =
     | "restore_sandbox"
@@ -21,6 +22,7 @@ export interface ThinkExecuteHeader {
     resultBytes: number;
     truncated: boolean;
     archiveIds: readonly string[];
+    indexStatus: ThinkIndexStatus;
     total?: number;
     succeeded?: number;
     failed?: number;
@@ -35,6 +37,15 @@ export interface ThinkFailurePayload {
     code: string;
     reason: string;
     recovery: ThinkRecovery;
+}
+
+export interface ThinkArtifactSearchFailurePayload {
+    tool: "think_artifact_search";
+    status: "error";
+    stage: "store";
+    code: string;
+    reason: string;
+    recovery: "repair_store" | "retry";
 }
 
 const THINK_EXECUTION_ERROR_BRAND: unique symbol = Symbol.for(
@@ -75,6 +86,24 @@ export function createThinkExecutionError(
     return error;
 }
 
+export function createThinkArtifactSearchError(input: {
+    code: string;
+    reason: string;
+    recovery: ThinkArtifactSearchFailurePayload["recovery"];
+}): Error {
+    const payload: ThinkArtifactSearchFailurePayload = {
+        tool: "think_artifact_search",
+        status: "error",
+        stage: "store",
+        code: input.code.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64),
+        reason: redactTextPreservingContext(input.reason, { maxLength: 512 }),
+        recovery: input.recovery,
+    };
+    const error = new Error(JSON.stringify(payload));
+    error.name = "ThinkArtifactSearchError";
+    return error;
+}
+
 export function isThinkExecutionError(error: OpaqueValue): error is Error {
     if (typeof error !== "object" || error === null) return false;
     return Reflect.get(error, THINK_EXECUTION_ERROR_BRAND) === true;
@@ -99,6 +128,10 @@ export function parseThinkExecuteHeader(
     const resultBytes = Reflect.get(parsed, "resultBytes");
     const truncated = Reflect.get(parsed, "truncated");
     const archiveIds = Reflect.get(parsed, "archiveIds");
+    const rawIndexStatus = Reflect.get(parsed, "indexStatus");
+    const indexStatus = isThinkIndexStatus(rawIndexStatus)
+        ? rawIndexStatus
+        : "unknown";
     const total = Reflect.get(parsed, "total");
     const succeeded = Reflect.get(parsed, "succeeded");
     const failed = Reflect.get(parsed, "failed");
@@ -126,11 +159,43 @@ export function parseThinkExecuteHeader(
         resultBytes,
         truncated,
         archiveIds,
+        indexStatus,
         ...(total === undefined ? {} : { total }),
         ...(succeeded === undefined ? {} : { succeeded }),
         ...(failed === undefined ? {} : { failed }),
         ...(blocked === undefined ? {} : { blocked }),
     };
+}
+
+export function parseThinkArtifactSearchFailurePayload(
+    content: OpaqueValue,
+): ThinkArtifactSearchFailurePayload | undefined {
+    const text = firstText(content);
+    if (text === undefined) return undefined;
+    let parsed: OpaqueValue;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        return undefined;
+    }
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const tool = Reflect.get(parsed, "tool");
+    const status = Reflect.get(parsed, "status");
+    const stage = Reflect.get(parsed, "stage");
+    const code = Reflect.get(parsed, "code");
+    const reason = Reflect.get(parsed, "reason");
+    const recovery = Reflect.get(parsed, "recovery");
+    if (
+        tool !== "think_artifact_search" ||
+        status !== "error" ||
+        stage !== "store" ||
+        typeof code !== "string" ||
+        typeof reason !== "string" ||
+        (recovery !== "repair_store" && recovery !== "retry")
+    ) {
+        return undefined;
+    }
+    return { tool, status, stage, code, reason, recovery };
 }
 
 export function parseThinkFailurePayload(
@@ -192,6 +257,10 @@ function isThinkAction(value: OpaqueValue): value is ThinkExecuteAction {
 
 function isThinkSourceStatus(value: OpaqueValue): value is ThinkSourceStatus {
     return value === "succeeded" || value === "failed" || value === "mixed";
+}
+
+function isThinkIndexStatus(value: OpaqueValue): value is ThinkIndexStatus {
+    return value === "indexed" || value === "failed" || value === "unknown";
 }
 
 function isThinkFailureStage(value: OpaqueValue): value is ThinkFailureStage {

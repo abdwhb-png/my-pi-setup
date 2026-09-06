@@ -39,8 +39,7 @@
         "lens": ["lens_diagnostics", "ast_grep_dump", "@lens-inspect"],
         "lens-write": ["@lens", "ast_grep_replace", "lens_diagnostic_mark"],
         "think-inspect": [
-            "think_note",
-            "think_search"
+            "think_artifact_search"
         ],
         "think-exec": [
             "think_execute"

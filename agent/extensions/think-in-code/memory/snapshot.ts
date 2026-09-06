@@ -1,31 +1,14 @@
-/**
- * Deterministic 1500-token post-compaction snapshot builder.
- *
- * Priority order (high → low):
- *   1. unresolved blockers / errors
- *   2. user decisions / corrections
- *   3. active objective / open actions
- *   4. verified facts (file paths, command outcomes, archive references)
- *
- * Completed / noisy events are dropped. Archive references are always
- * preserved (they are opaque IDs, not raw bytes).
- *
- * Output is hard-clamped to the configured token budget using Pi's exported
- * `estimateTokens` (chars/4 conservative heuristic).
- *
- * Stable for identical records: ties are broken by (priority, turnIndex, id)
- * then alphabetically by id. No tool-routing directives are ever emitted.
- */
+/** Deterministic, one-shot Think execution receipt for post-compaction use. */
 
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { estimateTokens } from "@earendil-works/pi-coding-agent";
-
-import type { CaptureRecord } from "./capture.ts";
+import { isCaptureRecord, type ThinkExecutionReceipt } from "./capture.ts";
 
 export const SNAPSHOT_ENTRY_TYPE = "think-in-code:snapshot";
+export const MAX_RECEIPT_SNAPSHOT_BYTES = 2048;
 
 export interface SnapshotOptions {
-    /** Hard token budget. Default: 1500. */
+    /** Hard byte budget, clamped to 2 KiB. */
+    byteBudget?: number;
+    /** Backward-compatible input; converted at four bytes per token. */
     tokenBudget?: number;
 }
 
@@ -38,113 +21,105 @@ export interface Snapshot {
     deterministicHash: string;
 }
 
-/**
- * Sort and truncate capture records to fit inside the token budget.
- *
- * No routing directives are ever included — output is a passive
- * project-context summary only.
- */
+interface SnapshotReceipt extends ThinkExecutionReceipt {
+    turnIndex: number;
+}
+
 export function buildSnapshot(
-    records: readonly CaptureRecord[],
+    records: readonly unknown[],
     options: SnapshotOptions = {},
 ): Snapshot {
-    const tokenBudget = options.tokenBudget ?? 1500;
-    const sorted = [...records].sort((a, b) => {
-        if (a.priority !== b.priority) return a.priority - b.priority;
-        if (a.turnIndex !== b.turnIndex) return a.turnIndex - b.turnIndex;
-        return a.id.localeCompare(b.id);
-    });
+    const requestedBudget =
+        options.byteBudget ??
+        (options.tokenBudget === undefined
+            ? MAX_RECEIPT_SNAPSHOT_BYTES
+            : options.tokenBudget * 4);
+    const byteBudget = Math.max(
+        256,
+        Math.min(MAX_RECEIPT_SNAPSHOT_BYTES, Math.floor(requestedBudget)),
+    );
+    const valid = records
+        .filter(isCaptureRecord)
+        .toSorted(
+            (left, right) =>
+                right.turnIndex - left.turnIndex ||
+                right.createdAt - left.createdAt ||
+                right.id.localeCompare(left.id),
+        );
+    const receipts: SnapshotReceipt[] = [];
+    let droppedCount = records.length - valid.length;
 
-    const kept: CaptureRecord[] = [];
-    let droppedCount = 0;
-    let working = "";
-    let archiveReferenceCount = 0;
+    for (const record of valid) {
+        const candidate: SnapshotReceipt = {
+            turnIndex: record.turnIndex,
+            ...record.receipt,
+            archiveIds: [...record.receipt.archiveIds],
+        };
+        if (tryAppend(receipts, candidate, byteBudget)) continue;
 
-    for (const record of sorted) {
-        const line = formatRecord(record);
-        const candidate = working ? `${working}\n${line}` : line;
-        const estimate = estimateTokens(syntheticMessage(candidate));
-        if (estimate > tokenBudget) {
-            // If a single record exceeds the budget on its own, still keep
-            // its archive references (always preserved), then drop the rest.
-            if (record.references && record.references.length > 0) {
-                const refLine = `archiveRefs(${record.id}): ${record.references.join(", ")}`;
-                const refCandidate = working
-                    ? `${working}\n${refLine}`
-                    : refLine;
-                const refEstimate = estimateTokens(
-                    syntheticMessage(refCandidate),
-                );
-                if (refEstimate <= tokenBudget) {
-                    working = refCandidate;
-                    archiveReferenceCount += record.references.length;
-                    kept.push(record);
-                    continue;
-                }
+        const withoutDerivation = { ...candidate };
+        delete withoutDerivation.derivation;
+        if (tryAppend(receipts, withoutDerivation, byteBudget)) continue;
+
+        const boundedReferences = {
+            ...withoutDerivation,
+            archiveIds: [] as string[],
+        };
+        for (const archiveId of withoutDerivation.archiveIds) {
+            const next = {
+                ...boundedReferences,
+                archiveIds: [...boundedReferences.archiveIds, archiveId],
+            };
+            if (fits([...receipts, next], byteBudget)) {
+                boundedReferences.archiveIds.push(archiveId);
+            } else {
+                break;
             }
-            droppedCount += 1;
-            continue;
         }
-        working = candidate;
-        if (record.references) {
-            archiveReferenceCount += record.references.length;
-        }
-        kept.push(record);
+        if (tryAppend(receipts, boundedReferences, byteBudget)) continue;
+        droppedCount += 1;
     }
 
-    const estimatedTokens = estimateTokens(syntheticMessage(working));
-    const byteCount = Buffer.byteLength(working, "utf8");
-    const deterministicHash = simpleHash(kept.map((r) => r.id).join("|"));
+    const content = serialize(receipts);
+    const byteCount = Buffer.byteLength(content, "utf8");
     return {
-        content: working,
+        content,
         byteCount,
-        estimatedTokens,
+        estimatedTokens: Math.ceil(byteCount / 4),
         droppedCount,
-        archiveReferenceCount,
-        deterministicHash,
+        archiveReferenceCount: receipts.reduce(
+            (total, receipt) => total + receipt.archiveIds.length,
+            0,
+        ),
+        deterministicHash: simpleHash(content),
     };
 }
 
-function formatRecord(record: CaptureRecord): string {
-    const refs =
-        record.references && record.references.length > 0
-            ? ` [refs:${record.references.join(",")}]`
-            : "";
-    return `${tagFor(record.priority)} t${record.turnIndex} ${record.text}${refs}`;
+function tryAppend(
+    receipts: SnapshotReceipt[],
+    receipt: SnapshotReceipt,
+    byteBudget: number,
+): boolean {
+    if (!fits([...receipts, receipt], byteBudget)) return false;
+    receipts.push(receipt);
+    return true;
 }
 
-function tagFor(priority: CaptureRecord["priority"]): string {
-    switch (priority) {
-        case 0:
-            return "[blocker]";
-        case 1:
-            return "[decision]";
-        case 2:
-            return "[objective]";
-        case 3:
-            return "[verified]";
-        case 4:
-            return "[claim]";
-        default:
-            return "[note]";
-    }
+function fits(
+    receipts: readonly SnapshotReceipt[],
+    byteBudget: number,
+): boolean {
+    return Buffer.byteLength(serialize(receipts), "utf8") <= byteBudget;
 }
 
-function syntheticMessage(content: string): AgentMessage {
-    // SAFETY: estimateTokens reads only role + content blocks; we cast the
-    // minimal subset it actually inspects.
-    return {
-        role: "user",
-        content: [{ type: "text", text: content }],
-        timestamp: 0,
-    } as unknown as AgentMessage;
+function serialize(receipts: readonly SnapshotReceipt[]): string {
+    return JSON.stringify({ type: "think-execution-receipts", receipts });
 }
 
-/** Deterministic FNV-1a-style hash; sufficient for change detection. */
 function simpleHash(input: string): string {
     let hash = 0x811c9dc5;
-    for (let i = 0; i < input.length; i += 1) {
-        hash ^= input.charCodeAt(i);
+    for (let index = 0; index < input.length; index += 1) {
+        hash ^= input.charCodeAt(index);
         hash = Math.imul(hash, 0x01000193) >>> 0;
     }
     return hash.toString(16).padStart(8, "0");

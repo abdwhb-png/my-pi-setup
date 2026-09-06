@@ -37,6 +37,39 @@ function context(cwd: string, sessionId: string): ExtensionContext {
 }
 
 describe("think-in-code extension lifecycle", () => {
+    it("registers two visible tools with call and result renderers", async () => {
+        fixture = await mkdtemp(join(tmpdir(), "think-index-renderers-"));
+        const project = join(fixture, "project");
+        await mkdir(project);
+        const handlers = new Map<string, EventHandler[]>();
+        const registered: Array<Record<string, unknown>> = [];
+        const pi = {
+            on: (name: string, handler: EventHandler) => {
+                handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+            },
+            registerTool: (tool: Record<string, unknown>) => registered.push(tool),
+            registerCommand: () => undefined,
+            appendEntry: () => undefined,
+            getActiveTools: () => ["think_execute", "think_artifact_search"],
+            setActiveTools: () => undefined,
+            events: { on: () => () => undefined },
+        } as unknown as ExtensionAPI;
+        registerThinkInCode(pi, { resolveRoot: () => join(fixture!, "state") });
+
+        for (const handler of handlers.get("session_start") ?? []) {
+            await handler({}, context(project, "renderer-session"));
+        }
+
+        expect(registered.map((tool) => tool.name)).toEqual([
+            "think_execute",
+            "think_artifact_search",
+        ]);
+        for (const tool of registered) {
+            expect(tool.renderCall).toBeFunction();
+            expect(tool.renderResult).toBeFunction();
+        }
+    });
+
     it("rebinds capture hooks to the current project store on a second session_start", async () => {
         fixture = await mkdtemp(join(tmpdir(), "think-index-lifecycle-"));
         const root = join(fixture, "state");
@@ -47,7 +80,7 @@ describe("think-in-code extension lifecycle", () => {
 
         const handlers = new Map<string, EventHandler[]>();
         const eventHandlers = new Map<string, EventHandler[]>();
-        let activeTools = ["think_execute", "think_note", "think_search"];
+        let activeTools = ["think_execute", "think_artifact_search"];
         const pi = {
             on: (name: string, handler: EventHandler) => {
                 handlers.set(name, [...(handlers.get(name) ?? []), handler]);
@@ -83,8 +116,25 @@ describe("think-in-code extension lifecycle", () => {
         for (const handler of [...(handlers.get("session_start") ?? [])]) {
             await handler({}, context(secondProject, "session-second"));
         }
-        for (const handler of handlers.get("before_agent_start") ?? []) {
-            await handler({ prompt: "captured in the second project" });
+        for (const handler of handlers.get("tool_result") ?? []) {
+            await handler({
+                toolName: "think_execute",
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify({
+                            status: "success",
+                            action: "file",
+                            sourceStatus: "succeeded",
+                            sourceBytes: 42,
+                            resultBytes: 18,
+                            truncated: false,
+                            archiveIds: ["archive-second"],
+                        }),
+                    },
+                    { type: "text", text: "second derivation" },
+                ],
+            });
         }
         for (const handler of handlers.get("turn_end") ?? []) {
             await handler({});
@@ -105,6 +155,7 @@ describe("think-in-code extension lifecycle", () => {
         store.close();
 
         expect(rows).toHaveLength(1);
-        expect(rows[0]?.payload).toContain("captured in the second project");
+        expect(rows[0]?.payload).toContain("second derivation");
+        expect(rows[0]?.payload).not.toContain("prompt");
     });
 });

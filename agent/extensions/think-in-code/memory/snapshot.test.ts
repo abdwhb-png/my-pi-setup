@@ -1,91 +1,90 @@
 import { describe, expect, it } from "bun:test";
 
-import type { CaptureRecord } from "./capture";
-import { buildSnapshot } from "./snapshot";
+import type { CaptureRecord } from "./capture.ts";
+import { buildSnapshot } from "./snapshot.ts";
 
-function record(partial: Partial<CaptureRecord>): CaptureRecord {
+function receipt(
+    turnIndex: number,
+    derivation = `derived result ${turnIndex}`,
+): CaptureRecord {
     return {
-        id: partial.id ?? "r",
-        sessionId: partial.sessionId ?? "s",
-        turnIndex: partial.turnIndex ?? 0,
-        priority: partial.priority ?? 3,
-        source: partial.source ?? "user",
-        text: partial.text ?? "",
-        references: partial.references,
-        createdAt: partial.createdAt ?? 0,
+        version: 2,
+        id: `receipt-${turnIndex}`,
+        sessionId: "session",
+        turnIndex,
+        createdAt: turnIndex,
+        receipt: {
+            status: "success",
+            action: "command",
+            sourceStatus: "succeeded",
+            sourceBytes: 4096,
+            resultBytes: Buffer.byteLength(derivation),
+            truncated: false,
+            indexStatus: "indexed",
+            archiveIds: [`archive-${turnIndex}`],
+            derivation,
+        },
     };
 }
 
-describe("snapshot builder", () => {
-    it("clamps output under the token budget", () => {
-        const records: CaptureRecord[] = [];
-        for (let i = 0; i < 5000; i += 1) {
-            records.push(
-                record({
-                    id: `r-${i}`,
-                    turnIndex: i,
-                    priority: 3,
-                    text: `verified fact number ${i} with enough text to consume tokens quickly`,
-                }),
-            );
-        }
-        const snapshot = buildSnapshot(records, { tokenBudget: 1500 });
-        expect(snapshot.estimatedTokens).toBeLessThanOrEqual(1500);
+describe("Think execution receipt snapshot", () => {
+    it("keeps only technical receipts under the hard 2 KB limit", () => {
+        const records: unknown[] = [
+            {
+                id: "legacy-user-memory",
+                source: "user",
+                text: "remember my private preference forever",
+                priority: 1,
+            },
+            ...Array.from({ length: 100 }, (_, index) =>
+                receipt(index, `bounded derivation ${index} ${"x".repeat(300)}`),
+            ),
+        ];
+
+        const snapshot = buildSnapshot(records);
+
+        expect(snapshot.byteCount).toBeLessThanOrEqual(2048);
+        expect(snapshot.content).not.toContain("private preference");
+        expect(snapshot.content).toContain('"type":"think-execution-receipts"');
+        expect(snapshot.content).toContain('"action":"command"');
         expect(snapshot.droppedCount).toBeGreaterThan(0);
     });
 
-    it("prioritizes blockers over verified facts", () => {
-        const records = [
-            record({ id: "v1", priority: 3, text: "verified content" }),
-            record({ id: "b1", priority: 0, text: "blocker content" }),
-        ];
-        const snapshot = buildSnapshot(records);
-        expect(snapshot.content.indexOf("[blocker]")).toBeLessThan(
-            snapshot.content.indexOf("[verified]"),
+    it("preserves a safe failure code and recovery without details", () => {
+        const record: CaptureRecord = {
+            version: 2,
+            id: "receipt-error",
+            sessionId: "session",
+            turnIndex: 3,
+            createdAt: 3,
+            receipt: {
+                status: "error",
+                action: "batch",
+                code: "sandbox-setup-failed",
+                reason: "Sandbox setup failed",
+                recovery: "restore_sandbox",
+                archiveIds: [],
+            },
+        };
+
+        const snapshot = buildSnapshot([record]);
+        const parsed = JSON.parse(snapshot.content) as {
+            receipts: Array<Record<string, unknown>>;
+        };
+        expect(parsed.receipts[0]).toMatchObject({
+            status: "error",
+            action: "batch",
+            code: "sandbox-setup-failed",
+            recovery: "restore_sandbox",
+        });
+    });
+
+    it("prioritizes the most recent execution receipts", () => {
+        const snapshot = buildSnapshot(
+            Array.from({ length: 40 }, (_, index) => receipt(index)),
+            { byteBudget: 512 },
         );
-    });
-
-    it("preserves archive references even when the record text would overflow", () => {
-        const records = [
-            record({
-                id: "huge",
-                priority: 0,
-                text: "X".repeat(50_000),
-                references: ["abc12345", "def67890"],
-            }),
-        ];
-        const snapshot = buildSnapshot(records, { tokenBudget: 200 });
-        expect(snapshot.archiveReferenceCount).toBe(2);
-        expect(snapshot.content).toContain("abc12345");
-    });
-
-    it("produces a deterministic hash for identical records", () => {
-        const records = [
-            record({ id: "a", priority: 0, text: "first" }),
-            record({ id: "b", priority: 3, text: "second" }),
-        ];
-        const first = buildSnapshot(records);
-        const second = buildSnapshot(records);
-        expect(first.deterministicHash).toBe(second.deterministicHash);
-    });
-
-    it("never emits a routing directive (no @-tool references)", () => {
-        const records = [
-            record({
-                id: "u",
-                priority: 1,
-                text: "User asked for @ctx_batch_execute to be removed",
-            }),
-            record({ id: "v", priority: 3, text: "File: /tmp/x.ts" }),
-        ];
-        const snapshot = buildSnapshot(records);
-        expect(snapshot.content).not.toMatch(/use\s+@?think_[a-z_]+/i);
-        expect(snapshot.content).not.toMatch(/call\s+@?ctx_[a-z_]+/i);
-    });
-
-    it("drops records without priority tags via overflow rather than dropping silently", () => {
-        const records = [record({ id: "huge", priority: 0, text: "Y".repeat(20_000) })];
-        const snapshot = buildSnapshot(records, { tokenBudget: 50 });
-        expect(snapshot.droppedCount).toBe(1);
+        expect(snapshot.content).toContain("archive-39");
+        expect(snapshot.content).not.toContain("archive-0");
     });
 });

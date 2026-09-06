@@ -7,13 +7,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
-import { ThinkStore, __getRawDatabase } from "../storage/store.ts";
+import { ThinkStore } from "../storage/store.ts";
 import {
     CAPTURE_ENTRY_TYPE,
     CaptureBuffer,
-    classifyToolCall,
-    classifyToolResult,
-    type CapturePriority,
+    isCaptureRecord,
     type CaptureRecord,
 } from "./capture.ts";
 import {
@@ -33,9 +31,8 @@ export function buildThinkSystemInstruction(
 ): string | undefined {
     const active = new Set(activeToolNames);
     const canExecute = active.has("think_execute");
-    const canNote = active.has("think_note");
-    const canSearch = active.has("think_search");
-    if (!canExecute && !canNote && !canSearch) return undefined;
+    const canSearch = active.has("think_artifact_search");
+    if (!canExecute && !canSearch) return undefined;
 
     const uses: string[] = [];
     if (canExecute) {
@@ -45,12 +42,7 @@ export function buildThinkSystemInstruction(
     }
     if (canSearch) {
         uses.push(
-            "use think_search only for relevant prior indexed analyses or notes, never current-source discovery",
-        );
-    }
-    if (canNote) {
-        uses.push(
-            "use think_note only for concise reviewed conclusions worth retaining",
+            "use think_artifact_search only for temporary prior Think execution artifacts, never general memory or current-source discovery",
         );
     }
     return `${SYSTEM_INSTRUCTION_PREFIX} ${uses.join("; ")}. Use these tools autonomously and do not narrate tool routing.`;
@@ -160,7 +152,11 @@ export class HookState {
             ...snapshots.entries(),
         ].toReversed()) {
             const compactionEntryId = ready.get(snapshotId);
-            if (compactionEntryId && !consumed.has(snapshotId)) {
+            if (
+                compactionEntryId &&
+                !consumed.has(snapshotId) &&
+                this.#store.isRecentPendingSnapshot(snapshotId, sessionId)
+            ) {
                 this.#snapshotId = snapshotId;
                 this.#snapshot = snapshot;
                 this.#readyCompactionEntryId = compactionEntryId;
@@ -169,43 +165,12 @@ export class HookState {
         }
     }
 
-    captureUserPrompt(prompt: string): void {
-        this.#buffer?.add({
-            sessionId: this.#sessionId ?? "",
-            turnIndex: this.#currentTurn,
-            source: "user",
-            priority: 2 satisfies CapturePriority,
-            text: prompt,
-        });
-    }
-
-    captureToolCall(toolName: string, args: Record<string, unknown>): void {
-        const classification = classifyToolCall({ toolName, args });
-        this.#buffer?.add({
-            sessionId: this.#sessionId ?? "",
-            turnIndex: this.#currentTurn,
-            source: "tool-call",
-            priority: classification.priority,
-            text: classification.text,
-        });
-    }
-
     captureToolResult(input: {
         toolName: string;
-        isError: boolean;
         content?: unknown;
         details?: unknown;
-        references?: readonly string[];
     }): void {
-        const classification = classifyToolResult(input);
-        this.#buffer?.add({
-            sessionId: this.#sessionId ?? "",
-            turnIndex: this.#currentTurn,
-            source: "tool-result",
-            priority: classification.priority,
-            text: classification.text,
-            references: classification.references,
-        });
+        this.#buffer?.addToolResult(input, this.#currentTurn);
     }
 
     endTurn(): void {
@@ -216,23 +181,20 @@ export class HookState {
     buildAndPersistSnapshot(sessionId: string): Snapshot | undefined {
         try {
             const records: CaptureRecord[] = [];
-            const events = __getRawDatabase(this.#store)
-                .query(
-                    `SELECT payload FROM session_events
-                       WHERE session_id = ? AND kind LIKE ?
-                       ORDER BY turn_index, id`,
-                )
-                .all(sessionId, `${CAPTURE_ENTRY_TYPE}:%`) as Array<{
-                payload: string;
-            }>;
-            for (const row of events) {
+            const events = this.#store.recentSessionEventPayloads(
+                sessionId,
+                CAPTURE_ENTRY_TYPE,
+            );
+            for (const payload of events) {
                 try {
-                    records.push(JSON.parse(row.payload) as CaptureRecord);
+                    const parsed: unknown = JSON.parse(payload);
+                    if (isCaptureRecord(parsed)) records.push(parsed);
                 } catch {
                     // Ignore malformed historical capture rows.
                 }
             }
             records.push(...(this.#buffer?.pending() ?? []));
+            if (records.length === 0) return undefined;
             const snapshot = buildSnapshot(records, {
                 tokenBudget: this.#tokenBudget,
             });
@@ -344,7 +306,6 @@ export function registerHooks(
     });
     pi.on("before_agent_start", (event) => {
         try {
-            state.captureUserPrompt(event.prompt ?? "");
             const instruction = buildThinkSystemInstruction(
                 pi.getActiveTools(),
             );
@@ -360,24 +321,12 @@ export function registerHooks(
         }
         return undefined;
     });
-    pi.on("tool_call", (event) => {
-        try {
-            state.captureToolCall(
-                event.toolName,
-                (event.input as Record<string, unknown>) ?? {},
-            );
-        } catch {
-            /* fail open */
-        }
-    });
     pi.on("tool_result", (event) => {
         try {
             state.captureToolResult({
                 toolName: event.toolName,
-                isError: Boolean(event.isError),
                 content: event.content,
                 details: event.details,
-                references: extractArchiveIds(event.details),
             });
         } catch {
             /* fail open */
@@ -481,20 +430,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function extractArchiveIds(details: unknown): string[] | undefined {
-    if (!isRecord(details) || !Array.isArray(details.archiveIds))
-        return undefined;
-    const filtered = details.archiveIds.filter(
-        (id): id is string => typeof id === "string",
-    );
-    return filtered.length > 0 ? filtered : undefined;
-}
-
 export const __test = {
     SNAPSHOT_ENTRY_TYPE,
     SNAPSHOT_READY_TYPE,
     SNAPSHOT_CONSUMED_TYPE,
-    extractArchiveIds,
     parseSnapshotEntry,
     parseMarkerEntry,
 };

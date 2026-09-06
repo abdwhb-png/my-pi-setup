@@ -2688,11 +2688,11 @@ describe("exploration ledger", () => {
     // Task 7 — think_* evidence classification (replaces legacy ctx_*).
     // ------------------------------------------------------------------
 
-    it("classifies think_search evidence as indexed (parity with ctx_search)", () => {
+    it("classifies think_artifact_search evidence as indexed", () => {
         const ledger = createExplorationLedger({ runId: "brainstorm-test" });
         const evidence = ledger.captureEvidence({
             toolCallId: "call-think-search",
-            toolName: "think_search",
+            toolName: "think_artifact_search",
             input: { queries: ["claim"], source: "ADR-018" },
             content: [{ type: "text", text: "ranked snippet" }],
             details: {},
@@ -2825,16 +2825,4 @@ describe("exploration ledger", () => {
         expect(evidence.sourceRefs).toEqual(["src/index.ts"]);
     });
 
-    it("classifies think_note as indexed (no archive content exposed)", () => {
-        const ledger = createExplorationLedger({ runId: "brainstorm-test" });
-        const evidence = ledger.captureEvidence({
-            toolCallId: "call-think-note",
-            toolName: "think_note",
-            input: { source: "finding", text: "summary" },
-            content: [{ type: "text", text: "Indexed result" }],
-            details: {},
-            isError: false,
-        });
-        expect(evidence.sourceKind).toBe("indexed");
-    });
 });

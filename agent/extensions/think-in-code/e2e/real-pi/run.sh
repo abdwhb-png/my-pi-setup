@@ -198,6 +198,20 @@ fi
         "$sessions" "$output_dir/compact-rpc.jsonl"
 )
 
+if ! jq -s -e '
+    ([.[] | select(.phase == "compact" and .label == "post-compact-first")][0]) as $first
+    | ([.[] | select(.phase == "compact" and .label == "post-compact-second")][0]) as $second
+    | $first.snapshotMessageCount == 1
+      and ($first.snapshotBytes[0] <= 2048)
+      and ($first.snapshotContents[0] | contains("think-execution-receipts"))
+      and ($first.snapshotContents[0] | contains("COMPACTION-SEED") | not)
+      and ($first.snapshotContents[0] | test("decision|objective|verified|claim|prompt"; "i") | not)
+      and $second.snapshotMessageCount == 0
+' "$trace" >/dev/null; then
+    echo "Think post-compaction execution receipt was missing, oversized, or repeated" >&2
+    exit 1
+fi
+
 (
     cd "$project"
     PI_REAL_BIN="$real_pi_bun" \

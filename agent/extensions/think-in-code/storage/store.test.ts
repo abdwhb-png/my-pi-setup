@@ -130,6 +130,47 @@ describe("ThinkStore", () => {
         expect(doc.documentId).toBeGreaterThan(0);
     });
 
+    it("searches only execution artifacts and ignores legacy notes", async () => {
+        harness = await makeHarness();
+        const artifact = harness.store.index({
+            kind: "analysis-summary",
+            source: "think_execute:batch",
+            text: "shared-marker technical derivation",
+        });
+        const db = __getRawDatabase(harness.store);
+        const legacy = db
+            .query(
+                `INSERT INTO documents (kind, source, redacted_text, byte_count, created_at)
+                 VALUES ('document-summary', 'legacy-note', 'shared-marker private conclusion', 32, 1)
+                 RETURNING id`,
+            )
+            .get() as { id: number };
+        db.query(
+            "INSERT INTO fts_documents (rowid, redacted_text) VALUES (?, ?)",
+        ).run(legacy.id, "shared-marker private conclusion");
+
+        const hits = harness.store.search("shared-marker", 10);
+        expect(hits.map((hit) => hit.documentId)).toEqual([
+            artifact.documentId,
+        ]);
+        expect(harness.store.countDocuments()).toBe(1);
+    });
+
+    it("never searches execution artifacts past the 24-hour retention window", async () => {
+        let now = 1_700_000_000_000;
+        harness = await makeHarness("/workspace/proj-a", () => now);
+        harness.store.index({
+            kind: "analysis-summary",
+            source: "think_execute:file",
+            text: "temporary-marker derivation",
+        });
+        expect(harness.store.search("temporary-marker", 5)).toHaveLength(1);
+
+        now += 24 * 60 * 60 * 1000 + 1;
+        expect(harness.store.search("temporary-marker", 5)).toEqual([]);
+        expect(harness.store.countDocuments()).toBe(0);
+    });
+
     it("removes a raw archive file when its database insert fails", async () => {
         harness = await makeHarness();
         const db = __getRawDatabase(harness.store);
@@ -151,15 +192,30 @@ describe("ThinkStore", () => {
         expect(() => harness!.store.readArchives(["missing00"], 10)).toThrow(/not found/);
     });
 
+    it("refuses archive reads after the 24-hour retention window", async () => {
+        let now = 1_700_000_000_000;
+        harness = await makeHarness("/workspace/proj-a", () => now);
+        const archive = harness.store.archive({
+            kind: "command-output",
+            data: "expired raw payload",
+        });
+
+        now += 24 * 60 * 60 * 1000 + 1;
+
+        expect(() => harness!.store.readArchives([archive.id], 1024)).toThrow(
+            /Archive expired:/,
+        );
+    });
+
     it("ranks more relevant documents higher and returns bounded snippets", async () => {
         harness = await makeHarness();
         harness.store.index({
-            kind: "document-summary",
+            kind: "analysis-summary",
             source: "doc-a",
             text: "alpha beta gamma repeated-keyword unique-a",
         });
         harness.store.index({
-            kind: "document-summary",
+            kind: "analysis-summary",
             source: "doc-b",
             text: "alpha beta unrelated",
         });
@@ -188,7 +244,7 @@ describe("ThinkStore", () => {
         expect(() =>
             db.transaction(() => {
                 db.query("INSERT INTO documents (kind, source, redacted_text, byte_count, created_at) VALUES (?, ?, ?, ?, ?)")
-                    .run("document-summary", "doomed", "doomed text", 11, 1);
+                    .run("analysis-summary", "doomed", "doomed text", 11, 1);
                 db.query(`INSERT INTO fts_documents (fts5) VALUES (?)`)
                     .run("malformed-matcher");
             })(),
@@ -235,7 +291,7 @@ describe("ThinkStore", () => {
         harness = await makeHarness();
         const huge = "y".repeat(5000);
         const doc = harness.store.index({
-            kind: "document-summary",
+            kind: "analysis-summary",
             source: "bulk",
             text: `${huge} ${"sk-abcdefghijklmnopqrstuv".repeat(20)}`,
         });

@@ -34,7 +34,7 @@ describe("think-in-code audit lifecycle", () => {
         const commands = new Map<string, CommandDefinition>();
         const eventHandlers = new Map<string, EventHandler[]>();
         const sendUserMessage = mock((_prompt: string) => undefined);
-        let activeTools = ["think_execute", "think_note", "think_search"];
+        let activeTools = ["think_execute", "think_artifact_search"];
         const pi = {
             on: (name: string, handler: EventHandler) => {
                 const registered = handlers.get(name) ?? [];
@@ -111,7 +111,7 @@ describe("think-in-code audit lifecycle", () => {
 
         const gate = handlers.get("tool_call")?.[0];
         if (!gate) throw new Error("tool_call gate was not registered");
-        for (const toolName of ["read", "bash", "think_search"]) {
+        for (const toolName of ["read", "bash", "think_artifact_search"]) {
             await expect(gate({ toolName })).resolves.toMatchObject({
                 block: true,
             });

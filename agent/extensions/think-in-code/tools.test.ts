@@ -79,8 +79,23 @@ describe("think_* tool handlers", () => {
         return { coordinator, handlers };
     }
 
-    it("publishes three schemas with one portable execute action discriminator", () => {
-        expect(Object.keys(SCHEMAS)).toEqual(["execute", "note", "search"]);
+    it("exposes execution and artifact search without a free-form memory tool", () => {
+        expect(Object.keys(SCHEMAS)).toEqual(["execute", "artifactSearch"]);
+        expect(SCHEMAS).not.toHaveProperty("note");
+
+        const artifactSearch = SCHEMAS.artifactSearch as {
+            properties?: Record<string, unknown>;
+        };
+        expect(Object.keys(artifactSearch.properties ?? {})).toEqual([
+            "query",
+            "limit",
+        ]);
+        expect(artifactSearch.properties).not.toHaveProperty("text");
+        expect(artifactSearch.properties).not.toHaveProperty("source");
+    });
+
+    it("publishes two schemas with one portable execute action discriminator", () => {
+        expect(Object.keys(SCHEMAS)).toEqual(["execute", "artifactSearch"]);
 
         const executeSchema = SCHEMAS.execute as {
             properties?: Record<string, unknown>;
@@ -94,14 +109,11 @@ describe("think_* tool handlers", () => {
 
     it("keeps the complete public schema below the five-tool context budget", () => {
         expect(JSON.stringify(SCHEMAS).length).toBeLessThan(2_800);
-        expect(
-            JSON.stringify({ note: SCHEMAS.note, search: SCHEMAS.search })
-                .length,
-        ).toBeLessThanOrEqual(512);
+        expect(JSON.stringify(SCHEMAS.artifactSearch).length).toBeLessThanOrEqual(512);
     });
 
     it("publishes provider-portable string enums in all public schemas", () => {
-        expect(Object.keys(SCHEMAS)).toEqual(["execute", "note", "search"]);
+        expect(Object.keys(SCHEMAS)).toEqual(["execute", "artifactSearch"]);
 
         const expectedLanguageSchema = {
             type: "string",
@@ -115,10 +127,10 @@ describe("think_* tool handlers", () => {
         );
         expect(executeSchema.properties?.language).not.toHaveProperty("anyOf");
 
-        const noteSchema = SCHEMAS.note as {
+        const artifactSearchSchema = SCHEMAS.artifactSearch as {
             properties?: Record<string, unknown>;
         };
-        expect(noteSchema.properties).not.toHaveProperty("kind");
+        expect(artifactSearchSchema.properties).not.toHaveProperty("text");
     });
 
     it("rejects additional properties in every public and nested object schema", () => {
@@ -155,12 +167,7 @@ describe("think_* tool handlers", () => {
                 program: "export default INPUTS.length",
                 items: [{ id: "one", command: "printf test", network: true }],
             });
-        expectRejected("think_note", SCHEMAS.note, {
-                source: "review",
-                text: "conclusion",
-                fetch: true,
-            });
-        expectRejected("think_search", SCHEMAS.search, {
+        expectRejected("think_artifact_search", SCHEMAS.artifactSearch, {
                 query: "conclusion",
                 network: true,
             });
@@ -265,18 +272,6 @@ describe("think_* tool handlers", () => {
         ).rejects.toThrow(/Batch execute exceeds/);
     });
 
-    it("rejects invalid archive provenance in think_note", async () => {
-        const { handlers } = await setup();
-        await expect(
-            handlers.note({
-                id: "x",
-                source: "echo",
-                text: "derived note",
-                archiveIds: ["bad id with spaces"],
-            }),
-        ).rejects.toThrow(/invalid archive id/);
-    });
-
     it("rejects fetch/network parameters on any think_* tool", async () => {
         const { handlers } = await setup();
         await expect(
@@ -294,27 +289,27 @@ describe("think_* tool handlers", () => {
         ).rejects.toThrow(/Fetch\/network/);
     });
 
-    it("rejects unexpected fields on think_search", async () => {
+    it("rejects unexpected fields on think_artifact_search", async () => {
         const { handlers } = await setup();
         await expect(
-            handlers.search({
+            handlers.artifactSearch({
                 id: "x",
                 query: "anything",
                 network: true,
             }),
-        ).rejects.toThrow(/think_search does not accept network/);
+        ).rejects.toThrow(/think_artifact_search does not accept network/);
     });
 
-    it("limits think_search to 20 results", async () => {
+    it("limits think_artifact_search to 20 results", async () => {
         const { handlers, coordinator } = await setup();
         for (let i = 0; i < 25; i += 1) {
             coordinator.store.index({
-                kind: "document-summary",
+                kind: "analysis-summary",
                 source: `s-${i}`,
                 text: `fence_marker_${i}`,
             });
         }
-        const result = (await handlers.search({
+        const result = (await handlers.artifactSearch({
             id: "x",
             query: "fence_marker",
             limit: 100,
@@ -370,10 +365,10 @@ describe("think_* tool handlers", () => {
         );
     });
 
-    it("does not auto-index arbitrary file analysis output", async () => {
+    it("indexes the bounded file derivation", async () => {
         const { handlers, coordinator } = await setup(
             fakeSafeExecution("unused"),
-            fakeAnalysis("raw-file-payload"),
+            fakeAnalysis("derived-file-summary"),
         );
         await writeFile(join(home!, "fixture.txt"), "raw-file-payload", "utf8");
 
@@ -388,6 +383,9 @@ describe("think_* tool handlers", () => {
             { toolCallId: "file-analysis-call" },
         );
 
+        expect(coordinator.store.search("derived-file-summary", 5)).toHaveLength(
+            1,
+        );
         expect(coordinator.store.search("raw-file-payload", 5)).toEqual([]);
     });
 
@@ -440,41 +438,6 @@ describe("think_* tool handlers", () => {
 
         expect(coordinator.store.countDocuments()).toBe(0);
         expect(coordinator.store.archiveBytes()).toBeGreaterThan(0);
-    });
-
-    it("think_note always requires explicit text", async () => {
-        const { handlers } = await setup();
-        await expect(
-            handlers.note({
-                id: "x",
-                source: "echo",
-            }),
-        ).rejects.toThrow(/text must be a string/);
-    });
-
-    it("rejects legacy index fields on think_note", async () => {
-        const { handlers } = await setup();
-        await expect(
-            handlers.note({
-                id: "x",
-                source: "legacy-note",
-                text: "concise conclusion",
-                kind: "analysis-summary",
-            }),
-        ).rejects.toThrow(/think_note does not accept kind/);
-    });
-
-    it("rejects notes larger than the effective indexed text limit", async () => {
-        const { handlers } = await setup();
-        await expect(
-            handlers.note({
-                id: "x",
-                source: "bounded-note",
-                text: "x".repeat(
-                    DEFAULT_THINK_IN_CODE_CONFIG.indexedSnippetChars + 1,
-                ),
-            }),
-        ).rejects.toThrow(/1024 characters/);
     });
 
     it("forwards Pi's real toolCallId and sanitizes the progress callback before safe execution", async () => {

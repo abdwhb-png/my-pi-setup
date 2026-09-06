@@ -68,7 +68,7 @@ export interface ArchiveResult {
 }
 
 export interface IndexInput {
-    kind: "command-summary" | "analysis-summary" | "document-summary";
+    kind: "command-summary" | "analysis-summary";
     source: string;
     text: string;
     archiveIds?: readonly string[];
@@ -88,6 +88,12 @@ export interface SearchHit {
     matchedTokenCount: number;
     queryTokenCount: number;
     archiveIds: readonly string[];
+}
+
+export interface ExpiredStateDeletion {
+    documentsDeleted: number;
+    sessionEventsDeleted: number;
+    snapshotsDeleted: number;
 }
 
 const DEFAULT_ARCHIVE_DIR = "archives";
@@ -281,10 +287,17 @@ export class ThinkStore {
             }
             const row = this.#database
                 .query(
-                    "SELECT archive_path AS archivePath FROM archives WHERE id = ?",
+                    `SELECT archive_path AS archivePath, expires_at AS expiresAt
+                       FROM archives
+                      WHERE id = ?`,
                 )
-                .get(id) as { archivePath: string } | undefined;
+                .get(id) as
+                | { archivePath: string; expiresAt: number }
+                | undefined;
             if (!row) throw new Error(`Archive not found: ${id}`);
+            if (row.expiresAt <= this.#now()) {
+                throw new Error(`Archive expired: ${id}`);
+            }
             assertNoSymlink(row.archivePath, "archive path");
             const canonicalArchive = realpathSync(row.archivePath);
             const relativePath = relative(canonicalStore, canonicalArchive);
@@ -373,10 +386,16 @@ export class ThinkStore {
                    FROM fts_documents
                    JOIN documents d ON d.id = fts_documents.rowid
                   WHERE fts_documents MATCH ?
+                    AND d.kind IN ('command-summary', 'analysis-summary')
+                    AND d.created_at > ?
                   ORDER BY score ASC
                   LIMIT ?`,
                 )
-                .all(safeQuery, rowLimit) as SearchRow[];
+                .all(
+                    safeQuery,
+                    this.#retentionCutoff(),
+                    rowLimit,
+                ) as SearchRow[];
 
         const strictQuery = buildFtsQuery(ftsTokens, "AND");
         const strictRows = queryRows(strictQuery, limit);
@@ -462,10 +481,13 @@ export class ThinkStore {
     countDocuments(): number {
         this.#assertOpen();
         const row = this.#database
-            .query<{ count: number }, []>(
-                "SELECT COUNT(*) AS count FROM documents",
+            .query<{ count: number }, [number]>(
+                `SELECT COUNT(*) AS count
+                   FROM documents
+                  WHERE kind IN ('command-summary', 'analysis-summary')
+                    AND created_at > ?`,
             )
-            .get();
+            .get(this.#retentionCutoff());
         return row?.count ?? 0;
     }
 
@@ -493,6 +515,22 @@ export class ThinkStore {
                 JSON.stringify(payload),
                 this.#now(),
             );
+    }
+
+    recentSessionEventPayloads(sessionId: string, kind: string): string[] {
+        this.#assertOpen();
+        return (
+            this.#database
+                .query(
+                    `SELECT payload
+                       FROM session_events
+                      WHERE session_id = ? AND kind = ? AND created_at > ?
+                      ORDER BY turn_index, id`,
+                )
+                .all(sessionId, kind, this.#retentionCutoff()) as Array<{
+                payload: string;
+            }>
+        ).map((row) => row.payload);
     }
 
     saveSnapshot(input: {
@@ -535,16 +573,66 @@ export class ThinkStore {
         return this.#database
             .query(
                 `SELECT id, content, byte_count AS byteCount, created_at AS createdAt
-                   FROM snapshots
-                  WHERE session_id = ? AND consumed = 0
+                  FROM snapshots
+                  WHERE session_id = ? AND consumed = 0 AND created_at > ?
                   ORDER BY created_at ASC`,
             )
-            .all(sessionId) as Array<{
+            .all(sessionId, this.#retentionCutoff()) as Array<{
             id: number;
             content: string;
             byteCount: number;
             createdAt: number;
         }>;
+    }
+
+    isRecentPendingSnapshot(snapshotId: number, sessionId: string): boolean {
+        this.#assertOpen();
+        const row = this.#database
+            .query(
+                `SELECT 1 AS found
+                   FROM snapshots
+                  WHERE id = ? AND session_id = ? AND consumed = 0
+                    AND created_at > ?`,
+            )
+            .get(snapshotId, sessionId, this.#retentionCutoff()) as
+            | { found: number }
+            | undefined;
+        return row?.found === 1;
+    }
+
+    deleteExpiredState(now: number = this.#now()): ExpiredStateDeletion {
+        this.#assertOpen();
+        const cutoff = this.#retentionCutoff(now);
+        return this.#runTransaction(() => {
+            const documentsDeleted = this.#countBefore("documents", cutoff);
+            const sessionEventsDeleted = this.#countBefore(
+                "session_events",
+                cutoff,
+            );
+            const snapshotsDeleted = this.#countBefore("snapshots", cutoff);
+            this.#database
+                .query(
+                    `DELETE FROM fts_documents
+                      WHERE rowid IN (
+                          SELECT id FROM documents WHERE created_at <= ?
+                      )`,
+                )
+                .run(cutoff);
+            this.#database
+                .query("DELETE FROM documents WHERE created_at <= ?")
+                .run(cutoff);
+            this.#database
+                .query("DELETE FROM session_events WHERE created_at <= ?")
+                .run(cutoff);
+            this.#database
+                .query("DELETE FROM snapshots WHERE created_at <= ?")
+                .run(cutoff);
+            return {
+                documentsDeleted,
+                sessionEventsDeleted,
+                snapshotsDeleted,
+            };
+        });
     }
 
     markSnapshotConsumed(snapshotId: number): void {
@@ -692,6 +780,22 @@ export class ThinkStore {
             }
             throw error;
         }
+    }
+
+    #retentionCutoff(now: number = this.#now()): number {
+        return now - this.#config.retentionHours * 60 * 60 * 1000;
+    }
+
+    #countBefore(
+        table: "documents" | "session_events" | "snapshots",
+        cutoff: number,
+    ): number {
+        const row = this.#database
+            .query(
+                `SELECT COUNT(*) AS count FROM ${table} WHERE created_at <= ?`,
+            )
+            .get(cutoff) as { count: number };
+        return row.count;
     }
 
     #assertOpen(): void {

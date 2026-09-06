@@ -137,8 +137,115 @@ describe("ThinkCoordinator", () => {
             resultBytes: 12,
             truncated: false,
             archiveIds: result.details.archiveIds,
+            indexStatus: "indexed",
         });
         expect(result.content[1]?.text).toBe("derived text");
+    });
+
+    it("rejects a command analysis that directly echoes raw source", async () => {
+        const raw = "COMMAND_RAW_PAYLOAD_THAT_MUST_STAY_ARCHIVED";
+        const { coordinator, store } = await setup(
+            fakeSafeExecution(() => raw),
+            fakeAnalysis({ output: raw }),
+        );
+
+        const failure = await captureThinkFailure(
+            coordinator.execute(
+                {
+                    id: "exec-source-echo",
+                    language: "javascript",
+                    program: "export default INPUT",
+                    source: { kind: "command", command: "printf raw" },
+                },
+                ctx("/workspace/proj"),
+            ),
+        );
+
+        expect(failure).toMatchObject({
+            stage: "analysis",
+            code: "analysis-source-echo",
+            recovery: "change_program",
+        });
+        expect(store.countDocuments()).toBe(0);
+        expect(store.archiveBytes()).toBe(Buffer.byteLength(raw));
+    });
+
+    it("rejects a file analysis that embeds raw source", async () => {
+        const raw = "FILE_RAW_PAYLOAD_THAT_MUST_STAY_ARCHIVED";
+        const { coordinator, store } = await setup(
+            undefined,
+            fakeAnalysis({ output: `prefix:${raw}` }),
+        );
+        await writeFile(join(home!, "fixture.txt"), raw, "utf8");
+
+        const failure = await captureThinkFailure(
+            coordinator.executeFile(
+                {
+                    id: "file-source-echo",
+                    language: "javascript",
+                    program: "export default FILE_CONTENT",
+                    path: "fixture.txt",
+                },
+                ctx(home!),
+            ),
+        );
+
+        expect(failure).toMatchObject({
+            stage: "analysis",
+            code: "analysis-source-echo",
+            recovery: "change_program",
+        });
+        expect(store.countDocuments()).toBe(0);
+        expect(store.archiveBytes()).toBe(Buffer.byteLength(raw));
+    });
+
+    it("rejects a batch analysis that directly echoes an item output", async () => {
+        const raw = 'BATCH_RAW_PAYLOAD_THAT_MUST_STAY_ARCHIVED\n"second line"';
+        const { coordinator, store } = await setup(
+            fakeSafeExecution(() => raw),
+            fakeAnalysis({ output: JSON.stringify([{ output: raw }]) }),
+        );
+
+        const failure = await captureThinkFailure(
+            coordinator.batchExecute(
+                {
+                    id: "batch-source-echo",
+                    language: "javascript",
+                    program: "export default INPUTS[0].output",
+                    items: [{ id: "one", command: "printf raw" }],
+                },
+                ctx("/workspace/proj"),
+            ),
+        );
+
+        expect(failure).toMatchObject({
+            stage: "analysis",
+            code: "analysis-source-echo",
+            recovery: "change_program",
+        });
+        expect(store.countDocuments()).toBe(0);
+        expect(store.archiveBytes()).toBe(Buffer.byteLength(raw));
+    });
+
+    it("throws a safe artifact-search error when the store is unavailable", async () => {
+        const { coordinator, store } = await setup();
+        store.close();
+
+        let thrown: unknown;
+        try {
+            coordinator.searchArtifacts({ id: "search-failed", query: "x" });
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect(thrown).toBeInstanceOf(Error);
+        expect((thrown as Error).message).toContain(
+            '"tool":"think_artifact_search"',
+        );
+        expect((thrown as Error).message).toContain(
+            '"code":"artifact-search-failed"',
+        );
+        expect((thrown as Error).message).not.toContain("closed");
     });
 
     it("throws a safe terminal error and skips analysis for an all-failed empty batch", async () => {
@@ -354,7 +461,7 @@ describe("ThinkCoordinator", () => {
             },
             ctx("/workspace/proj"),
         ));
-        const search = await coordinator.search({
+        const search = coordinator.searchArtifacts({
             id: "search-secret",
             query: secret,
         });
@@ -581,7 +688,7 @@ describe("ThinkCoordinator", () => {
         const safeExec = fakeSafeExecution(() => "ok");
         const { coordinator } = await setup(
             safeExec,
-            fakeAnalysis({ output: "ok" }),
+            fakeAnalysis({ output: "derived-result" }),
         );
         // Force index failure by closing the store mid-call.
         coordinator.store.close();
@@ -598,6 +705,9 @@ describe("ThinkCoordinator", () => {
         // runs first; with the store closed, it throws).
         expect(result.details.captureWarnings.length).toBeGreaterThan(0);
         expect(result.details.archiveIds.length).toBe(0);
+        expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+            indexStatus: "failed",
+        });
     });
 
     it("blocks execute when safe execution or analysis is unavailable", async () => {
@@ -743,6 +853,8 @@ describe("ThinkCoordinator", () => {
             undefined,
         );
         expect(store.archiveBytes()).toBeGreaterThan(0);
+        expect(store.search("derived", 5)).toHaveLength(1);
+        expect(store.search("internal target", 5)).toEqual([]);
     });
 
     it("rejects an outgoing symlink from the opened descriptor before archive or analysis", async () => {
@@ -1421,6 +1533,36 @@ describe("ThinkCoordinator", () => {
         expect(failure.code).toBe("archive-not-found");
     });
 
+    it("surfaces an expired archive with change_source recovery", async () => {
+        const { coordinator, store } = await setup();
+        const archive = store.archive({
+            kind: "command-output",
+            data: "expired raw source",
+        });
+        __getRawDatabase(store)
+            .query("UPDATE archives SET expires_at = 0 WHERE id = ?")
+            .run(archive.id);
+
+        const failure = await captureThinkFailure(
+            coordinator.execute(
+                {
+                    id: "exec-expired-archive",
+                    language: "javascript",
+                    program: "export default INPUT.length",
+                    source: { kind: "archives", archiveIds: [archive.id] },
+                },
+                ctx("/workspace/proj"),
+            ),
+        );
+
+        expect(failure).toMatchObject({
+            action: "archives",
+            stage: "source",
+            code: "archive-expired",
+            recovery: "change_source",
+        });
+    });
+
     it("surfaces a malformed archive id as 'Invalid archive id' rather than a generic command failure", async () => {
         const { coordinator } = await setup();
         const bad = "id with spaces";
@@ -1764,12 +1906,12 @@ describe("ThinkCoordinator", () => {
         const { coordinator, store } = await setup();
         for (let i = 0; i < 30; i += 1) {
             store.index({
-                kind: "document-summary",
+                kind: "analysis-summary",
                 source: `src-${i}`,
                 text: `unique_alpha_beta_marker_${i}`,
             });
         }
-        const result = coordinator.search({ id: "search-1", query: "alpha_beta_marker", limit: 100 });
+        const result = coordinator.searchArtifacts({ id: "search-1", query: "alpha_beta_marker", limit: 100 });
         const archiveIds = result.details.archiveIds;
         expect(archiveIds.length).toBeLessThanOrEqual(20);
         expect(result.details).toMatchObject({
@@ -1783,12 +1925,12 @@ describe("ThinkCoordinator", () => {
     it("distinguishes an empty corpus from a query with no matches", async () => {
         const { coordinator, store } = await setup();
 
-        const empty = coordinator.search({
+        const empty = coordinator.searchArtifacts({
             id: "search-empty",
             query: "missing",
         });
         expect(empty.content[0]?.text).toBe(
-            "No Think documents indexed for this project",
+            "No Think execution artifacts indexed for this project",
         );
         expect(empty.details).toMatchObject({
             hitCount: 0,
@@ -1797,16 +1939,16 @@ describe("ThinkCoordinator", () => {
         });
 
         store.index({
-            kind: "document-summary",
+            kind: "analysis-summary",
             source: "dashboard-review",
             text: "dashboard layout refactor",
         });
-        const noMatch = coordinator.search({
+        const noMatch = coordinator.searchArtifacts({
             id: "search-no-match",
             query: "vite hmr",
         });
         expect(noMatch.content[0]?.text).toBe(
-            "No relevant historical matches in 1 indexed document",
+            "No matching Think execution artifacts in 1 indexed artifact",
         );
         expect(noMatch.details).toMatchObject({
             hitCount: 0,
@@ -1821,17 +1963,17 @@ describe("ThinkCoordinator", () => {
     it("rejects historical results that match only generic fragments of a long query", async () => {
         const { coordinator, store } = await setup();
         store.index({
-            kind: "document-summary",
+            kind: "analysis-summary",
             source: "unrelated-dashboard",
             text: "dashboard test dev services status",
         });
         store.index({
-            kind: "document-summary",
+            kind: "analysis-summary",
             source: "relevant-cli-contract",
             text: "CLI facade Job module resolution contracts",
         });
 
-        const result = coordinator.search({
+        const result = coordinator.searchArtifacts({
             id: "search-relevance",
             query: "apps cli test Job type module resolution dev-services contracts",
             limit: 10,
@@ -1932,11 +2074,8 @@ describe("ThinkCoordinator", () => {
         expect(serialized).not.toContain("alpha-42");
     });
 
-    it("redacts every secret in the indexed command-source field across distinct pattern kinds", async () => {
-        // End-to-end: command with two distinct secret kinds is indexed as
-        // command-summary. The store redaction must mask every secret while
-        // preserving the assignment keys.
-        const safeExec = fakeSafeExecution(() => "ALPHA_BETA_MARKER");
+    it("indexes only execution metadata instead of the source command", async () => {
+        const safeExec = fakeSafeExecution(() => "RAW_COMMAND_PAYLOAD");
         const analysis = fakeAnalysis({ output: "ALPHA_BETA_MARKER response" });
         const { coordinator, store } = await setup(safeExec, analysis);
         await coordinator.execute(
@@ -1958,9 +2097,7 @@ describe("ThinkCoordinator", () => {
         for (const hit of hits) {
             expect(hit.source).not.toContain("zzzzzzzzzzzzzzzzzzzzzz");
             expect(hit.source).not.toContain("top-secret-value");
-            expect(hit.source).toContain("[REDACTED]");
-            expect(hit.source).toContain("export API_KEY=");
-            expect(hit.source).toContain("Authorization:");
+            expect(hit.source).toBe("think_execute:command:success");
         }
     });
 });

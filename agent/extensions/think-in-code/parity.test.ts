@@ -492,14 +492,7 @@ describe("Think-in-Code parity fixtures", () => {
 
     it("binds INPUTS/FILE_CONTENT/FILE_PATH to bounded values and rejects caller overrides", async () => {
         const safe = makeSafeExec(() => "trusted-source");
-        const analysis = makeAnalysis((request) =>
-            JSON.stringify({
-                input: request.bindings?.INPUT,
-                fileContent: request.bindings?.FILE_CONTENT,
-                filePath: request.bindings?.FILE_PATH,
-                inputs: request.bindings?.INPUTS ? "<set>" : "<absent>",
-            }),
-        );
+        const analysis = makeAnalysis(() => "bindings-observed");
         const harness = await setup(safe, analysis);
         try {
             await harness.coordinator.execute(
@@ -560,18 +553,18 @@ describe("Think-in-Code parity fixtures", () => {
         }
     });
 
-    it("think_search returns bounded snippets (≤ 240 chars) and at most 20 hits", async () => {
+    it("think_artifact_search returns bounded snippets and at most 20 hits", async () => {
         const harness = await setup();
         try {
             // Insert 25 documents with the same unique marker.
             for (let i = 0; i < 25; i += 1) {
                 harness.store.index({
-                    kind: "document-summary",
+                    kind: "analysis-summary",
                     source: `s-${i}`,
                     text: `parity_marker_${i}`,
                 });
             }
-            const result = harness.coordinator.search({
+            const result = harness.coordinator.searchArtifacts({
                 id: "parity-search",
                 query: "parity_marker",
                 limit: 100,
@@ -657,11 +650,10 @@ describe("Think-in-Code parity fixtures", () => {
         }
     });
 
-    it("registered tool names match the contract: three think_* tools", () => {
+    it("registered tool names match the two-tool contract", () => {
         expect(Object.values(TOOL_NAMES).sort()).toEqual([
+            "think_artifact_search",
             "think_execute",
-            "think_note",
-            "think_search",
         ]);
     });
 
@@ -670,8 +662,7 @@ describe("Think-in-Code parity fixtures", () => {
         // not a supported parameter on any think_* tool; the rejection
         // belongs to the handler, not the schema.
         expect(typeof SCHEMAS.execute).toBe("object");
-        expect(typeof SCHEMAS.note).toBe("object");
-        expect(typeof SCHEMAS.search).toBe("object");
+        expect(typeof SCHEMAS.artifactSearch).toBe("object");
     });
 });
 
