@@ -1,7 +1,7 @@
 {
-    "version": "0.3.3-fork.8",
-    "tag": "v0.3.3-fork.8",
-    "forkCommit": "bcca4760e36c576f482385031c42a74ba69c374f",
+    "version": "0.3.3-fork.10",
+    "tag": "v0.3.3-fork.10",
+    "forkCommit": "bc870aa8a3cc3101fe61e7eb5df97c512cbe14ae",
     "upstreamTag": "v0.3.3",
     "upstreamCommit": "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
     "engineRef": "rust-v0.131.0-alpha.22",
@@ -86,8 +86,28 @@
         {
             "path": "scripts/upstream-readable-carveout-fd.patch",
             "sha256": "ea36a3079bc2529a987ff7cbae96bc68570242ae9cc90da0895b7295a2a73a5e"
+        },
+        {
+            "path": "scripts/upstream-private-bind-mounts.patch",
+            "sha256": "94f3cd424b061ea01de6a7faab98335af0991f06fbee65168ecc937e76aa4f87"
+        },
+        {
+            "path": "scripts/upstream-docker-broker-route.patch",
+            "sha256": "62918257358c4b277e03df78a5e47620e094ef6683bf7a13b454e936e450aa33"
+        },
+        {
+            "path": "scripts/upstream-docker-broker-hidden-route.patch",
+            "sha256": "dbac1de2024c01adf3c20839abe7a6277a4780d938f8841b3fbf87710755f774"
+        },
+        {
+            "path": "scripts/upstream-docker-broker-resource-limits.patch",
+            "sha256": "5fbb9b4fffef9535c04c4d2c50f3fe13898726bde5fba1f0da8acd18a60e7751"
+        },
+        {
+            "path": "scripts/upstream-docker-broker-connection-permit.patch",
+            "sha256": "01d36d678c7ea381149f16268a70b8d06fbf4bb2d4b48b7c78f23b62c4428358"
         }
     ],
     "binaryName": "zerobox",
-    "binarySha256": "1623212b538f642c308250504c7a3ec6854471679e75dd4ff63b2d2bef43fcbb"
+    "binarySha256": "3093a7354ab77c1ad6c372752d1ad7342f854b487e6f12379eb63b47c5c32c67"
 }

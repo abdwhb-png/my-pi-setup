@@ -27,6 +27,9 @@ import {
 import { assertPrivateRootDirectory } from "./private-temp.ts";
 import { createZeroboxStatusChannel } from "./status-channel.ts";
 
+const ZEROBOX_LAUNCHER_PATH =
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 interface ZeroboxProvenance {
     version: string;
     binarySha256: string;
@@ -152,7 +155,10 @@ function compileProfile(policy: SandboxPolicy): ZeroboxProfile {
 }
 
 function launcherEnvironment(lease: PrivateTempLease): Record<string, string> {
-    return { ZEROBOX_HOME: lease.zeroboxHome };
+    return {
+        ZEROBOX_HOME: lease.zeroboxHome,
+        PATH: ZEROBOX_LAUNCHER_PATH,
+    };
 }
 
 function isEqualOrDescendant(path: string, parent: string): boolean {
@@ -347,7 +353,7 @@ class ZeroboxBackend implements SandboxBackend {
         try {
             version = this.#runCommand(this.#binaryPath, ["--version"], {
                 cwd: homedir(),
-                env: { HOME: homedir(), PATH: "/usr/local/bin:/usr/bin:/bin" },
+                env: { HOME: homedir(), PATH: ZEROBOX_LAUNCHER_PATH },
             });
         } catch (error) {
             throw new SandboxExecutionError("spawn-failed", { cause: error });
@@ -380,7 +386,7 @@ class ZeroboxBackend implements SandboxBackend {
                             HOME: probeHome,
                             TMPDIR: join(probeHome, "tmp"),
                             ZEROBOX_HOME: probeHome,
-                            PATH: "/usr/local/bin:/usr/bin:/bin",
+                            PATH: ZEROBOX_LAUNCHER_PATH,
                         },
                     },
                 );

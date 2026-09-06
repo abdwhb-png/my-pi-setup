@@ -146,7 +146,7 @@ Zerobox Docker policy is inactive.
 
 ## Release and rollback
 
-This decision advances the managed fork to `v0.3.3-fork.9`. Pi pins the final
+This decision advances the managed fork to `v0.3.3-fork.10`. Pi pins the final
 source commit, upstream/engine commits, ordered patch hashes, and Linux x64
 binary hash in `runtime/zerobox-provenance.json`. The prior accepted binary and
 matching provenance remain together under the existing rollback directory

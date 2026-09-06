@@ -25,14 +25,14 @@ import {
 } from "./zerobox-backend.ts";
 
 const EXPECTED_SHA =
-    "1623212b538f642c308250504c7a3ec6854471679e75dd4ff63b2d2bef43fcbb";
+    "3093a7354ab77c1ad6c372752d1ad7342f854b487e6f12379eb63b47c5c32c67";
 
 function successfulRun(
     _file: string,
     args: string[],
 ): ZeroboxCommandResult {
     return args.includes("--version")
-        ? { exitCode: 0, stdout: "zerobox 0.3.3-fork.8\n", stderr: "" }
+        ? { exitCode: 0, stdout: "zerobox 0.3.3-fork.10\n", stderr: "" }
         : { exitCode: 0, stdout: "", stderr: "" };
 }
 
@@ -122,7 +122,10 @@ describe("Zerobox backend", () => {
             expect(spec.statusProtocol).toEqual({ fd: 3, version: 1 });
             expect(spec.extraStdio).toHaveLength(1);
             expect(spec.extraStdio[0]).toBeNumber();
-            expect(spec.env).toEqual({ ZEROBOX_HOME: lease.zeroboxHome });
+            expect(spec.env).toEqual({
+                ZEROBOX_HOME: lease.zeroboxHome,
+                PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            });
             expect(JSON.stringify(spec)).not.toContain("must-not-pass");
             expect(JSON.stringify(spec.args)).not.toContain("bwrap");
             expect(JSON.stringify(spec.args)).not.toContain("disable-userns");
@@ -392,7 +395,7 @@ describe("Zerobox backend", () => {
                 platform: "linux",
                 probeRoot,
                 expectedProvenance: {
-                    version: "0.3.3-fork.8",
+                    version: "0.3.3-fork.10",
                     binarySha256: EXPECTED_SHA,
                 },
                 hashFile: async () => EXPECTED_SHA,

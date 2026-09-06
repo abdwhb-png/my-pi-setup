@@ -12,9 +12,9 @@ const QUICKJS_VARIANT_VERSION = "0.32.0";
 const AGENT_TYPESCRIPT_VERSION = "7.0.2";
 const SANDBOX_TYPESCRIPT_API_VERSION = "6.0.3";
 const SANDBOX_TYPESCRIPT_NATIVE_VERSION = "7.0.2";
-const ZEROBOX_VERSION = "0.3.3-fork.8";
+const ZEROBOX_VERSION = "0.3.3-fork.10";
 const ZEROBOX_SHA256 =
-    "1623212b538f642c308250504c7a3ec6854471679e75dd4ff63b2d2bef43fcbb";
+    "3093a7354ab77c1ad6c372752d1ad7342f854b487e6f12379eb63b47c5c32c67";
 const MANAGED_ZEROBOX_PATH = join(homedir(), ".pi", "bin", "zerobox");
 const ZEROBOX_SOURCE_ROOT = join(
     homedir(),
@@ -23,14 +23,14 @@ const ZEROBOX_SOURCE_ROOT = join(
     "sandboxes",
     "zerobox",
 );
-const ZEROBOX_SOURCE_COMMIT = "bcca4760e36c576f482385031c42a74ba69c374f";
+const ZEROBOX_SOURCE_COMMIT = "bc870aa8a3cc3101fe61e7eb5df97c512cbe14ae";
 const PREVIOUS_ZEROBOX_ROLLBACK_ROOT = join(
     homedir(),
     ".local",
     "state",
     "pi",
     "rollback",
-    "zerobox-fork.6-af290ad53ca67",
+    "zerobox-fork.9-694764bb753e",
 );
 
 const EXPECTED_PATCHES = [
@@ -54,6 +54,11 @@ const EXPECTED_PATCHES = [
     ["scripts/upstream-readable-carveouts.patch", "8031c86792a007ee569850b516c911d5e355bda5c90f13ff450c99c267e0f9e7"],
     ["scripts/upstream-target-env-isolation.patch", "bf1f8a45cc22ced5fef03ccb7a4a898b859179d762e3cd6bf65a206681e6b6e6"],
     ["scripts/upstream-readable-carveout-fd.patch", "ea36a3079bc2529a987ff7cbae96bc68570242ae9cc90da0895b7295a2a73a5e"],
+    ["scripts/upstream-private-bind-mounts.patch", "94f3cd424b061ea01de6a7faab98335af0991f06fbee65168ecc937e76aa4f87"],
+    ["scripts/upstream-docker-broker-route.patch", "62918257358c4b277e03df78a5e47620e094ef6683bf7a13b454e936e450aa33"],
+    ["scripts/upstream-docker-broker-hidden-route.patch", "dbac1de2024c01adf3c20839abe7a6277a4780d938f8841b3fbf87710755f774"],
+    ["scripts/upstream-docker-broker-resource-limits.patch", "5fbb9b4fffef9535c04c4d2c50f3fe13898726bde5fba1f0da8acd18a60e7751"],
+    ["scripts/upstream-docker-broker-connection-permit.patch", "01d36d678c7ea381149f16268a70b8d06fbf4bb2d4b48b7c78f23b62c4428358"],
 ].map(([path, sha256]) => ({ path, sha256 }));
 
 interface SandboxPackageJson {
@@ -146,8 +151,8 @@ describe("sandbox dependency contract", () => {
         ).json();
         expect(provenance).toEqual({
             version: ZEROBOX_VERSION,
-            tag: "v0.3.3-fork.8",
-            forkCommit: "bcca4760e36c576f482385031c42a74ba69c374f",
+            tag: "v0.3.3-fork.10",
+            forkCommit: ZEROBOX_SOURCE_COMMIT,
             upstreamTag: "v0.3.3",
             upstreamCommit: "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
             engineRef: "rust-v0.131.0-alpha.22",
@@ -174,7 +179,7 @@ describe("sandbox dependency contract", () => {
         expect(
             execFileSync(
                 "git",
-                ["rev-parse", "v0.3.3-fork.8^{commit}"],
+                ["rev-parse", "v0.3.3-fork.10^{commit}"],
                 { cwd: ZEROBOX_SOURCE_ROOT, encoding: "utf8" },
             ).trim(),
         ).toBe(ZEROBOX_SOURCE_COMMIT);
@@ -200,6 +205,11 @@ describe("sandbox dependency contract", () => {
         expect(syncScript).toContain("upstream-readable-carveouts.patch");
         expect(syncScript).toContain("upstream-target-env-isolation.patch");
         expect(syncScript).toContain("upstream-readable-carveout-fd.patch");
+        expect(syncScript).toContain("upstream-private-bind-mounts.patch");
+        expect(syncScript).toContain("upstream-docker-broker-route.patch");
+        expect(syncScript).toContain("upstream-docker-broker-hidden-route.patch");
+        expect(syncScript).toContain("upstream-docker-broker-resource-limits.patch");
+        expect(syncScript).toContain("upstream-docker-broker-connection-permit.patch");
     });
 
     it("keeps the legacy ASRT deny characterization reproducible", async () => {
@@ -268,15 +278,15 @@ describe("sandbox dependency contract", () => {
         );
 
         expect(createHash("sha256").update(binary).digest("hex")).toBe(
-            "af290ad53ca67ddf5cfadd1610cbf27ae4d6faadaf8db5ea696ac7e649fab574",
+            "694764bb753ed481f4af99d7b4866558cfdb5eb8c4ea5a644f5c6c39a6aae9b7",
         );
         expect(createHash("sha256").update(provenanceBytes).digest("hex")).toBe(
-            "401a2e6734e91936048a0baf08def697d2a19098df79949a9daf2ad20a3fe4fc",
+            "ea0bfb2194cda20c55516b5280fba779e31d644f715328a0e1f94b36d05f6395",
         );
         expect(previousProvenance).toMatchObject({
-            version: "0.3.3-fork.6",
+            version: "0.3.3-fork.9",
             binarySha256:
-                "af290ad53ca67ddf5cfadd1610cbf27ae4d6faadaf8db5ea696ac7e649fab574",
+                "694764bb753ed481f4af99d7b4866558cfdb5eb8c4ea5a644f5c6c39a6aae9b7",
         });
         expect(manifest).toContain("not an ASRT source rollback");
     });
