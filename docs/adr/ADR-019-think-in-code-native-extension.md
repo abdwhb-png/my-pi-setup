@@ -85,6 +85,13 @@ Replace Context Mode with a native extension,
 (`think_execute`, `think_note`, `think_search`) and persists project-local evidence in a
 per-project SQLite FTS5 store + raw archive directory.
 
+Registration and active visibility are distinct. `think_execute` remains a
+registered capability but is removed from the active tool schema whenever the
+shared Sandbox runtime is not `enabled`; it is restored before a later turn if
+the runtime becomes available. Store-only `think_note` and `think_search`
+remain active. Adaptive routing is built after this synchronization and
+therefore never recommends unavailable sandbox execution.
+
 The decision is recorded as ADR-019 because the Task 9 implementation
 plan referenced "ADR-018"; that slot was already taken by
 ADR-018-pi-dangerous-mode-unattended-prompt-suppression.

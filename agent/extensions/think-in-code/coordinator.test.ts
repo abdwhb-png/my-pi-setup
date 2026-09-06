@@ -1676,7 +1676,47 @@ describe("ThinkCoordinator", () => {
         const result = coordinator.search({ id: "search-1", query: "alpha_beta_marker", limit: 100 });
         const archiveIds = result.details.archiveIds;
         expect(archiveIds.length).toBeLessThanOrEqual(20);
+        expect(result.details).toMatchObject({
+            hitCount: 20,
+            indexedDocumentCount: 30,
+            corpusEmpty: false,
+        });
         expect(result.content[0]?.text.length ?? 0).toBeGreaterThan(0);
+    });
+
+    it("distinguishes an empty corpus from a query with no matches", async () => {
+        const { coordinator, store } = await setup();
+
+        const empty = coordinator.search({
+            id: "search-empty",
+            query: "missing",
+        });
+        expect(empty.content[0]?.text).toBe(
+            "No Think documents indexed for this project",
+        );
+        expect(empty.details).toMatchObject({
+            hitCount: 0,
+            indexedDocumentCount: 0,
+            corpusEmpty: true,
+        });
+
+        store.index({
+            kind: "document-summary",
+            source: "dashboard-review",
+            text: "dashboard layout refactor",
+        });
+        const noMatch = coordinator.search({
+            id: "search-no-match",
+            query: "vite hmr",
+        });
+        expect(noMatch.content[0]?.text).toBe(
+            "No matches in 1 indexed document",
+        );
+        expect(noMatch.details).toMatchObject({
+            hitCount: 0,
+            indexedDocumentCount: 1,
+            corpusEmpty: false,
+        });
     });
 
     it("protects INPUTS from caller overrides in batch execute", async () => {

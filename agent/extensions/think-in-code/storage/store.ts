@@ -396,6 +396,16 @@ export class ThinkStore {
         }));
     }
 
+    countDocuments(): number {
+        this.#assertOpen();
+        const row = this.#database
+            .query<{ count: number }, []>(
+                "SELECT COUNT(*) AS count FROM documents",
+            )
+            .get();
+        return row?.count ?? 0;
+    }
+
     recordSessionEvent(input: {
         sessionId: string;
         turnIndex: number;

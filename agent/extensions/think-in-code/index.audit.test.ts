@@ -33,6 +33,7 @@ describe("think-in-code audit lifecycle", () => {
         const handlers = new Map<string, EventHandler[]>();
         const commands = new Map<string, CommandDefinition>();
         const sendUserMessage = mock((_prompt: string) => undefined);
+        let activeTools = ["think_execute", "think_note", "think_search"];
         const pi = {
             on: (name: string, handler: EventHandler) => {
                 const registered = handlers.get(name) ?? [];
@@ -45,6 +46,10 @@ describe("think-in-code audit lifecycle", () => {
             },
             appendEntry: () => undefined,
             sendUserMessage,
+            getActiveTools: () => activeTools,
+            setActiveTools: (names: string[]) => {
+                activeTools = [...names];
+            },
         } as unknown as ExtensionAPI;
         registerThinkInCode(pi, { resolveRoot: () => root });
 

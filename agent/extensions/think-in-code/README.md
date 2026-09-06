@@ -37,7 +37,15 @@ Three native Pi tools are registered:
   are required. Optional `archiveIds` record provenance and are never used as
   note text. Notes are capped by the effective `indexedSnippetChars` limit.
 - `think_search` — search the FTS5 index. Returns bounded ranked
-  snippets plus archive/document IDs. Never returns raw archive bytes.
+  snippets plus archive/document IDs. Its details include `hitCount`,
+  `indexedDocumentCount`, and `corpusEmpty`, and its message distinguishes an
+  empty project corpus from zero matches. It never returns raw archive bytes.
+
+`think_execute` is active only while the shared Sandbox runtime reports
+`enabled`. Think-in-Code removes it from the active tool schema for
+`uninitialized`, `disabled`, and `error` states, then restores it before a
+later turn if Sandbox becomes available again. `think_note` and `think_search`
+remain active because they use only the project store.
 
 Successful, non-empty `command`, `content`, `archives`, and `batch` results are
 indexed automatically. `action=file` output is not auto-indexed because an
@@ -267,6 +275,11 @@ source and diagnostics from `think_search` recall of prior indexed analyses.
 It also keeps ordinary reads and shell calls for short fixed observations and
 normal edit tools for mutations. A custom role system prompt cannot suppress
 this hook-provided routing context.
+
+Before each agent turn, Think-in-Code synchronizes `think_execute` visibility
+with the current Sandbox runtime. This happens before the routing message is
+built, so a disabled Sandbox yields inspect-only guidance and never recommends
+an unavailable execution action.
 
 ## Storage
 

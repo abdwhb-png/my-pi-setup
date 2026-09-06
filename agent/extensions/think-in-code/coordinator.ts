@@ -964,6 +964,7 @@ export class ThinkCoordinator {
         const limit = Math.min(request.limit ?? 20, 20);
         try {
             const hits = this.#store.search(request.query, limit);
+            const indexedDocumentCount = this.#store.countDocuments();
             const summary = hits
                 .map((hit, index) => {
                     return [
@@ -974,17 +975,25 @@ export class ThinkCoordinator {
                     ].join("\n");
                 })
                 .join("\n");
+            const responseText =
+                summary ||
+                (indexedDocumentCount === 0
+                    ? "No Think documents indexed for this project"
+                    : `No matches in ${indexedDocumentCount} indexed ${indexedDocumentCount === 1 ? "document" : "documents"}`);
             return {
                 content: [
                     {
                         type: "text",
-                        text: summary || "no matches",
+                        text: responseText,
                     },
                 ],
                 details: {
                     archiveIds: hits.flatMap((hit) => hit.archiveIds),
+                    hitCount: hits.length,
+                    indexedDocumentCount,
+                    corpusEmpty: indexedDocumentCount === 0,
                     sourceBytes: Buffer.byteLength(summary, "utf8"),
-                    derivedBytes: Buffer.byteLength(summary, "utf8"),
+                    derivedBytes: Buffer.byteLength(responseText, "utf8"),
                     language: "javascript",
                     runtime: "none",
                     elapsedMs: Math.round(performance.now() - startedAt),

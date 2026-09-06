@@ -23,6 +23,7 @@ import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { getSandboxRuntime } from "../_shared/sandbox-runtime/index.ts";
 import { registerThinkAuditCommand } from "./audit-command.ts";
 import {
     createThinkCommandExecution,
@@ -65,6 +66,23 @@ export function registerThinkInCode(
     let telemetrySequence = 0;
     let telemetryWarningReported = false;
     let auditRecommendationTurnActive = false;
+    let restoreExecuteWhenSandboxAvailable = false;
+
+    function syncSandboxToolVisibility(): void {
+        const activeTools = new Set(pi.getActiveTools());
+        if (getSandboxRuntime().state !== "enabled") {
+            if (activeTools.delete(TOOL_NAMES.execute)) {
+                restoreExecuteWhenSandboxAvailable = true;
+                pi.setActiveTools([...activeTools]);
+            }
+            return;
+        }
+        if (restoreExecuteWhenSandboxAvailable) {
+            activeTools.add(TOOL_NAMES.execute);
+            restoreExecuteWhenSandboxAvailable = false;
+            pi.setActiveTools([...activeTools]);
+        }
+    }
 
     function warnTelemetry(ctx: ExtensionContext, message: string): void {
         if (telemetryWarningReported) return;
@@ -190,7 +208,7 @@ export function registerThinkInCode(
             name: TOOL_NAMES.search,
             label: "🧠 Think Search",
             description:
-                "Search prior indexed analyses and notes. Returns bounded ranked snippets plus archive/document IDs, never raw archive bytes. Reanalyze returned archives with think_execute action=archives.",
+                "Search prior indexed analyses and notes. Returns bounded ranked snippets plus archive/document IDs and distinguishes an empty project corpus from zero matches. Never returns raw archive bytes.",
             parameters: schemas.search,
             async execute(toolCallId, params, _signal, _onUpdate, _ctx) {
                 return asResult(
@@ -203,6 +221,10 @@ export function registerThinkInCode(
         });
     }
 
+    pi.on("before_agent_start", () => {
+        syncSandboxToolVisibility();
+    });
+
     pi.on("session_start", async (_event, ctx) => {
         telemetrySequence = 0;
         telemetryWarningReported = false;
@@ -210,6 +232,7 @@ export function registerThinkInCode(
         commandExecution?.approvals.clear();
         await openStore(ctx);
         registerTools();
+        syncSandboxToolVisibility();
     });
 
     pi.on("tool_call", async () => {

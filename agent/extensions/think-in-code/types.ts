@@ -112,6 +112,12 @@ export interface ExecuteFileRequest {
 
 export interface ToolExecutionDetails {
     archiveIds: readonly string[];
+    /** Search hits returned by think_search. Omitted for non-search tools. */
+    hitCount?: number;
+    /** Searchable documents in the current project store. */
+    indexedDocumentCount?: number;
+    /** True when think_search ran against a project store with no documents. */
+    corpusEmpty?: boolean;
     sourceBytes: number;
     derivedBytes: number;
     language: ThinkLanguage;

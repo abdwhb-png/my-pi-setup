@@ -235,6 +235,82 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(registered).not.toContain("mcp:ctx_execute");
     });
 
+    it("hides sandbox-backed execution while keeping index tools active when sandbox is disabled", async () => {
+        const home = createHarnessProject();
+        const session = await createTestSession({
+            cwd: home,
+            extensionFactories: [
+                (pi: ExtensionAPI) => {
+                    ownerSymbol = Symbol("think-in-code-disabled-runtime");
+                    claimSandboxRuntime(ownerSymbol);
+                    publishSandboxRuntime(ownerSymbol, { state: "disabled" });
+                    registerThinkInCode(pi, {
+                        resolveRoot: () =>
+                            join(
+                                testHome!,
+                                ".pi",
+                                "agent",
+                                "think-in-code",
+                            ),
+                    });
+                },
+            ],
+            mockTools: {
+                bash: "ok",
+                read: "ok",
+                write: "ok",
+                edit: "ok",
+            },
+        });
+        sessions.push(session);
+        await session.session.agent.waitForIdle();
+
+        const active = collectToolNames(session);
+        expect(active).toContain("think_note");
+        expect(active).toContain("think_search");
+        expect(active).not.toContain("think_execute");
+        const activeToolDescriptions = (
+            session.session as unknown as {
+                agent?: {
+                    state?: { tools?: Array<{ description?: string }> };
+                };
+            }
+        ).agent?.state?.tools?.map((tool) => tool.description ?? "");
+        expect(activeToolDescriptions?.join(" ")).not.toContain(
+            "think_execute",
+        );
+    });
+
+    it("resynchronizes think_execute before each turn when sandbox availability changes", async () => {
+        const state = makeBrokerState();
+        const home = createHarnessProject();
+        const session = await createTestSession({
+            cwd: home,
+            extensionFactories: [thinkInCodeFactory(state)],
+            mockTools: { bash: "ok", read: "ok", write: "ok", edit: "ok" },
+        });
+        sessions.push(session);
+        await session.session.agent.waitForIdle();
+        expect(collectToolNames(session)).toContain("think_execute");
+
+        publishSandboxRuntime(ownerSymbol!, { state: "disabled" });
+        await session.run(
+            when("Continue without sandbox", [says("Using inspection only.")]),
+        );
+        expect(collectToolNames(session)).not.toContain("think_execute");
+        expect(collectToolNames(session)).toContain("think_search");
+
+        publishSandboxRuntime(ownerSymbol!, {
+            state: "enabled",
+            createBashOperations: () => state.bashOperations,
+            analysis: state.analysis,
+        });
+        await session.run(
+            when("Continue with sandbox", [says("Execution is available.")]),
+        );
+        expect(collectToolNames(session)).toContain("think_execute");
+    });
+
     it("rejects unknown language and oversize program at argument validation", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();
@@ -719,9 +795,19 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(text).not.toContain("fence_marker_beta");
         // The search returned bounded snippets plus archiveIds in details.
         const details = searchResult?.details as
-            | { archiveIds?: readonly string[] }
+            | {
+                  archiveIds?: readonly string[];
+                  hitCount?: number;
+                  indexedDocumentCount?: number;
+                  corpusEmpty?: boolean;
+              }
             | undefined;
         expect(Array.isArray(details?.archiveIds)).toBe(true);
+        expect(details).toMatchObject({
+            hitCount: 2,
+            indexedDocumentCount: 2,
+            corpusEmpty: false,
+        });
     });
 
     it("captures the tool_call / tool_result into the snapshot and injects once after compaction", async () => {
