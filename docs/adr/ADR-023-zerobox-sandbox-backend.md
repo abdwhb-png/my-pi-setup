@@ -4,6 +4,12 @@
 
 Accepted
 
+> **Capability update (2026-09-06):**
+> [ADR-025](./ADR-025-dynamic-deny-globs-and-docker-broker.md) supersedes this
+> ADR's accepted fork release and its statements that dynamic deny globs and
+> controlled Docker access are unsupported. Historical validation counts and
+> rollback evidence below remain unchanged.
+
 ## Date
 
 2026-09-05

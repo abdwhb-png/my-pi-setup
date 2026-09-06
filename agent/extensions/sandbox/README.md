@@ -57,9 +57,9 @@ attributed safely. `sessionKey` is the SHA-256 digest of Pi's public session ID.
     },
     "filesystem": {
         "allowRead": [],
-        "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg"],
+        "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "**/*.pem"],
         "allowWrite": ["."],
-        "denyWrite": [".env"]
+        "denyWrite": [".env", "generated/**"]
     },
     "environment": {
         "allowedVariables": [],
@@ -73,12 +73,102 @@ Project settings override global settings. The preferred locations are the
 `sandbox` keys in `<cwd>/.pi/settings.json` and
 `~/.pi/agent/settings.json`; legacy `sandbox.json` files remain readable.
 
-Version 1 is Linux-only. It supports exact filesystem paths, public-domain
-outbound allowlists, port-scoped loopback, deny-all networking, private temp,
-environment filtering, nested-user-namespace blocking, and process-tree
-termination. Managed networking rejects UDP and raw IP sockets at seccomp and
-keeps host Unix sockets inaccessible. Dynamic filesystem globs, inbound
-binding, arbitrary Unix
+Only `filesystem.denyRead` and `filesystem.denyWrite` accept globs. A relative
+pattern without `/`, such as `*.pem`, matches basenames at every depth under
+the project root. A relative pattern containing `/` is anchored to that root.
+`*`, `?`, character classes, brace alternatives, and `**` use `globset`
+semantics with `/` as the separator. `~` and absolute patterns remain valid,
+but a pattern whose safe static prefix is only `/` is rejected.
+
+When a deny list contains a glob, Zerobox creates a private FUSE passthrough
+view and bind-mounts it only inside the command namespace. This catches files
+created or renamed after spawn. `denyRead` hides matching entries and blocks
+all mutations; `denyWrite` keeps reads available but blocks creation, writes,
+deletion, renames, links, and metadata changes. Requested and resolved symlink
+paths are both checked. Existing hardlink aliases retain path-by-name
+semantics. Missing `/dev/fuse`, `fusermount3`, or a failed mount blocks the
+spawn; Zerobox never falls back to a static expansion. Policies without globs
+keep the ordinary Bubblewrap path and do not mount FUSE.
+
+## Docker authority
+
+Docker access is disabled unless the canonical project root has an exact grant
+in the Git-ignored `~/.pi/agent/sandbox.global.json` authority file:
+
+```json
+{
+    "docker": {
+        "grants": [
+            {
+                "projectRoot": "~/projects/app",
+                "mode": "targeted",
+                "endpoint": "unix:///var/run/docker.sock",
+                "targets": [
+                    {
+                        "selector": {
+                            "type": "compose-service",
+                            "project": "app",
+                            "service": "api"
+                        },
+                        "operations": ["logs", "inspect"],
+                        "allowUnsafeTarget": false
+                    }
+                ]
+            }
+        ]
+    }
+}
+```
+
+The authority file accepts only local Unix endpoints. `projectRoot` expands a
+leading `~`, resolves symlinks, and must match the current canonical project
+root exactly. Duplicate roots, unknown fields, ambiguous targets, and
+group/world-writable or symlinked authority files fail closed. An absent grant
+means `Docker off`.
+
+A project `sandbox.docker` value may only disable or narrow its global grant.
+It can reduce `full` to `targeted`, remove targets or operations, and force
+`allowUnsafeTarget` to `false`. It cannot add an endpoint, target, operation,
+or unsafe exception. Any attempted escalation invalidates the complete Sandbox
+configuration.
+
+Targeted mode resolves exact container names or the standard Compose project
+and service labels once before spawn, then pins the matching container IDs for
+that execution. It supports `ps`, `inspect`, `logs`, `stats`, `exec`, `start`,
+`stop`, and `restart`; an omitted operation list grants this complete bundle.
+Discovery is filtered to pinned IDs, unknown targets return 404, forbidden
+operations return 403, and only broker-created exec IDs can be used. Detached
+or privileged exec is rejected.
+
+Targets with host namespaces, privileged mode, host bind mounts, runtime
+sockets, devices, dangerous added capabilities, or disabled confinement are
+excluded. Only `allowUnsafeTarget: true` in the global authority file can admit
+one, and the widget and `/sandbox` show a warning without exposing endpoints or
+target names. Compose commands may require discovery plus the operation they
+perform; reducing the bundle too far can therefore make the corresponding
+Compose command unavailable.
+
+The host Docker socket is never mounted in the sandbox. Zerobox brokers it over
+a private owner-only Unix socket and a loopback bridge exposed as
+`DOCKER_HOST=tcp://127.0.0.1:<private-port>` inside the namespace. Inherited
+Docker connection variables are removed first. `full` mode forwards the whole
+Engine API and is explicitly equivalent to host control; it can bypass other
+filesystem and network restrictions through Docker. `exec` necessarily uses
+the selected container's own mounts, network, and secrets, outside the command
+sandbox policy. See Docker's [daemon security guidance](https://docs.docker.com/engine/security/).
+
+With `/sandbox off` or `--no-sandbox`, command execution is local and the
+Zerobox Docker policy is inactive. A Docker grant never authorizes the
+`docker` shell command in Safe Bash or Think-in-Code; their independent command
+policies must allow it separately. Analysis workers always receive Docker
+mode `disabled`.
+
+Version 1 is Linux-only. It supports exact filesystem paths, dynamic deny
+globs, public-domain outbound allowlists, port-scoped loopback, deny-all
+networking, optional brokered Docker access, private temp, environment
+filtering, nested-user-namespace blocking, and process-tree termination.
+Managed networking rejects UDP and raw IP sockets at seccomp and keeps host
+Unix sockets inaccessible. Inbound binding, arbitrary target-visible Unix
 sockets, ASRT-only fields, macOS, and Windows are rejected before publication.
 
 ## Strict analysis service
