@@ -14,7 +14,8 @@
             "*": "allow",
             "*.env": "deny",
             "*.env.*": "deny",
-            "*.env.example": "allow"
+            "*.env.example": "allow",
+            "agent/roles/*": "ask"
         },
         "bash": {
             "rm *": "ask",

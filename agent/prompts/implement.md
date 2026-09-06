@@ -4,5 +4,5 @@ role: pi-agent
 ---
 
 Proceed to implementation.
-Your role will auto switch to the designated role for implementation. So make sure to follow the instructions introduced by that role!
+You enter in implementation mode, so make sure to follow the instructions introduced by that mode!
 $ARGUMENTS

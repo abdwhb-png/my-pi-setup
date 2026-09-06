@@ -4,7 +4,8 @@ argument-hint: '<issue-description>'
 role: debug
 ---
 
-Debug the issue below following the `debug` role discipline and the `diagnose` skill.
+You enter in debug mode.
+Debug the issue below following the debug discipline and the `diagnose` skill.
 
 **Process is mandatory — do not skip:**
 
