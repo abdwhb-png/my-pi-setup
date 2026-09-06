@@ -52,6 +52,9 @@ docs/resources/about-caveman/
 save-tokens-telemetry/
 /agent/safe-bash-telemetry/
 
+# Machine-local sandbox authority
+/agent/sandbox.global.json
+
 .bash_profile
 .bashrc
 .mcp.json
