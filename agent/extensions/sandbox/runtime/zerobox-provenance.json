@@ -1,7 +1,7 @@
 {
-    "version": "0.3.3-fork.11",
-    "tag": "v0.3.3-fork.11",
-    "forkCommit": "4e5eefdac60a8d65fd1d54fdbca961cf8a672f6e",
+    "version": "0.3.3-fork.12",
+    "tag": "v0.3.3-fork.12",
+    "forkCommit": "288a888aec15298035d67dd1ab56e5330459f5b6",
     "upstreamTag": "v0.3.3",
     "upstreamCommit": "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
     "engineRef": "rust-v0.131.0-alpha.22",
@@ -113,5 +113,5 @@
         }
     ],
     "binaryName": "zerobox",
-    "binarySha256": "1544917463257a19361796d517ef121b601dd4ded18edf53ca5617f387618514"
+    "binarySha256": "c832bf03ca555a3351ff4af6da48d2a917baea1670fddb029f3bd7fbabfdee1a"
 }

@@ -12,9 +12,9 @@ const QUICKJS_VARIANT_VERSION = "0.32.0";
 const AGENT_TYPESCRIPT_VERSION = "7.0.2";
 const SANDBOX_TYPESCRIPT_API_VERSION = "6.0.3";
 const SANDBOX_TYPESCRIPT_NATIVE_VERSION = "7.0.2";
-const ZEROBOX_VERSION = "0.3.3-fork.11";
+const ZEROBOX_VERSION = "0.3.3-fork.12";
 const ZEROBOX_SHA256 =
-    "1544917463257a19361796d517ef121b601dd4ded18edf53ca5617f387618514";
+    "c832bf03ca555a3351ff4af6da48d2a917baea1670fddb029f3bd7fbabfdee1a";
 const MANAGED_ZEROBOX_PATH = join(homedir(), ".pi", "bin", "zerobox");
 const ZEROBOX_SOURCE_ROOT = join(
     homedir(),
@@ -23,14 +23,14 @@ const ZEROBOX_SOURCE_ROOT = join(
     "sandboxes",
     "zerobox",
 );
-const ZEROBOX_SOURCE_COMMIT = "4e5eefdac60a8d65fd1d54fdbca961cf8a672f6e";
+const ZEROBOX_SOURCE_COMMIT = "288a888aec15298035d67dd1ab56e5330459f5b6";
 const PREVIOUS_ZEROBOX_ROLLBACK_ROOT = join(
     homedir(),
     ".local",
     "state",
     "pi",
     "rollback",
-    "zerobox-fork.10-3093a7354ab7",
+    "zerobox-fork.11-154491746325",
 );
 
 const EXPECTED_PATCHES = [
@@ -152,7 +152,7 @@ describe("sandbox dependency contract", () => {
         ).json();
         expect(provenance).toEqual({
             version: ZEROBOX_VERSION,
-            tag: "v0.3.3-fork.11",
+            tag: "v0.3.3-fork.12",
             forkCommit: ZEROBOX_SOURCE_COMMIT,
             upstreamTag: "v0.3.3",
             upstreamCommit: "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
@@ -180,7 +180,7 @@ describe("sandbox dependency contract", () => {
         expect(
             execFileSync(
                 "git",
-                ["rev-parse", "v0.3.3-fork.11^{commit}"],
+                ["rev-parse", "v0.3.3-fork.12^{commit}"],
                 { cwd: ZEROBOX_SOURCE_ROOT, encoding: "utf8" },
             ).trim(),
         ).toBe(ZEROBOX_SOURCE_COMMIT);
@@ -285,15 +285,15 @@ describe("sandbox dependency contract", () => {
         );
 
         expect(createHash("sha256").update(binary).digest("hex")).toBe(
-            "3093a7354ab77c1ad6c372752d1ad7342f854b487e6f12379eb63b47c5c32c67",
+            "1544917463257a19361796d517ef121b601dd4ded18edf53ca5617f387618514",
         );
         expect(createHash("sha256").update(provenanceBytes).digest("hex")).toBe(
-            "9316ca3d22e28b9ee552e6131ce17fed2b834f2b6b8425902cf9665eaa4f3300",
+            "d960b718088f2633d8aeca895a18ce9e53cbcba0d41efcd0d5270ab6e4b2dc17",
         );
         expect(previousProvenance).toMatchObject({
-            version: "0.3.3-fork.10",
+            version: "0.3.3-fork.11",
             binarySha256:
-                "3093a7354ab77c1ad6c372752d1ad7342f854b487e6f12379eb63b47c5c32c67",
+                "1544917463257a19361796d517ef121b601dd4ded18edf53ca5617f387618514",
         });
         expect(manifest).toContain("not an ASRT source rollback");
     });
