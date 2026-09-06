@@ -20,6 +20,7 @@ import {
     type SandboxBackend,
     type SandboxCapabilities,
     type SandboxCommand,
+    type SandboxDockerPolicy,
     type SandboxPolicy,
     type SandboxSpawnSpec,
 } from "./contracts.ts";
@@ -56,13 +57,16 @@ interface ZeroboxProfile {
     strict_sandbox: true;
     allow_read: string[];
     deny_read?: string[];
+    deny_read_globs?: string[];
     allow_write: string[];
     deny_write?: string[];
+    deny_write_globs?: string[];
     allow_net?: string[];
     deny_net?: string[];
     allow_env?: string[];
     deny_env?: string[];
     set_env: Record<string, string>;
+    docker?: SandboxDockerPolicy;
 }
 
 const PROVENANCE_URL = new URL("./zerobox-provenance.json", import.meta.url);
@@ -121,8 +125,14 @@ function compileProfile(policy: SandboxPolicy): ZeroboxProfile {
     if (policy.filesystem.denyRead.length > 0) {
         profile.deny_read = policy.filesystem.denyRead;
     }
+    if (policy.filesystem.denyReadGlobs.length > 0) {
+        profile.deny_read_globs = policy.filesystem.denyReadGlobs;
+    }
     if (policy.filesystem.denyWrite.length > 0) {
         profile.deny_write = policy.filesystem.denyWrite;
+    }
+    if (policy.filesystem.denyWriteGlobs.length > 0) {
+        profile.deny_write_globs = policy.filesystem.denyWriteGlobs;
     }
     if (policy.network.mode === "domain-allowlist") {
         profile.allow_net = policy.network.allow;
@@ -134,6 +144,9 @@ function compileProfile(policy: SandboxPolicy): ZeroboxProfile {
     }
     if (policy.environment.deny.length > 0) {
         profile.deny_env = policy.environment.deny;
+    }
+    if (policy.docker.mode !== "disabled") {
+        profile.docker = policy.docker;
     }
     return profile;
 }

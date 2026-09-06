@@ -55,24 +55,40 @@ describe("Zerobox backend", () => {
             const policy = createBashPolicy({
                 cwd: parent,
                 lease,
-                config: validatePiSandboxConfig({
-                    filesystem: {
-                        denyRead: [join(parent, "secret")],
-                        denyWrite: [join(parent, ".env")],
-                    },
-                    network: {
-                        allowedDomains: ["example.com", "localhost:8317"],
-                        deniedDomains: ["blocked.example.com"],
-                    },
-                    environment: {
-                        allowedVariables: ["CUSTOM"],
-                        variables: {
-                            LD_PRELOAD: "/target/inject.so",
-                            BASH_ENV: "/target/bash-env",
-                            NODE_OPTIONS: "--require=/target/hook.cjs",
+                config: validatePiSandboxConfig(
+                    {
+                        filesystem: {
+                            denyRead: [join(parent, "secret"), "*.pem"],
+                            denyWrite: [join(parent, ".env"), "private/**"],
+                        },
+                        network: {
+                            allowedDomains: ["example.com", "localhost:8317"],
+                            deniedDomains: ["blocked.example.com"],
+                        },
+                        environment: {
+                            allowedVariables: ["CUSTOM"],
+                            variables: {
+                                LD_PRELOAD: "/target/inject.so",
+                                BASH_ENV: "/target/bash-env",
+                                NODE_OPTIONS: "--require=/target/hook.cjs",
+                            },
                         },
                     },
-                }),
+                    {
+                        mode: "targeted",
+                        endpoint: "unix:///var/run/docker.sock",
+                        targets: [
+                            {
+                                selector: {
+                                    type: "container-name",
+                                    name: "api",
+                                },
+                                operations: ["logs", "inspect"],
+                                allowUnsafeTarget: false,
+                            },
+                        ],
+                    },
+                ),
                 hostEnv: {
                     USER: "tester",
                     CUSTOM: "target-only",
@@ -132,6 +148,7 @@ describe("Zerobox backend", () => {
                     "/mnt/c",
                     join(parent, "r"),
                 ],
+                deny_read_globs: ["*.pem"],
                 allow_write: [
                     lease.homeDir,
                     lease.tmpDir,
@@ -144,6 +161,7 @@ describe("Zerobox backend", () => {
                     "/mnt/c",
                     join(parent, "r"),
                 ],
+                deny_write_globs: ["private/**"],
                 allow_net: ["example.com", "localhost:8317"],
                 deny_net: ["blocked.example.com"],
                 allow_env: [
@@ -156,6 +174,7 @@ describe("Zerobox backend", () => {
                     "CUSTOM",
                 ],
                 set_env: policy.environment.set,
+                docker: policy.docker,
             });
             expect(profile.use).toBeUndefined();
             expect(profile.secret_hosts).toBeUndefined();

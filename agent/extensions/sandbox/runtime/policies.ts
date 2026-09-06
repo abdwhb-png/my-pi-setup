@@ -4,6 +4,7 @@ import { delimiter, dirname, isAbsolute, resolve } from "node:path";
 
 import {
     SandboxExecutionError,
+    type SandboxDockerPolicy,
     type SandboxLeasePaths,
     type SandboxNetworkPolicy,
     type SandboxPolicy,
@@ -53,6 +54,12 @@ const UPSTREAM_PROXY_VARIABLES = new Set([
     "ALL_PROXY",
     "all_proxy",
 ]);
+const DOCKER_CONNECTION_VARIABLES = new Set([
+    "DOCKER_HOST",
+    "DOCKER_CONTEXT",
+    "DOCKER_TLS_VERIFY",
+    "DOCKER_CERT_PATH",
+]);
 
 interface PiFilesystemConfig {
     allowRead: string[];
@@ -77,6 +84,7 @@ export interface PiSandboxConfig {
     filesystem: PiFilesystemConfig;
     network: PiNetworkConfig;
     environment: PiEnvironmentConfig;
+    docker: SandboxDockerPolicy;
 }
 
 export interface PolicyInput {
@@ -155,6 +163,7 @@ function isBackendReservedVariable(name: string): boolean {
         name === "PATH" ||
         name === "HOME" ||
         name === "TMPDIR" ||
+        DOCKER_CONNECTION_VARIABLES.has(name) ||
         UPSTREAM_PROXY_VARIABLES.has(name) ||
         name.startsWith("ZEROBOX_")
     );
@@ -240,7 +249,18 @@ function validateExactPaths(paths: string[]): void {
     }
 }
 
-export function validatePiSandboxConfig(raw: unknown): PiSandboxConfig {
+function validateDenyPaths(paths: string[]): void {
+    for (const path of paths) {
+        if (!path || path.includes("\0")) {
+            invalid(new Error("Invalid filesystem deny path"));
+        }
+    }
+}
+
+export function validatePiSandboxConfig(
+    raw: unknown,
+    docker: SandboxDockerPolicy = { mode: "disabled" },
+): PiSandboxConfig {
     if (!isRecord(raw)) invalid(new Error("Sandbox config must be an object"));
     for (const field of ASRT_ONLY_FIELDS) {
         if (Object.hasOwn(raw, field))
@@ -268,8 +288,10 @@ export function validatePiSandboxConfig(raw: unknown): PiSandboxConfig {
     };
     validateExactPaths([
         ...normalizedFilesystem.allowRead,
-        ...normalizedFilesystem.denyRead,
         ...normalizedFilesystem.allowWrite,
+    ]);
+    validateDenyPaths([
+        ...normalizedFilesystem.denyRead,
         ...normalizedFilesystem.denyWrite,
     ]);
 
@@ -338,6 +360,7 @@ export function validatePiSandboxConfig(raw: unknown): PiSandboxConfig {
             deniedVariables,
             variables: envVariables(environment.variables),
         },
+        docker,
     };
 }
 
@@ -350,6 +373,22 @@ function expandHome(path: string): string {
 function normalizePath(path: string, cwd: string): string {
     const expanded = expandHome(path);
     return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
+}
+
+function splitDenyPaths(
+    paths: string[],
+    cwd: string,
+): { exact: string[]; globs: string[] } {
+    const exact: string[] = [];
+    const globs: string[] = [];
+    for (const path of paths) {
+        if (GLOB_META.test(path)) {
+            globs.push(expandHome(path));
+        } else {
+            exact.push(normalizePath(path, cwd));
+        }
+    }
+    return { exact: unique(exact), globs: unique(globs) };
 }
 
 function unique(values: string[]): string[] {
@@ -415,22 +454,24 @@ export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
                   normalizePath(path, input.cwd),
               )
             : ["/"];
-    const configuredDenyRead = input.config.filesystem.denyRead.map((path) =>
-        normalizePath(path, input.cwd),
+    const configuredDenyRead = splitDenyPaths(
+        input.config.filesystem.denyRead,
+        input.cwd,
     );
     const configuredAllowWrite = input.config.filesystem.allowWrite.map(
         (path) => normalizePath(path, input.cwd),
     );
-    const configuredDenyWrite = input.config.filesystem.denyWrite.map((path) =>
-        normalizePath(path, input.cwd),
+    const configuredDenyWrite = splitDenyPaths(
+        input.config.filesystem.denyWrite,
+        input.cwd,
     );
     assertAllowsDoNotOverrideDenies(configuredAllowRead, [
-        ...configuredDenyRead,
+        ...configuredDenyRead.exact,
         ...fixedDeniedRoots,
     ]);
     assertAllowsDoNotOverrideDenies(configuredAllowWrite, [
-        ...configuredDenyRead,
-        ...configuredDenyWrite,
+        ...configuredDenyRead.exact,
+        ...configuredDenyWrite.exact,
         ...fixedDeniedRoots,
     ]);
 
@@ -444,13 +485,21 @@ export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
                 input.lease.tmpDir,
                 input.lease.proxyRunsDir,
             ]),
-            denyRead: unique([...configuredDenyRead, ...fixedDeniedRoots]),
+            denyRead: unique([
+                ...configuredDenyRead.exact,
+                ...fixedDeniedRoots,
+            ]),
+            denyReadGlobs: configuredDenyRead.globs,
             allowWrite: unique([
                 ...configuredAllowWrite,
                 input.lease.homeDir,
                 input.lease.tmpDir,
             ]),
-            denyWrite: unique([...configuredDenyWrite, ...fixedDeniedRoots]),
+            denyWrite: unique([
+                ...configuredDenyWrite.exact,
+                ...fixedDeniedRoots,
+            ]),
+            denyWriteGlobs: configuredDenyWrite.globs,
         },
         network: {
             mode: allow.length === 0 ? "deny-all" : "domain-allowlist",
@@ -468,6 +517,7 @@ export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
             },
             deny: input.config.environment.deniedVariables,
         },
+        docker: input.config.docker,
     };
 }
 
@@ -487,8 +537,10 @@ export function createAnalysisPolicy(
                 input.lease.tmpDir,
             ]),
             denyRead: [leaseParent],
+            denyReadGlobs: [],
             allowWrite: [input.lease.homeDir, input.lease.tmpDir],
             denyWrite: [leaseParent],
+            denyWriteGlobs: [],
         },
         network: { mode: "deny-all", allow: [], deny: [] },
         environment: {
@@ -500,6 +552,7 @@ export function createAnalysisPolicy(
             },
             deny: [],
         },
+        docker: { mode: "disabled" },
     };
 }
 

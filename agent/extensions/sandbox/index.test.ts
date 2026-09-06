@@ -15,6 +15,7 @@ import {
     explicitlyDisabled,
     loadSandboxConfig,
     loadSessionSandboxStatus,
+    renderSandboxStatusDetails,
     renderSandboxWidget,
     saveSessionSandboxStatus,
     sessionStateFilename,
@@ -146,6 +147,107 @@ describe('renderSandboxWidget', () => {
         expect(renderSandboxWidget(fakeTheme(), 'error')).toContain(
             'fg:error:error',
         );
+    });
+
+    it('shows Docker off, targeted, full, and unsafe states without target details', () => {
+        expect(renderSandboxWidget(fakeTheme(), 'on')).toContain(
+            'fg:dim:off',
+        );
+        const targeted = renderSandboxWidget(fakeTheme(), 'on', {
+            mode: 'targeted',
+            unsafe: false,
+        });
+        expect(targeted).toContain('fg:accent:targeted');
+        const unsafe = renderSandboxWidget(fakeTheme(), 'on', {
+            mode: 'targeted',
+            unsafe: true,
+        });
+        expect(unsafe).toContain('fg:warning:targeted!');
+        const full = renderSandboxWidget(fakeTheme(), 'on', {
+            mode: 'full',
+            unsafe: true,
+        });
+        expect(full).toContain('fg:error:full!');
+        expect(full).not.toContain('docker.sock');
+    });
+});
+
+describe('renderSandboxStatusDetails', () => {
+    function resolvedWithDocker(
+        docker: LoadSandboxConfigResult['config']['docker'],
+    ): LoadSandboxConfigResult {
+        return {
+            source: 'project-config',
+            config: {
+                enabled: true,
+                network: { allowedDomains: [], deniedDomains: [] },
+                filesystem: {
+                    allowRead: [],
+                    denyRead: [],
+                    allowWrite: ['.'],
+                    denyWrite: [],
+                },
+                environment: {
+                    allowedVariables: [],
+                    deniedVariables: [],
+                    variables: {},
+                },
+                docker,
+            },
+        };
+    }
+
+    it('reports Docker off when the sandbox is disabled', () => {
+        const output = renderSandboxStatusDetails(
+            resolvedWithDocker({
+                mode: 'full',
+                endpoint: 'unix:///secret/docker.sock',
+            }),
+            false,
+        );
+
+        expect(output).toContain('Docker: off (sandbox disabled)');
+        expect(output).not.toContain('/secret/docker.sock');
+        expect(output).not.toContain('host control');
+    });
+
+    it('warns for full Docker access without exposing the endpoint', () => {
+        const output = renderSandboxStatusDetails(
+            resolvedWithDocker({
+                mode: 'full',
+                endpoint: 'unix:///secret/docker.sock',
+            }),
+            true,
+        );
+
+        expect(output).toContain('Docker: full');
+        expect(output).toContain('equivalent to host control');
+        expect(output).not.toContain('/secret/docker.sock');
+    });
+
+    it('warns for a targeted unsafe exception without exposing targets', () => {
+        const output = renderSandboxStatusDetails(
+            resolvedWithDocker({
+                mode: 'targeted',
+                endpoint: 'unix:///secret/docker.sock',
+                targets: [
+                    {
+                        selector: {
+                            type: 'container-name',
+                            name: 'secret-container',
+                        },
+                        operations: ['logs'],
+                        allowUnsafeTarget: true,
+                    },
+                ],
+            }),
+            true,
+        );
+
+        expect(output).toContain('Docker: targeted');
+        expect(output).toContain('unsafe-target exception');
+        expect(output).not.toContain('/secret/docker.sock');
+        expect(output).not.toContain('secret-container');
     });
 });
 
@@ -448,6 +550,78 @@ describe('loadSandboxConfig resolution priority', () => {
         expect(result.config.enabled).toBe(false);
         expect(result.config.network?.allowedDomains).toContain('example.com');
         expect(result.config.filesystem?.denyRead).toContain('.secret');
+    });
+
+    it('loads global Docker authority and applies only project narrowing', () => {
+        writeFileSync(
+            join(agentDir, 'sandbox.global.json'),
+            JSON.stringify({
+                docker: {
+                    grants: [
+                        {
+                            projectRoot: cwd,
+                            mode: 'targeted',
+                            targets: [
+                                {
+                                    selector: {
+                                        type: 'container-name',
+                                        name: 'api',
+                                    },
+                                    operations: ['logs', 'inspect'],
+                                    allowUnsafeTarget: true,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            }),
+            { mode: 0o600 },
+        );
+        mkdirSync(join(cwd, '.pi'));
+        writeFileSync(
+            join(cwd, '.pi', 'sandbox.json'),
+            JSON.stringify({
+                enabled: true,
+                docker: {
+                    mode: 'targeted',
+                    targets: [
+                        {
+                            selector: {
+                                type: 'container-name',
+                                name: 'api',
+                            },
+                            operations: ['logs'],
+                            allowUnsafeTarget: false,
+                        },
+                    ],
+                },
+            }),
+        );
+
+        expect(load().config.docker).toEqual({
+            mode: 'targeted',
+            endpoint: 'unix:///var/run/docker.sock',
+            targets: [
+                {
+                    selector: { type: 'container-name', name: 'api' },
+                    operations: ['logs'],
+                    allowUnsafeTarget: false,
+                },
+            ],
+        });
+    });
+
+    it('rejects Docker authority from ordinary global sandbox settings', () => {
+        expect(() =>
+            load({
+                settingsManager: {
+                    getGlobalSettings: () => ({
+                        sandbox: { docker: { mode: 'full' } },
+                    }),
+                    getProjectSettings: () => ({}),
+                },
+            }),
+        ).toThrow();
     });
 });
 

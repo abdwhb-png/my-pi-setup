@@ -79,11 +79,45 @@ export class SandboxExecutionError extends Error {
 
 export type SandboxProfileName = "bash-general" | "analysis-strict";
 
+export const DOCKER_OPERATIONS = [
+    "ps",
+    "inspect",
+    "logs",
+    "stats",
+    "exec",
+    "start",
+    "stop",
+    "restart",
+] as const;
+
+export type DockerOperation = (typeof DOCKER_OPERATIONS)[number];
+
+export type DockerTargetSelector =
+    | { type: "container-name"; name: string }
+    | { type: "compose-service"; project: string; service: string };
+
+export interface DockerTargetGrant {
+    selector: DockerTargetSelector;
+    operations?: DockerOperation[];
+    allowUnsafeTarget: boolean;
+}
+
+export type SandboxDockerPolicy =
+    | { mode: "disabled" }
+    | {
+          mode: "targeted";
+          endpoint: string;
+          targets: DockerTargetGrant[];
+      }
+    | { mode: "full"; endpoint: string };
+
 export interface SandboxFilesystemPolicy {
     allowRead: string[];
     denyRead: string[];
+    denyReadGlobs: string[];
     allowWrite: string[];
     denyWrite: string[];
+    denyWriteGlobs: string[];
 }
 
 export interface SandboxNetworkPolicy {
@@ -104,6 +138,7 @@ export interface SandboxPolicy {
     filesystem: SandboxFilesystemPolicy;
     network: SandboxNetworkPolicy;
     environment: SandboxEnvironmentPolicy;
+    docker: SandboxDockerPolicy;
 }
 
 export interface SandboxCommand {
@@ -156,7 +191,7 @@ export interface SandboxCapabilities {
     privateTemp: true;
     environmentFiltering: true;
     processTreeTermination: true;
-    dynamicDenyGlobs: false;
+    dynamicDenyGlobs: true;
     inboundBinding: false;
     arbitraryUnixSockets: false;
 }
@@ -173,7 +208,7 @@ export const SANDBOX_CAPABILITIES: SandboxCapabilities = Object.freeze({
     privateTemp: true,
     environmentFiltering: true,
     processTreeTermination: true,
-    dynamicDenyGlobs: false,
+    dynamicDenyGlobs: true,
     inboundBinding: false,
     arbitraryUnixSockets: false,
 });

@@ -54,7 +54,7 @@ describe("provider-neutral sandbox contracts", () => {
             privateTemp: true,
             environmentFiltering: true,
             processTreeTermination: true,
-            dynamicDenyGlobs: false,
+            dynamicDenyGlobs: true,
             inboundBinding: false,
             arbitraryUnixSockets: false,
         });

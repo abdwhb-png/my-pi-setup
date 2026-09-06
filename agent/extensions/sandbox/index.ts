@@ -73,7 +73,12 @@ import {
 import {
     SandboxExecutionError,
     type SandboxCommand,
+    type SandboxDockerPolicy,
 } from "./runtime/contracts.ts";
+import {
+    dockerPolicyHasUnsafeTargets,
+    resolveDockerPolicy,
+} from "./runtime/docker-policy.ts";
 import {
     type PiSandboxConfig,
     validatePiSandboxConfig,
@@ -86,6 +91,11 @@ import { createZeroboxBackend } from "./runtime/zerobox-backend.ts";
 
 /** Footer widget state for the sandbox indicator. */
 export type SandboxFooterState = "on" | "restricted" | "off" | "error";
+
+export interface SandboxDockerFooterState {
+    mode: "off" | "targeted" | "full";
+    unsafe: boolean;
+}
 
 /** Shield glyph shown in the footer widget (same metaphor as the bash 🛡️ prefix). */
 const SANDBOX_ICON = "🛡️";
@@ -204,14 +214,84 @@ export function saveSessionSandboxStatus(
 export function renderSandboxWidget(
     theme: import("@earendil-works/pi-coding-agent").Theme,
     state: SandboxFooterState,
+    docker: SandboxDockerFooterState = { mode: "off", unsafe: false },
 ): string | null {
     const colors: UiColorsCreation = createUiColors(theme);
+    const dockerLabel = colors.subtle("docker:");
+    const dockerValue = colorForDockerState(colors, docker);
     if (state === "off") {
-        return `${colors.subtle(`${OFF_ICON}sandbox:`)} ${colors.warning(state)}`;
+        return `${colors.subtle(`${OFF_ICON}sandbox:`)} ${colors.warning(state)} ${dockerLabel} ${dockerValue}`;
     }
     const label = colors.subtle(`${SANDBOX_ICON}sandbox:`);
     const value = colorForState(colors, state);
-    return `${label} ${value}`;
+    return `${label} ${value} ${dockerLabel} ${dockerValue}`;
+}
+
+function colorForDockerState(
+    colors: UiColorsCreation,
+    state: SandboxDockerFooterState,
+): string {
+    const value = `${state.mode}${state.unsafe ? "!" : ""}`;
+    if (state.mode === "full") return colors.danger(value);
+    if (state.mode === "targeted") {
+        return state.unsafe ? colors.warning(value) : colors.primary(value);
+    }
+    return colors.subtle(value);
+}
+
+export function dockerFooterState(
+    policy: SandboxDockerPolicy,
+    sandboxActive = true,
+): SandboxDockerFooterState {
+    if (!sandboxActive || policy.mode === "disabled") {
+        return { mode: "off", unsafe: false };
+    }
+    if (policy.mode === "full") return { mode: "full", unsafe: true };
+    return {
+        mode: "targeted",
+        unsafe: dockerPolicyHasUnsafeTargets(policy),
+    };
+}
+
+/** Render the user-visible `/sandbox` status without exposing Docker authority details. */
+export function renderSandboxStatusDetails(
+    resolved: LoadSandboxConfigResult,
+    sandboxActive: boolean,
+): string {
+    const { config, source } = resolved;
+    const status = sandboxActive ? "ENABLED" : "DISABLED";
+    const securityLabel = explicitlyDisabled(resolved) ? `${status} ⚠` : status;
+    const dockerStatus = sandboxActive
+        ? config.docker.mode === "disabled"
+            ? "off"
+            : config.docker.mode
+        : "off (sandbox disabled)";
+    const lines = [
+        `Sandbox: ${securityLabel}`,
+        `Source: ${source}`,
+        "",
+        "Network:",
+        `  Allowed: ${config.network?.allowedDomains?.join(", ") || "(none)"}`,
+        `  Denied: ${config.network?.deniedDomains?.join(", ") || "(none)"}`,
+        "",
+        `Docker: ${dockerStatus}`,
+        ...(sandboxActive && config.docker.mode === "full"
+            ? ["  Warning: full Docker access is equivalent to host control."]
+            : []),
+        ...(sandboxActive && dockerPolicyHasUnsafeTargets(config.docker)
+            ? [
+                  "  Warning: an unsafe-target exception is active from the global grant.",
+              ]
+            : []),
+        "",
+        "Filesystem:",
+        `  Deny Read: ${config.filesystem?.denyRead?.join(", ") || "(none)"}`,
+        `  Allow Write: ${config.filesystem?.allowWrite?.join(", ") || "(none)"}`,
+        `  Deny Write: ${config.filesystem?.denyWrite?.join(", ") || "(none)"}`,
+        "",
+        "Use /sandbox on or /sandbox off to toggle.",
+    ];
+    return lines.join("\n");
 }
 
 function colorForState(
@@ -258,6 +338,11 @@ const DEFAULT_CONFIG: SandboxConfig = {
         deniedVariables: [],
         variables: {},
     },
+    docker: { mode: "disabled" },
+};
+
+type SandboxConfigLayer = Partial<Omit<SandboxConfig, "docker">> & {
+    docker?: unknown;
 };
 
 interface SandboxSettingsContainer {
@@ -284,24 +369,24 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-function normalizeConfig(raw: unknown, source: string): Partial<SandboxConfig> {
+function normalizeConfig(raw: unknown, source: string): SandboxConfigLayer {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
         throw new Error(`Invalid ${source}`);
     }
-    return raw as Partial<SandboxConfig>;
+    return raw as SandboxConfigLayer;
 }
 
 function readSettingsConfig(
     settings: SandboxSettingsContainer,
     source: "global" | "project",
-): Partial<SandboxConfig> {
+): SandboxConfigLayer {
     const raw = settings.sandbox;
     return raw === undefined
         ? {}
         : normalizeConfig(raw, `${source} sandbox settings`);
 }
 
-function readLegacyConfig(path: string): Partial<SandboxConfig> {
+function readLegacyConfig(path: string): SandboxConfigLayer {
     if (!existsSync(path)) return {};
     try {
         return normalizeConfig(
@@ -324,6 +409,10 @@ export function loadSandboxConfig(
     const globalConfigPath = join(
         options.agentDir ?? getAgentDir(),
         "sandbox.json",
+    );
+    const globalAuthorityPath = join(
+        options.agentDir ?? getAgentDir(),
+        "sandbox.global.json",
     );
 
     let globalSettings: SandboxSettingsContainer;
@@ -357,14 +446,25 @@ export function loadSandboxConfig(
         projectConfig = readLegacyConfig(projectConfigPath);
     }
 
+    if (globalConfig.docker !== undefined) {
+        throw new SandboxExecutionError("invalid-policy", {
+            cause: new Error(
+                "Global Docker authority belongs in sandbox.global.json",
+            ),
+        });
+    }
+    const projectDockerOverride = projectConfig.docker;
+    const { docker: _globalDocker, ...globalBaseConfig } = globalConfig;
+    const { docker: _projectDocker, ...projectBaseConfig } = projectConfig;
+
     const merged = deepMerge(
-        deepMerge(DEFAULT_CONFIG, globalConfig),
-        projectConfig,
+        deepMerge(DEFAULT_CONFIG, globalBaseConfig),
+        projectBaseConfig,
     );
 
     let source: SandboxConfigSource;
-    if (projectConfig.enabled === undefined) {
-        if (globalConfig.enabled === undefined) {
+    if (projectBaseConfig.enabled === undefined) {
+        if (globalBaseConfig.enabled === undefined) {
             source = "default";
         } else {
             source = "global-config";
@@ -387,12 +487,21 @@ export function loadSandboxConfig(
         }
     }
 
-    return { config: validatePiSandboxConfig(merged), source };
+    const docker = resolveDockerPolicy({
+        cwd,
+        globalConfigPath: globalAuthorityPath,
+        projectOverride: projectDockerOverride,
+    });
+    const { docker: _defaultDocker, ...mergedBaseConfig } = merged;
+    return {
+        config: validatePiSandboxConfig(mergedBaseConfig, docker),
+        source,
+    };
 }
 
 function deepMerge(
     base: SandboxConfig,
-    overrides: Partial<SandboxConfig>,
+    overrides: SandboxConfigLayer,
 ): SandboxConfig {
     const result: SandboxConfig = { ...base };
 
@@ -679,6 +788,10 @@ export default function (pi: ExtensionAPI) {
 
     let sandboxEnabled = false;
     let sandboxFooterState: SandboxFooterState = "off";
+    let sandboxDockerFooterState: SandboxDockerFooterState = {
+        mode: "off",
+        unsafe: false,
+    };
     const w = createWidget(pi, {
         id: WIDGET_ID,
         label: "Sandbox",
@@ -689,15 +802,47 @@ export default function (pi: ExtensionAPI) {
         align: "right",
         grow: false,
         styled: true,
-        render: (ctx) => renderSandboxWidget(ctx.theme, sandboxFooterState),
+        render: (ctx) =>
+            renderSandboxWidget(
+                ctx.theme,
+                sandboxFooterState,
+                sandboxDockerFooterState,
+            ),
     });
 
     function updateSandboxStatus(
         ctx: ExtensionContext,
         status: "on" | "restricted" | "off" | "error",
+        docker?: SandboxDockerPolicy,
     ): void {
         sandboxFooterState = status;
+        sandboxDockerFooterState = dockerFooterState(
+            docker ?? { mode: "disabled" },
+            status === "on",
+        );
         w.update(ctx);
+    }
+
+    function notifySandboxEnabled(
+        ctx: ExtensionContext,
+        message: string,
+        docker: SandboxDockerPolicy,
+    ): void {
+        if (docker.mode === "full") {
+            ctx.ui.notify(
+                `${message}. Docker full access is active and is equivalent to host control.`,
+                "warning",
+            );
+            return;
+        }
+        if (dockerPolicyHasUnsafeTargets(docker)) {
+            ctx.ui.notify(
+                `${message}. Targeted Docker includes an unsafe-target exception from the global grant.`,
+                "warning",
+            );
+            return;
+        }
+        ctx.ui.notify(message, "info");
     }
 
     /**
@@ -819,8 +964,8 @@ export default function (pi: ExtensionAPI) {
             const enabled = await enableServices(ctx.cwd, config, generation);
             if (!isCurrentTransition(generation) || !enabled) return;
             sandboxEnabled = true;
-            updateSandboxStatus(ctx, "on");
-            ctx.ui.notify("Sandbox initialized", "info");
+            updateSandboxStatus(ctx, "on", config.docker);
+            notifySandboxEnabled(ctx, "Sandbox initialized", config.docker);
         } catch (err) {
             if (!isCurrentTransition(generation)) return;
             sandboxEnabled = false;
@@ -900,9 +1045,9 @@ export default function (pi: ExtensionAPI) {
                     );
                     if (!isCurrentTransition(generation) || !enabled) return;
                     sandboxEnabled = true;
-                    updateSandboxStatus(ctx, "on");
+                    updateSandboxStatus(ctx, "on", config.docker);
                     persistSessionStatus(ctx, "enabled");
-                    ctx.ui.notify("Sandbox enabled", "info");
+                    notifySandboxEnabled(ctx, "Sandbox enabled", config.docker);
                 } catch (err) {
                     if (!isCurrentTransition(generation)) return;
                     sandboxEnabled = false;
@@ -964,27 +1109,10 @@ export default function (pi: ExtensionAPI) {
                     );
                     return;
                 }
-                const { config, source } = resolved;
-                const status = sandboxEnabled ? "ENABLED" : "DISABLED";
-                const securityLabel = explicitlyDisabled(resolved)
-                    ? `${status} ⚠`
-                    : status;
-                const lines = [
-                    `Sandbox: ${securityLabel}`,
-                    `Source: ${source}`,
-                    "",
-                    "Network:",
-                    `  Allowed: ${config.network?.allowedDomains?.join(", ") || "(none)"}`,
-                    `  Denied: ${config.network?.deniedDomains?.join(", ") || "(none)"}`,
-                    "",
-                    "Filesystem:",
-                    `  Deny Read: ${config.filesystem?.denyRead?.join(", ") || "(none)"}`,
-                    `  Allow Write: ${config.filesystem?.allowWrite?.join(", ") || "(none)"}`,
-                    `  Deny Write: ${config.filesystem?.denyWrite?.join(", ") || "(none)"}`,
-                    "",
-                    `Use /sandbox on or /sandbox off to toggle.`,
-                ];
-                ctx.ui.notify(lines.join("\n"), "info");
+                ctx.ui.notify(
+                    renderSandboxStatusDetails(resolved, sandboxEnabled),
+                    "info",
+                );
                 return;
             }
 

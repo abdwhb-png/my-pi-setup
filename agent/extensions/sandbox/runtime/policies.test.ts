@@ -74,6 +74,9 @@ describe("sandbox policies", () => {
             allow: [],
             deny: [],
         });
+        expect(analysis.filesystem.denyReadGlobs).toEqual([]);
+        expect(analysis.filesystem.denyWriteGlobs).toEqual([]);
+        expect(analysis.docker).toEqual({ mode: "disabled" });
         expect(bash.filesystem.allowWrite).toContain(cwd);
         expect(bash.filesystem.allowWrite).toContain(lease.homeDir);
         expect(bash.filesystem.allowWrite).toContain(lease.tmpDir);
@@ -96,6 +99,54 @@ describe("sandbox policies", () => {
         expect(analysis.filesystem.allowRead).not.toContain(cwd);
         expect(JSON.stringify({ bash, analysis })).not.toContain("/tmp/claude");
         expect(JSON.stringify({ bash, analysis })).not.toContain('"use"');
+    });
+
+    it("keeps dynamic globs only in deny policies", () => {
+        const policy = createBashPolicy({
+            cwd,
+            lease,
+            config: validatePiSandboxConfig({
+                filesystem: {
+                    denyRead: ["*.pem", "private/**", "secret.txt"],
+                    denyWrite: ["**/.env", "locked.txt"],
+                },
+            }),
+            hostEnv: {},
+        });
+
+        expect(policy.filesystem.denyReadGlobs).toEqual([
+            "*.pem",
+            "private/**",
+        ]);
+        expect(policy.filesystem.denyWriteGlobs).toEqual(["**/.env"]);
+        expect(policy.filesystem.denyRead).toContain(join(cwd, "secret.txt"));
+        expect(policy.filesystem.denyWrite).toContain(join(cwd, "locked.txt"));
+        expect(policy.filesystem.denyRead).not.toContain(join(cwd, "*.pem"));
+    });
+
+    it("passes the effective Docker policy only to Bash", () => {
+        const docker = {
+            mode: "targeted" as const,
+            endpoint: "unix:///var/run/docker.sock",
+            targets: [
+                {
+                    selector: {
+                        type: "container-name" as const,
+                        name: "api",
+                    },
+                    operations: ["logs" as const],
+                    allowUnsafeTarget: false,
+                },
+            ],
+        };
+        const config = validatePiSandboxConfig({}, docker);
+
+        expect(createBashPolicy({ cwd, lease, config, hostEnv: {} }).docker).toEqual(
+            docker,
+        );
+        expect(
+            createAnalysisPolicy({ cwd, lease, readablePaths: [] }).docker,
+        ).toEqual({ mode: "disabled" });
     });
 
     it("rejects configured allows that override a more specific deny", () => {
@@ -197,6 +248,10 @@ describe("sandbox policies", () => {
                         "https_proxy",
                         "ALL_PROXY",
                         "all_proxy",
+                        "DOCKER_HOST",
+                        "DOCKER_CONTEXT",
+                        "DOCKER_TLS_VERIFY",
+                        "DOCKER_CERT_PATH",
                     ],
                     deniedVariables: ["TERM", "CUSTOM"],
                     variables: {
@@ -211,6 +266,10 @@ describe("sandbox policies", () => {
                         https_proxy: "http://host-proxy.invalid:3128",
                         ALL_PROXY: "http://host-proxy.invalid:3128",
                         all_proxy: "http://host-proxy.invalid:3128",
+                        DOCKER_HOST: "unix:///run/user/1000/docker.sock",
+                        DOCKER_CONTEXT: "remote",
+                        DOCKER_TLS_VERIFY: "1",
+                        DOCKER_CERT_PATH: "/target/docker-certs",
                     },
                 },
             }),
@@ -247,6 +306,7 @@ describe("sandbox policies", () => {
         expect(JSON.stringify(policy.environment)).not.toContain("ZEROBOX_HOME");
         expect(JSON.stringify(policy.environment)).not.toContain("PROXY");
         expect(JSON.stringify(policy.environment)).not.toContain("proxy");
+        expect(JSON.stringify(policy.environment)).not.toContain("DOCKER_");
     });
 
     it("normalizes loopback aliases and rejects unsupported capabilities", () => {
@@ -269,8 +329,8 @@ describe("sandbox policies", () => {
             { network: { allowedDomains: ["[fd00::1]:443"] } },
             { network: { allowLocalBinding: true } },
             { network: { allowAllUnixSockets: true } },
-            { filesystem: { denyWrite: ["*.pem"] } },
-            { filesystem: { denyRead: ["secret?.txt"] } },
+            { filesystem: { allowWrite: ["*.pem"] } },
+            { filesystem: { allowRead: ["secret?.txt"] } },
             { ignoreViolations: {} },
             { enableWeakerNestedSandbox: true },
             { enableWeakerNetworkIsolation: true },
