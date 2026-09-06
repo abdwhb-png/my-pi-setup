@@ -1,7 +1,7 @@
 {
-    "version": "0.3.3-fork.10",
-    "tag": "v0.3.3-fork.10",
-    "forkCommit": "bc870aa8a3cc3101fe61e7eb5df97c512cbe14ae",
+    "version": "0.3.3-fork.11",
+    "tag": "v0.3.3-fork.11",
+    "forkCommit": "4e5eefdac60a8d65fd1d54fdbca961cf8a672f6e",
     "upstreamTag": "v0.3.3",
     "upstreamCommit": "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
     "engineRef": "rust-v0.131.0-alpha.22",
@@ -106,8 +106,12 @@
         {
             "path": "scripts/upstream-docker-broker-connection-permit.patch",
             "sha256": "01d36d678c7ea381149f16268a70b8d06fbf4bb2d4b48b7c78f23b62c4428358"
+        },
+        {
+            "path": "scripts/upstream-setup-artifact-errors.patch",
+            "sha256": "c3ed22741b53a1be3690b7e8214507fc6f5c6b85ab9fa61077a0ffe3dd5e37d8"
         }
     ],
     "binaryName": "zerobox",
-    "binarySha256": "3093a7354ab77c1ad6c372752d1ad7342f854b487e6f12379eb63b47c5c32c67"
+    "binarySha256": "1544917463257a19361796d517ef121b601dd4ded18edf53ca5617f387618514"
 }

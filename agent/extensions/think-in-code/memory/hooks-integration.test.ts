@@ -323,8 +323,21 @@ describe("registerHooks integration", () => {
             type: "tool_result",
             toolName: "think_execute",
             isError: false,
-            details: { archiveIds: ["abcd1234efgh5678"] },
-            content: [{ type: "text", text: "ok" }],
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({
+                        status: "success",
+                        action: "content",
+                        sourceStatus: "succeeded",
+                        sourceBytes: 12,
+                        resultBytes: 4,
+                        truncated: false,
+                        archiveIds: ["abcd1234efgh5678"],
+                    }),
+                },
+                { type: "text", text: "safe derivation" },
+            ],
         } as ToolResultEvent, makeCtx(sessionId));
         await mock.handlers.get("turn_end")!({
             type: "turn_end",
@@ -332,10 +345,14 @@ describe("registerHooks integration", () => {
 
         const rows = __getRawDatabase(store)
             .query(
-                "SELECT session_id AS sessionId, turn_index AS turnIndex " +
+                "SELECT session_id AS sessionId, turn_index AS turnIndex, payload " +
                     "FROM session_events ORDER BY id",
             )
-            .all() as Array<{ sessionId: string; turnIndex: number }>;
+            .all() as Array<{
+            sessionId: string;
+            turnIndex: number;
+            payload: string;
+        }>;
         expect(rows.length).toBeGreaterThanOrEqual(3);
         expect(rows.every((row) => row.sessionId === "real-pi-session-001")).toBe(true);
         // turn 0 has the first prompt; turn 1 carries the second prompt and
@@ -343,6 +360,17 @@ describe("registerHooks integration", () => {
         // with the placeholder session id from registerHooks.
         const turnIndices = [...new Set(rows.map((row) => row.turnIndex))].sort();
         expect(turnIndices).toEqual([0, 1]);
+        const captured = rows
+            .map((row) => JSON.parse(row.payload) as {
+                source?: string;
+                text?: string;
+                references?: string[];
+            })
+            .find((row) => row.source === "tool-result");
+        expect(captured?.text).toBe(
+            "think_execute succeeded: content, 12→4 bytes",
+        );
+        expect(captured?.references).toEqual(["abcd1234efgh5678"]);
     });
 
     it("fires hooks in the documented order: before_agent_start → tool_call → tool_result → turn_end → session_before_compact → session_compact → context", async () => {

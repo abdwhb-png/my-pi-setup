@@ -14,12 +14,12 @@ for the architecture decision.
 
 Four deep boundaries, each owned by one module:
 
-| Boundary | Owner | Purpose |
-| --- | --- | --- |
-| Command execution | `agent/extensions/_shared/command-execution/` | Generic guard, native-tool redirect, rewrite, execution and supervision primitives. Every consumer injects its policy, approvals, telemetry and operation resolver. |
-| Sandbox contract | `agent/extensions/_shared/sandbox-runtime/` | Versioned `pi.sandbox-runtime.v2` snapshot, owner-token publication, Bash-operation factory and `AnalysisSandboxPort`. |
-| Sandbox implementation | `agent/extensions/sandbox/` | Zerobox lifecycle and strict QuickJS/Python worker dispatch. It publishes Bash and analysis together and registers no Bash tool. |
-| Think-in-Code | `agent/extensions/think-in-code/` | Independent command policy and telemetry, three public tools, per-project SQLite FTS5 store, raw archives, concise system guidance, session capture and one-shot restore. |
+| Boundary               | Owner                                         | Purpose                                                                                                                                                                   |
+| ---------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command execution      | `agent/extensions/_shared/command-execution/` | Generic guard, native-tool redirect, rewrite, execution and supervision primitives. Every consumer injects its policy, approvals, telemetry and operation resolver.       |
+| Sandbox contract       | `agent/extensions/_shared/sandbox-runtime/`   | Versioned `pi.sandbox-runtime.v2` snapshot, owner-token publication, Bash-operation factory and `AnalysisSandboxPort`.                                                    |
+| Sandbox implementation | `agent/extensions/sandbox/`                   | Zerobox lifecycle and strict QuickJS/Python worker dispatch. It publishes Bash and analysis together and registers no Bash tool.                                          |
+| Think-in-Code          | `agent/extensions/think-in-code/`             | Independent command policy and telemetry, three public tools, per-project SQLite FTS5 store, raw archives, concise system guidance, session capture and one-shot restore. |
 
 Think-in-Code imports only the shared command-execution and Sandbox contracts.
 It never imports Safe Bash or a Sandbox implementation module.
@@ -29,10 +29,9 @@ It never imports Safe Bash or a Sandbox implementation module.
 Three native Pi tools are registered:
 
 - `think_execute` — derive a bounded answer through one explicit `action`:
-  `command`, `content`, `archives`, `file`, or `batch`. File analysis exposes
-  `FILE_CONTENT` / `FILE_PATH`; batch analysis accepts up to 16 commands with
-  global concurrency 2 and exposes ordered `INPUTS`. Raw source bytes are
-  archived; analyzer output is model-controlled and becomes the tool result.
+  `command`, `content`, `archives`, `file`, or `batch`. Its action-specific
+  bindings are documented below. Raw source bytes are archived; analyzer output
+  is model-controlled and becomes the tool result.
 - `think_note` — index one concise, redacted conclusion. `source` and `text`
   are required. Optional `archiveIds` record provenance and are never used as
   note text. Notes are capped by the effective `indexedSnippetChars` limit.
@@ -62,6 +61,19 @@ A single `think_execute` invocation produces exactly one outer tool result.
 Its inner command execution is a direct call to the shared executor configured
 for the literal `think_execute` operation, not a `safe_bash` Pi tool call, so it
 does not appear as a nested result.
+
+Every normal result has two text content blocks. The first is compact JSON with
+`status` (`success` or `partial`), `action`, `sourceStatus`, `sourceBytes`,
+`resultBytes`, `truncated`, and `archiveIds`. Batch headers also include
+`total`, `succeeded`, `failed`, and `blocked`. The second block is the bounded
+derivation. A failed command that produced analyzable output returns `partial`.
+
+Terminal source, file, store, or analysis failures throw, so Pi emits
+`isError:true`. The error message is safe JSON containing `status:"error"`,
+`action`, `stage`, `code`, `reason`, and one recovery value:
+`restore_sandbox`, `change_command`, `change_program`, `change_source`,
+`repair_store`, or `retry`. A batch whose items all fail without output stops
+before analysis, creates no analysis archive, and indexes nothing.
 
 ### Streaming progress and the raw-output boundary
 
@@ -116,6 +128,9 @@ with code 1"`, etc.).
   forwarded.
 - any other throwable is redacted to
   `"Command failed (raw output redacted)"`.
+- Typed `SandboxExecutionError` values preserve their closed public code across
+  extension caches. Their public message reaches the terminal JSON payload;
+  their bounded technical cause remains local telemetry only.
 
 Analyzer failures (QuickJS / Python worker errors) are routed through
 a dedicated `analyzerFailureReason(error, language)` helper that
@@ -126,14 +141,14 @@ failure as `new Error(...)`, so the model sees e.g.
 The helper never copies `error.message` verbatim, so a
 `throw new Error(FILE_CONTENT)` program or a `throw new Error(INPUT)`
 program cannot exfiltrate raw binding values through content text,
-`details.blockedReason`, `details.items[].error`, the analyzer
-`INPUTS` JSON binding, or any indexed search text.
+`details.items[].error`, the analyzer `INPUTS` binding, or any indexed search
+text.
 
 The raw error message is retained on `SafeExecutionError.raw`
 (non-enumerable so `JSON.stringify` and spread logs cannot see it)
 for capture warnings and telemetry only. The same normalization
 applies to batch item errors, the analyzer `INPUTS` JSON binding,
-and the per-tool `details.blockedReason` / `content` text — raw
+and the per-tool `content` text — raw
 stdout, file content, or any other binding value cannot reach the
 agent when a Think command fails, times out, is aborted,
 or an analyzer program throws.
@@ -147,9 +162,8 @@ supplied and is expected to see reflected back.
 Source/store/archive validation errors thrown out of
 `coordinator.execute` (e.g. `Archive not found: <id>`,
 `Invalid archive id: <id>`, `Unsupported source kind`) likewise
-reach the model with their static actionable message. Only the command-execution
-call inside `handleCommand` is funneled through `safeFailureReason`; the
-surrounding validation layer never goes through the command-failure classifier.
+reach the model through safe terminal JSON with `change_source` or
+`repair_store` recovery.
 
 ### Cross-extension failure identity
 
@@ -161,10 +175,11 @@ copies of an imported class and cannot rely on `instanceof` alone.
 The shared runtime stamps `SandboxUnavailableError` with
 `Symbol.for("pi.sandbox-runtime.SandboxUnavailableError.v2")`. The command
 executor similarly stamps `SafeExecutionError` with
-`Symbol.for("pi.safe-execution.SafeExecutionError")`. Both guards validate a
-closed-set kind in addition to the non-enumerable brand. Runtime initialization
-diagnostics and raw command errors remain non-enumerable and never become
-model-facing reasons.
+`Symbol.for("pi.safe-execution.SafeExecutionError")`, and shared execution
+failures with `Symbol.for("pi.sandbox-runtime.SandboxExecutionError.v2")`.
+Each guard validates a closed-set kind or code in addition to the non-enumerable
+brand. Runtime diagnostics and raw errors remain non-enumerable and never
+become model-facing reasons.
 
 ### Compaction and restore
 
@@ -174,21 +189,29 @@ order (high → low):
 
 ### Analyzer program syntax
 
-The five native tools expose `language` and `program` parameters whose
+`think_execute` exposes `language` and `program` parameters whose
 descriptions document the analyzer's contract:
 
 - **JavaScript / TypeScript** — the program is loaded as an ES module.
   Valid programs MUST use `export default <value>` to return derived
   text. Top-level `return` is a `SyntaxError` because the script is
-  evaluated as a module body, not a function body. Bindings
-  (`INPUT`, `INPUTS`, `FILE_CONTENT`, `FILE_PATH`, `ARCHIVES`,
-  `ARCHIVE_IDS`, plus caller-supplied names) are exposed as
-  `const` locals with frozen objects and no `fetch`, `process`, or
-  filesystem globals.
+  evaluated as a module body, not a function body.
 - **Python** — the program runs as a top-level statement block inside
   an Eryx JSPI sandbox. Bindings become locals and the program MUST
   assign to a top-level `result` variable. The value of that
   assignment becomes the returned derived text.
+
+Bindings are action-specific and frozen:
+
+- `command` and `content`: `INPUT` is a string.
+- `file`: `FILE_CONTENT` and `FILE_PATH` are strings.
+- `archives`: `ARCHIVES` is an ordered array of archive contents.
+- `batch`: `INPUTS` is an ordered array of
+  `{id,status,archiveId?,output?,error?}`. Select by id with
+  `INPUTS.find(item => item.id === "build")`; never use `INPUTS.<id>`.
+- `ARCHIVE_IDS` and caller-supplied string bindings remain available.
+
+The analyzers expose no `fetch`, `process`, or filesystem globals.
 
 The `description` field on each schema is the source of truth; LLM
 tool planners see it directly.
@@ -197,7 +220,7 @@ tool planners see it directly.
 
 Pinned sandbox components:
 
-- managed `~/.pi/bin/zerobox` `0.3.3-fork.8`, verified by exact binary,
+- managed `~/.pi/bin/zerobox` `0.3.3-fork.11`, verified by exact binary,
   source, engine, and ordered-patch provenance;
 - `typescript@6.0.3` for the QuickJS programmatic transform API and
   `@typescript/native` aliased to `typescript@7.0.2` for the native compiler;
@@ -253,11 +276,11 @@ fetching. The `thinkInCode.network` configuration key is locked to
 `think_*` tools are exposed through three groups in
 `agent/tool-groups.json` so roles can opt in with least-privilege:
 
-| Group            | Members                                                      |
-| ---------------- | ------------------------------------------------------------ |
-| `@think-inspect` | `think_note`, `think_search`                                 |
-| `@think-exec`    | `think_execute`                                              |
-| `@think`         | `@think-inspect`, `@think-exec`                              |
+| Group            | Members                         |
+| ---------------- | ------------------------------- |
+| `@think-inspect` | `think_note`, `think_search`    |
+| `@think-exec`    | `think_execute`                 |
+| `@think`         | `@think-inspect`, `@think-exec` |
 
 Planning/research roles use `@think-inspect`. Execution-capable roles
 (`atlas-orchestrator`, `herdr-orchestrator`, `debug`) use `@think`.
@@ -337,6 +360,11 @@ preserved (they are opaque IDs, not raw bytes). No tool-routing
 directive is ever emitted. The snapshot is persisted in SQLite and
 published as a custom entry, then marked ready with the compaction
 entry id.
+
+For `think_execute`, capture reads the machine header directly from `content`.
+It therefore preserves `success`, `partial`, byte counts, action, and archive
+references even when provider serialization omits `details`. Terminal JSON
+errors are captured as blockers by their safe code and reason.
 
 The `context` hook appends one hidden custom agent message to
 `event.messages` and immediately marks the snapshot consumed. Reload,

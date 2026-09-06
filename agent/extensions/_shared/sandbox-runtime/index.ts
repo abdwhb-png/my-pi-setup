@@ -3,6 +3,14 @@ import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import type { CreateBashOperationsOptions } from "../command-execution/exec.ts";
 import type { AnalysisRequest, AnalysisResult } from "./analysis-protocol.ts";
 
+export {
+    SANDBOX_ERROR_CODES,
+    SandboxExecutionError,
+    isSandboxExecutionError,
+    sandboxErrorMessage,
+    type SandboxErrorCode,
+} from "./errors.ts";
+
 export interface AnalysisSandboxPort {
     run(
         request: AnalysisRequest,

@@ -48,6 +48,7 @@ import {
     claimSandboxRuntime,
     publishSandboxRuntime,
     releaseSandboxRuntime,
+    SandboxExecutionError,
     type AnalysisSandboxPort,
 } from "../_shared/sandbox-runtime/index.ts";
 import type {
@@ -603,6 +604,15 @@ describe("think-in-code real Pi runtime wiring", () => {
         // nested result because the Think pipeline calls it as a function.
         expect(session.events.toolResultsFor("think_execute")).toHaveLength(1);
         expect(session.events.toolResultsFor("safe_bash")).toHaveLength(0);
+        const toolResult = session.events.toolResultsFor("think_execute")[0];
+        expect(toolResult?.isError).toBe(false);
+        const header = JSON.parse(toolResult?.content[0]?.text ?? "{}");
+        expect(header).toMatchObject({
+            status: "success",
+            action: "command",
+            sourceStatus: "succeeded",
+        });
+        expect(toolResult?.content[1]?.text).toContain("DERIVED[javascript]");
 
         // Both sandbox runtime ports were hit with the expected payload.
         expect(state.safeExecCalls).toHaveLength(1);
@@ -630,6 +640,59 @@ describe("think-in-code real Pi runtime wiring", () => {
             command: "echo hello",
             outcome: "succeeded",
         });
+    });
+
+    it("returns isError with safe recovery JSON for a terminal sandbox failure", async () => {
+        const secret = "ZER0BOX_TECHNICAL_SECRET_DO_NOT_LEAK";
+        const state = makeBrokerState();
+        state.bashOperations = {
+            exec: mock(async () => {
+                throw new SandboxExecutionError("setup-failed", {
+                    cause: new Error(secret),
+                });
+            }),
+        };
+        const home = createHarnessProject();
+        const session = await createTestSession({
+            cwd: home,
+            extensionFactories: [thinkInCodeFactory(state)],
+            mockTools: { bash: "ok", read: "ok", write: "ok", edit: "ok" },
+        });
+        sessions.push(session);
+        await session.session.agent.waitForIdle();
+
+        await session.run(
+            when("Trigger a sandbox setup failure", [
+                calls("think_execute", {
+                    action: "command",
+                    language: "javascript",
+                    program: "export default INPUT.length",
+                    command: "echo unreachable",
+                }),
+                says("Will recover the sandbox."),
+            ]),
+        );
+
+        const result = session.events.toolResultsFor("think_execute")[0];
+        expect(result?.isError).toBe(true);
+        expect(result?.content).toHaveLength(1);
+        const errorText = result?.content[0]?.text ?? "{}";
+        const payloadText = errorText.match(
+            /\{"tool":"think_execute"[^\n]+\}/,
+        )?.[0];
+        expect(payloadText).toBeDefined();
+        const payload = JSON.parse(payloadText!);
+        expect(payload).toEqual({
+            tool: "think_execute",
+            status: "error",
+            action: "command",
+            stage: "source",
+            code: "setup-failed",
+            reason: "Sandbox setup failed",
+            recovery: "restore_sandbox",
+        });
+        expect(state.analysisCalls).toHaveLength(0);
+        expect(JSON.stringify(result)).not.toContain(secret);
     });
 
     it("preserves hook order: before_agent_start → tool_call → tool_result → turn_end", async () => {

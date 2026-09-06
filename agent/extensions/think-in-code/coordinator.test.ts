@@ -21,6 +21,7 @@ import { DEFAULT_THINK_IN_CODE_CONFIG } from "./config.ts";
 import type { ThinkCommandOperation } from "./command-policy.ts";
 import { ThinkStore, __getRawDatabase } from "./storage/store.ts";
 import { ThinkCoordinator, __test } from "./coordinator.ts";
+import type { ThinkFailurePayload } from "./public-contract.ts";
 import type { ExecuteRequest } from "./types.ts";
 
 function ctx(cwd: string): ExtensionContext {
@@ -58,6 +59,21 @@ function fakeAnalysis(
         })),
         shutdown: async () => undefined,
     };
+}
+
+async function captureThinkFailure(
+    operation: Promise<unknown>,
+): Promise<ThinkFailurePayload> {
+    let thrown: unknown;
+    try {
+        await operation;
+    } catch (error) {
+        thrown = error;
+    }
+    if (!(thrown instanceof Error)) {
+        throw new Error("Expected think_execute to throw a terminal error");
+    }
+    return JSON.parse(thrown.message) as ThinkFailurePayload;
 }
 
 describe("ThinkCoordinator", () => {
@@ -99,6 +115,83 @@ describe("ThinkCoordinator", () => {
         return { store, coordinator };
     }
 
+    it("puts a compact machine-readable success header before the derivation", async () => {
+        const { coordinator } = await setup();
+
+        const result = await coordinator.execute(
+            {
+                id: "exec-public-success",
+                language: "javascript",
+                program: "export default INPUT.length",
+                source: { kind: "content", content: "input" },
+            },
+            ctx("/workspace/proj"),
+        );
+
+        expect(result.content).toHaveLength(2);
+        expect(JSON.parse(result.content[0]!.text)).toEqual({
+            status: "success",
+            action: "content",
+            sourceStatus: "succeeded",
+            sourceBytes: 5,
+            resultBytes: 12,
+            truncated: false,
+            archiveIds: result.details.archiveIds,
+        });
+        expect(result.content[1]?.text).toBe("derived text");
+    });
+
+    it("throws a safe terminal error and skips analysis for an all-failed empty batch", async () => {
+        const { SafeExecutionError } = await import(
+            "../_shared/command-execution/failure.ts"
+        );
+        const safeExec: CommandExecutionService<ThinkCommandOperation> = {
+            execute: mock(async () => {
+                throw new SafeExecutionError(
+                    "guard",
+                    "dangerous command blocked",
+                    "dangerous command blocked",
+                );
+            }),
+        };
+        const analysis = fakeAnalysis({ output: "must-not-run" });
+        const { coordinator, store } = await setup(safeExec, analysis);
+
+        let thrown: unknown;
+        try {
+            await coordinator.batchExecute(
+                {
+                    id: "batch-all-failed-empty",
+                    language: "javascript",
+                    program: "export default INPUTS.length",
+                    items: [
+                        { id: "one", command: "blocked-one" },
+                        { id: "two", command: "blocked-two" },
+                    ],
+                },
+                ctx("/workspace/proj"),
+            );
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect(thrown).toBeInstanceOf(Error);
+        const payload = JSON.parse((thrown as Error).message);
+        expect(payload).toEqual({
+            tool: "think_execute",
+            status: "error",
+            action: "batch",
+            stage: "source",
+            code: "command-blocked",
+            reason: "dangerous command blocked",
+            recovery: "change_command",
+        });
+        expect(analysis.run).not.toHaveBeenCalled();
+        expect(store.countDocuments()).toBe(0);
+        expect(JSON.stringify(thrown)).not.toContain("blocked-one");
+        expect(JSON.stringify(thrown)).not.toContain("blocked-two");
+    });
+
     it("preserves guard denial evidence and shows no raw stdout", async () => {
         const { SafeExecutionError } = await import(
             "../_shared/command-execution/failure.ts"
@@ -112,7 +205,7 @@ describe("ThinkCoordinator", () => {
                 );
             }),
         };
-        const { coordinator } = await setup(
+        const { coordinator, store } = await setup(
             safeExec,
             fakeAnalysis({ output: "ignored" }),
         );
@@ -122,11 +215,19 @@ describe("ThinkCoordinator", () => {
             program: "1+1",
             source: { kind: "command", command: "sudo something" },
         };
-        const result = await coordinator.execute(request, ctx("/workspace/proj"));
+        const failure = await captureThinkFailure(
+            coordinator.execute(request, ctx("/workspace/proj")),
+        );
         expect(safeExec.execute).toHaveBeenCalledTimes(1);
-        expect(result.content[0]?.text).toContain("dangerous");
-        expect(result.details.blockedReason).toContain("dangerous");
-        expect(result.details.archiveIds).toEqual([]);
+        expect(failure).toMatchObject({
+            status: "error",
+            action: "command",
+            stage: "source",
+            code: "command-blocked",
+            reason: "dangerous command blocked",
+            recovery: "change_command",
+        });
+        expect(store.countDocuments()).toBe(0);
     });
 
     it("strips raw stdout from a non-zero-exit safe-execution error", async () => {
@@ -139,7 +240,7 @@ describe("ThinkCoordinator", () => {
             }),
         };
         const { coordinator } = await setup(safeExec);
-        const result = await coordinator.execute(
+        const failure = await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-nonzero",
                 language: "javascript",
@@ -147,12 +248,10 @@ describe("ThinkCoordinator", () => {
                 source: { kind: "command", command: "cat secret.txt; exit 1" },
             },
             ctx("/workspace/proj"),
-        );
-        // Raw bytes must never appear; only the safe exit-code suffix reaches
-        // the LLM-facing content text and details.blockedReason.
-        expect(result.content[0]?.text).toBe("Command exited with code 1");
-        expect(result.details.blockedReason).toBe("Command exited with code 1");
-        expect(JSON.stringify(result)).not.toContain(secret);
+        ));
+        expect(failure.code).toBe("command-exit");
+        expect(failure.reason).toBe("Command exited with code 1");
+        expect(JSON.stringify(failure)).not.toContain(secret);
     });
 
     it("strips raw stdout from a timed-out safe-execution error", async () => {
@@ -165,7 +264,7 @@ describe("ThinkCoordinator", () => {
             }),
         };
         const { coordinator } = await setup(safeExec);
-        const result = await coordinator.execute(
+        const failure = await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-timeout",
                 language: "javascript",
@@ -173,14 +272,12 @@ describe("ThinkCoordinator", () => {
                 source: { kind: "command", command: "yes" },
             },
             ctx("/workspace/proj"),
-        );
-        expect(result.content[0]?.text).toBe(
+        ));
+        expect(failure.reason).toBe(
             "Command timed out after 30 seconds",
         );
-        expect(result.details.blockedReason).toBe(
-            "Command timed out after 30 seconds",
-        );
-        expect(JSON.stringify(result)).not.toContain(secret);
+        expect(failure.code).toBe("command-timeout");
+        expect(JSON.stringify(failure)).not.toContain(secret);
     });
 
     it("strips raw stdout from an aborted safe-execution error", async () => {
@@ -191,7 +288,7 @@ describe("ThinkCoordinator", () => {
             }),
         };
         const { coordinator } = await setup(safeExec);
-        const result = await coordinator.execute(
+        const failure = await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-abort",
                 language: "javascript",
@@ -199,10 +296,10 @@ describe("ThinkCoordinator", () => {
                 source: { kind: "command", command: "long-running" },
             },
             ctx("/workspace/proj"),
-        );
-        expect(result.content[0]?.text).toBe("Command aborted");
-        expect(result.details.blockedReason).toBe("Command aborted");
-        expect(JSON.stringify(result)).not.toContain(secret);
+        ));
+        expect(failure.reason).toBe("Command aborted");
+        expect(failure.code).toBe("command-aborted");
+        expect(JSON.stringify(failure)).not.toContain(secret);
     });
 
     it("scrubs raw stdout from a raw safe-execution error with no recognizable suffix", async () => {
@@ -217,7 +314,7 @@ describe("ThinkCoordinator", () => {
             }),
         };
         const { coordinator } = await setup(safeExec);
-        const result = await coordinator.execute(
+        const failure = await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-raw-error",
                 language: "javascript",
@@ -225,10 +322,9 @@ describe("ThinkCoordinator", () => {
                 source: { kind: "command", command: "echo" },
             },
             ctx("/workspace/proj"),
-        );
-        expect(JSON.stringify(result)).not.toContain(secret);
-        expect(result.content[0]?.text).not.toContain(secret);
-        expect(result.details.blockedReason ?? "").not.toContain(secret);
+        ));
+        expect(failure.reason).toBe("Command failed (raw output redacted)");
+        expect(JSON.stringify(failure)).not.toContain(secret);
     });
 
     it("does not index raw stdout from safe-execution errors into the search index", async () => {
@@ -249,7 +345,7 @@ describe("ThinkCoordinator", () => {
             },
             ctx("/workspace/proj"),
         );
-        await coordinator.execute(
+        await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-fail-indexed",
                 language: "javascript",
@@ -257,7 +353,7 @@ describe("ThinkCoordinator", () => {
                 source: { kind: "command", command: "failing" },
             },
             ctx("/workspace/proj"),
-        );
+        ));
         const search = await coordinator.search({
             id: "search-secret",
             query: secret,
@@ -301,7 +397,12 @@ describe("ThinkCoordinator", () => {
             }),
             undefined,
         );
-        expect(result.content[0]?.text).toBe("failure-derived");
+        expect(result.content[1]?.text).toBe("failure-derived");
+        expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+            status: "partial",
+            action: "command",
+            sourceStatus: "failed",
+        });
         expect(result.details.blockedReason).toBeUndefined();
         expect(result.details.archiveIds).toHaveLength(2);
         expect(store.readArchives([result.details.archiveIds[0]!], 1024)[0]?.data).toBe(raw);
@@ -345,7 +446,16 @@ describe("ThinkCoordinator", () => {
             }),
             undefined,
         );
-        expect(result.content[0]?.text).toBe("batch-failure-derived");
+        expect(result.content[1]?.text).toBe("batch-failure-derived");
+        expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+            status: "partial",
+            action: "batch",
+            sourceStatus: "failed",
+            total: 1,
+            succeeded: 0,
+            failed: 1,
+            blocked: 0,
+        });
         expect(result.details.items).toEqual([
             expect.objectContaining({
                 id: "failed",
@@ -375,7 +485,10 @@ describe("ThinkCoordinator", () => {
         );
         expect(analysis.run).toHaveBeenLastCalledWith(
             expect.objectContaining({
-                bindings: expect.objectContaining({ INPUT: "command-payload" }),
+                bindings: expect.objectContaining({
+                    INPUT: "command-payload",
+                    ARCHIVES: ["command-payload"],
+                }),
             }),
             undefined,
         );
@@ -434,7 +547,7 @@ describe("ThinkCoordinator", () => {
             },
             ctx("/workspace/proj"),
         );
-        expect(result.content[0]?.text).toBe("DERIVED");
+        expect(result.content[1]?.text).toBe("DERIVED");
         expect(result.details.derivedBytes).toBe(7);
         expect(result.details.archiveIds.length).toBe(2);
         // Raw bytes must not appear in content text or details.
@@ -494,7 +607,7 @@ describe("ThinkCoordinator", () => {
             }),
         };
         const { coordinator } = await setup(safeExec, fakeAnalysis({ output: "x" }));
-        const result = await coordinator.execute(
+        const failure = await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-5",
                 language: "javascript",
@@ -502,13 +615,17 @@ describe("ThinkCoordinator", () => {
                 source: { kind: "command", command: "echo" },
             },
             ctx("/workspace/proj"),
-        );
-        expect(result.details.blockedReason).toContain("Safe execution unavailable");
+        ));
+        expect(failure).toMatchObject({
+            code: "sandbox-unavailable",
+            recovery: "restore_sandbox",
+        });
+        expect(failure.reason).toContain("Safe execution unavailable");
     });
 
     it("rejects execute_file paths that escape the project root", async () => {
         const { coordinator } = await setup();
-        const result = await coordinator.executeFile(
+        const failure = await captureThinkFailure(coordinator.executeFile(
             {
                 id: "exec-file-1",
                 path: "../../etc/passwd",
@@ -516,8 +633,9 @@ describe("ThinkCoordinator", () => {
                 program: "FILE_PATH",
             },
             ctx(home!),
-        );
-        expect(result.details.blockedReason).toContain("escapes project root");
+        ));
+        expect(failure.reason).toContain("escapes project root");
+        expect(failure.code).toBe("file-unreadable");
     });
 
     it("rejects an absent execute_file before archive or analysis without leaking cwd", async () => {
@@ -526,7 +644,7 @@ describe("ThinkCoordinator", () => {
             fakeSafeExecution(() => "must not run"),
             analysis,
         );
-        const result = await coordinator.executeFile(
+        const failure = await captureThinkFailure(coordinator.executeFile(
             {
                 id: "exec-file-absent",
                 path: "missing.txt",
@@ -534,11 +652,10 @@ describe("ThinkCoordinator", () => {
                 program: "FILE_PATH",
             },
             ctx(home!),
-        );
-        expect(result.details.blockedReason).toBe("File not found: missing.txt");
-        expect(result.details.archiveIds).toEqual([]);
+        ));
+        expect(failure.reason).toBe("File not found: missing.txt");
         expect(analysis.run).not.toHaveBeenCalled();
-        expect(JSON.stringify(result)).not.toContain(home!);
+        expect(JSON.stringify(failure)).not.toContain(home!);
         expect(store.archiveBytes()).toBe(0);
     });
 
@@ -549,7 +666,7 @@ describe("ThinkCoordinator", () => {
             analysis,
         );
         await mkdir(join(home!, "subdir"), { recursive: true });
-        const dirResult = await coordinator.executeFile(
+        const failure = await captureThinkFailure(coordinator.executeFile(
             {
                 id: "exec-file-directory",
                 path: "subdir",
@@ -557,9 +674,8 @@ describe("ThinkCoordinator", () => {
                 program: "FILE_PATH",
             },
             ctx(home!),
-        );
-        expect(dirResult.details.blockedReason).toContain("not a regular file");
-        expect(dirResult.details.archiveIds).toEqual([]);
+        ));
+        expect(failure.reason).toContain("not a regular file");
         expect(analysis.run).not.toHaveBeenCalled();
         expect(store.archiveBytes()).toBe(0);
     });
@@ -574,7 +690,7 @@ describe("ThinkCoordinator", () => {
         const created = Bun.spawnSync(["mkfifo", fifoPath]);
         expect(created.exitCode).toBe(0);
 
-        const result = await Promise.race([
+        const failure = await captureThinkFailure(Promise.race([
             coordinator.executeFile(
                 {
                     id: "exec-file-fifo",
@@ -587,10 +703,9 @@ describe("ThinkCoordinator", () => {
             Bun.sleep(1_000).then(() => {
                 throw new Error("FIFO open blocked");
             }),
-        ]);
+        ]));
 
-        expect(result.details.blockedReason).toContain("not a regular file");
-        expect(result.details.archiveIds).toEqual([]);
+        expect(failure.reason).toContain("not a regular file");
         expect(analysis.run).not.toHaveBeenCalled();
         expect(store.archiveBytes()).toBe(0);
     });
@@ -644,7 +759,7 @@ describe("ThinkCoordinator", () => {
                 join(home!, "outgoing.txt"),
             );
 
-            const result = await coordinator.executeFile(
+            const failure = await captureThinkFailure(coordinator.executeFile(
                 {
                     id: "exec-file-outgoing-link",
                     path: "outgoing.txt",
@@ -652,10 +767,9 @@ describe("ThinkCoordinator", () => {
                     program: "FILE_PATH",
                 },
                 ctx(home!),
-            );
+            ));
 
-            expect(result.details.blockedReason).toContain("escapes project root");
-            expect(result.details.archiveIds).toEqual([]);
+            expect(failure.reason).toContain("escapes project root");
             expect(analysis.run).not.toHaveBeenCalled();
             expect(store.archiveBytes()).toBe(0);
         } finally {
@@ -674,7 +788,7 @@ describe("ThinkCoordinator", () => {
             Buffer.from([0x41, 0xc3, 0x28, 0x42]),
         );
 
-        const result = await coordinator.executeFile(
+        const failure = await captureThinkFailure(coordinator.executeFile(
             {
                 id: "exec-file-binary",
                 path: "binary.dat",
@@ -682,13 +796,12 @@ describe("ThinkCoordinator", () => {
                 program: "FILE_CONTENT",
             },
             ctx(home!),
-        );
+        ));
 
-        expect(result.details.blockedReason).toContain("valid UTF-8");
-        expect(result.details.archiveIds).toEqual([]);
+        expect(failure.reason).toContain("valid UTF-8");
         expect(analysis.run).not.toHaveBeenCalled();
         expect(store.archiveBytes()).toBe(0);
-        expect(JSON.stringify(result)).not.toContain("\ufffd");
+        expect(JSON.stringify(failure)).not.toContain("\ufffd");
     });
 
     it("rejects binary NUL bytes even when the payload is valid UTF-8", async () => {
@@ -702,7 +815,7 @@ describe("ThinkCoordinator", () => {
             Buffer.from([0x41, 0, 0x42]),
         );
 
-        const result = await coordinator.executeFile(
+        const failure = await captureThinkFailure(coordinator.executeFile(
             {
                 id: "exec-file-binary-nul",
                 path: "binary-with-nul.dat",
@@ -710,10 +823,9 @@ describe("ThinkCoordinator", () => {
                 program: "FILE_CONTENT",
             },
             ctx(home!),
-        );
+        ));
 
-        expect(result.details.blockedReason).toContain("appears binary");
-        expect(result.details.archiveIds).toEqual([]);
+        expect(failure.reason).toContain("appears binary");
         expect(analysis.run).not.toHaveBeenCalled();
         expect(store.archiveBytes()).toBe(0);
     });
@@ -754,7 +866,7 @@ describe("ThinkCoordinator", () => {
 
         expect(result.details.blockedReason).toBeUndefined();
         expect(result.details.archiveIds).toHaveLength(2);
-        expect(result.content[0]?.text).toBe("immutable");
+        expect(result.content[1]?.text).toBe("immutable");
         expect(result.details.sourceBytes).toBe(exact);
         expect(store.archiveBytes()).toBeGreaterThanOrEqual(exact);
         expect(normalizedRequests).toHaveLength(1);
@@ -780,7 +892,7 @@ describe("ThinkCoordinator", () => {
             Buffer.alloc(64 * 1024 * 1024 + 1, 0x41),
         );
 
-        const result = await coordinator.executeFile(
+        const failure = await captureThinkFailure(coordinator.executeFile(
             {
                 id: "exec-file-oversized",
                 path: "oversized.txt",
@@ -788,10 +900,9 @@ describe("ThinkCoordinator", () => {
                 program: "FILE_CONTENT",
             },
             ctx(home!),
-        );
+        ));
 
-        expect(result.details.blockedReason).toContain("exceeds 64 MiB");
-        expect(result.details.archiveIds).toEqual([]);
+        expect(failure.reason).toContain("exceeds 64 MiB");
         expect(analysis.run).not.toHaveBeenCalled();
         expect(store.archiveBytes()).toBe(0);
     });
@@ -1182,7 +1293,7 @@ describe("ThinkCoordinator", () => {
         try {
             const target = join(homeDir, "secrets.txt");
             await writeFile(target, fileContent, "utf8");
-            const result = await coordinator.executeFile(
+            const failure = await captureThinkFailure(coordinator.executeFile(
                 {
                     id: "exec-file-secret",
                     path: "secrets.txt",
@@ -1190,30 +1301,29 @@ describe("ThinkCoordinator", () => {
                     program: "throw new Error(FILE_CONTENT)",
                 },
                 ctx(homeDir),
-            );
+            ));
             // The full secret (or anything repeated from FILE_CONTENT) must
             // not appear in content[0].text or details.blockedReason, and
             // every surface (including JSON.stringify of the whole result)
             // must stay secret-free.
-            expect(result.content[0]?.text ?? "").not.toContain(secret);
-            expect(result.details.blockedReason ?? "").not.toContain(secret);
+            expect(failure.reason).not.toContain(secret);
             // The bounded reason must never echo the analyzer stderr; it
             // should be a generic shape that does not start with "Error:"
             // or "Command".
-            expect(result.content[0]?.text ?? "").not.toMatch(/^Error:/);
-            expect(JSON.stringify(result)).not.toContain(secret);
+            expect(failure.reason).not.toMatch(/^Error:/);
+            expect(JSON.stringify(failure)).not.toContain(secret);
             // Bound: even very large analyzer errors must not blow past
             // the documented 64 KiB cap; we allow a margin for the framing.
             const reasonBytes = Buffer.byteLength(
-                result.content[0]?.text ?? "",
-                "utf8",
-            );
-            const blockedBytes = Buffer.byteLength(
-                result.details.blockedReason ?? "",
+                failure.reason,
                 "utf8",
             );
             expect(reasonBytes).toBeLessThanOrEqual(256);
-            expect(blockedBytes).toBeLessThanOrEqual(256);
+            expect(failure).toMatchObject({
+                stage: "analysis",
+                code: "analysis-failed",
+                recovery: "change_program",
+            });
         } finally {
             await rm(homeDir, { recursive: true, force: true });
         }
@@ -1236,7 +1346,7 @@ describe("ThinkCoordinator", () => {
             fakeSafeExecution(() => "SAFE_OUTPUT"),
             analysisFailure,
         );
-        const result = await coordinator.execute(
+        const failure = await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-analyzer-fail",
                 language: "javascript",
@@ -1244,18 +1354,15 @@ describe("ThinkCoordinator", () => {
                 source: { kind: "command", command: "echo" },
             },
             ctx("/workspace/proj"),
-        );
-        expect(result.content[0]?.text ?? "").not.toContain(secret);
-        expect(result.details.blockedReason ?? "").not.toContain(secret);
-        expect(JSON.stringify(result)).not.toContain(secret);
+        ));
+        expect(failure.reason).not.toContain(secret);
+        expect(JSON.stringify(failure)).not.toContain(secret);
         // The reason must not mention safe-execution terminology because the
         // failure is an analyzer failure, not a safe-execution one.
         expect(
-            (result.content[0]?.text ?? "").toLowerCase(),
+            failure.reason.toLowerCase(),
         ).not.toContain("safe execution");
-        expect(
-            (result.details.blockedReason ?? "").toLowerCase(),
-        ).not.toContain("safe execution");
+        expect(failure.code).toBe("analysis-failed");
     });
 
     it("batch analyzer error keeps INPUTS secret out of every public surface and stays generic", async () => {
@@ -1270,7 +1377,7 @@ describe("ThinkCoordinator", () => {
             fakeSafeExecution(() => "OK"),
             analysisFailure,
         );
-        const result = await coordinator.batchExecute(
+        const failure = await captureThinkFailure(coordinator.batchExecute(
             {
                 id: "batch-analyzer-fail",
                 language: "python",
@@ -1278,16 +1385,13 @@ describe("ThinkCoordinator", () => {
                 items: [{ id: "x", command: "echo" }],
             },
             ctx("/workspace/proj"),
-        );
-        expect(result.content[0]?.text ?? "").not.toContain(secret);
-        expect(result.details.blockedReason ?? "").not.toContain(secret);
-        expect(JSON.stringify(result)).not.toContain(secret);
+        ));
+        expect(failure.reason).not.toContain(secret);
+        expect(JSON.stringify(failure)).not.toContain(secret);
         expect(
-            (result.content[0]?.text ?? "").toLowerCase(),
+            failure.reason.toLowerCase(),
         ).not.toContain("safe execution");
-        expect(
-            (result.details.blockedReason ?? "").toLowerCase(),
-        ).not.toContain("safe execution");
+        expect(failure.code).toBe("analysis-failed");
     });
 
     it("surfaces a stale-missing archive as 'Archive not found' rather than a generic command failure", async () => {
@@ -1297,7 +1401,7 @@ describe("ThinkCoordinator", () => {
         // safeFailureReason previously redacted both to the same opaque
         // "Command failed (raw output redacted)".
         const { coordinator } = await setup();
-        const result = await coordinator.execute(
+        const failure = await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-stale-archive",
                 language: "javascript",
@@ -1310,19 +1414,17 @@ describe("ThinkCoordinator", () => {
                 },
             },
             ctx("/workspace/proj"),
-        );
-        expect(result.details.blockedReason).toBe(
+        ));
+        expect(failure.reason).toBe(
             "Archive not found: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         );
-        expect(result.content[0]?.text).toBe(
-            "Archive not found: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        );
+        expect(failure.code).toBe("archive-not-found");
     });
 
     it("surfaces a malformed archive id as 'Invalid archive id' rather than a generic command failure", async () => {
         const { coordinator } = await setup();
         const bad = "id with spaces";
-        const result = await coordinator.execute(
+        const failure = await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-bad-archive",
                 language: "javascript",
@@ -1333,10 +1435,9 @@ describe("ThinkCoordinator", () => {
                 },
             },
             ctx("/workspace/proj"),
-        );
-        expect(result.details.blockedReason).toBe(
-            `Invalid archive id: ${bad}`,
-        );
+        ));
+        expect(failure.reason).toBe(`Invalid archive id: ${bad}`);
+        expect(failure.code).toBe("invalid-archive-id");
     });
 
     it("does not honor the 'Safe execution unavailable' prefix when it originates from an analyzer error", async () => {
@@ -1355,7 +1456,7 @@ describe("ThinkCoordinator", () => {
             fakeSafeExecution(() => ""),
             analysisFailure,
         );
-        const result = await coordinator.execute(
+        const failure = await captureThinkFailure(coordinator.execute(
             {
                 id: "exec-spoof",
                 language: "python",
@@ -1363,12 +1464,11 @@ describe("ThinkCoordinator", () => {
                 source: { kind: "content", content: "harmless" },
             },
             ctx("/workspace/proj"),
-        );
-        expect(result.content[0]?.text ?? "").not.toContain(tail);
-        expect(result.details.blockedReason ?? "").not.toContain(tail);
-        expect(JSON.stringify(result)).not.toContain(tail);
+        ));
+        expect(failure.reason).not.toContain(tail);
+        expect(JSON.stringify(failure)).not.toContain(tail);
         expect(
-            (result.content[0]?.text ?? "").toLowerCase(),
+            failure.reason.toLowerCase(),
         ).not.toContain("safe execution unavailable");
     });
 
@@ -1564,7 +1664,7 @@ describe("ThinkCoordinator", () => {
             }),
         };
         const { coordinator } = await setup(safeExec);
-        const result = await coordinator.batchExecute(
+        const failure = await captureThinkFailure(coordinator.batchExecute(
             {
                 id: "batch-aborted",
                 language: "javascript",
@@ -1573,12 +1673,10 @@ describe("ThinkCoordinator", () => {
             },
             ctx("/workspace/proj"),
             { signal: controller.signal },
-        );
-        const item = result.details.items.find((i) => i.id === "aborted");
-        expect(item?.status).toBe("blocked");
-        expect(item?.error).toBe("Command aborted");
-        expect(result.content[0]?.text ?? "").not.toContain(secret);
-        expect(JSON.stringify(result)).not.toContain(secret);
+        ));
+        expect(failure.code).toBe("command-aborted");
+        expect(failure.reason).toBe("Command aborted");
+        expect(JSON.stringify(failure)).not.toContain(secret);
     });
 
     it("non-aborted failed batch items still report failed status with sanitized reason", async () => {
@@ -1589,7 +1687,7 @@ describe("ThinkCoordinator", () => {
             }),
         };
         const { coordinator } = await setup(safeExec);
-        const result = await coordinator.batchExecute(
+        const failure = await captureThinkFailure(coordinator.batchExecute(
             {
                 id: "batch-failed",
                 language: "javascript",
@@ -1597,12 +1695,10 @@ describe("ThinkCoordinator", () => {
                 items: [{ id: "fail", command: "failing" }],
             },
             ctx("/workspace/proj"),
-        );
-        const item = result.details.items.find((i) => i.id === "fail");
-        expect(item?.status).toBe("failed");
-        expect(item?.error).toBe("Command exited with code 9");
-        expect(result.content[0]?.text ?? "").not.toContain(secret);
-        expect(JSON.stringify(result)).not.toContain(secret);
+        ));
+        expect(failure.code).toBe("command-exit");
+        expect(failure.reason).toBe("Command exited with code 9");
+        expect(JSON.stringify(failure)).not.toContain(secret);
     });
 
     it("runs batch execute with bounded concurrency and reports per-item status", async () => {
@@ -1642,7 +1738,7 @@ describe("ThinkCoordinator", () => {
             true,
         );
         expect(safeExec.execute).toHaveBeenCalledTimes(4);
-        expect(result.content[0]?.text).toBe("batch-derived");
+        expect(result.content[1]?.text).toBe("batch-derived");
     });
 
     it("rejects batches above the configured ceiling", async () => {
@@ -1831,7 +1927,7 @@ describe("ThinkCoordinator", () => {
         );
         // LLM must only see the bounded analyzer view; raw archive bytes
         // never appear in the tool result text or details.
-        expect(second.content[0]?.text).toBe("REPLAY");
+        expect(second.content[1]?.text).toBe("REPLAY");
         const serialized = JSON.stringify(second);
         expect(serialized).not.toContain("alpha-42");
     });

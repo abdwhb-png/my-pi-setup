@@ -196,7 +196,7 @@ export function registerThinkInCode(
             name: TOOL_NAMES.execute,
             label: "🧠 Think Execute",
             description:
-                "Use autonomously when large or raw command output, a project file, inline content, prior Think archives, or up to 16 command outputs must be filtered, parsed, aggregated, extracted, compared, or summarized without entering model context. Returns only a bounded derivation; never use it to edit files. File derivations are not indexed automatically; retain a reviewed conclusion with think_note when useful.",
+                "Use autonomously when large or raw command output, a project file, inline content, prior Think archives, or up to 16 command outputs must be filtered, parsed, aggregated, extracted, compared, or summarized without entering model context. Normal results contain a compact JSON status header (success or partial) followed by the bounded derivation; terminal failures set isError and return a safe JSON code, reason, and recovery. Never use it to edit files. File derivations are not indexed automatically; retain a reviewed conclusion with think_note when useful.",
             parameters: schemas.execute,
             async execute(toolCallId, params, signal, onUpdate, ctx) {
                 return asResult(

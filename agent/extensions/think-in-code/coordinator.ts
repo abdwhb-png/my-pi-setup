@@ -33,6 +33,7 @@ import type {
 import {
     isSafeExecutionError,
     toPublicFailure,
+    type SafeExecutionFailure,
 } from "../_shared/command-execution/failure.ts";
 import {
     toSafeAnalysisId,
@@ -49,6 +50,12 @@ import {
     type ThinkCommandOperation,
 } from "./command-policy.ts";
 import type { ThinkInCodeConfig } from "./config.ts";
+import {
+    createThinkExecuteContent,
+    createThinkExecutionError,
+    isThinkExecutionError,
+    type ThinkSourceStatus,
+} from "./public-contract.ts";
 import { runRetention } from "./storage/retention.ts";
 import { normalizeFtsTokens, type ThinkStore } from "./storage/store.ts";
 import type {
@@ -87,14 +94,109 @@ export interface CoordinatorRuntime {
     onUpdate?: ThinkUpdateCallback;
 }
 
-/**
- * Render a safe-execution error into the bounded reason that may reach
- * the LLM, capturing the raw message only for capture warnings / telemetry.
- * Never embeds preceding stdout when the bash exit/timeout/aborted shape
- * is recognizable; never embeds arbitrary preceding text otherwise.
- */
-function safeFailureReason(error: unknown): string {
-    return toPublicFailure(error).reason;
+function commandFailureError(
+    action: "command" | "batch",
+    failure: SafeExecutionFailure,
+): Error {
+    if (failure.kind === "sandbox") {
+        return createThinkExecutionError({
+            action,
+            stage: "source",
+            code: failure.code ?? "sandbox-failed",
+            reason: failure.reason,
+            recovery: "restore_sandbox",
+        });
+    }
+    if (failure.kind === "unavailable") {
+        return createThinkExecutionError({
+            action,
+            stage: "source",
+            code: "sandbox-unavailable",
+            reason: failure.reason,
+            recovery: "restore_sandbox",
+        });
+    }
+    if (failure.kind === "guard" || failure.kind === "redirect") {
+        return createThinkExecutionError({
+            action,
+            stage: "source",
+            code: "command-blocked",
+            reason: failure.reason,
+            recovery: "change_command",
+        });
+    }
+    if (failure.kind === "bash_exit") {
+        return createThinkExecutionError({
+            action,
+            stage: "source",
+            code: "command-exit",
+            reason: failure.reason,
+            recovery: "change_command",
+        });
+    }
+    if (failure.kind === "bash_timeout") {
+        return createThinkExecutionError({
+            action,
+            stage: "source",
+            code: "command-timeout",
+            reason: failure.reason,
+            recovery: "retry",
+        });
+    }
+    if (failure.kind === "bash_aborted") {
+        return createThinkExecutionError({
+            action,
+            stage: "source",
+            code: "command-aborted",
+            reason: failure.reason,
+            recovery: "retry",
+        });
+    }
+    return createThinkExecutionError({
+        action,
+        stage: "source",
+        code: "command-failed",
+        reason: failure.reason,
+        recovery: "retry",
+    });
+}
+
+function sourceFailureError(
+    action: "content" | "archives" | "file",
+    error: unknown,
+): Error {
+    const reason = error instanceof Error ? error.message : String(error);
+    const storeFailure = /sqlite|database|corrupt|archive data/i.test(reason);
+    const code = reason.startsWith("Invalid archive id:")
+        ? "invalid-archive-id"
+        : reason.startsWith("Archive not found:")
+          ? "archive-not-found"
+          : action === "file"
+            ? "file-unreadable"
+            : storeFailure
+              ? "store-read-failed"
+              : "source-unavailable";
+    return createThinkExecutionError({
+        action,
+        stage: storeFailure ? "store" : "source",
+        code,
+        reason,
+        recovery: storeFailure ? "repair_store" : "change_source",
+    });
+}
+
+function analysisFailureError(
+    action: "command" | "content" | "archives" | "file" | "batch",
+    error: unknown,
+    language: ThinkLanguage,
+): Error {
+    return createThinkExecutionError({
+        action,
+        stage: "analysis",
+        code: "analysis-failed",
+        reason: analyzerFailureReason(error, language),
+        recovery: "change_program",
+    });
 }
 
 /**
@@ -273,11 +375,9 @@ export class ThinkCoordinator {
         source: string;
         derivedResult: AnalysisResult | null;
         archiveIds: readonly string[];
-        blockedReason?: string;
         indexWarnings: string[];
     }): void {
         if (
-            input.blockedReason ||
             !input.derivedResult ||
             input.derivedResult.output.trim().length === 0
         ) {
@@ -311,8 +411,9 @@ export class ThinkCoordinator {
         const indexWarnings: string[] = [];
         const archiveIds: string[] = [];
         let sourceBytes = 0;
-        let blockedReason: string | undefined;
         let derivedResult: AnalysisResult | null = null;
+        let sourceStatus: ThinkSourceStatus = "succeeded";
+        let commandFailure: SafeExecutionFailure | undefined;
 
         const sourceInputs: Array<{
             archiveId?: string;
@@ -324,7 +425,7 @@ export class ThinkCoordinator {
             command: string,
             timeout?: number,
             stdin?: string,
-        ): Promise<void> => {
+        ): Promise<SafeExecutionFailure | undefined> => {
             const commandExecution = this.#commandExecution;
             try {
                 const result: CommandExecutionResult =
@@ -347,18 +448,22 @@ export class ThinkCoordinator {
                         sourceBytes += byteCount;
                     },
                 });
+                return undefined;
             } catch (error) {
+                const failure = toPublicFailure(error);
                 const rawOutput = rawCommandOutput(error);
-                if (rawOutput === null) throw error;
-                this.#captureCommandInput({
-                    data: rawOutput,
-                    archiveIds,
-                    captureWarnings,
-                    sourceInputs,
-                    onBytes: (byteCount) => {
-                        sourceBytes += byteCount;
-                    },
-                });
+                if (rawOutput !== null) {
+                    this.#captureCommandInput({
+                        data: rawOutput,
+                        archiveIds,
+                        captureWarnings,
+                        sourceInputs,
+                        onBytes: (byteCount) => {
+                            sourceBytes += byteCount;
+                        },
+                    });
+                }
+                return failure;
             }
         };
 
@@ -370,20 +475,12 @@ export class ThinkCoordinator {
         // which can carry raw stdout in its error message.
         try {
             if (request.source.kind === "command") {
-                try {
-                    await handleCommand(
-                        request.source.command,
-                        request.source.timeout,
-                        request.source.stdin,
-                    );
-                } catch (commandError) {
-                    // Typed bash-exit failures are captured in handleCommand
-                    // and become analyzer input. Guard, redirect, unavailable,
-                    // and unrecognized errors still fail closed.
-                    if (rawCommandOutput(commandError) === null) {
-                        blockedReason = safeFailureReason(commandError);
-                    }
-                }
+                commandFailure = await handleCommand(
+                    request.source.command,
+                    request.source.timeout,
+                    request.source.stdin,
+                );
+                if (commandFailure) sourceStatus = "failed";
             } else if (request.source.kind === "archives") {
                 for (const id of request.source.archiveIds) {
                     if (!verifyArchiveId(id)) {
@@ -424,42 +521,49 @@ export class ThinkCoordinator {
                 throw new Error("Unsupported source kind");
             }
         } catch (error) {
-            blockedReason =
-                error instanceof Error ? error.message : String(error);
+            throw sourceFailureError(
+                request.source.kind === "archives" ? "archives" : "content",
+                error,
+            );
         }
 
-        if (!blockedReason && sourceInputs.length > 0) {
-            try {
-                const analysis = this.#getAnalysisPort();
-                const archivePayload = sourceInputs.map((input) => ({
-                    id: input.archiveId,
-                    byteCount: input.byteCount,
-                }));
-                derivedResult = await analysis.run(
-                    {
-                        id: toSafeAnalysisId(request.id),
-                        language: request.language,
-                        program: request.program,
-                        bindings: {
-                            ...request.bindings,
-                            INPUT: sourceInputs
-                                .map((input) => input.data)
-                                .join(""),
-                            ARCHIVES: JSON.stringify(archivePayload),
-                            ARCHIVE_IDS: archiveIds.join(","),
-                        },
-                        limits: request.limits,
+        if (commandFailure && sourceInputs.length === 0) {
+            throw commandFailureError("command", commandFailure);
+        }
+
+        try {
+            const analysis = this.#getAnalysisPort();
+            derivedResult = await analysis.run(
+                {
+                    id: toSafeAnalysisId(request.id),
+                    language: request.language,
+                    program: request.program,
+                    bindings: {
+                        ...request.bindings,
+                        INPUT: sourceInputs.map((input) => input.data).join(""),
+                        ARCHIVES: sourceInputs.map((input) => input.data),
+                        ARCHIVE_IDS: archiveIds.join(","),
                     },
-                    runtime.signal,
-                );
-            } catch (error) {
-                // Analyzer failures originate from the analysis sandbox,
-                // never from safe execution. Use the bounded analyzer
-                // normalizer so raw binding values (`INPUT`,
-                // `FILE_CONTENT`) or attacker-controlled messages cannot
-                // reach the LLM as content text or details.blockedReason.
-                blockedReason = analyzerFailureReason(error, request.language);
-            }
+                    limits: request.limits,
+                },
+                runtime.signal,
+            );
+        } catch (error) {
+            throw analysisFailureError(
+                request.source.kind,
+                error,
+                request.language,
+            );
+        }
+
+        if (derivedResult.output.trim().length === 0) {
+            throw createThinkExecutionError({
+                action: request.source.kind,
+                stage: "analysis",
+                code: "analysis-empty",
+                reason: "Analysis produced no usable result",
+                recovery: "change_program",
+            });
         }
 
         if (derivedResult) {
@@ -484,7 +588,6 @@ export class ThinkCoordinator {
                     : request.id,
             derivedResult,
             archiveIds,
-            blockedReason,
             indexWarnings,
         });
 
@@ -498,20 +601,35 @@ export class ThinkCoordinator {
             derivedResult,
             this.#config.maxResultBytes,
         );
+        const status = sourceStatus === "succeeded" ? "success" : "partial";
         const details: ToolExecutionDetails = {
             archiveIds,
+            status,
+            action: request.source.kind,
+            sourceStatus,
             sourceBytes,
             derivedBytes,
+            resultBytes: derivedBytes,
             language: request.language,
             runtime: derivedResult?.runtime ?? "none",
             elapsedMs: Math.round(performance.now() - startedAt),
             truncated,
             captureWarnings,
             indexWarnings,
-            blockedReason,
         };
         return {
-            content: [{ type: "text", text: blockedReason ?? text }],
+            content: createThinkExecuteContent(
+                {
+                    status,
+                    action: request.source.kind,
+                    sourceStatus,
+                    sourceBytes,
+                    resultBytes: derivedBytes,
+                    truncated,
+                    archiveIds,
+                },
+                text,
+            ),
             details,
         };
     }
@@ -529,7 +647,6 @@ export class ThinkCoordinator {
         const captureWarnings: string[] = [];
         const indexWarnings: string[] = [];
         const archiveIds: string[] = [];
-        let blockedReason: string | undefined;
         let derivedResult: AnalysisResult | null = null;
         let sourceBytes = 0;
 
@@ -620,32 +737,40 @@ export class ThinkCoordinator {
                         },
                         runtime.signal,
                     );
-                    const analysisArchive = this.#archiveSafely({
-                        kind: "analysis-output",
-                        data: derivedResult.output,
-                        captureWarnings,
-                    });
-                    if (analysisArchive) archiveIds.push(analysisArchive.id);
                 } catch (analysisError) {
-                    // The analyzer may throw with a message that echoes raw
-                    // `FILE_CONTENT` (e.g. `throw new Error(FILE_CONTENT)`);
-                    // never copy that into content/details or let it exceed
-                    // the documented bound. The path validation layer above
-                    // is responsible for input shaping and uses static error
-                    // messages that only echo the caller's own `request.path`.
-                    blockedReason = analyzerFailureReason(
+                    throw analysisFailureError(
+                        "file",
                         analysisError,
                         request.language,
                     );
                 }
+                if (derivedResult.output.trim().length === 0) {
+                    throw createThinkExecutionError({
+                        action: "file",
+                        stage: "analysis",
+                        code: "analysis-empty",
+                        reason: "Analysis produced no usable result",
+                        recovery: "change_program",
+                    });
+                }
+                const analysisArchive = this.#archiveSafely({
+                    kind: "analysis-output",
+                    data: derivedResult.output,
+                    captureWarnings,
+                });
+                if (analysisArchive) archiveIds.push(analysisArchive.id);
             } finally {
                 await file.close();
             }
         } catch (error) {
+            if (isThinkExecutionError(error)) throw error;
             // Only our static validation messages may cross the boundary.
             // OS errors can contain canonical host paths, so map them to a
             // request-path-only public reason.
-            blockedReason = fileFailureReason(error, request.path);
+            throw sourceFailureError(
+                "file",
+                new Error(fileFailureReason(error, request.path)),
+            );
         }
 
         // File programs receive raw FILE_CONTENT and are intentionally
@@ -663,8 +788,12 @@ export class ThinkCoordinator {
             : 0;
         const details: ToolExecutionDetails = {
             archiveIds,
+            status: "success",
+            action: "file",
+            sourceStatus: "succeeded",
             sourceBytes,
             derivedBytes: fileDerivedBytes,
+            resultBytes: fileDerivedBytes,
             language: request.language,
             runtime: derivedResult?.runtime ?? "none",
             elapsedMs: Math.round(performance.now() - startedAt),
@@ -673,10 +802,20 @@ export class ThinkCoordinator {
                 fileDerivedBytes > this.#config.maxResultBytes,
             captureWarnings,
             indexWarnings,
-            blockedReason,
         };
         return {
-            content: [{ type: "text", text: blockedReason ?? text }],
+            content: createThinkExecuteContent(
+                {
+                    status: "success",
+                    action: "file",
+                    sourceStatus: "succeeded",
+                    sourceBytes,
+                    resultBytes: fileDerivedBytes,
+                    truncated: details.truncated,
+                    archiveIds,
+                },
+                text,
+            ),
             details,
         };
     }
@@ -701,8 +840,9 @@ export class ThinkCoordinator {
         const itemResults: Array<
             (BatchItemResult & { output?: string }) | undefined
         > = Array.from({ length: request.items.length });
+        const itemFailures: Array<SafeExecutionFailure | undefined> =
+            Array.from({ length: request.items.length });
         let derivedResult: AnalysisResult | null = null;
-        let blockedReason: string | undefined;
 
         if (request.items.length === 0) {
             throw new Error("Batch execute requires at least one item");
@@ -754,6 +894,8 @@ export class ThinkCoordinator {
                                 output,
                             };
                         } catch (error) {
+                            const failure = toPublicFailure(error);
+                            itemFailures[next.index] = failure;
                             const rawOutput = rawCommandOutput(error);
                             const byteCount = rawOutput
                                 ? Buffer.byteLength(rawOutput, "utf8")
@@ -773,7 +915,7 @@ export class ThinkCoordinator {
                                 archiveId: archive?.id,
                                 byteCount,
                                 output: rawOutput ?? undefined,
-                                error: safeFailureReason(error),
+                                error: failure.reason,
                             };
                         }
                     }
@@ -792,6 +934,38 @@ export class ThinkCoordinator {
             (total, item) => total + item.byteCount,
             0,
         );
+        const succeeded = orderedItems.filter(
+            (item) => item.status === "succeeded",
+        ).length;
+        const failed = orderedItems.filter(
+            (item) => item.status === "failed",
+        ).length;
+        const blocked = orderedItems.filter(
+            (item) => item.status === "blocked",
+        ).length;
+        const sourceStatus: ThinkSourceStatus =
+            failed + blocked === 0
+                ? "succeeded"
+                : succeeded === 0
+                  ? "failed"
+                  : "mixed";
+
+        if (succeeded === 0 && sourceBytes === 0) {
+            const firstFailure = itemFailures.find(
+                (failure): failure is SafeExecutionFailure =>
+                    failure !== undefined,
+            );
+            if (firstFailure) {
+                throw commandFailureError("batch", firstFailure);
+            }
+            throw createThinkExecutionError({
+                action: "batch",
+                stage: "source",
+                code: "source-unavailable",
+                reason: "Batch produced no usable source output",
+                recovery: "retry",
+            });
+        }
 
         try {
             const analysis = this.#getAnalysisPort();
@@ -817,9 +991,8 @@ export class ThinkCoordinator {
                             if (item.output !== undefined) {
                                 input.output = item.output;
                             }
-                            // The per-item error is already sanitized through
-                            // safeFailureReason before it crosses the worker
-                            // boundary.
+                            // The per-item error was normalized before it
+                            // crossed the worker boundary.
                             if (item.error !== undefined) {
                                 input.error = item.error;
                             }
@@ -829,24 +1002,31 @@ export class ThinkCoordinator {
                 },
                 runtime.signal,
             );
-            const analysisArchive = this.#archiveSafely({
-                kind: "analysis-output",
-                data: derivedResult.output,
-                captureWarnings,
-            });
-            if (analysisArchive) archiveIds.push(analysisArchive.id);
         } catch (error) {
-            // Analyzer failure (not safe execution) — generic bounded
-            // reason, never echo INPUTS binding.
-            blockedReason = analyzerFailureReason(error, request.language);
+            throw analysisFailureError("batch", error, request.language);
         }
+
+        if (derivedResult.output.trim().length === 0) {
+            throw createThinkExecutionError({
+                action: "batch",
+                stage: "analysis",
+                code: "analysis-empty",
+                reason: "Analysis produced no usable result",
+                recovery: "change_program",
+            });
+        }
+        const analysisArchive = this.#archiveSafely({
+            kind: "analysis-output",
+            data: derivedResult.output,
+            captureWarnings,
+        });
+        if (analysisArchive) archiveIds.push(analysisArchive.id);
 
         this.#indexDerivedResult({
             kind: "analysis-summary",
             source: request.id,
             derivedResult,
             archiveIds,
-            blockedReason,
             indexWarnings,
         });
 
@@ -857,12 +1037,17 @@ export class ThinkCoordinator {
         const derivedBytes = derivedResult
             ? Buffer.byteLength(derivedResult.output, "utf8")
             : 0;
+        const status = sourceStatus === "succeeded" ? "success" : "partial";
         const details: ToolExecutionDetails & {
             items: BatchExecuteSummary["items"];
         } = {
             archiveIds,
+            status,
+            action: "batch",
+            sourceStatus,
             sourceBytes,
             derivedBytes,
+            resultBytes: derivedBytes,
             language: request.language,
             runtime: derivedResult?.runtime ?? "none",
             elapsedMs: Math.round(performance.now() - startedAt),
@@ -871,16 +1056,25 @@ export class ThinkCoordinator {
                 derivedBytes > this.#config.maxResultBytes,
             captureWarnings,
             indexWarnings,
-            blockedReason,
             items: orderedItems.map(({ output: _output, ...item }) => item),
         };
         return {
-            content: [
+            content: createThinkExecuteContent(
                 {
-                    type: "text",
-                    text: blockedReason ?? derivedText,
+                    status,
+                    action: "batch",
+                    sourceStatus,
+                    sourceBytes,
+                    resultBytes: derivedBytes,
+                    truncated: details.truncated,
+                    archiveIds,
+                    total: orderedItems.length,
+                    succeeded,
+                    failed,
+                    blocked,
                 },
-            ],
+                derivedText,
+            ),
             details,
         };
     }

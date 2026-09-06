@@ -193,6 +193,7 @@ export class HookState {
     captureToolResult(input: {
         toolName: string;
         isError: boolean;
+        content?: unknown;
         details?: unknown;
         references?: readonly string[];
     }): void {
@@ -374,6 +375,7 @@ export function registerHooks(
             state.captureToolResult({
                 toolName: event.toolName,
                 isError: Boolean(event.isError),
+                content: event.content,
                 details: event.details,
                 references: extractArchiveIds(event.details),
             });

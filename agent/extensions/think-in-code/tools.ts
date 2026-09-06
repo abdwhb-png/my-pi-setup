@@ -1,9 +1,10 @@
 /**
  * Tool contracts for the three native `think_*` tools.
  *
- * Each tool calls the ThinkCoordinator and returns bounded analyzer text plus
- * structured `details`. Raw sources remain in archives unless the caller's
- * analyzer program deliberately copies them into its public result.
+ * Each tool calls the ThinkCoordinator and returns an LLM-visible status
+ * header followed by bounded analyzer text. Raw sources remain in archives
+ * unless the caller's analyzer program deliberately copies them into its
+ * public result.
  *
  * Schema validation rejects multiple sources, unknown languages, over-limit
  * batch size, invalid archive IDs, excessive result limits, and any fetch or
@@ -50,7 +51,7 @@ const DEFAULT_MAX_NOTE_CHARS = 1024;
 const LANGUAGE_DESCRIPTION =
     "Analyzer language. JavaScript/TypeScript run as QuickJS ES modules: bindings are const locals and output requires `export default <value>`. Python runs in Eryx: bindings are locals and output requires top-level `result = <value>`.";
 const PROGRAM_DESCRIPTION =
-    "Sandboxed analyzer source. Return only a bounded derivation, never raw bindings. JavaScript/TypeScript require `export default <value>`; Python requires top-level `result = <value>`. Bindings: INPUT, INPUTS, FILE_CONTENT, FILE_PATH, ARCHIVES, ARCHIVE_IDS and caller strings.";
+    "Sandboxed analyzer source; return only a bounded derivation, never raw bindings. JavaScript/TypeScript require `export default <value>`; Python requires top-level `result = <value>`. Bindings by action: INPUT is a string for command/content; FILE_CONTENT and FILE_PATH are strings for file; ARCHIVES is an ordered content array; INPUTS is an ordered {id,status,archiveId?,output?,error?} array for batch. Use INPUTS.find(item => item.id === 'build'), never INPUTS.<id>. ARCHIVE_IDS and caller strings remain available.";
 
 function requireLanguage(value: unknown): ThinkLanguage {
     if (

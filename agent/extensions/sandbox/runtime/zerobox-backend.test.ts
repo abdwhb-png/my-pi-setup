@@ -25,14 +25,14 @@ import {
 } from "./zerobox-backend.ts";
 
 const EXPECTED_SHA =
-    "3093a7354ab77c1ad6c372752d1ad7342f854b487e6f12379eb63b47c5c32c67";
+    "1544917463257a19361796d517ef121b601dd4ded18edf53ca5617f387618514";
 
 function successfulRun(
     _file: string,
     args: string[],
 ): ZeroboxCommandResult {
     return args.includes("--version")
-        ? { exitCode: 0, stdout: "zerobox 0.3.3-fork.10\n", stderr: "" }
+        ? { exitCode: 0, stdout: "zerobox 0.3.3-fork.11\n", stderr: "" }
         : { exitCode: 0, stdout: "", stderr: "" };
 }
 
@@ -395,7 +395,7 @@ describe("Zerobox backend", () => {
                 platform: "linux",
                 probeRoot,
                 expectedProvenance: {
-                    version: "0.3.3-fork.10",
+                    version: "0.3.3-fork.11",
                     binarySha256: EXPECTED_SHA,
                 },
                 hashFile: async () => EXPECTED_SHA,

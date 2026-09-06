@@ -93,7 +93,7 @@ describe("think_* tool handlers", () => {
     });
 
     it("keeps the complete public schema below the five-tool context budget", () => {
-        expect(JSON.stringify(SCHEMAS).length).toBeLessThan(2_600);
+        expect(JSON.stringify(SCHEMAS).length).toBeLessThan(2_800);
         expect(
             JSON.stringify({ note: SCHEMAS.note, search: SCHEMAS.search })
                 .length,
@@ -185,6 +185,14 @@ describe("think_* tool handlers", () => {
         expect(program?.description).toMatch(/export default/i);
         expect(program?.description).toMatch(/python/i);
         expect(program?.description).toMatch(/result/i);
+        expect(program?.description).toMatch(/INPUT.*string.*command.*content/i);
+        expect(program?.description).toMatch(
+            /FILE_CONTENT.*FILE_PATH.*file/i,
+        );
+        expect(program?.description).toMatch(/ARCHIVES.*ordered.*content.*array/i);
+        expect(program?.description).toMatch(
+            /INPUTS\.find.*never INPUTS\.<id>/i,
+        );
         // language descriptions must enumerate javascript / typescript / python
         expect(schema.properties?.language?.description).toBeDefined();
     });
@@ -327,7 +335,7 @@ describe("think_* tool handlers", () => {
             },
             ctx("/workspace/proj"),
         )) as { content: { text: string }[]; details: { derivedBytes: number } };
-        expect(result.content[0]?.text).toBe("DERIVED");
+        expect(result.content[1]?.text).toBe("DERIVED");
         expect(result.details.derivedBytes).toBe(7);
         expect(coordinator.store.search("DERIVED", 5)).toHaveLength(1);
     });
@@ -389,16 +397,18 @@ describe("think_* tool handlers", () => {
             fakeAnalysis(" \n "),
         );
 
-        await handlers.execute(
-            {
-                id: "empty-derived",
-                action: "content",
-                language: "javascript",
-                program: "export default ''",
-                content: "raw-source-marker",
-            },
-            ctx("/workspace/proj"),
-        );
+        await expect(
+            handlers.execute(
+                {
+                    id: "empty-derived",
+                    action: "content",
+                    language: "javascript",
+                    program: "export default ''",
+                    content: "raw-source-marker",
+                },
+                ctx("/workspace/proj"),
+            ),
+        ).rejects.toThrow(/"code":"analysis-empty"/);
 
         expect(coordinator.store.search("raw-source-marker", 5)).toEqual([]);
     });
@@ -415,19 +425,21 @@ describe("think_* tool handlers", () => {
             failingAnalysis,
         );
 
-        const result = (await handlers.execute(
-            {
-                action: "batch",
-                language: "javascript",
-                program: "export default INPUTS",
-                items: [{ id: "one", command: "echo one" }],
-            },
-            ctx(home!),
-            { toolCallId: "failed-batch-call" },
-        )) as { details: { archiveIds: readonly string[] } };
+        await expect(
+            handlers.execute(
+                {
+                    action: "batch",
+                    language: "javascript",
+                    program: "export default INPUTS",
+                    items: [{ id: "one", command: "echo one" }],
+                },
+                ctx(home!),
+                { toolCallId: "failed-batch-call" },
+            ),
+        ).rejects.toThrow(/"code":"analysis-failed"/);
 
-        const archivedId = result.details.archiveIds[0]!;
-        expect(coordinator.store.search(archivedId, 5)).toHaveLength(0);
+        expect(coordinator.store.countDocuments()).toBe(0);
+        expect(coordinator.store.archiveBytes()).toBeGreaterThan(0);
     });
 
     it("think_note always requires explicit text", async () => {
@@ -525,7 +537,7 @@ describe("think_* tool handlers", () => {
             ctx("/workspace/proj"),
             { toolCallId: "second-call" },
         )) as { content: { text: string }[] };
-        expect(result.content[0]?.text).toBe("DERIVED");
+        expect(result.content[1]?.text).toBe("DERIVED");
         const storeAfter = coordinator.store;
         expect(storeAfter.archiveBytes()).toBeGreaterThan(0);
         expect(storeAfter.search("DERIVED", 5).length).toBeGreaterThanOrEqual(2);

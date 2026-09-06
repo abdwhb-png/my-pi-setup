@@ -10,42 +10,44 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const tracePath = process.env.THINK_SMOKE_TRACE;
 const phase = process.env.THINK_SMOKE_PHASE ?? "functional";
+type OpaqueValue = ErrorOptions["cause"];
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
+function property(value: OpaqueValue, key: PropertyKey): OpaqueValue {
+    return typeof value === "object" && value !== null
+        ? Reflect.get(value, key)
         : undefined;
 }
 
-function textOf(content: unknown): string {
+function textOf(content: OpaqueValue): string {
     if (typeof content === "string") return content;
     if (!Array.isArray(content)) return "";
     return content
-        .map((block) => asRecord(block))
         .filter(
-            (block) => block?.type === "text" && typeof block.text === "string",
+            (block) =>
+                property(block, "type") === "text" &&
+                typeof property(block, "text") === "string",
         )
-        .map((block) => String(block?.text))
+        .map((block) => String(property(block, "text")))
         .join("\n");
 }
 
 function traceContext(context: Context, label: string): void {
     if (!tracePath) return;
-    const messages = context.messages.map((message) => asRecord(message));
-    const snapshots = messages
-        .filter((message) => message?.role === "user")
-        .map((message) => textOf(message?.content))
+    const snapshots = context.messages
+        .filter((message) => message.role === "user")
+        .map((message) => textOf(message.content))
         .filter((text) =>
             /^\[(?:blocker|decision|objective|verified|claim|note)\] t\d/m.test(
                 text,
             ),
         );
-    const toolResults = messages
-        .filter((message) => message?.role === "toolResult")
+    const toolResults = context.messages
+        .filter((message) => message.role === "toolResult")
         .map((message) => ({
-            toolName: message?.toolName,
-            isError: message?.isError,
-            details: message?.details,
+            toolName: message.toolName,
+            isError: message.isError,
+            contentText: textOf(message.content),
+            detailsPresent: Object.hasOwn(message, "details"),
         }));
     appendFileSync(
         tracePath,
@@ -84,10 +86,16 @@ function tool(name: string, arguments_: Record<string, unknown>, id: string) {
 
 function archiveIds(context: Context): string[] {
     return context.messages.flatMap((message) => {
-        const record = asRecord(message);
-        if (record?.role !== "toolResult") return [];
-        const details = asRecord(record.details);
-        const ids = details?.archiveIds;
+        if (message.role !== "toolResult") return [];
+        const firstLine = textOf(message.content).split("\n", 1)[0];
+        if (!firstLine) return [];
+        let header: OpaqueValue;
+        try {
+            header = JSON.parse(firstLine);
+        } catch {
+            return [];
+        }
+        const ids = property(header, "archiveIds");
         return Array.isArray(ids)
             ? ids.filter((value): value is string => typeof value === "string")
             : [];
@@ -165,10 +173,23 @@ export default function register(pi: ExtensionAPI): void {
                 tool(
                     "think_execute",
                     {
+                        action: "command",
+                        language: "javascript",
+                        command: "printf partial-source; exit 7",
+                        program: "export default INPUT.length",
+                    },
+                    "smoke-partial",
+                ),
+            ),
+            traced("after-partial", () =>
+                tool(
+                    "think_execute",
+                    {
                         action: "file",
                         path: "fixture.txt",
                         language: "javascript",
-                        program: "export default FILE_CONTENT.toUpperCase()",
+                        program:
+                            "export default FILE_CONTENT.trim().split(/\\s+/).length",
                     },
                     "smoke-file",
                 ),
@@ -180,7 +201,7 @@ export default function register(pi: ExtensionAPI): void {
                         action: "batch",
                         language: "javascript",
                         program:
-                            "export default INPUTS.map((item) => item.output).join('|')",
+                            "export default INPUTS.map((item) => item.output?.length ?? 0).join('|')",
                         items: [{ id: "red", command: "printf red" }],
                     },
                     "smoke-batch",
@@ -226,6 +247,7 @@ export default function register(pi: ExtensionAPI): void {
                 tool(
                     "think_execute",
                     {
+                        action: "content",
                         language: "javascript",
                         content: "network must stay sealed",
                         program: "export default fetch('https://example.com')",

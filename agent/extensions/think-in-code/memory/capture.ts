@@ -19,6 +19,10 @@
  */
 
 import { redactTextPreservingContext } from "../../_shared/redaction.ts";
+import {
+    parseThinkExecuteHeader,
+    parseThinkFailurePayload,
+} from "../public-contract.ts";
 import type { ThinkStore } from "../storage/store.ts";
 
 export const CAPTURE_PRIORITIES = Object.freeze({
@@ -30,6 +34,13 @@ export const CAPTURE_PRIORITIES = Object.freeze({
 });
 
 export const CAPTURE_ENTRY_TYPE = "think-in-code:capture";
+type OpaqueValue = ErrorOptions["cause"];
+
+function property(value: OpaqueValue, key: PropertyKey): OpaqueValue {
+    return typeof value === "object" && value !== null
+        ? Reflect.get(value, key)
+        : undefined;
+}
 
 export type CapturePriority =
     (typeof CAPTURE_PRIORITIES)[keyof typeof CAPTURE_PRIORITIES];
@@ -132,70 +143,101 @@ export function classifyToolCall(input: {
 export function classifyToolResult(input: {
     toolName: string;
     isError: boolean;
+    content?: unknown;
     details?: unknown;
     references?: readonly string[];
 }): { priority: CapturePriority; text: string; references?: string[] } {
-    const { toolName, isError, details, references } = input;
-    const detailRecord =
-        details && typeof details === "object"
-            ? (details as Record<string, unknown>)
+    const { toolName, isError, content, details, references } = input;
+    const thinkHeader =
+        toolName === "think_execute"
+            ? parseThinkExecuteHeader(content)
             : undefined;
+    const thinkFailure =
+        toolName === "think_execute"
+            ? parseThinkFailurePayload(content)
+            : undefined;
+    const resolvedReferences = references
+        ? [...references]
+        : thinkHeader
+          ? [...thinkHeader.archiveIds]
+          : undefined;
+    if (thinkFailure) {
+        return {
+            priority: CAPTURE_PRIORITIES.blocker,
+            text: `${toolName} failed [${thinkFailure.code}]: ${thinkFailure.reason}`,
+            references: resolvedReferences,
+        };
+    }
+    if (thinkHeader?.status === "partial") {
+        const counters =
+            thinkHeader.action === "batch"
+                ? `, succeeded=${thinkHeader.succeeded ?? 0}, failed=${thinkHeader.failed ?? 0}, blocked=${thinkHeader.blocked ?? 0}`
+                : "";
+        return {
+            priority: CAPTURE_PRIORITIES.blocker,
+            text: `${toolName} partial: ${thinkHeader.action}${counters}`,
+            references: resolvedReferences,
+        };
+    }
+    if (thinkHeader?.status === "success") {
+        return {
+            priority: CAPTURE_PRIORITIES.verifiedFact,
+            text: `${toolName} succeeded: ${thinkHeader.action}, ${thinkHeader.sourceBytes}→${thinkHeader.resultBytes} bytes`,
+            references: resolvedReferences,
+        };
+    }
+    const blockedReasonValue = property(details, "blockedReason");
     const blockedReason =
-        typeof detailRecord?.blockedReason === "string"
-            ? detailRecord.blockedReason
-            : undefined;
-    const failedBatchItem = Array.isArray(detailRecord?.items)
-        ? detailRecord.items.find(
-              (item) =>
-                  typeof item === "object" &&
-                  item !== null &&
-                  (item as { status?: unknown }).status !== "succeeded",
-          )
+        typeof blockedReasonValue === "string" ? blockedReasonValue : undefined;
+    const items = property(details, "items");
+    const failedBatchItem = Array.isArray(items)
+        ? items.find((item) => property(item, "status") !== "succeeded")
         : undefined;
+    const errorCount = property(details, "errorCount");
+    const failed = property(details, "failed");
+    const passed = property(details, "passed");
     const diagnosticFailure =
-        (typeof detailRecord?.errorCount === "number" &&
-            detailRecord.errorCount > 0) ||
-        (typeof detailRecord?.failed === "number" && detailRecord.failed > 0) ||
-        detailRecord?.passed === false;
+        (typeof errorCount === "number" && errorCount > 0) ||
+        (typeof failed === "number" && failed > 0) ||
+        passed === false;
     if (isError || blockedReason || failedBatchItem || diagnosticFailure) {
-        const batchRecord =
-            failedBatchItem && typeof failedBatchItem === "object"
-                ? (failedBatchItem as Record<string, unknown>)
-                : undefined;
+        const batchErrorValue = property(failedBatchItem, "error");
+        const batchStatus = property(failedBatchItem, "status");
         const batchError =
-            typeof batchRecord?.error === "string"
-                ? batchRecord.error
-                : typeof batchRecord?.status === "string"
-                  ? batchRecord.status
-                  : batchRecord
+            typeof batchErrorValue === "string"
+                ? batchErrorValue
+                : typeof batchStatus === "string"
+                  ? batchStatus
+                  : failedBatchItem
                     ? "batch item failed"
                     : undefined;
+        const detailReason = property(details, "reason");
+        const safeDetailReason =
+            typeof detailReason === "string" ? detailReason : undefined;
         const reason =
             blockedReason ??
             batchError ??
-            (detailRecord && "reason" in detailRecord
-                ? String(detailRecord.reason)
+            (safeDetailReason !== undefined
+                ? safeDetailReason
                 : diagnosticFailure
                   ? "diagnostic or test failure"
                   : "tool error");
         return {
             priority: CAPTURE_PRIORITIES.blocker,
             text: `${toolName} failed: ${reason}`,
-            references: references ? [...references] : undefined,
+            references: resolvedReferences,
         };
     }
     if (toolName === "think_execute" || toolName === "think_batch_execute") {
         return {
             priority: CAPTURE_PRIORITIES.verifiedFact,
             text: `${toolName} succeeded`,
-            references: references ? [...references] : undefined,
+            references: resolvedReferences,
         };
     }
     if (toolName === "edit" || toolName === "write") {
-        const path =
-            details && typeof details === "object" && "path" in details
-                ? String((details as { path: unknown }).path)
-                : "";
+        const pathValue = property(details, "path");
+        const path = typeof pathValue === "string" ? pathValue : "";
         return {
             priority: CAPTURE_PRIORITIES.verifiedFact,
             text: `${toolName} ${path}`,

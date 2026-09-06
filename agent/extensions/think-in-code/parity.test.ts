@@ -44,10 +44,10 @@ const MAX_DERIVED_BYTES = 64 * 1024;
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
 
 function extractText<T>(result: AgentToolResult<T>): string {
-    return result.content
+    const textBlocks = result.content
         .filter((block): block is { type: "text"; text: string } => block.type === "text")
-        .map((block) => block.text)
-        .join("");
+        .map((block) => block.text);
+    return textBlocks[1] ?? textBlocks[0] ?? "";
 }
 
 function textBinding(
@@ -240,7 +240,10 @@ describe("Think-in-Code parity fixtures", () => {
     });
 
     it("analyzes a project file end-to-end and exposes FILE_CONTENT/FILE_PATH", async () => {
-        const harness = await setup();
+        const harness = await setup(
+            undefined,
+            makeAnalysis(() => "file-derived"),
+        );
         try {
             await writeFile(
                 join(harness.home, "module.ts"),
@@ -268,7 +271,7 @@ describe("Think-in-Code parity fixtures", () => {
                 undefined,
             );
             // LLM-facing text is the bounded derived output, not the file.
-            expect(result.content[0]?.text.length).toBeLessThanOrEqual(
+            expect(result.content[1]?.text.length).toBeLessThanOrEqual(
                 MAX_DERIVED_BYTES,
             );
         } finally {
@@ -279,17 +282,18 @@ describe("Think-in-Code parity fixtures", () => {
     it("rejects file paths that escape the project root (../)", async () => {
         const harness = await setup();
         try {
-            const result = await harness.coordinator.executeFile(
-                {
-                    id: "parity-escape",
-                    path: "../../etc/passwd",
-                    language: "javascript",
-                    program: "FILE_PATH",
-                },
-                ctx(harness.home),
-            );
-            expect(result.details.blockedReason).toMatch(/escapes/i);
-            expect(result.details.archiveIds).toEqual([]);
+            await expect(
+                harness.coordinator.executeFile(
+                    {
+                        id: "parity-escape",
+                        path: "../../etc/passwd",
+                        language: "javascript",
+                        program: "FILE_PATH",
+                    },
+                    ctx(harness.home),
+                ),
+            ).rejects.toThrow(/escapes project root/i);
+            expect(harness.store.archiveBytes()).toBe(0);
         } finally {
             await harness.cleanup();
         }

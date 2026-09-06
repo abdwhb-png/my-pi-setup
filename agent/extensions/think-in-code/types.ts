@@ -112,6 +112,11 @@ export interface ExecuteFileRequest {
 
 export interface ToolExecutionDetails {
     archiveIds: readonly string[];
+    /** LLM-visible outcome metadata mirrored in the first content block. */
+    status?: "success" | "partial";
+    action?: ThinkExecuteAction;
+    sourceStatus?: "succeeded" | "failed" | "mixed";
+    resultBytes?: number;
     /** Search hits returned by think_search. Omitted for non-search tools. */
     hitCount?: number;
     /** Searchable documents in the current project store. */
