@@ -31,17 +31,21 @@ export function resolveBashOperations(
     options: SandboxBashOperationOptions = {},
 ): BashOperations {
     const runtime = getSandboxRuntime();
-    if (runtime.state === "enabled") {
-        return runtime.createBashOperations(options);
-    }
+    const sandbox = createSandboxBashOperations(options);
     if (runtime.state === "disabled") {
-        return localSupervisor.createOperations({
+        const local = localSupervisor.createOperations({
             onExecution: options.onExecution,
             stdin: options.stdin,
             rewriteCommand: options.rewriteCommand,
         });
+        return {
+            exec: (command, cwd, executionOptions) =>
+                getSandboxRuntime().state === "disabled"
+                    ? local.exec(command, cwd, executionOptions)
+                    : sandbox.exec(command, cwd, executionOptions),
+        };
     }
-    return createSandboxBashOperations(options);
+    return sandbox;
 }
 
 export interface BuiltinBashRegistrationOptions {

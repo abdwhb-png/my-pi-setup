@@ -14,7 +14,9 @@ const SANDBOX_TYPESCRIPT_API_VERSION = "6.0.3";
 const SANDBOX_TYPESCRIPT_NATIVE_VERSION = "7.0.2";
 const ZEROBOX_VERSION = "0.3.3-fork.15";
 const ZEROBOX_SHA256 =
-    "a0d234f552afed6f6517394fca3ece7af3d7d0a324808607bdc9416893168a0b";
+    "0b19e8057e5b872ce08762c4250a11ea2d7889e8e2d1db137351f1f5e2484819";
+const ZEROBOX_LOCAL_DIFF_SHA256 =
+    "ee10437758a0f51990998df8b9c68dbdfb7e9db5b75b79eda11bdc010dd2b41b";
 const MANAGED_ZEROBOX_PATH = join(homedir(), ".pi", "bin", "zerobox");
 const ZEROBOX_SOURCE_ROOT = join(
     homedir(),
@@ -164,6 +166,10 @@ describe("sandbox dependency contract", () => {
             patches: EXPECTED_PATCHES,
             binaryName: "zerobox",
             binarySha256: ZEROBOX_SHA256,
+            localBuild: {
+                baseCommit: ZEROBOX_SOURCE_COMMIT,
+                sourceDiffSha256: ZEROBOX_LOCAL_DIFF_SHA256,
+            },
         });
 
         const binary = await readFile(MANAGED_ZEROBOX_PATH);
@@ -172,6 +178,8 @@ describe("sandbox dependency contract", () => {
         expect(createHash("sha256").update(binary).digest("hex")).toBe(
             ZEROBOX_SHA256,
         );
+        const sourceDiff = execFileSync("git", ["diff", "--binary", ZEROBOX_SOURCE_COMMIT], { cwd: ZEROBOX_SOURCE_ROOT });
+        expect(createHash("sha256").update(sourceDiff).digest("hex")).toBe(ZEROBOX_LOCAL_DIFF_SHA256);
         expect(
             execFileSync(MANAGED_ZEROBOX_PATH, ["--version"], {
                 encoding: "utf8",

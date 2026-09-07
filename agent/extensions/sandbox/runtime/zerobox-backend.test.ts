@@ -25,8 +25,8 @@ import {
     type ZeroboxCommandResult,
 } from "./zerobox-backend.ts";
 
-const EXPECTED_SHA =
-    "a0d234f552afed6f6517394fca3ece7af3d7d0a324808607bdc9416893168a0b";
+import expectedProvenance from "./zerobox-provenance.json";
+const EXPECTED_SHA = expectedProvenance.binarySha256;
 
 function successfulRun(
     _file: string,

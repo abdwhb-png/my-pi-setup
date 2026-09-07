@@ -18,7 +18,7 @@ test("the real broker excludes a bind-mounted target until its explicit exceptio
         if (path === "/version") { response.end(JSON.stringify({ ApiVersion: "1.52", MinAPIVersion: "1.24" })); return; }
         if (path === "/containers/json") { response.end(JSON.stringify([summary])); return; }
         if (path === `/containers/${id}/json`) {
-            response.end(JSON.stringify({ Id: id, Name: "/cliproxy-fixture", HostConfig: { Binds: ["/fixture/config:/app/config:ro"] }, Mounts: [{ Type: "bind", Destination: "/app/config", RW: false }] })); return;
+            response.end(JSON.stringify({ Id: id, Name: "/cliproxy-fixture", HostConfig: { Binds: ["/fixture/config:/app/config:ro"] }, Mounts: [{ Type: "bind", Source: "/fixture/config", Destination: "/app/config", RW: false }] })); return;
         }
         response.statusCode = 404; response.end("{}");
     });
@@ -26,7 +26,7 @@ test("the real broker excludes a bind-mounted target until its explicit exceptio
     try {
         for (const allowUnsafeTarget of [false, true]) {
             const result = await inspectDockerAccess(import.meta.dir, { mode: "targeted", endpoint: `unix://${socket}`, targets: [{ selector: { type: "compose-service", project: "fixture", service: "api" }, operations: ["ps"], allowUnsafeTarget }] });
-            expect(result[0].containers[0]).toMatchObject({ id, access: allowUnsafeTarget ? "accessible" : "excluded", facts: ["Host bind mount: /app/config (read-only)"] });
+            expect(result[0].containers[0]).toMatchObject({ id, access: allowUnsafeTarget ? "accessible" : "excluded", mounts: [{ source: "/fixture/config", destination: "/app/config", writable: false }] });
         }
         expect(methods.every(method => method === "GET" || method === "HEAD")).toBe(true);
     } finally {

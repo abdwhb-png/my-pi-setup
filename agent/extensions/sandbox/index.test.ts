@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import {
     envSandboxStatus,
+    dockerFooterState,
     explicitlyDisabled,
     loadSandboxConfig,
     loadSessionSandboxStatus,
@@ -26,6 +27,20 @@ import {
 
 const ENV_OVERRIDE_KEY = 'PI_SANDBOX_SESSION_STATUS';
 const SESSION_ID = 'session-a';
+
+it('shows the effective Docker profile and exception instead of an ambiguous marker', () => {
+    const render = (operations?: Array<'ps' | 'inspect' | 'logs' | 'stats' | 'exec' | 'start' | 'stop' | 'restart'>) => renderSandboxWidget(fakeTheme(), 'on', dockerFooterState({
+        mode: 'targeted', endpoint: 'unix:///var/run/docker.sock',
+        targets: [{ selector: { type: 'container-name', name: 'api' }, operations, allowUnsafeTarget: true }],
+    }));
+    expect(render()).toContain('Administration');
+    expect(render(['ps','inspect','logs','stats','start','stop','restart'])).toContain('Exploitation');
+    expect(render(['ps','inspect','logs','stats'])).toContain('Observation');
+    expect(render(['logs'])).toContain('Custom');
+    expect(render()).toContain('1 target');
+    expect(render()).toContain('host-access exception');
+    expect(render()).not.toContain('targeted!');
+});
 
 function withEnv<T>(key: string, value: string | undefined, fn: () => T): T {
     const previous = process.env[key];
@@ -328,12 +343,12 @@ describe('renderSandboxWidget', () => {
             mode: 'targeted',
             unsafe: true,
         });
-        expect(unsafe).toContain('fg:warning:targeted!');
+        expect(unsafe).toContain('fg:warning:targeted · host-access exception');
         const full = renderSandboxWidget(fakeTheme(), 'on', {
             mode: 'full',
             unsafe: true,
         });
-        expect(full).toContain('fg:error:full!');
+        expect(full).toContain('fg:error:full · host control');
         expect(full).not.toContain('docker.sock');
     });
 });
@@ -391,7 +406,7 @@ describe('renderSandboxStatusDetails', () => {
         expect(output).not.toContain('/secret/docker.sock');
     });
 
-    it('warns for a targeted unsafe exception without exposing targets', () => {
+    it('explains targeted exceptions with the target and operations, without exposing the endpoint', () => {
         const output = renderSandboxStatusDetails(
             resolvedWithDocker({
                 mode: 'targeted',
@@ -411,9 +426,10 @@ describe('renderSandboxStatusDetails', () => {
         );
 
         expect(output).toContain('Docker: targeted');
-        expect(output).toContain('unsafe-target exception');
+        expect(output).toContain('host-access exception');
         expect(output).not.toContain('/secret/docker.sock');
-        expect(output).not.toContain('secret-container');
+        expect(output).toContain('container-name: secret-container');
+        expect(output).toContain('Operations: logs');
     });
 });
 

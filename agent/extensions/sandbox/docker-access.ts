@@ -18,6 +18,7 @@ export interface DockerTargetAccess {
         state: string;
         access: "accessible" | "excluded";
         facts: string[];
+        mounts: { source: string; destination: string; writable: boolean }[];
     }[];
 }
 
@@ -92,6 +93,21 @@ export async function inspectDockerAccess(
                         : "unknown",
                 access: "excluded",
                 facts: describeAccessFacts(inspect),
+                mounts: Array.isArray(inspect.Mounts)
+                    ? inspect.Mounts.map(object)
+                          .filter((mount) => mount.Type === "bind")
+                          .map((mount) => ({
+                              source:
+                                  typeof mount.Source === "string"
+                                      ? mount.Source
+                                      : "(not reported)",
+                              destination:
+                                  typeof mount.Destination === "string"
+                                      ? mount.Destination
+                                      : "(not reported)",
+                              writable: mount.RW === true,
+                          }))
+                    : [],
             });
         }
         targets.push({ selector, containers });
@@ -150,11 +166,8 @@ function describeAccessFacts(inspect: Record<string, unknown>): string[] {
     if (Array.isArray(inspect.Mounts))
         for (const value of inspect.Mounts) {
             const mount = object(value);
-            if (mount.Type === "bind")
-                facts.push(
-                    `Host bind mount: ${String(mount.Destination)} (${mount.RW === true ? "read-write" : "read-only"})`,
-                );
-            else if (
+            if (
+                mount.Type !== "bind" &&
                 typeof mount.Destination === "string" &&
                 /(?:docker|podman|containerd)\.sock$/i.test(mount.Destination)
             )
@@ -288,11 +301,16 @@ export function formatDockerAccess(targets: DockerTargetAccess[]): string[] {
         return target.containers.length === 0
             ? [`Docker target ${selector}: absent`]
             : target.containers.flatMap((container) => [
-                  `Docker target ${container.name}: ${container.access} (${container.state})`,
+                  `Docker container ${container.name}: ${container.state}`,
+                  `  Target access: ${container.access === "excluded" ? "blocked by the broker for this grant" : "eligible for this grant (operation execution not tested)"}`,
                   ...container.facts.map((fact) => `  ${fact}`),
+                  ...container.mounts.map(
+                      (mount) =>
+                          `  Host: ${mount.source} → Container: ${mount.destination} (${mount.writable ? "read-write" : "read-only"})`,
+                  ),
                   ...(container.access === "excluded"
                       ? [
-                            "  Broker excluded this target; review /sandbox docker grant for an explicit target exception.",
+                            "  Review the reported host access and confirm a target exception with /sandbox docker grant to authorize this target.",
                         ]
                       : []),
               ]);

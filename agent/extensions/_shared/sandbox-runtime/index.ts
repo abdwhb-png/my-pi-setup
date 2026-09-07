@@ -3,6 +3,7 @@ import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import type { CreateBashOperationsOptions } from "../command-execution/exec.ts";
 import type { ExecutionObserver } from "../execution-provenance/types.ts";
 import type { AnalysisRequest, AnalysisResult } from "./analysis-protocol.ts";
+import type { DockerAccessSummary } from "./docker-summary.ts";
 
 export {
     SANDBOX_ERROR_CODES,
@@ -28,10 +29,12 @@ export interface SandboxBashOperationOptions {
 
 export type SandboxRuntimeSnapshot =
     | { state: "uninitialized" }
+    | { state: "reconfiguring" }
     | { state: "disabled" }
     | { state: "error" }
     | {
           state: "enabled";
+          dockerAccess?: DockerAccessSummary;
           createBashOperations(
               options: SandboxBashOperationOptions,
           ): BashOperations;
@@ -43,8 +46,10 @@ export type SandboxRuntimeSnapshot =
 
 interface SandboxRuntimeRegistry {
     owner?: symbol;
+    session?: number;
     snapshot: SandboxRuntimeSnapshot;
     diagnostic?: string;
+    waiters?: Set<() => void>;
 }
 
 const RUNTIME_KEY = Symbol.for("pi.sandbox-runtime.v2");
@@ -60,8 +65,10 @@ function registry(): SandboxRuntimeRegistry {
 export function claimSandboxRuntime(owner: symbol): void {
     const current = registry();
     current.owner = owner;
+    current.session = (current.session ?? 0) + 1;
     current.snapshot = { state: "uninitialized" };
     current.diagnostic = undefined;
+    wakeWaiters(current);
 }
 
 export function ownsSandboxRuntime(owner: symbol): boolean {
@@ -77,6 +84,7 @@ export function publishSandboxRuntime(
     if (current.owner !== owner) return false;
     current.snapshot = snapshot;
     current.diagnostic = snapshot.state === "error" ? diagnostic : undefined;
+    wakeWaiters(current);
     return true;
 }
 
@@ -86,6 +94,7 @@ export function releaseSandboxRuntime(owner: symbol): boolean {
     current.owner = undefined;
     current.snapshot = { state: "uninitialized" };
     current.diagnostic = undefined;
+    wakeWaiters(current);
     return true;
 }
 
@@ -96,7 +105,10 @@ export function getSandboxRuntime(): SandboxRuntimeSnapshot {
 export type SandboxUnavailableKind =
     | "uninitialized"
     | "disabled"
-    | "initialization-failed";
+    | "initialization-failed"
+    | "reconfiguration-timeout"
+    | "session-changed"
+    | "execution-interrupted";
 
 const SANDBOX_UNAVAILABLE_BRAND: unique symbol = Symbol.for(
     "pi.sandbox-runtime.SandboxUnavailableError.v2",
@@ -105,12 +117,21 @@ const VALID_UNAVAILABLE_KINDS: ReadonlySet<SandboxUnavailableKind> = new Set([
     "uninitialized",
     "disabled",
     "initialization-failed",
+    "reconfiguration-timeout",
+    "session-changed",
+    "execution-interrupted",
 ]);
 const SURFACED_REASON: Readonly<Record<SandboxUnavailableKind, string>> = {
     uninitialized: "Sandbox execution unavailable: uninitialized",
     disabled: "Sandbox execution unavailable: disabled",
     "initialization-failed":
         "Sandbox execution unavailable: initialization failed",
+    "reconfiguration-timeout":
+        "Sandbox reconfiguration did not finish in time; the request was not executed",
+    "session-changed":
+        "Sandbox session changed; the pending request was not executed",
+    "execution-interrupted":
+        "Sandbox execution was interrupted by reconfiguration; it was not retried",
 };
 
 export class SandboxUnavailableError extends Error {
@@ -180,42 +201,157 @@ function unavailableError(): SandboxUnavailableError {
     );
 }
 
+function wakeWaiters(current: SandboxRuntimeRegistry): void {
+    for (const wake of current.waiters ?? []) wake();
+}
+
+/** A transition never grants a local fallback or extends an execution deadline. */
+async function withActiveRuntime<T>(
+    owner: symbol | undefined,
+    session: number | undefined,
+    signal: AbortSignal | undefined,
+    budgetMs: number,
+    run: (
+        snapshot: Extract<SandboxRuntimeSnapshot, { state: "enabled" }>,
+        remainingMs: number,
+    ) => Promise<T>,
+): Promise<T> {
+    const started = performance.now();
+    const deadline = started + Math.min(30_000, budgetMs);
+    let waited = false;
+    while (true) {
+        if (signal?.aborted)
+            throw new Error("aborted; the request was not executed");
+        const current = registry();
+        if (current.owner !== owner || current.session !== session)
+            throw new SandboxUnavailableError("session-changed");
+        if (waited && performance.now() >= deadline)
+            throw new SandboxUnavailableError("reconfiguration-timeout");
+        if (current.snapshot.state !== "reconfiguring") {
+            if (current.snapshot.state !== "enabled") {
+                const error = unavailableError();
+                if (waited)
+                    error.message += "; the pending request was not executed";
+                throw error;
+            }
+            const snapshot = current.snapshot;
+            const remaining = budgetMs - (performance.now() - started);
+            if (remaining <= 0)
+                throw new SandboxUnavailableError("reconfiguration-timeout");
+            try {
+                // Dispatch in the same turn as the snapshot check: no stale adapter gap.
+                // oxlint-disable-next-line no-await-in-loop -- Exactly one dispatch follows readiness; its failure must retain this snapshot.
+                return await run(snapshot, remaining);
+            } catch (error) {
+                if (getSandboxRuntime() !== snapshot && !signal?.aborted)
+                    throw new SandboxUnavailableError("execution-interrupted");
+                throw error;
+            }
+        }
+        const remaining = deadline - performance.now();
+        if (remaining <= 0)
+            throw new SandboxUnavailableError("reconfiguration-timeout");
+        waited = true;
+        // oxlint-disable-next-line no-await-in-loop -- Each notification requires a fresh state check before any execution.
+        await new Promise<void>((resolve) => {
+            const waiters = (current.waiters ??= new Set());
+            const wake = () => {
+                clearTimeout(timer);
+                signal?.removeEventListener("abort", wake);
+                waiters.delete(wake);
+                resolve();
+            };
+            const timer = setTimeout(wake, remaining);
+            waiters.add(wake);
+            signal?.addEventListener("abort", wake, { once: true });
+            if (signal?.aborted) wake();
+        });
+    }
+}
+
+function bashOperations(
+    options: SandboxBashOperationOptions,
+    think: boolean,
+): BashOperations {
+    const { owner, session } = registry();
+    return {
+        async exec(command, cwd, executionOptions) {
+            const budget =
+                executionOptions.timeout && executionOptions.timeout > 0
+                    ? executionOptions.timeout * 1000
+                    : Infinity;
+            return withActiveRuntime(
+                owner,
+                session,
+                executionOptions.signal,
+                budget,
+                async (snapshot, remaining) => {
+                    const operations = think
+                        ? snapshot.createThinkBashOperations(options)
+                        : snapshot.createBashOperations(options);
+                    const result = await operations.exec(command, cwd, {
+                        ...executionOptions,
+                        ...(Number.isFinite(budget)
+                            ? { timeout: remaining / 1000 }
+                            : {}),
+                    });
+                    if (
+                        result.exitCode === null &&
+                        getSandboxRuntime() !== snapshot
+                    )
+                        throw new SandboxUnavailableError(
+                            "execution-interrupted",
+                        );
+                    return result;
+                },
+            );
+        },
+    };
+}
+
 export function createSandboxBashOperations(
     options: SandboxBashOperationOptions = {},
 ): BashOperations {
-    const snapshot = getSandboxRuntime();
-    if (snapshot.state === "enabled") {
-        return snapshot.createBashOperations(options);
-    }
-    return {
-        async exec() {
-            throw unavailableError();
-        },
-    };
+    return bashOperations(options, false);
 }
 
 export function createSandboxThinkBashOperations(
     options: SandboxBashOperationOptions = {},
 ): BashOperations {
-    const snapshot = getSandboxRuntime();
-    if (snapshot.state === "enabled")
-        return snapshot.createThinkBashOperations(options);
-    return {
-        async exec() {
-            throw unavailableError();
-        },
-    };
+    return bashOperations(options, true);
 }
 
 export function getSandboxAnalysisPort(): AnalysisSandboxPort {
-    const snapshot = getSandboxRuntime();
-    if (snapshot.state === "enabled") return snapshot.analysis;
+    const { owner, session } = registry();
     return {
-        async run() {
-            throw unavailableError();
+        async run(request, signal) {
+            const budget = request.limits?.wallTimeMs ?? 60_000;
+            return withActiveRuntime(
+                owner,
+                session,
+                signal,
+                budget,
+                (snapshot, remaining) =>
+                    snapshot.analysis.run(
+                        {
+                            ...request,
+                            limits: {
+                                ...request.limits,
+                                wallTimeMs: Math.max(1, Math.floor(remaining)),
+                            },
+                        },
+                        signal,
+                    ),
+            );
         },
         async shutdown() {
-            return undefined;
+            const current = registry();
+            if (
+                current.owner === owner &&
+                current.session === session &&
+                current.snapshot.state === "enabled"
+            )
+                await current.snapshot.analysis.shutdown();
         },
     };
 }

@@ -310,7 +310,7 @@ describe("sandbox lifecycle", () => {
         expect(getSandboxRuntime().state).toBe("disabled");
     });
 
-    it("blocks execution while sandbox on and off transitions are pending", async () => {
+    it("waits for sandbox on transitions and rejects pending calls when switched off", async () => {
         await writeFile(
             join(cwd, ".pi", "sandbox.json"),
             JSON.stringify({ enabled: false }),
@@ -323,19 +323,21 @@ describe("sandbox lifecycle", () => {
         const enabling = deferred();
         initialize.mockImplementation(() => enabling.promise);
         const enableTransition = sandboxCommand(registered).handler("on", ctx);
-        expect(getSandboxRuntime().state).toBe("uninitialized");
-        await expectUnavailable("uninitialized");
+        expect(getSandboxRuntime().state).toBe("reconfiguring");
+        const pendingAnalysis = getSandboxAnalysisPort().run({ id: "wait", language: "javascript", program: "1" });
         enabling.resolve();
         await enableTransition;
+        expect(await pendingAnalysis).toMatchObject({ output: "ok" });
         expect(getSandboxRuntime().state).toBe("enabled");
 
         const disabling = deferred();
         reset.mockImplementation(() => disabling.promise);
         const disableTransition = sandboxCommand(registered).handler("off", ctx);
-        expect(getSandboxRuntime().state).toBe("uninitialized");
-        await expectUnavailable("uninitialized");
+        expect(getSandboxRuntime().state).toBe("reconfiguring");
+        const pendingBash = createSandboxBashOperations().exec("true", cwd, { onData() {} }).catch((error: Error) => error);
         disabling.resolve();
         await disableTransition;
+        expect((await pendingBash as Error).message).toContain("disabled");
         expect(getSandboxRuntime().state).toBe("disabled");
     });
 
@@ -406,10 +408,10 @@ describe("sandbox lifecycle", () => {
 
         expect(notifyCalls(ctx).at(-1)).toEqual([
             [
-                "Docker authority: off",
+                "Saved Docker grant: off",
                 "Project preference: inherit",
-                "Effective policy: off",
-                "Runtime: inactive (sandbox off)",
+                "Configured Docker: off",
+                "Runtime: uninitialized",
             ].join("\n"),
             "info",
         ]);
@@ -433,7 +435,10 @@ describe("sandbox lifecycle", () => {
                     "Sandbox doctor",
                     `Docker authority: ${join(agentDir, "sandbox.global.json")} (not configured)`,
                     "Effective Sandbox: off (default)",
-                    "Effective Docker: off",
+                    "Saved Docker grant: off",
+                    "Configured Docker: off",
+                    "Runtime: uninitialized",
+                    "Target visibility checks do not execute the granted operations.",
                     "Next: /sandbox docker grant",
                 ].join("\n"),
                 "info",
@@ -496,7 +501,7 @@ describe("sandbox lifecycle", () => {
         await writeFile(join(fakeBin, "docker"), '#!/bin/sh\nprintf \'{"name":"cliproxy","services":{"cli-proxy-api":{}}}\'\n', { mode: 0o700 });
         const path = join(agentDir, "sandbox.global.json");
         await writeFile(path, JSON.stringify({ docker: { grants: [{ projectRoot: cwd, mode: "targeted", targets: [{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, operations: ["ps"], allowUnsafeTarget: false }] }] } }), { mode: 0o600 });
-        inspectDockerAccess.mockResolvedValue([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", facts: ["Host bind mount: /app/config (read-only)"] }] }]);
+        inspectDockerAccess.mockResolvedValue([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", mounts: [{ source: "/host/config", destination: "/app/config", writable: false }], facts: [] }] }]);
         const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
         const previousPath = process.env.PATH;
         process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -514,20 +519,22 @@ describe("sandbox lifecycle", () => {
         await withExcludedDockerTarget(async (ctx, path) => {
             const before = await readFile(path, "utf8");
             await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
-            expect(ctx.ui.confirm).toHaveBeenCalledWith("Allow this Docker target despite its host access?", expect.stringContaining("Host bind mount: /app/config"));
+            expect(ctx.ui.confirm).toHaveBeenCalledWith("Authorize operations on a container with host access?", expect.stringContaining("Host: /host/config → Container: /app/config"));
             expect(await readFile(path, "utf8")).toBe(before);
         }, [false]);
     });
 
     it("saves only a separately confirmed target exception and keeps exploitation without exec", async () => {
         await withExcludedDockerTarget(async (ctx, path) => {
-            inspectDockerAccess.mockResolvedValueOnce([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", facts: ["Host bind mount: /app/config (read-only)"] }] }]);
-            inspectDockerAccess.mockResolvedValue([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "accessible", facts: [] }] }]);
+            inspectDockerAccess.mockResolvedValueOnce([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", mounts: [{ source: "/host/config", destination: "/app/config", writable: false }], facts: [] }] }]);
+            inspectDockerAccess.mockResolvedValue([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "accessible", mounts: [], facts: [] }] }]);
             await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
             const target = JSON.parse(await readFile(path, "utf8")).docker.grants[0].targets[0];
             expect(target.allowUnsafeTarget).toBe(true);
             expect(target.operations).toEqual(["ps", "inspect", "logs", "stats", "start", "stop", "restart"]);
             expect(ctx.ui.confirm).toHaveBeenCalledTimes(2);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host-access exception: enabled by the confirmed grant");
+            expect(notifyCalls(ctx).at(-1)?.[1]).toBe("info");
         }, [true, true]);
     });
 
@@ -535,10 +542,23 @@ describe("sandbox lifecycle", () => {
         await withExcludedDockerTarget(async (ctx, path) => {
             const before = await readFile(path, "utf8");
             await sandboxCommand(registerSandbox()).handler("doctor", ctx);
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Docker target cliproxy: excluded (running)");
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host bind mount: /app/config");
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Target access: blocked by the broker for this grant");
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host: /host/config → Container: /app/config");
             expect(notifyCalls(ctx).at(-1)?.[0]).toContain("(valid)");
             expect(await readFile(path, "utf8")).toBe(before);
+        }, []);
+    });
+
+    it("doctor detects a saved configuration that differs from the active runtime", async () => {
+        await withExcludedDockerTarget(async (ctx) => {
+            const registered = registerSandbox();
+            await registered.handlers.get("session_start")?.({}, ctx);
+            await writeFile(join(cwd, ".pi", "settings.json"), JSON.stringify({ sandbox: { docker: { mode: "disabled" } } }));
+            await sandboxCommand(registered).handler("doctor", ctx);
+            const message = notifyCalls(ctx).at(-1)?.[0];
+            expect(message).toContain("Configured Docker: off");
+            expect(message).toContain("Active Docker: targeted · Custom");
+            expect(message).toContain("Active Docker differs from the current configuration");
         }, []);
     });
 
@@ -564,10 +584,38 @@ describe("sandbox lifecycle", () => {
         }, [true, true]);
     });
 
+    it.each(["success", "reduced", "failure"] as const)("reports the confirmed exception and actual activation outcome: %s", async (outcome) => {
+        await withExcludedDockerTarget(async (ctx, path) => {
+            const registered = registerSandbox();
+            await registered.handlers.get("session_start")?.({}, ctx);
+            if (outcome === "reduced") {
+                await writeFile(join(cwd, ".pi", "settings.json"), JSON.stringify({ sandbox: { docker: { mode: "disabled" } } }));
+            }
+            if (outcome === "failure") analysisPreflight.mockRejectedValueOnce(new Error("fixture activation unavailable"));
+            const excluded = await inspectDockerAccess();
+            inspectDockerAccess.mockResolvedValueOnce(excluded);
+            inspectDockerAccess.mockResolvedValue(excluded.map((target) => ({ ...target, containers: target.containers.map((container) => ({ ...container, access: "accessible" as const })) })));
+            await sandboxCommand(registered).handler("docker grant", ctx);
+            const [message, level] = notifyCalls(ctx).at(-1)!;
+            expect(message).toContain("Saved Docker grant: targeted · Exploitation");
+            expect(message).toContain("Host-access exception: enabled by the confirmed grant");
+            expect(JSON.parse(await readFile(path, "utf8")).docker.grants[0].targets[0].allowUnsafeTarget).toBe(true);
+            if (outcome === "failure") {
+                expect(message).toContain("saved; activation failed: fixture activation unavailable");
+                expect(message).not.toContain("Active Docker:");
+                expect(level).toBe("error");
+            } else {
+                expect(level).toBe("info");
+                expect(message).toContain(outcome === "reduced" ? "Active Docker: off" : "Active Docker: targeted · Exploitation");
+                if (outcome === "reduced") expect(message).not.toContain("saved and active");
+            }
+        }, [true, true]);
+    });
+
     it("does not save after accepting the exception but cancelling the final grant", async () => {
         await withExcludedDockerTarget(async (ctx, path) => {
             const before = await readFile(path, "utf8");
-            inspectDockerAccess.mockResolvedValueOnce([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", facts: [] }] }]);
+            inspectDockerAccess.mockResolvedValueOnce([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", mounts: [], facts: [] }] }]);
             inspectDockerAccess.mockResolvedValue([]);
             await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
             expect(ctx.ui.confirm).toHaveBeenCalledTimes(2);
@@ -651,7 +699,7 @@ describe("sandbox lifecycle", () => {
             });
             expect(
                 notifyCalls(ctx).at(-1)?.[0],
-            ).toContain("Docker grant saved for this project");
+            ).toContain("Docker grant saved, not active: Sandbox is disabled.");
             const authorityMode =
                 (await stat(join(agentDir, "sandbox.global.json"))).mode & 0o777;
             expect(authorityMode).toBe(0o600);
@@ -782,9 +830,13 @@ describe("sandbox lifecycle", () => {
             expect(initialize).toHaveBeenCalledTimes(2);
             expect(getSandboxRuntime().state).toBe("enabled");
             expect(notifyCalls(ctx).at(-1)).toEqual([
-                "Docker grant saved for this project",
+                expect.stringContaining("Active Docker: targeted · Observation · 1 target"),
                 "info",
             ]);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("container-name: manual-api");
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Operations: ps, inspect, logs, stats");
+            const runtime = getSandboxRuntime();
+            expect(runtime.state === "enabled" && runtime.dockerAccess?.profile).toBe("Observation");
         } finally {
             if (previousAgentDir === undefined) {
                 delete process.env.PI_CODING_AGENT_DIR;
@@ -988,7 +1040,7 @@ describe("sandbox lifecycle", () => {
         expect(initialize).toHaveBeenCalledTimes(2);
         expect(getSandboxRuntime().state).toBe("enabled");
         expect(notifyCalls(ctx).at(-1)).toEqual([
-            "Docker project preference saved: off",
+            "Docker project preference saved: off\nActive Docker: off",
             "info",
         ]);
     });

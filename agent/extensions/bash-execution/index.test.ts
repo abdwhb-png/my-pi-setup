@@ -79,6 +79,32 @@ afterEach(() => {
 });
 
 describe("bash-execution ownership", () => {
+    test("Bash, safe_bash and a captured user_bash adapter wait for new permissions without local fallback", async () => {
+        const owner = Symbol("reconfiguration");
+        owners.push(owner);
+        claimSandboxRuntime(owner);
+        let runs = 0;
+        const snapshot = {
+            state: "enabled" as const,
+            createBashOperations: () => ({ exec: async () => { runs++; return { exitCode: 0 }; } }),
+            createThinkBashOperations: () => { throw new Error("wrong profile"); },
+            analysis: { run: async () => { throw new Error("wrong tool"); }, shutdown: async () => undefined },
+        };
+        publishSandboxRuntime(owner, snapshot);
+        const registered = register();
+        const adapter = registered.hooks.get("user_bash")?.[0]?.({ command: "true" }, executionContext()) as { operations: BashOperations };
+        publishSandboxRuntime(owner, { state: "reconfiguring" });
+        const pending = Promise.all([
+            adapter.operations.exec("true", process.cwd(), { onData() {} }),
+            ...["bash", "safe_bash"].map((name) => registered.tools.get(name)!.execute(`${name}-waiting`, { command: "true" }, undefined, undefined, executionContext())),
+        ]);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        expect(runs).toBe(0);
+        publishSandboxRuntime(owner, { ...snapshot });
+        await pending;
+        expect(runs).toBe(3);
+    });
+
     test("registers bash and safe_bash plus the user_bash hook", () => {
         publish({ state: "disabled" });
         const registered = register();

@@ -20,14 +20,23 @@ Docker is off by default. Its authority is kept separately in
 
 | Command | Purpose |
 | --- | --- |
-| `/sandbox` | Show the effective Sandbox policy. |
-| `/sandbox doctor` | Validate configuration and distinguish accessible, excluded and absent Docker targets. |
+| `/sandbox` | Show configured and active permissions, including Docker operations. |
+| `/sandbox doctor` | Validate canonical configuration, compare it with the active runtime and check target eligibility. |
 | `/sandbox on` / `/sandbox off` | Enable or disable Sandbox for this session. |
-| `/sandbox docker` | Show Docker authority, project preference and effective policy. |
+| `/sandbox docker` | Compare the saved grant, project restrictions and active Docker rights. |
 | `/sandbox docker grant` | Create or replace this project's global targeted Docker grant. |
 | `/sandbox docker off\|targeted\|full\|inherit` | Set a project-local narrowing of the global authority. |
 
 ## Documentation
+
+The Docker widget shows the active profile, target count and any confirmed
+host-access exception. Observation reads container state, Exploitation also
+starts/stops/restarts containers, and Administration adds `exec`. During a
+reload it shows `reconfiguring`; new calls wait up to 30 seconds.
+
+A saved grant can be inactive or reduced by project settings. The notification
+states the actual activation outcome. Target eligibility in doctor does not
+prove every granted operation works.
 
 - [Configuration](docs/configuration.md): ordinary Sandbox settings and precedence.
 - [Docker authority](docs/docker-authority.md): guided and manual Docker grants.

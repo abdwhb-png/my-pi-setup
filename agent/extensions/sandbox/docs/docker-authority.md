@@ -27,6 +27,11 @@ to allow the target exception. Declining either confirmation leaves the file
 unchanged. If inspection fails, the command reports the failure and saves nothing.
 An absent container is reported as absent; its grant can be saved for later use.
 
+Mounts are shown as **host source → container destination**, followed by
+`read-only` or `read-write`. These are existing container mounts, obtained from
+Docker metadata. The wizard does not read their file contents. Container state
+(`running`, for example) and broker eligibility are reported separately.
+
 | Profile | Operations |
 | --- | --- |
 | Observation | `ps`, `inspect`, `logs`, `stats` |
@@ -36,11 +41,39 @@ An absent container is reported as absent; its grant can be saved for later use.
 `exec` can expose the selected container's mounts, network and secrets. Choose
 Administration only when that access is required.
 
+Administration accepts ordinary `docker exec <container> ...` and
+`docker compose exec -T <service> ...`. Targeted mode refuses privileged or
+detached exec and non-empty detach keys. The process keeps Docker's usual user
+selection. No host sudo permission or filesystem permission change is added.
+
+Docker authorization and Linux file permissions are separate. A host user can
+be unable to read a root-owned `0600` log while an authorized process running
+as the container's normal user can read its mounted copy. Use `test -r <path>`
+inside the container to check readability without printing the log.
+
 The target exception is independent of the profile: choosing Administration
 does not enable it. `allowUnsafeTarget: true` bypasses the broker's target safety
 check for that selector, including replacement containers matching it. It does
 not add operations. For example, Exploitation with this exception still excludes
 `exec`. Confirm it only for a workload whose host access you accept.
+
+## Saved, configured and active rights
+
+The wizard always saves explicit operations. Profile names are derived from
+the exact operation set, including for manually edited files. No profile field
+is stored. Other sets display `Custom`; differing profiles across targets
+display `Mixed`, with each target's operations listed in `/sandbox`.
+
+The success notification shows the saved grant and the active rights after
+runtime publication. Project restrictions can reduce a grant or turn Docker
+off. With Sandbox disabled, the result is `saved, not active`. A failed reload
+is `saved; activation failed`, and execution remains blocked until recovery.
+The confirmed host-access exception is listed separately from the profile.
+
+`/sandbox doctor` compares saved authority, configured rights and the active
+runtime. If files changed without reloading, it reports the difference. Its
+container probe checks eligibility only; it does not run `exec`, restart a
+container or test every operation.
 
 ## Manual configuration
 

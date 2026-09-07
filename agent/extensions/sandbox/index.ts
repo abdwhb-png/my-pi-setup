@@ -64,8 +64,11 @@ import {
     type BashProcessSupervisor,
 } from "../_shared/command-execution/exec";
 import { createWidget } from "../_shared/fancy-footer";
+import type { DockerAccessSummary } from "../_shared/sandbox-runtime/docker-summary.ts";
 import {
     claimSandboxRuntime,
+    getSandboxRuntime,
+    ownsSandboxRuntime,
     publishSandboxRuntime,
     releaseSandboxRuntime,
     type SandboxBashOperationOptions,
@@ -77,10 +80,17 @@ import {
 } from "./analysis/client.ts";
 import { inspectDockerAccess, formatDockerAccess } from "./docker-access.ts";
 import {
+    DOCKER_ACCESS_PROFILES,
+    summarizeDockerAccess,
+    dockerSummaryLabel,
+    formatDockerSummary,
+    formatDockerGrantResult,
+    formatActiveDocker,
+} from "./docker-presentation.ts";
+import {
     SandboxExecutionError,
     type SandboxCommand,
     type SandboxDockerPolicy,
-    type DockerOperation,
     type DockerTargetGrant,
     type DockerTargetSelector,
 } from "./runtime/contracts.ts";
@@ -101,11 +111,17 @@ import {
 import { createZeroboxBackend } from "./runtime/zerobox-backend.ts";
 
 /** Footer widget state for the sandbox indicator. */
-export type SandboxFooterState = "on" | "restricted" | "off" | "error";
+export type SandboxFooterState =
+    | "on"
+    | "restricted"
+    | "off"
+    | "error"
+    | "reconfiguring";
 
 export interface SandboxDockerFooterState {
     mode: "off" | "targeted" | "full";
     unsafe: boolean;
+    summary?: DockerAccessSummary;
 }
 
 /** Shield glyph shown in the footer widget (same metaphor as the bash 🛡️ prefix). */
@@ -243,7 +259,12 @@ function colorForDockerState(
     colors: UiColorsCreation,
     state: SandboxDockerFooterState,
 ): string {
-    const value = `${state.mode}${state.unsafe ? "!" : ""}`;
+    const value =
+        state.mode === "full"
+            ? "full · host control"
+            : state.summary
+              ? dockerSummaryLabel(state.summary)
+              : `${state.mode}${state.unsafe ? " · host-access exception" : ""}`;
     if (state.mode === "full") return colors.danger(value);
     if (state.mode === "targeted") {
         return state.unsafe ? colors.warning(value) : colors.primary(value);
@@ -262,13 +283,16 @@ export function dockerFooterState(
     return {
         mode: "targeted",
         unsafe: dockerPolicyHasUnsafeTargets(policy),
+        summary: summarizeDockerAccess(policy),
     };
 }
 
-/** Render the user-visible `/sandbox` status without exposing Docker authority details. */
+/** Show configured and active rights without exposing Engine credentials. */
 export function renderSandboxStatusDetails(
     resolved: LoadSandboxConfigResult,
     sandboxActive: boolean,
+    activeDocker?: DockerAccessSummary,
+    runtimeState?: string,
 ): string {
     const { config, source } = resolved;
     const status = sandboxActive ? "ENABLED" : "DISABLED";
@@ -287,13 +311,19 @@ export function renderSandboxStatusDetails(
         `  Denied: ${config.network?.deniedDomains?.join(", ") || "(none)"}`,
         "",
         `Docker: ${dockerStatus}`,
+        ...formatDockerSummary(
+            "Configured Docker",
+            summarizeDockerAccess(config.docker),
+        ),
+        ...(runtimeState
+            ? formatActiveDocker(
+                  summarizeDockerAccess(config.docker),
+                  activeDocker,
+                  runtimeState,
+              )
+            : []),
         ...(sandboxActive && config.docker.mode === "full"
             ? ["  Warning: full Docker access is equivalent to host control."]
-            : []),
-        ...(sandboxActive && dockerPolicyHasUnsafeTargets(config.docker)
-            ? [
-                  "  Warning: an unsafe-target exception is active from the global grant.",
-              ]
             : []),
         "",
         "Filesystem:",
@@ -314,10 +344,25 @@ function colorForState(
         case "on":
             return colors.primary(state);
         case "restricted":
+        case "reconfiguring":
             return colors.warning(state);
         case "error":
             return colors.danger(state);
     }
+}
+
+function getActiveDockerSummary(): DockerAccessSummary | undefined {
+    const runtime = getSandboxRuntime();
+    return runtime.state === "enabled" ? runtime.dockerAccess : undefined;
+}
+
+function activeDockerLines(configured: SandboxDockerPolicy): string[] {
+    const runtime = getSandboxRuntime();
+    return formatActiveDocker(
+        summarizeDockerAccess(configured),
+        runtime.state === "enabled" ? runtime.dockerAccess : undefined,
+        runtime.state,
+    );
 }
 
 export interface SandboxConfig extends PiSandboxConfig {}
@@ -393,41 +438,6 @@ function configurationErrorMessage(error: unknown): string {
     }
     return errorMessage(error);
 }
-
-const DOCKER_ACCESS_PROFILES: ReadonlyArray<{
-    label: string;
-    operations: DockerOperation[];
-}> = [
-    {
-        label: "Exploitation",
-        operations: [
-            "ps",
-            "inspect",
-            "logs",
-            "stats",
-            "start",
-            "stop",
-            "restart",
-        ],
-    },
-    {
-        label: "Observation",
-        operations: ["ps", "inspect", "logs", "stats"],
-    },
-    {
-        label: "Administration",
-        operations: [
-            "ps",
-            "inspect",
-            "logs",
-            "stats",
-            "exec",
-            "start",
-            "stop",
-            "restart",
-        ],
-    },
-];
 
 interface ComposeProject {
     project: string;
@@ -577,19 +587,17 @@ async function selectDockerTarget(
     }
 }
 
-function renderDockerGrantDiff(
-    cwd: string,
-    target: DockerTargetSelector,
-    operations: readonly DockerOperation[],
-): string {
-    const selector =
-        target.type === "compose-service"
-            ? `compose-service: ${target.project} / ${target.service}`
-            : `container-name: ${target.name}`;
+function renderDockerGrantDiff(cwd: string, grant: DockerTargetGrant): string {
     return [
         `Project: ${cwd}`,
-        `Target: ${selector}`,
-        `Operations: ${operations.join(", ")}`,
+        ...formatDockerSummary(
+            "Proposed Docker grant",
+            summarizeDockerAccess({
+                mode: "targeted",
+                endpoint: DEFAULT_DOCKER_ENDPOINT,
+                targets: [grant],
+            }),
+        ),
         "This replaces the Docker grant for this project only.",
     ].join("\n");
 }
@@ -910,13 +918,17 @@ export default function (pi: ExtensionAPI) {
     };
 
     let transitionGeneration = 0;
-    const beginTransition = (): number | undefined => {
+    const beginTransition = (
+        ctx?: ExtensionContext,
+        initial = false,
+    ): number | undefined => {
         transitionGeneration += 1;
         const generation = transitionGeneration;
         const published = publishSandboxRuntime(runtimeOwner, {
-            state: "uninitialized",
+            state: initial ? "uninitialized" : "reconfiguring",
         });
         if (!published) return undefined;
+        if (ctx && !initial) updateSandboxStatus(ctx, "reconfiguring");
         return generation;
     };
     const isCurrentTransition = (generation: number): boolean =>
@@ -1102,6 +1114,7 @@ export default function (pi: ExtensionAPI) {
             }
             const published = publishSandboxRuntime(runtimeOwner, {
                 state: "enabled",
+                dockerAccess: summarizeDockerAccess(config.docker),
                 createBashOperations: (options) =>
                     createSandboxedBashOps(
                         candidateSandbox,
@@ -1169,7 +1182,7 @@ export default function (pi: ExtensionAPI) {
 
     function updateSandboxStatus(
         ctx: ExtensionContext,
-        status: "on" | "restricted" | "off" | "error",
+        status: SandboxFooterState,
         docker?: SandboxDockerPolicy,
     ): void {
         sandboxFooterState = status;
@@ -1192,14 +1205,16 @@ export default function (pi: ExtensionAPI) {
             );
             return;
         }
-        if (dockerPolicyHasUnsafeTargets(docker)) {
-            ctx.ui.notify(
-                `${message}. Targeted Docker includes an unsafe-target exception from the global grant.`,
-                "warning",
-            );
-            return;
-        }
-        ctx.ui.notify(message, "info");
+        ctx.ui.notify(
+            [
+                message,
+                ...formatDockerSummary(
+                    "Active Docker",
+                    summarizeDockerAccess(docker),
+                ),
+            ].join("\n"),
+            "info",
+        );
     }
 
     /**
@@ -1220,8 +1235,10 @@ export default function (pi: ExtensionAPI) {
     }
 
     pi.on("session_start", async (_event, ctx) => {
+        if (!ownsSandboxRuntime(runtimeOwner)) return;
+        claimSandboxRuntime(runtimeOwner);
         const noSandbox = pi.getFlag("no-sandbox") as boolean;
-        const generation = beginTransition();
+        const generation = beginTransition(ctx, true);
         if (generation === undefined) return;
         bashProcessSupervisor.shutdown();
 
@@ -1416,8 +1433,22 @@ export default function (pi: ExtensionAPI) {
                             "Sandbox doctor",
                             `Docker authority: ${authorityPath} (${existsSync(authorityPath) ? "valid" : "not configured"})`,
                             `Effective Sandbox: ${resolved.config.enabled ? "on" : "off"} (${resolved.source})`,
-                            `Effective Docker: ${resolved.config.docker.mode === "disabled" ? "off" : resolved.config.docker.mode}`,
+                            ...formatDockerSummary(
+                                "Saved Docker grant",
+                                summarizeDockerAccess(
+                                    resolveDockerPolicy({
+                                        cwd: ctx.cwd,
+                                        globalConfigPath: authorityPath,
+                                    }),
+                                ),
+                            ),
+                            ...formatDockerSummary(
+                                "Configured Docker",
+                                summarizeDockerAccess(resolved.config.docker),
+                            ),
+                            ...activeDockerLines(resolved.config.docker),
                             ...accessLines,
+                            "Target visibility checks do not execute the granted operations.",
                             "Next: /sandbox docker grant",
                         ].join("\n"),
                         "info",
@@ -1474,16 +1505,18 @@ export default function (pi: ExtensionAPI) {
                     });
                     const preference =
                         configuredDockerPreference(projectConfig);
-                    const effective =
-                        resolved.config.docker.mode === "disabled"
-                            ? "off"
-                            : resolved.config.docker.mode;
                     ctx.ui.notify(
                         [
-                            `Docker authority: ${authority.mode === "disabled" ? "off" : authority.mode}`,
+                            ...formatDockerSummary(
+                                "Saved Docker grant",
+                                summarizeDockerAccess(authority),
+                            ),
                             `Project preference: ${preference}`,
-                            `Effective policy: ${effective}`,
-                            `Runtime: ${sandboxEnabled ? "active" : "inactive (sandbox off)"}`,
+                            ...formatDockerSummary(
+                                "Configured Docker",
+                                summarizeDockerAccess(resolved.config.docker),
+                            ),
+                            ...activeDockerLines(resolved.config.docker),
                         ].join("\n"),
                         "info",
                     );
@@ -1547,8 +1580,13 @@ export default function (pi: ExtensionAPI) {
                         .filter((container) => container.access === "excluded");
                     if (excluded.length > 0) {
                         const accepted = await ctx.ui.confirm(
-                            "Allow this Docker target despite its host access?",
+                            "Authorize operations on a container with host access?",
                             [
+                                ...formatDockerSummary(
+                                    "Selected Docker grant",
+                                    summarizeDockerAccess(policy),
+                                ),
+                                "The paths below are existing container mounts: host source → container destination. Only mount metadata was inspected.",
                                 ...formatDockerAccess(access),
                                 "This exception allows the selected operations on containers matching this selector, including future replacements, despite their host access.",
                                 `Operations: ${profile.operations.join(", ")}.`,
@@ -1585,12 +1623,7 @@ export default function (pi: ExtensionAPI) {
                 const confirmed = await ctx.ui.confirm(
                     "Save Docker grant?",
                     [
-                        renderDockerGrantDiff(
-                            ctx.cwd,
-                            target,
-                            profile.operations,
-                        ),
-                        `Host-access exception: ${grant.allowUnsafeTarget ? "enabled for this target" : "off"}`,
+                        renderDockerGrantDiff(ctx.cwd, grant),
                         ...accessLines,
                     ].join("\n"),
                 );
@@ -1623,12 +1656,18 @@ export default function (pi: ExtensionAPI) {
                 }
                 if (!sandboxEnabled) {
                     ctx.ui.notify(
-                        "Docker grant saved for this project",
+                        formatDockerGrantResult(
+                            summarizeDockerAccess({
+                                mode: "targeted",
+                                endpoint: DEFAULT_DOCKER_ENDPOINT,
+                                targets: [grant],
+                            }),
+                        ),
                         "info",
                     );
                     return;
                 }
-                const generation = beginTransition();
+                const generation = beginTransition(ctx);
                 if (generation === undefined) return;
                 bashProcessSupervisor.shutdown();
                 try {
@@ -1647,10 +1686,16 @@ export default function (pi: ExtensionAPI) {
                     if (!isCurrentTransition(generation) || !enabled) return;
                     sandboxEnabled = true;
                     updateSandboxStatus(ctx, "on", config.docker);
-                    notifySandboxEnabled(
-                        ctx,
-                        "Docker grant saved for this project",
-                        config.docker,
+                    ctx.ui.notify(
+                        formatDockerGrantResult(
+                            summarizeDockerAccess({
+                                mode: "targeted",
+                                endpoint: DEFAULT_DOCKER_ENDPOINT,
+                                targets: [grant],
+                            }),
+                            summarizeDockerAccess(config.docker),
+                        ),
+                        "info",
                     );
                 } catch (error) {
                     if (!isCurrentTransition(generation)) return;
@@ -1658,7 +1703,15 @@ export default function (pi: ExtensionAPI) {
                     publishError(error);
                     updateSandboxStatus(ctx, "error");
                     ctx.ui.notify(
-                        `Docker grant saved, but sandbox reconfiguration failed: ${errorMessage(error)}`,
+                        formatDockerGrantResult(
+                            summarizeDockerAccess({
+                                mode: "targeted",
+                                endpoint: DEFAULT_DOCKER_ENDPOINT,
+                                targets: [grant],
+                            }),
+                            undefined,
+                            configurationErrorMessage(error),
+                        ),
                         "error",
                     );
                 }
@@ -1707,7 +1760,7 @@ export default function (pi: ExtensionAPI) {
                     return;
                 }
 
-                const generation = beginTransition();
+                const generation = beginTransition(ctx);
                 if (generation === undefined) return;
                 bashProcessSupervisor.shutdown();
                 try {
@@ -1754,7 +1807,7 @@ export default function (pi: ExtensionAPI) {
                     return;
                 }
 
-                const generation = beginTransition();
+                const generation = beginTransition(ctx);
                 if (generation === undefined) return;
                 try {
                     const { config } = loadSandboxConfig(ctx.cwd, {
@@ -1792,7 +1845,7 @@ export default function (pi: ExtensionAPI) {
                     "warning",
                 );
                 sandboxEnabled = false;
-                const generation = beginTransition();
+                const generation = beginTransition(ctx);
                 if (generation === undefined) return;
                 bashProcessSupervisor.shutdown();
                 try {
@@ -1834,7 +1887,12 @@ export default function (pi: ExtensionAPI) {
                     return;
                 }
                 ctx.ui.notify(
-                    renderSandboxStatusDetails(resolved, sandboxEnabled),
+                    renderSandboxStatusDetails(
+                        resolved,
+                        sandboxEnabled,
+                        getActiveDockerSummary(),
+                        getSandboxRuntime().state,
+                    ),
                     "info",
                 );
                 return;

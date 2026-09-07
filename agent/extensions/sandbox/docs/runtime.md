@@ -22,5 +22,22 @@ views, or required Linux facilities are unavailable. It does not fall back to
 local execution. Docker uses a brokered private connection; the host Docker
 socket is never mounted inside the Sandbox.
 
+The shared runtime distinguishes `uninitialized`, `reconfiguring`, `enabled`,
+`disabled` and `error`. An enabled snapshot includes the active Docker summary.
+Bash, safe_bash and Think resolve their execution service when dispatched;
+an adapter created before a reload does not retain the old service.
+
+During reconfiguration, new requests wait at most 30 seconds and keep their
+original total deadline and cancellation signal. Session replacement invalidates
+waiting requests. Only successful publication allows a pending request to run,
+once. Processes already engaged are stopped, reported as interrupted and never
+replayed automatically. A failed or disabled runtime gives no local fallback
+to requests waiting for Sandbox.
+
+Local Zerobox builds record the base source commit, source diff SHA-256 and
+binary SHA-256 in `runtime/zerobox-provenance.json`. The base release version
+alone does not identify a locally patched binary. Rebuild and update provenance
+together, then reload Pi so future leases use the corrected binary and source.
+
 Linux is required. The runtime also requires `mkfifo`, `prlimit`, Node with
 JSPI support for the Python analyzer, and the managed Zerobox binary.

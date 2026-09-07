@@ -9,13 +9,23 @@ and `~/.pi/agent/sandbox.global.json`; it never writes configuration.
 | `Untrusted global Docker authority file` | Make the authority a regular owner-owned `0600` file, not a symlink. |
 | `Project attempted to enable Docker` | Add the authority globally with `/sandbox docker grant`; project settings can only narrow it. |
 | Docker service cannot be selected | Run the command from the Compose project or use the manual container-name fallback. |
-| `Docker target ...: excluded` | The grant matches, but the broker excludes the container. Run `/sandbox docker grant` to review its host access and explicitly confirm an exception if appropriate. |
+| `Target access: blocked by the broker for this grant` | Review the reported host access with `/sandbox docker grant` and explicitly confirm an exception if appropriate. |
 | `Docker target ...: absent` | No current container matches the selector on the configured Docker endpoint. Check the Compose project and service names. |
 | `Docker target inspection unavailable` | The configuration was parsed, but live access could not be checked. Check the Docker daemon, CLI and Sandbox runtime, then rerun doctor. |
 | Sandbox configuration failed | Read the field path in the message, correct that canonical file, then run `/sandbox doctor` again. |
+| `Docker operation is not granted` | Inspect active operations in `/sandbox`. Choose Administration if this target needs `exec`. |
+| `Docker target is not authorized` | Check the exact container name or Compose project/service selector. The container may also have disappeared. |
+| `Docker exec option forbidden` | Targeted exec refuses privileged/detached execution and non-empty detach keys, even with Administration. |
+| `saved; activation failed` | The authority file was saved, but no new runtime was activated. Correct the reported cause, then run `/sandbox on`. |
+| `Active Docker differs from the current configuration` | The files and running permissions differ. Run `/sandbox on` to apply the current configuration. |
+| `reconfiguration did not finish in time` | The pending command was not executed. After recovery, submit it again if still needed. |
+| `execution was interrupted by reconfiguration` | An engaged process was stopped and was not replayed. Inspect its effects before deciding to retry. |
 
 If a new Docker grant is saved while Sandbox is active, Sandbox reloads the
 authority for the running session automatically.
+New Bash, safe_bash and Think calls wait at most 30 seconds during this change,
+within their original timeout. Cancellation, disablement, activation failure
+or session replacement ends the wait without executing the pending command.
 
 `docker ps` can return an empty list with exit code 0 when all matching
 containers are excluded. A valid `targeted` grant alone does not establish
