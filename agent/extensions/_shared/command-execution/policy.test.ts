@@ -22,11 +22,12 @@ function danger(command = 'sudo apt update') {
 
 function context(options: {
     hasUI?: boolean;
+    cwd?: string;
     select?: () => Promise<string | undefined>;
     input?: () => Promise<string | undefined>;
 } = {}): ExtensionContext {
     return {
-        cwd: '/tmp',
+        cwd: options.cwd ?? '/tmp',
         hasUI: options.hasUI ?? false,
         ui: {
             select: options.select ?? mock(async () => undefined),
@@ -172,5 +173,102 @@ describe('safe-bash guard policy', () => {
             PROMPT,
         );
         expect(select).toHaveBeenCalledTimes(2);
+    });
+
+    it('code default still denies rm with an empty guardPolicy', async () => {
+        const match = inspectDangerous('rm notes.md');
+        if (!match) throw new Error('expected dangerous command');
+        expect(resolveGuardPolicy({}, 'rm')).toBe('deny');
+        const result = await authorizeDangerousCommand(
+            match,
+            'deny',
+            context(),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(result).toEqual({ allowed: false, reason: match.message });
+    });
+
+    it('cwd-only allows an in-cwd rm and denies an outside-cwd rm', async () => {
+        const inCwd = inspectDangerous('rm notes.md');
+        if (!inCwd) throw new Error('expected dangerous command');
+        expect(
+            await authorizeDangerousCommand(
+                inCwd,
+                'cwd-only',
+                context({ cwd: '/home/user' }),
+                new GuardSessionApprovals(),
+                PROMPT,
+            ),
+        ).toEqual({ allowed: true });
+
+        const outCwd = inspectDangerous('rm /etc/hosts');
+        if (!outCwd) throw new Error('expected dangerous command');
+        const blocked = await authorizeDangerousCommand(
+            outCwd,
+            'cwd-only',
+            context({ cwd: '/home/user' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.reason).toContain('outside working dir');
+        expect(blocked.reason).toContain('/etc/hosts');
+    });
+
+    it('cwd-only applies to file-delete-api interpreter one-liners', async () => {
+        const inCwd = inspectDangerous(
+            `python3 -c "import os; os.remove('notes.md')"`,
+        );
+        if (!inCwd) throw new Error('expected dangerous command');
+        expect(
+            await authorizeDangerousCommand(
+                inCwd,
+                'cwd-only',
+                context({ cwd: '/home/user' }),
+                new GuardSessionApprovals(),
+                PROMPT,
+            ),
+        ).toEqual({ allowed: true });
+
+        const outCwd = inspectDangerous(
+            `python3 -c "import os; os.remove('/etc/hosts')"`,
+        );
+        if (!outCwd) throw new Error('expected dangerous command');
+        const blocked = await authorizeDangerousCommand(
+            outCwd,
+            'cwd-only',
+            context({ cwd: '/home/user' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.reason).toContain('/etc/hosts');
+    });
+
+    it('explicit deny overrides an in-cwd delete', async () => {
+        const match = inspectDangerous('rm notes.md');
+        if (!match) throw new Error('expected dangerous command');
+        const result = await authorizeDangerousCommand(
+            match,
+            'deny',
+            context({ cwd: '/home/user' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(result).toEqual({ allowed: false, reason: match.message });
+    });
+
+    it('explicit allow permits an outside-cwd rm', async () => {
+        const match = inspectDangerous('rm /etc/hosts');
+        if (!match) throw new Error('expected dangerous command');
+        const result = await authorizeDangerousCommand(
+            match,
+            'allow',
+            context({ cwd: '/home/user' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(result).toEqual({ allowed: true });
     });
 });

@@ -139,7 +139,10 @@ export function normalizeSafeBashConfig(raw: unknown): Partial<SafeBashConfig> {
         )) {
             if (
                 knownGroups.has(groupId) &&
-                (value === "ask" || value === "deny" || value === "allow")
+                (value === "ask" ||
+                    value === "deny" ||
+                    value === "allow" ||
+                    value === "cwd-only")
             ) {
                 filtered[groupId] = value;
             }

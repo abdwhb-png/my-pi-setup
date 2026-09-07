@@ -1,8 +1,9 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type { DangerMatch } from "./guard.ts";
+import { inspectDeleteScope } from "./guard.ts";
 
-export type CommandGuardPolicy = "ask" | "deny" | "allow";
+export type CommandGuardPolicy = "ask" | "deny" | "allow" | "cwd-only";
 
 export interface GuardPromptOptions {
     toolName: string;
@@ -74,6 +75,21 @@ export async function authorizeDangerousCommand(
 ): Promise<GuardAuthorization> {
     if (policy === "allow") return { allowed: true };
     if (policy === "deny") return { allowed: false, reason: match.message };
+    if (policy === "cwd-only") {
+        const scope = inspectDeleteScope(
+            match.normalizedCommand,
+            ctx.cwd,
+            match.groupId,
+        );
+        if (scope.verdict === "inside") return { allowed: true };
+        const offending = scope.offendingTarget;
+        return {
+            allowed: false,
+            reason: offending
+                ? `Command blocked by ${options.toolName}: ${match.groupId} target outside working dir: ${offending}`
+                : match.message,
+        };
+    }
     if (approvals.has(match)) return { allowed: true };
     if (!ctx.hasUI) {
         return {

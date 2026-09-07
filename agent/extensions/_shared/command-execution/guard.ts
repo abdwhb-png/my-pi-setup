@@ -5,6 +5,8 @@
  * other extension that wraps bash execution (e.g. the compressor).
  */
 
+import { resolve as resolvePath } from "node:path";
+
 /** A named bundle of regexes representing one class of dangerous command. */
 export interface DangerGroup {
     /** Stable id used in settings.json `safeBash.guardPolicy` (e.g. `"sudo"`). */
@@ -211,6 +213,229 @@ export function inspectDangerous(
 
 export function isDangerous(command: string): string | null {
     return inspectDangerous(command)?.message ?? null;
+}
+
+/**
+ * Verdict for a cwd-scoped delete authorization request.
+ *
+ * - `inside`: every resolvable target stays lexically under `cwd`.
+ * - `outside`: at least one resolvable target is outside `cwd` (fail closed).
+ * - `unknown`: at least one target cannot be resolved statically, so the
+ *   command is treated as unsafe.
+ */
+export interface DeleteTargetScope {
+    verdict: "inside" | "outside" | "unknown";
+    offendingTarget?: string;
+    targets: string[];
+}
+
+/** Shell command separators that create an independent command segment. */
+const SHELL_SEPARATORS = /&&|\|\||;|\||\r?\n/;
+
+/** Tokenize a shell word list, respecting single/double quotes and backslash escapes. */
+function tokenizeShell(s: string): string[] {
+    const tokens: string[] = [];
+    let cur = "";
+    let inSingle = false;
+    let inDouble = false;
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === "\\") {
+            if (i + 1 < s.length) {
+                cur += s[++i];
+            }
+            continue;
+        }
+        if (inSingle) {
+            if (ch === "'") inSingle = false;
+            else cur += ch;
+            continue;
+        }
+        if (inDouble) {
+            if (ch === '"') inDouble = false;
+            else cur += ch;
+            continue;
+        }
+        if (ch === "'") {
+            inSingle = true;
+            continue;
+        }
+        if (ch === '"') {
+            inDouble = true;
+            continue;
+        }
+        if (/\s/.test(ch)) {
+            if (cur) {
+                tokens.push(cur);
+                cur = "";
+            }
+            continue;
+        }
+        cur += ch;
+    }
+    if (cur) tokens.push(cur);
+    return tokens;
+}
+
+/**
+ * Expand a target operand into an absolute, resolvable path, or return null
+ * when the target cannot be resolved statically (unknown).
+ */
+function expandTargetOperand(op: string): string | null {
+    if (op === "~" || op.startsWith("~/")) {
+        const home = process.env.HOME;
+        if (!home) return null;
+        return home + op.slice(1);
+    }
+    if (op === "$HOME" || op.startsWith("$HOME/")) {
+        const home = process.env.HOME;
+        if (!home) return null;
+        return home + op.slice("$HOME".length);
+    }
+    if (op === "${HOME}" || op.startsWith("${HOME}/")) {
+        const home = process.env.HOME;
+        if (!home) return null;
+        return home + op.slice("${HOME}".length);
+    }
+    // Any other variable / command substitution / backtick is unresolvable.
+    if (/[$`]/.test(op)) return null;
+    // Glob characters cannot be resolved to a single path.
+    if (/[*?[\]]/.test(op)) return null;
+    return op;
+}
+
+/** Lexical containment: resolved target is `cwd` itself or under `cwd + "/"`. */
+function isContained(resolved: string, root: string): boolean {
+    return resolved === root || resolved.startsWith(root + "/");
+}
+
+/** Collect rm absolute targets from a command, or null if any is unresolvable. */
+function collectRmTargets(
+    command: string,
+    cwd: string,
+): { targets: string[]; unknown: boolean } | null {
+    const root = resolvePath(cwd);
+    const targets: string[] = [];
+    let unknown = false;
+
+    for (const segment of command.split(SHELL_SEPARATORS)) {
+        const tokens = tokenizeShell(segment);
+        if (tokens.length === 0 || tokens[0] !== "rm") continue;
+        let flagMode = true;
+        for (let i = 1; i < tokens.length; i++) {
+            const tok = tokens[i];
+            if (flagMode) {
+                if (tok === "--") {
+                    flagMode = false;
+                    continue;
+                }
+                if (tok === "-") {
+                    // lone dash = stdin itself (unresolvable)
+                    unknown = true;
+                    continue;
+                }
+                if (tok.startsWith("-")) continue;
+                flagMode = false;
+            }
+            const expanded = expandTargetOperand(tok);
+            if (expanded === null) {
+                unknown = true;
+                continue;
+            }
+            targets.push(resolvePath(root, expanded));
+        }
+    }
+    return { targets, unknown };
+}
+
+/**
+ * Regex capturing path-like string literals from interpreter deletion APIs:
+ * the first string argument of common delete calls plus `Path("...")`.
+ */
+const DELETE_PATH_LITERAL_RE =
+    /(?:shutil\.rmtree|os\.(?:remove|unlink|rmdir|removedirs)|fs\.(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)|FileUtils\.rm_rf|File\.(?:delete|unlink)|Dir\.rmdir|(?:Path\s*\([^)]*\)|[A-Za-z_$][\w$]*)\.(?:unlink|rmdir|rm|rmSync|unlinkSync|rmdirSync)|\b(?:unlink|rmdir)\b)\s*\(\s*["']([^"']+)["']|Path\s*\(\s*["']([^"']+)["']/g;
+
+/** Collect file-delete-api absolute targets, or null if a literal is unresolvable. */
+function collectApiTargets(
+    command: string,
+    cwd: string,
+): { targets: string[]; unknown: boolean } | null {
+    const root = resolvePath(cwd);
+    const literals = new Set<string>();
+    let m: RegExpExecArray | null;
+    DELETE_PATH_LITERAL_RE.lastIndex = 0;
+    while ((m = DELETE_PATH_LITERAL_RE.exec(command)) !== null) {
+        const lit = m[1] ?? m[2];
+        if (lit) literals.add(lit.trim());
+    }
+
+    const targets: string[] = [];
+    let unknown = false;
+    for (const lit of literals) {
+        // Skip overlarge / clearly non-path literals (e.g. error strings).
+        if (lit.length < 1 || lit.length > 4096) continue;
+        const expanded = expandTargetOperand(lit);
+        if (expanded === null) {
+            unknown = true;
+            continue;
+        }
+        targets.push(resolvePath(root, expanded));
+    }
+    return { targets, unknown };
+}
+
+/**
+ * Determine whether a dangerous delete command stays inside `cwd`.
+ *
+ * Supports the `rm` and `file-delete-api` danger groups. Any other groupId,
+ * an unresolvable target (variable/glob/backtick), or a bare invocation with
+ * no targets resolves to `unknown` (fail closed). Outside targets are reported
+ * with their first offending absolute path.
+ */
+export function inspectDeleteScope(
+    command: string,
+    cwd: string,
+    groupId: string,
+): DeleteTargetScope {
+    if (groupId === "rm") {
+        const collected = collectRmTargets(command, cwd);
+        if (!collected) {
+            return { verdict: "unknown", targets: [] };
+        }
+        return toScope(
+            collected.targets,
+            collected.unknown,
+            resolvePath(cwd),
+        );
+    }
+    if (groupId === "file-delete-api") {
+        const collected = collectApiTargets(command, cwd);
+        if (!collected) {
+            return { verdict: "unknown", targets: [] };
+        }
+        return toScope(
+            collected.targets,
+            collected.unknown,
+            resolvePath(cwd),
+        );
+    }
+    // Any other group cannot be scoped — fail closed.
+    return { verdict: "unknown", targets: [] };
+}
+
+function toScope(
+    targets: string[],
+    unknown: boolean,
+    root: string,
+): DeleteTargetScope {
+    if (unknown) return { verdict: "unknown", targets };
+    if (targets.length === 0) return { verdict: "unknown", targets };
+    for (const target of targets) {
+        if (!isContained(target, root)) {
+            return { verdict: "outside", offendingTarget: target, targets };
+        }
+    }
+    return { verdict: "inside", targets };
 }
 
 /**

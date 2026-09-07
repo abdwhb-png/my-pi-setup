@@ -24,7 +24,6 @@
         "~/projects/pi-integrations/pi-fancy-footer",
         "npm:@gotgenes/pi-permission-system",
         "~/projects/pi-integrations/pi-roles",
-        "npm:context-mode",
         "npm:@ogulcancelik/pi-herdr",
         "./extensions/tool-groups"
     ],
@@ -38,7 +37,11 @@
         }
     },
     "safeBash": {
-        "mode": "coexist"
+        "mode": "coexist",
+        "guardPolicy": {
+            "rm": "cwd-only",
+            "file-delete-api": "cwd-only"
+        }
     },
     "saveTokens": {
         "caveman": {
@@ -47,6 +50,35 @@
         "ponytail": {
             "enabled": true,
             "defaultMode": "full"
+        }
+    },
+    "thinkInCode": {
+        "languages": [
+            "javascript",
+            "typescript",
+            "python"
+        ],
+        "retentionHours": 24,
+        "projectQuotaBytes": 536870912,
+        "restoreTokenBudget": 1500,
+        "searchSnippetChars": 240,
+        "indexedSnippetChars": 1024,
+        "maxResultBytes": 65536,
+        "batchConcurrency": 2,
+        "maxBatchCommands": 16,
+        "network": false,
+        "commandPolicy": {
+            "guardPolicy": {},
+            "allowedShellCommands": [],
+            "rewrites": []
+        },
+        "telemetry": {
+            "enabled": true,
+            "retentionDays": 30,
+            "captureCommand": true,
+            "maxCommandLength": 10000,
+            "auditDays": 30,
+            "auditLimit": 100
         }
     },
     "fileResolver": {

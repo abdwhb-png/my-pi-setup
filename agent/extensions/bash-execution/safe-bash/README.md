@@ -45,12 +45,29 @@ Actions:
 - `deny`: block. This is the default for missing groups.
 - `ask`: interactive choice to allow once, allow the exact normalized command for the session, deny, or deny with a reason. Non-interactive sessions deny.
 - `allow`: execute without prompting while preserving telemetry guard evidence.
+- `cwd-only`: allow only when every resolvable delete target stays lexically inside the session working directory (`ctx.cwd`). An unresolvable target (variable, glob, backtick, bare `rm`) or any target outside `cwd` blocks with a reason naming the offending path. Supported for the `rm` and `file-delete-api` groups; other groups fail closed to `deny`.
 
 Every matching group is evaluated, so allowing one group cannot bypass another matching group's `ask` or `deny` policy.
 
-The `safe_bash` tool description and `promptSnippet` always reflect live state: `Mode`, per-group `allow`/`ask`/`deny(default)`, `AllowedShell` bypass list, and `native-redirect` status. `before_agent_start` and `/safe-bash reload` refresh it, so the LLM sees what will be blocked before calling `rm` or equivalents.
+The `safe_bash` tool description and `promptSnippet` always reflect live state: `Mode`, per-group `allow`/`ask`/`cwd-only`/`deny(default)`, `AllowedShell` bypass list, and `native-redirect` status. `before_agent_start` and `/safe-bash reload` refresh it, so the LLM sees what will be blocked before calling `rm` or equivalents.
 
 `allowDangerous` is removed and ignored. `safeBash.mode` remains unchanged: `replace` removes raw `bash`, while `coexist` exposes both tools.
+
+### Global default with project override
+
+Setting `cwd-only` in the global `settings.json` makes in-cwd deletes the default for every project; a project `settings.json` under the same `safeBash.guardPolicy` key overrides it per group (project settings win over global):
+
+```json
+{
+    "safeBash": {
+        "guardPolicy": {
+            "sudo": "allow",
+            "rm": "cwd-only",
+            "file-delete-api": "cwd-only"
+        }
+    }
+}
+```
 
 ## Telemetry configuration
 

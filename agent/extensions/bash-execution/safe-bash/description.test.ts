@@ -41,6 +41,21 @@ describe("buildSafeBashDescription", () => {
         expect(result).toContain("bypass=[grep,find]");
     });
 
+    it("shows cwd-only groups", () => {
+        const result = buildSafeBashDescription({
+            config: {
+                mode: "coexist",
+                guardPolicy: {
+                    rm: "cwd-only",
+                    "file-delete-api": "cwd-only",
+                },
+                allowedShellCommands: [],
+            },
+            enforceNativeTools: true,
+        });
+        expect(result).toContain("cwd-only=[file-delete-api,rm]");
+    });
+
     it("shows relaxed native-redirect when not enforced", () => {
         const result = buildSafeBashDescription({
             config: { mode: "coexist", guardPolicy: {}, allowedShellCommands: [] },
@@ -85,5 +100,18 @@ describe("buildSafeBashPromptSnippet", () => {
         expect(result).toContain("allow:sudo");
         expect(result).toContain("ask:rm");
         expect(result).toContain("native=relaxed");
+    });
+
+    it("lists cwd-only groups in the prompt snippet", () => {
+        const result = buildSafeBashPromptSnippet({
+            config: {
+                mode: "coexist",
+                guardPolicy: { rm: "cwd-only" },
+                allowedShellCommands: [],
+            },
+            enforceNativeTools: true,
+        });
+        expect(result).toContain("cwd:rm");
+        expect(result).toContain("native=enforced");
     });
 });

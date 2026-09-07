@@ -1,5 +1,10 @@
 /* oxlint-disable typescript/no-restricted-types -- failure normalization intentionally accepts fully type-erased inputs and preserves the raw cause for telemetry; widening to a concrete interface would defeat the purpose. */
-import { isSandboxUnavailableError } from "../sandbox-runtime/index.ts";
+import {
+    SANDBOX_ERROR_CODES,
+    isSandboxExecutionError,
+    isSandboxUnavailableError,
+    type SandboxErrorCode,
+} from "../sandbox-runtime/index.ts";
 /**
  * Safe-execution failure normalization.
  *
@@ -50,12 +55,15 @@ export type SafeExecutionFailureKind =
     | "bash_aborted"
     | "guard"
     | "redirect"
+    | "sandbox"
     | "unavailable"
     | "analyzer"
     | "abnormal";
 
 export interface SafeExecutionFailure {
     kind: SafeExecutionFailureKind;
+    /** Stable sandbox code when `kind` is `sandbox`. */
+    code?: SandboxErrorCode;
     /** Safe, bounded reason that may appear in LLM-facing surfaces. */
     reason: string;
     /** Original error message, retained only for capture warnings / telemetry. */
@@ -140,6 +148,21 @@ export function normalizeAbnormalError(message: string): SafeExecutionFailure {
 export function classifySafeExecutionError(
     error: unknown,
 ): SafeExecutionFailure {
+    if (isSandboxExecutionError(error)) {
+        const cause = error.getCause();
+        const technical =
+            cause instanceof Error
+                ? cause.message
+                : typeof cause === "string"
+                  ? cause
+                  : "";
+        return {
+            kind: "sandbox",
+            code: error.code,
+            reason: error.message,
+            raw: technical.slice(0, 4096),
+        };
+    }
     // Typed Sandbox runtime unavailability: trust provenance via the
     // brand + closed kind. The bounded reason is the deterministic
     // 'Sandbox execution unavailable: <kind>' phrase, NEVER the raw
@@ -194,6 +217,9 @@ const SAFE_EXECUTION_ERROR_NAME = "SafeExecutionError";
 const SAFE_EXECUTION_BRAND: unique symbol = Symbol.for(
     "pi.safe-execution.SafeExecutionError",
 );
+const VALID_SANDBOX_ERROR_CODES: ReadonlySet<string> = new Set(
+    SANDBOX_ERROR_CODES,
+);
 
 /** Closed enum of valid kinds. */
 const VALID_SAFE_EXECUTION_KINDS: ReadonlySet<SafeExecutionFailureKind> =
@@ -203,6 +229,7 @@ const VALID_SAFE_EXECUTION_KINDS: ReadonlySet<SafeExecutionFailureKind> =
         "bash_aborted",
         "guard",
         "redirect",
+        "sandbox",
         "unavailable",
         "analyzer",
         "abnormal",
@@ -229,10 +256,17 @@ export function isSafeExecutionError(
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Record keying by symbol mixes with string indexing; we validate the kind below against the closed enum.
     const kind = (record as Record<string, unknown>)["kind"];
     if (typeof kind !== "string") return false;
-    return VALID_SAFE_EXECUTION_KINDS.has(
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the enum validation below proves the value is well-formed.
-        kind as SafeExecutionFailureKind,
-    );
+    if (
+        !VALID_SAFE_EXECUTION_KINDS.has(
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the enum validation below proves the value is well-formed.
+            kind as SafeExecutionFailureKind,
+        )
+    ) {
+        return false;
+    }
+    const code = record.code;
+    if (kind !== "sandbox") return code === undefined;
+    return typeof code === "string" && VALID_SANDBOX_ERROR_CODES.has(code);
 }
 
 /**
@@ -259,8 +293,14 @@ export function isSafeExecutionError(
 export class SafeExecutionError extends Error {
     readonly kind!: SafeExecutionFailureKind;
     readonly raw!: string;
+    readonly code?: SandboxErrorCode;
 
-    constructor(kind: SafeExecutionFailureKind, reason: string, raw: string) {
+    constructor(
+        kind: SafeExecutionFailureKind,
+        reason: string,
+        raw: string,
+        code?: SandboxErrorCode,
+    ) {
         super(reason);
         this.name = SAFE_EXECUTION_ERROR_NAME;
         Object.defineProperty(this, "kind", {
@@ -275,6 +315,14 @@ export class SafeExecutionError extends Error {
             writable: false,
             configurable: false,
         });
+        if (code !== undefined) {
+            Object.defineProperty(this, "code", {
+                value: code,
+                enumerable: false,
+                writable: false,
+                configurable: false,
+            });
+        }
         Object.defineProperty(this, SAFE_EXECUTION_BRAND, {
             value: true,
             enumerable: false,
@@ -292,6 +340,10 @@ export class SafeExecutionError extends Error {
     getRaw(): string {
         return this.raw;
     }
+
+    getCode(): SandboxErrorCode | undefined {
+        return this.code;
+    }
 }
 
 /**
@@ -306,6 +358,7 @@ export function toPublicFailure(error: unknown): SafeExecutionFailure {
     if (isSafeExecutionError(error)) {
         const result: SafeExecutionFailure = {
             kind: error.kind,
+            code: error.code,
             reason: error.message,
             raw: error.raw,
         };

@@ -149,6 +149,29 @@ describe('normalizeSafeBashConfig', () => {
             guardPolicy: { sudo: 'allow' },
         });
     });
+
+    it('accepts and preserves cwd-only for known danger groups', () => {
+        expect(
+            normalizeSafeBashConfig({
+                guardPolicy: {
+                    rm: 'cwd-only',
+                    'file-delete-api': 'cwd-only',
+                },
+            }),
+        ).toEqual({
+            guardPolicy: { rm: 'cwd-only', 'file-delete-api': 'cwd-only' },
+        });
+    });
+
+    it('rejects cwd-only for unknown danger groups', () => {
+        expect(
+            normalizeSafeBashConfig({ guardPolicy: { unknownGroup: 'cwd-only' } }),
+        ).toEqual({});
+    });
+
+    it('keeps DEFAULT_SAFE_BASH_CONFIG guardPolicy empty (deny by default)', () => {
+        expect(DEFAULT_SAFE_BASH_CONFIG.guardPolicy).toEqual({});
+    });
 });
 
 describe('loadSafeBashConfig', () => {

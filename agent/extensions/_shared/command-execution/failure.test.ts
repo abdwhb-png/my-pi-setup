@@ -3,6 +3,7 @@ import { createJiti } from "jiti";
 import { pathToFileURL } from "node:url";
 
 import {
+    SandboxExecutionError,
     SandboxUnavailableError,
 } from "../sandbox-runtime/index.ts";
 import {
@@ -50,6 +51,37 @@ function makeTypedUnavailableFromRuntime(
 }
 
 describe("safe-execution failure normalization", () => {
+    it("classifies typed sandbox failures by safe public code", () => {
+        const error = new SandboxExecutionError("setup-failed", {
+            cause: new Error("zerobox setup frame SECRET_TECHNICAL_CAUSE"),
+        });
+
+        const failure = classifySafeExecutionError(error);
+
+        expect(failure.kind).toBe("sandbox");
+        expect(failure.code).toBe("setup-failed");
+        expect(failure.reason).toBe("Sandbox setup failed");
+        expect(failure.reason).not.toContain("SECRET_TECHNICAL_CAUSE");
+        expect(failure.raw).toContain("SECRET_TECHNICAL_CAUSE");
+    });
+
+    it("preserves the safe sandbox code through the broker wrapper", () => {
+        const wrapped = new SafeExecutionError(
+            "sandbox",
+            "Sandbox setup failed",
+            "local setup diagnostic",
+            "setup-failed",
+        );
+
+        expect(toPublicFailure(wrapped)).toEqual({
+            kind: "sandbox",
+            code: "setup-failed",
+            reason: "Sandbox setup failed",
+            raw: "local setup diagnostic",
+        });
+        expect(JSON.stringify(wrapped)).not.toContain("setup-failed");
+    });
+
     it("extracts the trusted exit suffix and discards preceding raw stdout", () => {
         const result = extractBashFailure(
             "SECRET_TOKEN_FROM_COMMAND\n\nCommand exited with code 1",
