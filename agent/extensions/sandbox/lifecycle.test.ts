@@ -78,6 +78,12 @@ const {
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<void>;
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void>;
+type CommandDefinition = {
+    handler: CommandHandler;
+    getArgumentCompletions?: (
+        prefix: string,
+    ) => Array<{ value: string; label: string }> | null;
+};
 
 type Deferred = {
     promise: Promise<void>;
@@ -101,14 +107,14 @@ function fakeTheme(): Theme {
 
 function registerSandbox() {
     const handlers = new Map<string, Handler>();
-    const commands = new Map<string, CommandHandler>();
+    const commands = new Map<string, CommandDefinition>();
     const pi = {
         registerFlag: () => undefined,
         registerTool: () => undefined,
         registerCommand: (
             name: string,
-            definition: { handler: CommandHandler },
-        ) => commands.set(name, definition.handler),
+            definition: CommandDefinition,
+        ) => commands.set(name, definition),
         on: (event: string, handler: Handler) => handlers.set(event, handler),
         getFlag: () => false,
     } as unknown as ExtensionAPI;
@@ -116,16 +122,24 @@ function registerSandbox() {
     return { handlers, commands };
 }
 
+function sandboxCommand(registered: ReturnType<typeof registerSandbox>): CommandDefinition {
+    const command = registered.commands.get("sandbox");
+    if (!command) throw new Error("sandbox command not registered");
+    return command;
+}
+
 function context(
     cwd: string,
     sessionDir?: string,
     sessionId = "session-a",
+    projectTrusted = true,
 ): ExtensionContext {
     const notify = mock((_message: string, _level?: string) => undefined);
     (context as unknown as { notify?: typeof notify }).notify = notify;
     return {
         cwd,
         hasUI: false,
+        isProjectTrusted: () => projectTrusted,
         ui: { notify },
         sessionManager: sessionDir
             ? ({
@@ -250,7 +264,7 @@ describe("sandbox lifecycle", () => {
         expect(getSandboxRuntime().state).toBe("error");
         expect(reset).toHaveBeenCalledTimes(1);
 
-        await registered.commands.get("sandbox")?.("off", ctx);
+        await sandboxCommand(registered).handler("off", ctx);
         expect(reset).toHaveBeenCalledTimes(2);
         expect(getSandboxRuntime().state).toBe("disabled");
     });
@@ -276,7 +290,7 @@ describe("sandbox lifecycle", () => {
             "error",
         ]);
 
-        await registered.commands.get("sandbox")?.("off", ctx);
+        await sandboxCommand(registered).handler("off", ctx);
         expect(reset).toHaveBeenCalledTimes(2);
         expect(getSandboxRuntime().state).toBe("disabled");
     });
@@ -293,7 +307,7 @@ describe("sandbox lifecycle", () => {
 
         const enabling = deferred();
         initialize.mockImplementation(() => enabling.promise);
-        const enableTransition = registered.commands.get("sandbox")?.("on", ctx);
+        const enableTransition = sandboxCommand(registered).handler("on", ctx);
         expect(getSandboxRuntime().state).toBe("uninitialized");
         await expectUnavailable("uninitialized");
         enabling.resolve();
@@ -302,12 +316,188 @@ describe("sandbox lifecycle", () => {
 
         const disabling = deferred();
         reset.mockImplementation(() => disabling.promise);
-        const disableTransition = registered.commands.get("sandbox")?.("off", ctx);
+        const disableTransition = sandboxCommand(registered).handler("off", ctx);
         expect(getSandboxRuntime().state).toBe("uninitialized");
         await expectUnavailable("uninitialized");
         disabling.resolve();
         await disableTransition;
         expect(getSandboxRuntime().state).toBe("disabled");
+    });
+
+    it("exposes only on and off and rejects the removed toggle aliases", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        const command = sandboxCommand(registered);
+
+        expect(command.getArgumentCompletions?.("")).toEqual([
+            { value: "on", label: "on" },
+            { value: "off", label: "off" },
+            { value: "docker", label: "docker" },
+        ]);
+        expect(command.getArgumentCompletions?.("docker ")).toEqual([
+            { value: "docker off", label: "docker off" },
+            { value: "docker targeted", label: "docker targeted" },
+            { value: "docker full", label: "docker full" },
+            { value: "docker inherit", label: "docker inherit" },
+        ]);
+
+        await command.handler("enable", ctx);
+        await command.handler("disable", ctx);
+
+        expect(notifyCalls(ctx).slice(-2)).toEqual([
+            ["Usage: /sandbox [on|off|docker ...]", "error"],
+            ["Usage: /sandbox [on|off|docker ...]", "error"],
+        ]);
+        expect(initialize).not.toHaveBeenCalled();
+        expect(reset).not.toHaveBeenCalled();
+    });
+
+    it("persists Docker off in project settings without losing legacy sandbox fields", async () => {
+        await writeFile(
+            join(cwd, ".pi", "sandbox.json"),
+            JSON.stringify({
+                enabled: true,
+                network: { allowedDomains: ["example.com"] },
+            }),
+        );
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+
+        await sandboxCommand(registered).handler("docker off", ctx);
+
+        const settings = JSON.parse(
+            await readFile(join(cwd, ".pi", "settings.json"), "utf8"),
+        );
+        expect(settings).toEqual({
+            sandbox: {
+                enabled: true,
+                network: { allowedDomains: ["example.com"] },
+                docker: { mode: "disabled" },
+            },
+        });
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            "Docker project preference saved: off",
+            "info",
+        ]);
+    });
+
+    it("shows Docker authority, project preference, effective policy, and runtime state", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+
+        await sandboxCommand(registered).handler("docker", ctx);
+
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            [
+                "Docker authority: off",
+                "Project preference: inherit",
+                "Effective policy: off",
+                "Runtime: inactive (sandbox off)",
+            ].join("\n"),
+            "info",
+        ]);
+    });
+
+    it("refuses Docker project changes for an untrusted project", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd, undefined, SESSION_ID, false);
+
+        await sandboxCommand(registered).handler("docker off", ctx);
+
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            "Docker project preference requires a trusted project",
+            "error",
+        ]);
+        await expect(
+            readFile(join(cwd, ".pi", "settings.json"), "utf8"),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it("rejects Docker escalation without mutating project settings", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+
+        await sandboxCommand(registered).handler("docker targeted", ctx);
+
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            expect.stringContaining("Project attempted to enable Docker"),
+            "error",
+        ]);
+        await expect(
+            readFile(join(cwd, ".pi", "settings.json"), "utf8"),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it("explains why full authority cannot become targeted without targets", async () => {
+        const agentDir = join(cwd, "agent-home");
+        await mkdir(agentDir);
+        await writeFile(
+            join(agentDir, "sandbox.global.json"),
+            JSON.stringify({
+                docker: {
+                    grants: [{ projectRoot: cwd, mode: "full" }],
+                },
+            }),
+            { mode: 0o600 },
+        );
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd);
+
+            await sandboxCommand(registered).handler("docker targeted", ctx);
+
+            expect(notifyCalls(ctx).at(-1)).toEqual([
+                "Docker configuration failed: Targeted narrowing of full Docker requires targets",
+                "error",
+            ]);
+            await expect(
+                readFile(join(cwd, ".pi", "settings.json"), "utf8"),
+            ).rejects.toMatchObject({ code: "ENOENT" });
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+        }
+    });
+
+    it("restarts an active sandbox after saving a Docker preference", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        expect(getSandboxRuntime().state).toBe("enabled");
+
+        await sandboxCommand(registered).handler("docker off", ctx);
+
+        expect(reset).toHaveBeenCalledTimes(1);
+        expect(initialize).toHaveBeenCalledTimes(2);
+        expect(getSandboxRuntime().state).toBe("enabled");
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            "Docker project preference saved: off",
+            "info",
+        ]);
+    });
+
+    it("fails closed and surfaces the real Docker reconfiguration error", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        initialize.mockRejectedValueOnce(new Error("docker broker unavailable"));
+
+        await sandboxCommand(registered).handler("docker off", ctx);
+
+        expect(getSandboxRuntime().state).toBe("error");
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            "Docker preference saved, but sandbox reconfiguration failed: docker broker unavailable",
+            "error",
+        ]);
+        const settings = JSON.parse(
+            await readFile(join(cwd, ".pi", "settings.json"), "utf8"),
+        );
+        expect(settings.sandbox.docker).toEqual({ mode: "disabled" });
     });
 
     it("keeps a later off request authoritative over an in-flight enable", async () => {
@@ -321,9 +511,9 @@ describe("sandbox lifecycle", () => {
 
         const preflight = deferred();
         analysisPreflight.mockImplementationOnce(() => preflight.promise);
-        const enabling = registered.commands.get("sandbox")?.("on", ctx);
+        const enabling = sandboxCommand(registered).handler("on", ctx);
         await Bun.sleep(10);
-        const disabling = registered.commands.get("sandbox")?.("off", ctx);
+        const disabling = sandboxCommand(registered).handler("off", ctx);
         await disabling;
         expect(getSandboxRuntime().state).toBe("disabled");
 
@@ -346,10 +536,10 @@ describe("sandbox lifecycle", () => {
         const preflight = deferred();
         analysisPreflight.mockImplementationOnce(() => preflight.promise);
         reset.mockRejectedValueOnce(new Error("late candidate cleanup failed"));
-        const enabling = registered.commands.get("sandbox")?.("on", ctx);
+        const enabling = sandboxCommand(registered).handler("on", ctx);
         await Bun.sleep(10);
 
-        await registered.commands.get("sandbox")?.("off", ctx);
+        await sandboxCommand(registered).handler("off", ctx);
         expect(reset).toHaveBeenCalledTimes(1);
         expect(getSandboxRuntime().state).toBe("error");
         expect(notifyCalls(ctx).at(-1)).toEqual([
@@ -362,7 +552,7 @@ describe("sandbox lifecycle", () => {
         expect(reset).toHaveBeenCalledTimes(2);
         expect(getSandboxRuntime().state).toBe("error");
 
-        await registered.commands.get("sandbox")?.("off", ctx);
+        await sandboxCommand(registered).handler("off", ctx);
         expect(getSandboxRuntime().state).toBe("disabled");
     });
 
@@ -390,7 +580,7 @@ describe("sandbox lifecycle", () => {
         await registered.handlers.get("session_start")?.({}, ctx);
         reset.mockRejectedValueOnce(new Error("reset failed"));
 
-        await registered.commands.get("sandbox")?.("off", ctx);
+        await sandboxCommand(registered).handler("off", ctx);
 
         expect(getSandboxRuntime().state).toBe("error");
         let captured: unknown;
@@ -424,7 +614,7 @@ describe("sandbox lifecycle", () => {
         expect(captured.message).not.toContain("reset failed");
         expect(serialized).not.toContain("reset failed");
 
-        await registered.commands.get("sandbox")?.("off", ctx);
+        await sandboxCommand(registered).handler("off", ctx);
         expect(reset).toHaveBeenCalledTimes(2);
         expect(getSandboxRuntime().state).toBe("disabled");
     });
@@ -612,7 +802,7 @@ describe("sandbox per-session persistence and propagation", () => {
         const ctx = context(cwd, sessionDir);
         await registered.handlers.get("session_start")?.({}, ctx);
 
-        await registered.commands.get("sandbox")?.("off", ctx);
+        await sandboxCommand(registered).handler("off", ctx);
 
         expect(getSandboxRuntime().state).toBe("disabled");
         expect(process.env[ENV_KEY]).toBe("disabled");
@@ -638,7 +828,7 @@ describe("sandbox per-session persistence and propagation", () => {
         const ctx = context(cwd, sessionDir);
         await registered.handlers.get("session_start")?.({}, ctx);
 
-        await registered.commands.get("sandbox")?.("on", ctx);
+        await sandboxCommand(registered).handler("on", ctx);
 
         expect(getSandboxRuntime().state).toBe("enabled");
         expect(process.env[ENV_KEY]).toBe("enabled");
@@ -650,7 +840,7 @@ describe("sandbox per-session persistence and propagation", () => {
         const first = registerSandbox();
         const firstContext = context(cwd, sessionDir, SESSION_ID);
         await first.handlers.get("session_start")?.({}, firstContext);
-        await first.commands.get("sandbox")?.("off", firstContext);
+        await sandboxCommand(first).handler("off", firstContext);
         expect(process.env[ENV_KEY]).toBe("disabled");
 
         await first.handlers.get("session_shutdown")?.({}, firstContext);
@@ -668,7 +858,7 @@ describe("sandbox per-session persistence and propagation", () => {
         const registered = registerSandbox();
         const ctx = context(cwd, sessionDir);
         await registered.handlers.get("session_start")?.({}, ctx);
-        await registered.commands.get("sandbox")?.("on", ctx);
+        await sandboxCommand(registered).handler("on", ctx);
         expect(process.env[ENV_KEY]).toBe("enabled");
 
         await registered.handlers.get("session_shutdown")?.({}, ctx);
@@ -698,7 +888,7 @@ describe("sandbox per-session persistence and propagation", () => {
         const registered = registerSandbox();
         const ctx = context(cwd, sessionDir);
         await registered.handlers.get("session_start")?.({}, ctx);
-        await registered.commands.get("sandbox")?.("off", ctx);
+        await sandboxCommand(registered).handler("off", ctx);
 
         const widget = renderWidget();
         expect(widget).not.toBeNull();

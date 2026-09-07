@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import { SandboxExecutionError } from "./contracts.ts";
 import {
@@ -45,6 +46,27 @@ const lease = {
 };
 
 describe("sandbox policies", () => {
+    it("honors an explicit project denial of the host tmp root", () => {
+        const config = validatePiSandboxConfig({ filesystem: { allowWrite: ["."], denyRead: ["/tmp"] } });
+        const policy = createBashPolicy({ cwd, lease, config });
+        expect(policy.filesystem.allowRead).not.toContain("/tmp");
+        expect(policy.filesystem.allowWrite).not.toContain("/tmp");
+        expect(policy.filesystem.denyRead).toContain("/tmp");
+    });
+    it("shares host tmp for development while retaining explicit project restrictions", () => {
+        const config = validatePiSandboxConfig({
+            filesystem: { allowWrite: ["."], denyRead: ["/tmp/project-secret"] },
+        });
+        const policy = createBashPolicy({ cwd, lease, config, hostEnv: {} });
+        expect(policy.filesystem.allowRead).toContain("/tmp");
+        expect(policy.filesystem.allowWrite).toContain("/tmp");
+        expect(policy.filesystem.denyRead).not.toContain("/tmp");
+        expect(policy.filesystem.denyWrite).not.toContain("/tmp");
+        expect(policy.filesystem.denyRead).toContain("/tmp/project-secret");
+        expect(policy.filesystem.denyRead).toContain(join(lease.root, ".."));
+        expect(policy.strict).toBe(true);
+    });
+
     it("builds distinct strict Bash and analysis policies", () => {
         const config = validatePiSandboxConfig({
             filesystem: {
@@ -126,6 +148,23 @@ describe("sandbox policies", () => {
         expect(policy.filesystem.denyRead).not.toContain(join(cwd, "*.pem"));
     });
 
+    it("always denies writes to the global Docker authority", () => {
+        const piRoot = join(homedir(), ".pi");
+        const policy = createBashPolicy({
+            cwd: piRoot,
+            lease,
+            config: validatePiSandboxConfig({
+                filesystem: { allowWrite: ["."], denyWrite: [] },
+            }),
+            hostEnv: {},
+        });
+
+        expect(policy.filesystem.allowWrite).toContain(piRoot);
+        expect(policy.filesystem.denyWrite).toContain(
+            join(getAgentDir(), "sandbox.global.json"),
+        );
+    });
+
     it("passes the effective Docker policy only to Bash", () => {
         const docker = {
             mode: "targeted" as const,
@@ -154,7 +193,7 @@ describe("sandbox policies", () => {
     it("rejects configured allows that override a more specific deny", () => {
         for (const filesystem of [
             { allowRead: ["/proc/1/root/etc/hostname"] },
-            { allowWrite: ["/tmp/nested"] },
+            { allowWrite: ["/mnt/c/nested"] },
             { allowRead: ["private/child"], denyRead: ["private"] },
             { allowWrite: ["private/child"], denyWrite: ["private"] },
             { allowWrite: ["private/child"], denyRead: ["private"] },

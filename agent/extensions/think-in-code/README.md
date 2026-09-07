@@ -51,6 +51,18 @@ calls before input is read, executed, archived or indexed. The tool is restored
 before a later turn if Sandbox becomes available again.
 `think_artifact_search` remains active because it uses only the project store.
 
+Run command and batch collection through `think-strict`, with project rules
+and a private session/cwd `/tmp`. Run every derivation through a fresh
+`analysis-strict` lease. Read file/content/archive sources and search artifacts
+on the host. Interpret `sourceExecution` and `analysisExecution` independently
+in result and failure JSON. Batch `sourceExecutions` lists each command's
+observed facts. Treat `unknown` as absence of execution evidence. A successful
+analysis does not change a failing source command's actual exit code.
+
+Treat paths printed by commands as paths in the reported namespace. Think
+does not export files from its private `/tmp`. Its raw text archives are host
+storage and remain accessible only through Think's bounded analysis workflow.
+
 Every successful, non-empty derivation from `command`, `content`, `archives`,
 `file`, or `batch` is indexed automatically with its status and archive IDs.
 Blocked, terminally failed, and empty analyses are not indexed. There is no

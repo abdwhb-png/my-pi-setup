@@ -161,6 +161,7 @@ export interface LocalCompressorConfig {
 }
 
 export interface ArchiveOriginalInput {
+    sourceExecution?: import("../../_shared/execution-provenance/types.ts").ExecutionProvenance;
     toolCallId: string;
     toolName: string;
     subject?: string;

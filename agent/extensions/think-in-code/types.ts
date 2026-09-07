@@ -11,6 +11,7 @@ import type {
     AnalysisLanguage,
     AnalysisResult,
 } from "../_shared/sandbox-runtime/analysis-protocol.ts";
+import type { ThinkExecutionProvenance } from "./execution-provenance.ts";
 
 export type ThinkLanguage = AnalysisLanguage;
 
@@ -74,6 +75,7 @@ export interface BatchExecuteRequest {
 export type ItemStatus = "blocked" | "failed" | "succeeded";
 
 export interface BatchItemResult {
+    execution?: import("../_shared/execution-provenance/types.ts").ExecutionProvenance;
     id: string;
     status: ItemStatus;
     archiveId?: string;
@@ -110,7 +112,7 @@ export interface ExecuteFileRequest {
     bindings?: Record<string, string>;
 }
 
-export interface ToolExecutionDetails {
+export interface ToolExecutionDetails extends Partial<ThinkExecutionProvenance> {
     archiveIds: readonly string[];
     /** LLM-visible outcome metadata mirrored in the first content block. */
     status?: "success" | "partial";

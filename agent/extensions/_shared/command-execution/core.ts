@@ -1,9 +1,18 @@
 import {
     createBashToolDefinition,
     type BashOperations,
+    type BashToolDetails,
+    type AgentToolResult,
     type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import {
+    recordExecution,
+    resolveExecution,
+    unknownExecution,
+    type ExecutionObserver,
+    type ExecutionProvenance,
+} from "../execution-provenance/index.ts";
 import type { CreateBashOperationsOptions } from "./exec.ts";
 import { classifySafeExecutionError, SafeExecutionError } from "./failure.ts";
 import {
@@ -26,8 +35,8 @@ export type CommandExecutionDefinition = ReturnType<
     typeof createBashToolDefinition
 >;
 type CommandExecutionExecute = CommandExecutionDefinition["execute"];
-export type CommandExecutionResult = Awaited<
-    ReturnType<CommandExecutionExecute>
+export type CommandExecutionResult = AgentToolResult<
+    (BashToolDetails & { execution?: ExecutionProvenance }) | undefined
 >;
 export type CommandExecutionUpdateCallback =
     Parameters<CommandExecutionExecute>[3];
@@ -83,6 +92,7 @@ export interface CommandExecutionService<
 }
 
 export interface CommandExecutionOperationsOptions {
+    onExecution?: ExecutionObserver;
     stdin?: string;
     rewriteCommand?: CreateBashOperationsOptions["rewriteCommand"];
 }
@@ -117,6 +127,7 @@ export function createCommandExecutionService<
 
     return {
         async execute(request) {
+            recordExecution(request.toolCallId, unknownExecution());
             const telemetry = options.getTelemetryRecorder();
             const executionName = request.operation;
             const authorization = await authorizeDangerousMatches(
@@ -128,6 +139,11 @@ export function createCommandExecutionService<
             );
             const danger = authorization.match ?? null;
             if (!authorization.allowed && danger) {
+                recordExecution(request.toolCallId, {
+                    ...unknownExecution(),
+                    phase: "policy",
+                    outcome: "blocked",
+                });
                 await telemetry?.record({
                     operation: request.operation,
                     toolCallId: request.toolCallId,
@@ -147,6 +163,11 @@ export function createCommandExecutionService<
                 executionName,
             );
             if (redirect) {
+                recordExecution(request.toolCallId, {
+                    ...unknownExecution(),
+                    phase: "policy",
+                    outcome: "blocked",
+                });
                 await telemetry?.record({
                     operation: request.operation,
                     toolCallId: request.toolCallId,
@@ -161,6 +182,8 @@ export function createCommandExecutionService<
             }
 
             const operations = options.createOperations({
+                onExecution: (execution) =>
+                    recordExecution(request.toolCallId, execution),
                 stdin: request.stdin,
                 rewriteCommand: (command) =>
                     applyFirstRewrite(command, request.operation, [
@@ -187,7 +210,13 @@ export function createCommandExecutionService<
                     decision: danger ? "allowed" : undefined,
                     outcome: "succeeded",
                 });
-                return result;
+                return {
+                    ...result,
+                    details: {
+                        ...result.details,
+                        execution: resolveExecution(request.toolCallId),
+                    },
+                };
             } catch (error) {
                 const classified = classifySafeExecutionError(error);
                 await telemetry?.record({
@@ -203,6 +232,7 @@ export function createCommandExecutionService<
                     classified.kind,
                     classified.reason,
                     classified.raw,
+                    classified.code,
                 );
             }
         },

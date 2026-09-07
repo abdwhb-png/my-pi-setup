@@ -17,6 +17,16 @@ import { constants as fsConstants } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { performance } from "node:perf_hooks";
+import {
+    hostExecution,
+    recordExecution,
+    resolveExecution,
+    unknownExecution,
+} from "../_shared/execution-provenance/index.ts";
+import {
+    withThinkExecution,
+    type ThinkAnalysisTrace,
+} from "./execution-provenance.ts";
 
 import type {
     AgentToolUpdateCallback,
@@ -59,7 +69,7 @@ import {
 import { runRetention } from "./storage/retention.ts";
 import { normalizeFtsTokens, type ThinkStore } from "./storage/store.ts";
 import type {
-    BatchExecuteItem,
+    BatchExecuteRequest,
     BatchExecuteSummary,
     BatchItemResult,
     ExecuteFileRequest,
@@ -407,6 +417,23 @@ export class ThinkCoordinator {
         request: ExecuteRequest,
         ctx: ExtensionContext,
         runtime: CoordinatorRuntime = {},
+    ) {
+        return withThinkExecution(
+            () => ({
+                sourceExecution:
+                    request.source.kind === "command"
+                        ? resolveExecution(request.id)
+                        : hostExecution(),
+            }),
+            (trace) => this.#execute(request, ctx, runtime, trace),
+        );
+    }
+
+    async #execute(
+        request: ExecuteRequest,
+        ctx: ExtensionContext,
+        runtime: CoordinatorRuntime,
+        trace: ThinkAnalysisTrace,
     ): Promise<{
         content: { type: "text"; text: string }[];
         details: ToolExecutionDetails;
@@ -445,6 +472,10 @@ export class ThinkCoordinator {
                         onUpdate: sanitizeStreamingUpdate(runtime.onUpdate),
                         ctx,
                     });
+                recordExecution(
+                    request.id,
+                    resolveExecution(request.id, result.details),
+                );
                 this.#captureCommandInput({
                     data: extractText(result),
                     archiveIds,
@@ -539,7 +570,8 @@ export class ThinkCoordinator {
 
         try {
             const analysis = this.#getAnalysisPort();
-            derivedResult = await analysis.run(
+            derivedResult = await trace.run(
+                analysis,
                 {
                     id: toSafeAnalysisId(request.id),
                     language: request.language,
@@ -646,6 +678,18 @@ export class ThinkCoordinator {
         request: ExecuteFileRequest,
         ctx: ExtensionContext,
         runtime: CoordinatorRuntime = {},
+    ) {
+        return withThinkExecution(
+            () => ({ sourceExecution: hostExecution() }),
+            (trace) => this.#executeFile(request, ctx, runtime, trace),
+        );
+    }
+
+    async #executeFile(
+        request: ExecuteFileRequest,
+        ctx: ExtensionContext,
+        runtime: CoordinatorRuntime,
+        trace: ThinkAnalysisTrace,
     ): Promise<{
         content: { type: "text"; text: string }[];
         details: ToolExecutionDetails;
@@ -732,7 +776,8 @@ export class ThinkCoordinator {
                 }
                 try {
                     const analysis = this.#getAnalysisPort();
-                    derivedResult = await analysis.run(
+                    derivedResult = await trace.run(
+                        analysis,
                         {
                             id: toSafeAnalysisId(request.id),
                             language: request.language,
@@ -838,14 +883,27 @@ export class ThinkCoordinator {
     }
 
     async batchExecute(
-        request: {
-            id: string;
-            language: ThinkLanguage;
-            program: string;
-            items: readonly BatchExecuteItem[];
-        },
+        request: BatchExecuteRequest,
         ctx: ExtensionContext,
         runtime: CoordinatorRuntime = {},
+    ) {
+        return withThinkExecution(
+            () => ({
+                sourceExecution: { ...unknownExecution(), phase: "source" },
+                sourceExecutions: request.items.map((item) => ({
+                    id: item.id,
+                    execution: resolveExecution(`${request.id}:${item.id}`),
+                })),
+            }),
+            (trace) => this.#batchExecute(request, ctx, runtime, trace),
+        );
+    }
+
+    async #batchExecute(
+        request: BatchExecuteRequest,
+        ctx: ExtensionContext,
+        runtime: CoordinatorRuntime,
+        trace: ThinkAnalysisTrace,
     ): Promise<{
         content: { type: "text"; text: string }[];
         details: ToolExecutionDetails & { items: BatchExecuteSummary["items"] };
@@ -896,6 +954,13 @@ export class ThinkCoordinator {
                                 ),
                                 ctx,
                             });
+                            recordExecution(
+                                `${request.id}:${next.item.id}`,
+                                resolveExecution(
+                                    `${request.id}:${next.item.id}`,
+                                    result.details,
+                                ),
+                            );
                             const output = extractText(result);
                             const byteCount = Buffer.byteLength(output, "utf8");
                             const archive = this.#archiveSafely({
@@ -986,7 +1051,8 @@ export class ThinkCoordinator {
 
         try {
             const analysis = this.#getAnalysisPort();
-            derivedResult = await analysis.run(
+            derivedResult = await trace.run(
+                analysis,
                 {
                     id: toSafeAnalysisId(request.id),
                     language: request.language,
@@ -1081,7 +1147,10 @@ export class ThinkCoordinator {
                 derivedBytes > this.#config.maxResultBytes,
             captureWarnings,
             indexWarnings,
-            items: orderedItems.map(({ output: _output, ...item }) => item),
+            items: orderedItems.map(({ output: _output, ...item }) => ({
+                ...item,
+                execution: resolveExecution(`${request.id}:${item.id}`),
+            })),
         };
         return {
             content: createThinkExecuteContent(

@@ -57,6 +57,7 @@ describe("accepted Zerobox safe_bash contract", () => {
                 console.info(`${command}: ${((performance.now() - start) / 1000).toFixed(2)}s`);
                 expect(result?.text).not.toContain("Sandbox setup failed");
                 expect(result, result?.text).toMatchObject({ mocked: false, isError: false });
+                expect(result?.details).toMatchObject({ execution: { status: 'sandboxed', profile: 'bash-general', tmpNamespace: 'host', outcome: 'succeeded', exitCode: 0 } });
             },
             180_000,
         );
@@ -129,6 +130,78 @@ describe("accepted Zerobox safe_bash contract", () => {
             });
         }
     });
+
+    it("keeps the global Docker authority denied by Pi Permission System", async () => {
+        fixture = await mkdtemp(resolve(AGENT_ROOT, ".zerobox-safe-bash-"));
+        session = await createTestSession({
+            cwd: fixture,
+            extensions: [PERMISSION_EXTENSION],
+            propagateErrors: false,
+        });
+
+        const permissions = getPermissionsService();
+        expect(permissions).toBeDefined();
+        for (const surface of ["write", "edit"]) {
+            for (const path of [
+                "sandbox.global.json",
+                "agent/sandbox.global.json",
+                ".pi/agent/sandbox.global.json",
+                resolve(AGENT_ROOT, "sandbox.global.json"),
+            ]) {
+                expect(permissions?.checkPermission(surface, path)).toMatchObject({
+                    state: "deny",
+                });
+            }
+        }
+    });
+
+    it("blocks a real safe_bash write to Docker authority from its parent root", async () => {
+        inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
+        delete process.env[SESSION_STATUS_ENV];
+        fixture = await mkdtemp(resolve(AGENT_ROOT, ".zerobox-safe-bash-"));
+        const isolatedAgentDir = resolve(fixture, "agent");
+        await mkdir(isolatedAgentDir);
+        await writeFile(
+            resolve(isolatedAgentDir, "sandbox.json"),
+            JSON.stringify({
+                enabled: true,
+                filesystem: { allowWrite: ["."], denyWrite: [] },
+            }),
+        );
+        const authorityPath = resolve(
+            isolatedAgentDir,
+            "sandbox.global.json",
+        );
+        await writeFile(authorityPath, "{}", { mode: 0o600 });
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+        try {
+            session = await createTestSession({
+                cwd: fixture,
+                extensions: [SANDBOX_EXTENSION, BASH_EXECUTION_EXTENSION],
+                propagateErrors: false,
+            });
+            await session.run(
+                when("Try to overwrite Docker authority", [
+                    calls("safe_bash", {
+                        command:
+                            "printf compromised >agent/sandbox.global.json",
+                    }),
+                    says("Write result observed."),
+                ]),
+            );
+
+            const [result] = session.events.toolResultsFor("safe_bash");
+            expect(result).toMatchObject({ mocked: false, isError: true });
+            expect(await readFile(authorityPath, "utf8")).toBe("{}");
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+        }
+    }, 30_000);
 
     it("runs normal Bun tooling that writes dependency-owned files", async () => {
         inheritedSessionStatus = process.env[SESSION_STATUS_ENV];

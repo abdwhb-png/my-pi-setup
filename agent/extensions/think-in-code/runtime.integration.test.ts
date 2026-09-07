@@ -131,6 +131,7 @@ function installBrokers(state: BrokerState): symbol {
     publishSandboxRuntime(owner, {
         state: "enabled",
         createBashOperations: () => state.bashOperations,
+        createThinkBashOperations: () => state.bashOperations,
         analysis: state.analysis,
     });
     return owner;
@@ -457,6 +458,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         publishSandboxRuntime(ownerSymbol!, {
             state: "enabled",
             createBashOperations: () => state.bashOperations,
+            createThinkBashOperations: () => state.bashOperations,
             analysis: state.analysis,
         });
         await session.run(
@@ -658,6 +660,8 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(payloadText).toBeDefined();
         const payload = JSON.parse(payloadText!);
         expect(payload).toEqual({
+            sourceExecution: { status: 'unknown', profile: 'unknown', backend: 'unknown', tmpNamespace: 'unknown', phase: 'setup', outcome: 'pending' },
+            analysisExecution: { status: 'unknown', profile: 'unknown', backend: 'unknown', tmpNamespace: 'unknown', phase: 'setup', outcome: 'pending' },
             tool: "think_execute",
             status: "error",
             action: "command",
@@ -783,6 +787,7 @@ describe("think-in-code real Pi runtime wiring", () => {
             publishSandboxRuntime(owner, {
                 state: "enabled",
                 createBashOperations: () => slowBash,
+                createThinkBashOperations: () => slowBash,
                 analysis: slowAnalysis,
             });
         }

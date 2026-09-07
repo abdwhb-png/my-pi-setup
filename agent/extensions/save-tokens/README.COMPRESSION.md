@@ -42,6 +42,16 @@ restart Pi. Starting a new session alone does not rebuild the backend registry.
 
 ## Tool Policy
 
+Read an archive's `.txt` with native `read`, using `offset` and `limit` for
+pagination. Managed archive reads bypass compression. Keep the `.txt` byte
+exact, including a copied native `fullOutputPath`, and store provenance in the
+paired `.txt.meta.json`. Retention removes both files together and counts both
+sizes. Interpret these archives as host-stored **output text**, not as exports
+of files whose paths appear inside command output. Inspect `sourceExecution`
+for the originating process namespace and `storage` for the host storage.
+Treat legacy archives without metadata as having unknown source provenance.
+Keep Think tools outside this compression pipeline.
+
 `find` output bypasses semantic backends because plain path listings can be
 misclassified as prose and lose exact paths. Listings that fit the deterministic
 cap budget remain intact. Larger listings use a deterministic head/tail cap and

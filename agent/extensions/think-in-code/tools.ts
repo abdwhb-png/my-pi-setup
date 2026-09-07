@@ -362,11 +362,14 @@ export function buildToolHandlers(coordinator: ThinkCoordinator): ToolHandlers {
             const obj = args as Record<string, unknown>;
             rejectUnexpectedArtifactSearchFields(obj);
             const id = boundedString("id", obj.id, 128);
-            return coordinator.searchArtifacts({
-                id,
-                query: boundedString("query", obj.query, 1024),
-                limit: typeof obj.limit === "number" ? obj.limit : undefined,
-            });
+            return executeOnHost(id, async () =>
+                coordinator.searchArtifacts({
+                    id,
+                    query: boundedString("query", obj.query, 1024),
+                    limit:
+                        typeof obj.limit === "number" ? obj.limit : undefined,
+                }),
+            );
         },
     };
 }
@@ -374,3 +377,4 @@ export function buildToolHandlers(coordinator: ThinkCoordinator): ToolHandlers {
 export const SCHEMAS = createThinkSchemas();
 
 export { THINK_TOOL_NAMES, TOOL_NAMES };
+import { executeOnHost } from "../_shared/execution-provenance/index.ts";

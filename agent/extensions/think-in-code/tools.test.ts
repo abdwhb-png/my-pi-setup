@@ -19,6 +19,7 @@ import { DEFAULT_THINK_IN_CODE_CONFIG } from "./config.ts";
 import { ThinkStore } from "./storage/store.ts";
 import { ThinkCoordinator } from "./coordinator.ts";
 import { buildToolHandlers, SCHEMAS } from "./tools.ts";
+import { resolveExecution } from '../_shared/execution-provenance/index.ts';
 
 function ctx(cwd: string): ExtensionContext {
     return { cwd, hasUI: false, ui: {} } as unknown as ExtensionContext;
@@ -92,6 +93,12 @@ describe("think_* tool handlers", () => {
         ]);
         expect(artifactSearch.properties).not.toHaveProperty("text");
         expect(artifactSearch.properties).not.toHaveProperty("source");
+    });
+
+    it('records artifact retrieval as host execution', async () => {
+        const { handlers } = await setup();
+        await handlers.artifactSearch({ id: 'artifact-provenance', query: 'needle' });
+        expect(resolveExecution('artifact-provenance')).toMatchObject({ status: 'unsandboxed', backend: 'host', phase: 'source', outcome: 'succeeded' });
     });
 
     it("publishes two schemas with one portable execute action discriminator", () => {

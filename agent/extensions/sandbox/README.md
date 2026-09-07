@@ -20,15 +20,18 @@ initialization failures publish a bounded `error` state. Owner tokens prevent a
 stale reloaded instance from publishing or releasing the current runtime.
 Sandbox never supplies a local fallback.
 
-Bash has one private lease per session. Each analysis request has a new lease.
+Bash and Think collection have separate private leases per session and cwd.
+Each analysis request has a new lease.
 Leases live below `~/.pi/zbx/`, use owner-only permissions, contain an explicit
 owner marker, and are the only paths eligible for stale cleanup. The launcher
 uses protocol-v1 JSONL on FD 3: only `child_started` makes a process ready;
 setup errors, corrupt status, premature EOF, and impossible ordering fail
-closed. `HOME` points into the lease. Bash sees the lease's private temporary
-storage at standard `/tmp` with `TMPDIR=/tmp`; host and sibling-session temp
-files remain inaccessible. Analysis retains its separate per-request temp
-path. `ZEROBOX_HOME` remains a launcher-only variable. The host-side managed TCP bridge receives read-only
+closed. `HOME` points into the lease. `bash-general` exposes the host `/tmp`
+with `TMPDIR=/tmp`, subject to explicit project denies. It retains filesystem,
+network, Docker and lease-control restrictions. `think-strict` collection and
+`analysis-strict` derivation each mount their own lease storage at `/tmp`, also
+with `TMPDIR=/tmp`. Host and sibling-lease temporary files remain inaccessible
+to both Think profiles. `ZEROBOX_HOME` remains a launcher-only variable. The host-side managed TCP bridge receives read-only
 access to the dedicated `zerobox-home/tmp/runs` subtree; target writes,
 profiles, and all other lease control data remain denied.
 
@@ -49,11 +52,23 @@ the requested page of entries instead of rechecking every entry per page.
 
 ## Commands and persistence
 
-| Command        | Description                                 |
-| -------------- | ------------------------------------------- |
-| `/sandbox`     | Show current status and configuration       |
-| `/sandbox on`  | Enable the Sandbox runtime for this session |
-| `/sandbox off` | Publish an explicit disabled runtime state  |
+| Command                    | Description                                                     |
+| -------------------------- | --------------------------------------------------------------- |
+| `/sandbox`                 | Show current status and configuration                           |
+| `/sandbox on`              | Enable the Sandbox runtime for this session                     |
+| `/sandbox off`             | Publish an explicit disabled runtime state                      |
+| `/sandbox docker`          | Show global authority, project preference, and effective mode   |
+| `/sandbox docker off`      | Persist a disabled Docker preference for this project           |
+| `/sandbox docker targeted` | Persist targeted mode when global authority is already targeted |
+| `/sandbox docker full`     | Persist full mode when global authority is full                 |
+| `/sandbox docker inherit`  | Remove the project override and inherit global Docker authority |
+
+`enable` and `disable` are not aliases. Docker setters require a trusted
+project and persist under `sandbox.docker` in `<cwd>/.pi/settings.json` while
+preserving the other project settings. A requested expansion is rejected before
+the file changes. Reducing global `full` authority to `targeted` requires an
+explicit target list in project settings and is intentionally not inferred by
+the command.
 
 The Sandbox runtime is disabled by default. The effective `enabled` value uses, in
 descending priority: `--no-sandbox`, `PI_SANDBOX_SESSION_STATUS`, the session's
@@ -147,6 +162,12 @@ leading `~`, resolves symlinks, and must match the current canonical project
 root exactly. Duplicate roots, unknown fields, ambiguous targets, and
 group/world-writable or symlinked authority files fail closed. An absent grant
 means `Docker off`.
+
+While the sandbox is active, the compiled filesystem policy always denies
+writes to the authority file, even when Pi runs from `~/.pi` and the configured
+write root is `.`. Pi Permission System also denies direct `write` and `edit`
+calls to it. These protections do not claim to survive `/sandbox off`: an
+unsandboxed shell running with the owner's UID can modify owner-writable files.
 
 A project `sandbox.docker` value may only disable or narrow its global grant.
 It can reduce `full` to `targeted`, remove targets or operations, and force

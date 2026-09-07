@@ -11,6 +11,11 @@ import {
     getShellConfig,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@sinclair/typebox";
+import {
+    unknownExecution,
+    type ExecutionObserver,
+    type ExecutionProvenance,
+} from "../execution-provenance/types.ts";
 
 export const MAX_STDIN_BYTES = 1_048_576;
 
@@ -42,6 +47,7 @@ export type BashSpawn = (
 ) => ChildProcess;
 
 export interface PreparedBashSpawn {
+    execution?: ExecutionProvenance;
     file: string;
     args: string[];
     cwd: string;
@@ -60,6 +66,8 @@ interface ResolvedBashSpawn extends Omit<PreparedBashSpawn, "supervise"> {
 }
 
 export interface CreateBashOperationsOptions {
+    onExecution?: ExecutionObserver;
+    execution?: ExecutionProvenance;
     stdin?: string;
     shellPath?: string;
     env?: NodeJS.ProcessEnv;
@@ -274,36 +282,52 @@ function createTrackedBashOperations(
 
     return {
         async exec(command, cwd, { onData, signal, timeout, env }) {
+            let execution = { ...(options.execution ?? unknownExecution()) };
+            const report = (patch: Partial<ExecutionProvenance>) => {
+                execution = { ...execution, ...patch };
+                options.onExecution?.({ ...execution });
+            };
+            report({});
             if (stdinBytes > MAX_STDIN_BYTES) {
+                report({ outcome: "failed" });
                 throw new Error(`stdin exceeds ${MAX_STDIN_BYTES} UTF-8 bytes`);
             }
-            if (signal?.aborted) throw new Error("aborted");
+            if (signal?.aborted) {
+                report({ outcome: "aborted" });
+                throw new Error("aborted");
+            }
 
-            const prepared = options.prepareCommand
-                ? await options.prepareCommand({
-                      command,
-                      cwd,
-                      env: env ?? options.env ?? process.env,
-                  })
-                : {
-                      command,
-                      cwd,
-                      env: env ?? options.env ?? process.env,
-                  };
+            let prepared: BashPreparationContext;
+            try {
+                prepared = options.prepareCommand
+                    ? await options.prepareCommand({
+                          command,
+                          cwd,
+                          env: env ?? options.env ?? process.env,
+                      })
+                    : {
+                          command,
+                          cwd,
+                          env: env ?? options.env ?? process.env,
+                      };
 
-            // Apply project-configured rewrites after prepareCommand, before spawn.
-            // Guards in execute() already ran on the original command.
-            if (options.rewriteCommand) {
-                const rewritten = options.rewriteCommand(prepared.command);
-                if (typeof rewritten === "string") {
-                    prepared.command = rewritten;
-                } else if (
-                    rewritten &&
-                    typeof rewritten === "object" &&
-                    "command" in rewritten
-                ) {
-                    prepared.command = rewritten.command;
+                // Apply project-configured rewrites after prepareCommand, before spawn.
+                // Guards in execute() already ran on the original command.
+                if (options.rewriteCommand) {
+                    const rewritten = options.rewriteCommand(prepared.command);
+                    if (typeof rewritten === "string") {
+                        prepared.command = rewritten;
+                    } else if (
+                        rewritten &&
+                        typeof rewritten === "object" &&
+                        "command" in rewritten
+                    ) {
+                        prepared.command = rewritten.command;
+                    }
                 }
+            } catch (error) {
+                report({ outcome: signal?.aborted ? "aborted" : "failed" });
+                throw error;
             }
 
             let spawnSpec: ResolvedBashSpawn | undefined;
@@ -325,6 +349,7 @@ function createTrackedBashOperations(
                               cleanup: undefined,
                           };
                       })();
+                if (spawnSpec.execution) report(spawnSpec.execution);
                 try {
                     await access(spawnSpec.cwd, constants.F_OK);
                 } catch {
@@ -349,6 +374,14 @@ function createTrackedBashOperations(
                     windowsHide: true,
                 });
                 const pid = child.pid;
+                if (!options.prepareSpawn && pid !== undefined)
+                    report({
+                        status: "unsandboxed",
+                        backend: "local",
+                        profile: "none",
+                        tmpNamespace: "host",
+                        phase: "process",
+                    });
                 if (pid !== undefined) activeProcessIds.add(pid);
                 const closePromise = options.prepareSpawn
                     ? waitForClose(child)
@@ -399,6 +432,8 @@ function createTrackedBashOperations(
                     });
                     const exitPromise = waitForChildProcess(child);
                     await readyPromise;
+                    if (supervision && spawnSpec.execution)
+                        report({ status: "sandboxed", phase: "process" });
                     const stdinPromise =
                         options.stdin === undefined
                             ? Promise.resolve()
@@ -407,18 +442,28 @@ function createTrackedBashOperations(
                         exitPromise,
                         stdinPromise,
                     ]);
+                    report({ exitCode });
                     await settledPromise;
                     await closePromise;
                     if (signal?.aborted) throw new Error("aborted");
                     if (timedOut) throw new Error(`timeout:${timeout}`);
                     executionResult = { exitCode };
+                    report({
+                        outcome: exitCode === 0 ? "succeeded" : "failed",
+                    });
                 } catch (error) {
                     if (!exited) killChild();
                     if (options.prepareSpawn && pid !== undefined) {
                         await waitForPreparedClose(closePromise);
                     }
-                    if (signal?.aborted) throw new Error("aborted");
-                    if (timedOut) throw new Error(`timeout:${timeout}`);
+                    if (signal?.aborted) {
+                        report({ outcome: "aborted" });
+                        throw new Error("aborted");
+                    }
+                    if (timedOut) {
+                        report({ outcome: "timed-out" });
+                        throw new Error(`timeout:${timeout}`);
+                    }
                     throw error;
                 } finally {
                     child.removeListener("exit", markExited);
@@ -430,6 +475,8 @@ function createTrackedBashOperations(
                     if (pid !== undefined) activeProcessIds.delete(pid);
                 }
             } catch (error) {
+                if (execution.outcome === "pending")
+                    report({ outcome: "failed" });
                 hasPrimaryFailure = true;
                 primaryFailure = error;
             }
@@ -458,7 +505,10 @@ function createTrackedBashOperations(
                     attachCleanupFailure(primaryFailure, cleanupFailure);
                 throw primaryFailure;
             }
-            if (cleanupFailures.length > 0) throw cleanupFailure;
+            if (cleanupFailures.length > 0) {
+                report({ phase: "cleanup", outcome: "failed" });
+                throw cleanupFailure;
+            }
             if (!executionResult)
                 throw new Error("Bash execution produced no result");
             return executionResult;

@@ -106,7 +106,7 @@ describe("Pi Zerobox Linux contract", () => {
             backend: createZeroboxBackend(),
             config: validatePiSandboxConfig({
                 filesystem: {
-                    denyRead: ["~/.ssh", "~/.gnupg"],
+                    denyRead: ["~/.ssh", "~/.gnupg", hostTmp],
                     allowWrite: ["."],
                     denyWrite: [".env"],
                 },
@@ -129,9 +129,9 @@ describe("Pi Zerobox Linux contract", () => {
                 "printf changed > .env",
                 "printf changed > env-link",
                 "mv replacement .env",
-                `cat ${JSON.stringify(hostTmp)}`,
                 `cat ${JSON.stringify(sibling.markerPath)}`,
                 "ls /mnt/c",
+                `cat ${JSON.stringify(hostTmp)}`,
                 `cat /proc/1/root${hostTmp}`,
                 "unshare --user /bin/true",
                 "bwrap --ro-bind / / /bin/true",
@@ -288,7 +288,7 @@ describe("Pi Zerobox Linux contract", () => {
                 unix: "blocked",
             });
             expect(result.env.HOME).toMatch(/^\/home\/[^/]+\/\.pi\/zbx\/l-[a-f0-9]{6}\/home$/);
-            expect(result.env.TMPDIR).toBe(result.env.HOME.replace(/\/home$/, "/tmp"));
+            expect(result.env.TMPDIR).toBe("/tmp");
             expect(result.env.ZEROBOX_HOME).toBeUndefined();
             expect(result.env.SECRET).toBeUndefined();
         } finally {

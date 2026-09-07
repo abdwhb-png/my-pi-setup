@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+    parseExecutionProvenance,
+    type ExecutionProvenance,
+} from "../execution-provenance/index.ts";
 
 export const ANALYSIS_LIMITS = Object.freeze({
     wallTimeMs: 60_000,
@@ -78,6 +82,7 @@ export interface NormalizedAnalysisRequest extends Omit<
 }
 
 export interface AnalysisResult {
+    execution?: ExecutionProvenance;
     output: string;
     stderr: string;
     runtime: AnalysisWorker;
@@ -87,7 +92,7 @@ export interface AnalysisResult {
 
 export type AnalysisHostResponse =
     | { ok: true; result: AnalysisResult }
-    | { ok: false; error: string };
+    | { ok: false; error: string; execution?: ExecutionProvenance };
 
 export function parseAnalysisHostResponse(
     value: unknown,
@@ -97,7 +102,13 @@ export function parseAnalysisHostResponse(
     }
     const response = value as Record<string, unknown>;
     if (response.ok === false && typeof response.error === "string") {
-        return { ok: false, error: response.error };
+        return {
+            ok: false,
+            error: response.error,
+            ...(parseExecutionProvenance(response.execution)
+                ? { execution: parseExecutionProvenance(response.execution) }
+                : {}),
+        };
     }
     if (
         response.ok !== true ||
@@ -120,6 +131,9 @@ export function parseAnalysisHostResponse(
     return {
         ok: true,
         result: {
+            ...(parseExecutionProvenance(result.execution)
+                ? { execution: parseExecutionProvenance(result.execution) }
+                : {}),
             output: result.output,
             stderr: result.stderr,
             runtime: result.runtime,

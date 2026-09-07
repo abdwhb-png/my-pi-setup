@@ -9,6 +9,7 @@ import {
 import {
     createAnalysisPolicy,
     createBashPolicy,
+    createThinkPolicy,
     type PiSandboxConfig,
 } from "./policies.ts";
 import {
@@ -25,6 +26,7 @@ export interface SandboxService {
     probe(): Promise<SandboxCapabilities>;
     startBashSession(cwd: string): Promise<void>;
     prepareBash(command: SandboxCommand): Promise<SandboxSpawnSpec>;
+    prepareThinkBash(command: SandboxCommand): Promise<SandboxSpawnSpec>;
     prepareAnalysis(
         command: SandboxCommand,
         readablePaths: string[],
@@ -67,6 +69,7 @@ class DefaultSandboxService implements SandboxService {
     readonly #orphanLeases = new Set<PrivateTempLease>();
     #bashLease?: PrivateTempLease;
     #bashCwd?: string;
+    #thinkLease?: PrivateTempLease;
     #closed = false;
     #lifecycle: Promise<void> = Promise.resolve();
     #recovery?: Promise<void>;
@@ -113,6 +116,10 @@ class DefaultSandboxService implements SandboxService {
             await this.probe();
             await this.#recoverOnce();
             if (this.#bashLease && this.#bashCwd === cwd) return;
+            if (this.#thinkLease) {
+                await this.#thinkLease.dispose();
+                this.#thinkLease = undefined;
+            }
             const previous = this.#bashLease;
             if (previous) {
                 await previous.dispose();
@@ -144,13 +151,26 @@ class DefaultSandboxService implements SandboxService {
     }
 
     prepareBash(command: SandboxCommand): Promise<SandboxSpawnSpec> {
+        return this.#prepareShell(command, false);
+    }
+
+    prepareThinkBash(command: SandboxCommand): Promise<SandboxSpawnSpec> {
+        return this.#prepareShell(command, true);
+    }
+
+    #prepareShell(
+        command: SandboxCommand,
+        think: boolean,
+    ): Promise<SandboxSpawnSpec> {
         return this.#serialize(async () => {
             this.#assertOpen();
-            const lease = this.#bashLease;
-            if (!lease || this.#bashCwd !== command.cwd) {
+            if (!this.#bashLease || this.#bashCwd !== command.cwd) {
                 throw new SandboxExecutionError("setup-failed");
             }
-            const policy = createBashPolicy({
+            if (think && !this.#thinkLease)
+                this.#thinkLease = await this.#createLease();
+            const lease = think ? this.#thinkLease! : this.#bashLease;
+            const policy = (think ? createThinkPolicy : createBashPolicy)({
                 cwd: command.cwd,
                 lease,
                 config: this.#config,
@@ -227,12 +247,24 @@ class DefaultSandboxService implements SandboxService {
 
     async #shutdownOnce(): Promise<void> {
         const bashLease = this.#bashLease;
+        const thinkLease = this.#thinkLease;
         const handles = [...this.#analysisHandles];
         let primary: unknown;
         const disposals: Array<{
             dispose: () => Promise<void>;
             success: () => void;
         }> = [
+            ...(thinkLease
+                ? [
+                      {
+                          dispose: () => thinkLease.dispose(),
+                          success: () => {
+                              if (this.#thinkLease === thinkLease)
+                                  this.#thinkLease = undefined;
+                          },
+                      },
+                  ]
+                : []),
             ...(bashLease
                 ? [
                       {

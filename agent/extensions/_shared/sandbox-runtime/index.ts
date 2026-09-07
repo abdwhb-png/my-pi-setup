@@ -1,6 +1,7 @@
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 
 import type { CreateBashOperationsOptions } from "../command-execution/exec.ts";
+import type { ExecutionObserver } from "../execution-provenance/types.ts";
 import type { AnalysisRequest, AnalysisResult } from "./analysis-protocol.ts";
 
 export {
@@ -20,6 +21,7 @@ export interface AnalysisSandboxPort {
 }
 
 export interface SandboxBashOperationOptions {
+    onExecution?: ExecutionObserver;
     stdin?: string;
     rewriteCommand?: CreateBashOperationsOptions["rewriteCommand"];
 }
@@ -31,6 +33,9 @@ export type SandboxRuntimeSnapshot =
     | {
           state: "enabled";
           createBashOperations(
+              options: SandboxBashOperationOptions,
+          ): BashOperations;
+          createThinkBashOperations(
               options: SandboxBashOperationOptions,
           ): BashOperations;
           analysis: AnalysisSandboxPort;
@@ -182,6 +187,19 @@ export function createSandboxBashOperations(
     if (snapshot.state === "enabled") {
         return snapshot.createBashOperations(options);
     }
+    return {
+        async exec() {
+            throw unavailableError();
+        },
+    };
+}
+
+export function createSandboxThinkBashOperations(
+    options: SandboxBashOperationOptions = {},
+): BashOperations {
+    const snapshot = getSandboxRuntime();
+    if (snapshot.state === "enabled")
+        return snapshot.createThinkBashOperations(options);
     return {
         async exec() {
             throw unavailableError();

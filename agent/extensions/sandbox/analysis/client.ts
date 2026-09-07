@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 import { basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+    withExecutionError,
+    unknownExecution,
+} from "../../_shared/execution-provenance/index.ts";
 
 import {
     ANALYSIS_MAX_CONCURRENCY,
@@ -172,7 +176,15 @@ function runAnalysisHostProcess(
                 return;
             }
             if (!response.ok) {
-                reject(new Error(response.error));
+                reject(
+                    withExecutionError(
+                        new Error(response.error),
+                        response.execution ?? {
+                            ...unknownExecution(),
+                            outcome: "failed",
+                        },
+                    ),
+                );
                 return;
             }
             resolve(response.result);

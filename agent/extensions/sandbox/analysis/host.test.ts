@@ -101,6 +101,7 @@ describe("analysis sandbox host", () => {
         const result = await executeAnalysisHostRequest(request, harness.deps);
 
         expect(result).toEqual({
+            execution: unknownExecution(),
             output: "42",
             stderr: "",
             runtime: "quickjs",
@@ -205,6 +206,7 @@ describe("analysis sandbox host", () => {
         ).toEqual({
             ok: false,
             error: "worker failed; cleanup failed: lease cleanup failed",
+            execution: { ...unknownExecution(), phase: 'cleanup', outcome: 'failed' },
         });
         expect(shutdown).toHaveBeenCalledTimes(1);
     });
@@ -375,3 +377,4 @@ describe("analysis sandbox host", () => {
         }
     });
 });
+import { unknownExecution } from '../../_shared/execution-provenance/index.ts';

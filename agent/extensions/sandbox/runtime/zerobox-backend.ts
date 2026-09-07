@@ -433,11 +433,19 @@ class ZeroboxBackend implements SandboxBackend {
             }
             return {
                 file: this.#binaryPath,
+                execution: {
+                    status: "unknown",
+                    profile: policy.name,
+                    backend: "zerobox",
+                    tmpNamespace: policy.tmpNamespace,
+                    phase: "setup",
+                    outcome: "pending",
+                },
                 args: [
                     `--profile=${profile.name}`,
                     "--strict-sandbox",
                     "--status-fd=3",
-                    ...(policy.name === "bash-general"
+                    ...(policy.tmpNamespace === "lease-private"
                         ? [`--private-tmp=${lease.tmpDir}`]
                         : []),
                     ...(policy.network.allowLocalBinding

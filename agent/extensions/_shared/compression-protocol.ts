@@ -33,6 +33,8 @@ export interface CompressionBackendMetrics {
 }
 
 export interface CompressionDetails {
+    sourceExecution?: import("./execution-provenance/types.ts").ExecutionProvenance;
+    archiveKind?: "output-text";
     originalLength: number;
     compressedLength: number;
     savedBytes: number;

@@ -21,8 +21,9 @@ import { DEFAULT_THINK_IN_CODE_CONFIG } from "./config.ts";
 import type { ThinkCommandOperation } from "./command-policy.ts";
 import { ThinkStore, __getRawDatabase } from "./storage/store.ts";
 import { ThinkCoordinator, __test } from "./coordinator.ts";
-import type { ThinkFailurePayload } from "./public-contract.ts";
+import { parseThinkExecuteHeader, type ThinkFailurePayload } from "./public-contract.ts";
 import type { ExecuteRequest } from "./types.ts";
+import { unknownExecution, hostExecution, withExecutionError } from '../_shared/execution-provenance/index.ts';
 
 function ctx(cwd: string): ExtensionContext {
     return {
@@ -130,6 +131,8 @@ describe("ThinkCoordinator", () => {
 
         expect(result.content).toHaveLength(2);
         expect(JSON.parse(result.content[0]!.text)).toEqual({
+            sourceExecution: { status: "unsandboxed", profile: "none", backend: "host", tmpNamespace: "host", phase: "source", outcome: "succeeded" },
+            analysisExecution: { status: "unknown", profile: "unknown", backend: "unknown", tmpNamespace: "unknown", phase: "setup", outcome: "pending" },
             status: "success",
             action: "content",
             sourceStatus: "succeeded",
@@ -140,6 +143,35 @@ describe("ThinkCoordinator", () => {
             indexStatus: "indexed",
         });
         expect(result.content[1]?.text).toBe("derived text");
+        expect(parseThinkExecuteHeader(result.content)).toMatchObject({ sourceExecution: hostExecution(), analysisExecution: unknownExecution() });
+    });
+
+    it('keeps overlapping analysis success and failure provenance local to each invocation', async () => {
+        const successExecution = { status: 'sandboxed' as const, profile: 'analysis-strict' as const, backend: 'zerobox' as const, tmpNamespace: 'lease-private' as const, phase: 'analysis' as const, outcome: 'succeeded' as const, exitCode: 0 };
+        const failureExecution = { ...successExecution, outcome: 'timed-out' as const, exitCode: null };
+        const analysis: AnalysisSandboxPort = { run: async request => {
+            if (request.id === 'slow-success') {
+                await new Promise(resolve => setTimeout(resolve, 10));
+                return { output: 'derived', stderr: '', runtime: 'quickjs', durationMs: 10, truncated: false, execution: successExecution };
+            }
+            throw withExecutionError(new Error('timeout'), failureExecution);
+        }, shutdown: async () => undefined };
+        const { coordinator } = await setup(undefined, analysis);
+        const request = { language: 'javascript' as const, program: 'export default INPUT.length', source: { kind: 'content' as const, content: 'raw fixture' } };
+        const [success, failure] = await Promise.all([
+            coordinator.execute({ ...request, id: 'slow-success' }, ctx('/workspace/proj')),
+            captureThinkFailure(coordinator.execute({ ...request, id: 'fast-failure' }, ctx('/workspace/proj'))),
+        ]);
+        expect(JSON.parse(success.content[0]!.text)).toMatchObject({ sourceExecution: hostExecution(), analysisExecution: successExecution });
+        expect(failure).toMatchObject({ sourceExecution: hostExecution(), analysisExecution: failureExecution });
+    });
+
+    it('preserves each batch item execution in details and public JSON', async () => {
+        const execution = { ...hostExecution('process'), exitCode: 0 };
+        const { coordinator } = await setup({ execute: async () => ({ content: [{ type: 'text', text: 'source bytes' }], details: { execution } }) });
+        const result = await coordinator.batchExecute({ id: 'batch-provenance', language: 'javascript', program: 'export default INPUTS.length', items: [{ id: 'one', command: 'fixture' }] }, ctx('/workspace/proj'));
+        expect(result.details.items[0]).toMatchObject({ id: 'one', execution });
+        expect(JSON.parse(result.content[0]!.text).sourceExecutions).toEqual([{ id: 'one', execution }]);
     });
 
     it("rejects a command analysis that directly echoes raw source", async () => {
@@ -285,6 +317,9 @@ describe("ThinkCoordinator", () => {
         expect(thrown).toBeInstanceOf(Error);
         const payload = JSON.parse((thrown as Error).message);
         expect(payload).toEqual({
+            sourceExecution: { ...unknownExecution(), phase: 'source' },
+            analysisExecution: unknownExecution(),
+            sourceExecutions: ['one', 'two'].map(id => ({ id, execution: unknownExecution() })),
             tool: "think_execute",
             status: "error",
             action: "batch",

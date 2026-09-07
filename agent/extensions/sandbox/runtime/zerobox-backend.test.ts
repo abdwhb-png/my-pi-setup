@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import { createPrivateTempLease } from "./private-temp.ts";
 import {
@@ -111,7 +112,6 @@ describe("Zerobox backend", () => {
                 expect.stringMatching(/^--profile=bash-general-[a-f0-9]{24}$/),
                 "--strict-sandbox",
                 "--status-fd=3",
-                `--private-tmp=${lease.tmpDir}`,
                 "--allow-local-binding",
                 "-C",
                 parent,
@@ -141,30 +141,30 @@ describe("Zerobox backend", () => {
                 strict_sandbox: true,
                 allow_read: [
                     "/",
+                    "/tmp",
                     lease.homeDir,
                     lease.tmpDir,
                     lease.proxyRunsDir,
                 ],
                 deny_read: [
                     join(parent, "secret"),
-                    "/tmp",
-                    "/private/tmp",
                     "/proc/1/root",
                     "/mnt/c",
                     join(parent, "r"),
+                    join(getAgentDir(), "sandbox.global.json"),
                 ],
                 deny_read_globs: ["*.pem"],
                 allow_write: [
+                    "/tmp",
                     lease.homeDir,
                     lease.tmpDir,
                 ],
                 deny_write: [
                     join(parent, ".env"),
-                    "/tmp",
-                    "/private/tmp",
                     "/proc/1/root",
                     "/mnt/c",
                     join(parent, "r"),
+                    join(getAgentDir(), "sandbox.global.json"),
                 ],
                 deny_write_globs: ["private/**"],
                 allow_net: ["example.com", "localhost:8317"],

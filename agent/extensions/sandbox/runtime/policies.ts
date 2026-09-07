@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, resolve } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import {
     SandboxExecutionError,
@@ -395,7 +396,7 @@ function unique(values: string[]): string[] {
 }
 
 function isEqualOrDescendant(path: string, parent: string): boolean {
-    return path === parent || path.startsWith(`${parent}/`);
+    return parent === "/" || path === parent || path.startsWith(`${parent}/`);
 }
 
 function assertAllowsDoNotOverrideDenies(
@@ -421,6 +422,18 @@ export function buildBashPath(): string {
 }
 
 export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
+    return createShellPolicy(input, "bash-general");
+}
+
+export function createThinkPolicy(input: BashPolicyInput): SandboxPolicy {
+    return createShellPolicy(input, "think-strict");
+}
+
+function createShellPolicy(
+    input: BashPolicyInput,
+    name: "bash-general" | "think-strict",
+): SandboxPolicy {
+    const privateTmp = name === "think-strict";
     const hostEnv = input.hostEnv ?? process.env;
     const denied = new Set(input.config.environment.deniedVariables);
     const inherit = unique([
@@ -441,11 +454,11 @@ export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
     const allow = input.config.network.allowedDomains;
     const leaseParent = dirname(input.lease.root);
     const fixedDeniedRoots = [
-        "/tmp",
-        "/private/tmp",
+        ...(privateTmp ? ["/tmp", "/private/tmp"] : []),
         "/proc/1/root",
         "/mnt/c",
         leaseParent,
+        resolve(getAgentDir(), "sandbox.global.json"),
     ];
     const configuredAllowRead =
         input.config.filesystem.allowRead.length > 0
@@ -475,11 +488,18 @@ export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
     ]);
 
     return {
-        name: "bash-general",
+        name,
         strict: true,
+        tmpNamespace: privateTmp ? "lease-private" : "host",
         filesystem: {
             allowRead: unique([
                 ...configuredAllowRead,
+                ...(!privateTmp &&
+                !configuredDenyRead.exact.some((path) =>
+                    isEqualOrDescendant("/tmp", path),
+                )
+                    ? ["/tmp"]
+                    : []),
                 input.lease.homeDir,
                 input.lease.tmpDir,
                 input.lease.proxyRunsDir,
@@ -491,6 +511,13 @@ export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
             denyReadGlobs: configuredDenyRead.globs,
             allowWrite: unique([
                 ...configuredAllowWrite,
+                ...(!privateTmp &&
+                ![
+                    ...configuredDenyRead.exact,
+                    ...configuredDenyWrite.exact,
+                ].some((path) => isEqualOrDescendant("/tmp", path))
+                    ? ["/tmp"]
+                    : []),
                 input.lease.homeDir,
                 input.lease.tmpDir,
             ]),
@@ -528,6 +555,7 @@ export function createAnalysisPolicy(
     return {
         name: "analysis-strict",
         strict: true,
+        tmpNamespace: "lease-private",
         filesystem: {
             allowRead: unique([
                 ...input.readablePaths.map((path) =>
@@ -536,10 +564,10 @@ export function createAnalysisPolicy(
                 input.lease.homeDir,
                 input.lease.tmpDir,
             ]),
-            denyRead: [leaseParent],
+            denyRead: ["/tmp", "/private/tmp", leaseParent],
             denyReadGlobs: [],
             allowWrite: [input.lease.homeDir, input.lease.tmpDir],
-            denyWrite: [leaseParent],
+            denyWrite: ["/tmp", "/private/tmp", leaseParent],
             denyWriteGlobs: [],
         },
         network: { mode: "deny-all", allow: [], deny: [] },
@@ -548,7 +576,7 @@ export function createAnalysisPolicy(
             set: {
                 PATH: "/usr/local/bin:/usr/bin:/bin",
                 HOME: input.lease.homeDir,
-                TMPDIR: input.lease.tmpDir,
+                TMPDIR: "/tmp",
             },
             deny: [],
         },

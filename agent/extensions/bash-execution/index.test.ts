@@ -45,7 +45,7 @@ function publish(
     const owner = Symbol("bash-execution-test-runtime");
     owners.push(owner);
     claimSandboxRuntime(owner);
-    publishSandboxRuntime(owner, state);
+    publishSandboxRuntime(owner, state.state === 'enabled' ? { ...state, createThinkBashOperations: state.createBashOperations } : state);
 }
 
 function register(): {
@@ -62,6 +62,7 @@ function register(): {
             tools.set(tool.name, tool);
         },
         registerCommand: () => undefined,
+        appendEntry: () => undefined,
         on: (event: string, hook: Hook) => {
             hooks.set(event, [...(hooks.get(event) ?? []), hook]);
         },

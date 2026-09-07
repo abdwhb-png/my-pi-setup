@@ -6,6 +6,13 @@ import {
 import { realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+    executionFromDetails,
+    withExecutionError,
+    unknownExecution,
+    type ExecutionObserver,
+    type ExecutionProvenance,
+} from "../../_shared/execution-provenance/index.ts";
 
 import {
     analysisHostResponseBudget,
@@ -29,6 +36,7 @@ import { createZeroboxInputChannel } from "../runtime/status-channel.ts";
 import { createZeroboxBackend } from "../runtime/zerobox-backend.ts";
 
 export interface ChildExecutionInput extends SandboxSpawnSpec {
+    onExecution?: ExecutionObserver;
     stdin: string;
     wallTimeMs: number;
     outputBytes: number;
@@ -36,6 +44,7 @@ export interface ChildExecutionInput extends SandboxSpawnSpec {
 }
 
 export interface ChildExecutionResult {
+    execution?: ExecutionProvenance;
     stdout: string;
     stderr: string;
     exitCode: number | null;
@@ -130,6 +139,9 @@ function readableWorkerPaths(dependencies: AnalysisHostDependencies): string[] {
     return [
         dependencies.sandboxRoot,
         sharedRuntimeRoot,
+        fileURLToPath(
+            new URL("../../_shared/execution-provenance/", import.meta.url),
+        ),
         dependencies.bunPath,
         dependencies.nodePath,
         dependencies.prlimitPath,
@@ -204,6 +216,7 @@ export async function executeAnalysisHostRequest(
     let primaryFailure: unknown;
     let hasPrimaryFailure = false;
     let result: AnalysisResult | undefined;
+    let execution = handle.spawn.execution ?? unknownExecution();
     try {
         const child = await dependencies.runChild({
             ...handle.spawn,
@@ -211,7 +224,11 @@ export async function executeAnalysisHostRequest(
             wallTimeMs: request.limits.wallTimeMs,
             outputBytes: analysisHostResponseBudget(request.limits.outputBytes),
             signal: dependencies.signal,
+            onExecution: (value) => {
+                execution = value;
+            },
         });
+        execution = child.execution ?? execution;
         let response: WorkerResponse;
         try {
             response = parseWorkerResponse(child.stdout);
@@ -235,6 +252,7 @@ export async function executeAnalysisHostRequest(
             );
         }
         result = {
+            execution,
             output: response.result.output,
             stderr: [response.result.stderr, child.stderr]
                 .filter(Boolean)
@@ -245,7 +263,14 @@ export async function executeAnalysisHostRequest(
         };
     } catch (error) {
         hasPrimaryFailure = true;
-        primaryFailure = error;
+        primaryFailure = withExecutionError(error, {
+            ...execution,
+            outcome:
+                execution.outcome === "pending" ||
+                execution.outcome === "succeeded"
+                    ? "failed"
+                    : execution.outcome,
+        });
     }
     let cleanupFailure: unknown;
     let hasCleanupFailure = false;
@@ -260,7 +285,12 @@ export async function executeAnalysisHostRequest(
             attachCleanupFailure(primaryFailure, cleanupFailure);
         throw primaryFailure;
     }
-    if (hasCleanupFailure) throw cleanupFailure;
+    if (hasCleanupFailure)
+        throw withExecutionError(cleanupFailure, {
+            ...execution,
+            phase: "cleanup",
+            outcome: "failed",
+        });
     if (!result) throw new Error("Analysis host produced no result");
     return result;
 }
@@ -311,6 +341,41 @@ export async function runAnalysisChild(
     spawnChild: AnalysisChildSpawn = spawn,
     createInputChannel: typeof createZeroboxInputChannel = createZeroboxInputChannel,
 ): Promise<ChildExecutionResult> {
+    let execution = input.execution ?? unknownExecution();
+    const onExecution: ExecutionObserver = (value) => {
+        execution = value;
+        input.onExecution?.(value);
+    };
+    onExecution(execution);
+    try {
+        return await runObservedAnalysisChild(
+            { ...input, onExecution },
+            spawnChild,
+            createInputChannel,
+        );
+    } catch (error) {
+        const code =
+            error instanceof SandboxExecutionError ? error.code : undefined;
+        onExecution({
+            ...execution,
+            phase: code === "cleanup-failed" ? "cleanup" : execution.phase,
+            outcome:
+                code === "timeout"
+                    ? "timed-out"
+                    : code === "aborted"
+                      ? "aborted"
+                      : "failed",
+        });
+        throw withExecutionError(error, execution);
+    }
+}
+
+async function runObservedAnalysisChild(
+    input: ChildExecutionInput,
+    spawnChild: AnalysisChildSpawn,
+    createInputChannel: typeof createZeroboxInputChannel,
+): Promise<ChildExecutionResult> {
+    let execution = input.execution ?? unknownExecution();
     if (input.signal?.aborted) {
         return rejectBeforeAnalysisSpawn(
             input,
@@ -403,6 +468,12 @@ export async function runAnalysisChild(
             | undefined;
         const finalizeChild = (exitCode: number | null) => {
             if (finalizing) return;
+            execution = {
+                ...execution,
+                exitCode,
+                outcome: exitCode === 0 ? "succeeded" : "failed",
+            };
+            input.onExecution?.(execution);
             finalizing = true;
             exited = true;
             clearTimeout(timer);
@@ -453,6 +524,7 @@ export async function runAnalysisChild(
                     return;
                 }
                 resolve({
+                    execution,
                     stdout: Buffer.concat(stdout).toString("utf8"),
                     stderr: Buffer.concat(stderr).toString("utf8"),
                     exitCode,
@@ -508,6 +580,14 @@ export async function runAnalysisChild(
 
         void supervision.ready.then(
             async () => {
+                if (input.execution) {
+                    execution = {
+                        ...execution,
+                        status: "sandboxed",
+                        phase: "analysis",
+                    };
+                    input.onExecution?.(execution);
+                }
                 if (terminalError) return;
                 try {
                     await inputChannel.write(input.stdin);
@@ -571,6 +651,13 @@ export async function appendAnalysisHostShutdownFailure(
             error instanceof Error ? error.message : String(error);
         return {
             ok: false,
+            execution: {
+                ...((response.ok
+                    ? response.result.execution
+                    : response.execution) ?? unknownExecution()),
+                phase: "cleanup",
+                outcome: "failed",
+            },
             error: response.ok
                 ? `Analysis host cleanup failed: ${cleanupMessage}`
                 : `${response.error}; cleanup failed: ${cleanupMessage}`,
@@ -600,6 +687,10 @@ if (import.meta.main) {
     } catch (error) {
         response = {
             ok: false,
+            execution: executionFromDetails(error) ?? {
+                ...unknownExecution(),
+                outcome: "failed",
+            },
             error: error instanceof Error ? error.message : String(error),
         };
     } finally {

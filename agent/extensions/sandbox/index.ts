@@ -14,15 +14,17 @@
  * Example .pi/settings.json:
  * ```json
  * {
- *   "enabled": true,
- *   "network": {
- *     "allowedDomains": ["github.com", "*.github.com"],
- *     "deniedDomains": []
- *   },
- *   "filesystem": {
- *     "denyRead": ["~/.ssh", "~/.aws"],
- *     "allowWrite": ["."],
- *     "denyWrite": [".env"]
+ *   "sandbox": {
+ *     "enabled": true,
+ *     "network": {
+ *       "allowedDomains": ["github.com", "*.github.com"],
+ *       "deniedDomains": []
+ *     },
+ *     "filesystem": {
+ *       "denyRead": ["~/.ssh", "~/.aws"],
+ *       "allowWrite": ["."],
+ *       "denyWrite": [".env"]
+ *     }
  *   }
  * }
  * ```
@@ -36,17 +38,19 @@
  * prlimit, and Node with JSPI support for the Python analyzer.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
     existsSync,
     mkdirSync,
     readFileSync,
     renameSync,
+    unlinkSync,
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import {
     SettingsManager,
+    withFileMutationQueue,
     type ExtensionAPI,
     type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -99,6 +103,7 @@ export interface SandboxDockerFooterState {
 
 /** Shield glyph shown in the footer widget (same metaphor as the bash 🛡️ prefix). */
 const SANDBOX_ICON = "🛡️";
+const DOCKER_ICON = "🐳";
 /** Warning glyph used in the footer widget when sandbox is disabled. */
 const OFF_ICON = "⚠️";
 const WIDGET_ID = "pi-sandbox";
@@ -217,7 +222,7 @@ export function renderSandboxWidget(
     docker: SandboxDockerFooterState = { mode: "off", unsafe: false },
 ): string | null {
     const colors: UiColorsCreation = createUiColors(theme);
-    const dockerLabel = colors.subtle("docker:");
+    const dockerLabel = colors.subtle(`${DOCKER_ICON}docker:`);
     const dockerValue = colorForDockerState(colors, docker);
     if (state === "off") {
         return `${colors.subtle(`${OFF_ICON}sandbox:`)} ${colors.warning(state)} ${dockerLabel} ${dockerValue}`;
@@ -350,6 +355,8 @@ interface SandboxSettingsContainer {
     sandbox?: unknown;
 }
 
+export type DockerProjectPreference = "inherit" | "off" | "targeted" | "full";
+
 interface SandboxSettingsReader {
     getGlobalSettings(): SandboxSettingsContainer;
     getProjectSettings(): SandboxSettingsContainer;
@@ -370,6 +377,14 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+function configurationErrorMessage(error: unknown): string {
+    if (error instanceof SandboxExecutionError) {
+        const cause = error.getCause();
+        if (cause !== undefined) return errorMessage(cause);
+    }
+    return errorMessage(error);
+}
+
 function normalizeConfig(raw: unknown, source: string): SandboxConfigLayer {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
         throw new Error(`Invalid ${source}`);
@@ -385,6 +400,117 @@ function readSettingsConfig(
     return raw === undefined
         ? {}
         : normalizeConfig(raw, `${source} sandbox settings`);
+}
+
+function dockerOverrideForPreference(
+    preference: DockerProjectPreference,
+): { mode: "disabled" | "targeted" | "full" } | undefined {
+    if (preference === "inherit") return undefined;
+    return { mode: preference === "off" ? "disabled" : preference };
+}
+
+function parseDockerProjectPreference(
+    value: string,
+): DockerProjectPreference | undefined {
+    if (
+        value === "off" ||
+        value === "targeted" ||
+        value === "full" ||
+        value === "inherit"
+    ) {
+        return value;
+    }
+    return undefined;
+}
+
+function configuredDockerPreference(
+    config: SandboxConfigLayer,
+): DockerProjectPreference {
+    const docker = config.docker;
+    if (
+        typeof docker !== "object" ||
+        docker === null ||
+        Array.isArray(docker)
+    ) {
+        return "inherit";
+    }
+    if (!("mode" in docker)) return "inherit";
+    const mode = docker.mode;
+    if (mode === "disabled") return "off";
+    if (mode === "targeted" || mode === "full") return mode;
+    return "inherit";
+}
+
+/** Persist a validated Docker narrowing in project-local Pi settings. */
+export async function persistProjectDockerPreference(
+    cwd: string,
+    preference: DockerProjectPreference,
+    agentDir = getAgentDir(),
+): Promise<LoadSandboxConfigResult> {
+    const settingsPath = join(cwd, ".pi", "settings.json");
+    return withFileMutationQueue(settingsPath, async () => {
+        const current = existsSync(settingsPath)
+            ? readFileSync(settingsPath, "utf8")
+            : undefined;
+        const parsed: unknown =
+            current === undefined ? {} : JSON.parse(current);
+        if (
+            typeof parsed !== "object" ||
+            parsed === null ||
+            Array.isArray(parsed)
+        ) {
+            throw new Error("Invalid project settings");
+        }
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- validated JSON object boundary.
+        const projectSettings = parsed as Record<string, unknown>;
+        const currentSandbox =
+            projectSettings.sandbox === undefined
+                ? readLegacyConfig(join(cwd, ".pi", "sandbox.json"))
+                : normalizeConfig(
+                      projectSettings.sandbox,
+                      "project sandbox settings",
+                  );
+        const nextSandbox: Record<string, unknown> = { ...currentSandbox };
+        const docker = dockerOverrideForPreference(preference);
+        if (docker === undefined) delete nextSandbox.docker;
+        else nextSandbox.docker = docker;
+
+        const nextSettings = {
+            ...projectSettings,
+            sandbox: nextSandbox,
+        };
+        const settingsManager = SettingsManager.create(cwd, agentDir);
+        const resolved = loadSandboxConfig(cwd, {
+            agentDir,
+            settingsManager: {
+                getGlobalSettings: () =>
+                    // SAFETY: Pi settings permit extension-owned keys absent from its generic Settings type.
+                    settingsManager.getGlobalSettings() as unknown as SandboxSettingsContainer,
+                getProjectSettings: () => nextSettings,
+            },
+        });
+        const temporaryPath = join(
+            cwd,
+            ".pi",
+            `.settings.json.${process.pid}.${randomUUID()}.tmp`,
+        );
+        mkdirSync(join(cwd, ".pi"), { recursive: true });
+        try {
+            writeFileSync(
+                temporaryPath,
+                JSON.stringify(nextSettings, null, 2),
+                {
+                    encoding: "utf8",
+                    mode: 0o600,
+                },
+            );
+            renameSync(temporaryPath, settingsPath);
+        } catch (error) {
+            if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+            throw error;
+        }
+        return resolved;
+    });
 }
 
 function readLegacyConfig(path: string): SandboxConfigLayer {
@@ -438,12 +564,14 @@ export function loadSandboxConfig(
         );
     }
 
+    const hasGlobalSettings = globalSettings.sandbox !== undefined;
+    const hasProjectSettings = projectSettings.sandbox !== undefined;
     let globalConfig = readSettingsConfig(globalSettings, "global");
     let projectConfig = readSettingsConfig(projectSettings, "project");
-    if (Object.keys(globalConfig).length === 0) {
+    if (!hasGlobalSettings) {
         globalConfig = readLegacyConfig(globalConfigPath);
     }
-    if (Object.keys(projectConfig).length === 0) {
+    if (!hasProjectSettings) {
         projectConfig = readLegacyConfig(projectConfigPath);
     }
 
@@ -524,8 +652,18 @@ export function createSandboxedBashOps(
     service: SandboxService,
     supervisor: BashProcessSupervisor,
     options: SandboxBashOperationOptions = {},
+    profile: "bash-general" | "think-strict" = "bash-general",
 ): BashOperations {
     return supervisor.createOperations({
+        onExecution: options.onExecution,
+        execution: {
+            status: "unknown",
+            profile,
+            backend: "zerobox",
+            tmpNamespace: profile === "bash-general" ? "host" : "lease-private",
+            phase: "setup",
+            outcome: "pending",
+        },
         stdin: options.stdin,
         detached: true,
         rewriteCommand: options.rewriteCommand,
@@ -536,7 +674,9 @@ export function createSandboxedBashOps(
                 cwd,
                 stdin: options.stdin,
             };
-            return service.prepareBash(sandboxCommand);
+            return profile === "think-strict"
+                ? service.prepareThinkBash(sandboxCommand)
+                : service.prepareBash(sandboxCommand);
         },
     });
 }
@@ -760,6 +900,13 @@ export default function (pi: ExtensionAPI) {
                         options,
                     ),
                 analysis: candidateAnalysis,
+                createThinkBashOperations: (options) =>
+                    createSandboxedBashOps(
+                        candidateSandbox,
+                        bashProcessSupervisor,
+                        options,
+                        "think-strict",
+                    ),
             });
             if (!published) {
                 await cleanupCandidates(candidateSandbox, candidateAnalysis);
@@ -1000,12 +1147,23 @@ export default function (pi: ExtensionAPI) {
 
     pi.registerCommand("sandbox", {
         description:
-            "Toggle sandbox or show status (/sandbox, /sandbox on, /sandbox off)",
+            "Configure sandbox or show status (/sandbox, /sandbox on|off, /sandbox docker ...)",
         getArgumentCompletions: (prefix: string) => {
-            const values = ["on", "enable", "off", "disable"];
+            const values = [
+                "on",
+                "off",
+                "docker",
+                "docker off",
+                "docker targeted",
+                "docker full",
+                "docker inherit",
+            ];
             const trimmed = prefix.trimStart().toLowerCase();
-            if (!trimmed)
-                return values.map((value) => ({ value, label: value }));
+            if (!trimmed) {
+                return values
+                    .slice(0, 3)
+                    .map((value) => ({ value, label: value }));
+            }
             const filtered = values.filter((value) =>
                 value.startsWith(trimmed),
             );
@@ -1016,8 +1174,142 @@ export default function (pi: ExtensionAPI) {
         handler: async (args, ctx) => {
             const arg = args.trim().toLowerCase();
 
+            if (arg === "docker") {
+                try {
+                    const agentDir = getAgentDir();
+                    const settingsManager = SettingsManager.create(
+                        ctx.cwd,
+                        agentDir,
+                    );
+                    const projectSettings =
+                        settingsManager.getProjectSettings() as SandboxSettingsContainer;
+                    let projectConfig = readSettingsConfig(
+                        projectSettings,
+                        "project",
+                    );
+                    if (projectSettings.sandbox === undefined) {
+                        projectConfig = readLegacyConfig(
+                            join(ctx.cwd, ".pi", "sandbox.json"),
+                        );
+                    }
+                    const resolved = loadSandboxConfig(ctx.cwd, {
+                        agentDir,
+                        settingsManager: {
+                            // SAFETY: Pi settings permit extension-owned keys that are absent from its generic Settings type.
+                            getGlobalSettings: () =>
+                                settingsManager.getGlobalSettings() as unknown as SandboxSettingsContainer,
+                            // SAFETY: Same extension-owned project key boundary.
+                            getProjectSettings: () =>
+                                settingsManager.getProjectSettings() as unknown as SandboxSettingsContainer,
+                        },
+                        sessionDir: ctx.sessionManager?.getSessionDir(),
+                        sessionId: ctx.sessionManager?.getSessionId(),
+                        envOverride: envSandboxStatus(),
+                    });
+                    const authority = resolveDockerPolicy({
+                        cwd: ctx.cwd,
+                        globalConfigPath: join(agentDir, "sandbox.global.json"),
+                    });
+                    const preference =
+                        configuredDockerPreference(projectConfig);
+                    const effective =
+                        resolved.config.docker.mode === "disabled"
+                            ? "off"
+                            : resolved.config.docker.mode;
+                    ctx.ui.notify(
+                        [
+                            `Docker authority: ${authority.mode === "disabled" ? "off" : authority.mode}`,
+                            `Project preference: ${preference}`,
+                            `Effective policy: ${effective}`,
+                            `Runtime: ${sandboxEnabled ? "active" : "inactive (sandbox off)"}`,
+                        ].join("\n"),
+                        "info",
+                    );
+                } catch (error) {
+                    ctx.ui.notify(
+                        `Docker configuration failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                }
+                return;
+            }
+
+            if (arg.startsWith("docker ")) {
+                const preference = parseDockerProjectPreference(
+                    arg.slice("docker ".length),
+                );
+                if (preference === undefined) {
+                    ctx.ui.notify(
+                        "Usage: /sandbox docker [off|targeted|full|inherit]",
+                        "error",
+                    );
+                    return;
+                }
+                if (!ctx.isProjectTrusted()) {
+                    ctx.ui.notify(
+                        "Docker project preference requires a trusted project",
+                        "error",
+                    );
+                    return;
+                }
+
+                let resolved: LoadSandboxConfigResult;
+                try {
+                    resolved = await persistProjectDockerPreference(
+                        ctx.cwd,
+                        preference,
+                    );
+                } catch (error) {
+                    ctx.ui.notify(
+                        `Docker configuration failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                    return;
+                }
+
+                if (!sandboxEnabled) {
+                    updateSandboxStatus(ctx, "off");
+                    ctx.ui.notify(
+                        `Docker project preference saved: ${preference}`,
+                        "info",
+                    );
+                    return;
+                }
+
+                const generation = beginTransition();
+                if (generation === undefined) return;
+                bashProcessSupervisor.shutdown();
+                try {
+                    await shutdownServices();
+                    if (!isCurrentTransition(generation)) return;
+                    const enabled = await enableServices(
+                        ctx.cwd,
+                        resolved.config,
+                        generation,
+                    );
+                    if (!isCurrentTransition(generation) || !enabled) return;
+                    sandboxEnabled = true;
+                    updateSandboxStatus(ctx, "on", resolved.config.docker);
+                    notifySandboxEnabled(
+                        ctx,
+                        `Docker project preference saved: ${preference}`,
+                        resolved.config.docker,
+                    );
+                } catch (error) {
+                    if (!isCurrentTransition(generation)) return;
+                    sandboxEnabled = false;
+                    publishError(error);
+                    updateSandboxStatus(ctx, "error");
+                    ctx.ui.notify(
+                        `Docker preference saved, but sandbox reconfiguration failed: ${errorMessage(error)}`,
+                        "error",
+                    );
+                }
+                return;
+            }
+
             // /sandbox on
-            if (arg === "on" || arg === "enable") {
+            if (arg === "on") {
                 if (sandboxEnabled && sandboxService) {
                     ctx.ui.notify("Sandbox is already enabled", "info");
                     return;
@@ -1063,7 +1355,7 @@ export default function (pi: ExtensionAPI) {
             }
 
             // /sandbox off
-            if (arg === "off" || arg === "disable") {
+            if (arg === "off") {
                 ctx.ui.notify(
                     "⚠ Disabling sandbox is a security risk — bash commands will run with full system access. (This preference is persisted for this session.)",
                     "warning",
@@ -1117,7 +1409,7 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
 
-            ctx.ui.notify("Usage: /sandbox [on|off]", "error");
+            ctx.ui.notify("Usage: /sandbox [on|off|docker ...]", "error");
         },
     });
 }

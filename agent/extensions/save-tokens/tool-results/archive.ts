@@ -1,17 +1,24 @@
-import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
+import { createHash } from "node:crypto";
 import {
     chmod,
     copyFile,
     lstat,
     mkdir,
+    open,
     readdir,
+    readFile,
+    realpath,
     unlink,
     writeFile,
-} from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import type { ArchiveOriginalInput } from './types';
+} from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import {
+    hostExecution,
+    parseExecutionProvenance,
+    unknownExecution,
+} from "../../_shared/execution-provenance/index.ts";
+import type { ArchiveOriginalInput } from "./types";
 
 const MANAGED_ARCHIVE_NAME = /^(\d+)-[a-zA-Z0-9_.-]+-[a-f0-9]{12}\.txt$/;
 const DAY_MS = 86_400_000;
@@ -33,7 +40,7 @@ export interface ArchivePruneSummary {
 export function resolveToolResultArchiveRoot(): string {
     return (
         process.env.PI_TOOL_RESULT_ARCHIVE_DIR?.trim() ||
-        join(homedir(), '.pi', 'agent', 'tool-result-archive')
+        join(homedir(), ".pi", "agent", "tool-result-archive")
     );
 }
 
@@ -41,12 +48,12 @@ export async function archiveOriginalToolResult(
     input: ArchiveOriginalInput,
 ): Promise<string> {
     const archiveRoot = resolveToolResultArchiveRoot();
-    const digest = createHash('sha256')
+    const digest = createHash("sha256")
         .update(input.sourcePath ?? input.text)
-        .digest('hex')
+        .digest("hex")
         .slice(0, 12);
-    const safeToolCallId = input.toolCallId.replace(/[^a-zA-Z0-9_.-]/g, '_');
-    const safeToolName = input.toolName.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const safeToolCallId = input.toolCallId.replace(/[^a-zA-Z0-9_.-]/g, "_");
+    const safeToolName = input.toolName.replace(/[^a-zA-Z0-9_.-]/g, "_");
     const filePath = join(
         archiveRoot,
         `${Date.now()}-${safeToolName}-${safeToolCallId}-${digest}.txt`,
@@ -54,22 +61,123 @@ export async function archiveOriginalToolResult(
 
     await mkdir(archiveRoot, { recursive: true, mode: 0o700 });
     await chmod(archiveRoot, 0o700);
+    let ownsText = false;
+    let ownsMetadata = false;
     try {
+        const reservation = await open(filePath, "wx", 0o600);
+        ownsText = true;
+        await reservation.close();
         if (input.sourcePath) {
-            await copyFile(input.sourcePath, filePath, constants.COPYFILE_EXCL);
+            await copyFile(input.sourcePath, filePath);
             await chmod(filePath, 0o600);
         } else {
             await writeFile(filePath, input.text, {
-                encoding: 'utf8',
+                encoding: "utf8",
                 mode: 0o600,
-                flag: 'wx',
+                flag: "w",
             });
         }
+        const metadata = await open(`${filePath}.meta.json`, "wx", 0o600);
+        ownsMetadata = true;
+        try {
+            await metadata.writeFile(
+                JSON.stringify({
+                    version: 1,
+                    kind: "output-text",
+                    toolName: input.toolName,
+                    sourceExecution:
+                        input.sourceExecution ?? unknownExecution(),
+                    storage: hostExecution(),
+                }),
+                "utf8",
+            );
+        } finally {
+            await metadata.close();
+        }
     } catch (error) {
-        await unlink(filePath).catch(() => undefined);
+        if (ownsText) await unlink(filePath).catch(() => undefined);
+        if (ownsMetadata)
+            await unlink(`${filePath}.meta.json`).catch(() => undefined);
         throw error;
     }
     return filePath;
+}
+
+/** Recognize only existing regular files in the configured archive directory. */
+export async function managedOutputArchive(path: string) {
+    const candidate = resolve(path);
+    if (!MANAGED_ARCHIVE_NAME.test(basename(candidate))) return;
+    try {
+        const root = await realpath(resolveToolResultArchiveRoot());
+        if (
+            dirname(await realpath(candidate)) !== root ||
+            !(await lstat(candidate)).isFile()
+        )
+            return;
+        let sourceExecution = unknownExecution();
+        let sourceMetadata: "valid" | "missing" | "invalid" | "unavailable" =
+            "invalid";
+        try {
+            const stat = await lstat(`${candidate}.meta.json`);
+            if (!stat.isFile() || stat.size > 65536)
+                throw new Error("Invalid archive metadata file");
+            const metadata: unknown = JSON.parse(
+                await readFile(`${candidate}.meta.json`, "utf8"),
+            );
+            const parsed =
+                metadata &&
+                typeof metadata === "object" &&
+                "version" in metadata &&
+                metadata.version === 1 &&
+                "kind" in metadata &&
+                metadata.kind === "output-text" &&
+                "sourceExecution" in metadata
+                    ? parseExecutionProvenance(metadata.sourceExecution)
+                    : undefined;
+            if (parsed) {
+                sourceExecution = parsed;
+                sourceMetadata = "valid";
+            }
+        } catch (error) {
+            sourceMetadata =
+                error instanceof SyntaxError
+                    ? "invalid"
+                    : error instanceof Error &&
+                        "code" in error &&
+                        error.code === "ENOENT"
+                      ? "missing"
+                      : "unavailable";
+        }
+        return {
+            kind: "output-text" as const,
+            path: candidate,
+            sourceExecution,
+            sourceMetadata,
+            storage: hostExecution(),
+        };
+    } catch (error) {
+        if (
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT"
+        )
+            return;
+        throw error;
+    }
+}
+
+async function removeArchivePair(path: string): Promise<void> {
+    await unlink(`${path}.meta.json`).catch((error) => {
+        if (
+            !(
+                error instanceof Error &&
+                "code" in error &&
+                error.code === "ENOENT"
+            )
+        )
+            throw error;
+    });
+    await unlink(path);
 }
 
 export async function pruneToolResultArchive(
@@ -83,8 +191,8 @@ export async function pruneToolResultArchive(
     } catch (error) {
         if (
             error instanceof Error &&
-            'code' in error &&
-            error.code === 'ENOENT'
+            "code" in error &&
+            error.code === "ENOENT"
         ) {
             return {
                 removedFiles: 0,
@@ -114,7 +222,12 @@ export async function pruneToolResultArchive(
                 name,
                 path,
                 timestamp: Number(match[1]),
-                size: stat.size,
+                size:
+                    stat.size +
+                    (await lstat(`${path}.meta.json`).then(
+                        (meta) => (meta.isFile() ? meta.size : 0),
+                        () => 0,
+                    )),
             });
         } catch {
             // Ignore entries removed concurrently.
@@ -134,7 +247,7 @@ export async function pruneToolResultArchive(
         if (file.timestamp < cutoff) {
             try {
                 // oxlint-disable-next-line eslint/no-await-in-loop -- age pruning is deterministic and best-effort per file
-                await unlink(file.path);
+                await removeArchivePair(file.path);
                 removedFiles += 1;
                 removedBytes += file.size;
             } catch {
@@ -151,7 +264,7 @@ export async function pruneToolResultArchive(
         if (!oldest) break;
         try {
             // oxlint-disable-next-line eslint/no-await-in-loop -- size pruning depends on ordered deletions
-            await unlink(oldest.path);
+            await removeArchivePair(oldest.path);
             removedFiles += 1;
             removedBytes += oldest.size;
             remainingBytes -= oldest.size;

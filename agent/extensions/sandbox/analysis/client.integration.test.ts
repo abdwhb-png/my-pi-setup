@@ -13,6 +13,15 @@ afterEach(async () => {
 });
 
 describe("strict analysis sandbox integration", () => {
+    it('retains actual worker execution facts on an analysis error', async () => {
+        service = createAnalysisSandboxService();
+        let error: unknown;
+        try {
+            await service.run({ id: 'provenance-analysis-error', language: 'javascript', program: 'throw new Error("fixture failure")', limits: { wallTimeMs: 15000 } });
+        } catch (failure) { error = failure; }
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toMatchObject({ execution: { status: 'sandboxed', profile: 'analysis-strict', tmpNamespace: 'lease-private', phase: 'analysis', outcome: 'failed', exitCode: expect.any(Number) } });
+    }, 20000);
     it("executes QuickJS and Eryx only through the outer sandbox", async () => {
         service = createAnalysisSandboxService();
 
@@ -32,6 +41,7 @@ describe("strict analysis sandbox integration", () => {
         });
 
         expect(javascript).toMatchObject({
+            execution: { status: "sandboxed", profile: "analysis-strict", backend: "zerobox", tmpNamespace: "lease-private", phase: "analysis", outcome: "succeeded", exitCode: 0 },
             output: "6",
             runtime: "quickjs",
             truncated: false,

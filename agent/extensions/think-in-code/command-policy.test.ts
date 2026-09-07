@@ -110,7 +110,8 @@ describe("Think command policy", () => {
                 state === "enabled"
                     ? {
                           state,
-                          createBashOperations: () => operations,
+                          createBashOperations: () => ({ exec: async () => { throw new Error("development operations must not run for Think"); } }),
+                          createThinkBashOperations: () => operations,
                           analysis: {
                               run: async () => ({
                                   output: "unused",

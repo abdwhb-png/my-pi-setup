@@ -23,8 +23,10 @@ import { Container, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { getActivePolicy } from "../_shared/audit-mode/audit-state";
 import { appendCompressionFooter } from "../_shared/compression-render";
+import { executeOnHost } from "../_shared/execution-provenance/index.ts";
 import { expandHomePath } from "../_shared/home-path.ts";
 import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
+import { managedOutputArchive } from "../save-tokens/tool-results/archive.ts";
 import {
     loadFileResolverConfig,
     setFileResolverConfig,
@@ -666,21 +668,52 @@ export default function piOverrides(pi: ExtensionAPI): void {
 
         pi.registerTool({
             ...readDef,
+            execute: (id, params, signal, update, context) =>
+                executeOnHost(id, async () => {
+                    const result = await readDef.execute(
+                        id,
+                        params,
+                        signal,
+                        update,
+                        context,
+                    );
+                    const outputArchive = await managedOutputArchive(
+                        nodePath.resolve(cwd, expandHomePath(params.path)),
+                    );
+                    return outputArchive
+                        ? {
+                              ...result,
+                              details: { ...result.details, outputArchive },
+                          }
+                        : result;
+                }),
             promptGuidelines: READ_DISAMBIGUATION.promptGuidelines,
             renderResult: makeRenderResult(readTextByCallId, readDef),
         });
         pi.registerTool({
             ...grepDef,
+            execute: (id, params, signal, update, context) =>
+                executeOnHost(id, () =>
+                    grepDef.execute(id, params, signal, update, context),
+                ),
             ...GREP_DISAMBIGUATION,
             renderResult: makeRenderResult(grepTextByCallId, grepDef),
         });
         pi.registerTool({
             ...lsDef,
+            execute: (id, params, signal, update, context) =>
+                executeOnHost(id, () =>
+                    lsDef.execute(id, params, signal, update, context),
+                ),
             ...LS_DISAMBIGUATION,
             renderResult: makeRenderResult(lsTextByCallId, lsDef),
         });
         pi.registerTool({
             ...findDef,
+            execute: (id, params, signal, update, context) =>
+                executeOnHost(id, () =>
+                    findDef.execute(id, params, signal, update, context),
+                ),
             ...FIND_DISAMBIGUATION,
             renderResult: makeRenderResult(findTextByCallId, findDef),
         });

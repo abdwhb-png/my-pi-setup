@@ -4,10 +4,13 @@ import {
     describe,
     expect,
     it,
+    spyOn,
 } from 'bun:test';
 import {
     lstatSync,
     mkdtempSync,
+    mkdirSync,
+    unlinkSync,
     readFileSync,
     rmSync,
     symlinkSync,
@@ -19,6 +22,7 @@ import { join } from 'node:path';
 import {
     archiveOriginalToolResult,
     pruneToolResultArchive,
+    managedOutputArchive,
 } from './archive';
 
 const ARCHIVE_NAME = (timestamp: number, suffix: string) =>
@@ -43,6 +47,28 @@ afterEach(() => {
 });
 
 describe('archiveOriginalToolResult', () => {
+    it('preserves an existing archive pair when a filename collides', async () => {
+        const clock = spyOn(Date, 'now').mockReturnValue(12345);
+        try {
+            const input = { toolCallId: 'same-call', toolName: 'bash', text: 'keep original' };
+            const path = await archiveOriginalToolResult(input);
+            await expect(archiveOriginalToolResult(input)).rejects.toThrow();
+            expect(readFileSync(path, 'utf8')).toBe(input.text);
+            expect(JSON.parse(readFileSync(`${path}.meta.json`, 'utf8')).kind).toBe('output-text');
+        } finally { clock.mockRestore(); }
+    });
+    it('identifies legacy archives without inventing source provenance', async () => {
+        const path = join(archiveRoot, ARCHIVE_NAME(Date.now(), '1'));
+        writeFileSync(path, 'legacy bytes');
+        expect(await managedOutputArchive(path)).toMatchObject({ sourceMetadata: 'missing', sourceExecution: { status: 'unknown' }, storage: { status: 'unsandboxed' } });
+    });
+    it('keeps archive bytes readable when its sidecar cannot be read', async () => {
+        const path = await archiveOriginalToolResult({ toolCallId: 'sidecar-failure', toolName: 'bash', text: 'exact bytes' });
+        unlinkSync(`${path}.meta.json`);
+        mkdirSync(`${path}.meta.json`);
+        expect(await managedOutputArchive(path)).toMatchObject({ kind: 'output-text', sourceExecution: { status: 'unknown' }, sourceMetadata: 'unavailable' });
+        expect(readFileSync(path, 'utf8')).toBe('exact bytes');
+    });
     it('stores text exactly without a metadata header', async () => {
         const path = await archiveOriginalToolResult({
             toolCallId: 'call-1',
@@ -51,6 +77,7 @@ describe('archiveOriginalToolResult', () => {
         });
 
         expect(readFileSync(path, 'utf8')).toBe('alpha\nbêta');
+        expect(JSON.parse(readFileSync(`${path}.meta.json`, 'utf8'))).toMatchObject({ version: 1, kind: 'output-text', storage: { status: 'unsandboxed', tmpNamespace: 'host' }, sourceExecution: { status: 'unknown' } });
         expect(lstatSync(archiveRoot).mode & 0o777).toBe(0o700);
         expect(lstatSync(path).mode & 0o777).toBe(0o600);
     });
@@ -89,6 +116,7 @@ describe('pruneToolResultArchive', () => {
         const fresh = join(archiveRoot, ARCHIVE_NAME(nowMs - 1_000, '2'));
         const unknown = join(archiveRoot, 'notes.txt');
         writeFileSync(old, 'old');
+        writeFileSync(`${old}.meta.json`, '{}');
         writeFileSync(fresh, 'fresh');
         writeFileSync(unknown, 'keep');
 
@@ -101,6 +129,7 @@ describe('pruneToolResultArchive', () => {
 
         expect(summary.removedFiles).toBe(1);
         expect(() => lstatSync(old)).toThrow();
+        expect(() => lstatSync(`${old}.meta.json`)).toThrow();
         expect(readFileSync(fresh, 'utf8')).toBe('fresh');
         expect(readFileSync(unknown, 'utf8')).toBe('keep');
     });

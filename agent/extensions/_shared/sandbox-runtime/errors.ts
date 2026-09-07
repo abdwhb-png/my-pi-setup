@@ -49,9 +49,18 @@ export class SandboxExecutionError extends Error {
 
     constructor(
         code: SandboxErrorCode,
-        options: { cause?: OpaqueFailure; cleanupError?: OpaqueFailure } = {},
+        options: {
+            cause?: OpaqueFailure;
+            cleanupError?: OpaqueFailure;
+            diagnostic?: string;
+        } = {},
     ) {
-        super(sandboxErrorMessage(code), { cause: options.cause });
+        super(
+            options.diagnostic
+                ? `${sandboxErrorMessage(code)}: ${options.diagnostic}`
+                : sandboxErrorMessage(code),
+            { cause: options.cause },
+        );
         Object.defineProperty(this, "name", {
             configurable: true,
             enumerable: false,

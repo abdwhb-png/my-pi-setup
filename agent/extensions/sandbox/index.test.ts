@@ -5,6 +5,7 @@ import {
     mkdtempSync,
     readFileSync,
     rmSync,
+    statSync,
     writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,6 +16,7 @@ import {
     explicitlyDisabled,
     loadSandboxConfig,
     loadSessionSandboxStatus,
+    persistProjectDockerPreference,
     renderSandboxStatusDetails,
     renderSandboxWidget,
     saveSessionSandboxStatus,
@@ -114,6 +116,170 @@ describe('loadSandboxConfig', () => {
                 },
             }),
         ).toThrow('Could not load sandbox settings: settings unavailable');
+    });
+
+    it('lets an explicit empty project sandbox settings object suppress legacy fallback', () => {
+        mkdirSync(join(cwd, '.pi'), { recursive: true });
+        writeFileSync(
+            join(cwd, '.pi', 'sandbox.json'),
+            JSON.stringify({ enabled: true }),
+        );
+
+        const resolved = loadSandboxConfig(cwd, {
+            agentDir,
+            settingsManager: {
+                getGlobalSettings: () => ({}),
+                getProjectSettings: () => ({ sandbox: {} }),
+            },
+        });
+
+        expect(resolved.config.enabled).toBe(false);
+        expect(resolved.source).toBe('default');
+    });
+});
+
+describe('persistProjectDockerPreference', () => {
+    let root: string;
+    let agentDir: string;
+    let cwd: string;
+
+    beforeEach(() => {
+        root = mkdtempSync(join(tmpdir(), 'sandbox-docker-preference-'));
+        agentDir = join(root, 'agent');
+        cwd = join(root, 'project');
+        mkdirSync(agentDir, { recursive: true });
+        mkdirSync(join(cwd, '.pi'), { recursive: true });
+        writeFileSync(
+            join(agentDir, 'sandbox.global.json'),
+            JSON.stringify({
+                docker: {
+                    grants: [{ projectRoot: cwd, mode: 'full' }],
+                },
+            }),
+            { mode: 0o600 },
+        );
+    });
+
+    afterEach(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it('removes a legacy Docker-only override when inheriting global authority', async () => {
+        writeFileSync(
+            join(cwd, '.pi', 'sandbox.json'),
+            JSON.stringify({ docker: { mode: 'disabled' } }),
+        );
+
+        const resolved = await persistProjectDockerPreference(
+            cwd,
+            'inherit',
+            agentDir,
+        );
+        const settings = JSON.parse(
+            readFileSync(join(cwd, '.pi', 'settings.json'), 'utf8'),
+        );
+
+        expect(settings).toEqual({ sandbox: {} });
+        expect(resolved.config.docker.mode).toBe('full');
+    });
+
+    it('refuses targeted narrowing of full authority without writing settings', async () => {
+        await expect(
+            persistProjectDockerPreference(cwd, 'targeted', agentDir),
+        ).rejects.toThrow('Sandbox policy is invalid');
+        expect(existsSync(join(cwd, '.pi', 'settings.json'))).toBe(false);
+    });
+
+    it('persists full when the global authority is full', async () => {
+        const resolved = await persistProjectDockerPreference(
+            cwd,
+            'full',
+            agentDir,
+        );
+        const settings = JSON.parse(
+            readFileSync(join(cwd, '.pi', 'settings.json'), 'utf8'),
+        );
+
+        expect(settings.sandbox.docker).toEqual({ mode: 'full' });
+        expect(resolved.config.docker.mode).toBe('full');
+        expect(statSync(join(cwd, '.pi', 'settings.json')).mode & 0o777).toBe(
+            0o600,
+        );
+    });
+
+    it('persists targeted when the global authority is targeted', async () => {
+        writeFileSync(
+            join(agentDir, 'sandbox.global.json'),
+            JSON.stringify({
+                docker: {
+                    grants: [
+                        {
+                            projectRoot: cwd,
+                            mode: 'targeted',
+                            targets: [
+                                {
+                                    selector: {
+                                        type: 'container-name',
+                                        name: 'api',
+                                    },
+                                    operations: ['logs'],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            }),
+            { mode: 0o600 },
+        );
+
+        const resolved = await persistProjectDockerPreference(
+            cwd,
+            'targeted',
+            agentDir,
+        );
+        const settings = JSON.parse(
+            readFileSync(join(cwd, '.pi', 'settings.json'), 'utf8'),
+        );
+
+        expect(settings.sandbox.docker).toEqual({ mode: 'targeted' });
+        expect(resolved.config.docker.mode).toBe('targeted');
+    });
+
+    it('preserves unrelated project and sandbox settings', async () => {
+        writeFileSync(
+            join(cwd, '.pi', 'settings.json'),
+            JSON.stringify({
+                theme: 'dark',
+                sandbox: {
+                    enabled: true,
+                    filesystem: { denyWrite: ['generated/**'] },
+                },
+            }),
+        );
+
+        await persistProjectDockerPreference(cwd, 'off', agentDir);
+        const settings = JSON.parse(
+            readFileSync(join(cwd, '.pi', 'settings.json'), 'utf8'),
+        );
+
+        expect(settings).toEqual({
+            theme: 'dark',
+            sandbox: {
+                enabled: true,
+                filesystem: { denyWrite: ['generated/**'] },
+                docker: { mode: 'disabled' },
+            },
+        });
+    });
+
+    it('preserves malformed project settings and reports the parse error', async () => {
+        const settingsPath = join(cwd, '.pi', 'settings.json');
+        writeFileSync(settingsPath, '{ invalid');
+
+        await expect(
+            persistProjectDockerPreference(cwd, 'off', agentDir),
+        ).rejects.toThrow();
+        expect(readFileSync(settingsPath, 'utf8')).toBe('{ invalid');
     });
 });
 

@@ -17,6 +17,10 @@ import {
 } from "../_shared/command-execution/rewrites.ts";
 import { appendCompressionFooter } from "../_shared/compression-render.ts";
 import {
+    recordExecution,
+    unknownExecution,
+} from "../_shared/execution-provenance/index.ts";
+import {
     createSandboxBashOperations,
     getSandboxRuntime,
     type SandboxBashOperationOptions,
@@ -32,6 +36,7 @@ export function resolveBashOperations(
     }
     if (runtime.state === "disabled") {
         return localSupervisor.createOperations({
+            onExecution: options.onExecution,
             stdin: options.stdin,
             rewriteCommand: options.rewriteCommand,
         });
@@ -72,10 +77,13 @@ export function registerBuiltinBash(
                 return component;
             },
             async execute(id, params, signal, onUpdate, ctx) {
+                recordExecution(id, unknownExecution());
                 const operations = resolveBashOperations(
                     options.localSupervisor,
                     {
                         stdin: params.stdin,
+                        onExecution: (execution) =>
+                            recordExecution(id, execution),
                         rewriteCommand: (command) =>
                             applyFirstRewrite(command, "bash", rewriteRules),
                     },
@@ -94,9 +102,28 @@ export function registerBuiltinBash(
         }),
     );
 
-    pi.on("user_bash", () => ({
-        operations: resolveBashOperations(options.localSupervisor),
-    }));
+    pi.on("user_bash", (event) => {
+        let execution = unknownExecution();
+        const operations = resolveBashOperations(options.localSupervisor, {
+            onExecution: (value) => {
+                execution = value;
+            },
+        });
+        return {
+            operations: {
+                exec: async (...args) => {
+                    try {
+                        return await operations.exec(...args);
+                    } finally {
+                        pi.appendEntry("pi.execution.user-bash.v1", {
+                            command: event.command,
+                            execution,
+                        });
+                    }
+                },
+            },
+        };
+    });
 
     pi.on("session_start", (_event, ctx) => {
         options.localSupervisor.shutdown();

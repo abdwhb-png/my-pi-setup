@@ -1,5 +1,11 @@
 # Bash Execution
 
+Use `bash`, `safe_bash`, and `!` with the `bash-general` profile for development
+commands. This profile shares the host `/tmp` while retaining the other sandbox
+rules and explicit project denies. Read process status from each result's
+execution provenance. A disabled sandbox reports `unsandboxed`; missing proof
+reports `unknown`. Preserve raw output when adding or compressing metadata.
+
 `bash-execution` is the only Pi extension entrypoint that owns the three Bash
 surfaces:
 

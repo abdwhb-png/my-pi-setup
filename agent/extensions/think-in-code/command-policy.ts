@@ -6,7 +6,7 @@ import {
     type CommandExecutionTelemetryRecorder,
 } from "../_shared/command-execution/core.ts";
 import { GuardSessionApprovals } from "../_shared/command-execution/policy.ts";
-import { createSandboxBashOperations } from "../_shared/sandbox-runtime/index.ts";
+import { createSandboxThinkBashOperations } from "../_shared/sandbox-runtime/index.ts";
 
 import type { ThinkInCodeConfig } from "./config.ts";
 
@@ -39,7 +39,7 @@ export function createThinkCommandExecution(
         shouldEnforceNativeTools:
             options.shouldEnforceNativeTools ?? shouldEnforceNativeTools,
         createOperations: (operationOptions) =>
-            (options.createOperations ?? createSandboxBashOperations)(
+            (options.createOperations ?? createSandboxThinkBashOperations)(
                 operationOptions,
             ),
         ...(options.createDefinition

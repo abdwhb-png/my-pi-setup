@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import type { ExecutionProvenance } from "../../_shared/execution-provenance/types.ts";
 import {
     SANDBOX_ERROR_CODES,
     SandboxExecutionError,
@@ -15,7 +16,10 @@ export {
     type SandboxErrorCode,
 };
 
-export type SandboxProfileName = "bash-general" | "analysis-strict";
+export type SandboxProfileName =
+    | "bash-general"
+    | "think-strict"
+    | "analysis-strict";
 
 export const DOCKER_OPERATIONS = [
     "ps",
@@ -74,6 +78,7 @@ export interface SandboxEnvironmentPolicy {
 export interface SandboxPolicy {
     name: SandboxProfileName;
     strict: true;
+    tmpNamespace: "host" | "lease-private";
     filesystem: SandboxFilesystemPolicy;
     network: SandboxNetworkPolicy;
     environment: SandboxEnvironmentPolicy;
@@ -93,6 +98,7 @@ export interface SandboxStatusSupervision {
 }
 
 export interface SandboxSpawnSpec {
+    execution?: ExecutionProvenance;
     file: string;
     args: string[];
     cwd: string;

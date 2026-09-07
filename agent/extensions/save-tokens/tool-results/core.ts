@@ -184,6 +184,7 @@ function archiveInput(
     return {
         toolCallId: event.toolCallId,
         toolName: event.toolName,
+        sourceExecution: resolveExecution(event.toolCallId, event.details),
         subject,
         input: event.input,
         text,
@@ -192,15 +193,18 @@ function archiveInput(
 }
 
 function mergedDetails(
-    original: unknown,
+    event: ToolResultEvent,
     compression: CompressionDetails,
 ): Record<string, unknown> & { compression: CompressionDetails } {
-    if (original && typeof original === "object" && !Array.isArray(original)) {
-        return { ...(original as Record<string, unknown>), compression };
-    }
-    return original === undefined
-        ? { compression }
-        : { originalDetails: original, compression };
+    const execution = resolveExecution(event.toolCallId, event.details);
+    return {
+        ...mergeExecutionDetails(event.details, execution),
+        compression: {
+            ...compression,
+            sourceExecution: execution,
+            archiveKind: "output-text",
+        },
+    };
 }
 
 const HEAD_TAIL_OMISSION_MARKER = "\n... [omitted by head/tail cap] ...\n";
@@ -279,14 +283,24 @@ function observationMeta(
 }
 
 /** Shared savings math — single source for backend + cap floor (global). */
-export function computeSavedPct(originalLength: number, compressedLength: number): number {
+export function computeSavedPct(
+    originalLength: number,
+    compressedLength: number,
+): number {
     if (originalLength <= 0) return 0;
     const savedBytes = Math.max(0, originalLength - compressedLength);
     return Math.round((savedBytes / originalLength) * 100);
 }
 
-export function belowMinSavings(savedPct: number, minSavingsPct: number | undefined): boolean {
-    return minSavingsPct !== undefined && minSavingsPct > 0 && savedPct < minSavingsPct;
+export function belowMinSavings(
+    savedPct: number,
+    minSavingsPct: number | undefined,
+): boolean {
+    return (
+        minSavingsPct !== undefined &&
+        minSavingsPct > 0 &&
+        savedPct < minSavingsPct
+    );
 }
 
 async function maybeCreateArchivedCap(
@@ -399,7 +413,7 @@ async function maybeCreateArchivedCap(
     } satisfies CompressionDetails;
     return {
         content: [{ type: "text" as const, text: outputText }],
-        details: mergedDetails(event.details, compression),
+        details: mergedDetails(event, compression),
     };
 }
 
@@ -424,6 +438,14 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
     ) => {
         if (!isCompressibleToolName(event.toolName)) return;
         if (!enabled || excludedTools.has(event.toolName)) return;
+        if (
+            event.toolName === "read" &&
+            event.input &&
+            "path" in event.input &&
+            typeof event.input.path === "string" &&
+            (await managedOutputArchive(event.input.path))
+        )
+            return;
 
         // Consult shared audit policy — bypass compression if the active profile
         // disables it for this tool's category.
@@ -717,7 +739,10 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
                 0,
                 originalLength - finalCompressedLength,
             );
-            const savedPct = computeSavedPct(originalLength, finalCompressedLength);
+            const savedPct = computeSavedPct(
+                originalLength,
+                finalCompressedLength,
+            );
             if (belowMinSavings(savedPct, options?.minSavingsPct)) {
                 options?.onObservation?.({
                     kind: "skipped",
@@ -765,7 +790,7 @@ export function createToolResultHandler(options?: ToolResultHandlerOptions) {
             } satisfies CompressionDetails;
             return {
                 content: [{ type: "text" as const, text: outputText }],
-                details: mergedDetails(event.details, compression),
+                details: mergedDetails(event, compression),
             };
         } catch {
             // A backend throw still gets a measured latency: elapsed time
@@ -845,3 +870,8 @@ export function summarizeToolSubject(
     }
     return undefined;
 }
+import {
+    mergeExecutionDetails,
+    resolveExecution,
+} from "../../_shared/execution-provenance/index.ts";
+import { managedOutputArchive } from "./archive.ts";

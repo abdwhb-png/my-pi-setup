@@ -35,6 +35,54 @@ function deferred<T = void>() {
 }
 
 describe("sandbox service", () => {
+    it("isolates Think collection from development and analysis leases", async () => {
+        const leases: PrivateTempLease[] = [];
+        const policies: SandboxPolicy[] = [];
+        const service = createSandboxService({
+            backend: {
+                probe: async () => SANDBOX_CAPABILITIES,
+                prepare: async (command, policy, lease) => {
+                    policies.push(policy);
+                    return {
+                        file: command.file, args: [lease.root], cwd: command.cwd, env: {},
+                        statusProtocol: { fd: 3, version: 1 }, extraStdio: [],
+                        supervise: () => ({ ready: Promise.resolve(), settled: Promise.resolve() }),
+                    };
+                },
+            },
+            config: validatePiSandboxConfig({ filesystem: { allowWrite: ["."] } }),
+            createLease: async () => {
+                const lease = fakeLease(leases.length + 1);
+                leases.push(lease);
+                return lease;
+            },
+            recoverStaleLeases: async () => undefined,
+        });
+        const command = { file: "/bin/bash", args: ["-c", "true"], cwd: "/workspace" };
+        await service.startBashSession(command.cwd);
+        const development = await service.prepareBash(command);
+        const think = await service.prepareThinkBash(command);
+        const repeatedThink = await service.prepareThinkBash(command);
+        const analysis = await service.prepareAnalysis(command, ["/runtime"]);
+        expect(think.args).toEqual(repeatedThink.args);
+        expect(think.args).not.toEqual(development.args);
+        expect(think.args).not.toEqual(analysis.spawn.args);
+        expect(policies.map(p => p.name)).toEqual([
+            "bash-general", "think-strict", "think-strict", "analysis-strict",
+        ]);
+        expect(policies.map(p => p.tmpNamespace)).toEqual([
+            "host", "lease-private", "lease-private", "lease-private",
+        ]);
+        expect(policies[1]?.filesystem.allowWrite).toContain(command.cwd);
+        expect(policies[1]?.filesystem.denyRead).toContain("/tmp");
+        expect(policies[3]?.environment.set.TMPDIR).toBe("/tmp");
+        await service.startBashSession("/other-workspace");
+        expect(leases[1]?.dispose).toHaveBeenCalledTimes(1);
+        await service.shutdown();
+        for (const lease of leases) expect(lease.dispose).toHaveBeenCalledTimes(1);
+        await expect(service.prepareThinkBash(command)).rejects.toMatchObject({ code: "setup-failed" });
+    });
+
     it("reuses one Bash lease and gives every analysis request a fresh lease", async () => {
         const leases: PrivateTempLease[] = [];
         const createLease = mock(async () => {
@@ -183,7 +231,7 @@ describe("sandbox service", () => {
                 },
             },
             config: validatePiSandboxConfig({
-                filesystem: { allowWrite: ["/tmp"] },
+                filesystem: { allowWrite: ["/mnt/c"] },
             }),
             createLease: async () => lease,
         });
@@ -208,7 +256,7 @@ describe("sandbox service", () => {
                 },
             },
             config: validatePiSandboxConfig({
-                filesystem: { allowWrite: ["/tmp"] },
+                filesystem: { allowWrite: ["/mnt/c"] },
             }),
             createLease: async () => lease,
         });

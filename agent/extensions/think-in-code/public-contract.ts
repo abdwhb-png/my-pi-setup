@@ -1,4 +1,6 @@
+import { parseExecutionProvenance } from "../_shared/execution-provenance/index.ts";
 import { redactTextPreservingContext } from "../_shared/redaction.ts";
+import type { ThinkExecutionProvenance } from "./execution-provenance.ts";
 
 import type { ThinkExecuteAction } from "./types.ts";
 
@@ -14,7 +16,7 @@ export type ThinkRecovery =
     | "repair_store"
     | "retry";
 
-export interface ThinkExecuteHeader {
+export interface ThinkExecuteHeader extends Partial<ThinkExecutionProvenance> {
     status: ThinkResultStatus;
     action: ThinkExecuteAction;
     sourceStatus: ThinkSourceStatus;
@@ -29,7 +31,7 @@ export interface ThinkExecuteHeader {
     blocked?: number;
 }
 
-export interface ThinkFailurePayload {
+export interface ThinkFailurePayload extends Partial<ThinkExecutionProvenance> {
     tool: "think_execute";
     status: "error";
     action: ThinkExecuteAction;
@@ -136,6 +138,26 @@ export function parseThinkExecuteHeader(
     const succeeded = Reflect.get(parsed, "succeeded");
     const failed = Reflect.get(parsed, "failed");
     const blocked = Reflect.get(parsed, "blocked");
+    const sourceExecution = parseExecutionProvenance(
+        Reflect.get(parsed, "sourceExecution"),
+    );
+    const analysisExecution = parseExecutionProvenance(
+        Reflect.get(parsed, "analysisExecution"),
+    );
+    const rawSources = Reflect.get(parsed, "sourceExecutions");
+    const sourceExecutions = Array.isArray(rawSources)
+        ? rawSources.flatMap((item) => {
+              const execution =
+                  item && typeof item === "object"
+                      ? parseExecutionProvenance(item.execution)
+                      : undefined;
+              return execution &&
+                  typeof item.id === "string" &&
+                  item.id.length <= 128
+                  ? [{ id: item.id, execution }]
+                  : [];
+          })
+        : undefined;
     if (
         (status !== "success" && status !== "partial") ||
         !isThinkAction(action) ||
@@ -164,6 +186,9 @@ export function parseThinkExecuteHeader(
         ...(succeeded === undefined ? {} : { succeeded }),
         ...(failed === undefined ? {} : { failed }),
         ...(blocked === undefined ? {} : { blocked }),
+        ...(sourceExecution ? { sourceExecution } : {}),
+        ...(analysisExecution ? { analysisExecution } : {}),
+        ...(sourceExecutions ? { sourceExecutions } : {}),
     };
 }
 

@@ -44,6 +44,7 @@ describe("sandbox runtime v2", () => {
             publishSandboxRuntime(owner, {
                 state: "enabled",
                 createBashOperations: () => ({ exec }),
+                createThinkBashOperations: () => ({ exec }),
                 analysis,
             }),
         ).toBe(true);
