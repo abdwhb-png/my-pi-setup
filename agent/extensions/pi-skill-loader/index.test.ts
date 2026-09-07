@@ -47,7 +47,7 @@ function createMockAPI(customCommands?: SlashCommandInfo[]) {
   }>();
   let activeTools: string[] = ["read", "edit", "write"];
   const sentMessages: Array<{ customType: string; content: string; display: boolean }> = [];
-  const handlers = new Map<string, (event: object, ctx?: object) => Promise<void> | void>();
+  const handlers = new Map<string, (event: object, ctx?: object) => Promise<unknown> | unknown>();
   const events = createEventBus();
 
   const pi = {
@@ -73,7 +73,7 @@ function createMockAPI(customCommands?: SlashCommandInfo[]) {
     sendMessage(msg: { customType: string; content: string; display: boolean }) {
       sentMessages.push(msg);
     },
-    on(event: string, handler: (event: object, ctx?: object) => Promise<void> | void) {
+    on(event: string, handler: (event: object, ctx?: object) => Promise<unknown> | unknown) {
       handlers.set(event, handler);
     },
   } as unknown as ExtensionAPI;
@@ -375,6 +375,117 @@ describe("pi-skill-loader", () => {
 
       const result = await tool.execute("call1", { query: "tdd" }, undefined, undefined, {} as any);
       expect(result.content.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("input event dollar skill expansion", () => {
+    it("rewrites a sole dollar token for a core skill to slash form", async () => {
+      const { pi, handlers } = createMockAPI();
+      piSkillLoader(pi);
+      await handlers.get("session_start")?.({}, { cwd: "/workspace" });
+
+      const inputHandler = handlers.get("input");
+      if (!inputHandler) throw new Error("input handler not registered");
+
+      const result = await inputHandler({ text: "$tdd fix login" }, { cwd: "/workspace" });
+      expect(result).toEqual({ action: "transform", text: "/skill:tdd fix login" });
+    });
+
+    it("splices an embedded dollar token inline using loadSkillContent", async () => {
+      readFileMock.mockResolvedValue(Buffer.from("---\nname: tdd\ndescription: TDD\n---\n\n# TDD Instructions\n"));
+      const { pi, handlers } = createMockAPI();
+      piSkillLoader(pi);
+      await handlers.get("session_start")?.({}, { cwd: "/workspace" });
+
+      const inputHandler = handlers.get("input");
+      if (!inputHandler) throw new Error("input handler not registered");
+
+      const result = await inputHandler(
+        { text: "please use $tdd before pushing" },
+        { cwd: "/workspace" },
+      );
+      expect(result).toEqual({
+        action: "transform",
+        text: "please use <skill name=\"tdd\" location=\"/skills/tdd/SKILL.md\">\nReferences are relative to /skills/tdd.\n\n# TDD Instructions\n</skill> before pushing",
+      });
+    });
+
+    it("leaves unknown dollar token untouched", async () => {
+      const { pi, handlers } = createMockAPI();
+      piSkillLoader(pi);
+      await handlers.get("session_start")?.({}, { cwd: "/workspace" });
+
+      const inputHandler = handlers.get("input");
+      if (!inputHandler) throw new Error("input handler not registered");
+
+      const result = await inputHandler({ text: "cost $unknown dollars" }, { cwd: "/workspace" });
+      expect(result).toEqual({ action: "continue" });
+    });
+  });
+
+  describe("dollar skill autocomplete provider", () => {
+    it("registers autocomplete provider on session_start and provides dollar completions", async () => {
+      let factory: ((current: any) => any) | undefined;
+      const mockUI = {
+        notify: mock(() => undefined),
+        addAutocompleteProvider: mock((f: (current: any) => any) => {
+          factory = f;
+        }),
+      };
+
+      const { pi, handlers } = createMockAPI();
+      piSkillLoader(pi);
+      await handlers.get("session_start")?.({}, { cwd: "/workspace", hasUI: true, ui: mockUI });
+
+      expect(mockUI.addAutocompleteProvider).toHaveBeenCalled();
+      if (!factory) throw new Error("autocomplete factory not registered");
+
+      const current = {
+        getSuggestions: () => Promise.resolve(null),
+        applyCompletion: () => ({ lines: [], cursorLine: 0, cursorCol: 0 }),
+      };
+
+      const provider = factory(current);
+      expect(provider.triggerCharacters).toContain("$");
+
+      const suggestions = await provider.getSuggestions(["use $td"], 0, 7, {});
+      expect(suggestions).toEqual({
+        prefix: "$td",
+        items: [
+          {
+            value: "$tdd",
+            label: "$tdd",
+            description: "Test-driven development",
+          },
+        ],
+      });
+
+      const nonDollar = await provider.getSuggestions(["plain text"], 0, 10, {});
+      expect(nonDollar).toBeNull();
+    });
+  });
+
+  describe("expansion parity with markdown links", () => {
+    it("embedded dollar block matches load_skill content and applies markdown link transform", async () => {
+      readFileMock.mockResolvedValue(Buffer.from("---\nname: tdd\ndescription: TDD\n---\n\nRead [guide](guide.md)\n"));
+      const { pi, handlers } = createMockAPI();
+      pi.events.on(MARKDOWN_LINKS_TRANSFORM_EVENT, (value) => {
+        if (!isMarkdownLinkTransformRequest(value)) return;
+        expect(value.sourcePath).toBe("/skills/tdd/SKILL.md");
+        expect(value.sourceKind).toBe("dollar-skill-input");
+        value.result = value.content.replace("guide.md", "/skills/tdd/guide.md");
+      });
+      piSkillLoader(pi);
+      await handlers.get("session_start")?.({}, { cwd: "/workspace" });
+
+      const inputHandler = handlers.get("input");
+      if (!inputHandler) throw new Error("input handler not registered");
+
+      const result = await inputHandler({ text: "check $tdd now" }, { cwd: "/workspace" });
+      expect(result).toEqual({
+        action: "transform",
+        text: "check <skill name=\"tdd\" location=\"/skills/tdd/SKILL.md\">\nReferences are relative to /skills/tdd.\n\nRead [guide](/skills/tdd/guide.md)\n</skill> now",
+      });
     });
   });
 });

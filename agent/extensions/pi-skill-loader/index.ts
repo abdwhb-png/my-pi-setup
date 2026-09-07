@@ -9,17 +9,37 @@ import {
 import { Type } from "typebox";
 import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
 import {
+    extractDollarPrefix,
+    transformDollarSkillInput,
+} from "./dollar-skill.ts";
+import {
     buildSkillList,
     findSkill,
     searchSkills,
     type SkillEntry,
 } from "./skill-index";
+import {
+    discoverSkillFallbacks,
+    formatRescuedSkillBlock,
+    getSkillRoots,
+    type RescuedSkill,
+} from "./skill-rescue.ts";
+
+export type { RescuedSkill };
+export {
+    discoverSkillFallbacks,
+    formatRescuedSkillBlock,
+    getSkillRoots,
+    transformDollarSkillInput,
+};
 
 export default function piSkillLoader(pi: ExtensionAPI): void {
     let skillList: SkillEntry[] = [];
+    let rescuedSkills: RescuedSkill[] = [];
+    let sessionCwd = process.cwd();
 
     const refreshSkillList = () => {
-        skillList = buildSkillList(pi.getCommands());
+        skillList = buildSkillList(pi.getCommands(), rescuedSkills);
     };
 
     // ---- search_skill ----
@@ -173,9 +193,10 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
             let content: string;
             try {
                 const buf = await readFile(skill.path);
+                const raw = buf.toString("utf-8");
                 content = requestMarkdownLinkTransform(pi.events, {
                     sourcePath: skill.path,
-                    content: buf.toString("utf-8"),
+                    content: raw.startsWith("\uFEFF") ? raw.slice(1) : raw,
                     cwd: context.cwd,
                     sourceKind: "load-skill-tool",
                 });
@@ -198,9 +219,171 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
         },
     });
 
-    // ---- register on session_start ----
-    pi.on("session_start", () => {
+    // ---- input event: dollar tokens and rescued slash command fallback ----
+    pi.on("input", async (event, ctx) => {
         refreshSkillList();
+        const cwd = (ctx as { cwd?: string } | undefined)?.cwd ?? sessionCwd;
+
+        const dollarTransformed = await transformDollarSkillInput(
+            event.text,
+            skillList,
+            pi.events,
+            cwd,
+        );
+        if (dollarTransformed) {
+            return { action: "transform", text: dollarTransformed };
+        }
+
+        const slashMatch = event.text.match(
+            /^\/skill:([^\s]+)(?:\s+([\s\S]*))?$/,
+        );
+        if (slashMatch) {
+            const coreOwnsSkill = pi
+                .getCommands()
+                .some(
+                    (command) =>
+                        command.source === "skill" &&
+                        command.name.replace(/^skill:/, "").toLowerCase() ===
+                            slashMatch[1].toLowerCase(),
+                );
+            if (!coreOwnsSkill) {
+                const skill = rescuedSkills.find(
+                    (candidate) =>
+                        candidate.name.toLowerCase() ===
+                        slashMatch[1].toLowerCase(),
+                );
+                if (skill) {
+                    return {
+                        action: "transform",
+                        text: formatRescuedSkillBlock(
+                            skill,
+                            slashMatch[2] ?? "",
+                        ),
+                    };
+                }
+            }
+        }
+
+        return { action: "continue" };
+    });
+
+    // ---- before_agent_start: BOM-normalized fallback skills catalog ----
+    pi.on("before_agent_start", (event) => {
+        const coreSkillNames = new Set(
+            pi
+                .getCommands()
+                .filter((command) => command.source === "skill")
+                .map((command) =>
+                    command.name.replace(/^skill:/, "").toLowerCase(),
+                ),
+        );
+        const fallbacks = rescuedSkills.filter(
+            (skill) => !coreSkillNames.has(skill.name.toLowerCase()),
+        );
+        if (fallbacks.length === 0) return undefined;
+
+        const catalog = fallbacks
+            .map(
+                (skill) =>
+                    `- \`${skill.name}\`: ${skill.description}\n  Load full instructions with \`load_skill\`.`,
+            )
+            .join("\n");
+        return {
+            systemPrompt: `${event.systemPrompt}\n\n## BOM-normalized fallback skills\n${catalog}`,
+        };
+    });
+
+    // ---- /validate-skills command ----
+    pi.registerCommand("validate-skills", {
+        description:
+            "Report BOM and frontmatter problems in discoverable skills",
+        handler: async (_args, ctx: ExtensionCommandContext) => {
+            const trusted =
+                typeof ctx.isProjectTrusted === "function" &&
+                ctx.isProjectTrusted();
+            const roots = await getSkillRoots(ctx.cwd, trusted);
+            const discovery = await discoverSkillFallbacks(roots);
+            const content =
+                discovery.diagnostics.length === 0
+                    ? "All discoverable skills passed BOM/frontmatter validation."
+                    : discovery.diagnostics
+                          .map(
+                              (diagnostic) =>
+                                  `${diagnostic.path}: ${diagnostic.message}`,
+                          )
+                          .join("\n");
+            pi.sendMessage(
+                {
+                    customType: "skill-validation",
+                    content,
+                    display: true,
+                },
+                { triggerTurn: false },
+            );
+        },
+    });
+
+    // ---- register on session_start ----
+    pi.on("session_start", async (_event, ctx: ExtensionContext) => {
+        sessionCwd = ctx.cwd;
+        const trusted =
+            typeof ctx.isProjectTrusted === "function" &&
+            ctx.isProjectTrusted();
+        const roots = await getSkillRoots(ctx.cwd, trusted);
+        const discovery = await discoverSkillFallbacks(roots);
+        rescuedSkills = discovery.skills;
+        if (ctx.hasUI && discovery.diagnostics.length > 0) {
+            ctx.ui.notify(
+                `Normalized ${discovery.diagnostics.length} invalid skill file(s). Run /validate-skills for paths.`,
+                "warning",
+            );
+        }
+        refreshSkillList();
+
+        if (ctx.hasUI) {
+            ctx.ui.addAutocompleteProvider((current) => ({
+                ...current,
+                triggerCharacters: [
+                    ...(current.triggerCharacters ?? []),
+                    "$",
+                ],
+                getSuggestions(lines, cursorLine, cursorCol, options) {
+                    const prefix = extractDollarPrefix(
+                        lines,
+                        cursorLine,
+                        cursorCol,
+                    );
+                    if (!prefix) {
+                        return current.getSuggestions(
+                            lines,
+                            cursorLine,
+                            cursorCol,
+                            options,
+                        );
+                    }
+                    const query = prefix.slice(1).toLowerCase();
+                    const items = skillList
+                        .filter((skill) =>
+                            skill.name.toLowerCase().includes(query),
+                        )
+                        .slice(0, 20)
+                        .map((skill) => ({
+                            value: `$${skill.name}`,
+                            label: `$${skill.name}`,
+                            description: skill.description,
+                        }));
+                    if (items.length === 0) {
+                        return current.getSuggestions(
+                            lines,
+                            cursorLine,
+                            cursorCol,
+                            options,
+                        );
+                    }
+                    return { items, prefix };
+                },
+            }));
+        }
 
         pi.registerTool(searchSkillTool);
         pi.registerTool(findSkillTool);
@@ -231,7 +414,7 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
                     }))
                     .slice(0, 30);
             },
-            handler: async (args: string, context: ExtensionCommandContext) => {
+            handler: async (args: string, cmdCtx: ExtensionCommandContext) => {
                 const names = args.trim().split(/\s+/).filter(Boolean);
                 if (names.length === 0) {
                     return;
@@ -248,12 +431,13 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
                     try {
                         // oxlint-disable-next-line eslint/no-await-in-loop -- sequential load by design
                         const buf = await readFile(skill.path);
+                        const raw = buf.toString("utf-8");
                         const content = requestMarkdownLinkTransform(
                             pi.events,
                             {
                                 sourcePath: skill.path,
-                                content: buf.toString("utf-8"),
-                                cwd: context.cwd,
+                                content: raw.startsWith("\uFEFF") ? raw.slice(1) : raw,
+                                cwd: cmdCtx.cwd,
                                 sourceKind: "load-skills-command",
                             },
                         );
@@ -266,7 +450,16 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
                             },
                             { triggerTurn: false },
                         );
-                    } catch {}
+                    } catch (err) {
+                        pi.sendMessage(
+                            {
+                                customType: "skill-load-error",
+                                content: `Failed to load skill "${skill.name}": ${err instanceof Error ? err.message : String(err)}`,
+                                display: true,
+                            },
+                            { triggerTurn: false },
+                        );
+                    }
                 }
             },
         });

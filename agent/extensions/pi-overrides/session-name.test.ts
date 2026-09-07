@@ -90,6 +90,19 @@ Fix login`;
         );
     });
 
+    it('compacts a leading block produced from an embedded dollar ref', () => {
+        // An embedded `$tdd` splices the block inline at submit time; when
+        // the user text happens to lead with the ref the expanded message
+        // still starts with the block and compacts as usual.
+        const message = `<skill name="tdd" location="/skills/tdd/SKILL.md">
+TDD instructions
+</skill> please review this`;
+
+        expect(compactSkillSessionName(message)).toBe(
+            '/skill:tdd please review this',
+        );
+    });
+
     it('returns only the compact command when no user message follows', () => {
         const message = `<skill name="diagnose" location="/skills/diagnose/SKILL.md">
 Diagnose instructions

@@ -1,4 +1,5 @@
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { RescuedSkill } from "./skill-rescue.ts";
 
 export interface SkillEntry {
     /** Skill name without the "skill:" prefix */
@@ -7,16 +8,20 @@ export interface SkillEntry {
     description: string;
     /** Absolute path to the SKILL.md file */
     path: string;
-    /** Source scope: "user" | "project" */
+    /** Source scope: "user" | "project" | "rescued" */
     source: string;
 }
 
 /**
- * Build a skill list from pi's slash commands.
+ * Build a skill list from pi's slash commands plus BOM-normalized rescued skills.
  * Filters commands with source === "skill" and strips the "skill:" prefix.
+ * Core skills take precedence; rescued skills with conflicting names are excluded.
  */
-export function buildSkillList(commands: SlashCommandInfo[]): SkillEntry[] {
-    return commands
+export function buildSkillList(
+    commands: SlashCommandInfo[],
+    rescuedSkills: readonly RescuedSkill[] = [],
+): SkillEntry[] {
+    const core = commands
         .filter((c) => c.source === "skill")
         .map((c) => ({
             name: c.name.startsWith("skill:")
@@ -26,6 +31,18 @@ export function buildSkillList(commands: SlashCommandInfo[]): SkillEntry[] {
             path: c.sourceInfo?.path ?? "",
             source: c.sourceInfo?.source ?? "unknown",
         }));
+
+    const coreNames = new Set(core.map((s) => s.name.toLowerCase()));
+    const rescued = rescuedSkills
+        .filter((s) => !coreNames.has(s.name.toLowerCase()))
+        .map((s) => ({
+            name: s.name,
+            description: s.description,
+            path: s.path,
+            source: "rescued",
+        }));
+
+    return [...core, ...rescued];
 }
 
 /**

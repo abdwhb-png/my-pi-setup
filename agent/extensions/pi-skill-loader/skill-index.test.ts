@@ -72,6 +72,49 @@ describe("buildSkillList", () => {
     expect(result[0].path).toBe("/home/user/.pi/agent/skills/test/SKILL.md");
   });
 
+  it("appends rescued skills when no core skill conflicts", () => {
+    const commands: SlashCommandInfo[] = [
+      makeCommand("skill:tdd", "skill"),
+    ];
+    const rescued = [
+      {
+        name: "bom-skill",
+        description: "BOM rescued skill",
+        path: "/path/to/bom-skill/SKILL.md",
+        baseDir: "/path/to/bom-skill",
+        content: "# BOM Skill",
+      },
+    ];
+
+    const result = buildSkillList(commands, rescued);
+    expect(result).toHaveLength(2);
+    expect(result[1]).toEqual({
+      name: "bom-skill",
+      description: "BOM rescued skill",
+      path: "/path/to/bom-skill/SKILL.md",
+      source: "rescued",
+    });
+  });
+
+  it("gives core skills precedence over rescued skills with same name", () => {
+    const commands: SlashCommandInfo[] = [
+      makeCommand("skill:tdd", "skill", { description: "Core TDD" }),
+    ];
+    const rescued = [
+      {
+        name: "TDD",
+        description: "Rescued TDD",
+        path: "/other/tdd/SKILL.md",
+        baseDir: "/other/tdd",
+        content: "# TDD",
+      },
+    ];
+
+    const result = buildSkillList(commands, rescued);
+    expect(result).toHaveLength(1);
+    expect(result[0].description).toBe("Core TDD");
+  });
+
   it("extracts source scope from sourceInfo", () => {
     const commands: SlashCommandInfo[] = [
       makeCommand("skill:user-skill", "skill", {

@@ -11,7 +11,6 @@ import type {
     ExtensionAPI,
     SessionEntry,
     Theme,
-    ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import {
     createFindToolDefinition,
@@ -25,7 +24,6 @@ import { getActivePolicy } from "../_shared/audit-mode/audit-state";
 import { appendCompressionFooter } from "../_shared/compression-render";
 import { executeOnHost } from "../_shared/execution-provenance/index.ts";
 import { expandHomePath } from "../_shared/home-path.ts";
-import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
 import { managedOutputArchive } from "../save-tokens/tool-results/archive.ts";
 import {
     loadFileResolverConfig,
@@ -39,12 +37,6 @@ import {
     compactPromptSessionName,
     compactSkillSessionName,
 } from "./session-name.ts";
-import {
-    discoverSkillFallbacks,
-    formatRescuedSkillBlock,
-    getSkillRoots,
-    type RescuedSkill,
-} from "./skill-rescue.ts";
 
 // ─── Audit-aware ls operations ───────────────────────────────────────────────
 
@@ -336,7 +328,6 @@ function userMessageText(entry: SessionEntry | undefined): string | undefined {
 
 function registerCompactSessionNames(
     pi: ExtensionAPI,
-    transformSkillInput: (text: string) => string | undefined,
 ): (entries: readonly SessionEntry[]) => void {
     let firstUserInputSeen = false;
     let firstUserMessageSeen = false;
@@ -376,12 +367,6 @@ function registerCompactSessionNames(
     });
 
     pi.on("input", (event) => {
-        const rescuedSkillInput = transformSkillInput(event.text);
-        if (rescuedSkillInput) {
-            firstUserInputSeen = true;
-            return { action: "transform", text: rescuedSkillInput };
-        }
-
         if (firstUserInputSeen || pi.getSessionName()) {
             return { action: "continue" };
         }
@@ -412,176 +397,10 @@ export default function piOverrides(pi: ExtensionAPI): void {
     // --- Register piFileResolver
     piFileResolver(pi);
     registerPromptThinking(pi);
-    let rescuedSkills: RescuedSkill[] = [];
-    let sessionCwd = process.cwd();
-    pi.registerCommand("validate-skills", {
-        description:
-            "Report BOM and frontmatter problems in discoverable skills",
-        handler: async (_args, ctx) => {
-            const trusted =
-                typeof ctx.isProjectTrusted === "function" &&
-                ctx.isProjectTrusted();
-            const roots = await getSkillRoots(ctx.cwd, trusted);
-            const discovery = await discoverSkillFallbacks(roots);
-            const content =
-                discovery.diagnostics.length === 0
-                    ? "All discoverable skills passed BOM/frontmatter validation."
-                    : discovery.diagnostics
-                          .map(
-                              (diagnostic) =>
-                                  `${diagnostic.path}: ${diagnostic.message}`,
-                          )
-                          .join("\n");
-            pi.sendMessage(
-                {
-                    customType: "skill-validation",
-                    content,
-                    display: true,
-                },
-                { triggerTurn: false },
-            );
-        },
-    });
-    const restoreCompactSessionNameState = registerCompactSessionNames(
-        pi,
-        (text) => {
-            const match = text.match(/^\/skill:([^\s]+)(?:\s+([\s\S]*))?$/);
-            if (!match) return undefined;
-
-            const coreOwnsSkill = pi
-                .getCommands()
-                .some(
-                    (command) =>
-                        command.source === "skill" &&
-                        command.name.replace(/^skill:/, "").toLowerCase() ===
-                            match[1].toLowerCase(),
-                );
-            if (coreOwnsSkill) return undefined;
-
-            const skill = rescuedSkills.find(
-                (candidate) =>
-                    candidate.name.toLowerCase() === match[1].toLowerCase(),
-            );
-            return skill
-                ? formatRescuedSkillBlock(skill, match[2] ?? "")
-                : undefined;
-        },
-    );
-
-    const availableRescuedSkills = () => {
-        const coreSkillNames = new Set(
-            pi
-                .getCommands()
-                .filter((command) => command.source === "skill")
-                .map((command) =>
-                    command.name.replace(/^skill:/, "").toLowerCase(),
-                ),
-        );
-        return rescuedSkills.filter(
-            (skill) => !coreSkillNames.has(skill.name.toLowerCase()),
-        );
-    };
-
-    pi.on("before_agent_start", (event) => {
-        const skills = availableRescuedSkills();
-        if (skills.length === 0) return undefined;
-
-        const catalog = skills
-            .map(
-                (skill) =>
-                    `- \`${skill.name}\`: ${skill.description}\n  Load full instructions with \`load_skill\`.`,
-            )
-            .join("\n");
-        return {
-            systemPrompt: `${event.systemPrompt}\n\n## BOM-normalized fallback skills\n${catalog}`,
-        };
-    });
-
-    pi.on("tool_result", (event: ToolResultEvent) => {
-        const output = event.content
-            .filter((block) => block.type === "text")
-            .map((block) => block.text)
-            .join("\n");
-
-        if (event.toolName === "load_skill") {
-            const name = event.input.name;
-            if (typeof name !== "string") return undefined;
-            if (!output.includes(`Skill "${name}" not found`)) return undefined;
-
-            const skill = availableRescuedSkills().find(
-                (candidate) =>
-                    candidate.name.toLowerCase() === name.toLowerCase(),
-            );
-            if (!skill) return undefined;
-
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: requestMarkdownLinkTransform(pi.events, {
-                            sourcePath: skill.path,
-                            content: skill.content,
-                            cwd: sessionCwd,
-                            sourceKind: "bom-skill-fallback",
-                        }),
-                    },
-                ],
-                details: undefined,
-                isError: false,
-            };
-        }
-
-        if (event.toolName !== "search_skill") return undefined;
-        const query = event.input.query;
-        if (typeof query !== "string") return undefined;
-        const lowerQuery = query.toLowerCase();
-        const matches = availableRescuedSkills().filter((skill) =>
-            `${skill.name} ${skill.description}`
-                .toLowerCase()
-                .includes(lowerQuery),
-        );
-        if (matches.length === 0) return undefined;
-
-        const lines = [
-            `Found ${matches.length} BOM-normalized fallback skill(s) matching "${query}":`,
-            "",
-            ...matches.flatMap((skill) => [
-                `  • ${skill.name}`,
-                `    ${skill.description}`,
-            ]),
-            "",
-            `Use load_skill("${matches[0].name}") to load its full instructions.`,
-        ];
-        const fallbackOutput = lines.join("\n");
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: output.startsWith("No skills found")
-                        ? fallbackOutput
-                        : `${output}\n\n${fallbackOutput}`,
-                },
-            ],
-            details: undefined,
-            isError: false,
-        };
-    });
+    const restoreCompactSessionNameState = registerCompactSessionNames(pi);
 
     pi.on("session_start", async (_event, ctx) => {
-        sessionCwd = ctx.cwd;
         restoreCompactSessionNameState(ctx.sessionManager.getEntries());
-        const trusted =
-            typeof ctx.isProjectTrusted === "function" &&
-            ctx.isProjectTrusted();
-        const roots = await getSkillRoots(ctx.cwd, trusted);
-        const discovery = await discoverSkillFallbacks(roots);
-        rescuedSkills = discovery.skills;
-        if (ctx.hasUI && discovery.diagnostics.length > 0) {
-            ctx.ui.notify(
-                `Normalized ${discovery.diagnostics.length} invalid skill file(s). Run /validate-skills for paths.`,
-                "warning",
-            );
-        }
         // Load config fresh each session
         setFileResolverConfig(loadFileResolverConfig(ctx.cwd));
 
