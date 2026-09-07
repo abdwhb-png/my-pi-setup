@@ -64,7 +64,8 @@ const ROLE_TOOL_POLICY_EVENT = "pi-roles:tool-policy";
 
 function sandboxUnavailableReason(): string | undefined {
     const runtime = getSandboxRuntime();
-    if (runtime.state === "enabled") return undefined;
+    if (runtime.state === "enabled" || runtime.state === "reconfiguring")
+        return undefined;
     const kind: SandboxUnavailableKind =
         runtime.state === "disabled"
             ? "disabled"
@@ -94,7 +95,8 @@ export function registerThinkInCode(
 
     function syncSandboxToolVisibility(): void {
         const activeTools = new Set(pi.getActiveTools());
-        if (getSandboxRuntime().state !== "enabled") {
+        const runtimeState = getSandboxRuntime().state;
+        if (runtimeState !== "enabled" && runtimeState !== "reconfiguring") {
             if (activeTools.delete(TOOL_NAMES.execute)) {
                 restoreExecuteWhenSandboxAvailable = true;
                 pi.setActiveTools([...activeTools]);

@@ -436,6 +436,68 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(readdirSync(archiveRoot)).toEqual([]);
     });
 
+    it("keeps Think available during reconfiguration and runs once with the replacement runtime", async () => {
+        const previous = makeBrokerState();
+        const next = makeBrokerState();
+        const home = createHarnessProject();
+        const session = await createTestSession({
+            cwd: home,
+            extensionFactories: [thinkInCodeFactory(previous)],
+            mockTools: { bash: "ok", read: "ok", write: "ok", edit: "ok" },
+        });
+        sessions.push(session);
+        await session.session.agent.waitForIdle();
+        publishSandboxRuntime(ownerSymbol!, { state: "reconfiguring" });
+        const pending = session.run(when("Wait for the new sandbox", [
+            calls("think_execute", { action: "command", command: "echo ready", language: "javascript", program: "INPUT.length" }),
+            says("Done."),
+        ]));
+        try {
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            expect(collectToolNames(session)).toContain("think_execute");
+            expect(session.events.toolResultsFor("think_execute")).toHaveLength(0);
+            expect(previous.safeExecCalls).toHaveLength(0);
+        } finally {
+            publishSandboxRuntime(ownerSymbol!, {
+                state: "enabled",
+                createBashOperations: () => next.bashOperations,
+                createThinkBashOperations: () => next.bashOperations,
+                analysis: next.analysis,
+            });
+            await pending;
+        }
+        expect(next.safeExecCalls).toHaveLength(1);
+        expect(next.analysisCalls).toHaveLength(1);
+        expect(session.events.toolResultsFor("think_execute")).toHaveLength(1);
+        expect(session.events.toolResultsFor("think_execute")[0]?.isError).not.toBe(true);
+    });
+
+    it.each(["error", "disabled"] as const)("surfaces a failed reconfiguration through the real Think result: %s", async (ending) => {
+        const state = makeBrokerState();
+        const home = createHarnessProject();
+        const session = await createTestSession({
+            cwd: home,
+            extensionFactories: [thinkInCodeFactory(state)],
+            mockTools: { bash: "ok", read: "ok", write: "ok", edit: "ok" },
+        });
+        sessions.push(session);
+        await session.session.agent.waitForIdle();
+        publishSandboxRuntime(ownerSymbol!, { state: "reconfiguring" });
+        const pending = session.run(when("Execute after configuration", [
+            calls("think_execute", { action: "command", command: "echo ready", language: "javascript", program: "INPUT.length" }),
+            says("Reported."),
+        ]));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        publishSandboxRuntime(ownerSymbol!, { state: ending });
+        await pending;
+        const results = session.events.toolResultsFor("think_execute");
+        expect(results).toHaveLength(1);
+        expect(results[0]?.isError).toBe(true);
+        expect(JSON.stringify(results[0]?.content)).toContain("request was not executed");
+        expect(state.safeExecCalls).toHaveLength(0);
+        expect(state.analysisCalls).toHaveLength(0);
+    });
+
     it("resynchronizes think_execute before each turn when sandbox availability changes", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();

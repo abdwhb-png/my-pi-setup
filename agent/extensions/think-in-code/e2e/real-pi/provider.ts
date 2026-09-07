@@ -136,13 +136,20 @@ export default function register(pi: ExtensionAPI): void {
 
     if (phase === "bash-architecture") {
         const sandboxProbe =
-            'test ! -e "$HOME/.pi/agent/settings.json" && printf zerobox';
+            'test "$HOME" != "$DOCKER_CONFIG" && test -d "$DOCKER_CONFIG" && ! cat .pi/sandbox-denied.txt 2>/dev/null && printf zerobox';
         faux.setResponses([
             traced("bash-start", () =>
                 tool("bash", { command: sandboxProbe }, "smoke-bash"),
             ),
             traced("after-bash", () =>
                 tool("safe_bash", { command: sandboxProbe }, "smoke-safe-bash"),
+            ),
+            traced("after-safe-bash", () =>
+                tool(
+                    "safe_bash",
+                    { command: "(exit 7) | tail -n 1" },
+                    "smoke-pipefail",
+                ),
             ),
             traced("bash-complete", () =>
                 fauxAssistantMessage("bash architecture smoke complete"),

@@ -37,9 +37,11 @@ mkdir -p "$project/.pi/extensions" "$sessions" "$bash_sessions"
 ln -s "$agent_root/node_modules" "$project/node_modules"
 cp "$script_dir/provider.ts" "$project/.pi/extensions/smoke-provider.ts"
 printf 'FILE SMOKE PAYLOAD\n' >"$project/fixture.txt"
+printf 'DENIED SANDBOX FIXTURE\n' >"$project/.pi/sandbox-denied.txt"
 printf '%s\n' '{' \
     '  "sandbox": {' \
     '    "enabled": true,' \
+    '    "filesystem": { "denyRead": [".pi/sandbox-denied.txt"] },' \
     '    "network": { "allowedDomains": [], "deniedDomains": [] }' \
     '  },' \
     '  "safeBash": {' \
@@ -99,8 +101,10 @@ bash_common=(
 if ! jq -e '
     select(.phase == "bash-architecture" and .label == "bash-complete")
     | (.tools | sort) == ["bash", "safe_bash"]
-      and ([.toolResults[] | select(.toolName == "bash" or .toolName == "safe_bash")] | length) == 2
-      and all(.toolResults[]; .isError != true)
+      and ([.toolResults[] | select(.toolName == "bash" or .toolName == "safe_bash")] | length) == 3
+      and all(.toolResults[0:2][]; .isError != true)
+      and .toolResults[2].isError == true
+      and (.toolResults[2].contentText | contains("code 7"))
 ' "$trace" >/dev/null; then
     echo "Bash Execution architecture smoke did not complete through both tools" >&2
     exit 1
