@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   createEventBus,
+  initTheme,
   type ExtensionAPI,
+  type MessageRenderer,
   type SlashCommandInfo,
   type SourceInfo,
   type ToolDefinition,
@@ -11,6 +13,7 @@ import {
   MARKDOWN_LINKS_TRANSFORM_EVENT,
 } from "../_shared/markdown-links.ts";
 import piSkillLoader from "./index";
+import { CustomMessageComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/custom-message.js";
 
 function makeSourceInfo(overrides: Partial<SourceInfo> = {}): SourceInfo {
   return {
@@ -40,6 +43,7 @@ function createMockAPI(customCommands?: SlashCommandInfo[]) {
   ];
 
   const registeredTools = new Map<string, ToolDefinition>();
+  const registeredRenderers = new Map<string, MessageRenderer>();
   const registeredCommands = new Map<string, {
     description?: string;
     getArgumentCompletions?: (prefix: string) => { value: string; label: string; description?: string }[] | null;
@@ -73,12 +77,15 @@ function createMockAPI(customCommands?: SlashCommandInfo[]) {
     sendMessage(msg: { customType: string; content: string; display: boolean }) {
       sentMessages.push(msg);
     },
+    registerMessageRenderer(name: string, renderer: MessageRenderer) {
+      registeredRenderers.set(name, renderer);
+    },
     on(event: string, handler: (event: object, ctx?: object) => Promise<unknown> | unknown) {
       handlers.set(event, handler);
     },
   } as unknown as ExtensionAPI;
 
-  return { pi, commands, registeredTools, registeredCommands, activeTools, sentMessages, handlers };
+  return { pi, commands, registeredTools, registeredCommands, registeredRenderers, activeTools, sentMessages, handlers };
 }
 
 // Mock readFile
@@ -86,6 +93,8 @@ const readFileMock = mock();
 
 mock.module("node:fs/promises", () => ({
   readFile: readFileMock,
+  // These tests provide the skill catalog explicitly, independent of local installs.
+  readdir: mock(async () => []),
 }));
 
 /** Helper: load extension and fire session_start */
@@ -264,6 +273,32 @@ describe("pi-skill-loader", () => {
   });
 
   describe("/load-skills command", () => {
+    it("renders both loaded skills when expanded and after collapsing again", async () => {
+      initTheme("dark", false);
+      readFileMock.mockImplementation((path: string) => {
+        if (path === "/skills/tdd/SKILL.md") return Promise.resolve(Buffer.from("# TDD instructions\n\n---\n\nFirst skill body"));
+        if (path === "/skills/bun-test/SKILL.md") return Promise.resolve(Buffer.from("# Bun Test instructions\n\nSecond skill body"));
+        throw new Error("ENOENT");
+      });
+      const api = createMockAPI();
+      await initExtension(api);
+      await api.registeredCommands.get("load-skills")!.handler("tdd bun-test", { cwd: "/workspace" });
+      const renderer = api.registeredRenderers.get("skill-loaded");
+      expect(renderer).toBeDefined();
+      const component = new CustomMessageComponent(
+        { ...api.sentMessages[0], role: "custom", timestamp: 0 },
+        renderer,
+      );
+      expect(component.render(100).join("\n")).toContain("tdd, bun-test");
+      expect(component.render(100).join("\n")).not.toContain("Second skill body");
+      component.setExpanded(true);
+      const expanded = component.render(100).join("\n");
+      expect(expanded).toContain("First skill body");
+      expect(expanded).toContain("Second skill body");
+      component.setExpanded(false);
+      expect(component.render(100).join("\n")).not.toContain("First skill body");
+    });
+
     it("autocomplete returns matching skill names for prefix", async () => {
       const { pi, registeredCommands, handlers } = createMockAPI();
       piSkillLoader(pi);
@@ -277,7 +312,7 @@ describe("pi-skill-loader", () => {
       expect(completions[0].value).toBe("tdd");
     });
 
-    it("autocomplete excludes already-matched skills in multi-arg", async () => {
+    it("autocomplete excludes already-matched skills in multi-arg and preserves prior arguments", async () => {
       const { pi, registeredCommands, handlers } = createMockAPI();
       piSkillLoader(pi);
       await handlers.get("session_start")?.({}, {});
@@ -287,8 +322,8 @@ describe("pi-skill-loader", () => {
 
       const completions = cmd.getArgumentCompletions("tdd bun") ?? [];
       const values = completions.map((c) => c.value);
-      // "bun" should match "bun-test" but NOT "tdd" (already matched)
-      expect(values).toContain("bun-test");
+      // "bun" should match "bun-test" with prior "tdd " preserved so pi-tui doesn't overwrite
+      expect(values).toContain("tdd bun-test");
       expect(values).not.toContain("tdd");
     });
 
@@ -304,7 +339,7 @@ describe("pi-skill-loader", () => {
       expect(completions).toHaveLength(0);
     });
 
-    it("handler loads multiple skills and sends messages", async () => {
+    it("handler loads multiple skills and sends single batched message", async () => {
       readFileMock.mockImplementation((path: string) => {
         if (path === "/skills/tdd/SKILL.md") return Promise.resolve(Buffer.from("# TDD Skill"));
         if (path === "/skills/bun-test/SKILL.md") return Promise.resolve(Buffer.from("# Bun Test Skill"));
@@ -318,11 +353,12 @@ describe("pi-skill-loader", () => {
       const cmd = registeredCommands.get("load-skills");
       if (!cmd?.handler) throw new Error("load-skills not registered");
 
-      await cmd.handler("tdd bun-test", { cwd: "/workspace" });
+      await cmd.handler("tdd bun-test", { cwd: "/workspace" } as any);
 
-      expect(sentMessages.length).toBe(2);
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].customType).toBe("skill-loaded");
       expect(sentMessages[0].content).toContain("# TDD Skill");
-      expect(sentMessages[1].content).toContain("# Bun Test Skill");
+      expect(sentMessages[0].content).toContain("# Bun Test Skill");
     });
 
     it("rewrites Markdown before /load-skills sends it", async () => {
@@ -338,7 +374,7 @@ describe("pi-skill-loader", () => {
 
       const cmd = registeredCommands.get("load-skills");
       if (!cmd?.handler) throw new Error("load-skills not registered");
-      await cmd.handler("tdd", { cwd: "/workspace" });
+      await cmd.handler("tdd", { cwd: "/workspace" } as any);
 
       expect(sentMessages[0].content).toContain(
         "Read [guide](/skills/tdd/guide.md)",
@@ -355,7 +391,7 @@ describe("pi-skill-loader", () => {
       const cmd = registeredCommands.get("load-skills");
       if (!cmd?.handler) throw new Error("load-skills not registered");
 
-      await cmd.handler("nonexistent tdd", { cwd: "/workspace" });
+      await cmd.handler("nonexistent tdd", { cwd: "/workspace" } as any);
 
       expect(sentMessages.length).toBe(1);
       expect(sentMessages[0].content).toContain("# TDD Skill");
@@ -379,6 +415,70 @@ describe("pi-skill-loader", () => {
   });
 
   describe("input event dollar skill expansion", () => {
+    it("loads every skill referenced throughout a message", async () => {
+      const api = createMockAPI([
+        makeSkillCommand("bun", "/skills/bun/SKILL.md"),
+        makeSkillCommand("bun-test", "/skills/bun-test/SKILL.md"),
+        makeSkillCommand("concise-communication", "/skills/concise-communication/SKILL.md"),
+      ]);
+      readFileMock.mockImplementation(async (path: string) => Buffer.from({
+        "/skills/bun/SKILL.md": "BUN_INSTRUCTIONS",
+        "/skills/bun-test/SKILL.md": "BUN_TEST_INSTRUCTIONS",
+        "/skills/concise-communication/SKILL.md": "CONCISE_INSTRUCTIONS",
+      }[path] ?? ""));
+      await initExtension(api);
+      const result = await api.handlers.get("input")!(
+        { text: "this is a test $bun $bun-test, next $concise-communication" },
+        { cwd: "/workspace" },
+      );
+      expect(result).toMatchObject({ action: "transform" });
+      const delivered = [JSON.stringify(result), ...api.sentMessages.map(message => message.content)].join("\n");
+      expect(delivered).toContain("BUN_INSTRUCTIONS");
+      expect(delivered).toContain("BUN_TEST_INSTRUCTIONS");
+      expect(delivered).toContain("CONCISE_INSTRUCTIONS");
+      expect(delivered).toContain("this is a test skill:bun skill:bun-test, next skill:concise-communication");
+    });
+
+    it("does not read or send duplicate skills when input is processed again", async () => {
+      const api = createMockAPI();
+      readFileMock.mockResolvedValue(Buffer.from("Skill body"));
+      await initExtension(api);
+      const input = api.handlers.get("input")!;
+      expect(await input({ text: "$tdd $TDD,$bun-test $bun-test" }, { cwd: "/workspace" })).toEqual({
+        action: "transform", text: "skill:tdd skill:tdd,skill:bun-test skill:bun-test",
+      });
+      expect(readFileMock).toHaveBeenCalledTimes(2);
+      expect(api.sentMessages).toHaveLength(1);
+      expect(await input({ text: "skill:tdd skill:tdd,skill:bun-test skill:bun-test" }, { cwd: "/workspace" })).toEqual({ action: "continue" });
+      expect(readFileMock).toHaveBeenCalledTimes(2);
+      expect(api.sentMessages).toHaveLength(1);
+    });
+
+    it("reports a failed skill read and preserves its reference while loading other skills", async () => {
+      const api = createMockAPI();
+      readFileMock.mockImplementation(async (path: string) => {
+        if (path === "/skills/tdd/SKILL.md") throw new Error("ENOENT: missing skill file");
+        return Buffer.from("BUN_TEST_INSTRUCTIONS");
+      });
+      await initExtension(api);
+      const result = await api.handlers.get("input")!({ text: "$tdd and $bun-test" }, { cwd: "/workspace" });
+      expect(result).toEqual({ action: "transform", text: "$tdd and skill:bun-test" });
+      expect(api.sentMessages).toHaveLength(2);
+      expect(api.sentMessages[0]).toMatchObject({ customType: "skill-load-error", content: 'Failed to load skill "tdd": ENOENT: missing skill file' });
+      expect(api.sentMessages[1]).toMatchObject({ customType: "skill-loaded", details: { skillNames: ["bun-test"] } });
+      expect(api.sentMessages[1].content).toContain("BUN_TEST_INSTRUCTIONS");
+    });
+
+    it("keeps the original input when all referenced skill files fail to load", async () => {
+      const api = createMockAPI();
+      readFileMock.mockRejectedValue(new Error("EACCES: inaccessible skill file"));
+      await initExtension(api);
+      const result = await api.handlers.get("input")!({ text: "$tdd $bun-test" }, { cwd: "/workspace" });
+      expect(result).toEqual({ action: "continue" });
+      expect(api.sentMessages).toHaveLength(2);
+      expect(api.sentMessages.every(message => message.customType === "skill-load-error")).toBe(true);
+    });
+
     it("rewrites a sole dollar token for a core skill to slash form", async () => {
       const { pi, handlers } = createMockAPI();
       piSkillLoader(pi);
@@ -388,11 +488,10 @@ describe("pi-skill-loader", () => {
       if (!inputHandler) throw new Error("input handler not registered");
 
       const result = await inputHandler({ text: "$tdd fix login" }, { cwd: "/workspace" });
-      expect(result).toEqual({ action: "transform", text: "/skill:tdd fix login" });
+      expect(result).toEqual({ action: "transform", text: "/skill:tdd skill:tdd fix login" });
     });
 
-    it("splices an embedded dollar token inline using loadSkillContent", async () => {
-      readFileMock.mockResolvedValue(Buffer.from("---\nname: tdd\ndescription: TDD\n---\n\n# TDD Instructions\n"));
+    it("rewrites an embedded dollar token to leading slash command for native Pi core expansion", async () => {
       const { pi, handlers } = createMockAPI();
       piSkillLoader(pi);
       await handlers.get("session_start")?.({}, { cwd: "/workspace" });
@@ -406,7 +505,7 @@ describe("pi-skill-loader", () => {
       );
       expect(result).toEqual({
         action: "transform",
-        text: "please use <skill name=\"tdd\" location=\"/skills/tdd/SKILL.md\">\nReferences are relative to /skills/tdd.\n\n# TDD Instructions\n</skill> before pushing",
+        text: "/skill:tdd please use skill:tdd before pushing",
       });
     });
 
@@ -465,26 +564,19 @@ describe("pi-skill-loader", () => {
     });
   });
 
-  describe("expansion parity with markdown links", () => {
-    it("embedded dollar block matches load_skill content and applies markdown link transform", async () => {
-      readFileMock.mockResolvedValue(Buffer.from("---\nname: tdd\ndescription: TDD\n---\n\nRead [guide](guide.md)\n"));
+  describe("native Pi core expansion compatibility", () => {
+    it("rewrites trailing dollar token to leading slash command preserving user prompt", async () => {
       const { pi, handlers } = createMockAPI();
-      pi.events.on(MARKDOWN_LINKS_TRANSFORM_EVENT, (value) => {
-        if (!isMarkdownLinkTransformRequest(value)) return;
-        expect(value.sourcePath).toBe("/skills/tdd/SKILL.md");
-        expect(value.sourceKind).toBe("dollar-skill-input");
-        value.result = value.content.replace("guide.md", "/skills/tdd/guide.md");
-      });
       piSkillLoader(pi);
       await handlers.get("session_start")?.({}, { cwd: "/workspace" });
 
       const inputHandler = handlers.get("input");
       if (!inputHandler) throw new Error("input handler not registered");
 
-      const result = await inputHandler({ text: "check $tdd now" }, { cwd: "/workspace" });
+      const result = await inputHandler({ text: "this is just a test to see if it works $bun-test" }, { cwd: "/workspace" });
       expect(result).toEqual({
         action: "transform",
-        text: "check <skill name=\"tdd\" location=\"/skills/tdd/SKILL.md\">\nReferences are relative to /skills/tdd.\n\nRead [guide](/skills/tdd/guide.md)\n</skill> now",
+        text: "/skill:bun-test this is just a test to see if it works skill:bun-test",
       });
     });
   });

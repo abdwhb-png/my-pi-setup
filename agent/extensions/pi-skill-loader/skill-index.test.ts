@@ -93,6 +93,8 @@ describe("buildSkillList", () => {
       description: "BOM rescued skill",
       path: "/path/to/bom-skill/SKILL.md",
       source: "rescued",
+      baseDir: "/path/to/bom-skill",
+      content: "# BOM Skill",
     });
   });
 

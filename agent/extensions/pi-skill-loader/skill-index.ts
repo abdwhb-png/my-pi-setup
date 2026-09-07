@@ -10,6 +10,10 @@ export interface SkillEntry {
     path: string;
     /** Source scope: "user" | "project" | "rescued" */
     source: string;
+    /** Base directory of the skill (for rescued skills) */
+    baseDir?: string;
+    /** In-memory content of the skill (for rescued skills) */
+    content?: string;
 }
 
 /**
@@ -40,6 +44,8 @@ export function buildSkillList(
             description: s.description,
             path: s.path,
             source: "rescued",
+            baseDir: s.baseDir,
+            content: s.content,
         }));
 
     return [...core, ...rescued];

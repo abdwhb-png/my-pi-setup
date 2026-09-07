@@ -1,17 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createEventBus } from "@earendil-works/pi-coding-agent";
-import {
-    isMarkdownLinkTransformRequest,
-    MARKDOWN_LINKS_TRANSFORM_EVENT,
-} from "../_shared/markdown-links.ts";
 import {
     extractDollarPrefix,
     extractDollarSkillName,
-    loadSkillContent,
-    spliceSkillBlock,
+    rewriteDollarTokenToSkillRef,
     transformDollarSkillInput,
 } from "./dollar-skill.ts";
 import type { SkillEntry } from "./skill-index.ts";
@@ -42,6 +33,13 @@ describe("extractDollarSkillName", () => {
         expect(extractDollarSkillName("use $tdd.")).toBe("tdd");
         expect(extractDollarSkillName("use $tdd, then deploy")).toBe("tdd");
     });
+
+    it("recognizes punctuation boundaries without treating escaped or shell tokens as skills", () => {
+        expect(extractDollarSkillName("($bun), next")).toBe("bun");
+        expect(extractDollarSkillName("$$bun")).toBeNull();
+        expect(extractDollarSkillName("\\$bun")).toBeNull();
+        expect(extractDollarSkillName("prefix$bun")).toBeNull();
+    });
 });
 
 describe("extractDollarPrefix", () => {
@@ -56,149 +54,125 @@ describe("extractDollarPrefix", () => {
     it("returns null without a dollar token", () => {
         expect(extractDollarPrefix(["plain text"], 0, 10)).toBeNull();
     });
-});
 
-describe("spliceSkillBlock", () => {
-    it("replaces a lone token with the block", () => {
-        expect(spliceSkillBlock("$tdd", "tdd", "<block/>")).toBe("<block/>");
-    });
-
-    it("preserves text around an embedded token", () => {
-        expect(spliceSkillBlock("use $tdd now", "tdd", "<block/>")).toBe(
-            "use <block/> now",
-        );
-    });
-
-    it("leaves unknown names untouched", () => {
-        expect(spliceSkillBlock("use $nope now", "tdd", "<block/>")).toBe(
-            "use $nope now",
-        );
+    it("completes after punctuation while ignoring escaped or shell dollars", () => {
+        expect(extractDollarPrefix(["($bu"], 0, 4)).toBe("$bu");
+        expect(extractDollarPrefix(["$$bu"], 0, 4)).toBeNull();
+        expect(extractDollarPrefix(["\\$bu"], 0, 4)).toBeNull();
     });
 });
 
-describe("loadSkillContent", () => {
-    it("returns error result on read failure", async () => {
-        const events = createEventBus();
-        const skill: SkillEntry = {
-            name: "missing",
-            description: "Missing",
-            path: "/nonexistent/SKILL.md",
-            source: "user",
-        };
-        const result = await loadSkillContent(events, skill, "/workspace", "test");
-        expect(result.ok).toBe(false);
-        if (!result.ok) {
-            expect(result.error).toContain("Failed to read skill file");
-        }
+describe("rewriteDollarTokenToSkillRef", () => {
+    it("rewrites a lone token to skill:name", () => {
+        expect(rewriteDollarTokenToSkillRef("$tdd", "tdd")).toBe("skill:tdd");
+    });
+
+    it("rewrites an embedded token to skill:name", () => {
+        expect(
+            rewriteDollarTokenToSkillRef("please use $tdd before pushing", "tdd"),
+        ).toBe("please use skill:tdd before pushing");
+    });
+
+    it("rewrites a trailing token to skill:name", () => {
+        expect(
+            rewriteDollarTokenToSkillRef("this is a test $bun", "bun"),
+        ).toBe("this is a test skill:bun");
+    });
+
+    it("preserves trailing punctuation on token", () => {
+        expect(
+            rewriteDollarTokenToSkillRef("use $tdd, then deploy", "tdd"),
+        ).toBe("use skill:tdd, then deploy");
+    });
+
+    it("rewrites every matching reference without rewriting escapes, longer names, or mid-word uses", () => {
+        expect(rewriteDollarTokenToSkillRef(
+            "($bun),$BUN and $bun-test prefix$bun \\$bun $$bun",
+            "bun",
+        )).toBe("(skill:bun),skill:bun and $bun-test prefix$bun \\$bun $$bun");
     });
 });
 
 describe("transformDollarSkillInput", () => {
-    it("rewrites a sole dollar token for a core skill to slash form", async () => {
-        const events = createEventBus();
-        const skillList: SkillEntry[] = [
-            {
-                name: "tdd",
-                description: "TDD skill",
-                path: "/skills/tdd/SKILL.md",
-                source: "user",
-            },
-        ];
-        const result = await transformDollarSkillInput(
-            "$tdd fix login",
-            skillList,
-            events,
-            "/workspace",
+    const skillList: SkillEntry[] = [
+        {
+            name: "tdd",
+            description: "TDD skill",
+            path: "/skills/tdd/SKILL.md",
+            source: "user",
+        },
+        {
+            name: "bun",
+            description: "Bun skill",
+            path: "/skills/bun/SKILL.md",
+            source: "user",
+        },
+        {
+            name: "bom-skill",
+            description: "Rescued skill",
+            path: "/skills/bom-skill/SKILL.md",
+            baseDir: "/skills/bom-skill",
+            content: "---\nname: bom-skill\ndescription: Rescued skill\n---\n\n# Instructions\n",
+            source: "rescued",
+        },
+    ];
+
+    it("rewrites a lone dollar token for a core skill to slash command without trailing duplicate", () => {
+        expect(transformDollarSkillInput("$tdd", skillList)).toBe("/skill:tdd");
+    });
+
+    it("rewrites a leading dollar token with trailing text maintaining skill:name trace", () => {
+        expect(transformDollarSkillInput("$tdd fix login", skillList)).toBe(
+            "/skill:tdd skill:tdd fix login",
         );
-        expect(result).toBe("/skill:tdd fix login");
     });
 
-    it("splices an embedded dollar token and transforms markdown links", async () => {
-        const root = await mkdtemp(join(tmpdir(), "pi-dollar-test-"));
-        try {
-            const skillDir = join(root, "tdd");
-            await mkdir(skillDir, { recursive: true });
-            const skillPath = join(skillDir, "SKILL.md");
-            await writeFile(
-                skillPath,
-                "---\nname: tdd\ndescription: TDD skill\n---\n\n# TDD\n\nRead [guide](guide.md).\n",
-            );
-            const events = createEventBus();
-            events.on(MARKDOWN_LINKS_TRANSFORM_EVENT, (value) => {
-                if (!isMarkdownLinkTransformRequest(value)) return;
-                expect(value.sourcePath).toBe(skillPath);
-                expect(value.sourceKind).toBe("dollar-skill-input");
-                value.result = value.content.replace("guide.md", join(skillDir, "guide.md"));
-            });
+    it("rewrites an embedded dollar token prepending slash command and keeping skill:name in prompt", () => {
+        expect(
+            transformDollarSkillInput("please use $tdd before pushing", skillList),
+        ).toBe("/skill:tdd please use skill:tdd before pushing");
+    });
 
-            const skillList: SkillEntry[] = [
-                {
-                    name: "tdd",
-                    description: "TDD skill",
-                    path: skillPath,
-                    source: "user",
-                },
-            ];
-
-            const result = await transformDollarSkillInput(
-                "please use $tdd right now",
+    it("rewrites a trailing dollar token prepending slash command and keeping skill:name in prompt", () => {
+        expect(
+            transformDollarSkillInput(
+                "this is just a test to see if it works $bun",
                 skillList,
-                events,
-                root,
-            );
-
-            expect(result).toBe(
-                `please use <skill name="tdd" location="${skillPath}">\nReferences are relative to ${skillDir}.\n\n# TDD\n\nRead [guide](${join(skillDir, "guide.md")}).\n</skill> right now`,
-            );
-        } finally {
-            await rm(root, { recursive: true, force: true });
-        }
+            ),
+        ).toBe("/skill:bun this is just a test to see if it works skill:bun");
     });
 
-    it("expands a sole dollar token for a rescued skill directly with args", async () => {
-        const root = await mkdtemp(join(tmpdir(), "pi-dollar-test-"));
-        try {
-            const skillDir = join(root, "bom-skill");
-            await mkdir(skillDir, { recursive: true });
-            const skillPath = join(skillDir, "SKILL.md");
-            await writeFile(
-                skillPath,
-                "\uFEFF---\nname: bom-skill\ndescription: Rescued BOM skill\n---\n\n# Rescued\n",
-            );
-            const events = createEventBus();
-            const skillList: SkillEntry[] = [
-                {
-                    name: "bom-skill",
-                    description: "Rescued BOM skill",
-                    path: skillPath,
-                    source: "rescued",
-                },
-            ];
-
-            const result = await transformDollarSkillInput(
-                "$bom-skill run now",
-                skillList,
-                events,
-                root,
-            );
-
-            expect(result).toBe(
-                `<skill name="bom-skill" location="${skillPath}">\nReferences are relative to ${skillDir}.\n\n# Rescued\n</skill>\n\nrun now`,
-            );
-        } finally {
-            await rm(root, { recursive: true, force: true });
-        }
+    it("rewrites a dollar token followed by punctuation cleanly", () => {
+        expect(
+            transformDollarSkillInput("use $tdd, then deploy", skillList),
+        ).toBe("/skill:tdd use skill:tdd, then deploy");
     });
 
-    it("returns undefined for unknown dollar token", async () => {
-        const events = createEventBus();
-        const skillList: SkillEntry[] = [];
-        const result = await transformDollarSkillInput(
-            "cost $unknown here",
-            skillList,
-            events,
-            "/workspace",
+    it("formats a rescued skill with block at byte 0 and maintains trace in user prompt", () => {
+        const result = transformDollarSkillInput("$bom-skill run now", skillList);
+        expect(result).toBe(
+            `<skill name="bom-skill" location="/skills/bom-skill/SKILL.md">\nReferences are relative to /skills/bom-skill.\n\n# Instructions\n</skill>\n\nskill:bom-skill run now`,
         );
-        expect(result).toBeUndefined();
+    });
+
+    it("formats a lone rescued skill without extra user prompt", () => {
+        const result = transformDollarSkillInput("$bom-skill", skillList);
+        expect(result).toBe(
+            `<skill name="bom-skill" location="/skills/bom-skill/SKILL.md">\nReferences are relative to /skills/bom-skill.\n\n# Instructions\n</skill>`,
+        );
+    });
+
+    it("returns undefined for unknown dollar token so text remains untouched", () => {
+        expect(
+            transformDollarSkillInput("cost $unknown here", skillList),
+        ).toBeUndefined();
+    });
+
+    it("does not re-expand dollar examples inside an already expanded rescued skill", () => {
+        const result = transformDollarSkillInput("$bom-skill", [
+            ...skillList,
+        ].map(skill => skill.name === "bom-skill" ? { ...skill, content: "Use $bun in a prompt" } : skill));
+        expect(result).toContain("Use $bun in a prompt");
+        expect(transformDollarSkillInput(result!, skillList)).toBeUndefined();
     });
 });

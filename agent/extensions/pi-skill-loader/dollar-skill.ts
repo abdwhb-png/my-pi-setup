@@ -1,9 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import type { EventBus } from "@earendil-works/pi-coding-agent";
-import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
-import { formatRescuedSkillBlock } from "./skill-rescue.ts";
 import { findSkill, type SkillEntry } from "./skill-index.ts";
+import { formatRescuedSkillBlock } from "./skill-rescue.ts";
 
 /**
  * Inline `$skill-name` references.
@@ -15,11 +11,18 @@ import { findSkill, type SkillEntry } from "./skill-index.ts";
  */
 export const DOLLAR_SKILL_NAME_PATTERN = "[A-Za-z][A-Za-z0-9_-]*";
 
-const DOLLAR_TOKEN_PATTERN = /\$([A-Za-z][A-Za-z0-9_-]*)/g;
+const DOLLAR_BOUNDARY = String.raw`(?<![\p{L}\p{N}_/$\\])`;
+const DOLLAR_TOKEN_PATTERN = new RegExp(
+    `${DOLLAR_BOUNDARY}\\$(${DOLLAR_SKILL_NAME_PATTERN})`,
+    "gu",
+);
 
-const DOLLAR_LOOKUP_PATTERN = /(?:^|\s)\$([A-Za-z][A-Za-z0-9_-]*)/;
+const DOLLAR_LOOKUP_PATTERN = new RegExp(DOLLAR_TOKEN_PATTERN.source, "u");
 
-const DOLLAR_PREFIX_PATTERN = /(?:^|\s)(\$[A-Za-z0-9_-]*)$/;
+const DOLLAR_PREFIX_PATTERN = new RegExp(
+    `${DOLLAR_BOUNDARY}(\\$[A-Za-z0-9_-]*)$`,
+    "u",
+);
 
 const normalizeName = (raw: string): string => raw.replace(/[-_]+$/, "");
 
@@ -29,11 +32,25 @@ export function extractDollarSkillName(text: string): string | null {
     return tokenMatch?.[1] ? normalizeName(tokenMatch[1]) || null : null;
 }
 
+/** Resolve every reference once, in mention order. Do not re-expand skill bodies. */
+export function findDollarSkills(
+    text: string,
+    skillList: SkillEntry[],
+): SkillEntry[] {
+    if (text.trimStart().startsWith("<skill ")) return [];
+    const found = new Map<string, SkillEntry>();
+    for (const match of text.matchAll(DOLLAR_TOKEN_PATTERN)) {
+        const skill = findSkill(skillList, normalizeName(match[1]));
+        if (skill) found.set(skill.name.toLowerCase(), skill);
+    }
+    return [...found.values()];
+}
+
 /**
  * `$` prefix under the cursor on `cursorLine`, or null. Multiline-safe:
  * scans only the current line up to `cursorCol` and requires the `$` to
- * start the token (preceded by start-of-line or whitespace) so mid-word
- * uses like `cost$5` never trigger.
+ * start the token (including after punctuation) so escaped, shell, and
+ * mid-word uses never trigger.
  */
 export function extractDollarPrefix(
     lines: string[],
@@ -47,114 +64,58 @@ export function extractDollarPrefix(
 }
 
 /**
- * Splice `block` in place of the first `$name` token matching `name`
- * (case-insensitive). All other text — including other `$tokens` — is
- * preserved untouched.
+ * Rewrite every occurrence of `$name` (case-insensitive) in `text` to `skill:${name}`.
+ * Preserves the trace in the user's prompt so the LLM explicitly sees the skill reference.
  */
-export function spliceSkillBlock(
+export function rewriteDollarTokenToSkillRef(
     text: string,
     name: string,
-    block: string,
 ): string {
     const lower = name.toLowerCase();
-    let replaced = false;
-    DOLLAR_TOKEN_PATTERN.lastIndex = 0;
     return text.replace(DOLLAR_TOKEN_PATTERN, (token, raw: string) => {
-        if (replaced || normalizeName(raw).toLowerCase() !== lower) {
+        if (normalizeName(raw).toLowerCase() !== lower) {
             return token;
         }
-        replaced = true;
-        return block;
+        return `skill:${name}`;
     });
 }
 
-export type SkillContentResult =
-    | { ok: true; block: string }
-    | { ok: false; error: string };
-
 /**
- * Single loader path for `$` expansion: read the skill file and route it
- * through the same markdown link transform load_skill uses, so embedded
- * and slash expansion produce identical blocks.
+ * Rewrite references to one unique skill to a native Pi `/skill:name` command.
+ * The input handler delivers multiple skills through a batched custom message.
+ * - Any position in input: rewrites every token to `skill:${name}` in the user prompt,
+ *   and prepends `/skill:name`.
+ * - Pi core expands this at prompt time and collapses it into `[skill] name (ctrl+o to expand)`.
+ * - For rescued skills: formats the `<skill>` block at byte 0 directly so Pi TUI collapses it.
+ * - Unknown `$name`: returns undefined (text untouched).
  */
-export async function loadSkillContent(
-    events: Pick<EventBus, "emit">,
-    skill: SkillEntry,
-    cwd: string,
-    sourceKind: string,
-    args = "",
-): Promise<SkillContentResult> {
-    let content: string;
-    try {
-        const buf = await readFile(skill.path);
-        const raw = buf.toString("utf-8");
-        content = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
-    } catch (err) {
-        return {
-            ok: false,
-            error: `Failed to read skill file at ${skill.path}: ${err instanceof Error ? err.message : String(err)}`,
-        };
-    }
-    return {
-        ok: true,
-        block: formatRescuedSkillBlock(
+export function transformDollarSkillInput(
+    text: string,
+    skillList: SkillEntry[],
+): string | undefined {
+    const skills = findDollarSkills(text, skillList);
+    if (skills.length !== 1) return undefined;
+    const skill = skills[0];
+    const name = skill.name;
+
+    const trimmed = text.trim();
+    const isLoneToken = trimmed.toLowerCase() === `$${name.toLowerCase()}`;
+    const userPrompt = isLoneToken
+        ? ""
+        : rewriteDollarTokenToSkillRef(trimmed, skill.name);
+
+    if (skill.source === "rescued" && skill.content && skill.baseDir) {
+        return formatRescuedSkillBlock(
             {
                 name: skill.name,
                 description: skill.description,
                 path: skill.path,
-                baseDir: dirname(skill.path),
-                content: requestMarkdownLinkTransform(events, {
-                    sourcePath: skill.path,
-                    content,
-                    cwd,
-                    sourceKind,
-                }),
+                baseDir: skill.baseDir,
+                content: skill.content,
             },
-            args,
-        ),
-    };
-}
-
-/**
- * Rewrite `$name` skill references before Pi core expansion.
- * - Sole `$name` with trailing text: rewrites to `/skill:name args` for core skills,
- *   or expands the rescued block for rescued skills.
- * - Embedded `$name`: splices the markdown-link-transformed block inline.
- * - Unknown `$name`: returns undefined (surrounding text untouched).
- */
-export async function transformDollarSkillInput(
-    text: string,
-    skillList: SkillEntry[],
-    events: Pick<EventBus, "emit">,
-    cwd: string,
-): Promise<string | undefined> {
-    const name = extractDollarSkillName(text);
-    if (!name) return undefined;
-    const skill = findSkill(skillList, name);
-    if (!skill) return undefined;
-
-    const soleMatch = text.match(/^\$([A-Za-z][A-Za-z0-9_-]*)\s*([\s\S]*)$/);
-    if (soleMatch?.[1]?.toLowerCase() === name.toLowerCase()) {
-        if (skill.source !== "rescued") {
-            return `/skill:${skill.name}${soleMatch[2] ? ` ${soleMatch[2]}` : ""}`;
-        }
-        const loaded = await loadSkillContent(
-            events,
-            skill,
-            cwd,
-            "dollar-skill-input",
-            soleMatch[2] ?? "",
+            userPrompt,
         );
-        return loaded.ok ? loaded.block : undefined;
     }
 
-    const loaded = await loadSkillContent(
-        events,
-        skill,
-        cwd,
-        "dollar-skill-input",
-        "",
-    );
-    if (!loaded.ok) return undefined;
-    return spliceSkillBlock(text, name, loaded.block);
+    return `/skill:${skill.name}${userPrompt ? ` ${userPrompt}` : ""}`;
 }

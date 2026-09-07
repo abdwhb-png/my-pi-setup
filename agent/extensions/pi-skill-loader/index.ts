@@ -1,15 +1,20 @@
 import { readFile } from "node:fs/promises";
 import {
     defineTool,
+    getMarkdownTheme,
+    keyText,
     type AgentToolResult,
     type ExtensionAPI,
     type ExtensionCommandContext,
     type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Box, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
 import {
     extractDollarPrefix,
+    findDollarSkills,
+    rewriteDollarTokenToSkillRef,
     transformDollarSkillInput,
 } from "./dollar-skill.ts";
 import {
@@ -36,10 +41,55 @@ export {
 export default function piSkillLoader(pi: ExtensionAPI): void {
     let skillList: SkillEntry[] = [];
     let rescuedSkills: RescuedSkill[] = [];
-    let sessionCwd = process.cwd();
 
     const refreshSkillList = () => {
         skillList = buildSkillList(pi.getCommands(), rescuedSkills);
+    };
+
+    const sendLoadedSkills = async (
+        skills: SkillEntry[],
+        cwd: string,
+        sourceKind: string,
+    ): Promise<string[]> => {
+        const loadedNames: string[] = [];
+        const loadedContents: string[] = [];
+        for (const skill of skills) {
+            try {
+                const raw =
+                    skill.content ??
+                    // oxlint-disable-next-line eslint/no-await-in-loop -- preserve mention order
+                    (await readFile(skill.path)).toString("utf-8");
+                const content = requestMarkdownLinkTransform(pi.events, {
+                    sourcePath: skill.path,
+                    content: raw.startsWith("\uFEFF") ? raw.slice(1) : raw,
+                    cwd,
+                    sourceKind,
+                });
+                loadedNames.push(skill.name);
+                loadedContents.push(`## Skill: ${skill.name}\n\n${content}`);
+            } catch (err) {
+                pi.sendMessage(
+                    {
+                        customType: "skill-load-error",
+                        content: `Failed to load skill "${skill.name}": ${err instanceof Error ? err.message : String(err)}`,
+                        display: true,
+                    },
+                    { triggerTurn: false },
+                );
+            }
+        }
+        if (loadedNames.length > 0) {
+            pi.sendMessage(
+                {
+                    customType: "skill-loaded",
+                    content: loadedContents.join("\n\n---\n\n"),
+                    details: { skillNames: loadedNames },
+                    display: true,
+                },
+                { triggerTurn: false },
+            );
+        }
+        return loadedNames;
     };
 
     // ---- search_skill ----
@@ -222,13 +272,25 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
     // ---- input event: dollar tokens and rescued slash command fallback ----
     pi.on("input", async (event, ctx) => {
         refreshSkillList();
-        const cwd = (ctx as { cwd?: string } | undefined)?.cwd ?? sessionCwd;
 
-        const dollarTransformed = await transformDollarSkillInput(
+        const referencedSkills = findDollarSkills(event.text, skillList);
+        if (referencedSkills.length > 1) {
+            const loadedNames = await sendLoadedSkills(
+                referencedSkills,
+                ctx.cwd,
+                "dollar-skill-input",
+            );
+            if (loadedNames.length === 0) return { action: "continue" };
+            let text = event.text;
+            for (const name of loadedNames) {
+                text = rewriteDollarTokenToSkillRef(text, name);
+            }
+            return { action: "transform", text };
+        }
+
+        const dollarTransformed = transformDollarSkillInput(
             event.text,
             skillList,
-            pi.events,
-            cwd,
         );
         if (dollarTransformed) {
             return { action: "transform", text: dollarTransformed };
@@ -325,7 +387,6 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
 
     // ---- register on session_start ----
     pi.on("session_start", async (_event, ctx: ExtensionContext) => {
-        sessionCwd = ctx.cwd;
         const trusted =
             typeof ctx.isProjectTrusted === "function" &&
             ctx.isProjectTrusted();
@@ -343,11 +404,8 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
         if (ctx.hasUI) {
             ctx.ui.addAutocompleteProvider((current) => ({
                 ...current,
-                triggerCharacters: [
-                    ...(current.triggerCharacters ?? []),
-                    "$",
-                ],
-                getSuggestions(lines, cursorLine, cursorCol, options) {
+                triggerCharacters: [...(current.triggerCharacters ?? []), "$"],
+                async getSuggestions(lines, cursorLine, cursorCol, options) {
                     const prefix = extractDollarPrefix(
                         lines,
                         cursorLine,
@@ -389,6 +447,53 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
         pi.registerTool(findSkillTool);
         pi.registerTool(loadSkillTool);
 
+        pi.registerMessageRenderer<{ skillNames?: string[] }>(
+            "skill-loaded",
+            (message, options, theme) => {
+                const box = new Box(1, 1, (t) =>
+                    theme.bg("customMessageBg", t),
+                );
+                const details = message.details;
+                const names = details?.skillNames?.join(", ") ?? "";
+                const label = theme.fg(
+                    "customMessageLabel",
+                    "\x1b[1m[skill-loaded]\x1b[22m ",
+                );
+                const title = theme.fg(
+                    "customMessageText",
+                    `Loaded skill: ${names}`,
+                );
+
+                if (!options.expanded) {
+                    const hint = theme.fg(
+                        "dim",
+                        ` (${keyText("app.tools.expand")} to expand)`,
+                    );
+                    box.addChild(new Text(label + title + hint, 0, 0));
+                    return box;
+                }
+
+                box.addChild(new Text(label + title, 0, 0));
+                box.addChild(new Spacer(1));
+                const text =
+                    typeof message.content === "string"
+                        ? message.content
+                        : Array.isArray(message.content)
+                          ? (
+                                message.content as Array<{
+                                    type?: string;
+                                    text?: string;
+                                }>
+                            )
+                                .filter((c) => c.type === "text")
+                                .map((c) => c.text)
+                                .join("\n")
+                          : "";
+                box.addChild(new Markdown(text, 0, 0, getMarkdownTheme()));
+                return box;
+            },
+        );
+
         pi.registerCommand("load-skills", {
             description: "Load one or more skills by name",
             getArgumentCompletions: (
@@ -398,17 +503,20 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
 
                 const parts = prefix.split(/\s+/);
                 const activePart = parts[parts.length - 1] ?? "";
+                const priorParts = parts.slice(0, -1).filter(Boolean);
                 const alreadyMatched = new Set(
-                    parts.slice(0, -1).filter(Boolean),
+                    priorParts.map((p) => p.toLowerCase()),
                 );
 
                 const lowerActive = activePart.toLowerCase();
+                const prefixBase =
+                    priorParts.length > 0 ? `${priorParts.join(" ")} ` : "";
 
                 return skillList
-                    .filter((s) => !alreadyMatched.has(s.name))
+                    .filter((s) => !alreadyMatched.has(s.name.toLowerCase()))
                     .filter((s) => s.name.toLowerCase().includes(lowerActive))
                     .map((s) => ({
-                        value: s.name,
+                        value: `${prefixBase}${s.name}`,
                         label: s.name,
                         description: `${s.source} — ${s.description.substring(0, 60)}`,
                     }))
@@ -422,45 +530,14 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
 
                 refreshSkillList();
 
-                for (const name of names) {
-                    const skill = findSkill(skillList, name);
-                    if (!skill) {
-                        continue;
-                    }
-
-                    try {
-                        // oxlint-disable-next-line eslint/no-await-in-loop -- sequential load by design
-                        const buf = await readFile(skill.path);
-                        const raw = buf.toString("utf-8");
-                        const content = requestMarkdownLinkTransform(
-                            pi.events,
-                            {
-                                sourcePath: skill.path,
-                                content: raw.startsWith("\uFEFF") ? raw.slice(1) : raw,
-                                cwd: cmdCtx.cwd,
-                                sourceKind: "load-skills-command",
-                            },
-                        );
-
-                        pi.sendMessage(
-                            {
-                                customType: "skill-loaded",
-                                content: `Loaded skill: ${skill.name}\n\n${content}`,
-                                display: true,
-                            },
-                            { triggerTurn: false },
-                        );
-                    } catch (err) {
-                        pi.sendMessage(
-                            {
-                                customType: "skill-load-error",
-                                content: `Failed to load skill "${skill.name}": ${err instanceof Error ? err.message : String(err)}`,
-                                display: true,
-                            },
-                            { triggerTurn: false },
-                        );
-                    }
-                }
+                const skills = names
+                    .map((name) => findSkill(skillList, name))
+                    .filter((skill): skill is SkillEntry => skill !== null);
+                await sendLoadedSkills(
+                    skills,
+                    cmdCtx.cwd,
+                    "load-skills-command",
+                );
             },
         });
 
