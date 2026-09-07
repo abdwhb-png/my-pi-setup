@@ -38,6 +38,7 @@
  * prlimit, and Node with JSPI support for the Python analyzer.
  */
 
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
     existsSync,
@@ -78,10 +79,14 @@ import {
     SandboxExecutionError,
     type SandboxCommand,
     type SandboxDockerPolicy,
+    type DockerOperation,
+    type DockerTargetGrant,
+    type DockerTargetSelector,
 } from "./runtime/contracts.ts";
 import {
     dockerPolicyHasUnsafeTargets,
     resolveDockerPolicy,
+    saveTargetedDockerGrant,
 } from "./runtime/docker-policy.ts";
 import {
     type PiSandboxConfig,
@@ -371,6 +376,8 @@ export interface LoadSandboxConfigOptions {
     sessionId?: string;
     /** Explicit status override (e.g. from `PI_SANDBOX_SESSION_STATUS`); takes priority over the session file. */
     envOverride?: "enabled" | "disabled";
+    /** Read legacy sandbox.json files when settings do not define Sandbox. */
+    includeLegacy?: boolean;
 }
 
 function errorMessage(error: unknown): string {
@@ -383,6 +390,206 @@ function configurationErrorMessage(error: unknown): string {
         if (cause !== undefined) return errorMessage(cause);
     }
     return errorMessage(error);
+}
+
+const DOCKER_ACCESS_PROFILES: ReadonlyArray<{
+    label: string;
+    operations: DockerOperation[];
+}> = [
+    {
+        label: "Exploitation",
+        operations: [
+            "ps",
+            "inspect",
+            "logs",
+            "stats",
+            "start",
+            "stop",
+            "restart",
+        ],
+    },
+    {
+        label: "Observation",
+        operations: ["ps", "inspect", "logs", "stats"],
+    },
+    {
+        label: "Administration",
+        operations: [
+            "ps",
+            "inspect",
+            "logs",
+            "stats",
+            "exec",
+            "start",
+            "stop",
+            "restart",
+        ],
+    },
+];
+
+interface ComposeProject {
+    project: string;
+    services: string[];
+}
+
+class DockerComposeUnavailableError extends Error {}
+
+// oxlint-disable-next-line typescript/no-restricted-types -- Docker Compose JSON is untrusted until this function validates it.
+function composeRecord(value: unknown, field: string): Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error(`Docker Compose ${field} must be an object`);
+    }
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- object shape was checked above; fields remain untrusted until read.
+    return value as Record<string, unknown>;
+}
+
+function parseDockerComposeConfig(output: string): ComposeProject {
+    // oxlint-disable-next-line typescript/no-restricted-types -- JSON.parse returns untrusted data.
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(output);
+    } catch (error) {
+        throw new Error(
+            `Docker Compose returned invalid JSON: ${errorMessage(error)}`,
+            { cause: error },
+        );
+    }
+    const config = composeRecord(parsed, "configuration");
+    if (
+        typeof config.name !== "string" ||
+        config.name.trim() !== config.name ||
+        !config.name
+    ) {
+        throw new Error("Docker Compose configuration has no project name");
+    }
+    const services = composeRecord(config.services, "services");
+    const names = Object.keys(services).toSorted();
+    if (names.length === 0) {
+        throw new Error("Docker Compose configuration has no services");
+    }
+    return { project: config.name, services: names };
+}
+
+async function discoverDockerComposeProject(
+    cwd: string,
+): Promise<ComposeProject> {
+    return new Promise((resolveProject, rejectProject) => {
+        let stdout = "";
+        let stderr = "";
+        let settled = false;
+        const settle = (callback: () => void) => {
+            if (settled) return;
+            settled = true;
+            callback();
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+            child = spawn("docker", ["compose", "config", "--format", "json"], {
+                cwd,
+                shell: false,
+                stdio: ["ignore", "pipe", "pipe"],
+            });
+        } catch (error) {
+            rejectProject(
+                new DockerComposeUnavailableError(
+                    `Docker Compose is unavailable: ${errorMessage(error)}`,
+                    { cause: error },
+                ),
+            );
+            return;
+        }
+        const stdoutStream = child.stdout;
+        const stderrStream = child.stderr;
+        if (stdoutStream === null || stderrStream === null) {
+            child.kill();
+            rejectProject(
+                new DockerComposeUnavailableError(
+                    "Docker Compose did not provide output streams",
+                ),
+            );
+            return;
+        }
+        stdoutStream.on("data", (chunk: Buffer) => {
+            if (stdout.length + chunk.length <= 1_000_000)
+                stdout += chunk.toString();
+        });
+        stderrStream.on("data", (chunk: Buffer) => {
+            if (stderr.length + chunk.length <= 8_000)
+                stderr += chunk.toString();
+        });
+        child.on("error", (error) =>
+            settle(() =>
+                rejectProject(
+                    new DockerComposeUnavailableError(
+                        `Docker Compose is unavailable: ${errorMessage(error)}`,
+                        { cause: error },
+                    ),
+                ),
+            ),
+        );
+        child.on("close", (code) =>
+            settle(() => {
+                if (code !== 0) {
+                    rejectProject(
+                        new DockerComposeUnavailableError(
+                            `Docker Compose is unavailable${stderr ? `: ${stderr.trim()}` : ""}`,
+                        ),
+                    );
+                    return;
+                }
+                try {
+                    resolveProject(parseDockerComposeConfig(stdout));
+                } catch (error) {
+                    rejectProject(error);
+                }
+            }),
+        );
+    });
+}
+
+async function selectDockerTarget(
+    ctx: ExtensionContext,
+): Promise<DockerTargetSelector | undefined> {
+    try {
+        const compose = await discoverDockerComposeProject(ctx.cwd);
+        const choices = compose.services.map(
+            (service) => `${compose.project} / ${service}`,
+        );
+        const selected = await ctx.ui.select(
+            "Docker Compose service to authorize",
+            choices,
+        );
+        if (selected === undefined) return undefined;
+        const service = compose.services[choices.indexOf(selected)];
+        if (service === undefined) return undefined;
+        return { type: "compose-service", project: compose.project, service };
+    } catch (error) {
+        if (!(error instanceof DockerComposeUnavailableError)) throw error;
+        const name = await ctx.ui.input(
+            "Docker container to authorize",
+            "Container name",
+        );
+        const normalized = name?.trim();
+        if (!normalized) return undefined;
+        return { type: "container-name", name: normalized };
+    }
+}
+
+function renderDockerGrantDiff(
+    cwd: string,
+    target: DockerTargetSelector,
+    operations: readonly DockerOperation[],
+): string {
+    const selector =
+        target.type === "compose-service"
+            ? `compose-service: ${target.project} / ${target.service}`
+            : `container-name: ${target.name}`;
+    return [
+        `Project: ${cwd}`,
+        `Target: ${selector}`,
+        `Operations: ${operations.join(", ")}`,
+        "This replaces the Docker grant for this project only.",
+    ].join("\n");
 }
 
 function normalizeConfig(raw: unknown, source: string): SandboxConfigLayer {
@@ -568,10 +775,10 @@ export function loadSandboxConfig(
     const hasProjectSettings = projectSettings.sandbox !== undefined;
     let globalConfig = readSettingsConfig(globalSettings, "global");
     let projectConfig = readSettingsConfig(projectSettings, "project");
-    if (!hasGlobalSettings) {
+    if (!hasGlobalSettings && options.includeLegacy !== false) {
         globalConfig = readLegacyConfig(globalConfigPath);
     }
-    if (!hasProjectSettings) {
+    if (!hasProjectSettings && options.includeLegacy !== false) {
         projectConfig = readLegacyConfig(projectConfigPath);
     }
 
@@ -1150,9 +1357,11 @@ export default function (pi: ExtensionAPI) {
             "Configure sandbox or show status (/sandbox, /sandbox on|off, /sandbox docker ...)",
         getArgumentCompletions: (prefix: string) => {
             const values = [
+                "doctor",
                 "on",
                 "off",
                 "docker",
+                "docker grant",
                 "docker off",
                 "docker targeted",
                 "docker full",
@@ -1161,7 +1370,7 @@ export default function (pi: ExtensionAPI) {
             const trimmed = prefix.trimStart().toLowerCase();
             if (!trimmed) {
                 return values
-                    .slice(0, 3)
+                    .slice(0, 4)
                     .map((value) => ({ value, label: value }));
             }
             const filtered = values.filter((value) =>
@@ -1173,6 +1382,41 @@ export default function (pi: ExtensionAPI) {
         },
         handler: async (args, ctx) => {
             const arg = args.trim().toLowerCase();
+
+            if (arg === "doctor") {
+                const agentDir = getAgentDir();
+                const authorityPath = join(agentDir, "sandbox.global.json");
+                try {
+                    const resolved = loadSandboxConfig(ctx.cwd, {
+                        agentDir,
+                        sessionDir: ctx.sessionManager?.getSessionDir(),
+                        sessionId: ctx.sessionManager?.getSessionId(),
+                        envOverride: envSandboxStatus(),
+                        includeLegacy: false,
+                    });
+                    ctx.ui.notify(
+                        [
+                            "Sandbox doctor",
+                            `Docker authority: ${authorityPath} (${existsSync(authorityPath) ? "valid" : "not configured"})`,
+                            `Effective Sandbox: ${resolved.config.enabled ? "on" : "off"} (${resolved.source})`,
+                            `Effective Docker: ${resolved.config.docker.mode === "disabled" ? "off" : resolved.config.docker.mode}`,
+                            "Next: /sandbox docker grant",
+                        ].join("\n"),
+                        "info",
+                    );
+                } catch (error) {
+                    ctx.ui.notify(
+                        [
+                            "Sandbox doctor",
+                            `Docker authority: ${authorityPath} (invalid)`,
+                            `Problem: ${configurationErrorMessage(error)}`,
+                            "Next: /sandbox docker grant",
+                        ].join("\n"),
+                        "error",
+                    );
+                }
+                return;
+            }
 
             if (arg === "docker") {
                 try {
@@ -1228,6 +1472,115 @@ export default function (pi: ExtensionAPI) {
                 } catch (error) {
                     ctx.ui.notify(
                         `Docker configuration failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                }
+                return;
+            }
+
+            if (arg === "docker grant") {
+                if (!ctx.isProjectTrusted()) {
+                    ctx.ui.notify(
+                        "Docker grants require a trusted project",
+                        "error",
+                    );
+                    return;
+                }
+                let target: DockerTargetSelector | undefined;
+                try {
+                    target = await selectDockerTarget(ctx);
+                } catch (error) {
+                    ctx.ui.notify(
+                        `Docker discovery failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                    return;
+                }
+                if (target === undefined) {
+                    ctx.ui.notify("Docker grant cancelled", "info");
+                    return;
+                }
+                const selectedProfile = await ctx.ui.select(
+                    "Docker access profile",
+                    DOCKER_ACCESS_PROFILES.map(({ label }) => label),
+                );
+                const profile = DOCKER_ACCESS_PROFILES.find(
+                    ({ label }) => label === selectedProfile,
+                );
+                if (profile === undefined) {
+                    ctx.ui.notify("Docker grant cancelled", "info");
+                    return;
+                }
+                const confirmed = await ctx.ui.confirm(
+                    "Save Docker grant?",
+                    renderDockerGrantDiff(ctx.cwd, target, profile.operations),
+                );
+                if (!confirmed) {
+                    ctx.ui.notify("Docker grant cancelled", "info");
+                    return;
+                }
+                const authorityPath = join(
+                    getAgentDir(),
+                    "sandbox.global.json",
+                );
+                const grant: DockerTargetGrant = {
+                    selector: target,
+                    operations: profile.operations,
+                    allowUnsafeTarget: false,
+                };
+                try {
+                    await withFileMutationQueue(authorityPath, async () => {
+                        saveTargetedDockerGrant({
+                            cwd: ctx.cwd,
+                            globalConfigPath: authorityPath,
+                            target: grant,
+                        });
+                    });
+                } catch (error) {
+                    ctx.ui.notify(
+                        `Docker grant failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                    return;
+                }
+                if (!sandboxEnabled) {
+                    ctx.ui.notify(
+                        "Docker grant saved for this project",
+                        "info",
+                    );
+                    return;
+                }
+                const generation = beginTransition();
+                if (generation === undefined) return;
+                bashProcessSupervisor.shutdown();
+                try {
+                    await shutdownServices();
+                    if (!isCurrentTransition(generation)) return;
+                    const { config } = loadSandboxConfig(ctx.cwd, {
+                        sessionDir: ctx.sessionManager?.getSessionDir(),
+                        sessionId: ctx.sessionManager?.getSessionId(),
+                        envOverride: envSandboxStatus(),
+                    });
+                    const enabled = await enableServices(
+                        ctx.cwd,
+                        config,
+                        generation,
+                    );
+                    if (!isCurrentTransition(generation) || !enabled) return;
+                    sandboxEnabled = true;
+                    updateSandboxStatus(ctx, "on", config.docker);
+                    notifySandboxEnabled(
+                        ctx,
+                        "Docker grant saved for this project",
+                        config.docker,
+                    );
+                } catch (error) {
+                    if (!isCurrentTransition(generation)) return;
+                    sandboxEnabled = false;
+                    publishError(error);
+                    updateSandboxStatus(ctx, "error");
+                    ctx.ui.notify(
+                        `Docker grant saved, but sandbox reconfiguration failed: ${errorMessage(error)}`,
                         "error",
                     );
                 }
@@ -1409,7 +1762,10 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
 
-            ctx.ui.notify("Usage: /sandbox [on|off|docker ...]", "error");
+            ctx.ui.notify(
+                "Usage: /sandbox [doctor|on|off|docker ...]",
+                "error",
+            );
         },
     });
 }

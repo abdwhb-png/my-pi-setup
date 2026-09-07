@@ -1,13 +1,18 @@
+import { randomUUID } from "node:crypto";
 /* oxlint-disable typescript/no-restricted-types -- sandbox.global.json and project overlays are untrusted JSON until this module validates every field. */
 import {
     existsSync,
     lstatSync,
+    mkdirSync,
     readFileSync,
+    renameSync,
     realpathSync,
     statSync,
+    unlinkSync,
+    writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 
 import {
     DOCKER_OPERATIONS,
@@ -23,6 +28,18 @@ export const DEFAULT_DOCKER_ENDPOINT = "unix:///var/run/docker.sock";
 interface GlobalDockerGrant {
     projectRoot: string;
     policy: Exclude<SandboxDockerPolicy, { mode: "disabled" }>;
+}
+
+interface GlobalDockerAuthority {
+    schema?: string;
+    grants: GlobalDockerGrant[];
+}
+
+export interface SaveTargetedDockerGrantOptions {
+    cwd: string;
+    globalConfigPath: string;
+    target: DockerTargetGrant;
+    homeDir?: string;
 }
 
 interface ProjectTargetNarrowing {
@@ -44,7 +61,10 @@ export interface ResolveDockerPolicyOptions {
 }
 
 function invalid(cause: unknown): never {
-    throw new SandboxExecutionError("invalid-policy", { cause });
+    throw new SandboxExecutionError("invalid-policy", {
+        cause,
+        diagnostic: cause instanceof Error ? cause.message : String(cause),
+    });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -240,8 +260,11 @@ function canonicalDirectory(path: string, field: string): string {
     }
 }
 
-function readGlobalGrants(path: string, home: string): GlobalDockerGrant[] {
-    if (!existsSync(path)) return [];
+function readGlobalAuthority(
+    path: string,
+    home: string,
+): GlobalDockerAuthority {
+    if (!existsSync(path)) return { grants: [] };
     let parsed: unknown;
     try {
         const metadata = lstatSync(path);
@@ -261,8 +284,12 @@ function readGlobalGrants(path: string, home: string): GlobalDockerGrant[] {
     }
 
     const root = record(parsed, "sandbox.global.json");
-    assertKnownFields(root, ["docker"], "global sandbox config");
-    if (root.docker === undefined) return [];
+    assertKnownFields(root, ["$schema", "docker"], "global sandbox config");
+    if (root.$schema !== undefined && typeof root.$schema !== "string") {
+        invalid(new Error("$schema must be a string"));
+    }
+    const schema = root.$schema;
+    if (root.docker === undefined) return { schema, grants: [] };
     const docker = record(root.docker, "docker");
     assertKnownFields(docker, ["grants"], "global Docker config");
     if (!Array.isArray(docker.grants)) {
@@ -271,7 +298,7 @@ function readGlobalGrants(path: string, home: string): GlobalDockerGrant[] {
 
     const grants: GlobalDockerGrant[] = [];
     const roots = new Set<string>();
-    for (const rawGrant of docker.grants) {
+    for (const [index, rawGrant] of docker.grants.entries()) {
         const grant = record(rawGrant, "Docker grant");
         assertKnownFields(
             grant,
@@ -299,6 +326,13 @@ function readGlobalGrants(path: string, home: string): GlobalDockerGrant[] {
             }
             policy = { mode: "full", endpoint };
         } else if (grant.mode === "targeted") {
+            if (grant.targets === undefined) {
+                invalid(
+                    new Error(
+                        `docker.grants[${index}].targets is required for mode "targeted"; run /sandbox docker grant`,
+                    ),
+                );
+            }
             policy = {
                 mode: "targeted",
                 endpoint,
@@ -309,7 +343,94 @@ function readGlobalGrants(path: string, home: string): GlobalDockerGrant[] {
         }
         grants.push({ projectRoot, policy });
     }
-    return grants;
+    return { schema, grants };
+}
+
+function readGlobalGrants(path: string, home: string): GlobalDockerGrant[] {
+    return readGlobalAuthority(path, home).grants;
+}
+
+function renderProjectRoot(projectRoot: string, home: string): string {
+    const resolvedHome = resolve(home);
+    if (projectRoot === resolvedHome) return "~";
+    return projectRoot.startsWith(`${resolvedHome}/`)
+        ? `~/${projectRoot.slice(resolvedHome.length + 1)}`
+        : projectRoot;
+}
+
+function serializeGlobalGrant(
+    grant: GlobalDockerGrant,
+    home: string,
+): Record<string, unknown> {
+    const base = {
+        projectRoot: renderProjectRoot(grant.projectRoot, home),
+        mode: grant.policy.mode,
+        ...(grant.policy.endpoint === DEFAULT_DOCKER_ENDPOINT
+            ? {}
+            : { endpoint: grant.policy.endpoint }),
+    };
+    if (grant.policy.mode === "full") return base;
+    return {
+        ...base,
+        targets: grant.policy.targets.map((target) => ({
+            selector: target.selector,
+            ...(target.operations === undefined
+                ? {}
+                : { operations: target.operations }),
+            allowUnsafeTarget: target.allowUnsafeTarget,
+        })),
+    };
+}
+
+/**
+ * Replace the current project's global targeted Docker authority while retaining
+ * every other validated grant. Callers must serialize mutations with Pi's file
+ * mutation queue.
+ */
+export function saveTargetedDockerGrant(
+    options: SaveTargetedDockerGrantOptions,
+): void {
+    const home = options.homeDir ?? homedir();
+    const projectRoot = canonicalDirectory(options.cwd, "cwd");
+    const authority = readGlobalAuthority(options.globalConfigPath, home);
+    const nextGrant: GlobalDockerGrant = {
+        projectRoot,
+        policy: {
+            mode: "targeted",
+            endpoint: DEFAULT_DOCKER_ENDPOINT,
+            targets: [options.target],
+        },
+    };
+    const existingIndex = authority.grants.findIndex(
+        (grant) => grant.projectRoot === projectRoot,
+    );
+    const grants = [...authority.grants];
+    if (existingIndex === -1) grants.push(nextGrant);
+    else grants[existingIndex] = nextGrant;
+
+    const document = {
+        $schema:
+            authority.schema ??
+            "./extensions/sandbox/docs/sandbox.global.schema.json",
+        docker: {
+            grants: grants.map((grant) => serializeGlobalGrant(grant, home)),
+        },
+    };
+    const temporaryPath = `${options.globalConfigPath}.${process.pid}.${randomUUID()}.tmp`;
+    mkdirSync(dirname(options.globalConfigPath), {
+        recursive: true,
+        mode: 0o700,
+    });
+    try {
+        writeFileSync(temporaryPath, `${JSON.stringify(document, null, 2)}\n`, {
+            encoding: "utf8",
+            mode: 0o600,
+        });
+        renameSync(temporaryPath, options.globalConfigPath);
+    } catch (error) {
+        if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+        throw error;
+    }
 }
 
 function parseProjectOverride(

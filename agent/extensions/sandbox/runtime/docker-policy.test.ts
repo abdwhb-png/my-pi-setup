@@ -62,6 +62,34 @@ const composeTarget: DockerTargetGrant = {
 };
 
 describe("global Docker authority", () => {
+    it("accepts an optional JSON Schema declaration", () => {
+        const { projectRoot, writeGlobal, resolve } = fixture();
+        writeGlobal({
+            $schema: "./extensions/sandbox/docs/sandbox.global.schema.json",
+            docker: {
+                grants: [{ projectRoot, mode: "full" }],
+            },
+        });
+
+        expect(resolve()).toEqual({
+            mode: "full",
+            endpoint: "unix:///var/run/docker.sock",
+        });
+    });
+
+    it("explains how to add required targeted Docker targets", () => {
+        const { projectRoot, writeGlobal, resolve } = fixture();
+        writeGlobal({
+            docker: {
+                grants: [{ projectRoot, mode: "targeted" }],
+            },
+        });
+
+        expect(resolve).toThrow(
+            'docker.grants[0].targets is required for mode "targeted"; run /sandbox docker grant',
+        );
+    });
+
     it("defaults to disabled when the global grant file is absent", () => {
         const { resolve } = fixture();
 

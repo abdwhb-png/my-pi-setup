@@ -1,7 +1,7 @@
 /// <reference types="bun" />
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -133,14 +133,22 @@ function context(
     sessionDir?: string,
     sessionId = "session-a",
     projectTrusted = true,
+    responses: {
+        select?: Array<string | undefined>;
+        input?: Array<string | undefined>;
+        confirm?: Array<boolean | undefined>;
+    } = {},
 ): ExtensionContext {
     const notify = mock((_message: string, _level?: string) => undefined);
+    const select = mock(async () => responses.select?.shift());
+    const input = mock(async () => responses.input?.shift());
+    const confirm = mock(async () => responses.confirm?.shift());
     (context as unknown as { notify?: typeof notify }).notify = notify;
     return {
         cwd,
-        hasUI: false,
+        hasUI: true,
         isProjectTrusted: () => projectTrusted,
-        ui: { notify },
+        ui: { notify, select, input, confirm },
         sessionManager: sessionDir
             ? ({
                   getSessionDir: () => sessionDir,
@@ -330,11 +338,13 @@ describe("sandbox lifecycle", () => {
         const command = sandboxCommand(registered);
 
         expect(command.getArgumentCompletions?.("")).toEqual([
+            { value: "doctor", label: "doctor" },
             { value: "on", label: "on" },
             { value: "off", label: "off" },
             { value: "docker", label: "docker" },
         ]);
         expect(command.getArgumentCompletions?.("docker ")).toEqual([
+            { value: "docker grant", label: "docker grant" },
             { value: "docker off", label: "docker off" },
             { value: "docker targeted", label: "docker targeted" },
             { value: "docker full", label: "docker full" },
@@ -345,8 +355,8 @@ describe("sandbox lifecycle", () => {
         await command.handler("disable", ctx);
 
         expect(notifyCalls(ctx).slice(-2)).toEqual([
-            ["Usage: /sandbox [on|off|docker ...]", "error"],
-            ["Usage: /sandbox [on|off|docker ...]", "error"],
+            ["Usage: /sandbox [doctor|on|off|docker ...]", "error"],
+            ["Usage: /sandbox [doctor|on|off|docker ...]", "error"],
         ]);
         expect(initialize).not.toHaveBeenCalled();
         expect(reset).not.toHaveBeenCalled();
@@ -396,6 +406,414 @@ describe("sandbox lifecycle", () => {
             ].join("\n"),
             "info",
         ]);
+    });
+
+    it("diagnoses only the canonical Docker authority without writing configuration", async () => {
+        const agentDir = join(cwd, "agent-home");
+        await mkdir(agentDir);
+        await writeFile(join(cwd, ".pi", "sandbox.json"), "{ invalid");
+        await writeFile(join(agentDir, "sandbox.global.lg.json"), "{ invalid");
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd);
+
+            await sandboxCommand(registered).handler("doctor", ctx);
+
+            expect(notifyCalls(ctx).at(-1)).toEqual([
+                [
+                    "Sandbox doctor",
+                    `Docker authority: ${join(agentDir, "sandbox.global.json")} (not configured)`,
+                    "Effective Sandbox: off (default)",
+                    "Effective Docker: off",
+                    "Next: /sandbox docker grant",
+                ].join("\n"),
+                "info",
+            ]);
+            await expect(
+                readFile(join(agentDir, "sandbox.global.json"), "utf8"),
+            ).rejects.toMatchObject({ code: "ENOENT" });
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+        }
+    });
+
+    it("reports the exact invalid authority field through doctor", async () => {
+        const agentDir = join(cwd, "agent-home");
+        await mkdir(agentDir);
+        await writeFile(
+            join(agentDir, "sandbox.global.json"),
+            JSON.stringify({
+                docker: {
+                    grants: [{ projectRoot: cwd, mode: "targeted" }],
+                },
+            }),
+            { mode: 0o600 },
+        );
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd);
+
+            await sandboxCommand(registered).handler("doctor", ctx);
+
+            expect(notifyCalls(ctx).at(-1)).toEqual([
+                [
+                    "Sandbox doctor",
+                    `Docker authority: ${join(agentDir, "sandbox.global.json")} (invalid)`,
+                    'Problem: docker.grants[0].targets is required for mode "targeted"; run /sandbox docker grant',
+                    "Next: /sandbox docker grant",
+                ].join("\n"),
+                "error",
+            ]);
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+        }
+    });
+
+    it("grants exploitation access to a selected Compose service", async () => {
+        const agentDir = join(cwd, "agent-home");
+        const otherProject = join(cwd, "other-project");
+        const fakeBin = join(cwd, "bin");
+        await mkdir(agentDir);
+        await mkdir(otherProject);
+        await mkdir(fakeBin);
+        await writeFile(
+            join(agentDir, "sandbox.global.json"),
+            JSON.stringify({
+                docker: {
+                    grants: [{ projectRoot: otherProject, mode: "full" }],
+                },
+            }),
+            { mode: 0o600 },
+        );
+        const dockerPath = join(fakeBin, "docker");
+        await writeFile(
+            dockerPath,
+            [
+                "#!/bin/sh",
+                'printf \'{"name":"cliproxy","services":{"cli-proxy-api":{}}}\'',
+            ].join("\n"),
+        );
+        await chmod(dockerPath, 0o700);
+
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        const previousPath = process.env.PATH;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, SESSION_ID, true, {
+                select: ["cliproxy / cli-proxy-api", "Exploitation"],
+                confirm: [true],
+            });
+
+            await sandboxCommand(registered).handler("docker grant", ctx);
+
+            expect(
+                JSON.parse(
+                    await readFile(join(agentDir, "sandbox.global.json"), "utf8"),
+                ),
+            ).toEqual({
+                $schema: "./extensions/sandbox/docs/sandbox.global.schema.json",
+                docker: {
+                    grants: [
+                        { projectRoot: otherProject, mode: "full" },
+                        {
+                            projectRoot: cwd,
+                            mode: "targeted",
+                            targets: [
+                                {
+                                    selector: {
+                                        type: "compose-service",
+                                        project: "cliproxy",
+                                        service: "cli-proxy-api",
+                                    },
+                                    operations: [
+                                        "ps",
+                                        "inspect",
+                                        "logs",
+                                        "stats",
+                                        "start",
+                                        "stop",
+                                        "restart",
+                                    ],
+                                    allowUnsafeTarget: false,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            });
+            expect(
+                notifyCalls(ctx).at(-1)?.[0],
+            ).toContain("Docker grant saved for this project");
+            const authorityMode =
+                (await stat(join(agentDir, "sandbox.global.json"))).mode & 0o777;
+            expect(authorityMode).toBe(0o600);
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+            if (previousPath === undefined) delete process.env.PATH;
+            else process.env.PATH = previousPath;
+        }
+    });
+
+    it("falls back to a manually named container when Docker Compose is unavailable", async () => {
+        const agentDir = join(cwd, "agent-home");
+        const fakeBin = join(cwd, "bin");
+        await mkdir(agentDir);
+        await mkdir(fakeBin);
+        const dockerPath = join(fakeBin, "docker");
+        await writeFile(dockerPath, "#!/bin/sh\nexit 127\n");
+        await chmod(dockerPath, 0o700);
+
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        const previousPath = process.env.PATH;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, SESSION_ID, true, {
+                input: ["manual-api"],
+                select: ["Observation"],
+                confirm: [true],
+            });
+
+            await sandboxCommand(registered).handler("docker grant", ctx);
+
+            const authority = JSON.parse(
+                await readFile(join(agentDir, "sandbox.global.json"), "utf8"),
+            );
+            expect(authority.docker.grants[0].targets[0]).toEqual({
+                selector: { type: "container-name", name: "manual-api" },
+                operations: ["ps", "inspect", "logs", "stats"],
+                allowUnsafeTarget: false,
+            });
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+            if (previousPath === undefined) delete process.env.PATH;
+            else process.env.PATH = previousPath;
+        }
+    });
+
+    it("grants administration access only when explicitly selected", async () => {
+        const agentDir = join(cwd, "agent-home");
+        const fakeBin = join(cwd, "bin");
+        await mkdir(agentDir);
+        await mkdir(fakeBin);
+        const dockerPath = join(fakeBin, "docker");
+        await writeFile(dockerPath, "#!/bin/sh\nexit 127\n");
+        await chmod(dockerPath, 0o700);
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        const previousPath = process.env.PATH;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, SESSION_ID, true, {
+                input: ["manual-api"],
+                select: ["Administration"],
+                confirm: [true],
+            });
+
+            await sandboxCommand(registered).handler("docker grant", ctx);
+
+            const authority = JSON.parse(
+                await readFile(join(agentDir, "sandbox.global.json"), "utf8"),
+            );
+            expect(authority.docker.grants[0].targets[0].operations).toEqual([
+                "ps",
+                "inspect",
+                "logs",
+                "stats",
+                "exec",
+                "start",
+                "stop",
+                "restart",
+            ]);
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+            if (previousPath === undefined) delete process.env.PATH;
+            else process.env.PATH = previousPath;
+        }
+    });
+
+    it("reconfigures an active Sandbox after saving a Docker grant", async () => {
+        const agentDir = join(cwd, "agent-home");
+        const fakeBin = join(cwd, "bin");
+        await mkdir(agentDir);
+        await mkdir(fakeBin);
+        const dockerPath = join(fakeBin, "docker");
+        await writeFile(dockerPath, "#!/bin/sh\nexit 127\n");
+        await chmod(dockerPath, 0o700);
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        const previousPath = process.env.PATH;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, SESSION_ID, true, {
+                input: ["manual-api"],
+                select: ["Observation"],
+                confirm: [true],
+            });
+            await registered.handlers.get("session_start")?.({}, ctx);
+            expect(getSandboxRuntime().state).toBe("enabled");
+
+            await sandboxCommand(registered).handler("docker grant", ctx);
+
+            expect(reset).toHaveBeenCalledTimes(1);
+            expect(initialize).toHaveBeenCalledTimes(2);
+            expect(getSandboxRuntime().state).toBe("enabled");
+            expect(notifyCalls(ctx).at(-1)).toEqual([
+                "Docker grant saved for this project",
+                "info",
+            ]);
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+            if (previousPath === undefined) delete process.env.PATH;
+            else process.env.PATH = previousPath;
+        }
+    });
+
+    it("does not write a Docker grant after selection cancellation", async () => {
+        const agentDir = join(cwd, "agent-home");
+        const fakeBin = join(cwd, "bin");
+        await mkdir(agentDir);
+        await mkdir(fakeBin);
+        const dockerPath = join(fakeBin, "docker");
+        await writeFile(
+            dockerPath,
+            [
+                "#!/bin/sh",
+                'printf \'{"name":"cliproxy","services":{"cli-proxy-api":{}}}\'',
+            ].join("\n"),
+        );
+        await chmod(dockerPath, 0o700);
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        const previousPath = process.env.PATH;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, SESSION_ID, true, {
+                select: [undefined],
+            });
+
+            await sandboxCommand(registered).handler("docker grant", ctx);
+
+            await expect(
+                readFile(join(agentDir, "sandbox.global.json"), "utf8"),
+            ).rejects.toMatchObject({ code: "ENOENT" });
+            expect(notifyCalls(ctx).at(-1)).toEqual([
+                "Docker grant cancelled",
+                "info",
+            ]);
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+            if (previousPath === undefined) delete process.env.PATH;
+            else process.env.PATH = previousPath;
+        }
+    });
+
+    it("refuses a Docker grant for an untrusted project without discovery or writing", async () => {
+        const agentDir = join(cwd, "agent-home");
+        await mkdir(agentDir);
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, SESSION_ID, false);
+
+            await sandboxCommand(registered).handler("docker grant", ctx);
+
+            expect(notifyCalls(ctx).at(-1)).toEqual([
+                "Docker grants require a trusted project",
+                "error",
+            ]);
+            await expect(
+                readFile(join(agentDir, "sandbox.global.json"), "utf8"),
+            ).rejects.toMatchObject({ code: "ENOENT" });
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+        }
+    });
+
+    it("does not replace an untrusted global Docker authority file", async () => {
+        const agentDir = join(cwd, "agent-home");
+        const fakeBin = join(cwd, "bin");
+        await mkdir(agentDir);
+        await mkdir(fakeBin);
+        const authorityPath = join(agentDir, "sandbox.global.json");
+        await writeFile(authorityPath, '{"docker":{"grants":[]}}\n');
+        await chmod(authorityPath, 0o622);
+        const dockerPath = join(fakeBin, "docker");
+        await writeFile(dockerPath, "#!/bin/sh\nexit 127\n");
+        await chmod(dockerPath, 0o700);
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        const previousPath = process.env.PATH;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, SESSION_ID, true, {
+                input: ["manual-api"],
+                select: ["Administration"],
+                confirm: [true],
+            });
+
+            await sandboxCommand(registered).handler("docker grant", ctx);
+
+            expect(await readFile(authorityPath, "utf8")).toBe(
+                '{"docker":{"grants":[]}}\n',
+            );
+            expect(notifyCalls(ctx).at(-1)).toEqual([
+                expect.stringContaining("Untrusted global Docker authority file"),
+                "error",
+            ]);
+        } finally {
+            if (previousAgentDir === undefined) {
+                delete process.env.PI_CODING_AGENT_DIR;
+            } else {
+                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            }
+            if (previousPath === undefined) delete process.env.PATH;
+            else process.env.PATH = previousPath;
+        }
     });
 
     it("refuses Docker project changes for an untrusted project", async () => {

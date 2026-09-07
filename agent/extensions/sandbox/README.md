@@ -1,243 +1,34 @@
-# sandbox
+# Sandbox
 
-Linux OS-level Zerobox runtime for Bash consumers and Think-in-Code analysis.
-The extension invokes the provenance-pinned Zerobox fork at
-`~/.pi/bin/zerobox`; it never resolves a sandbox binary from `PATH` or a
-development checkout.
+Sandbox is the Linux Zerobox runtime used by Bash and Think-in-Code. It keeps
+filesystem, network, environment and Docker access explicit.
 
-Sandbox registers no `bash`, `safe_bash`, or `user_bash` surface. The
-`bash-execution` extension owns those Pi interfaces and consumes the runtime
-contract published here.
+## Start here
 
-## Lifecycle and fail-closed publication
+1. Put ordinary Sandbox settings in `~/.pi/agent/settings.json` under
+   `sandbox`, or in `<project>/.pi/settings.json` for one project.
+2. Open Pi in the project and run `/sandbox doctor`.
+3. Run `/sandbox on` when the status is correct.
+4. If the project needs Docker, run `/sandbox docker grant` from that project.
+   Choose a service and an access profile, review the change, then confirm it.
 
-The extension owns one tagged process-global Sandbox runtime at
-`Symbol.for("pi.sandbox-runtime.v2")`. On enable it
-validates configuration, probes the managed binary, creates the Bash session
-lease, constructs the analysis service, and then publishes both services in
-one synchronous assignment. During transitions the runtime is `uninitialized`;
-initialization failures publish a bounded `error` state. Owner tokens prevent a
-stale reloaded instance from publishing or releasing the current runtime.
-Sandbox never supplies a local fallback.
+Docker is off by default. Its authority is kept separately in
+`~/.pi/agent/sandbox.global.json`, never in project settings.
 
-Bash and Think collection have separate private leases per session and cwd.
-Each analysis request has a new lease.
-Leases live below `~/.pi/zbx/`, use owner-only permissions, contain an explicit
-owner marker, and are the only paths eligible for stale cleanup. The launcher
-uses protocol-v1 JSONL on FD 3: only `child_started` makes a process ready;
-setup errors, corrupt status, premature EOF, and impossible ordering fail
-closed. `HOME` points into the lease. `bash-general` exposes the host `/tmp`
-with `TMPDIR=/tmp`, subject to explicit project denies. It retains filesystem,
-network, Docker and lease-control restrictions. `think-strict` collection and
-`analysis-strict` derivation each mount their own lease storage at `/tmp`, also
-with `TMPDIR=/tmp`. Host and sibling-lease temporary files remain inaccessible
-to both Think profiles. `ZEROBOX_HOME` remains a launcher-only variable. The host-side managed TCP bridge receives read-only
-access to the dedicated `zerobox-home/tmp/runs` subtree; target writes,
-profiles, and all other lease control data remain denied.
+## Daily commands
 
-Bash permits TCP test listeners only inside its private network namespace.
-Set `network.allowLocalBinding` to `false` to prohibit them. Analysis keeps
-listeners prohibited. Explicit `localhost:port` grants reserve those private
-ports for host access through the policy-enforcing proxy; other loopback
-ports are private test ports. This does not expose a host listener or permit
-host Unix sockets, UDP, raw sockets, or unapproved outbound destinations.
-Buffered subprocess pipes use private Unix stream socketpairs, not named
-host sockets.
+| Command | Purpose |
+| --- | --- |
+| `/sandbox` | Show the effective Sandbox policy. |
+| `/sandbox doctor` | Validate canonical configuration and show the next corrective command. |
+| `/sandbox on` / `/sandbox off` | Enable or disable Sandbox for this session. |
+| `/sandbox docker` | Show Docker authority, project preference and effective policy. |
+| `/sandbox docker grant` | Create or replace this project's global targeted Docker grant. |
+| `/sandbox docker off\|targeted\|full\|inherit` | Set a project-local narrowing of the global authority. |
 
-Setup failures include the helper's diagnostic and remain distinct from a
-started process's exit code/stdout/stderr. Bounded diagnostics explicitly
-mark truncation. FUSE memoizes only immutable lexical policy answers, never
-file contents, metadata, or symlink resolution. Directory reads check only
-the requested page of entries instead of rechecking every entry per page.
+## Documentation
 
-## Commands and persistence
-
-| Command                    | Description                                                     |
-| -------------------------- | --------------------------------------------------------------- |
-| `/sandbox`                 | Show current status and configuration                           |
-| `/sandbox on`              | Enable the Sandbox runtime for this session                     |
-| `/sandbox off`             | Publish an explicit disabled runtime state                      |
-| `/sandbox docker`          | Show global authority, project preference, and effective mode   |
-| `/sandbox docker off`      | Persist a disabled Docker preference for this project           |
-| `/sandbox docker targeted` | Persist targeted mode when global authority is already targeted |
-| `/sandbox docker full`     | Persist full mode when global authority is full                 |
-| `/sandbox docker inherit`  | Remove the project override and inherit global Docker authority |
-
-`enable` and `disable` are not aliases. Docker setters require a trusted
-project and persist under `sandbox.docker` in `<cwd>/.pi/settings.json` while
-preserving the other project settings. A requested expansion is rejected before
-the file changes. Reducing global `full` authority to `targeted` requires an
-explicit target list in project settings and is intentionally not inferred by
-the command.
-
-The Sandbox runtime is disabled by default. The effective `enabled` value uses, in
-descending priority: `--no-sandbox`, `PI_SANDBOX_SESSION_STATUS`, the session's
-`sandbox-state.<sessionKey>.json`, project config, global config, then the built-in
-default. Static security fields continue to come from project/global config. The
-former directory-wide `sandbox-state.json` is intentionally ignored because Pi
-stores multiple sessions in one directory and the legacy state cannot be
-attributed safely. `sessionKey` is the SHA-256 digest of Pi's public session ID.
-
-## Supported configuration
-
-```json
-{
-    "enabled": true,
-    "network": {
-        "allowLocalBinding": true,
-        "allowedDomains": ["github.com", "*.github.com", "localhost:8317"],
-        "deniedDomains": []
-    },
-    "filesystem": {
-        "allowRead": [],
-        "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "**/*.pem"],
-        "allowWrite": ["."],
-        "denyWrite": [".env", "generated/**"]
-    },
-    "environment": {
-        "allowedVariables": [],
-        "deniedVariables": [],
-        "variables": {}
-    }
-}
-```
-
-Project settings override global settings. The preferred locations are the
-`sandbox` keys in `<cwd>/.pi/settings.json` and
-`~/.pi/agent/settings.json`; legacy `sandbox.json` files remain readable.
-Keep ordinary development outputs such as `node_modules` writable in this
-OS-level policy. Use Pi Permission System to deny direct `write` and `edit`
-tool calls into dependencies without breaking package managers, compilers, or
-framework CLIs that legitimately maintain their own files.
-
-Only `filesystem.denyRead` and `filesystem.denyWrite` accept globs. A relative
-pattern without `/`, such as `*.pem`, matches basenames at every depth under
-the project root. A relative pattern containing `/` is anchored to that root.
-`*`, `?`, character classes, brace alternatives, and `**` use `globset`
-semantics with `/` as the separator. `~` and absolute patterns remain valid,
-but a pattern whose safe static prefix is only `/` is rejected.
-
-When a deny list contains a glob, Zerobox creates a private FUSE passthrough
-view and bind-mounts it only inside the command namespace. This catches files
-created or renamed after spawn. `denyRead` hides matching entries and blocks
-all mutations; `denyWrite` keeps reads available but blocks creation, writes,
-deletion, renames, links, and metadata changes. Requested and resolved symlink
-paths are both checked. Existing hardlink aliases retain path-by-name
-semantics. Missing `/dev/fuse`, `fusermount3`, or a failed mount blocks the
-spawn; Zerobox never falls back to a static expansion. Policies without globs
-keep the ordinary Bubblewrap path and do not mount FUSE.
-
-## Docker authority
-
-Docker access is disabled unless the canonical project root has an exact grant
-in the Git-ignored `~/.pi/agent/sandbox.global.json` authority file:
-
-```json
-{
-    "docker": {
-        "grants": [
-            {
-                "projectRoot": "~/projects/app",
-                "mode": "targeted",
-                "endpoint": "unix:///var/run/docker.sock",
-                "targets": [
-                    {
-                        "selector": {
-                            "type": "compose-service",
-                            "project": "app",
-                            "service": "api"
-                        },
-                        "operations": ["logs", "inspect"],
-                        "allowUnsafeTarget": false
-                    }
-                ]
-            }
-        ]
-    }
-}
-```
-
-The authority file accepts only local Unix endpoints. `projectRoot` expands a
-leading `~`, resolves symlinks, and must match the current canonical project
-root exactly. Duplicate roots, unknown fields, ambiguous targets, and
-group/world-writable or symlinked authority files fail closed. An absent grant
-means `Docker off`.
-
-While the sandbox is active, the compiled filesystem policy always denies
-writes to the authority file, even when Pi runs from `~/.pi` and the configured
-write root is `.`. Pi Permission System also denies direct `write` and `edit`
-calls to it. These protections do not claim to survive `/sandbox off`: an
-unsandboxed shell running with the owner's UID can modify owner-writable files.
-
-A project `sandbox.docker` value may only disable or narrow its global grant.
-It can reduce `full` to `targeted`, remove targets or operations, and force
-`allowUnsafeTarget` to `false`. It cannot add an endpoint, target, operation,
-or unsafe exception. Any attempted escalation invalidates the complete Sandbox
-configuration.
-
-Targeted mode resolves exact container names or the standard Compose project
-and service labels once before spawn, then pins the matching container IDs for
-that execution. It supports `ps`, `inspect`, `logs`, `stats`, `exec`, `start`,
-`stop`, and `restart`; an omitted operation list grants this complete bundle.
-Discovery is filtered to pinned IDs, unknown targets return 404, forbidden
-operations return 403, and only broker-created exec IDs can be used. Detached
-or privileged exec is rejected.
-
-Targets with host namespaces, privileged mode, host bind mounts, runtime
-sockets, devices, dangerous added capabilities, or disabled confinement are
-excluded. Only `allowUnsafeTarget: true` in the global authority file can admit
-one, and the widget and `/sandbox` show a warning without exposing endpoints or
-target names. Compose commands may require discovery plus the operation they
-perform; reducing the bundle too far can therefore make the corresponding
-Compose command unavailable.
-
-The host Docker socket is never mounted in the sandbox. Zerobox brokers it over
-a private owner-only Unix socket and a loopback bridge exposed as
-`DOCKER_HOST=tcp://127.0.0.1:<private-port>` inside the namespace. Inherited
-Docker connection variables are removed first. `full` mode forwards the whole
-Engine API and is explicitly equivalent to host control; it can bypass other
-filesystem and network restrictions through Docker. `exec` necessarily uses
-the selected container's own mounts, network, and secrets, outside the command
-sandbox policy. See Docker's [daemon security guidance](https://docs.docker.com/engine/security/).
-
-With `/sandbox off` or `--no-sandbox`, command execution is local and the
-Zerobox Docker policy is inactive. A Docker grant never authorizes the
-`docker` shell command in Safe Bash or Think-in-Code; their independent command
-policies must allow it separately. Analysis workers always receive Docker
-mode `disabled`.
-
-Version 1 is Linux-only. It supports exact filesystem paths, dynamic deny
-globs, public-domain outbound allowlists, port-scoped loopback, deny-all
-networking, optional brokered Docker access, private temp, environment
-filtering, nested-user-namespace blocking, and process-tree termination.
-Managed networking rejects UDP and raw IP sockets at seccomp and keeps host
-Unix sockets inaccessible. Host-visible inbound binding, arbitrary target-visible Unix
-sockets, ASRT-only fields, macOS, and Windows are rejected before publication.
-
-## Strict analysis service
-
-The model selects only a language and program. The host selects a fixed
-QuickJS or Node/Eryx worker, invokes it as structured `file`/`args` through
-Zerobox, and sends model data over a private FIFO only after the status channel
-confirms `child_started`. The analysis policy has no project mount, no inherited
-environment, no network, and no writable path outside its lease. Linux
-`prlimit`, parent wall-time/output limits, process-group cleanup, and the inner
-WASM runtime provide independent limits.
-
-## Exact dependencies
-
-The sandbox package keeps both requested compiler generations:
-
-- `typescript@6.0.3` for the QuickJS programmatic transform API;
-- `@typescript/native` as `npm:typescript@7.0.2` for the TypeScript 7 native
-  compiler.
-
-The `agent` package itself contains only `typescript@7.0.2`.
-`@sebastianwessel/quickjs@3.1.0`,
-`@jitl/quickjs-ng-wasmfile-release-sync@0.32.0`, and
-`@bsull/eryx@0.6.0` are exact-pinned. ASRT is not installed.
-
-Operational requirements are Linux, `/usr/bin/mkfifo`, `/usr/bin/prlimit`, and
-`/usr/bin/node` with JSPI support. The managed Zerobox version, hash, source
-commit, engine commit, and ordered patch hashes are recorded in
-`runtime/zerobox-provenance.json` and verified by executable tests.
+- [Configuration](docs/configuration.md): ordinary Sandbox settings and precedence.
+- [Docker authority](docs/docker-authority.md): guided and manual Docker grants.
+- [Troubleshooting](docs/troubleshooting.md): errors and corrective actions.
+- [Runtime](docs/runtime.md): isolation, temporary storage and operational limits.

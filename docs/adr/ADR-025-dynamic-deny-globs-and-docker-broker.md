@@ -106,6 +106,12 @@ canonicalizes every configured project root at startup, rejects duplicate roots
 and unknown fields, and requires an exact match with the current canonical
 project root. No match means `Disabled`.
 
+The compiled Bash profile always denies writes to this authority file,
+independently of the current project root and configurable write paths. Pi
+Permission System separately denies direct `write` and `edit` calls. These
+guards apply while sandbox enforcement is active; local shell execution selected
+by `/sandbox off` retains the owner's normal Unix permissions.
+
 The project `sandbox.docker` layer may disable access, reduce `Full` to
 `Targeted`, remove targets or operations, or force an unsafe exception off. It
 cannot set an endpoint or add any authority. An escalation attempt invalidates
@@ -119,9 +125,11 @@ policies remain independent and must separately authorize the `docker`
 command.
 
 The `/sandbox` status and footer show `Docker off`, `targeted`, or `full`, plus
-unsafe/full warnings. They do not reveal endpoints, target names, or grant
-contents. `/sandbox off` and `--no-sandbox` select local execution, so the
-Zerobox Docker policy is inactive.
+unsafe/full warnings. `/sandbox docker` additionally shows the global mode,
+project preference, and effective mode without revealing endpoints, target
+names, or grant contents. Its `off`, `targeted`, `full`, and `inherit`
+subcommands persist only a validated project narrowing. `/sandbox off` and
+`--no-sandbox` select local execution, so the Zerobox Docker policy is inactive.
 
 ## Consequences
 
