@@ -437,6 +437,12 @@ class ZeroboxBackend implements SandboxBackend {
                     `--profile=${profile.name}`,
                     "--strict-sandbox",
                     "--status-fd=3",
+                    ...(policy.name === "bash-general"
+                        ? [`--private-tmp=${lease.tmpDir}`]
+                        : []),
+                    ...(policy.network.allowLocalBinding
+                        ? ["--allow-local-binding"]
+                        : []),
                     "-C",
                     command.cwd,
                     "--",

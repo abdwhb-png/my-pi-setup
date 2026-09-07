@@ -313,6 +313,7 @@ export interface SandboxConfig extends PiSandboxConfig {}
 const DEFAULT_CONFIG: SandboxConfig = {
     enabled: false,
     network: {
+        allowLocalBinding: true,
         allowedDomains: [
             "npmjs.org",
             "*.npmjs.org",

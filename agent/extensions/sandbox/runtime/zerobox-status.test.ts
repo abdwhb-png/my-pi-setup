@@ -34,15 +34,15 @@ describe("Zerobox status protocol v1", () => {
         await expect(status.settled).resolves.toBeUndefined();
     });
 
-    it("maps setup_error to setup-failed without leaking its fields", async () => {
+    it("exposes setup phase and helper diagnostics without treating them as target errors", async () => {
         const stream = new PassThrough();
         const status = superviseZeroboxStatusStream(stream);
         stream.end(
             line({
                 version: 1,
                 event: "setup_error",
-                code: "raw-secret-code",
-                message: "raw-secret-message",
+                code: "sandbox_setup",
+                message: "bwrap: mount source disappeared: ENOENT",
             }),
         );
         for (const promise of [status.ready, status.settled]) {
@@ -51,7 +51,8 @@ describe("Zerobox status protocol v1", () => {
                 throw new Error("expected rejection");
             } catch (error) {
                 expect(error).toMatchObject({ code: "setup-failed" });
-                expect((error as Error).message).not.toContain("raw-secret");
+                expect((error as Error).message).toContain("[sandbox_setup]");
+                expect((error as Error).message).toContain("bwrap: mount source disappeared: ENOENT");
             }
         }
     });

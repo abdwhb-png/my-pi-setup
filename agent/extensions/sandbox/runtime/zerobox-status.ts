@@ -108,6 +108,7 @@ export function superviseZeroboxStatusStream(stream: Readable): {
             terminal = true;
             setupFailure = new SandboxExecutionError("setup-failed", {
                 cause: new Error(`[${value.code}] ${value.message}`),
+                diagnostic: `[${value.code}] ${value.message}`,
             });
             rejectReady(setupFailure);
             return;

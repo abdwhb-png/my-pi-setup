@@ -62,6 +62,7 @@ export interface SandboxNetworkPolicy {
     mode: "deny-all" | "domain-allowlist";
     allow: string[];
     deny: string[];
+    allowLocalBinding?: boolean;
 }
 
 export interface SandboxEnvironmentPolicy {
@@ -131,6 +132,7 @@ export interface SandboxCapabilities {
     processTreeTermination: true;
     dynamicDenyGlobs: true;
     inboundBinding: false;
+    privateNetworkListeners: true;
     arbitraryUnixSockets: false;
 }
 
@@ -148,6 +150,7 @@ export const SANDBOX_CAPABILITIES: SandboxCapabilities = Object.freeze({
     processTreeTermination: true,
     dynamicDenyGlobs: true,
     inboundBinding: false,
+    privateNetworkListeners: true,
     arbitraryUnixSockets: false,
 });
 

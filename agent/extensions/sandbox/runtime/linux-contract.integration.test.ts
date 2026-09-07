@@ -153,7 +153,7 @@ describe("Pi Zerobox Linux contract", () => {
             expect(environment.exitCode, environment.output).toBe(0);
             const parsed = JSON.parse(environment.output);
             expect(parsed.HOME).toMatch(/^\/home\/[^/]+\/\.pi\/zbx\/l-[a-f0-9]{6}\/home$/);
-            expect(parsed.TMPDIR).toBe(parsed.HOME.replace(/\/home$/, "/tmp"));
+            expect(parsed.TMPDIR).toBe("/tmp");
             expect(parsed.ZEROBOX_HOME).toBeUndefined();
             expect(parsed.PATH).not.toContain("/mnt/c");
 
@@ -573,8 +573,8 @@ describe("Pi Zerobox Linux contract", () => {
                         cwd,
                     )
                 ).exitCode,
-                "ProxyRouted must reject inbound TCP binding",
-            ).toBe(0);
+                "local test listeners must work inside the private network namespace",
+            ).toBe(42);
             const bridgeReadOnly = await collectExecution(
                 bashOperations(service),
                 `bridge="$HOME/../zerobox-home/tmp/runs"; test -d "$bridge" && test -r "$bridge" && ! touch "$bridge/target-write"`,

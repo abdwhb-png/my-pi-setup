@@ -69,6 +69,8 @@ describe("sandbox policies", () => {
         expect(bash.strict).toBe(true);
         expect(analysis.strict).toBe(true);
         expect(bash.network.mode).toBe("domain-allowlist");
+        expect(bash.network.allowLocalBinding).toBe(true);
+        expect(bash.environment.set.TMPDIR).toBe("/tmp");
         expect(analysis.network).toEqual({
             mode: "deny-all",
             allow: [],
@@ -290,7 +292,7 @@ describe("sandbox policies", () => {
             EXPLICIT: "captured-host-value",
             PATH: buildBashPath(),
             HOME: lease.homeDir,
-            TMPDIR: lease.tmpDir,
+            TMPDIR: "/tmp",
         });
         expect(policy.environment.inherit).toEqual([
             "USER",
@@ -327,7 +329,6 @@ describe("sandbox policies", () => {
             { network: { allowedDomains: ["10.0.0.1:443"] } },
             { network: { allowedDomains: ["8.8.8.8:443"] } },
             { network: { allowedDomains: ["[fd00::1]:443"] } },
-            { network: { allowLocalBinding: true } },
             { network: { allowAllUnixSockets: true } },
             { filesystem: { allowWrite: ["*.pem"] } },
             { filesystem: { allowRead: ["secret?.txt"] } },
@@ -352,7 +353,9 @@ describe("sandbox policies", () => {
         const config = validatePiSandboxConfig(raw);
         expect(config.enabled).toBe(true);
         expect(config.filesystem.allowWrite).not.toContain("/tmp");
-        expect(config.filesystem.denyWrite).toEqual([".env"]);
+        expect(config.filesystem.denyWrite).toEqual([
+            ".env", ".env.*", "*.pem", "*.key",
+        ]);
         expect(config.network.allowedDomains).toEqual([
             "github.com",
             "*.github.com",

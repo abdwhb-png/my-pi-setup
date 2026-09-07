@@ -3,7 +3,12 @@
     "filesystem": {
         "denyRead": ["~/.ssh", "~/.gnupg"],
         "allowWrite": ["."],
-        "denyWrite": [".env"]
+        "denyWrite": [
+            ".env",
+            ".env.*",
+            "*.pem",
+            "*.key"
+        ]
     },
     "network": {
         "allowedDomains": [

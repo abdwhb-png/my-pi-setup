@@ -52,6 +52,7 @@ describe("provider-neutral sandbox contracts", () => {
             networkDenyAll: true,
             nestedUserNamespacesBlocked: true,
             privateTemp: true,
+            privateNetworkListeners: true,
             environmentFiltering: true,
             processTreeTermination: true,
             dynamicDenyGlobs: true,

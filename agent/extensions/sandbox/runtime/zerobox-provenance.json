@@ -1,7 +1,7 @@
 {
-    "version": "0.3.3-fork.12",
-    "tag": "v0.3.3-fork.12",
-    "forkCommit": "288a888aec15298035d67dd1ab56e5330459f5b6",
+    "version": "0.3.3-fork.15",
+    "tag": "v0.3.3-fork.15",
+    "forkCommit": "1bffd639196d144743110e2172f0a61304e700c4",
     "upstreamTag": "v0.3.3",
     "upstreamCommit": "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
     "engineRef": "rust-v0.131.0-alpha.22",
@@ -110,8 +110,20 @@
         {
             "path": "scripts/upstream-setup-artifact-errors.patch",
             "sha256": "c3ed22741b53a1be3690b7e8214507fc6f5c6b85ab9fa61077a0ffe3dd5e37d8"
+        },
+        {
+            "path": "scripts/upstream-private-stream-ipc.patch",
+            "sha256": "b02fc89137b1b5c0bf5553e0c6cd71e7044e1a21b73a4c32513a0d391117c6ee"
+        },
+        {
+            "path": "scripts/upstream-local-test-network.patch",
+            "sha256": "3ee6d7458c0756b6973a9e29b626104054451d53fdb74160a82c5f1826484501"
+        },
+        {
+            "path": "scripts/upstream-concurrent-deny-targets.patch",
+            "sha256": "6c2ce1c39412c9f73005652537b633573a7397cfadc6de3149c7be0bc9fc8d8d"
         }
     ],
     "binaryName": "zerobox",
-    "binarySha256": "c832bf03ca555a3351ff4af6da48d2a917baea1670fddb029f3bd7fbabfdee1a"
+    "binarySha256": "a0d234f552afed6f6517394fca3ece7af3d7d0a324808607bdc9416893168a0b"
 }

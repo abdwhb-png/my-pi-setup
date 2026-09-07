@@ -12,9 +12,9 @@ const QUICKJS_VARIANT_VERSION = "0.32.0";
 const AGENT_TYPESCRIPT_VERSION = "7.0.2";
 const SANDBOX_TYPESCRIPT_API_VERSION = "6.0.3";
 const SANDBOX_TYPESCRIPT_NATIVE_VERSION = "7.0.2";
-const ZEROBOX_VERSION = "0.3.3-fork.12";
+const ZEROBOX_VERSION = "0.3.3-fork.15";
 const ZEROBOX_SHA256 =
-    "c832bf03ca555a3351ff4af6da48d2a917baea1670fddb029f3bd7fbabfdee1a";
+    "a0d234f552afed6f6517394fca3ece7af3d7d0a324808607bdc9416893168a0b";
 const MANAGED_ZEROBOX_PATH = join(homedir(), ".pi", "bin", "zerobox");
 const ZEROBOX_SOURCE_ROOT = join(
     homedir(),
@@ -23,14 +23,14 @@ const ZEROBOX_SOURCE_ROOT = join(
     "sandboxes",
     "zerobox",
 );
-const ZEROBOX_SOURCE_COMMIT = "288a888aec15298035d67dd1ab56e5330459f5b6";
+const ZEROBOX_SOURCE_COMMIT = "1bffd639196d144743110e2172f0a61304e700c4";
 const PREVIOUS_ZEROBOX_ROLLBACK_ROOT = join(
     homedir(),
     ".local",
     "state",
     "pi",
     "rollback",
-    "zerobox-fork.11-154491746325",
+    "zerobox-fork.12-ou3Geh",
 );
 
 const EXPECTED_PATCHES = [
@@ -60,6 +60,9 @@ const EXPECTED_PATCHES = [
     ["scripts/upstream-docker-broker-resource-limits.patch", "5fbb9b4fffef9535c04c4d2c50f3fe13898726bde5fba1f0da8acd18a60e7751"],
     ["scripts/upstream-docker-broker-connection-permit.patch", "01d36d678c7ea381149f16268a70b8d06fbf4bb2d4b48b7c78f23b62c4428358"],
     ["scripts/upstream-setup-artifact-errors.patch", "c3ed22741b53a1be3690b7e8214507fc6f5c6b85ab9fa61077a0ffe3dd5e37d8"],
+    ["scripts/upstream-private-stream-ipc.patch", "b02fc89137b1b5c0bf5553e0c6cd71e7044e1a21b73a4c32513a0d391117c6ee"],
+    ["scripts/upstream-local-test-network.patch", "3ee6d7458c0756b6973a9e29b626104054451d53fdb74160a82c5f1826484501"],
+    ["scripts/upstream-concurrent-deny-targets.patch", "6c2ce1c39412c9f73005652537b633573a7397cfadc6de3149c7be0bc9fc8d8d"],
 ].map(([path, sha256]) => ({ path, sha256 }));
 
 interface SandboxPackageJson {
@@ -152,7 +155,7 @@ describe("sandbox dependency contract", () => {
         ).json();
         expect(provenance).toEqual({
             version: ZEROBOX_VERSION,
-            tag: "v0.3.3-fork.12",
+            tag: "v0.3.3-fork.15",
             forkCommit: ZEROBOX_SOURCE_COMMIT,
             upstreamTag: "v0.3.3",
             upstreamCommit: "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
@@ -180,7 +183,7 @@ describe("sandbox dependency contract", () => {
         expect(
             execFileSync(
                 "git",
-                ["rev-parse", "v0.3.3-fork.12^{commit}"],
+                ["rev-parse", "v0.3.3-fork.15^{commit}"],
                 { cwd: ZEROBOX_SOURCE_ROOT, encoding: "utf8" },
             ).trim(),
         ).toBe(ZEROBOX_SOURCE_COMMIT);
@@ -278,24 +281,28 @@ describe("sandbox dependency contract", () => {
         const [binary, provenanceBytes, manifest] = await Promise.all([
             readFile(previousBinary),
             readFile(previousProvenancePath),
-            readFile(join(PREVIOUS_ZEROBOX_ROLLBACK_ROOT, "MANIFEST.md"), "utf8"),
+            readFile(join(PREVIOUS_ZEROBOX_ROLLBACK_ROOT, "README.md"), "utf8"),
         ]);
         const previousProvenance: unknown = JSON.parse(
             provenanceBytes.toString("utf8"),
         );
 
         expect(createHash("sha256").update(binary).digest("hex")).toBe(
-            "1544917463257a19361796d517ef121b601dd4ded18edf53ca5617f387618514",
+            "c832bf03ca555a3351ff4af6da48d2a917baea1670fddb029f3bd7fbabfdee1a",
         );
         expect(createHash("sha256").update(provenanceBytes).digest("hex")).toBe(
-            "d960b718088f2633d8aeca895a18ce9e53cbcba0d41efcd0d5270ab6e4b2dc17",
+            "46a187031e7322c80a39bd31bae915b597e6ca3493c79714f232e51e9892e755",
         );
         expect(previousProvenance).toMatchObject({
-            version: "0.3.3-fork.11",
+            version: "0.3.3-fork.12",
             binarySha256:
-                "1544917463257a19361796d517ef121b601dd4ded18edf53ca5617f387618514",
+                "c832bf03ca555a3351ff4af6da48d2a917baea1670fddb029f3bd7fbabfdee1a",
         });
-        expect(manifest).toContain("not an ASRT source rollback");
+        expect(manifest).toContain("Do not restore only the old executable");
+        expect((await stat(join(PREVIOUS_ZEROBOX_ROLLBACK_ROOT, "pi-integration.tar"))).size).toBeGreaterThan(0);
+        const previousConfig = await Bun.file(join(PREVIOUS_ZEROBOX_ROLLBACK_ROOT, "sandbox.json")).json();
+        expect(previousConfig.filesystem.denyWrite).toContain("*/node_modules/*");
+        expect(previousConfig.filesystem.denyWrite).not.toContain("**/node_modules/**");
     });
 
     it("executes JavaScript and TypeScript through QuickJS", async () => {

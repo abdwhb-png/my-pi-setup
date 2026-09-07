@@ -71,6 +71,7 @@ interface PiFilesystemConfig {
 interface PiNetworkConfig {
     allowedDomains: string[];
     deniedDomains: string[];
+    allowLocalBinding: boolean;
 }
 
 interface PiEnvironmentConfig {
@@ -303,11 +304,8 @@ export function validatePiSandboxConfig(
         "allowLocalBinding",
         "allowAllUnixSockets",
     ]);
-    if (
-        network.allowLocalBinding === true ||
-        network.allowAllUnixSockets === true
-    ) {
-        unsupported(new Error("Inbound or Unix socket access requested"));
+    if (network.allowAllUnixSockets === true) {
+        unsupported(new Error("Host Unix socket access requested"));
     }
     if (
         network.allowLocalBinding !== undefined &&
@@ -322,6 +320,7 @@ export function validatePiSandboxConfig(
         invalid(new Error("allowAllUnixSockets must be boolean"));
     }
     const normalizedNetwork: PiNetworkConfig = {
+        allowLocalBinding: network.allowLocalBinding !== false,
         allowedDomains: normalizeNetworkRules(
             stringArray(network.allowedDomains, "network.allowedDomains"),
         ),
@@ -505,6 +504,7 @@ export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
             mode: allow.length === 0 ? "deny-all" : "domain-allowlist",
             allow,
             deny: input.config.network.deniedDomains,
+            allowLocalBinding: input.config.network.allowLocalBinding,
         },
         environment: {
             inherit,
@@ -513,7 +513,7 @@ export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
                 ...configuredVariables,
                 PATH: buildBashPath(),
                 HOME: input.lease.homeDir,
-                TMPDIR: input.lease.tmpDir,
+                TMPDIR: "/tmp",
             },
             deny: input.config.environment.deniedVariables,
         },

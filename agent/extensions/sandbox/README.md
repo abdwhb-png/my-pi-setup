@@ -25,18 +25,35 @@ Leases live below `~/.pi/zbx/`, use owner-only permissions, contain an explicit
 owner marker, and are the only paths eligible for stale cleanup. The launcher
 uses protocol-v1 JSONL on FD 3: only `child_started` makes a process ready;
 setup errors, corrupt status, premature EOF, and impossible ordering fail
-closed. `HOME` and `TMPDIR` point into the lease and `ZEROBOX_HOME` remains a
-launcher-only variable. The host-side managed TCP bridge receives read-only
+closed. `HOME` points into the lease. Bash sees the lease's private temporary
+storage at standard `/tmp` with `TMPDIR=/tmp`; host and sibling-session temp
+files remain inaccessible. Analysis retains its separate per-request temp
+path. `ZEROBOX_HOME` remains a launcher-only variable. The host-side managed TCP bridge receives read-only
 access to the dedicated `zerobox-home/tmp/runs` subtree; target writes,
 profiles, and all other lease control data remain denied.
 
+Bash permits TCP test listeners only inside its private network namespace.
+Set `network.allowLocalBinding` to `false` to prohibit them. Analysis keeps
+listeners prohibited. Explicit `localhost:port` grants reserve those private
+ports for host access through the policy-enforcing proxy; other loopback
+ports are private test ports. This does not expose a host listener or permit
+host Unix sockets, UDP, raw sockets, or unapproved outbound destinations.
+Buffered subprocess pipes use private Unix stream socketpairs, not named
+host sockets.
+
+Setup failures include the helper's diagnostic and remain distinct from a
+started process's exit code/stdout/stderr. Bounded diagnostics explicitly
+mark truncation. FUSE memoizes only immutable lexical policy answers, never
+file contents, metadata, or symlink resolution. Directory reads check only
+the requested page of entries instead of rechecking every entry per page.
+
 ## Commands and persistence
 
-| Command        | Description                                   |
-| -------------- | --------------------------------------------- |
-| `/sandbox`     | Show current status and configuration         |
-| `/sandbox on`  | Enable the Sandbox runtime for this session   |
-| `/sandbox off` | Publish an explicit disabled runtime state    |
+| Command        | Description                                 |
+| -------------- | ------------------------------------------- |
+| `/sandbox`     | Show current status and configuration       |
+| `/sandbox on`  | Enable the Sandbox runtime for this session |
+| `/sandbox off` | Publish an explicit disabled runtime state  |
 
 The Sandbox runtime is disabled by default. The effective `enabled` value uses, in
 descending priority: `--no-sandbox`, `PI_SANDBOX_SESSION_STATUS`, the session's
@@ -52,6 +69,7 @@ attributed safely. `sessionKey` is the SHA-256 digest of Pi's public session ID.
 {
     "enabled": true,
     "network": {
+        "allowLocalBinding": true,
         "allowedDomains": ["github.com", "*.github.com", "localhost:8317"],
         "deniedDomains": []
     },
@@ -72,6 +90,10 @@ attributed safely. `sessionKey` is the SHA-256 digest of Pi's public session ID.
 Project settings override global settings. The preferred locations are the
 `sandbox` keys in `<cwd>/.pi/settings.json` and
 `~/.pi/agent/settings.json`; legacy `sandbox.json` files remain readable.
+Keep ordinary development outputs such as `node_modules` writable in this
+OS-level policy. Use Pi Permission System to deny direct `write` and `edit`
+tool calls into dependencies without breaking package managers, compilers, or
+framework CLIs that legitimately maintain their own files.
 
 Only `filesystem.denyRead` and `filesystem.denyWrite` accept globs. A relative
 pattern without `/`, such as `*.pem`, matches basenames at every depth under
@@ -168,7 +190,7 @@ globs, public-domain outbound allowlists, port-scoped loopback, deny-all
 networking, optional brokered Docker access, private temp, environment
 filtering, nested-user-namespace blocking, and process-tree termination.
 Managed networking rejects UDP and raw IP sockets at seccomp and keeps host
-Unix sockets inaccessible. Inbound binding, arbitrary target-visible Unix
+Unix sockets inaccessible. Host-visible inbound binding, arbitrary target-visible Unix
 sockets, ASRT-only fields, macOS, and Windows are rejected before publication.
 
 ## Strict analysis service

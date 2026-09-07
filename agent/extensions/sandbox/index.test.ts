@@ -180,7 +180,7 @@ describe('renderSandboxStatusDetails', () => {
             source: 'project-config',
             config: {
                 enabled: true,
-                network: { allowedDomains: [], deniedDomains: [] },
+                network: { allowedDomains: [], deniedDomains: [], allowLocalBinding: true },
                 filesystem: {
                     allowRead: [],
                     denyRead: [],
