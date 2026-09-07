@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { homedir } from "node:os";
+import { createSandboxedBashOps } from "../index.ts";
+import { createBashProcessSupervisor } from "../../_shared/command-execution/exec.ts";
 import { createBashOperations } from "../../_shared/command-execution/exec.ts";
 import { createPrivateTempLease } from "./private-temp.ts";
 import { validatePiSandboxConfig } from "./policies.ts";
@@ -54,4 +57,44 @@ test("development shares host tmp while both Think profiles isolate it and sibli
         await rm(hostTmp, { recursive: true, force: true });
         await rm(cwd, { recursive: true, force: true });
     }
+}, 30_000);
+
+test("development resolves home-relative project paths without granting home writes", async () => {
+    const cwd = await mkdtemp(join(import.meta.dir, ".tmp-home-"));
+    const outside = join(homedir(), `.pi-home-write-probe-${process.pid}`);
+    const service = createSandboxService({ backend: createZeroboxBackend(), config: validatePiSandboxConfig({ filesystem: { allowWrite: ["."], denyRead: [join(cwd, "denied.txt")] } }) });
+    const supervisor = createBashProcessSupervisor();
+    try {
+        await writeFile(join(cwd, "denied.txt"), "private fixture");
+        await service.startBashSession(cwd);
+        const operations = createSandboxedBashOps(service, supervisor);
+        let output = "";
+        const command = `cd ~/${relative(homedir(), cwd)} && printf '%s' "$PWD"`;
+        const result = await operations.exec(command, cwd, { timeout: 10, onData: chunk => { output += chunk.toString(); } });
+        expect({ code: result.exitCode, output }).toEqual({ code: 0, output: cwd });
+        const cache = await operations.exec('test -n "$XDG_CACHE_HOME" && test -n "$BUN_INSTALL_CACHE_DIR" && test -n "$npm_config_cache" && mkdir -p "$XDG_CACHE_HOME" "$BUN_INSTALL_CACHE_DIR" "$npm_config_cache" && printf cache > "$XDG_CACHE_HOME/probe"', cwd, { timeout: 10, onData: () => {} });
+        expect(cache.exitCode).toBe(0);
+        for (const blocked of [`printf forbidden > ${outside}`, "cat denied.txt"]) {
+            const denied = await operations.exec(blocked, cwd, { timeout: 10, onData: () => {} });
+            expect(denied.exitCode).not.toBe(0);
+        }
+    } finally {
+        supervisor.shutdown();
+        await service.shutdown();
+        await rm(cwd, { recursive: true, force: true });
+        await rm(outside, { force: true });
+    }
+}, 30_000);
+
+test("Sandbox shell reports an upstream failure even when the final pipeline command succeeds", async () => {
+    const service = createSandboxService({ backend: createZeroboxBackend(), config: validatePiSandboxConfig({}) });
+    const supervisor = createBashProcessSupervisor();
+    try {
+        await service.startBashSession(import.meta.dir);
+        const events: object[] = [];
+        const operations = createSandboxedBashOps(service, supervisor, { onExecution: value => events.push(value) });
+        const result = await operations.exec("(printf failed; exit 7) | tail -n 1", import.meta.dir, { timeout: 10, onData: () => {} });
+        expect(result.exitCode).toBe(7);
+        expect(events.at(-1)).toMatchObject({ outcome: "failed", exitCode: 7 });
+    } finally { supervisor.shutdown(); await service.shutdown(); }
 }, 30_000);

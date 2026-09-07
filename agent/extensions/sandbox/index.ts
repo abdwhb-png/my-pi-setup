@@ -75,6 +75,7 @@ import {
     createAnalysisSandboxService,
     type AnalysisSandboxService,
 } from "./analysis/client.ts";
+import { inspectDockerAccess, formatDockerAccess } from "./docker-access.ts";
 import {
     SandboxExecutionError,
     type SandboxCommand,
@@ -85,6 +86,7 @@ import {
 } from "./runtime/contracts.ts";
 import {
     dockerPolicyHasUnsafeTargets,
+    DEFAULT_DOCKER_ENDPOINT,
     resolveDockerPolicy,
     saveTargetedDockerGrant,
 } from "./runtime/docker-policy.ts";
@@ -877,7 +879,7 @@ export function createSandboxedBashOps(
         prepareSpawn: async ({ command, cwd }) => {
             const sandboxCommand: SandboxCommand = {
                 file: "/bin/bash",
-                args: ["-c", command],
+                args: ["-o", "pipefail", "-c", command],
                 cwd,
                 stdin: options.stdin,
             };
@@ -1394,12 +1396,28 @@ export default function (pi: ExtensionAPI) {
                         envOverride: envSandboxStatus(),
                         includeLegacy: false,
                     });
+                    let accessLines: string[] = [];
+                    if (resolved.config.docker.mode === "targeted") {
+                        try {
+                            accessLines = formatDockerAccess(
+                                await inspectDockerAccess(
+                                    ctx.cwd,
+                                    resolved.config.docker,
+                                ),
+                            );
+                        } catch (error) {
+                            accessLines = [
+                                `Docker target inspection unavailable: ${configurationErrorMessage(error)}`,
+                            ];
+                        }
+                    }
                     ctx.ui.notify(
                         [
                             "Sandbox doctor",
                             `Docker authority: ${authorityPath} (${existsSync(authorityPath) ? "valid" : "not configured"})`,
                             `Effective Sandbox: ${resolved.config.enabled ? "on" : "off"} (${resolved.source})`,
                             `Effective Docker: ${resolved.config.docker.mode === "disabled" ? "off" : resolved.config.docker.mode}`,
+                            ...accessLines,
                             "Next: /sandbox docker grant",
                         ].join("\n"),
                         "info",
@@ -1511,9 +1529,70 @@ export default function (pi: ExtensionAPI) {
                     ctx.ui.notify("Docker grant cancelled", "info");
                     return;
                 }
+                const grant: DockerTargetGrant = {
+                    selector: target,
+                    operations: profile.operations,
+                    allowUnsafeTarget: false,
+                };
+                let accessLines: string[];
+                try {
+                    const policy = {
+                        mode: "targeted" as const,
+                        endpoint: DEFAULT_DOCKER_ENDPOINT,
+                        targets: [grant],
+                    };
+                    let access = await inspectDockerAccess(ctx.cwd, policy);
+                    const excluded = access
+                        .flatMap((item) => item.containers)
+                        .filter((container) => container.access === "excluded");
+                    if (excluded.length > 0) {
+                        const accepted = await ctx.ui.confirm(
+                            "Allow this Docker target despite its host access?",
+                            [
+                                ...formatDockerAccess(access),
+                                "This exception allows the selected operations on containers matching this selector, including future replacements, despite their host access.",
+                                `Operations: ${profile.operations.join(", ")}.`,
+                                "Keep this exception limited to a container you trust.",
+                            ].join("\n"),
+                        );
+                        if (!accepted) {
+                            ctx.ui.notify("Docker grant cancelled", "info");
+                            return;
+                        }
+                        grant.allowUnsafeTarget = true;
+                        access = await inspectDockerAccess(ctx.cwd, policy);
+                        if (
+                            access.some((item) =>
+                                item.containers.some(
+                                    (container) =>
+                                        container.access === "excluded",
+                                ),
+                            )
+                        ) {
+                            throw new Error(
+                                "Docker target remains excluded with the exception; no grant was saved",
+                            );
+                        }
+                    }
+                    accessLines = formatDockerAccess(access);
+                } catch (error) {
+                    ctx.ui.notify(
+                        `Docker grant inspection failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                    return;
+                }
                 const confirmed = await ctx.ui.confirm(
                     "Save Docker grant?",
-                    renderDockerGrantDiff(ctx.cwd, target, profile.operations),
+                    [
+                        renderDockerGrantDiff(
+                            ctx.cwd,
+                            target,
+                            profile.operations,
+                        ),
+                        `Host-access exception: ${grant.allowUnsafeTarget ? "enabled for this target" : "off"}`,
+                        ...accessLines,
+                    ].join("\n"),
                 );
                 if (!confirmed) {
                     ctx.ui.notify("Docker grant cancelled", "info");
@@ -1523,13 +1602,12 @@ export default function (pi: ExtensionAPI) {
                     getAgentDir(),
                     "sandbox.global.json",
                 );
-                const grant: DockerTargetGrant = {
-                    selector: target,
-                    operations: profile.operations,
-                    allowUnsafeTarget: false,
-                };
                 try {
                     await withFileMutationQueue(authorityPath, async () => {
+                        if (!ctx.isProjectTrusted())
+                            throw new Error(
+                                "Docker grants require a trusted project",
+                            );
                         saveTargetedDockerGrant({
                             cwd: ctx.cwd,
                             globalConfigPath: authorityPath,

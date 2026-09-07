@@ -57,6 +57,7 @@ const UPSTREAM_PROXY_VARIABLES = new Set([
 ]);
 const DOCKER_CONNECTION_VARIABLES = new Set([
     "DOCKER_HOST",
+    "DOCKER_CONFIG",
     "DOCKER_CONTEXT",
     "DOCKER_TLS_VERIFY",
     "DOCKER_CERT_PATH",
@@ -539,7 +540,27 @@ function createShellPolicy(
                 ...inheritedVariables,
                 ...configuredVariables,
                 PATH: buildBashPath(),
-                HOME: input.lease.homeDir,
+                // Path expansion does not grant any additional filesystem access.
+                HOME: privateTmp ? input.lease.homeDir : homedir(),
+                // Preserve writable tool caches while HOME keeps normal path semantics.
+                ...(!privateTmp
+                    ? {
+                          XDG_CACHE_HOME: resolve(
+                              input.lease.homeDir,
+                              ".cache",
+                          ),
+                          BUN_INSTALL_CACHE_DIR: resolve(
+                              input.lease.homeDir,
+                              ".bun/install/cache",
+                          ),
+                          npm_config_cache: resolve(
+                              input.lease.homeDir,
+                              ".npm",
+                          ),
+                      }
+                    : {}),
+                // Do not load a host Docker context that could override the broker.
+                DOCKER_CONFIG: input.lease.homeDir,
                 TMPDIR: "/tmp",
             },
             deny: input.config.environment.deniedVariables,

@@ -10,6 +10,7 @@ import {
     buildBashPath,
     createAnalysisPolicy,
     createBashPolicy,
+    createThinkPolicy,
     isNetworkDestinationAllowed,
     validatePiSandboxConfig,
 } from "./policies.ts";
@@ -87,6 +88,11 @@ describe("sandbox policies", () => {
         });
 
         expect(bash.name).toBe("bash-general");
+        const think = createThinkPolicy({ cwd, lease, config, hostEnv: {} });
+        expect(think.environment.set.HOME).toBe(lease.homeDir);
+        expect(analysis.environment.set.HOME).toBe(lease.homeDir);
+        expect(bash.environment.set.DOCKER_CONFIG).toBe(lease.homeDir);
+        expect(bash.filesystem.allowWrite).not.toContain(homedir());
         expect(analysis.name).toBe("analysis-strict");
         expect(bash.strict).toBe(true);
         expect(analysis.strict).toBe(true);
@@ -330,7 +336,11 @@ describe("sandbox policies", () => {
             LANG: "C.UTF-8",
             EXPLICIT: "captured-host-value",
             PATH: buildBashPath(),
-            HOME: lease.homeDir,
+            HOME: homedir(),
+            XDG_CACHE_HOME: join(lease.homeDir, ".cache"),
+            BUN_INSTALL_CACHE_DIR: join(lease.homeDir, ".bun/install/cache"),
+            npm_config_cache: join(lease.homeDir, ".npm"),
+            DOCKER_CONFIG: lease.homeDir,
             TMPDIR: "/tmp",
         });
         expect(policy.environment.inherit).toEqual([
@@ -347,7 +357,9 @@ describe("sandbox policies", () => {
         expect(JSON.stringify(policy.environment)).not.toContain("ZEROBOX_HOME");
         expect(JSON.stringify(policy.environment)).not.toContain("PROXY");
         expect(JSON.stringify(policy.environment)).not.toContain("proxy");
-        expect(JSON.stringify(policy.environment)).not.toContain("DOCKER_");
+        expect(policy.environment.inherit.some(name => name.startsWith("DOCKER_"))).toBe(false);
+        expect(policy.environment.set.DOCKER_HOST).toBeUndefined();
+        expect(policy.environment.set.DOCKER_CONTEXT).toBeUndefined();
     });
 
     it("normalizes loopback aliases and rejects unsupported capabilities", () => {

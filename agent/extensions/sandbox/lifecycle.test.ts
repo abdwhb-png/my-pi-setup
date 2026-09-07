@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { DockerTargetAccess } from "./docker-access.ts";
 import type {
     BashOperations,
     ExtensionAPI,
@@ -12,6 +13,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 const initialize = mock(async (): Promise<void> => undefined);
+// External Docker Engine and broker inspection is tested separately with the real adapter.
+const inspectDockerAccess = mock(async (): Promise<DockerTargetAccess[]> => []);
+const { formatDockerAccess } = await import("./docker-access.ts");
+mock.module("./docker-access.ts", () => ({ formatDockerAccess, inspectDockerAccess }));
 const reset = mock(async (): Promise<void> => undefined);
 const createZeroboxBackend = mock(() => ({}));
 const createSandboxService = mock(() => ({
@@ -206,6 +211,8 @@ describe("sandbox lifecycle", () => {
             JSON.stringify({ enabled: true }),
         );
         initialize.mockReset();
+        inspectDockerAccess.mockReset();
+        inspectDockerAccess.mockResolvedValue([]);
         initialize.mockImplementation(async () => undefined);
         reset.mockReset();
         reset.mockImplementation(async () => undefined);
@@ -479,6 +486,93 @@ describe("sandbox lifecycle", () => {
                 process.env.PI_CODING_AGENT_DIR = previousAgentDir;
             }
         }
+    });
+
+    async function withExcludedDockerTarget(run: (ctx: ExtensionContext, path: string) => Promise<void>, confirmations: boolean[]) {
+        const agentDir = join(cwd, "agent-home");
+        const fakeBin = join(cwd, "bin");
+        await mkdir(agentDir);
+        await mkdir(fakeBin);
+        await writeFile(join(fakeBin, "docker"), '#!/bin/sh\nprintf \'{"name":"cliproxy","services":{"cli-proxy-api":{}}}\'\n', { mode: 0o700 });
+        const path = join(agentDir, "sandbox.global.json");
+        await writeFile(path, JSON.stringify({ docker: { grants: [{ projectRoot: cwd, mode: "targeted", targets: [{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, operations: ["ps"], allowUnsafeTarget: false }] }] } }), { mode: 0o600 });
+        inspectDockerAccess.mockResolvedValue([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", facts: ["Host bind mount: /app/config (read-only)"] }] }]);
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        const previousPath = process.env.PATH;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+        try { await run(context(cwd, undefined, SESSION_ID, true, { select: ["cliproxy / cli-proxy-api", "Exploitation"], confirm: confirmations }), path); }
+        finally {
+            if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+            if (previousPath === undefined) delete process.env.PATH;
+            else process.env.PATH = previousPath;
+        }
+    }
+
+    it("does not save after declining the explicit exception for an excluded Docker target", async () => {
+        await withExcludedDockerTarget(async (ctx, path) => {
+            const before = await readFile(path, "utf8");
+            await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
+            expect(ctx.ui.confirm).toHaveBeenCalledWith("Allow this Docker target despite its host access?", expect.stringContaining("Host bind mount: /app/config"));
+            expect(await readFile(path, "utf8")).toBe(before);
+        }, [false]);
+    });
+
+    it("saves only a separately confirmed target exception and keeps exploitation without exec", async () => {
+        await withExcludedDockerTarget(async (ctx, path) => {
+            inspectDockerAccess.mockResolvedValueOnce([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", facts: ["Host bind mount: /app/config (read-only)"] }] }]);
+            inspectDockerAccess.mockResolvedValue([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "accessible", facts: [] }] }]);
+            await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
+            const target = JSON.parse(await readFile(path, "utf8")).docker.grants[0].targets[0];
+            expect(target.allowUnsafeTarget).toBe(true);
+            expect(target.operations).toEqual(["ps", "inspect", "logs", "stats", "start", "stop", "restart"]);
+            expect(ctx.ui.confirm).toHaveBeenCalledTimes(2);
+        }, [true, true]);
+    });
+
+    it("doctor distinguishes a valid grant from a target excluded by the broker without writing", async () => {
+        await withExcludedDockerTarget(async (ctx, path) => {
+            const before = await readFile(path, "utf8");
+            await sandboxCommand(registerSandbox()).handler("doctor", ctx);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Docker target cliproxy: excluded (running)");
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host bind mount: /app/config");
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("(valid)");
+            expect(await readFile(path, "utf8")).toBe(before);
+        }, []);
+    });
+
+    it("keeps a valid grant marked valid when target inspection is unavailable", async () => {
+        await withExcludedDockerTarget(async (ctx, path) => {
+            const before = await readFile(path, "utf8");
+            inspectDockerAccess.mockRejectedValue(new Error("engine unavailable"));
+            await sandboxCommand(registerSandbox()).handler("doctor", ctx);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("(valid)");
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Docker target inspection unavailable: engine unavailable");
+            expect(await readFile(path, "utf8")).toBe(before);
+        }, []);
+    });
+
+    it("does not save a grant when target inspection fails", async () => {
+        await withExcludedDockerTarget(async (ctx, path) => {
+            const before = await readFile(path, "utf8");
+            inspectDockerAccess.mockRejectedValue(new Error("engine unavailable"));
+            await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
+            expect(ctx.ui.confirm).not.toHaveBeenCalled();
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Docker grant inspection failed");
+            expect(await readFile(path, "utf8")).toBe(before);
+        }, [true, true]);
+    });
+
+    it("does not save after accepting the exception but cancelling the final grant", async () => {
+        await withExcludedDockerTarget(async (ctx, path) => {
+            const before = await readFile(path, "utf8");
+            inspectDockerAccess.mockResolvedValueOnce([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", facts: [] }] }]);
+            inspectDockerAccess.mockResolvedValue([]);
+            await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
+            expect(ctx.ui.confirm).toHaveBeenCalledTimes(2);
+            expect(await readFile(path, "utf8")).toBe(before);
+        }, [true, false]);
     });
 
     it("grants exploitation access to a selected Compose service", async () => {

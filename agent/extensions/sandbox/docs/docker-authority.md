@@ -19,6 +19,14 @@ It then asks for a Compose service and an access profile. If Docker Compose is
 unavailable, it asks for an exact container name instead. It shows the project,
 target and operations before writing anything.
 
+The command also checks matching containers through the real Sandbox Docker
+broker. A container with host bind mounts (even read-only mounts), privileged
+access, or other host access can be excluded despite a matching grant.
+In that case, it explains the container's access and asks separately whether
+to allow the target exception. Declining either confirmation leaves the file
+unchanged. If inspection fails, the command reports the failure and saves nothing.
+An absent container is reported as absent; its grant can be saved for later use.
+
 | Profile | Operations |
 | --- | --- |
 | Observation | `ps`, `inspect`, `logs`, `stats` |
@@ -27,6 +35,12 @@ target and operations before writing anything.
 
 `exec` can expose the selected container's mounts, network and secrets. Choose
 Administration only when that access is required.
+
+The target exception is independent of the profile: choosing Administration
+does not enable it. `allowUnsafeTarget: true` bypasses the broker's target safety
+check for that selector, including replacement containers matching it. It does
+not add operations. For example, Exploitation with this exception still excludes
+`exec`. Confirm it only for a workload whose host access you accept.
 
 ## Manual configuration
 

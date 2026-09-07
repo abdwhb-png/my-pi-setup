@@ -11,6 +11,7 @@ filesystem, network, environment and Docker access explicit.
 3. Run `/sandbox on` when the status is correct.
 4. If the project needs Docker, run `/sandbox docker grant` from that project.
    Choose a service and an access profile, review the change, then confirm it.
+   If the broker excludes that container, review the separate target exception.
 
 Docker is off by default. Its authority is kept separately in
 `~/.pi/agent/sandbox.global.json`, never in project settings.
@@ -20,7 +21,7 @@ Docker is off by default. Its authority is kept separately in
 | Command | Purpose |
 | --- | --- |
 | `/sandbox` | Show the effective Sandbox policy. |
-| `/sandbox doctor` | Validate canonical configuration and show the next corrective command. |
+| `/sandbox doctor` | Validate configuration and distinguish accessible, excluded and absent Docker targets. |
 | `/sandbox on` / `/sandbox off` | Enable or disable Sandbox for this session. |
 | `/sandbox docker` | Show Docker authority, project preference and effective policy. |
 | `/sandbox docker grant` | Create or replace this project's global targeted Docker grant. |

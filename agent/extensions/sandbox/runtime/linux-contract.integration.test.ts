@@ -152,7 +152,7 @@ describe("Pi Zerobox Linux contract", () => {
             );
             expect(environment.exitCode, environment.output).toBe(0);
             const parsed = JSON.parse(environment.output);
-            expect(parsed.HOME).toMatch(/^\/home\/[^/]+\/\.pi\/zbx\/l-[a-f0-9]{6}\/home$/);
+            expect(parsed.HOME).toBe(homedir());
             expect(parsed.TMPDIR).toBe("/tmp");
             expect(parsed.ZEROBOX_HOME).toBeUndefined();
             expect(parsed.PATH).not.toContain("/mnt/c");
@@ -178,7 +178,7 @@ describe("Pi Zerobox Linux contract", () => {
             await service.startBashSession(cwd);
             const replace = await collectExecution(
                 bashOperations(service),
-                `ln -sfn ${JSON.stringify(hostTarget)} "$HOME/../zerobox-home/profiles/bash-general.json"`,
+                `ln -sfn ${JSON.stringify(hostTarget)} "$DOCKER_CONFIG/../zerobox-home/profiles/bash-general.json"`,
                 cwd,
             );
             expect(replace.exitCode).not.toBe(0);
@@ -377,7 +377,7 @@ describe("Pi Zerobox Linux contract", () => {
         await service.startBashSession(cwd);
         const execution = await collectExecution(
             bashOperations(service),
-            "printf '%s' \"$HOME\"; curl -fsS --max-time 5 https://example.com >/dev/null",
+            "printf '%s' \"$DOCKER_CONFIG\"; curl -fsS --max-time 5 https://example.com >/dev/null",
             cwd,
         );
         expect(execution.exitCode, execution.output).toBe(0);
@@ -577,7 +577,7 @@ describe("Pi Zerobox Linux contract", () => {
             ).toBe(42);
             const bridgeReadOnly = await collectExecution(
                 bashOperations(service),
-                `bridge="$HOME/../zerobox-home/tmp/runs"; test -d "$bridge" && test -r "$bridge" && ! touch "$bridge/target-write"`,
+                `bridge="$DOCKER_CONFIG/../zerobox-home/tmp/runs"; test -d "$bridge" && test -r "$bridge" && ! touch "$bridge/target-write"`,
                 cwd,
             );
             expect(bridgeReadOnly.exitCode, bridgeReadOnly.output).toBe(0);
