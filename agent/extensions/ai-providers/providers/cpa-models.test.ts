@@ -10,6 +10,7 @@
  */
 
 import { afterEach, describe, expect, it, mock } from 'bun:test';
+import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import type {
     ModelsDevCatalog,
     ModelsDevMatch,
@@ -482,7 +483,7 @@ describe('enrichModel enrichment pipeline', () => {
         const result = enrichModel(entry, catalog, [
             {
                 match: { id: 'ocg/go-deepseek-v4-flash' },
-                metadata: { cost: { cacheWrite: 0 } },
+                metadata: { cost: { cacheWrite: 0 } as never },
             },
         ])!;
 
@@ -521,7 +522,7 @@ describe('enrichModel enrichment pipeline', () => {
                     match: { id: 'muse-spark-1.2-contributor' },
                     metadata: { api: 'openai-responses' },
                 },
-            ] as never,
+            ],
         )!;
 
         expect(result.api).toBe('openai-responses');
@@ -564,11 +565,73 @@ describe('enrichModel enrichment pipeline', () => {
                 match: { id: 'gpt-5.6-terra', ownedBy: 'openai' },
                 metadata: { contextWindow: 372_000 },
             },
-        ] as never)!;
+        ])!;
 
         expect(result.contextWindow).toBe(372_000);
         expect(result.maxTokens).toBe(128_000);
         expect(result.reasoning).toBe(true);
+    });
+
+    it('applies thinkingLevelMap, compat, and samplingParams overrides to CPA models', () => {
+        const entry: CpaModelEntry = {
+            id: 'ocg/go-deepseek-v4-pro',
+            owned_by: 'openai',
+        };
+        const result = enrichModel(entry, emptyLookup, [
+            {
+                match: { id: 'ocg/*', provider: 'cpa' },
+                metadata: {
+                    thinkingLevelMap: {
+                        off: null,
+                        minimal: null,
+                        high: 'high',
+                    },
+                    compat: {
+                        supportsDeveloperRole: true,
+                    },
+                    samplingParams: {
+                        temperature: 0.6,
+                    },
+                },
+            },
+        ]) as ProviderModelConfig & { samplingParams?: Record<string, unknown> };
+
+        expect(result.thinkingLevelMap).toEqual({
+            off: null,
+            minimal: null,
+            high: 'high',
+        });
+        expect(result.compat).toEqual({
+            supportsDeveloperRole: true,
+        });
+        expect(result.samplingParams).toEqual({
+            temperature: 0.6,
+        });
+    });
+
+    it('filters rules by provider when specified', () => {
+        const entry: CpaModelEntry = {
+            id: 'claude-opus-4-6-thinking',
+            owned_by: 'antigravity',
+        };
+        const result = enrichModel(entry, emptyLookup, [
+            {
+                match: { id: 'claude-*', provider: 'other-provider' },
+                metadata: { maxTokens: 999 },
+            },
+            {
+                match: { id: 'claude-*', provider: 'cpa' },
+                metadata: { contextWindow: 500_000 },
+            },
+            {
+                match: { id: 'claude-*' },
+                metadata: { reasoning: false },
+            },
+        ])!;
+
+        expect(result.maxTokens).toBe(128_000); // not overwritten by other-provider (claude thinking family default is 128_000)
+        expect(result.contextWindow).toBe(500_000); // overwritten by cpa rule
+        expect(result.reasoning).toBe(false); // overwritten by universal rule
     });
 
     it('enriches Antigravity models via exact base mapping without fuzzy lookup', () => {
@@ -972,7 +1035,7 @@ describe('buildCpaModels', () => {
         const result = await buildCpaModels(
             'http://localhost:8317/v1',
             'test-key',
-            { catalog, metadataRules: [] },
+            { catalog, modelRules: [] },
         );
 
         expect(result.models).toHaveLength(1);
@@ -1021,7 +1084,7 @@ describe('buildCpaModels', () => {
         const result = await buildCpaModels(
             'http://localhost:8317/v1',
             'test-key',
-            { catalog, metadataRules: [] },
+            { catalog, modelRules: [] },
         );
 
         expect(result.models[0]).toMatchObject({

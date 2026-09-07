@@ -220,10 +220,10 @@ export function registerCpaProvider(
         entries: readonly CpaModelEntry[],
     ): ProviderModelConfig[] {
         const catalog = getCatalog();
+        const config = loadAiProvidersConfig();
+        const rules = config.modelRules ?? [];
         return entries
-            .map((entry) =>
-                enrichModel(entry, catalog, cpaConfig.metadataRules ?? []),
-            )
+            .map((entry) => enrichModel(entry, catalog, rules))
             .filter((model): model is ProviderModelConfig => model !== null);
     }
 

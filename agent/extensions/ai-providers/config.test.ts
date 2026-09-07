@@ -20,7 +20,7 @@ describe('normalizeAiProvidersConfig', () => {
             {
                 providers: {},
                 widgets: {},
-                cpa: { refreshTtlMs: 30_000, metadataRules: [] },
+                cpa: { refreshTtlMs: 30_000 },
             },
             normalizeAiProvidersConfig({ cpa: { refreshTtlMs: 45_000 } }),
         );
@@ -56,7 +56,6 @@ describe('normalizeAiProvidersConfig', () => {
                 cpa: {
                     refreshTtlMs: 30_000,
                     silentCatalogDiff: true,
-                    metadataRules: [],
                 },
             },
             normalizeAiProvidersConfig({ providers: { cpa: true } }),
@@ -64,116 +63,89 @@ describe('normalizeAiProvidersConfig', () => {
         expect(merged.cpa.silentCatalogDiff).toBe(true);
     });
 
-    test('accepts exact and glob CPA metadata rules', () => {
-        expect(
-            normalizeAiProvidersConfig({
-                cpa: {
-                    metadataRules: [
-                        {
-                            match: { id: 'gpt-5.6-*', ownedBy: 'openai' },
-                            metadata: { reasoning: true },
-                        },
-                        {
-                            match: { id: 'gpt-5.6-terra' },
-                            metadata: {
-                                api: 'openai-responses',
-                                contextWindow: 372_000,
-                                maxTokens: 128_000,
-                                input: ['text', 'image'],
-                            },
-                        },
-                    ],
+    test('accepts top-level modelRules with provider filter and Pi metadata', () => {
+        const normalized = normalizeAiProvidersConfig({
+            modelRules: [
+                {
+                    match: { id: 'ocg/*', provider: 'cpa', ownedBy: 'openai' },
+                    metadata: {
+                        thinkingLevelMap: { minimal: null, high: 'high' },
+                        compat: { supportsDeveloperRole: false },
+                        samplingParams: { temperature: 0.5 },
+                        contextWindow: 1_000_000,
+                    },
                 },
-            }),
-        ).toEqual({
-            providers: {},
-            widgets: {},
-            cpa: {
-                metadataRules: [
-                    {
-                        match: { id: 'gpt-5.6-*', ownedBy: 'openai' },
-                        metadata: { reasoning: true },
-                    },
-                    {
-                        match: { id: 'gpt-5.6-terra' },
-                        metadata: {
-                            api: 'openai-responses',
-                            contextWindow: 372_000,
-                            maxTokens: 128_000,
-                            input: ['text', 'image'],
-                        },
-                    },
-                ],
-            },
+                {
+                    match: { id: '*deepseek*' },
+                    metadata: { reasoning: true },
+                },
+            ],
         });
-    });
 
-    test('appends project metadata rules after global rules', () => {
-        const global = mergeAiProvidersConfig(
+        expect(normalized.modelRules).toEqual([
             {
-                providers: {},
-                widgets: {},
-                cpa: { refreshTtlMs: 30_000, metadataRules: [] },
+                match: { id: 'ocg/*', provider: 'cpa', ownedBy: 'openai' },
+                metadata: {
+                    thinkingLevelMap: { minimal: null, high: 'high' },
+                    compat: { supportsDeveloperRole: false },
+                    samplingParams: { temperature: 0.5 },
+                    contextWindow: 1_000_000,
+                },
             },
-            normalizeAiProvidersConfig({
-                cpa: {
-                    metadataRules: [
-                        {
-                            match: { id: 'gpt-5.6-*' },
-                            metadata: { reasoning: true },
-                        },
-                    ],
-                },
-            }),
-        );
-        const merged = mergeAiProvidersConfig(
-            global,
-            normalizeAiProvidersConfig({
-                cpa: {
-                    metadataRules: [
-                        {
-                            match: { id: 'gpt-5.6-terra' },
-                            metadata: { contextWindow: 372_000 },
-                        },
-                    ],
-                },
-            }),
-        );
-
-        expect(merged.cpa.metadataRules).toEqual([
             {
-                match: { id: 'gpt-5.6-*' },
+                match: { id: '*deepseek*' },
                 metadata: { reasoning: true },
-            },
-            {
-                match: { id: 'gpt-5.6-terra' },
-                metadata: { contextWindow: 372_000 },
             },
         ]);
     });
 
-    test('drops malformed CPA metadata rules', () => {
+    test('drops malformed modelRules', () => {
         const normalized = normalizeAiProvidersConfig({
-            cpa: {
-                metadataRules: [
-                    { match: { id: '' }, metadata: { contextWindow: 1 } },
-                    { match: { id: 'valid' }, metadata: { maxTokens: 0 } },
-                    {
-                        match: { id: 'valid-owner', ownedBy: 42 },
-                        metadata: { reasoning: true },
-                    },
-                    {
-                        match: { id: 'valid-input' },
-                        metadata: { input: ['image'] },
-                    },
-                    {
-                        match: { id: 'valid-cost' },
-                        metadata: { cost: { input: -1 } },
-                    },
-                ],
-            },
+            modelRules: [
+                { match: { id: '' }, metadata: { contextWindow: 1 } },
+                { match: { id: 'valid' }, metadata: { maxTokens: 0 } },
+                {
+                    match: { id: 'valid-owner', ownedBy: 42 },
+                    metadata: { reasoning: true },
+                },
+                {
+                    match: { id: 'valid-input' },
+                    metadata: { input: ['image'] },
+                },
+                {
+                    match: { id: 'valid-cost' },
+                    metadata: { cost: { input: -1 } },
+                },
+            ],
         });
 
-        expect(normalized.cpa?.metadataRules).toBeUndefined();
+        expect(normalized.modelRules).toBeUndefined();
+    });
+
+    test('merges top-level modelRules from global and project config', () => {
+        const global = mergeAiProvidersConfig(
+            {
+                providers: {},
+                widgets: {},
+                modelRules: [
+                    { match: { id: 'gpt-5.6-*' }, metadata: { reasoning: true } },
+                ],
+                cpa: { refreshTtlMs: 30_000 },
+            },
+            {},
+        );
+        const merged = mergeAiProvidersConfig(
+            global,
+            normalizeAiProvidersConfig({
+                modelRules: [
+                    { match: { id: 'gpt-5.6-terra' }, metadata: { contextWindow: 372_000 } },
+                ],
+            }),
+        );
+
+        expect(merged.modelRules).toEqual([
+            { match: { id: 'gpt-5.6-*' }, metadata: { reasoning: true } },
+            { match: { id: 'gpt-5.6-terra' }, metadata: { contextWindow: 372_000 } },
+        ]);
     });
 });

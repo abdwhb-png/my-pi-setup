@@ -34,8 +34,8 @@ mock.module('./config.ts', () => ({
     isProviderEnabled: (name: string) => name === 'cpa',
     isWidgetEnabled: () => false,
     loadAiProvidersConfig: () => ({
+        modelRules: [],
         cpa: {
-            metadataRules: [],
             refreshTtlMs: 0,
             silentCatalogDiff: true,
         },

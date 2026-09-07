@@ -18,11 +18,12 @@ import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { ModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { getModelsDevCatalog } from "../../_shared/models-dev/catalog";
 import { resolveCpaModelsDevRefs } from "../../_shared/models-dev/mapping";
-import { loadAiProvidersConfig, type CpaMetadataRule } from "../config.ts";
+import { loadAiProvidersConfig, type ModelRule } from "../config.ts";
 import {
     STATIC_FALLBACK_MODELS,
     NO_DEV_ROLE_COMPAT,
 } from "../constants/cpa-static-models";
+import { applyModelRules } from "../rules/model-rules.ts";
 
 // ── Types ──
 
@@ -323,49 +324,6 @@ export function familyDefaults(
     return {};
 }
 
-function matchesGlob(pattern: string, value: string): boolean {
-    let patternIndex = 0;
-    let valueIndex = 0;
-    let starIndex = -1;
-    let starValueIndex = 0;
-
-    while (valueIndex < value.length) {
-        if (
-            pattern[patternIndex] === "?" ||
-            pattern[patternIndex] === value[valueIndex]
-        ) {
-            patternIndex++;
-            valueIndex++;
-        } else if (pattern[patternIndex] === "*") {
-            starIndex = patternIndex++;
-            starValueIndex = valueIndex;
-        } else if (starIndex >= 0) {
-            patternIndex = starIndex + 1;
-            valueIndex = ++starValueIndex;
-        } else {
-            return false;
-        }
-    }
-
-    while (pattern[patternIndex] === "*") patternIndex++;
-    return patternIndex === pattern.length;
-}
-
-function isExactRule(rule: CpaMetadataRule): boolean {
-    return !rule.match.id.includes("*") && !rule.match.id.includes("?");
-}
-
-function matchesMetadataRule(
-    rule: CpaMetadataRule,
-    modelId: string,
-    ownedBy: string,
-): boolean {
-    return (
-        matchesGlob(rule.match.id, modelId) &&
-        (rule.match.ownedBy === undefined || rule.match.ownedBy === ownedBy)
-    );
-}
-
 // ── Helper: format model name for display ──
 
 function formatModelName(id: string, ownedBy: string): string {
@@ -433,8 +391,7 @@ function formatModelName(id: string, ownedBy: string): string {
 export function enrichModel(
     entry: CpaModelEntry,
     catalog: CpaCatalogLookup,
-    metadataRules: readonly CpaMetadataRule[] = loadAiProvidersConfig().cpa
-        .metadataRules ?? [],
+    modelRules?: readonly ModelRule[],
 ): ProviderModelConfig | null {
     const modelId = entry.id;
     const ownedBy = entry.owned_by;
@@ -447,11 +404,10 @@ export function enrichModel(
 
     // ── Layer 1: Generic fallback ──
     const genericCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-    let api: CpaMetadataRule["metadata"]["api"];
     let contextWindow = 128_000;
     let maxTokens = 32_768;
     let reasoning = true;
-    let cost = { ...genericCost };
+    const cost = { ...genericCost };
 
     // ── Layer 2: Family-based defaults ──
     const family = familyDefaults(modelId);
@@ -511,48 +467,9 @@ export function enrichModel(
             : ["text"];
     }
 
-    // ── Layer 6: Local metadata rules ──
-    // Patterns run in declaration order, then exact IDs. Local config is the
-    // final authority while rules that omit a field preserve CPA/catalog data.
-    const matchingRules = [
-        ...metadataRules.filter(
-            (rule) =>
-                !isExactRule(rule) &&
-                matchesMetadataRule(rule, modelId, ownedBy),
-        ),
-        ...metadataRules.filter(
-            (rule) =>
-                isExactRule(rule) &&
-                matchesMetadataRule(rule, modelId, ownedBy),
-        ),
-    ];
-    for (const rule of matchingRules) {
-        const { metadata } = rule;
-        if (metadata.api !== undefined) api = metadata.api;
-        if (metadata.contextWindow !== undefined) {
-            contextWindow = metadata.contextWindow;
-        }
-        if (metadata.maxTokens !== undefined) maxTokens = metadata.maxTokens;
-        if (metadata.reasoning !== undefined) reasoning = metadata.reasoning;
-        if (metadata.input !== undefined) input = metadata.input;
-        if (metadata.cost) {
-            if (metadata.cost.input !== undefined)
-                cost.input = metadata.cost.input;
-            if (metadata.cost.output !== undefined)
-                cost.output = metadata.cost.output;
-            if (metadata.cost.cacheRead !== undefined) {
-                cost.cacheRead = metadata.cost.cacheRead;
-            }
-            if (metadata.cost.cacheWrite !== undefined) {
-                cost.cacheWrite = metadata.cost.cacheWrite;
-            }
-        }
-    }
-
-    return {
+    const baseModel: ProviderModelConfig = {
         id: modelId,
         name: formatModelName(modelId, ownedBy),
-        ...(api ? { api } : {}),
         reasoning,
         input,
         contextWindow,
@@ -560,6 +477,15 @@ export function enrichModel(
         cost,
         compat: NO_DEV_ROLE_COMPAT,
     };
+
+    // ── Layer 6: Model rules ──
+    const effectiveRules =
+        modelRules ?? (loadAiProvidersConfig().modelRules ?? []);
+
+    return applyModelRules(baseModel, effectiveRules, {
+        provider: "cpa",
+        ownedBy,
+    });
 }
 
 // ── Step 1e: Build provider config ──
@@ -568,11 +494,11 @@ export interface BuildCpaModelsOptions {
     /**
      * Catalog used for enrichment. Defaults to the process-wide
      * {@link getModelsDevCatalog} — lookupFirst is snapshot-only, so the
-     * default catalog never triggers a network request from this function.
+     * default catalog never triggers a network request from this function.\
      */
     catalog?: CpaCatalogLookup;
     /** Injected local rules keep enrichment tests independent of user config. */
-    metadataRules?: readonly CpaMetadataRule[];
+    modelRules?: readonly ModelRule[];
 }
 
 export async function buildCpaModels(
@@ -594,13 +520,12 @@ export async function buildCpaModels(
 
     // 3. Enrich each entry against the shared catalog (in-memory lookup)
     const catalog = options?.catalog ?? getModelsDevCatalog();
-    const metadataRules =
-        options?.metadataRules ??
-        loadAiProvidersConfig().cpa.metadataRules ??
-        [];
+    const config = loadAiProvidersConfig();
+    const modelRules =
+        options?.modelRules ?? (config.modelRules ?? []);
     const models: ProviderModelConfig[] = [];
     for (const entry of entries) {
-        const model = enrichModel(entry, catalog, metadataRules);
+        const model = enrichModel(entry, catalog, modelRules);
         if (model) models.push(model);
     }
 
