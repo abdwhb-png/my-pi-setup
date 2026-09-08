@@ -6,7 +6,15 @@ export interface DockerAccessSummary {
         selector: string;
         profile: string;
         operations: string[];
+        requestedProfile?: string;
+        requestedOperations?: string[];
+        boundedInspection?: boolean;
         hostAccessException: boolean;
     }[];
     hostAccessException: boolean;
+    boundedInspection?: boolean;
+    breakGlass?: {
+        containerId: string;
+        expiresAtMs: number;
+    }[];
 }

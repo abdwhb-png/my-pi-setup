@@ -19,7 +19,7 @@ const { formatDockerAccess } = await import("./docker-access.ts");
 mock.module("./docker-access.ts", () => ({ formatDockerAccess, inspectDockerAccess }));
 const reset = mock(async (): Promise<void> => undefined);
 const createZeroboxBackend = mock(() => ({}));
-const createSandboxService = mock(() => ({
+const createSandboxService = mock((_options: unknown) => ({
     probe: initialize,
     startBashSession: initialize,
     prepareBash: mock(async () => {
@@ -354,6 +354,7 @@ describe("sandbox lifecycle", () => {
         ]);
         expect(command.getArgumentCompletions?.("docker ")).toEqual([
             { value: "docker grant", label: "docker grant" },
+            { value: "docker break-glass", label: "docker break-glass" },
             { value: "docker off", label: "docker off" },
             { value: "docker targeted", label: "docker targeted" },
             { value: "docker full", label: "docker full" },
@@ -519,7 +520,7 @@ describe("sandbox lifecycle", () => {
         await withExcludedDockerTarget(async (ctx, path) => {
             const before = await readFile(path, "utf8");
             await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
-            expect(ctx.ui.confirm).toHaveBeenCalledWith("Authorize operations on a container with host access?", expect.stringContaining("Host: /host/config → Container: /app/config"));
+            expect(ctx.ui.confirm).toHaveBeenCalledWith("Authorize this Docker target despite host access?", expect.stringContaining("Host: /host/config → Container: /app/config"));
             expect(await readFile(path, "utf8")).toBe(before);
         }, [false]);
     });
@@ -533,6 +534,10 @@ describe("sandbox lifecycle", () => {
             expect(target.allowUnsafeTarget).toBe(true);
             expect(target.operations).toEqual(["ps", "inspect", "logs", "stats", "start", "stop", "restart"]);
             expect(ctx.ui.confirm).toHaveBeenCalledTimes(2);
+            expect(ctx.ui.confirm).toHaveBeenCalledWith(
+                "Authorize this Docker target despite host access?",
+                expect.stringContaining("Arbitrary exec remains unavailable"),
+            );
             expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host-access exception: enabled by the confirmed grant");
             expect(notifyCalls(ctx).at(-1)?.[1]).toBe("info");
         }, [true, true]);
@@ -799,6 +804,64 @@ describe("sandbox lifecycle", () => {
             }
             if (previousPath === undefined) delete process.env.PATH;
             else process.env.PATH = previousPath;
+        }
+    });
+
+    it("activates break-glass only for the current container and never persists it", async () => {
+        const agentDir = join(cwd, "agent-home");
+        await mkdir(agentDir);
+        const authorityPath = join(agentDir, "sandbox.global.json");
+        await writeFile(
+            authorityPath,
+            JSON.stringify({
+                docker: {
+                    grants: [{
+                        projectRoot: cwd,
+                        mode: "targeted",
+                        targets: [{
+                            selector: { type: "container-name", name: "api" },
+                            operations: ["ps", "inspect", "logs", "stats", "exec", "start", "stop", "restart"],
+                            allowUnsafeTarget: true,
+                        }],
+                    }],
+                },
+            }),
+            { mode: 0o600 },
+        );
+        inspectDockerAccess.mockResolvedValue([{
+            selector: { type: "container-name", name: "api" },
+            containers: [{
+                id: "0123456789abcdef",
+                name: "api-current",
+                state: "running",
+                access: "accessible",
+                facts: [],
+                mounts: [{ source: "/host/auths", destination: "/auths", writable: true }],
+            }],
+        }]);
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, SESSION_ID, true, { confirm: [true] });
+            await registered.handlers.get("session_start")?.({}, ctx);
+            const before = await readFile(authorityPath, "utf8");
+
+            await sandboxCommand(registered).handler("docker break-glass", ctx);
+
+            const runtime = getSandboxRuntime();
+            expect(runtime.state).toBe("enabled");
+            expect(runtime.state === "enabled" && runtime.dockerAccess?.breakGlass?.[0]?.containerId).toBe("0123456789abcdef");
+            const serviceOptions = createSandboxService.mock.calls.at(-1)?.[0] as unknown as { config: { docker: { targets: Array<{ selector: { type: string; id?: string; unsafeExecExpiresAtMs?: number } }> } } };
+            const ephemeral = serviceOptions.config.docker.targets.find((target) => target.selector.type === "ephemeral-container");
+            expect(ephemeral?.selector.id).toBe("0123456789abcdef");
+            expect(ephemeral?.selector.unsafeExecExpiresAtMs).toBeGreaterThan(Date.now());
+            expect(await readFile(authorityPath, "utf8")).toBe(before);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Break-glass exec active for container api-current");
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host: /host/auths → Container: /auths (read-write)");
+        } finally {
+            if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
     });
 

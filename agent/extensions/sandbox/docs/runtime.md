@@ -17,6 +17,12 @@ context cannot override the broker. Both strict Think profiles retain private
 HOME directories. Sandbox Bash enables `pipefail` so the reported process status
 includes failures before the final command in a pipeline.
 
+For a targeted Docker grant with a host-access exception, the broker removes
+arbitrary persistent `exec` and recognizes only fixed read-only bind probes. A
+five-minute break-glass grant is held in the session runtime, binds to one exact
+container ID and is never loaded from persistent authority. Its expiry replaces
+the runtime so commands still using the old grant are interrupted.
+
 The runtime fails closed when its binary, policy, setup protocol, FUSE deny
 views, or required Linux facilities are unavailable. It does not fall back to
 local execution. Docker uses a brokered private connection; the host Docker

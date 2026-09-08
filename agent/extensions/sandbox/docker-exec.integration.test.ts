@@ -10,7 +10,7 @@ import { validatePiSandboxConfig } from "./runtime/policies.ts";
 import { createBashProcessSupervisor } from "../_shared/command-execution/exec.ts";
 import { createSandboxedBashOps } from "./index.ts";
 
-test("real Docker and Compose clients execute only with Administration through the broker", async () => {
+test("real Docker and Compose clients enforce Administration, inspection, and break-glass", async () => {
     const root = await mkdtemp("/tmp/pi-docker-exec-");
     const endpoint = join(root, "engine.sock");
     const id = "a".repeat(64), execId = "b".repeat(64);
@@ -20,6 +20,7 @@ test("real Docker and Compose clients execute only with Administration through t
     const bodies: unknown[] = [];
     const unexpected: string[] = [];
     const requests: string[] = [];
+    let hostAccessTarget = false;
     // A raw Engine fixture preserves Docker's HTTP-to-stream upgrade exactly.
     const server = createServer((socket) => {
         sockets.add(socket);
@@ -44,7 +45,7 @@ test("real Docker and Compose clients execute only with Administration through t
             if (path === "/_ping") return respond("OK", "200 OK", "API-Version: 1.52\r\n");
             if (path === "/version") return respond({ ApiVersion: "1.52", MinAPIVersion: "1.24" });
             if (path === "/containers/json") return respond([summary]);
-            if (path === `/containers/${id}/json`) return respond({ Id: id, Name: "/fixture-api", Config: { User: "", Tty: false, Labels: labels }, State: { Running: true }, HostConfig: {}, Mounts: [] });
+            if (path === `/containers/${id}/json`) return respond({ Id: id, Name: "/fixture-api", Config: { User: "", Tty: false, Labels: labels }, State: { Running: true }, HostConfig: {}, Mounts: hostAccessTarget ? [{ Type: "bind", Source: "/host/auths", Destination: "/auths", RW: true }] : [] });
             if (path === `/containers/${id}/exec`) {
                 bodies.push(JSON.parse(received.subarray(headerEnd + 4, headerEnd + 4 + length).toString()));
                 return respond({ Id: execId }, "201 Created");
@@ -86,7 +87,52 @@ test("real Docker and Compose clients execute only with Administration through t
                 }
             } finally { supervisor.shutdown(); await service.shutdown(); }
         }
-        expect(bodies).toHaveLength(2);
+
+        hostAccessTarget = true;
+        const restrictedService = createSandboxService({ backend: createZeroboxBackend(), config: validatePiSandboxConfig({}, {
+            mode: "targeted", endpoint: `unix://${endpoint}`,
+            targets: [{ selector: { type: "compose-service", project: "fixtureexec", service: "api" }, operations: [...DOCKER_ACCESS_PROFILES.find((profile) => profile.label === "Administration")!.operations], allowUnsafeTarget: true }],
+        }) });
+        const restrictedSupervisor = createBashProcessSupervisor();
+        try {
+            await restrictedService.startBashSession(root);
+            const operations = createSandboxedBashOps(restrictedService, restrictedSupervisor);
+            let output = "";
+            const probe = await operations.exec("docker exec fixture-api test -r /auths/main.log", root, { onData: (chunk) => { output += chunk.toString(); }, timeout: 15 });
+            expect(probe.exitCode).toBe(0);
+            expect(output).toContain("fixture exec ok");
+
+            output = "";
+            const mutation = await operations.exec("docker compose exec -T api chmod 0644 /auths/main.log", root, { onData: (chunk) => { output += chunk.toString(); }, timeout: 15 });
+            expect(mutation.exitCode).not.toBe(0);
+            expect(output).toContain("Docker exec is restricted to read-only inspection");
+        } finally { restrictedSupervisor.shutdown(); await restrictedService.shutdown(); }
+
+        const breakGlassExpiresAtMs = Date.now() + 2_000;
+        const breakGlassService = createSandboxService({ backend: createZeroboxBackend(), config: validatePiSandboxConfig({}, {
+            mode: "targeted", endpoint: `unix://${endpoint}`,
+            targets: [
+                { selector: { type: "compose-service", project: "fixtureexec", service: "api" }, operations: [...DOCKER_ACCESS_PROFILES.find((profile) => profile.label === "Administration")!.operations], allowUnsafeTarget: true },
+                { selector: { type: "ephemeral-container", id, unsafeExecExpiresAtMs: breakGlassExpiresAtMs }, operations: ["exec"], allowUnsafeTarget: true },
+            ],
+        }) });
+        const breakGlassSupervisor = createBashProcessSupervisor();
+        try {
+            await breakGlassService.startBashSession(root);
+            const operations = createSandboxedBashOps(breakGlassService, breakGlassSupervisor);
+            let output = "";
+            const mutation = await operations.exec("docker compose exec -T api chmod 0644 /auths/main.log", root, { onData: (chunk) => { output += chunk.toString(); }, timeout: 15 });
+            expect(mutation.exitCode).toBe(0);
+            expect(output).toContain("fixture exec ok");
+
+            await Bun.sleep(Math.max(0, breakGlassExpiresAtMs - Date.now() + 50));
+            output = "";
+            const expired = await operations.exec("docker exec fixture-api true", root, { onData: (chunk) => { output += chunk.toString(); }, timeout: 15 });
+            expect(expired.exitCode).not.toBe(0);
+            expect(output).toContain("Docker break-glass exec expired");
+        } finally { breakGlassSupervisor.shutdown(); await breakGlassService.shutdown(); }
+
+        expect(bodies).toHaveLength(4);
         expect(bodies[0]).toMatchObject({ DetachKeys: "", Privileged: false });
         expect(unexpected).toEqual([]);
     } finally {

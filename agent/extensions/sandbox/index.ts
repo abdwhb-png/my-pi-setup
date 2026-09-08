@@ -78,9 +78,14 @@ import {
     createAnalysisSandboxService,
     type AnalysisSandboxService,
 } from "./analysis/client.ts";
-import { inspectDockerAccess, formatDockerAccess } from "./docker-access.ts";
+import {
+    inspectDockerAccess,
+    formatDockerAccess,
+    type DockerTargetAccess,
+} from "./docker-access.ts";
 import {
     DOCKER_ACCESS_PROFILES,
+    dockerSelectorLabel,
     summarizeDockerAccess,
     dockerSummaryLabel,
     formatDockerSummary,
@@ -88,6 +93,7 @@ import {
     formatActiveDocker,
 } from "./docker-presentation.ts";
 import {
+    DOCKER_OPERATIONS,
     SandboxExecutionError,
     type SandboxCommand,
     type SandboxDockerPolicy,
@@ -95,6 +101,7 @@ import {
     type DockerTargetSelector,
 } from "./runtime/contracts.ts";
 import {
+    dockerSelectorKey,
     dockerPolicyHasUnsafeTargets,
     DEFAULT_DOCKER_ENDPOINT,
     resolveDockerPolicy,
@@ -130,6 +137,7 @@ const DOCKER_ICON = "🐳";
 /** Warning glyph used in the footer widget when sandbox is disabled. */
 const OFF_ICON = "⚠️";
 const WIDGET_ID = "pi-sandbox";
+const DOCKER_BREAK_GLASS_DURATION_MS = 5 * 60 * 1000;
 
 /** Return a bounded, path-safe state filename scoped to one public Pi session identity. */
 export function sessionStateFilename(sessionId: string): string {
@@ -602,6 +610,42 @@ function renderDockerGrantDiff(cwd: string, grant: DockerTargetGrant): string {
     ].join("\n");
 }
 
+interface DockerBreakGlassCandidate {
+    target: DockerTargetGrant;
+    access: DockerTargetAccess;
+    container: DockerTargetAccess["containers"][number];
+}
+
+function dockerBreakGlassCandidates(
+    policy: Extract<SandboxDockerPolicy, { mode: "targeted" }>,
+    access: DockerTargetAccess[],
+): DockerBreakGlassCandidate[] {
+    const targets = new Map(
+        policy.targets
+            .filter(
+                (target) =>
+                    target.selector.type !== "ephemeral-container" &&
+                    target.allowUnsafeTarget &&
+                    (target.operations ?? DOCKER_OPERATIONS).includes("exec"),
+            )
+            .map((target) => [dockerSelectorKey(target.selector), target]),
+    );
+    return access.flatMap((targetAccess) => {
+        const target = targets.get(dockerSelectorKey(targetAccess.selector));
+        if (!target) return [];
+        return targetAccess.containers
+            .filter((container) => container.access === "accessible")
+            .map((container) => ({
+                target,
+                access: {
+                    selector: targetAccess.selector,
+                    containers: [container],
+                },
+                container,
+            }));
+    });
+}
+
 function normalizeConfig(raw: unknown, source: string): SandboxConfigLayer {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
         throw new Error(`Invalid ${source}`);
@@ -904,6 +948,14 @@ export default function (pi: ExtensionAPI) {
     claimSandboxRuntime(runtimeOwner);
     const inheritedSessionStatus = process.env[ENV_SESSION_STATUS];
     let ownedSessionStatus: "enabled" | "disabled" | undefined;
+    let breakGlassExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearBreakGlassExpiry = (): void => {
+        if (breakGlassExpiryTimer !== undefined) {
+            clearTimeout(breakGlassExpiryTimer);
+            breakGlassExpiryTimer = undefined;
+        }
+    };
 
     const restoreSessionStatus = (): void => {
         if (ownedSessionStatus === undefined) return;
@@ -922,6 +974,7 @@ export default function (pi: ExtensionAPI) {
         ctx?: ExtensionContext,
         initial = false,
     ): number | undefined => {
+        clearBreakGlassExpiry();
         transitionGeneration += 1;
         const generation = transitionGeneration;
         const published = publishSandboxRuntime(runtimeOwner, {
@@ -1217,6 +1270,55 @@ export default function (pi: ExtensionAPI) {
         );
     }
 
+    function scheduleBreakGlassExpiry(
+        ctx: ExtensionContext,
+        baseConfig: SandboxConfig,
+        expiresAtMs: number,
+        activationGeneration: number,
+    ): void {
+        const delay = Math.max(1, expiresAtMs - Date.now());
+        breakGlassExpiryTimer = setTimeout(() => {
+            breakGlassExpiryTimer = undefined;
+            if (
+                !ownsSandboxRuntime(runtimeOwner) ||
+                !isCurrentTransition(activationGeneration)
+            ) {
+                return;
+            }
+            const generation = beginTransition(ctx);
+            if (generation === undefined) return;
+            bashProcessSupervisor.shutdown();
+            void (async () => {
+                try {
+                    await shutdownServices();
+                    if (!isCurrentTransition(generation)) return;
+                    const enabled = await enableServices(
+                        ctx.cwd,
+                        baseConfig,
+                        generation,
+                    );
+                    if (!isCurrentTransition(generation) || !enabled) return;
+                    sandboxEnabled = true;
+                    updateSandboxStatus(ctx, "on", baseConfig.docker);
+                    ctx.ui.notify(
+                        "Docker break-glass expired. Arbitrary exec is disabled; running Sandbox commands were interrupted and were not retried.",
+                        "info",
+                    );
+                } catch (error) {
+                    if (!isCurrentTransition(generation)) return;
+                    sandboxEnabled = false;
+                    publishError(error);
+                    updateSandboxStatus(ctx, "error");
+                    ctx.ui.notify(
+                        `Docker break-glass expired, but Sandbox reconfiguration failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                }
+            })();
+        }, delay);
+        breakGlassExpiryTimer.unref?.();
+    }
+
     /**
      * Persist the sandbox status under the current Pi session identity and
      * set the live env var for spawned subagent children to inherit.
@@ -1381,6 +1483,7 @@ export default function (pi: ExtensionAPI) {
                 "off",
                 "docker",
                 "docker grant",
+                "docker break-glass",
                 "docker off",
                 "docker targeted",
                 "docker full",
@@ -1529,6 +1632,171 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
 
+            if (arg === "docker break-glass") {
+                if (!ctx.isProjectTrusted()) {
+                    ctx.ui.notify(
+                        "Docker break-glass requires a trusted project",
+                        "error",
+                    );
+                    return;
+                }
+                if (
+                    !sandboxEnabled ||
+                    getSandboxRuntime().state !== "enabled"
+                ) {
+                    ctx.ui.notify(
+                        "Docker break-glass requires an active Sandbox runtime",
+                        "error",
+                    );
+                    return;
+                }
+
+                let baseConfig: SandboxConfig;
+                let candidate: DockerBreakGlassCandidate;
+                try {
+                    const resolved = loadSandboxConfig(ctx.cwd, {
+                        sessionDir: ctx.sessionManager?.getSessionDir(),
+                        sessionId: ctx.sessionManager?.getSessionId(),
+                        envOverride: envSandboxStatus(),
+                    });
+                    baseConfig = resolved.config;
+                    if (baseConfig.docker.mode !== "targeted") {
+                        ctx.ui.notify(
+                            "Docker break-glass is available only for targeted host-access grants",
+                            "error",
+                        );
+                        return;
+                    }
+                    const access = await inspectDockerAccess(
+                        ctx.cwd,
+                        baseConfig.docker,
+                    );
+                    const candidates = dockerBreakGlassCandidates(
+                        baseConfig.docker,
+                        access,
+                    );
+                    if (candidates.length === 0) {
+                        ctx.ui.notify(
+                            "No running host-access target has Administration requested. Run /sandbox docker grant first.",
+                            "error",
+                        );
+                        return;
+                    }
+                    if (candidates.length === 1) {
+                        candidate = candidates[0];
+                    } else {
+                        const labels = candidates.map(
+                            ({ container }) =>
+                                `${container.name} (${container.id.slice(0, 12)})`,
+                        );
+                        const selected = await ctx.ui.select(
+                            "Container for temporary arbitrary exec",
+                            labels,
+                        );
+                        const selectedIndex =
+                            selected === undefined
+                                ? -1
+                                : labels.indexOf(selected);
+                        if (selectedIndex < 0) {
+                            ctx.ui.notify(
+                                "Docker break-glass cancelled",
+                                "info",
+                            );
+                            return;
+                        }
+                        candidate = candidates[selectedIndex];
+                    }
+                } catch (error) {
+                    ctx.ui.notify(
+                        `Docker break-glass inspection failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                    return;
+                }
+
+                const expiresAtMs = Date.now() + DOCKER_BREAK_GLASS_DURATION_MS;
+                const accepted = await ctx.ui.confirm(
+                    "Temporarily allow arbitrary Docker exec?",
+                    [
+                        `Target: ${dockerSelectorLabel(candidate.target.selector)}`,
+                        `Exact container: ${candidate.container.name} (${candidate.container.id})`,
+                        ...formatDockerAccess([candidate.access]),
+                        "Arbitrary commands can modify or delete data exposed through the host access listed above, including read-write host bind mounts.",
+                        "This authorization is kept only in the current Pi session, applies only to this container ID, and expires after 5 minutes.",
+                        "Expiration interrupts running Sandbox commands; they are not retried.",
+                    ].join("\n"),
+                );
+                if (!accepted) {
+                    ctx.ui.notify("Docker break-glass cancelled", "info");
+                    return;
+                }
+
+                if (baseConfig.docker.mode !== "targeted") return;
+                const runtimeDocker: SandboxDockerPolicy = {
+                    ...baseConfig.docker,
+                    targets: [
+                        ...baseConfig.docker.targets,
+                        {
+                            selector: {
+                                type: "ephemeral-container",
+                                id: candidate.container.id,
+                                unsafeExecExpiresAtMs: expiresAtMs,
+                            },
+                            operations: ["exec"],
+                            allowUnsafeTarget: true,
+                        },
+                    ],
+                };
+                const runtimeConfig: SandboxConfig = {
+                    ...baseConfig,
+                    docker: runtimeDocker,
+                };
+                const generation = beginTransition(ctx);
+                if (generation === undefined) return;
+                bashProcessSupervisor.shutdown();
+                try {
+                    await shutdownServices();
+                    if (!isCurrentTransition(generation)) return;
+                    const enabled = await enableServices(
+                        ctx.cwd,
+                        runtimeConfig,
+                        generation,
+                    );
+                    if (!isCurrentTransition(generation) || !enabled) return;
+                    sandboxEnabled = true;
+                    updateSandboxStatus(ctx, "on", runtimeDocker);
+                    scheduleBreakGlassExpiry(
+                        ctx,
+                        baseConfig,
+                        expiresAtMs,
+                        generation,
+                    );
+                    ctx.ui.notify(
+                        [
+                            `Break-glass exec active for container ${candidate.container.name}.`,
+                            `Exact container ID: ${candidate.container.id}`,
+                            `Expires: ${new Date(expiresAtMs).toISOString()}`,
+                            ...formatDockerAccess([candidate.access]),
+                            ...formatDockerSummary(
+                                "Active Docker",
+                                summarizeDockerAccess(runtimeDocker),
+                            ),
+                        ].join("\n"),
+                        "warning",
+                    );
+                } catch (error) {
+                    if (!isCurrentTransition(generation)) return;
+                    sandboxEnabled = false;
+                    publishError(error);
+                    updateSandboxStatus(ctx, "error");
+                    ctx.ui.notify(
+                        `Docker break-glass activation failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                }
+                return;
+            }
+
             if (arg === "docker grant") {
                 if (!ctx.isProjectTrusted()) {
                     ctx.ui.notify(
@@ -1579,17 +1847,22 @@ export default function (pi: ExtensionAPI) {
                         .flatMap((item) => item.containers)
                         .filter((container) => container.access === "excluded");
                     if (excluded.length > 0) {
+                        const exceptionPolicy: SandboxDockerPolicy = {
+                            ...policy,
+                            targets: [{ ...grant, allowUnsafeTarget: true }],
+                        };
                         const accepted = await ctx.ui.confirm(
-                            "Authorize operations on a container with host access?",
+                            "Authorize this Docker target despite host access?",
                             [
                                 ...formatDockerSummary(
-                                    "Selected Docker grant",
-                                    summarizeDockerAccess(policy),
+                                    "Effective Docker rights with this exception",
+                                    summarizeDockerAccess(exceptionPolicy),
                                 ),
                                 "The paths below are existing container mounts: host source → container destination. Only mount metadata was inspected.",
                                 ...formatDockerAccess(access),
-                                "This exception allows the selected operations on containers matching this selector, including future replacements, despite their host access.",
-                                `Operations: ${profile.operations.join(", ")}.`,
+                                "This exception authorizes containers matching this selector, including future replacements, despite their host access.",
+                                "Arbitrary exec remains unavailable for host-access targets. When Administration is requested, only the fixed read-only probes test -r, stat and ls are available.",
+                                "Use /sandbox docker break-glass for a temporary arbitrary exec authorization bound to one current container ID.",
                                 "Keep this exception limited to a container you trust.",
                             ].join("\n"),
                         );

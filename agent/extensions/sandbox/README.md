@@ -25,14 +25,19 @@ Docker is off by default. Its authority is kept separately in
 | `/sandbox on` / `/sandbox off` | Enable or disable Sandbox for this session. |
 | `/sandbox docker` | Compare the saved grant, project restrictions and active Docker rights. |
 | `/sandbox docker grant` | Create or replace this project's global targeted Docker grant. |
+| `/sandbox docker break-glass` | Allow arbitrary `exec` for one exact current container for five minutes. |
 | `/sandbox docker off\|targeted\|full\|inherit` | Set a project-local narrowing of the global authority. |
 
 ## Documentation
 
-The Docker widget shows the active profile, target count and any confirmed
-host-access exception. Observation reads container state, Exploitation also
-starts/stops/restarts containers, and Administration adds `exec`. During a
-reload it shows `reconfiguring`; new calls wait up to 30 seconds.
+The Docker widget shows the effective profile, target count, host-access
+exception and any active break-glass grant. Observation reads container state.
+Exploitation also starts, stops and restarts containers. Administration adds
+`exec` on targets without a host-access exception. With that exception,
+arbitrary `exec` is removed and only fixed read-only probes of declared bind
+destinations are accepted. `/sandbox docker break-glass` can temporarily add
+arbitrary `exec` for one exact current container after a separate confirmation.
+During a reload the widget shows `reconfiguring`; new calls wait up to 30 seconds.
 
 A saved grant can be inactive or reduced by project settings. The notification
 states the actual activation outcome. Target eligibility in doctor does not

@@ -36,26 +36,46 @@ Docker metadata. The wizard does not read their file contents. Container state
 | --- | --- |
 | Observation | `ps`, `inspect`, `logs`, `stats` |
 | Exploitation (default) | Observation plus `start`, `stop`, `restart` |
-| Administration | Exploitation plus `exec` |
+| Administration | Exploitation plus `exec`, subject to the target rules below |
 
 `exec` can expose the selected container's mounts, network and secrets. Choose
 Administration only when that access is required.
 
-Administration accepts ordinary `docker exec <container> ...` and
-`docker compose exec -T <service> ...`. Targeted mode refuses privileged or
-detached exec and non-empty detach keys. The process keeps Docker's usual user
-selection. No host sudo permission or filesystem permission change is added.
+On a target without a host-access exception, Administration accepts ordinary
+`docker exec <container> ...` and `docker compose exec -T <service> ...`.
+Targeted mode refuses privileged or detached exec and non-empty detach keys.
+The process keeps Docker's usual user selection.
 
-Docker authorization and Linux file permissions are separate. A host user can
-be unable to read a root-owned `0600` log while an authorized process running
-as the container's normal user can read its mounted copy. Use `test -r <path>`
-inside the container to check readability without printing the log.
+Docker authorization and Linux file permissions are separate. A process in the
+container keeps the container's normal Linux user and permissions. If arbitrary
+`exec` is authorized, that process can still modify any writable host bind that
+its container user can access.
 
 The target exception is independent of the profile: choosing Administration
-does not enable it. `allowUnsafeTarget: true` bypasses the broker's target safety
-check for that selector, including replacement containers matching it. It does
-not add operations. For example, Exploitation with this exception still excludes
-`exec`. Confirm it only for a workload whose host access you accept.
+does not enable it. `allowUnsafeTarget: true` makes containers matching that
+selector visible despite their host access, including future replacements. It
+does not make arbitrary `exec` persistent. If the saved operations correspond
+to Administration, the effective persistent rights are Exploitation plus these
+fixed read-only probes below a declared bind destination:
+
+```text
+test -r PATH
+stat -- PATH
+ls -la -- PATH
+```
+
+The broker accepts only these exact argument forms. It rejects shells,
+interpreters, other commands, paths outside the declared bind destinations,
+environment overrides, alternate users and alternate working directories.
+For example, `test -r /mounted/log` checks readability without printing the
+file. If the target has no bind destination, no bind probe is available.
+
+Use `/sandbox docker break-glass` when the current task truly requires an
+arbitrary command in such a target. It requires a separate confirmation that
+lists the host mounts, authorizes only the exact current container ID, remains
+in memory for five minutes and is never written to `sandbox.global.json`.
+Expiry republishes the normal runtime and interrupts commands still running in
+the old runtime without replaying them.
 
 ## Saved, configured and active rights
 
@@ -64,11 +84,12 @@ the exact operation set, including for manually edited files. No profile field
 is stored. Other sets display `Custom`; differing profiles across targets
 display `Mixed`, with each target's operations listed in `/sandbox`.
 
-The success notification shows the saved grant and the active rights after
-runtime publication. Project restrictions can reduce a grant or turn Docker
-off. With Sandbox disabled, the result is `saved, not active`. A failed reload
+The success notification shows requested, saved and effective rights after
+runtime publication. Project restrictions or the host-access rule can reduce a
+grant. With Sandbox disabled, the result is `saved, not active`. A failed reload
 is `saved; activation failed`, and execution remains blocked until recovery.
-The confirmed host-access exception is listed separately from the profile.
+The confirmed host-access exception and a temporary break-glass grant are shown
+separately from the effective profile.
 
 `/sandbox doctor` compares saved authority, configured rights and the active
 runtime. If files changed without reloading, it reports the difference. Its

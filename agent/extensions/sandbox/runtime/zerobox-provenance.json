@@ -125,9 +125,9 @@
         }
     ],
     "binaryName": "zerobox",
-    "binarySha256": "0b19e8057e5b872ce08762c4250a11ea2d7889e8e2d1db137351f1f5e2484819",
+    "binarySha256": "8e559c0748432b186effbaf8fb197874026d174731ce1e5e1aaf9bf9b004b1a3",
     "localBuild": {
         "baseCommit": "1bffd639196d144743110e2172f0a61304e700c4",
-        "sourceDiffSha256": "ee10437758a0f51990998df8b9c68dbdfb7e9db5b75b79eda11bdc010dd2b41b"
+        "sourceDiffSha256": "a0660809cbe954389541da48fa007e714f64ffb9c6f66797d3a3f62098d9f18b"
     }
 }

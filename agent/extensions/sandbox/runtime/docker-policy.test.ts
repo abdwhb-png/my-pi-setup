@@ -184,6 +184,29 @@ describe("global Docker authority", () => {
         symlinkSync(target, globalConfigPath);
         expect(resolve).toThrow(SandboxExecutionError);
     });
+
+    it("rejects the runtime-only break-glass selector in persistent authority", () => {
+        const { projectRoot, writeGlobal, resolve } = fixture();
+        writeGlobal({
+            docker: {
+                grants: [{
+                    projectRoot,
+                    mode: "targeted",
+                    targets: [{
+                        selector: {
+                            type: "ephemeral-container",
+                            id: "0123456789abcdef",
+                            unsafeExecExpiresAtMs: Date.now() + 300_000,
+                        },
+                        operations: ["exec"],
+                        allowUnsafeTarget: true,
+                    }],
+                }],
+            },
+        });
+
+        expect(resolve).toThrow("Unknown Docker target selector type");
+    });
 });
 
 describe("project Docker narrowing", () => {

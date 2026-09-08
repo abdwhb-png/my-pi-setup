@@ -50,7 +50,9 @@ export async function inspectDockerAccess(
                           `com.docker.compose.service=${selector.service}`,
                       ],
                   }
-                : { name: [selector.name] };
+                : selector.type === "container-name"
+                  ? { name: [selector.name] }
+                  : { id: [selector.id] };
         // oxlint-disable-next-line no-await-in-loop -- bound concurrent Docker requests; a selector may match many replicas.
         const response = await dependencies.request(
             `/containers/json?all=1&filters=${encodeURIComponent(JSON.stringify(filters))}`,
@@ -68,9 +70,12 @@ export async function inspectDockerAccess(
             const matches =
                 selector.type === "container-name"
                     ? names.includes(selector.name)
-                    : labels["com.docker.compose.project"] ===
-                          selector.project &&
-                      labels["com.docker.compose.service"] === selector.service;
+                    : selector.type === "compose-service"
+                      ? labels["com.docker.compose.project"] ===
+                            selector.project &&
+                        labels["com.docker.compose.service"] ===
+                            selector.service
+                      : summary.Id === selector.id;
             if (!matches) continue;
             if (
                 typeof summary.Id !== "string" ||
@@ -297,7 +302,9 @@ export function formatDockerAccess(targets: DockerTargetAccess[]): string[] {
         const selector =
             target.selector.type === "compose-service"
                 ? `${target.selector.project} / ${target.selector.service}`
-                : target.selector.name;
+                : target.selector.type === "container-name"
+                  ? target.selector.name
+                  : target.selector.id;
         return target.containers.length === 0
             ? [`Docker target ${selector}: absent`]
             : target.containers.flatMap((container) => [

@@ -13,11 +13,13 @@ and `~/.pi/agent/sandbox.global.json`; it never writes configuration.
 | `Docker target ...: absent` | No current container matches the selector on the configured Docker endpoint. Check the Compose project and service names. |
 | `Docker target inspection unavailable` | The configuration was parsed, but live access could not be checked. Check the Docker daemon, CLI and Sandbox runtime, then rerun doctor. |
 | Sandbox configuration failed | Read the field path in the message, correct that canonical file, then run `/sandbox doctor` again. |
-| `Docker operation is not granted` | Inspect active operations in `/sandbox`. Choose Administration if this target needs `exec`. |
+| `Docker operation is not granted` | Inspect effective operations in `/sandbox`. Administration adds persistent `exec` only when the target has no host-access exception. |
 | `Docker target is not authorized` | Check the exact container name or Compose project/service selector. The container may also have disappeared. |
 | `Docker exec option forbidden` | Targeted exec refuses privileged/detached execution and non-empty detach keys, even with Administration. |
+| `Docker exec is restricted to read-only inspection` | This target has a persistent host-access exception. Use exactly `test -r PATH`, `stat -- PATH` or `ls -la -- PATH` below a declared bind destination, or explicitly run `/sandbox docker break-glass`. |
+| `Break-glass exec expired` | The five-minute exact-container grant ended. Any command still using the old runtime was interrupted and was not replayed. Confirm a new break-glass grant only if arbitrary exec is still required. |
 | `saved; activation failed` | The authority file was saved, but no new runtime was activated. Correct the reported cause, then run `/sandbox on`. |
-| `Active Docker differs from the current configuration` | The files and running permissions differ. Run `/sandbox on` to apply the current configuration. |
+| `Active Docker differs from the current configuration` | The files and running permissions differ. If `/sandbox` shows a session-only break-glass grant, the difference is intentional until it expires. Otherwise run `/sandbox on`. |
 | `reconfiguration did not finish in time` | The pending command was not executed. After recovery, submit it again if still needed. |
 | `execution was interrupted by reconfiguration` | An engaged process was stopped and was not replayed. Inspect its effects before deciding to retry. |
 

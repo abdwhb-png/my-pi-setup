@@ -33,7 +33,8 @@ it('shows the effective Docker profile and exception instead of an ambiguous mar
         mode: 'targeted', endpoint: 'unix:///var/run/docker.sock',
         targets: [{ selector: { type: 'container-name', name: 'api' }, operations, allowUnsafeTarget: true }],
     }));
-    expect(render()).toContain('Administration');
+    expect(render()).toContain('Exploitation + inspection');
+    expect(render()).not.toContain('Administration');
     expect(render(['ps','inspect','logs','stats','start','stop','restart'])).toContain('Exploitation');
     expect(render(['ps','inspect','logs','stats'])).toContain('Observation');
     expect(render(['logs'])).toContain('Custom');

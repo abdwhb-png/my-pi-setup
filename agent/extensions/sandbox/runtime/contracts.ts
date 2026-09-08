@@ -36,7 +36,13 @@ export type DockerOperation = (typeof DOCKER_OPERATIONS)[number];
 
 export type DockerTargetSelector =
     | { type: "container-name"; name: string }
-    | { type: "compose-service"; project: string; service: string };
+    | { type: "compose-service"; project: string; service: string }
+    | {
+          /** Runtime-only selector. sandbox.global.json deliberately rejects it. */
+          type: "ephemeral-container";
+          id: string;
+          unsafeExecExpiresAtMs: number;
+      };
 
 export interface DockerTargetGrant {
     selector: DockerTargetSelector;

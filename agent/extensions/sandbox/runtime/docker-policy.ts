@@ -180,10 +180,16 @@ function parseTargetFields(value: unknown): {
     };
 }
 
-function selectorKey(selector: DockerTargetSelector): string {
+export function dockerSelectorKey(selector: DockerTargetSelector): string {
     return selector.type === "container-name"
         ? JSON.stringify([selector.type, selector.name])
-        : JSON.stringify([selector.type, selector.project, selector.service]);
+        : selector.type === "compose-service"
+          ? JSON.stringify([selector.type, selector.project, selector.service])
+          : JSON.stringify([
+                selector.type,
+                selector.id,
+                selector.unsafeExecExpiresAtMs,
+            ]);
 }
 
 function parseTargetList<T>(
@@ -196,7 +202,7 @@ function parseTargetList<T>(
     const targets = value.map(parse);
     const seen = new Set<string>();
     for (const target of targets) {
-        const key = selectorKey(target.selector);
+        const key = dockerSelectorKey(target.selector);
         if (seen.has(key)) invalid(new Error("Duplicate Docker target"));
         seen.add(key);
     }
@@ -464,12 +470,12 @@ function narrowTargetedPolicy(
     if (override.targets === undefined) return globalPolicy;
     const globalTargets = new Map(
         globalPolicy.targets.map((target) => [
-            selectorKey(target.selector),
+            dockerSelectorKey(target.selector),
             target,
         ]),
     );
     const targets = override.targets.map((target): DockerTargetGrant => {
-        const granted = globalTargets.get(selectorKey(target.selector));
+        const granted = globalTargets.get(dockerSelectorKey(target.selector));
         if (!granted) invalid(new Error("Project added a Docker target"));
         const globallyAllowed = new Set(
             granted.operations ?? DOCKER_OPERATIONS,
