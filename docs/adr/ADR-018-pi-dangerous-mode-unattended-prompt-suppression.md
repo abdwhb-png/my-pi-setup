@@ -16,7 +16,9 @@ ADR-015 combined prompt suppression with continuation turns, budgets, completion
 
 Replace Autopilot with `/unattended on|off|status` in `pi-dangerous-mode`.
 
-Unattended suppresses `ask_user_question`, structured `ExtensionUIContext` prompts, and active-run `custom()` UI. Suppressed calls use `UNATTENDED_PROMPT_BLOCKED` and direct the model to choose only a safe, reversible, context-supported path or end normally with a concrete blocker.
+Unattended suppresses `ask_user_question`, structured `ExtensionUIContext` prompts, and active-run `custom()` UI. The tool-call path retains its `UNATTENDED_PROMPT_BLOCKED` reason. UI primitives are guarded through Pi's public `ui_prompt_before` event and reject with the public `UIPromptBlockedError` marker (`UI_PROMPT_BLOCKED`). Both paths direct the model to choose only a safe, reversible, context-supported path or end normally with a concrete blocker.
+
+The UI guard depends only on Pi's public prompt API, not on `pi-permission-system` events or private Pi prototypes. Pi invokes it for any extension using `select`, `confirm`, `input`, `editor`, or `custom`. Structured prompts are blocked whenever Unattended is enabled; `custom` is blocked only during active agent work. A Pi version without the public marker loads the extension but disables Unattended explicitly.
 
 Unattended has no CLI flag, does not enable Dangerous, and does not persist beyond session command semantics. It never injects a continuation, registers a completion tool, evaluates plans, tracks budgets, guards external actions, or records Autopilot telemetry.
 
@@ -46,4 +48,4 @@ Rejected. The requested mode is explicitly toggled during a live session; `/unat
 
 ## Verification
 
-Focused unit and Pi runtime tests prove command activation, independent Dangerous state, pre-execution prompt blocking, idle custom UI access, and absence of continuation/completion tooling. Repository formatting, linting, typecheck, and tests run before completion.
+Focused unit and Pi runtime tests prove command activation, independent Dangerous state, public pre-execution prompt blocking, idle custom UI access, third-party prompt interception, old-core incompatibility handling, and absence of continuation/completion tooling. Repository formatting, linting, typecheck, and tests run before completion.

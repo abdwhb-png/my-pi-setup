@@ -1,22 +1,9 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 
 const sendNotification = mock((_event: unknown) => undefined);
-const unregisterObserver = mock(() => undefined);
-let promptObserver: ((kind: string) => void) | undefined;
 
 mock.module("../notify/transport.ts", () => ({
     createNotificationTransport: () => ({ send: sendNotification }),
-}));
-
-mock.module("../_shared/extension-ui-broker.ts", () => ({
-    installExtensionUiBroker: () => true,
-    registerExtensionUiPromptObserver: (
-        _ownerId: string,
-        observer: (kind: string) => void,
-    ) => {
-        promptObserver = observer;
-        return unregisterObserver;
-    },
 }));
 
 const { default: notifyExtension } = await import("../notify.ts");
@@ -119,13 +106,17 @@ async function emit(
 
 beforeEach(() => {
     sendNotification.mockClear();
-    unregisterObserver.mockClear();
-    promptObserver = undefined;
     delete process.env.PI_NO_NOTIFY;
 });
 
 describe("notify extension", () => {
-    it("uses agent_settled rather than intermediate agent_end for completion", () => {
+	it("subscribes to the public UI prompt lifecycle", () => {
+		const fixture = setup();
+
+		expect(fixture.handlers.has("ui_prompt_start")).toBe(true);
+	});
+
+	it("uses agent_settled rather than intermediate agent_end for completion", () => {
         const fixture = setup();
 
         expect(fixture.handlers.has("agent_end")).toBe(false);
@@ -194,12 +185,21 @@ describe("notify extension", () => {
         const context = createContext();
         await emit(fixture, "session_start", { reason: "startup" }, context);
 
-        expect(promptObserver).toBeDefined();
-        promptObserver?.("confirm");
+        await emit(
+            fixture,
+            "ui_prompt_start",
+            { type: "ui_prompt_start", kind: "confirm" },
+            context,
+        );
         expect(sendNotification).toHaveBeenCalledTimes(0);
 
         await emit(fixture, "agent_start", {}, context);
-        promptObserver?.("confirm");
+        await emit(
+            fixture,
+            "ui_prompt_start",
+            { type: "ui_prompt_start", kind: "confirm" },
+            context,
+        );
 
         expect(sendNotification).toHaveBeenCalledWith({
             type: "action-required",
@@ -214,7 +214,12 @@ describe("notify extension", () => {
         const context = createContext();
         await emit(fixture, "session_start", { reason: "startup" }, context);
         await emit(fixture, "agent_start", {}, context);
-        promptObserver?.("input");
+        await emit(
+            fixture,
+            "ui_prompt_start",
+            { type: "ui_prompt_start", kind: "input" },
+            context,
+        );
         await emit(fixture, "agent_settled", {}, context);
         await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -222,7 +227,12 @@ describe("notify extension", () => {
 
         await fixture.commands.get("notify")!.handler("", context);
         await emit(fixture, "agent_start", {}, context);
-        promptObserver?.("input");
+        await emit(
+            fixture,
+            "ui_prompt_start",
+            { type: "ui_prompt_start", kind: "input" },
+            context,
+        );
         expect(sendNotification).toHaveBeenCalledTimes(1);
     });
 
@@ -231,14 +241,19 @@ describe("notify extension", () => {
         const context = createContext(false);
         await emit(fixture, "session_start", { reason: "startup" }, context);
         await emit(fixture, "agent_start", {}, context);
-        promptObserver?.("editor");
+        await emit(
+            fixture,
+            "ui_prompt_start",
+            { type: "ui_prompt_start", kind: "editor" },
+            context,
+        );
         await emit(fixture, "agent_settled", {}, context);
         await new Promise((resolve) => setTimeout(resolve, 5));
 
         expect(sendNotification).toHaveBeenCalledTimes(0);
     });
 
-    it("unregisters prompt observation and cancels completion on shutdown", async () => {
+    it("cancels completion on shutdown", async () => {
         const fixture = setup();
         const context = createContext();
         await emit(fixture, "session_start", { reason: "startup" }, context);
@@ -247,7 +262,6 @@ describe("notify extension", () => {
         await emit(fixture, "session_shutdown", {}, context);
         await new Promise((resolve) => setTimeout(resolve, 5));
 
-        expect(unregisterObserver).toHaveBeenCalledTimes(1);
         expect(sendNotification).toHaveBeenCalledTimes(0);
     });
 });

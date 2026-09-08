@@ -11,7 +11,7 @@ export type EmitToolCall = (
 ) => Promise<ToolCallEventResult | undefined>;
 
 export interface RuntimeStatus {
-    compatible: { runner: boolean; uiBroker: boolean };
+    compatible: { runner: boolean; uiPromptGuard: boolean };
     configValid: boolean;
     dangerous: {
         flag: boolean;
@@ -28,7 +28,7 @@ export interface DangerousRuntimeState {
     installed: boolean;
     runnerPatchVersion?: number;
     compatible: boolean;
-    uiBrokerCompatible: boolean;
+    uiPromptGuardCompatible: boolean;
     configValid: boolean;
     incompatibilityReported: boolean;
     original?: EmitToolCall;
@@ -56,7 +56,7 @@ function defaultState(): DangerousRuntimeState {
     return {
         installed: false,
         compatible: true,
-        uiBrokerCompatible: true,
+        uiPromptGuardCompatible: true,
         configValid: true,
         incompatibilityReported: false,
         enabled: false,
@@ -71,10 +71,12 @@ function defaultState(): DangerousRuntimeState {
 function upgradeState(state: DangerousRuntimeState): DangerousRuntimeState {
     const legacy = state as DangerousRuntimeState & {
         override?: boolean | undefined;
+        uiBrokerCompatible?: boolean;
     };
     state.dangerousOverride ??= legacy.override;
     state.unattendedOverride ??= undefined;
     state.unattendedEffective ??= false;
+    state.uiPromptGuardCompatible ??= legacy.uiBrokerCompatible ?? true;
     state.config = cloneConfig(state.config);
     return state;
 }
@@ -98,7 +100,7 @@ export function recomputeEffectiveState(
         (state.dangerousOverride ?? state.dangerousFlag);
     state.unattendedEffective =
         state.compatible &&
-        state.uiBrokerCompatible &&
+        state.uiPromptGuardCompatible &&
         state.unattendedOverride === true;
 }
 
@@ -135,7 +137,7 @@ export function setDangerousOverride(enabled: boolean): boolean {
 
 export function setUnattendedOverride(enabled: boolean): boolean {
     const state = getMutableRuntimeState();
-    if (enabled && (!state.compatible || !state.uiBrokerCompatible)) {
+    if (enabled && (!state.compatible || !state.uiPromptGuardCompatible)) {
         return false;
     }
 
@@ -152,9 +154,9 @@ export function isUnattendedEnabled(): boolean {
     return getMutableRuntimeState().unattendedEffective;
 }
 
-export function setUiBrokerCompatibility(compatible: boolean): void {
+export function setUiPromptGuardCompatibility(compatible: boolean): void {
     const state = getMutableRuntimeState();
-    state.uiBrokerCompatible = compatible;
+    state.uiPromptGuardCompatible = compatible;
     recomputeEffectiveState(state);
 }
 
@@ -163,7 +165,7 @@ export function getRuntimeStatus(): RuntimeStatus {
     return {
         compatible: {
             runner: state.compatible,
-            uiBroker: state.uiBrokerCompatible,
+            uiPromptGuard: state.uiPromptGuardCompatible,
         },
         configValid: state.configValid,
         dangerous: {

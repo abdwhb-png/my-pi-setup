@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import dangerousModeExtension from "./index.ts";
+import {
+    setUiPromptGuardCompatibility,
+    setUnattendedOverride,
+} from "./runtime-state.ts";
 
 type Command = {
     handler: (args: string, ctx: CommandContext) => Promise<void>;
@@ -22,9 +26,17 @@ type CommandContext = {
 function setup(): {
     commands: Map<string, Command>;
     flags: string[];
+    handlers: Map<
+        string,
+        Array<(event: unknown, ctx?: unknown) => unknown>
+    >;
 } {
     const commands = new Map<string, Command>();
     const flags: string[] = [];
+    const handlers = new Map<
+        string,
+        Array<(event: unknown, ctx?: unknown) => unknown>
+    >();
     dangerousModeExtension({
         registerFlag(name: string) {
             flags.push(name);
@@ -42,13 +54,84 @@ function setup(): {
         setActiveTools() {},
         appendEntry() {},
         sendMessage() {},
-        on() {},
+        on(event: string, handler: (event: unknown, ctx?: unknown) => unknown) {
+            const registered = handlers.get(event) ?? [];
+            registered.push(handler);
+            handlers.set(event, registered);
+        },
         events: { on: () => () => {}, emit() {} },
     } as unknown as ExtensionAPI);
-    return { commands, flags };
+    return { commands, flags, handlers };
 }
 
 describe("pi-dangerous-mode extension", () => {
+    it("registers the public UI prompt guard", () => {
+        const fixture = setup();
+
+        expect(fixture.handlers.has("ui_prompt_before")).toBe(true);
+    });
+
+    it("refuses Unattended when the public prompt API is incompatible", async () => {
+        const fixture = setup();
+        const notifications: Array<[string, string]> = [];
+        setUiPromptGuardCompatibility(false);
+
+        await fixture.commands.get("unattended")!.handler("on", {
+            cwd: "/test",
+            hasUI: true,
+            ui: {
+                notify(message, level) {
+                    notifications.push([message, level]);
+                },
+            },
+        });
+
+        expect(notifications).toContainEqual([
+            "Unattended cannot be enabled: configuration, runner, or public UI prompt guard is incompatible.",
+            "error",
+        ]);
+    });
+
+    it("stops blocking idle custom UI when the active session shuts down", async () => {
+        const fixture = setup();
+        expect(setUnattendedOverride(true)).toBe(true);
+
+        for (const handler of fixture.handlers.get("agent_start") ?? []) {
+            await handler({ type: "agent_start" });
+        }
+        const guard = fixture.handlers.get("ui_prompt_before")?.[0];
+        expect(guard).toBeDefined();
+        if (!guard) return;
+
+        await expect(
+            Promise.resolve(
+                guard({
+                    type: "ui_prompt_before",
+                    reason: "ui_prompt",
+                    kind: "custom",
+                }),
+            ),
+        ).resolves.toMatchObject({ block: true });
+
+        for (const handler of fixture.handlers.get("session_shutdown") ?? []) {
+            await handler(
+                { type: "session_shutdown" },
+                { hasUI: false, ui: { setWidget() {} } },
+            );
+        }
+
+        await expect(
+            Promise.resolve(
+                guard({
+                    type: "ui_prompt_before",
+                    reason: "ui_prompt",
+                    kind: "custom",
+                }),
+            ),
+        ).resolves.toBeUndefined();
+        setUnattendedOverride(false);
+    });
+
     it("registers Dangerous flag and explicit Unattended command", () => {
         const fixture = setup();
 

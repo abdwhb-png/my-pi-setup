@@ -3,7 +3,7 @@ import { renderDangerousWidget } from "./widget.ts";
 
 const theme = { fg: (_color: string, text: string) => text } as never;
 const base = {
-    compatible: { runner: true, uiBroker: true },
+    compatible: { runner: true, uiPromptGuard: true },
     configValid: true,
     dangerous: { flag: false, override: undefined, effective: false },
     unattended: { override: undefined, effective: false },

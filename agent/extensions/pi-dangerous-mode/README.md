@@ -9,10 +9,10 @@ Dangerous behavior remains defined by [ADR-013](../../../docs/adr/ADR-013-pi-dan
 
 ## Activation
 
-| Surface | Dangerous | Unattended |
-| --- | --- | --- |
-| CLI flag | `--dangerously-skip-permissions` | None |
-| Command | `/dangerous-mode on\|off\|status` | `/unattended on\|off\|status` |
+| Surface  | Dangerous                         | Unattended                    |
+| -------- | --------------------------------- | ----------------------------- |
+| CLI flag | `--dangerously-skip-permissions`  | None                          |
+| Command  | `/dangerous-mode on\|off\|status` | `/unattended on\|off\|status` |
 
 Both commands affect only current session. Explicit command state survives `/reload` and resets for new, resumed, and forked sessions.
 
@@ -21,10 +21,12 @@ Both commands affect only current session. Explicit command state survives `/rel
 While Unattended is on:
 
 - `ask_user_question` is blocked before extension handlers execute.
-- `ExtensionUIContext.select`, `confirm`, `input`, and `editor` throw `UNATTENDED_PROMPT_BLOCKED` before UI renders.
+- `ExtensionUIContext.select`, `confirm`, `input`, and `editor` reject with Pi's public `UIPromptBlockedError` (`UI_PROMPT_BLOCKED`) before UI renders.
 - `custom()` is blocked only during active agent work. Idle user dashboards remain available.
 
 The block message directs the agent to select only a safe, reversible path supported by current context and not repeat the prompt. If no such path exists, agent must end normally with concrete blocker. Unattended never invents user preference or approval.
+
+Prompt interception is registered through Pi's public `ui_prompt_before` event. If the installed Pi core does not export `UIPromptBlockedError`, the extension still loads but reports Unattended as incompatible and refuses to enable it.
 
 UI created outside `ExtensionUIContext` is outside interception contract.
 

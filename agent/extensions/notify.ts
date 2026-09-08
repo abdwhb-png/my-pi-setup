@@ -3,10 +3,6 @@ import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-    installExtensionUiBroker,
-    registerExtensionUiPromptObserver,
-} from "./_shared/extension-ui-broker.ts";
 import { createNotificationTransport } from "./notify/transport.ts";
 
 export default function notify(pi: ExtensionAPI): void {
@@ -19,21 +15,6 @@ export default function notify(pi: ExtensionAPI): void {
     let lifecycleGeneration = 0;
     let sessionProject: string | undefined;
     let sessionHasUI = false;
-
-    installExtensionUiBroker();
-    const unregisterPromptObserver = registerExtensionUiPromptObserver(
-        "pi.notify",
-        (promptKind) => {
-            if (!enabled || !agentActive || !sessionHasUI || !sessionProject) {
-                return;
-            }
-            transport.send({
-                type: "action-required",
-                project: sessionProject,
-                promptKind,
-            });
-        },
-    );
 
     function updateStatus(ctx: ExtensionContext): void {
         if (!ctx.hasUI) return;
@@ -56,7 +37,17 @@ export default function notify(pi: ExtensionAPI): void {
     pi.on("session_shutdown", () => {
         agentActive = false;
         lifecycleGeneration++;
-        unregisterPromptObserver();
+    });
+
+    pi.on("ui_prompt_start", (event) => {
+        if (!enabled || !agentActive || !sessionHasUI || !sessionProject) {
+            return;
+        }
+        transport.send({
+            type: "action-required",
+            project: sessionProject,
+            promptKind: event.kind,
+        });
     });
 
     pi.registerCommand("notify", {

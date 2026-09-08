@@ -2,11 +2,17 @@
 
 ## Status
 
-Accepted
+Superseded
 
 ## Date
 
 2026-08-29
+
+## Superseded by
+
+Pi core now owns this interception through the public `ui_prompt_before`, `ui_prompt_start`, and `ui_prompt_end` extension events. `notify` and `pi-dangerous-mode` subscribe independently to that API, so the private process-global broker and its prototype patches have been removed.
+
+The historical decision below explains the behavior that was replaced. ADR-018 defines the current Unattended policy.
 
 ## Context
 

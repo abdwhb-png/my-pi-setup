@@ -12,10 +12,7 @@ import {
     setUnattendedOverride,
     startRuntimeSession,
 } from "./runtime-state.ts";
-import {
-    installUiBrokerPatches,
-    unregisterUiBrokerGuard,
-} from "./ui-broker.ts";
+import { installUiPromptGuard } from "./ui-prompt-guard.ts";
 import { renderDangerousWidget, WIDGET_ID } from "./widget.ts";
 
 const ACTIONS = ["on", "off", "status"] as const;
@@ -48,7 +45,7 @@ function dangerousStatusMessage(): string {
 
 function unattendedStatusMessage(): string {
     const status = getRuntimeStatus();
-    return `Unattended: ${status.unattended.effective ? "ON" : "OFF"}; runner=${status.compatible.runner ? "compatible" : "incompatible"}; ui=${status.compatible.uiBroker ? "compatible" : "incompatible"}. Human prompts are suppressed only while this mode is ON.`;
+    return `Unattended: ${status.unattended.effective ? "ON" : "OFF"}; runner=${status.compatible.runner ? "compatible" : "incompatible"}; ui=${status.compatible.uiPromptGuard ? "compatible" : "incompatible"}. Human prompts are suppressed only while this mode is ON.`;
 }
 
 export default function dangerousModeExtension(pi: ExtensionAPI): void {
@@ -64,15 +61,15 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
         render: (ctx) => renderDangerousWidget(ctx.theme, getRuntimeStatus()),
     });
     const patchInstalled = installRunnerPatch();
-    const uiBrokerInstalled = installUiBrokerPatches({
+    const uiPromptGuardInstalled = installUiPromptGuard(pi, {
         isEnabled: isUnattendedEnabled,
         isAgentActive: () => agentActive,
     });
     installAuthorizerLink(pi);
 
     pi.on("session_shutdown", (_event, ctx) => {
+        agentActive = false;
         widget.remove(ctx as never);
-        unregisterUiBrokerGuard();
     });
     pi.on("agent_start", () => {
         agentActive = true;
@@ -164,7 +161,7 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
             const enabled = action === "on";
             if (!setUnattendedOverride(enabled)) {
                 ctx.ui.notify(
-                    "Unattended cannot be enabled: configuration, runner, or UI broker is incompatible.",
+                    "Unattended cannot be enabled: configuration, runner, or public UI prompt guard is incompatible.",
                     "error",
                 );
                 return;
@@ -178,6 +175,7 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
     });
 
     pi.on("session_start", (event, ctx) => {
+        agentActive = false;
         resetRuntimeSessionOverrides(event.reason === "reload");
         try {
             startRuntimeSession({
@@ -206,9 +204,12 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
                 "error",
             );
         }
-        if (!uiBrokerInstalled || !getRuntimeStatus().compatible.uiBroker) {
+        if (
+            !uiPromptGuardInstalled ||
+            !getRuntimeStatus().compatible.uiPromptGuard
+        ) {
             ctx.ui.notify(
-                "Unattended disabled: incompatible extension UI runtime.",
+                "Unattended disabled: this Pi version lacks the public UI prompt guard API.",
                 "error",
             );
         }

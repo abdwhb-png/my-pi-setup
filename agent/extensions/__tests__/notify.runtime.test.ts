@@ -6,8 +6,12 @@ import {
     type TestSession,
     when,
 } from "@abdwhb-png/pi-test-harness";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+    ExtensionAPI,
+    ExtensionUIContext,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { requestPermissionDecisionFromUi } from "../../npm/node_modules/@gotgenes/pi-permission-system/src/authority/permission-dialog.ts";
 
 const notificationEvents: unknown[] = [];
 const interactionOrder: string[] = [];
@@ -40,6 +44,51 @@ function registerPromptFixture(pi: ExtensionAPI): void {
             };
         },
     });
+}
+
+function registerCustomPromptFixture(pi: ExtensionAPI): void {
+    pi.registerTool({
+        name: "prompt_custom",
+        label: "Prompt custom",
+        description: "Open generic custom UI.",
+        parameters: Type.Object({}),
+        async execute(_id, _params, _signal, _onUpdate, ctx) {
+            await ctx.ui.custom(() => ({ render: () => [], invalidate() {} }));
+            return {
+                content: [{ type: "text", text: "custom UI completed" }],
+                details: {},
+            };
+        },
+    });
+}
+
+function registerPermissionPromptFixture(pi: ExtensionAPI): void {
+    pi.registerTool({
+        name: "permission_prompt",
+        label: "Permission prompt",
+        description: "Open the installed permission-system approval UI.",
+        parameters: Type.Object({}),
+        async execute(_id, _params, _signal, _onUpdate, ctx) {
+            await requestPermissionDecisionFromUi(
+                ctx.ui,
+                "Permission required",
+                "Allow this test action?",
+            );
+            return {
+                content: [{ type: "text", text: "permission UI completed" }],
+                details: {},
+            };
+        },
+    });
+}
+
+function installCustomUiFixture(session: TestSession): void {
+    const runner = session.session.extensionRunner;
+    const custom: ExtensionUIContext["custom"] = async () => {
+        interactionOrder.push("ui:custom");
+        return undefined as never;
+    };
+    runner.setUIContext({ ...runner.getUIContext(), custom }, "tui");
 }
 
 async function enableUnattended(session: TestSession): Promise<void> {
@@ -97,6 +146,51 @@ describe("notify extension real Pi UI boundary", () => {
         expect(session.events.uiCallsFor("select")).toHaveLength(1);
     });
 
+    it("notifies before a third-party custom UI renders", async () => {
+        session = await createTestSession({
+            extensionFactories: [registerCustomPromptFixture, notifyExtension],
+        });
+        installCustomUiFixture(session);
+
+        await session.run(
+            when("Open custom UI", [
+                calls("prompt_custom"),
+                says("Custom UI completed."),
+            ]),
+        );
+
+        expect(interactionOrder.slice(0, 2)).toEqual([
+            "notify:action-required",
+            "ui:custom",
+        ]);
+        expect(actionNotifications()).toHaveLength(1);
+    });
+
+    it("observes the installed permission-system approval UI", async () => {
+        session = await createTestSession({
+            extensionFactories: [registerPermissionPromptFixture, notifyExtension],
+            mockUI: {
+                select: () => {
+                    interactionOrder.push("ui:select");
+                    return "Yes";
+                },
+            },
+        });
+
+        await session.run(
+            when("Request permission", [
+                calls("permission_prompt"),
+                says("Permission UI completed."),
+            ]),
+        );
+
+        expect(interactionOrder.slice(0, 2)).toEqual([
+            "notify:action-required",
+            "ui:select",
+        ]);
+        expect(actionNotifications()).toHaveLength(1);
+    });
+
     it("keeps direct idle UI silent", async () => {
         session = await createTestSession({
             extensionFactories: [notifyExtension],
@@ -142,5 +236,28 @@ describe("notify extension real Pi UI boundary", () => {
 
         expect(actionNotifications()).toHaveLength(0);
         expect(session.events.uiCallsFor("select")).toHaveLength(0);
+    });
+
+    it("lets Unattended suppress third-party custom UI", async () => {
+        session = await createTestSession({
+            extensionFactories: [
+                registerCustomPromptFixture,
+                notifyExtension,
+                dangerousModeExtension,
+            ],
+            propagateErrors: false,
+        });
+        installCustomUiFixture(session);
+        await enableUnattended(session);
+
+        await session.run(
+            when("Open blocked custom UI", [
+                calls("prompt_custom"),
+                says("Used a non-interactive path."),
+            ]),
+        );
+
+        expect(actionNotifications()).toHaveLength(0);
+        expect(interactionOrder).not.toContain("ui:custom");
     });
 });

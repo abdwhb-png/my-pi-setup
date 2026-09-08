@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
+  CustomMessageComponent,
   createEventBus,
   initTheme,
   type ExtensionAPI,
@@ -13,7 +14,6 @@ import {
   MARKDOWN_LINKS_TRANSFORM_EVENT,
 } from "../_shared/markdown-links.ts";
 import piSkillLoader from "./index";
-import { CustomMessageComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/custom-message.js";
 
 function makeSourceInfo(overrides: Partial<SourceInfo> = {}): SourceInfo {
   return {
