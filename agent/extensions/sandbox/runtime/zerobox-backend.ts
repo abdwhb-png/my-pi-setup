@@ -65,6 +65,7 @@ interface ZeroboxProfile {
     deny_write?: string[];
     deny_write_globs?: string[];
     allow_net?: string[];
+    allow_host_net?: string[];
     deny_net?: string[];
     allow_env?: string[];
     deny_env?: string[];
@@ -138,7 +139,12 @@ function compileProfile(policy: SandboxPolicy): ZeroboxProfile {
         profile.deny_write_globs = policy.filesystem.denyWriteGlobs;
     }
     if (policy.network.mode === "domain-allowlist") {
-        profile.allow_net = policy.network.allow;
+        if (policy.network.allow.length > 0) {
+            profile.allow_net = policy.network.allow;
+        }
+        if (policy.network.allowHost.length > 0) {
+            profile.allow_host_net = policy.network.allowHost;
+        }
         if (policy.network.deny.length > 0)
             profile.deny_net = policy.network.deny;
     }

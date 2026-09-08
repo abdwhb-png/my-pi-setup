@@ -102,6 +102,7 @@ describe("sandbox policies", () => {
         expect(analysis.network).toEqual({
             mode: "deny-all",
             allow: [],
+            allowHost: [],
             deny: [],
         });
         expect(analysis.filesystem.denyReadGlobs).toEqual([]);
@@ -397,6 +398,36 @@ describe("sandbox policies", () => {
         }
     });
 
+    it("accepts only explicit-port host domain rules", () => {
+        const config = validatePiSandboxConfig({
+            network: {
+                allowedHostDomains: [
+                    "*.DEV.TEST:443",
+                    "dashboard.dev.test:8443",
+                ],
+            },
+        });
+
+        expect(config.network.allowedHostDomains).toEqual([
+            "*.dev.test:443",
+            "dashboard.dev.test:8443",
+        ]);
+
+        for (const rule of [
+            "*.dev.test",
+            "*:*",
+            "localhost:443",
+            "127.0.0.1:443",
+            "https://app.dev.test:443",
+        ]) {
+            expect(() =>
+                validatePiSandboxConfig({
+                    network: { allowedHostDomains: [rule] },
+                }),
+            ).toThrow(SandboxExecutionError);
+        }
+    });
+
     it("keeps the checked-in active config inside the v1 capability gate", async () => {
         const raw = JSON.parse(
             await readFile(join(import.meta.dir, "../../../sandbox.json"), "utf8"),
@@ -412,6 +443,10 @@ describe("sandbox policies", () => {
             "*.github.com",
             "localhost:8317",
             "localhost:8320",
+            "localhost:18740",
+        ]);
+        expect(config.network.allowedHostDomains).toEqual([
+            "*.dev.test:443",
         ]);
     });
 });

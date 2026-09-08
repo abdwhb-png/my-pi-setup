@@ -27,6 +27,54 @@ describe("accepted Zerobox safe_bash contract", () => {
     let session: TestSession | undefined;
     let inheritedSessionStatus: string | undefined;
 
+    it.skipIf(!process.env.PI_SANDBOX_LOCAL_NETWORK_CONTRACT)(
+        "routes configured local services through real bash and safe_bash",
+        async () => {
+            inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
+            delete process.env[SESSION_STATUS_ENV];
+            fixture = await mkdtemp(resolve(AGENT_ROOT, ".zerobox-local-net-"));
+            await mkdir(resolve(fixture, ".pi"));
+            await writeFile(
+                resolve(fixture, ".pi/settings.json"),
+                JSON.stringify({ safeBash: { mode: "coexist" } }),
+            );
+            session = await createTestSession({
+                cwd: fixture,
+                extensions: [SANDBOX_EXTENSION, BASH_EXECUTION_EXTENSION],
+                propagateErrors: false,
+            });
+            const command = [
+                "curl --fail --silent --show-error --insecure --max-time 15 https://shein-ecom.dev.test/ >/dev/null",
+                "curl --fail --silent --show-error --max-time 15 http://localhost:18740/ >/dev/null",
+            ].join(" && ");
+
+            await session.run(
+                when("Check local development services", [
+                    calls("bash", { command, timeout: 45 }),
+                    calls("safe_bash", { command, timeout: 45 }),
+                    says("Local services reached."),
+                ]),
+            );
+
+            for (const tool of ["bash", "safe_bash"]) {
+                const result = session.events.toolResultsFor(tool).at(-1);
+                expect(result, `${tool}: ${result?.text}`).toMatchObject({
+                    mocked: false,
+                    isError: false,
+                    details: {
+                        execution: {
+                            status: "sandboxed",
+                            profile: "bash-general",
+                            outcome: "succeeded",
+                            exitCode: 0,
+                        },
+                    },
+                });
+            }
+        },
+        90_000,
+    );
+
     for (const command of [
         "bun run --cwd apps/web build",
         "bun run build",

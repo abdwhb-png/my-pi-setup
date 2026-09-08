@@ -33,7 +33,7 @@ function successfulRun(
     args: string[],
 ): ZeroboxCommandResult {
     return args.includes("--version")
-        ? { exitCode: 0, stdout: "zerobox 0.3.3-fork.15\n", stderr: "" }
+        ? { exitCode: 0, stdout: "zerobox 0.3.3-fork.16\n", stderr: "" }
         : { exitCode: 0, stdout: "", stderr: "" };
 }
 
@@ -64,6 +64,7 @@ describe("Zerobox backend", () => {
                         },
                         network: {
                             allowedDomains: ["example.com", "localhost:8317"],
+                            allowedHostDomains: ["*.dev.test:443"],
                             deniedDomains: ["blocked.example.com"],
                         },
                         environment: {
@@ -168,6 +169,7 @@ describe("Zerobox backend", () => {
                 ],
                 deny_write_globs: ["private/**"],
                 allow_net: ["example.com", "localhost:8317"],
+                allow_host_net: ["*.dev.test:443"],
                 deny_net: ["blocked.example.com"],
                 allow_env: [
                     "USER",
@@ -397,7 +399,7 @@ describe("Zerobox backend", () => {
                 platform: "linux",
                 probeRoot,
                 expectedProvenance: {
-                    version: "0.3.3-fork.15",
+                    version: "0.3.3-fork.16",
                     binarySha256: EXPECTED_SHA,
                 },
                 hashFile: async () => EXPECTED_SHA,

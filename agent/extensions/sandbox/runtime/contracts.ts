@@ -71,6 +71,7 @@ export interface SandboxFilesystemPolicy {
 export interface SandboxNetworkPolicy {
     mode: "deny-all" | "domain-allowlist";
     allow: string[];
+    allowHost: string[];
     deny: string[];
     allowLocalBinding?: boolean;
 }
@@ -136,6 +137,7 @@ export interface SandboxCapabilities {
     exactReadDeny: true;
     exactWriteDeny: true;
     domainAllowlist: true;
+    hostDomainRouting: true;
     outboundLoopback: true;
     networkDenyAll: true;
     nestedUserNamespacesBlocked: true;
@@ -154,6 +156,7 @@ export const SANDBOX_CAPABILITIES: SandboxCapabilities = Object.freeze({
     exactReadDeny: true,
     exactWriteDeny: true,
     domainAllowlist: true,
+    hostDomainRouting: true,
     outboundLoopback: true,
     networkDenyAll: true,
     nestedUserNamespacesBlocked: true,

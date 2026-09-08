@@ -48,6 +48,7 @@ describe("provider-neutral sandbox contracts", () => {
             exactReadDeny: true,
             exactWriteDeny: true,
             domainAllowlist: true,
+            hostDomainRouting: true,
             outboundLoopback: true,
             networkDenyAll: true,
             nestedUserNamespacesBlocked: true,

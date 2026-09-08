@@ -337,6 +337,7 @@ export function renderSandboxStatusDetails(
         "",
         "Network:",
         `  Allowed: ${config.network?.allowedDomains?.join(", ") || "(none)"}`,
+        `  Host-local: ${config.network?.allowedHostDomains?.join(", ") || "(none)"}`,
         `  Denied: ${config.network?.deniedDomains?.join(", ") || "(none)"}`,
         "",
         `Docker: ${dockerStatus}`,
@@ -402,6 +403,7 @@ const DEFAULT_CONFIG: SandboxConfig = {
     enabled: false,
     network: {
         allowLocalBinding: true,
+        allowedHostDomains: [],
         allowedDomains: [
             "npmjs.org",
             "*.npmjs.org",

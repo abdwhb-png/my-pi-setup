@@ -362,7 +362,12 @@ describe('renderSandboxStatusDetails', () => {
             source: 'project-config',
             config: {
                 enabled: true,
-                network: { allowedDomains: [], deniedDomains: [], allowLocalBinding: true },
+                network: {
+                    allowedDomains: [],
+                    allowedHostDomains: [],
+                    deniedDomains: [],
+                    allowLocalBinding: true,
+                },
                 filesystem: {
                     allowRead: [],
                     denyRead: [],

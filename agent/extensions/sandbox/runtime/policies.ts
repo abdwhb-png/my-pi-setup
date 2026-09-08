@@ -72,6 +72,7 @@ interface PiFilesystemConfig {
 
 interface PiNetworkConfig {
     allowedDomains: string[];
+    allowedHostDomains: string[];
     deniedDomains: string[];
     allowLocalBinding: boolean;
 }
@@ -243,6 +244,29 @@ function normalizeNetworkRules(rules: string[]): string[] {
     ];
 }
 
+function normalizeHostDomainRules(rules: string[]): string[] {
+    return [
+        ...new Set(
+            rules.map((rawRule) => {
+                const rule = parseNetworkRule(rawRule);
+                if (rule.loopback) {
+                    unsupported(
+                        new Error(
+                            "Host domain rules require a DNS hostname, not loopback",
+                        ),
+                    );
+                }
+                if (rule.port === undefined) {
+                    unsupported(
+                        new Error("Host domain rules require an explicit port"),
+                    );
+                }
+                return formatNetworkRule(rule);
+            }),
+        ),
+    ];
+}
+
 function validateExactPaths(paths: string[]): void {
     for (const path of paths) {
         if (!path || path.includes("\0"))
@@ -302,6 +326,7 @@ export function validatePiSandboxConfig(
     if (!isRecord(network)) invalid(new Error("network must be an object"));
     assertKnownFields(network, [
         "allowedDomains",
+        "allowedHostDomains",
         "deniedDomains",
         "allowLocalBinding",
         "allowAllUnixSockets",
@@ -325,6 +350,12 @@ export function validatePiSandboxConfig(
         allowLocalBinding: network.allowLocalBinding !== false,
         allowedDomains: normalizeNetworkRules(
             stringArray(network.allowedDomains, "network.allowedDomains"),
+        ),
+        allowedHostDomains: normalizeHostDomainRules(
+            stringArray(
+                network.allowedHostDomains,
+                "network.allowedHostDomains",
+            ),
         ),
         deniedDomains: normalizeNetworkRules(
             stringArray(network.deniedDomains, "network.deniedDomains"),
@@ -453,6 +484,7 @@ function createShellPolicy(
         }),
     );
     const allow = input.config.network.allowedDomains;
+    const allowHost = input.config.network.allowedHostDomains;
     const leaseParent = dirname(input.lease.root);
     const fixedDeniedRoots = [
         ...(privateTmp ? ["/tmp", "/private/tmp"] : []),
@@ -529,8 +561,12 @@ function createShellPolicy(
             denyWriteGlobs: configuredDenyWrite.globs,
         },
         network: {
-            mode: allow.length === 0 ? "deny-all" : "domain-allowlist",
+            mode:
+                allow.length === 0 && allowHost.length === 0
+                    ? "deny-all"
+                    : "domain-allowlist",
             allow,
+            allowHost,
             deny: input.config.network.deniedDomains,
             allowLocalBinding: input.config.network.allowLocalBinding,
         },
@@ -591,7 +627,7 @@ export function createAnalysisPolicy(
             denyWrite: ["/tmp", "/private/tmp", leaseParent],
             denyWriteGlobs: [],
         },
-        network: { mode: "deny-all", allow: [], deny: [] },
+        network: { mode: "deny-all", allow: [], allowHost: [], deny: [] },
         environment: {
             inherit: [],
             set: {

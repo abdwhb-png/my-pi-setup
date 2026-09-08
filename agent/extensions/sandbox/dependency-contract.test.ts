@@ -12,9 +12,9 @@ const QUICKJS_VARIANT_VERSION = "0.32.0";
 const AGENT_TYPESCRIPT_VERSION = "7.0.2";
 const SANDBOX_TYPESCRIPT_API_VERSION = "6.0.3";
 const SANDBOX_TYPESCRIPT_NATIVE_VERSION = "7.0.2";
-const ZEROBOX_VERSION = "0.3.3-fork.15";
+const ZEROBOX_VERSION = "0.3.3-fork.16";
 const ZEROBOX_SHA256 =
-    "8e559c0748432b186effbaf8fb197874026d174731ce1e5e1aaf9bf9b004b1a3";
+    "8c5f1388169ff1911bcf497da511ec449e2d5968a2a0ae5b3a25116cd1e1b68a";
 const ZEROBOX_LOCAL_DIFF_SHA256 =
     "a0660809cbe954389541da48fa007e714f64ffb9c6f66797d3a3f62098d9f18b";
 const MANAGED_ZEROBOX_PATH = join(homedir(), ".pi", "bin", "zerobox");
@@ -25,7 +25,7 @@ const ZEROBOX_SOURCE_ROOT = join(
     "sandboxes",
     "zerobox",
 );
-const ZEROBOX_SOURCE_COMMIT = "1bffd639196d144743110e2172f0a61304e700c4";
+const ZEROBOX_SOURCE_COMMIT = "d21bf650c100d09f79e4d217513ba66f0675c6c9";
 const PREVIOUS_ZEROBOX_ROLLBACK_ROOT = join(
     homedir(),
     ".local",
@@ -64,6 +64,7 @@ const EXPECTED_PATCHES = [
     ["scripts/upstream-setup-artifact-errors.patch", "c3ed22741b53a1be3690b7e8214507fc6f5c6b85ab9fa61077a0ffe3dd5e37d8"],
     ["scripts/upstream-private-stream-ipc.patch", "b02fc89137b1b5c0bf5553e0c6cd71e7044e1a21b73a4c32513a0d391117c6ee"],
     ["scripts/upstream-local-test-network.patch", "3ee6d7458c0756b6973a9e29b626104054451d53fdb74160a82c5f1826484501"],
+    ["scripts/upstream-host-domain-routing.patch", "c48024a8b025077af0f66701b99c477317c16ec236f29570e60ba8c9c41584e0"],
     ["scripts/upstream-concurrent-deny-targets.patch", "6c2ce1c39412c9f73005652537b633573a7397cfadc6de3149c7be0bc9fc8d8d"],
 ].map(([path, sha256]) => ({ path, sha256 }));
 
@@ -157,7 +158,7 @@ describe("sandbox dependency contract", () => {
         ).json();
         expect(provenance).toEqual({
             version: ZEROBOX_VERSION,
-            tag: "v0.3.3-fork.15",
+            tag: "v0.3.3-fork.16",
             forkCommit: ZEROBOX_SOURCE_COMMIT,
             upstreamTag: "v0.3.3",
             upstreamCommit: "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
@@ -191,7 +192,7 @@ describe("sandbox dependency contract", () => {
         expect(
             execFileSync(
                 "git",
-                ["rev-parse", "v0.3.3-fork.15^{commit}"],
+                ["rev-parse", "v0.3.3-fork.16^{commit}"],
                 { cwd: ZEROBOX_SOURCE_ROOT, encoding: "utf8" },
             ).trim(),
         ).toBe(ZEROBOX_SOURCE_COMMIT);
