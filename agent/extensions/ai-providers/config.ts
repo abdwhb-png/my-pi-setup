@@ -39,7 +39,9 @@ function isRecord(
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeBooleanMap(raw: JsonValue | undefined): Record<string, boolean> {
+function normalizeBooleanMap(
+    raw: JsonValue | undefined,
+): Record<string, boolean> {
     if (!isRecord(raw)) return {};
     const result: Record<string, boolean> = {};
     for (const [key, value] of Object.entries(raw)) {

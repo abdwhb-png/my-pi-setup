@@ -612,4 +612,164 @@ describe('tool-groups extension', () => {
 
         expect(pi.getActiveTools()).not.toContain(wfMember);
     });
+
+    it('applies an extension-owned policy augmenter after the role policy', async () => {
+        const member = 'tool_groups_policy_augmenter_probe';
+        const { registerToolPolicyAugmenter } = await import(
+            './policy-augmenters.ts'
+        );
+        let enabled = false;
+        const unregister = registerToolPolicyAugmenter(
+            'tool-groups-policy-augmenter-test',
+            () => (enabled ? [member] : []),
+        );
+
+        const pi = makeMockPi(['read', member]);
+        pi.registerTool({ name: member });
+        const factory = createToolGroupsExtension(() => ({
+            groups: { inspect: ['read'] },
+        }));
+        factory(pi as never);
+
+        pi.events.emit('pi-roles:tool-policy', {
+            version: 1,
+            roleName: 'reviewer',
+            mode: 'set',
+            toolNames: ['read'],
+        });
+        expect(pi.getActiveTools()).toEqual(['read']);
+
+        enabled = true;
+        pi._handlers.get('input')!(
+            { type: 'input', text: 'continue', source: 'interactive' },
+            makeMockCtx(),
+        );
+        expect(pi.getActiveTools()).toEqual(['read', member]);
+        expect(
+            pi._handlers.get('tool_call')!(
+                { type: 'tool_call', toolName: member },
+                makeMockCtx(),
+            ),
+        ).toBeUndefined();
+
+        enabled = false;
+        pi._handlers.get('input')!(
+            { type: 'input', text: 'continue', source: 'interactive' },
+            makeMockCtx(),
+        );
+        expect(pi.getActiveTools()).toEqual(['read']);
+        unregister();
+    });
+
+    it('reapplies the effective policy when an extension requests a refresh', async () => {
+        const member = 'tool_groups_policy_refresh_probe';
+        const { registerToolPolicyAugmenter, TOOL_POLICY_REFRESH_EVENT } =
+            await import('./policy-augmenters.ts');
+        let enabled = false;
+        const unregister = registerToolPolicyAugmenter(
+            'tool-groups-policy-refresh-test',
+            () => (enabled ? [member] : []),
+        );
+
+        const pi = makeMockPi(['read']);
+        pi.registerTool({ name: member });
+        const factory = createToolGroupsExtension(() => ({
+            groups: { inspect: ['read'] },
+        }));
+        factory(pi as never);
+        pi.events.emit('pi-roles:tool-policy', {
+            version: 1,
+            roleName: 'reviewer',
+            mode: 'set',
+            toolNames: ['read'],
+        });
+
+        enabled = true;
+        pi.events.emit(TOOL_POLICY_REFRESH_EVENT, undefined);
+        expect(pi.getActiveTools()).toEqual(['read', member]);
+
+        enabled = false;
+        pi.events.emit(TOOL_POLICY_REFRESH_EVENT, undefined);
+        expect(pi.getActiveTools()).toEqual(['read']);
+        unregister();
+    });
+
+    it('keeps policy augmenters below the CLI tool policy ceiling', async () => {
+        const member = 'tool_groups_policy_augmenter_cli_probe';
+        const { registerToolPolicyAugmenter, TOOL_POLICY_REFRESH_EVENT } =
+            await import('./policy-augmenters.ts');
+        let enabled = false;
+        const unregister = registerToolPolicyAugmenter(
+            'tool-groups-policy-augmenter-cli-test',
+            () => (enabled ? [member] : []),
+        );
+
+        const pi = makeMockPi(['read', member]);
+        pi.registerTool({ name: member });
+        const factory = createToolGroupsExtension(
+            () => ({ groups: { inspect: ['read', member] } }),
+            () => ['read'],
+        );
+        factory(pi as never);
+
+        const ctx = makeMockCtx();
+        pi._handlers.get('session_start')!(
+            { type: 'session_start', reason: 'startup' },
+            ctx,
+        );
+        enabled = true;
+        pi.events.emit(TOOL_POLICY_REFRESH_EVENT, undefined);
+
+        expect(pi.getActiveTools()).toEqual(['read']);
+        expect(
+            pi._handlers.get('tool_call')!(
+                { type: 'tool_call', toolName: member },
+                ctx,
+            ),
+        ).toEqual({
+            block: true,
+            reason: `Tool "${member}" is not allowed by CLI tool policy.`,
+        });
+        unregister();
+    });
+
+    it('keeps policy augmenters below the child tool policy ceiling', async () => {
+        const member = 'tool_groups_policy_augmenter_child_probe';
+        const { registerToolPolicyAugmenter, TOOL_POLICY_REFRESH_EVENT } =
+            await import('./policy-augmenters.ts');
+        let enabled = false;
+        const unregister = registerToolPolicyAugmenter(
+            'tool-groups-policy-augmenter-child-test',
+            () => (enabled ? [member] : []),
+        );
+
+        const pi = makeMockPi(['read', member]);
+        pi.registerTool({ name: member });
+        const factory = createToolGroupsExtension(
+            () => ({ groups: { inspect: ['read', member] } }),
+            () => undefined,
+            () => ({ allowedTools: ['read'] }),
+        );
+        factory(pi as never);
+
+        const ctx = makeMockCtx();
+        pi._handlers.get('session_start')!(
+            { type: 'session_start', reason: 'startup' },
+            ctx,
+        );
+        enabled = true;
+        pi.events.emit(TOOL_POLICY_REFRESH_EVENT, undefined);
+
+        expect(pi.getActiveTools()).toEqual(['read']);
+        expect(
+            pi._handlers.get('tool_call')!(
+                { type: 'tool_call', toolName: member },
+                ctx,
+            ),
+        ).toEqual({
+            block: true,
+            reason: `Tool "${member}" is not allowed by child tool policy.`,
+        });
+        unregister();
+    });
 });

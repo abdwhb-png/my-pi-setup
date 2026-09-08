@@ -7,10 +7,7 @@
             "get_search_content",
             "mcp:firecrawl"
         ],
-        "docs": [
-            "mcp:context7",
-            "mcp:deepwiki"
-        ],
+        "docs": ["mcp:context7", "mcp:deepwiki"],
         "memory-consult": [
             "pi_session_find",
             "pi_session_search",
@@ -38,39 +35,18 @@
         ],
         "lens": ["lens_diagnostics", "ast_grep_dump", "@lens-inspect"],
         "lens-write": ["@lens", "ast_grep_replace", "lens_diagnostic_mark"],
-        "think-inspect": [
-            "think_artifact_search"
-        ],
-        "think-exec": [
-            "think_execute"
-        ],
-        "think": [
-            "@think-inspect",
-            "@think-exec"
-        ],
-        "ssh-tools": [
-            "ssh_read",
-            "ssh_write",
-            "ssh_edit",
-            "ssh_bash"
-        ],
+        "think-inspect": ["think_artifact_search"],
+        "think-exec": ["think_execute"],
+        "think": ["@think-inspect", "@think-exec"],
+        "ssh-tools": ["ssh_read", "ssh_write", "ssh_edit", "ssh_bash"],
         "subagents": [
             "subagent",
             "subagent_supervisor",
             "subagent_wait",
-            "intercom"
+            "bg_wait"
         ],
-        "review": [
-            "@inspect",
-            "@lens",
-            "@think-inspect",
-            "contact_supervisor"
-        ],
-        "review-max": [
-            "@review",
-            "@report-write",
-            "@docs",
-            "memory_search"
-        ]
+        "review": ["@inspect", "@lens", "@think-inspect", "contact_supervisor"],
+        "review-max": ["@review", "@report-write", "@docs", "memory_search"],
+        "herdr": ["herdr_layout", "herdr_pane", "herdr_agent"]
     }
 }

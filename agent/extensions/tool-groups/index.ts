@@ -19,6 +19,10 @@ import {
     type ToolGroupsConfig,
     type ToolGroupDiagnostic,
 } from "../_shared/tool-groups/types.ts";
+import {
+    collectToolPolicyAugmentations,
+    TOOL_POLICY_REFRESH_EVENT,
+} from "./policy-augmenters.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -199,6 +203,12 @@ export function createToolGroupsExtension(
                 }
             },
         );
+        const unsubscribePolicyRefresh = pi.events.on(
+            TOOL_POLICY_REFRESH_EVENT,
+            () => {
+                enforceConfiguredPolicy();
+            },
+        );
 
         function reportDiagnostics(
             diagnostics: ToolGroupDiagnostic[],
@@ -240,10 +250,8 @@ export function createToolGroupsExtension(
                 resolveMcp,
             );
 
-            const candidates = requested.names.filter(
-                (name) =>
-                    allowedNames.has(name) &&
-                    (!childAllowedTools || childAllowedTools.has(name)),
+            const candidates = requested.names.filter((name) =>
+                allowedNames.has(name),
             );
             // Workflow-group members are only visible while their workflow owns
             // the session; the broker strips them otherwise (sole chokepoint).
@@ -252,7 +260,11 @@ export function createToolGroupsExtension(
                 candidates,
             );
             cliToolPolicy = [...reconciled];
-            pi.setActiveTools(reconciled);
+            pi.setActiveTools(
+                childAllowedTools
+                    ? reconciled.filter((name) => childAllowedTools.has(name))
+                    : reconciled,
+            );
             reportDiagnostics(requested.diagnostics, ctx);
         }
 
@@ -313,6 +325,19 @@ export function createToolGroupsExtension(
                 diagnostics.push(...resolvedRole.diagnostics);
             }
 
+            const broker = getSharedVisibilityBroker();
+            const policyAugmentations = collectToolPolicyAugmentations();
+            if (policyAugmentations.length > 0) {
+                const available = new Set(allToolNames);
+                const augmented = names ? [...names] : [...pi.getActiveTools()];
+                for (const name of policyAugmentations) {
+                    if (available.has(name) && !augmented.includes(name)) {
+                        augmented.push(name);
+                    }
+                }
+                names = broker.reconcileWithLease(pi, augmented);
+            }
+
             let cliAllowed: Set<string> | undefined;
             if (cliToolPolicy) {
                 cliAllowed = new Set(cliToolPolicy);
@@ -337,7 +362,6 @@ export function createToolGroupsExtension(
 
             if (!names) return undefined;
 
-            const broker = getSharedVisibilityBroker();
             const activeWorkflow = broker.getActiveWorkflow(pi);
             if (activeWorkflow) {
                 for (const name of pi.getActiveTools()) {
@@ -411,7 +435,13 @@ export function createToolGroupsExtension(
             if (!policy || policy.names.includes(event.toolName)) {
                 return undefined;
             }
-            if (!roleToolPolicy && childAllowedTools) {
+            if (cliToolPolicy && !cliToolPolicy.includes(event.toolName)) {
+                return {
+                    block: true as const,
+                    reason: `Tool "${event.toolName}" is not allowed by CLI tool policy.`,
+                };
+            }
+            if (childAllowedTools && !childAllowedTools.has(event.toolName)) {
                 return {
                     block: true as const,
                     reason: `Tool "${event.toolName}" is not allowed by child tool policy.`,
@@ -426,6 +456,7 @@ export function createToolGroupsExtension(
 
         pi.on("session_shutdown", () => {
             unsubscribeRoleToolPolicy();
+            unsubscribePolicyRefresh();
             roleToolPolicy = undefined;
             cliToolPolicy = undefined;
         });
