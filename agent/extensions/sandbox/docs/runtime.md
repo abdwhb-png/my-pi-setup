@@ -19,9 +19,10 @@ includes failures before the final command in a pipeline.
 
 For a targeted Docker grant with a host-access exception, the broker removes
 arbitrary persistent `exec` and recognizes only fixed read-only bind probes. A
-five-minute break-glass grant is held in the session runtime, binds to one exact
-container ID and is never loaded from persistent authority. Its expiry replaces
-the runtime so commands still using the old grant are interrupted.
+break-glass grant is held in the session runtime, binds to one exact container
+ID and is never loaded from persistent authority. It defaults to five minutes
+and accepts a user-selected duration from one through thirty minutes. Its expiry
+replaces the runtime so commands still using the old grant are interrupted.
 
 The runtime fails closed when its binary, policy, setup protocol, FUSE deny
 views, or required Linux facilities are unavailable. It does not fall back to
@@ -37,8 +38,10 @@ During reconfiguration, new requests wait at most 30 seconds and keep their
 original total deadline and cancellation signal. Session replacement invalidates
 waiting requests. Only successful publication allows a pending request to run,
 once. Processes already engaged are stopped, reported as interrupted and never
-replayed automatically. A failed or disabled runtime gives no local fallback
-to requests waiting for Sandbox.
+replayed automatically. The agent receives hidden context feedback about the
+interruption. It also receives break-glass activation and expiration feedback,
+using steering during an active turn and the next context otherwise. A failed
+or disabled runtime gives no local fallback to requests waiting for Sandbox.
 
 Local Zerobox builds record the base source commit, source diff SHA-256 and
 binary SHA-256 in `runtime/zerobox-provenance.json`. The base release version

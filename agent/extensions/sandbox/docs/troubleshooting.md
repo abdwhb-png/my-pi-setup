@@ -17,7 +17,7 @@ and `~/.pi/agent/sandbox.global.json`; it never writes configuration.
 | `Docker target is not authorized` | Check the exact container name or Compose project/service selector. The container may also have disappeared. |
 | `Docker exec option forbidden` | Targeted exec refuses privileged/detached execution and non-empty detach keys, even with Administration. |
 | `Docker exec is restricted to read-only inspection` | This target has a persistent host-access exception. Use exactly `test -r PATH`, `stat -- PATH` or `ls -la -- PATH` below a declared bind destination, or explicitly run `/sandbox docker break-glass`. |
-| `Break-glass exec expired` | The five-minute exact-container grant ended. Any command still using the old runtime was interrupted and was not replayed. Confirm a new break-glass grant only if arbitrary exec is still required. |
+| `Break-glass exec expired` | The exact-container grant reached its selected expiration. Any command still using the old runtime was interrupted and was not replayed. The agent receives this state automatically. Confirm a new break-glass grant only if arbitrary exec is still required. |
 | `saved; activation failed` | The authority file was saved, but no new runtime was activated. Correct the reported cause, then run `/sandbox on`. |
 | `Active Docker differs from the current configuration` | The files and running permissions differ. If `/sandbox` shows a session-only break-glass grant, the difference is intentional until it expires. Otherwise run `/sandbox on`. |
 | `reconfiguration did not finish in time` | The pending command was not executed. After recovery, submit it again if still needed. |
@@ -32,6 +32,10 @@ or session replacement ends the wait without executing the pending command.
 `docker ps` can return an empty list with exit code 0 when all matching
 containers are excluded. A valid `targeted` grant alone does not establish
 container access; use the target lines in `/sandbox doctor`.
+
+`/sandbox docker break-glass` lasts five minutes by default. Pass a whole-minute
+duration from `1m` through `30m` when needed, for example
+`/sandbox docker break-glass 15m`.
 
 Development Bash resolves `~` to your normal home directory. Its filesystem
 restrictions still apply: a home-relative path outside the configured write

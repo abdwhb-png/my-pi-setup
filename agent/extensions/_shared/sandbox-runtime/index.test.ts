@@ -4,6 +4,7 @@ import {
     claimSandboxRuntime,
     createSandboxBashOperations,
     createSandboxThinkBashOperations,
+    getSandboxActiveExecutionCount,
     getSandboxAnalysisPort,
     getSandboxRuntime,
     isSandboxUnavailableError,
@@ -172,10 +173,13 @@ describe("sandbox runtime v2", () => {
             analysis: { state: "ready" as const, service: { run: async () => { throw new Error("wrong path"); }, shutdown: async () => undefined } },
         });
         const pending = createSandboxBashOperations().exec("true", "/tmp", { onData() {} });
+        expect(getSandboxActiveExecutionCount(owner)).toBe(1);
         publishSandboxRuntime(owner, { state: "reconfiguring" });
+        expect(getSandboxActiveExecutionCount(owner)).toBe(1);
         finish({ exitCode: null });
         await expect(pending).rejects.toThrow("interrupted by reconfiguration; it was not retried");
         expect(runs).toBe(1);
+        expect(getSandboxActiveExecutionCount(owner)).toBe(0);
     });
 
     test("waits again if another transition starts between readiness and dispatch", async () => {

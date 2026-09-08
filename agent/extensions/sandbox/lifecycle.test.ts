@@ -1,6 +1,14 @@
 /// <reference types="bun" />
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+    afterEach,
+    beforeEach,
+    describe,
+    expect,
+    it,
+    mock,
+    spyOn,
+} from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -125,6 +133,7 @@ function fakeTheme(): Theme {
 function registerSandbox() {
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, CommandDefinition>();
+    const sentMessages: Array<{ message: unknown; options: unknown }> = [];
     const pi = {
         registerFlag: () => undefined,
         registerTool: () => undefined,
@@ -134,9 +143,11 @@ function registerSandbox() {
         ) => commands.set(name, definition),
         on: (event: string, handler: Handler) => handlers.set(event, handler),
         getFlag: () => false,
+        sendMessage: (message: unknown, options?: unknown) =>
+            sentMessages.push({ message, options }),
     } as unknown as ExtensionAPI;
     sandboxExtension(pi);
-    return { handlers, commands };
+    return { handlers, commands, sentMessages };
 }
 
 function sandboxCommand(registered: ReturnType<typeof registerSandbox>): CommandDefinition {
@@ -180,6 +191,47 @@ type NotifyMock = ReturnType<typeof mock<(message: string, level?: string) => vo
 function notifyCalls(ctx: ExtensionContext): Array<[string, string | undefined]> {
     const notify = (ctx.ui as unknown as { notify: NotifyMock }).notify;
     return notify.mock.calls as Array<[string, string | undefined]>;
+}
+
+async function configureBreakGlassTarget(
+    cwd: string,
+    agentDir: string,
+): Promise<string> {
+    await mkdir(agentDir);
+    const authorityPath = join(agentDir, "sandbox.global.json");
+    await writeFile(
+        authorityPath,
+        JSON.stringify({
+            docker: {
+                grants: [{
+                    projectRoot: cwd,
+                    mode: "targeted",
+                    targets: [{
+                        selector: { type: "container-name", name: "api" },
+                        operations: ["ps", "inspect", "logs", "stats", "exec", "start", "stop", "restart"],
+                        allowUnsafeTarget: true,
+                    }],
+                }],
+            },
+        }),
+        { mode: 0o600 },
+    );
+    inspectDockerAccess.mockResolvedValue([{
+        selector: { type: "container-name", name: "api" },
+        containers: [{
+            id: "0123456789abcdef",
+            name: "api-current",
+            state: "running",
+            access: "accessible",
+            facts: [],
+            mounts: [{
+                source: "/host/auths",
+                destination: "/auths",
+                writable: true,
+            }],
+        }],
+    }]);
+    return authorityPath;
 }
 
 const execArgs = [
@@ -405,6 +457,30 @@ describe("sandbox lifecycle", () => {
         expect(getSandboxRuntime().state).toBe("disabled");
     });
 
+    it("tells the agent when a configuration change interrupts a running execution", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const running = createSandboxBashOperations().exec("sleep 30", cwd, {
+            onData: () => undefined,
+        });
+        await Bun.sleep(20);
+
+        await sandboxCommand(registered).handler("off", ctx);
+
+        await expect(running).rejects.toThrow("interrupted by reconfiguration");
+        expect(registered.sentMessages).toContainEqual({
+            message: expect.objectContaining({
+                customType: "sandbox-runtime-feedback",
+                display: false,
+                content: expect.stringMatching(
+                    /1 running Sandbox execution was interrupted.*was not retried/is,
+                ),
+            }),
+            options: { deliverAs: "steer" },
+        });
+    });
+
     it("exposes only on and off and rejects the removed toggle aliases", async () => {
         const registered = registerSandbox();
         const ctx = context(cwd);
@@ -419,6 +495,18 @@ describe("sandbox lifecycle", () => {
         expect(command.getArgumentCompletions?.("docker ")).toEqual([
             { value: "docker grant", label: "docker grant" },
             { value: "docker break-glass", label: "docker break-glass" },
+            {
+                value: "docker break-glass 5m",
+                label: "docker break-glass 5m",
+            },
+            {
+                value: "docker break-glass 15m",
+                label: "docker break-glass 15m",
+            },
+            {
+                value: "docker break-glass 30m",
+                label: "docker break-glass 30m",
+            },
             { value: "docker off", label: "docker off" },
             { value: "docker targeted", label: "docker targeted" },
             { value: "docker full", label: "docker full" },
@@ -867,36 +955,7 @@ describe("sandbox lifecycle", () => {
 
     it("activates break-glass only for the current container and never persists it", async () => {
         const agentDir = join(cwd, "agent-home");
-        await mkdir(agentDir);
-        const authorityPath = join(agentDir, "sandbox.global.json");
-        await writeFile(
-            authorityPath,
-            JSON.stringify({
-                docker: {
-                    grants: [{
-                        projectRoot: cwd,
-                        mode: "targeted",
-                        targets: [{
-                            selector: { type: "container-name", name: "api" },
-                            operations: ["ps", "inspect", "logs", "stats", "exec", "start", "stop", "restart"],
-                            allowUnsafeTarget: true,
-                        }],
-                    }],
-                },
-            }),
-            { mode: 0o600 },
-        );
-        inspectDockerAccess.mockResolvedValue([{
-            selector: { type: "container-name", name: "api" },
-            containers: [{
-                id: "0123456789abcdef",
-                name: "api-current",
-                state: "running",
-                access: "accessible",
-                facts: [],
-                mounts: [{ source: "/host/auths", destination: "/auths", writable: true }],
-            }],
-        }]);
+        const authorityPath = await configureBreakGlassTarget(cwd, agentDir);
         const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
         process.env.PI_CODING_AGENT_DIR = agentDir;
         try {
@@ -905,7 +964,11 @@ describe("sandbox lifecycle", () => {
             await registered.handlers.get("session_start")?.({}, ctx);
             const before = await readFile(authorityPath, "utf8");
 
-            await sandboxCommand(registered).handler("docker break-glass", ctx);
+            const startedAt = Date.now();
+            await sandboxCommand(registered).handler(
+                "docker break-glass 15m",
+                ctx,
+            );
 
             const runtime = getSandboxRuntime();
             expect(runtime.state).toBe("enabled");
@@ -913,11 +976,101 @@ describe("sandbox lifecycle", () => {
             const serviceOptions = createSandboxService.mock.calls.at(-1)?.[0] as unknown as { config: { docker: { targets: Array<{ selector: { type: string; id?: string; unsafeExecExpiresAtMs?: number } }> } } };
             const ephemeral = serviceOptions.config.docker.targets.find((target) => target.selector.type === "ephemeral-container");
             expect(ephemeral?.selector.id).toBe("0123456789abcdef");
-            expect(ephemeral?.selector.unsafeExecExpiresAtMs).toBeGreaterThan(Date.now());
+            expect(ephemeral?.selector.unsafeExecExpiresAtMs).toBeGreaterThanOrEqual(
+                startedAt + 15 * 60 * 1000,
+            );
+            expect(ephemeral?.selector.unsafeExecExpiresAtMs).toBeLessThanOrEqual(
+                Date.now() + 15 * 60 * 1000,
+            );
             expect(await readFile(authorityPath, "utf8")).toBe(before);
             expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Break-glass exec active for container api-current");
             expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host: /host/auths → Container: /auths (read-write)");
+            expect(registered.sentMessages).toContainEqual({
+                message: expect.objectContaining({
+                    customType: "sandbox-runtime-feedback",
+                    display: false,
+                    content: expect.stringContaining(
+                        "Docker break-glass is active for api-current (0123456789abcdef) until",
+                    ),
+                }),
+                options: { deliverAs: "steer" },
+            });
         } finally {
+            if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        }
+    });
+
+    it("rejects a break-glass duration outside the one-to-thirty-minute range", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+
+        await sandboxCommand(registered).handler("docker break-glass 31m", ctx);
+
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            "Docker break-glass duration must be between 1m and 30m. Usage: /sandbox docker break-glass [5m|15m|30m]",
+            "error",
+        ]);
+        expect(inspectDockerAccess).not.toHaveBeenCalled();
+        expect(registered.sentMessages).toEqual([]);
+    });
+
+    it("tells the agent when break-glass expires and reports interrupted executions", async () => {
+        const agentDir = join(cwd, "agent-home");
+        await configureBreakGlassTarget(cwd, agentDir);
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        let expiryCallback: (() => void) | undefined;
+        const originalSetTimeout = globalThis.setTimeout;
+        const timeout = spyOn(globalThis, "setTimeout").mockImplementation(
+            ((callback: (...args: unknown[]) => void, delay?: number) => {
+                if ((delay ?? 0) >= 60_000) {
+                    expiryCallback = () => callback();
+                    const handle = originalSetTimeout(() => undefined, delay);
+                    handle.unref();
+                    return handle;
+                }
+                return originalSetTimeout(callback, delay);
+            }) as typeof setTimeout,
+        );
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, SESSION_ID, true, {
+                confirm: [true],
+            });
+            await registered.handlers.get("session_start")?.({}, ctx);
+            await sandboxCommand(registered).handler("docker break-glass", ctx);
+            const running = createSandboxBashOperations().exec("sleep 30", cwd, {
+                onData: () => undefined,
+            });
+            await Bun.sleep(20);
+
+            expiryCallback?.();
+            expect(registered.sentMessages.at(-1)).toEqual({
+                message: expect.objectContaining({
+                    customType: "sandbox-runtime-feedback",
+                    display: false,
+                    content: expect.stringMatching(
+                        /break-glass expired.*no longer authorized/is,
+                    ),
+                }),
+                options: { deliverAs: "steer" },
+            });
+            await expect(running).rejects.toThrow("interrupted by reconfiguration");
+            await Bun.sleep(10);
+
+            expect(registered.sentMessages).toContainEqual({
+                message: expect.objectContaining({
+                    customType: "sandbox-runtime-feedback",
+                    display: false,
+                    content: expect.stringMatching(
+                        /1 running Sandbox execution was interrupted.*was not retried/is,
+                    ),
+                }),
+                options: { deliverAs: "steer" },
+            });
+        } finally {
+            timeout.mockRestore();
             if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
             else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }

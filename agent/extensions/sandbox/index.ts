@@ -67,6 +67,7 @@ import { createWidget } from "../_shared/fancy-footer";
 import type { DockerAccessSummary } from "../_shared/sandbox-runtime/docker-summary.ts";
 import {
     claimSandboxRuntime,
+    getSandboxActiveExecutionCount,
     getSandboxRuntime,
     ownsSandboxRuntime,
     publishSandboxRuntime,
@@ -138,8 +139,26 @@ const DOCKER_ICON = "🐳";
 /** Warning glyph used in the footer widget when sandbox is disabled. */
 const OFF_ICON = "⚠️";
 const WIDGET_ID = "pi-sandbox";
-const DOCKER_BREAK_GLASS_DURATION_MS = 5 * 60 * 1000;
+const DOCKER_BREAK_GLASS_DEFAULT_MINUTES = 5;
+const DOCKER_BREAK_GLASS_MIN_MINUTES = 1;
+const DOCKER_BREAK_GLASS_MAX_MINUTES = 30;
+const DOCKER_BREAK_GLASS_DURATION_USAGE =
+    "Docker break-glass duration must be between 1m and 30m. Usage: /sandbox docker break-glass [5m|15m|30m]";
 const ANALYSIS_RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 300_000] as const;
+
+function parseDockerBreakGlassDurationMinutes(
+    value: string | undefined,
+): number | undefined {
+    if (value === undefined) return DOCKER_BREAK_GLASS_DEFAULT_MINUTES;
+    const match = /^(\d+)m$/.exec(value);
+    if (!match) return undefined;
+    const minutes = Number(match[1]);
+    return Number.isSafeInteger(minutes) &&
+        minutes >= DOCKER_BREAK_GLASS_MIN_MINUTES &&
+        minutes <= DOCKER_BREAK_GLASS_MAX_MINUTES
+        ? minutes
+        : undefined;
+}
 
 /** Return a bounded, path-safe state filename scoped to one public Pi session identity. */
 export function sessionStateFilename(sessionId: string): string {
@@ -978,6 +997,27 @@ export default function (pi: ExtensionAPI) {
     let analysisRetryAttempt = 0;
     let analysisAttemptGeneration: number | undefined;
 
+    const sendSandboxRuntimeFeedback = (
+        ctx: ExtensionContext,
+        content: string,
+    ): void => {
+        try {
+            pi.sendMessage(
+                {
+                    customType: "sandbox-runtime-feedback",
+                    content,
+                    display: false,
+                },
+                { deliverAs: "steer" },
+            );
+        } catch (error) {
+            ctx.ui.notify(
+                `Sandbox could not notify the agent: ${errorMessage(error)}`,
+                "warning",
+            );
+        }
+    };
+
     const clearAnalysisRecovery = (): void => {
         if (analysisRetryTimer !== undefined) {
             clearTimeout(analysisRetryTimer);
@@ -999,6 +1039,20 @@ export default function (pi: ExtensionAPI) {
             state: initial ? "uninitialized" : "reconfiguring",
         });
         if (!published) return undefined;
+        if (ctx && !initial) {
+            const interruptedExecutions =
+                getSandboxActiveExecutionCount(runtimeOwner);
+            if (interruptedExecutions > 0) {
+                const interruption =
+                    interruptedExecutions === 1
+                        ? "1 running Sandbox execution was interrupted and was not retried"
+                        : `${interruptedExecutions} running Sandbox executions were interrupted and were not retried`;
+                sendSandboxRuntimeFeedback(
+                    ctx,
+                    `Sandbox reconfiguration started. ${interruption}. Do not assume interrupted commands completed; retry them only after the new runtime is active and only if they are still needed.`,
+                );
+            }
+        }
         if (ctx && !initial) updateSandboxStatus(ctx, "reconfiguring");
         return generation;
     };
@@ -1342,6 +1396,7 @@ export default function (pi: ExtensionAPI) {
         baseConfig: SandboxConfig,
         expiresAtMs: number,
         activationGeneration: number,
+        container: { id: string; name: string },
     ): void {
         const delay = Math.max(1, expiresAtMs - Date.now());
         breakGlassExpiryTimer = setTimeout(() => {
@@ -1354,6 +1409,10 @@ export default function (pi: ExtensionAPI) {
             }
             const generation = beginTransition(ctx);
             if (generation === undefined) return;
+            sendSandboxRuntimeFeedback(
+                ctx,
+                `Docker break-glass expired for ${container.name} (${container.id}). Arbitrary Docker exec is no longer authorized for this container. Do not retry an exec that depends on this exception unless the user activates a new break-glass grant.`,
+            );
             bashProcessSupervisor.shutdown();
             void (async () => {
                 try {
@@ -1369,7 +1428,7 @@ export default function (pi: ExtensionAPI) {
                     sandboxEnabled = true;
                     updateSandboxStatus(ctx, "on", baseConfig.docker);
                     ctx.ui.notify(
-                        "Docker break-glass expired. Arbitrary exec is disabled; running Sandbox commands were interrupted and were not retried.",
+                        "Docker break-glass expired. Arbitrary exec is disabled; any running Sandbox commands were interrupted and were not retried.",
                         "info",
                     );
                 } catch (error) {
@@ -1380,6 +1439,10 @@ export default function (pi: ExtensionAPI) {
                     ctx.ui.notify(
                         `Docker break-glass expired, but Sandbox reconfiguration failed: ${configurationErrorMessage(error)}`,
                         "error",
+                    );
+                    sendSandboxRuntimeFeedback(
+                        ctx,
+                        `Sandbox reconfiguration after Docker break-glass expiration failed. Sandbox execution is unavailable until recovery.`,
                     );
                 }
             })();
@@ -1557,6 +1620,9 @@ export default function (pi: ExtensionAPI) {
                 "docker",
                 "docker grant",
                 "docker break-glass",
+                "docker break-glass 5m",
+                "docker break-glass 15m",
+                "docker break-glass 30m",
                 "docker off",
                 "docker targeted",
                 "docker full",
@@ -1705,7 +1771,19 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
 
-            if (arg === "docker break-glass") {
+            if (
+                arg === "docker break-glass" ||
+                arg.startsWith("docker break-glass ")
+            ) {
+                const breakGlassMatch =
+                    /^docker break-glass(?:\s+(\S+))?$/.exec(arg);
+                const durationMinutes = parseDockerBreakGlassDurationMinutes(
+                    breakGlassMatch?.[1],
+                );
+                if (!breakGlassMatch || durationMinutes === undefined) {
+                    ctx.ui.notify(DOCKER_BREAK_GLASS_DURATION_USAGE, "error");
+                    return;
+                }
                 if (!ctx.isProjectTrusted()) {
                     ctx.ui.notify(
                         "Docker break-glass requires a trusted project",
@@ -1787,7 +1865,8 @@ export default function (pi: ExtensionAPI) {
                     return;
                 }
 
-                const expiresAtMs = Date.now() + DOCKER_BREAK_GLASS_DURATION_MS;
+                const expiresAtMs = Date.now() + durationMinutes * 60 * 1000;
+                const durationLabel = `${durationMinutes} minute${durationMinutes === 1 ? "" : "s"}`;
                 const accepted = await ctx.ui.confirm(
                     "Temporarily allow arbitrary Docker exec?",
                     [
@@ -1795,7 +1874,7 @@ export default function (pi: ExtensionAPI) {
                         `Exact container: ${candidate.container.name} (${candidate.container.id})`,
                         ...formatDockerAccess([candidate.access]),
                         "Arbitrary commands can modify or delete data exposed through the host access listed above, including read-write host bind mounts.",
-                        "This authorization is kept only in the current Pi session, applies only to this container ID, and expires after 5 minutes.",
+                        `This authorization is kept only in the current Pi session, applies only to this container ID, and expires after ${durationLabel}.`,
                         "Expiration interrupts running Sandbox commands; they are not retried.",
                     ].join("\n"),
                 );
@@ -1844,6 +1923,10 @@ export default function (pi: ExtensionAPI) {
                         baseConfig,
                         expiresAtMs,
                         generation,
+                        {
+                            id: candidate.container.id,
+                            name: candidate.container.name,
+                        },
                     );
                     ctx.ui.notify(
                         [
@@ -1857,6 +1940,10 @@ export default function (pi: ExtensionAPI) {
                             ),
                         ].join("\n"),
                         "warning",
+                    );
+                    sendSandboxRuntimeFeedback(
+                        ctx,
+                        `Docker break-glass is active for ${candidate.container.name} (${candidate.container.id}) until ${new Date(expiresAtMs).toISOString()}. Arbitrary Docker exec is temporarily authorized only for this exact container ID. Retry a previously blocked or interrupted Docker exec only if it is still needed.`,
                     );
                 } catch (error) {
                     if (!isCurrentTransition(generation)) return;

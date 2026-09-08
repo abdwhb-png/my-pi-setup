@@ -61,6 +61,7 @@ interface SandboxRuntimeRegistry {
     snapshot: SandboxRuntimeSnapshot;
     diagnostic?: string;
     waiters?: Set<() => void>;
+    activeExecutions?: number;
 }
 
 const RUNTIME_KEY = Symbol.for("pi.sandbox-runtime.v2");
@@ -79,6 +80,7 @@ export function claimSandboxRuntime(owner: symbol): void {
     current.session = (current.session ?? 0) + 1;
     current.snapshot = { state: "uninitialized" };
     current.diagnostic = undefined;
+    current.activeExecutions = 0;
     wakeWaiters(current);
 }
 
@@ -111,6 +113,12 @@ export function releaseSandboxRuntime(owner: symbol): boolean {
 
 export function getSandboxRuntime(): SandboxRuntimeSnapshot {
     return registry().snapshot;
+}
+
+/** Return executions already dispatched through the current runtime owner. */
+export function getSandboxActiveExecutionCount(owner: symbol): number {
+    const current = registry();
+    return current.owner === owner ? (current.activeExecutions ?? 0) : 0;
 }
 
 export type SandboxUnavailableKind =
@@ -252,6 +260,7 @@ async function withActiveRuntime<T>(
             const remaining = budgetMs - (performance.now() - started);
             if (remaining <= 0)
                 throw new SandboxUnavailableError("reconfiguration-timeout");
+            current.activeExecutions = (current.activeExecutions ?? 0) + 1;
             try {
                 // Dispatch in the same turn as the snapshot check: no stale adapter gap.
                 // oxlint-disable-next-line no-await-in-loop -- Exactly one dispatch follows readiness; its failure must retain this snapshot.
@@ -260,6 +269,14 @@ async function withActiveRuntime<T>(
                 if (getSandboxRuntime() !== snapshot && !signal?.aborted)
                     throw new SandboxUnavailableError("execution-interrupted");
                 throw error;
+            } finally {
+                const latest = registry();
+                if (latest.owner === owner && latest.session === session) {
+                    latest.activeExecutions = Math.max(
+                        0,
+                        (latest.activeExecutions ?? 1) - 1,
+                    );
+                }
             }
         }
         const remaining = deadline - performance.now();

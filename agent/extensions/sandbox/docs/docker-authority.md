@@ -70,12 +70,15 @@ environment overrides, alternate users and alternate working directories.
 For example, `test -r /mounted/log` checks readability without printing the
 file. If the target has no bind destination, no bind probe is available.
 
-Use `/sandbox docker break-glass` when the current task truly requires an
-arbitrary command in such a target. It requires a separate confirmation that
+Use `/sandbox docker break-glass [duration]` when the current task truly
+requires an arbitrary command in such a target. The duration defaults to `5m`
+and accepts whole minutes from `1m` through `30m`, for example
+`/sandbox docker break-glass 15m`. It requires a separate confirmation that
 lists the host mounts, authorizes only the exact current container ID, remains
-in memory for five minutes and is never written to `sandbox.global.json`.
-Expiry republishes the normal runtime and interrupts commands still running in
-the old runtime without replaying them.
+in memory and is never written to `sandbox.global.json`. Expiry republishes the
+normal runtime and interrupts commands still running in the old runtime
+without replaying them. Sandbox sends activation, expiration and interruption
+feedback directly to the agent context.
 
 ## Saved, configured and active rights
 
