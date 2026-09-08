@@ -9,6 +9,7 @@ import {
   type SourceInfo,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import {
   isMarkdownLinkTransformRequest,
   MARKDOWN_LINKS_TRANSFORM_EVENT,
@@ -539,13 +540,21 @@ describe("pi-skill-loader", () => {
       expect(mockUI.addAutocompleteProvider).toHaveBeenCalled();
       if (!factory) throw new Error("autocomplete factory not registered");
 
-      const current = {
-        getSuggestions: () => Promise.resolve(null),
-        applyCompletion: () => ({ lines: [], cursorLine: 0, cursorCol: 0 }),
-      };
+      const current = new CombinedAutocompleteProvider([], "/workspace");
 
       const provider = factory(current);
       expect(provider.triggerCharacters).toContain("$");
+      expect(typeof provider.applyCompletion).toBe("function");
+
+      expect(
+        provider.applyCompletion(
+          ["/dev"],
+          0,
+          4,
+          { value: "dev-services", label: "dev-services" },
+          "/dev",
+        ),
+      ).toEqual({ lines: ["/dev-services "], cursorLine: 0, cursorCol: 14 });
 
       const suggestions = await provider.getSuggestions(["use $td"], 0, 7, {});
       expect(suggestions).toEqual({

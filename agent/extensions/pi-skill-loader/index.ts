@@ -403,7 +403,6 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
 
         if (ctx.hasUI) {
             ctx.ui.addAutocompleteProvider((current) => ({
-                ...current,
                 triggerCharacters: [...(current.triggerCharacters ?? []), "$"],
                 async getSuggestions(lines, cursorLine, cursorCol, options) {
                     const prefix = extractDollarPrefix(
@@ -440,6 +439,17 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
                     }
                     return { items, prefix };
                 },
+                applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+                    return current.applyCompletion(
+                        lines,
+                        cursorLine,
+                        cursorCol,
+                        item,
+                        prefix,
+                    );
+                },
+                shouldTriggerFileCompletion:
+                    current.shouldTriggerFileCompletion?.bind(current),
             }));
         }
 
