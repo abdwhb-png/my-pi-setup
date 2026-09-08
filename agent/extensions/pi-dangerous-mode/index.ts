@@ -111,6 +111,26 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
             }
 
             const enabled = action === "on";
+            if (enabled) {
+                if (getRuntimeStatus().dangerous.effective) {
+                    ctx.ui.notify("Dangerous mode is already ON.", "info");
+                    return;
+                }
+                if (ctx.hasUI) {
+                    const confirmed = await ctx.ui.confirm(
+                        "Enable Dangerous Mode?",
+                        "Dangerous mode bypasses permission checks for unprotected tools in this session. Are you sure?",
+                    );
+                    if (!confirmed) {
+                        ctx.ui.notify(
+                            "Dangerous mode activation canceled.",
+                            "info",
+                        );
+                        return;
+                    }
+                }
+            }
+
             if (!setDangerousOverride(enabled)) {
                 ctx.ui.notify(
                     "Dangerous mode cannot be enabled: configuration or runner is incompatible.",

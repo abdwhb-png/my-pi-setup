@@ -11,7 +11,12 @@ type Command = {
 
 type CommandContext = {
     cwd: string;
-    ui: { notify(message: string, level: "info" | "warning" | "error"): void };
+    hasUI?: boolean;
+    ui: {
+        notify(message: string, level: "info" | "warning" | "error"): void;
+        confirm?: (title: string, message: string) => Promise<boolean>;
+        theme?: unknown;
+    };
 };
 
 function setup(): {
@@ -59,5 +64,106 @@ describe("pi-dangerous-mode extension", () => {
             { value: "off", label: "off" },
             { value: "status", label: "status" },
         ]);
+    });
+
+    it("prompts for confirmation when enabling dangerous-mode and cancels if rejected", async () => {
+        const fixture = setup();
+        const command = fixture.commands.get("dangerous-mode")!;
+        const notifications: Array<[string, string]> = [];
+        let confirmCalled = false;
+
+        const ctx: CommandContext = {
+            cwd: "/test",
+            hasUI: true,
+            ui: {
+                notify(message, level) {
+                    notifications.push([message, level]);
+                },
+                confirm: async () => {
+                    confirmCalled = true;
+                    return false;
+                },
+            },
+        };
+
+        await command.handler("on", ctx);
+
+        expect(confirmCalled).toBe(true);
+        expect(notifications).toContainEqual([
+            "Dangerous mode activation canceled.",
+            "info",
+        ]);
+    });
+
+    it("enables dangerous-mode when confirmation is accepted", async () => {
+        const fixture = setup();
+        const command = fixture.commands.get("dangerous-mode")!;
+        const notifications: Array<[string, string]> = [];
+        let confirmCalled = false;
+
+        const ctx: CommandContext = {
+            cwd: "/test",
+            hasUI: true,
+            ui: {
+                notify(message, level) {
+                    notifications.push([message, level]);
+                },
+                confirm: async () => {
+                    confirmCalled = true;
+                    return true;
+                },
+            },
+        };
+
+        await command.handler("on", ctx);
+
+        expect(confirmCalled).toBe(true);
+        expect(notifications).toContainEqual([
+            "Dangerous mode: ON.",
+            "info",
+        ]);
+
+        // Disabling does not ask for confirmation
+        confirmCalled = false;
+        await command.handler("off", ctx);
+        expect(confirmCalled).toBe(false);
+        expect(notifications).toContainEqual([
+            "Dangerous mode: OFF.",
+            "info",
+        ]);
+    });
+
+    it("notifies without prompting if dangerous-mode is already on", async () => {
+        const fixture = setup();
+        const command = fixture.commands.get("dangerous-mode")!;
+        const notifications: Array<[string, string]> = [];
+        let confirmCount = 0;
+
+        const ctx: CommandContext = {
+            cwd: "/test",
+            hasUI: true,
+            ui: {
+                notify(message, level) {
+                    notifications.push([message, level]);
+                },
+                confirm: async () => {
+                    confirmCount++;
+                    return true;
+                },
+            },
+        };
+
+        await command.handler("on", ctx);
+        expect(confirmCount).toBe(1);
+
+        // Turn on again while already active
+        await command.handler("on", ctx);
+        expect(confirmCount).toBe(1);
+        expect(notifications).toContainEqual([
+            "Dangerous mode is already ON.",
+            "info",
+        ]);
+
+        await command.handler("off", ctx);
     });
 });
