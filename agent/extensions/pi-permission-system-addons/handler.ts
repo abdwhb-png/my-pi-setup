@@ -47,7 +47,7 @@ export async function checkAndBlock(
     ctx: ExtensionContext,
     _events: EventBus,
     sessionCache: InMemorySessionCache,
-    yolo?: boolean,
+    sessionYolo = false,
 ): Promise<{ block?: boolean; reason?: string } | undefined> {
     const targetSurface = config.inherit[toolName];
     if (!targetSurface) return undefined;
@@ -70,7 +70,7 @@ export async function checkAndBlock(
     }
 
     // state === 'ask'
-    if (yolo) return undefined;
+    if (sessionYolo) return undefined;
     const mp = result.matchedPattern;
     if (mp && sessionCache.has(mp, checkValue)) return undefined;
     return handleAsk(

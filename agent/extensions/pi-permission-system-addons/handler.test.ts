@@ -177,27 +177,28 @@ describe('checkAndBlock', () => {
         expect(r).toEqual({ block: true, reason: expect.any(String) });
     });
 
-    it('auto-allows ask when yolo is true', async () => {
+    it('auto-allows ask when session yolo is true', async () => {
         mockService = {
             checkPermission: () => ({
                 state: 'ask',
                 matchedPattern: 'rm -rf *',
             }),
         };
-        // With yolo: true, ask → auto-allow. No dialog needed, no UI required.
+
         const r = await checkAndBlock(
             'safe_bash',
             { command: 'rm -rf /tmp' },
             fakeConfig({ safe_bash: 'bash' }),
-            fakeCtx(false), // no UI — but yolo bypasses the check entirely
+            fakeCtx(false),
             fakeEvents(),
             new Cache(),
-            true, // yolo
+            true,
         );
+
         expect(r).toBeUndefined();
     });
 
-    it('still blocks deny when yolo is true', async () => {
+    it('still blocks deny when session yolo is true', async () => {
         mockService = {
             checkPermission: () => ({
                 state: 'deny',
@@ -205,6 +206,7 @@ describe('checkAndBlock', () => {
                 reason: 'never allowed',
             }),
         };
+
         const r = await checkAndBlock(
             'safe_bash',
             { command: 'rm -rf /tmp' },
@@ -212,8 +214,9 @@ describe('checkAndBlock', () => {
             fakeCtx(),
             fakeEvents(),
             new Cache(),
-            true, // yolo
+            true,
         );
+
         expect(r).toEqual({ block: true, reason: 'never allowed' });
     });
 });

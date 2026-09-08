@@ -1,95 +1,64 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
-import {
-    mkdtempSync,
-    mkdirSync,
-    readFileSync,
-    rmSync,
-    writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it, mock } from 'bun:test';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-let agentDir = '';
+let permissionService:
+    | {
+          checkPermission: () => {
+              state: 'allow' | 'ask' | 'deny';
+              matchedPattern: string | null;
+              reason?: string;
+          };
+      }
+    | undefined;
 
-mock.module('@earendil-works/pi-coding-agent', () => ({
-    getAgentDir: () => agentDir,
-    SettingsManager: {
-        create: () => {
-            throw new Error('settings unavailable in unit test');
-        },
-    },
+mock.module('@gotgenes/pi-permission-system', () => ({
+    getPermissionsService: () => permissionService,
+}));
+
+mock.module('./config.ts', () => ({
+    loadConfig: () => ({ inherit: { safe_bash: 'bash' } }),
 }));
 
 const { default: extension } = await import('./index.ts');
 
-afterEach(() => {
-    if (agentDir) rmSync(agentDir, { recursive: true, force: true });
-    agentDir = '';
-});
+type EventListener = (event: any, ctx: any) => Promise<any> | any;
+type CommandContext = {
+    ui: { notify(message: string, level: string): void };
+    waitForIdle(): Promise<void>;
+    reload(): Promise<void>;
+};
+type CommandDefinition = {
+    handler(args: string, ctx: CommandContext): Promise<void>;
+};
 
-function setup(initialYolo = false, startBusy = false) {
-    agentDir = mkdtempSync(join(tmpdir(), 'perm-addon-command-'));
-    const configDir = join(agentDir, 'extensions', 'pi-permission-system');
-    mkdirSync(configDir, { recursive: true });
-    writeFileSync(
-        join(configDir, 'config.json'),
-        JSON.stringify({
-            yoloMode: initialYolo,
-            permission: { bash: { '*': 'allow' } },
-        }),
-    );
-
-    let command:
-        | {
-              handler: (args: string, ctx: any) => Promise<void>;
-          }
-        | undefined;
+function setup() {
+    const listeners = new Map<string, EventListener>();
     const flags: string[] = [];
+    const commands: string[] = [];
+    const commandDefinitions = new Map<string, CommandDefinition>();
+
     const pi = {
         registerFlag(name: string) {
             flags.push(name);
         },
-        registerCommand(name: string, definition: typeof command) {
-            if (name === 'yolo-permission') command = definition;
+        registerCommand(name: string, definition: CommandDefinition) {
+            commands.push(name);
+            commandDefinitions.set(name, definition);
         },
-        on() {},
-        events: {},
-    };
-    extension(pi as any);
-
-    const notifications: Array<[string, string]> = [];
-    let reloads = 0;
-    let releaseIdle = () => {};
-    const idle = startBusy
-        ? new Promise<void>((resolve) => {
-              releaseIdle = resolve;
-          })
-        : Promise.resolve();
-    const ctx = {
-        ui: {
-            notify(message: string, level: string) {
-                notifications.push([message, level]);
+        on(event: string, handler: EventListener) {
+            listeners.set(event, handler);
+        },
+        events: {
+            emit() {},
+            on() {
+                return () => {};
             },
         },
-        waitForIdle() {
-            return idle;
-        },
-        async reload() {
-            reloads += 1;
-        },
     };
 
-    return {
-        command: command!,
-        flags,
-        ctx,
-        notifications,
-        releaseIdle,
-        get reloads() {
-            return reloads;
-        },
-        configPath: join(configDir, 'config.json'),
-    };
+    extension(pi as unknown as ExtensionAPI);
+
+    return { listeners, flags, commands, commandDefinitions };
 }
 
 describe('extension entry point', () => {
@@ -98,94 +67,117 @@ describe('extension entry point', () => {
         expect(typeof mod.default).toBe('function');
     });
 
-    it('registers only yolo-permission and rejects implicit or toggle actions', async () => {
-        const fixture = setup(false);
-        const initial = readFileSync(fixture.configPath, 'utf-8');
+    it('registers yolo-permission command without a CLI flag', () => {
+        const { flags, commands, listeners } = setup();
 
-        await fixture.command.handler('', fixture.ctx);
-        await fixture.command.handler('toggle', fixture.ctx);
-        await fixture.command.handler('unexpected', fixture.ctx);
+        expect(flags).toHaveLength(0);
+        expect(commands).toEqual(['yolo-permission']);
+        expect(listeners.has('session_start')).toBe(true);
+        expect(listeners.has('session_shutdown')).toBe(true);
+        expect(listeners.has('tool_call')).toBe(true);
+    });
 
-        expect(fixture.flags).toEqual(['yolo-permission']);
-        expect(readFileSync(fixture.configPath, 'utf-8')).toBe(initial);
-        expect(fixture.reloads).toBe(0);
+    it('enables session yolo immediately without reloading', async () => {
+        const { commandDefinitions } = setup();
+        const command = commandDefinitions.get('yolo-permission');
+        const notifications: Array<[string, string]> = [];
+        let reloads = 0;
+        const ctx: CommandContext = {
+            ui: {
+                notify(message: string, level: string) {
+                    notifications.push([message, level]);
+                },
+            },
+            async waitForIdle() {},
+            async reload() {
+                reloads += 1;
+            },
+        };
+
+        expect(command).toBeDefined();
+        await command!.handler('on', ctx);
+        await command!.handler('status', ctx);
+        expect(notifications.at(-1)?.[0]).toContain('ON');
+
+        await command!.handler('off', ctx);
+        await command!.handler('status', ctx);
+
+        expect(reloads).toBe(0);
+        expect(notifications.at(-1)?.[0]).toContain('OFF');
+    });
+
+    it('resets session yolo when a session starts', async () => {
+        const { commandDefinitions, listeners } = setup();
+        const command = commandDefinitions.get('yolo-permission')!;
+        const onSessionStart = listeners.get('session_start')!;
+        const notifications: Array<[string, string]> = [];
+        const ctx: CommandContext = {
+            ui: {
+                notify(message: string, level: string) {
+                    notifications.push([message, level]);
+                },
+            },
+            async waitForIdle() {},
+            async reload() {},
+        };
+
+        await command.handler('on', ctx);
+        await onSessionStart({}, { cwd: '/nonexistent' });
+        await command.handler('status', ctx);
+
+        expect(notifications.at(-1)?.[0]).toContain('OFF');
+    });
+
+    it('applies session yolo to inherited asks only while enabled', async () => {
+        permissionService = {
+            checkPermission: () => ({
+                state: 'ask',
+                matchedPattern: 'rm -rf *',
+            }),
+        };
+        const { commandDefinitions, listeners } = setup();
+        const command = commandDefinitions.get('yolo-permission')!;
+        const onSessionStart = listeners.get('session_start')!;
+        const onToolCall = listeners.get('tool_call')!;
+        const commandCtx: CommandContext = {
+            ui: { notify() {} },
+            async waitForIdle() {},
+            async reload() {},
+        };
+        const toolCtx = { hasUI: false };
+
+        await onSessionStart({}, { cwd: '/nonexistent' });
+        await command.handler('on', commandCtx);
         expect(
-            fixture.notifications.every(([message]) =>
-                message.includes('Usage: /yolo-permission'),
+            await onToolCall(
+                { toolName: 'safe_bash', input: { command: 'rm -rf /tmp' } },
+                toolCtx,
             ),
-        ).toBe(true);
-    });
+        ).toBeUndefined();
 
-    it('supports explicit off without losing policy', async () => {
-        const fixture = setup(true);
-
-        await fixture.command.handler('off', fixture.ctx);
-
-        expect(JSON.parse(readFileSync(fixture.configPath, 'utf-8'))).toEqual({
-            yoloMode: false,
-            permission: { bash: { '*': 'allow' } },
+        await command.handler('off', commandCtx);
+        expect(
+            await onToolCall(
+                { toolName: 'safe_bash', input: { command: 'rm -rf /tmp' } },
+                toolCtx,
+            ),
+        ).toEqual({
+            block: true,
+            reason: expect.stringContaining('Permission required'),
         });
-        expect(fixture.reloads).toBe(1);
     });
 
-    it('supports explicit on', async () => {
-        const fixture = setup(false);
+    it('bypasses tool_call when tool is not in inherit map', async () => {
+        const { listeners } = setup();
+        const onStart = listeners.get('session_start')!;
+        const onToolCall = listeners.get('tool_call')!;
 
-        await fixture.command.handler('on', fixture.ctx);
+        await onStart({}, { cwd: '/nonexistent' });
+        const result = await onToolCall(
+            { toolName: 'unmapped_tool', input: {} },
+            { cwd: '/nonexistent' },
+        );
 
-        expect(JSON.parse(readFileSync(fixture.configPath, 'utf-8'))).toEqual({
-            yoloMode: true,
-            permission: { bash: { '*': 'allow' } },
-        });
-        expect(fixture.reloads).toBe(1);
-    });
-
-    it('does nothing when requested mode is already active', async () => {
-        const fixture = setup(false);
-        const initial = readFileSync(fixture.configPath, 'utf-8');
-
-        await fixture.command.handler('off', fixture.ctx);
-
-        expect(readFileSync(fixture.configPath, 'utf-8')).toBe(initial);
-        expect(fixture.reloads).toBe(0);
-        expect(fixture.notifications.at(-1)?.[0]).toContain('already OFF');
-    });
-
-    it('coalesces duplicate pending changes into one write and reload', async () => {
-        const fixture = setup(false, true);
-
-        const first = fixture.command.handler('on', fixture.ctx);
-        const second = fixture.command.handler('on', fixture.ctx);
-        fixture.releaseIdle();
-        await Promise.all([first, second]);
-
-        expect(JSON.parse(readFileSync(fixture.configPath, 'utf-8'))).toEqual({
-            yoloMode: true,
-            permission: { bash: { '*': 'allow' } },
-        });
-        expect(fixture.reloads).toBe(1);
-    });
-
-    it('cancels opposite pending changes before idle without writing or reloading', async () => {
-        const fixture = setup(false, true);
-        const initial = readFileSync(fixture.configPath, 'utf-8');
-
-        const enable = fixture.command.handler('on', fixture.ctx);
-        const disable = fixture.command.handler('off', fixture.ctx);
-        fixture.releaseIdle();
-        await Promise.all([enable, disable]);
-
-        expect(readFileSync(fixture.configPath, 'utf-8')).toBe(initial);
-        expect(fixture.reloads).toBe(0);
-        expect(fixture.notifications.at(-1)?.[0]).toContain('canceled');
-    });
-
-    it('reports status without reloading', async () => {
-        const fixture = setup(true);
-
-        await fixture.command.handler('status', fixture.ctx);
-
-        expect(fixture.notifications.at(-1)?.[0]).toContain('ON');
-        expect(fixture.reloads).toBe(0);
+        expect(result).toBeUndefined();
     });
 });
