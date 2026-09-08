@@ -19,12 +19,24 @@ const { formatDockerAccess } = await import("./docker-access.ts");
 mock.module("./docker-access.ts", () => ({ formatDockerAccess, inspectDockerAccess }));
 const reset = mock(async (): Promise<void> => undefined);
 const createZeroboxBackend = mock(() => ({}));
+const prepareBash = mock(
+    async (command: { file: string; args: string[]; cwd: string }) => ({
+        file: command.file,
+        args: command.args,
+        cwd: command.cwd,
+        env: { ...process.env } as Record<string, string>,
+        statusProtocol: { fd: 3 as const, version: 1 as const },
+        extraStdio: ["ignore" as const],
+        supervise: () => ({
+            ready: Promise.resolve(),
+            settled: Promise.resolve(),
+        }),
+    }),
+);
 const createSandboxService = mock((_options: unknown) => ({
     probe: initialize,
     startBashSession: initialize,
-    prepareBash: mock(async () => {
-        throw new Error("not exercised");
-    }),
+    prepareBash,
     prepareAnalysis: mock(async () => {
         throw new Error("not exercised");
     }),
@@ -250,37 +262,87 @@ describe("sandbox lifecycle", () => {
         expect(getSandboxRuntime().state).toBe("uninitialized");
     });
 
-    it("keeps both brokers unpublished until Analysis preflight succeeds", async () => {
-        const preflight = deferred();
-        analysisPreflight.mockImplementation(() => preflight.promise);
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-
-        const starting = registered.handlers.get("session_start")?.({}, ctx);
-        await Bun.sleep(10);
-        expect(getSandboxRuntime().state).toBe("uninitialized");
-        expect(getSandboxRuntime().state).toBe("uninitialized");
-
-        preflight.reject(new Error("analysis preflight failed"));
-        await starting;
-        expect(getSandboxRuntime().state).toBe("error");
-        expect(getSandboxRuntime().state).toBe("error");
-        expect(analysisShutdown).toHaveBeenCalledTimes(1);
-        expect(reset).toHaveBeenCalledTimes(1);
-    });
-
-    it("retains a failed candidate cleanup for the next transition", async () => {
-        analysisPreflight.mockRejectedValueOnce(new Error("preflight failed"));
-        reset.mockRejectedValueOnce(new Error("candidate cleanup failed"));
+    it("keeps Bash active while Analysis retries, then restores Analysis without restarting Bash", async () => {
+        analysisPreflight.mockRejectedValueOnce(
+            new Error("analysis preflight failed"),
+        );
         const registered = registerSandbox();
         const ctx = context(cwd);
 
         await registered.handlers.get("session_start")?.({}, ctx);
-        expect(getSandboxRuntime().state).toBe("error");
-        expect(reset).toHaveBeenCalledTimes(1);
+        await Bun.sleep(10);
+
+        const runtime = getSandboxRuntime();
+        expect(runtime).toMatchObject({
+            state: "enabled",
+            analysis: { state: "retrying" },
+        });
+        await expect(
+            getSandboxAnalysisPort().run({
+                id: "blocked",
+                language: "javascript",
+                program: "export default 1",
+            }),
+        ).rejects.toMatchObject({ kind: "analysis-unavailable" });
+        expect(initialize).toHaveBeenCalledTimes(1);
+        const output: string[] = [];
+        await expect(
+            createSandboxBashOperations().exec("printf bash-ready", cwd, {
+                onData: (chunk) => output.push(chunk.toString()),
+            }),
+        ).resolves.toMatchObject({ exitCode: 0 });
+        expect(output.join("")).toBe("bash-ready");
+        expect(notifyCalls(ctx).at(-1)).toEqual([
+            "Analysis indisponible, réessai en cours",
+            "warning",
+        ]);
+
+        await Bun.sleep(5_100);
+        expect(getSandboxRuntime()).toMatchObject({
+            state: "enabled",
+            analysis: { state: "ready" },
+        });
+        expect(initialize).toHaveBeenCalledTimes(1);
+        await expect(
+            getSandboxAnalysisPort().run({
+                id: "restored",
+                language: "javascript",
+                program: "export default 1",
+            }),
+        ).resolves.toMatchObject({ output: "ok" });
+    }, 8_000);
+
+    it("cancels a scheduled Analysis retry when the session closes", async () => {
+        analysisPreflight.mockRejectedValue(new Error("analysis unavailable"));
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await Bun.sleep(10);
+        expect(analysisPreflight).toHaveBeenCalledTimes(1);
+
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+        await Bun.sleep(5_100);
+        expect(analysisPreflight).toHaveBeenCalledTimes(1);
+    }, 8_000);
+
+    it("retains failed Analysis cleanup for the next transition without disabling Bash", async () => {
+        analysisPreflight.mockRejectedValueOnce(new Error("preflight failed"));
+        analysisShutdown.mockRejectedValueOnce(
+            new Error("candidate cleanup failed"),
+        );
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await Bun.sleep(10);
+        expect(getSandboxRuntime()).toMatchObject({
+            state: "enabled",
+            analysis: { state: "retrying" },
+        });
+        expect(reset).not.toHaveBeenCalled();
 
         await sandboxCommand(registered).handler("off", ctx);
-        expect(reset).toHaveBeenCalledTimes(2);
         expect(getSandboxRuntime().state).toBe("disabled");
     });
 
@@ -327,7 +389,9 @@ describe("sandbox lifecycle", () => {
         const pendingAnalysis = getSandboxAnalysisPort().run({ id: "wait", language: "javascript", program: "1" });
         enabling.resolve();
         await enableTransition;
-        expect(await pendingAnalysis).toMatchObject({ output: "ok" });
+        await expect(pendingAnalysis).rejects.toMatchObject({
+            kind: "analysis-unavailable",
+        });
         expect(getSandboxRuntime().state).toBe("enabled");
 
         const disabling = deferred();
@@ -605,15 +669,9 @@ describe("sandbox lifecycle", () => {
             expect(message).toContain("Saved Docker grant: targeted · Exploitation");
             expect(message).toContain("Host-access exception: enabled by the confirmed grant");
             expect(JSON.parse(await readFile(path, "utf8")).docker.grants[0].targets[0].allowUnsafeTarget).toBe(true);
-            if (outcome === "failure") {
-                expect(message).toContain("saved; activation failed: fixture activation unavailable");
-                expect(message).not.toContain("Active Docker:");
-                expect(level).toBe("error");
-            } else {
-                expect(level).toBe("info");
-                expect(message).toContain(outcome === "reduced" ? "Active Docker: off" : "Active Docker: targeted · Exploitation");
-                if (outcome === "reduced") expect(message).not.toContain("saved and active");
-            }
+            expect(level).toBe("info");
+            expect(message).toContain(outcome === "reduced" ? "Active Docker: off" : "Active Docker: targeted · Exploitation");
+            if (outcome === "reduced") expect(message).not.toContain("saved and active");
         }, [true, true]);
     });
 
@@ -1176,7 +1234,7 @@ describe("sandbox lifecycle", () => {
 
         preflight.resolve();
         await enabling;
-        expect(reset).toHaveBeenCalledTimes(2);
+        expect(reset).toHaveBeenCalledTimes(1);
         expect(getSandboxRuntime().state).toBe("error");
 
         await sandboxCommand(registered).handler("off", ctx);

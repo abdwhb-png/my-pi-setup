@@ -108,16 +108,36 @@ export function registerBuiltinBash(
 
     pi.on("user_bash", (event) => {
         let execution = unknownExecution();
-        const operations = resolveBashOperations(options.localSupervisor, {
-            onExecution: (value) => {
+        const sandboxPrefix = /^s(?:\s|$)/.test(event.command);
+        const command = sandboxPrefix
+            ? event.command.slice(1).trimStart()
+            : event.command;
+        const operationOptions = {
+            onExecution: (value: typeof execution) => {
                 execution = value;
             },
-        });
+        };
+        const operations =
+            sandboxPrefix && command.length > 0
+                ? createSandboxBashOperations(operationOptions)
+                : sandboxPrefix
+                  ? undefined
+                  : options.localSupervisor.createOperations(operationOptions);
         return {
             operations: {
-                exec: async (...args) => {
+                exec: async (_command, cwd, executionOptions) => {
                     try {
-                        return await operations.exec(...args);
+                        if (sandboxPrefix && command.length === 0) {
+                            throw new Error("Usage: !s <command>");
+                        }
+                        if (!operations) {
+                            throw new Error("Usage: !s <command>");
+                        }
+                        return await operations.exec(
+                            sandboxPrefix ? command : _command,
+                            cwd,
+                            executionOptions,
+                        );
                     } finally {
                         pi.appendEntry("pi.execution.user-bash.v1", {
                             command: event.command,

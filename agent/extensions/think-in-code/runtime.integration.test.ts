@@ -132,7 +132,7 @@ function installBrokers(state: BrokerState): symbol {
         state: "enabled",
         createBashOperations: () => state.bashOperations,
         createThinkBashOperations: () => state.bashOperations,
-        analysis: state.analysis,
+        analysis: { state: "ready", service: state.analysis },
     });
     return owner;
 }
@@ -277,7 +277,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(descriptions.get("think_artifact_search")).toMatch(/never.*general memory/i);
     });
 
-    it("hides sandbox-backed execution while keeping index tools active when sandbox is disabled", async () => {
+    it("hides all Think tools when sandbox is disabled", async () => {
         const home = createHarnessProject();
         const session = await createTestSession({
             cwd: home,
@@ -308,11 +308,11 @@ describe("think-in-code real Pi runtime wiring", () => {
         await session.session.agent.waitForIdle();
 
         const active = collectToolNames(session);
-        expect(active).toContain("think_artifact_search");
         expect(active).not.toContain("think_execute");
+        expect(active).not.toContain("think_artifact_search");
     });
 
-    it("removes think_execute again after a role reactivates every registered tool", async () => {
+    it("removes all Think tools again after a role reactivates every registered tool", async () => {
         const home = createHarnessProject();
         const session = await createTestSession({
             cwd: home,
@@ -365,7 +365,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         );
 
         expect(collectToolNames(session)).not.toContain("think_execute");
-        expect(collectToolNames(session)).toContain("think_artifact_search");
+        expect(collectToolNames(session)).not.toContain("think_artifact_search");
     });
 
     it("blocks a stale think_execute call before it can archive input when sandbox is disabled", async () => {
@@ -436,7 +436,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(readdirSync(archiveRoot)).toEqual([]);
     });
 
-    it("keeps Think available during reconfiguration and runs once with the replacement runtime", async () => {
+    it("hides Think during reconfiguration and restores it with the replacement runtime", async () => {
         const previous = makeBrokerState();
         const next = makeBrokerState();
         const home = createHarnessProject();
@@ -448,31 +448,27 @@ describe("think-in-code real Pi runtime wiring", () => {
         sessions.push(session);
         await session.session.agent.waitForIdle();
         publishSandboxRuntime(ownerSymbol!, { state: "reconfiguring" });
-        const pending = session.run(when("Wait for the new sandbox", [
+        await session.run(when("Wait for the new sandbox", [says("Waiting.")]));
+        expect(collectToolNames(session)).not.toContain("think_execute");
+        expect(collectToolNames(session)).not.toContain("think_artifact_search");
+        expect(previous.safeExecCalls).toHaveLength(0);
+        publishSandboxRuntime(ownerSymbol!, {
+            state: "enabled",
+            createBashOperations: () => next.bashOperations,
+            createThinkBashOperations: () => next.bashOperations,
+            analysis: { state: "ready", service: next.analysis },
+        });
+        await session.run(when("Use the replacement sandbox", [
             calls("think_execute", { action: "command", command: "echo ready", language: "javascript", program: "INPUT.length" }),
             says("Done."),
         ]));
-        try {
-            await new Promise((resolve) => setTimeout(resolve, 30));
-            expect(collectToolNames(session)).toContain("think_execute");
-            expect(session.events.toolResultsFor("think_execute")).toHaveLength(0);
-            expect(previous.safeExecCalls).toHaveLength(0);
-        } finally {
-            publishSandboxRuntime(ownerSymbol!, {
-                state: "enabled",
-                createBashOperations: () => next.bashOperations,
-                createThinkBashOperations: () => next.bashOperations,
-                analysis: next.analysis,
-            });
-            await pending;
-        }
         expect(next.safeExecCalls).toHaveLength(1);
         expect(next.analysisCalls).toHaveLength(1);
         expect(session.events.toolResultsFor("think_execute")).toHaveLength(1);
         expect(session.events.toolResultsFor("think_execute")[0]?.isError).not.toBe(true);
     });
 
-    it.each(["error", "disabled"] as const)("surfaces a failed reconfiguration through the real Think result: %s", async (ending) => {
+    it.each(["error", "disabled"] as const)("keeps Think unavailable after a failed reconfiguration: %s", async (ending) => {
         const state = makeBrokerState();
         const home = createHarnessProject();
         const session = await createTestSession({
@@ -493,7 +489,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         const results = session.events.toolResultsFor("think_execute");
         expect(results).toHaveLength(1);
         expect(results[0]?.isError).toBe(true);
-        expect(JSON.stringify(results[0]?.content)).toContain("request was not executed");
+        expect(JSON.stringify(results[0]?.content)).toContain("Tool think_execute not found");
         expect(state.safeExecCalls).toHaveLength(0);
         expect(state.analysisCalls).toHaveLength(0);
     });
@@ -509,19 +505,20 @@ describe("think-in-code real Pi runtime wiring", () => {
         sessions.push(session);
         await session.session.agent.waitForIdle();
         expect(collectToolNames(session)).toContain("think_execute");
+        expect(collectToolNames(session)).toContain("think_artifact_search");
 
         publishSandboxRuntime(ownerSymbol!, { state: "disabled" });
         await session.run(
             when("Continue without sandbox", [says("Using inspection only.")]),
         );
         expect(collectToolNames(session)).not.toContain("think_execute");
-        expect(collectToolNames(session)).toContain("think_artifact_search");
+        expect(collectToolNames(session)).not.toContain("think_artifact_search");
 
         publishSandboxRuntime(ownerSymbol!, {
             state: "enabled",
             createBashOperations: () => state.bashOperations,
             createThinkBashOperations: () => state.bashOperations,
-            analysis: state.analysis,
+            analysis: { state: "ready", service: state.analysis },
         });
         await session.run(
             when("Continue with sandbox", [says("Execution is available.")]),
@@ -850,7 +847,7 @@ describe("think-in-code real Pi runtime wiring", () => {
                 state: "enabled",
                 createBashOperations: () => slowBash,
                 createThinkBashOperations: () => slowBash,
-                analysis: slowAnalysis,
+                analysis: { state: "ready", service: slowAnalysis },
             });
         }
 

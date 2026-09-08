@@ -12,6 +12,11 @@ import {
     DEFAULT_THINK_IN_CODE_CONFIG,
     hashProjectPath,
 } from "./config.ts";
+import {
+    claimSandboxRuntime,
+    publishSandboxRuntime,
+    releaseSandboxRuntime,
+} from "../_shared/sandbox-runtime/index.ts";
 import { registerThinkInCode } from "./index.ts";
 import { __getRawDatabase, ThinkStore } from "./storage/store.ts";
 
@@ -37,6 +42,85 @@ function context(cwd: string, sessionId: string): ExtensionContext {
 }
 
 describe("think-in-code extension lifecycle", () => {
+    it("blocks both Think tools with analysis-unavailable before source or store work", async () => {
+        fixture = await mkdtemp(join(tmpdir(), "think-analysis-unavailable-"));
+        const project = join(fixture, "project");
+        await mkdir(project);
+        const owner = Symbol("think-analysis-unavailable");
+        claimSandboxRuntime(owner);
+        publishSandboxRuntime(owner, {
+            state: "enabled",
+            createBashOperations: () => ({
+                exec: async () => ({ exitCode: 0 }),
+            }),
+            createThinkBashOperations: () => ({
+                exec: async () => ({ exitCode: 0 }),
+            }),
+            analysis: { state: "retrying" },
+        });
+
+        try {
+            const handlers = new Map<string, EventHandler[]>();
+            const tools = new Map<string, Record<string, unknown>>();
+            let activeTools = ["think_execute", "think_artifact_search"];
+            const pi = {
+                on: (name: string, handler: EventHandler) => {
+                    handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+                },
+                registerTool: (tool: Record<string, unknown>) =>
+                    tools.set(String(tool.name), tool),
+                registerCommand: () => undefined,
+                appendEntry: () => undefined,
+                getActiveTools: () => activeTools,
+                setActiveTools: (names: string[]) => {
+                    activeTools = [...names];
+                },
+                events: { on: () => () => undefined },
+            } as unknown as ExtensionAPI;
+            registerThinkInCode(pi, {
+                resolveRoot: () => join(fixture!, "state"),
+            });
+
+            for (const handler of handlers.get("session_start") ?? []) {
+                await handler({}, context(project, "analysis-unavailable"));
+            }
+
+            expect(activeTools).toEqual([]);
+            const gate = handlers.get("tool_call")?.[0];
+            for (const toolName of ["think_execute", "think_artifact_search"]) {
+                await expect(gate?.({ toolName })).resolves.toMatchObject({
+                    block: true,
+                    reason: "analysis-unavailable",
+                });
+                const execute = tools.get(toolName)?.execute as (
+                    id: string,
+                    params: Record<string, unknown>,
+                    signal: AbortSignal | undefined,
+                    onUpdate: undefined,
+                    ctx: ExtensionContext,
+                ) => Promise<unknown>;
+                await expect(
+                    execute(
+                        "blocked",
+                        toolName === "think_execute"
+                            ? {
+                                  action: "content",
+                                  language: "javascript",
+                                  program: "export default 1",
+                                  content: "must not be read",
+                              }
+                            : { query: "must not be searched" },
+                        undefined,
+                        undefined,
+                        context(project, "analysis-unavailable"),
+                    ),
+                ).rejects.toMatchObject({ kind: "analysis-unavailable" });
+            }
+        } finally {
+            releaseSandboxRuntime(owner);
+        }
+    });
+
     it("registers two visible tools with call and result renderers", async () => {
         fixture = await mkdtemp(join(tmpdir(), "think-index-renderers-"));
         const project = join(fixture, "project");

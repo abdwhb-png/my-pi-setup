@@ -45,7 +45,16 @@ function publish(
     const owner = Symbol("bash-execution-test-runtime");
     owners.push(owner);
     claimSandboxRuntime(owner);
-    publishSandboxRuntime(owner, state.state === 'enabled' ? { ...state, createThinkBashOperations: state.createBashOperations } : state);
+    publishSandboxRuntime(
+        owner,
+        state.state === "enabled"
+            ? {
+                  ...state,
+                  createThinkBashOperations: state.createBashOperations,
+                  analysis: { state: "ready", service: state.analysis },
+              }
+            : state,
+    );
 }
 
 function register(): {
@@ -79,7 +88,7 @@ afterEach(() => {
 });
 
 describe("bash-execution ownership", () => {
-    test("Bash, safe_bash and a captured user_bash adapter wait for new permissions without local fallback", async () => {
+    test("Bash and safe_bash wait for new permissions while user_bash stays on the host", async () => {
         const owner = Symbol("reconfiguration");
         owners.push(owner);
         claimSandboxRuntime(owner);
@@ -88,21 +97,19 @@ describe("bash-execution ownership", () => {
             state: "enabled" as const,
             createBashOperations: () => ({ exec: async () => { runs++; return { exitCode: 0 }; } }),
             createThinkBashOperations: () => { throw new Error("wrong profile"); },
-            analysis: { run: async () => { throw new Error("wrong tool"); }, shutdown: async () => undefined },
+            analysis: { state: "ready" as const, service: { run: async () => { throw new Error("wrong tool"); }, shutdown: async () => undefined } },
         };
         publishSandboxRuntime(owner, snapshot);
         const registered = register();
-        const adapter = registered.hooks.get("user_bash")?.[0]?.({ command: "true" }, executionContext()) as { operations: BashOperations };
         publishSandboxRuntime(owner, { state: "reconfiguring" });
         const pending = Promise.all([
-            adapter.operations.exec("true", process.cwd(), { onData() {} }),
             ...["bash", "safe_bash"].map((name) => registered.tools.get(name)!.execute(`${name}-waiting`, { command: "true" }, undefined, undefined, executionContext())),
         ]);
         await new Promise((resolve) => setTimeout(resolve, 5));
         expect(runs).toBe(0);
         publishSandboxRuntime(owner, { ...snapshot });
         await pending;
-        expect(runs).toBe(3);
+        expect(runs).toBe(2);
     });
 
     test("registers bash and safe_bash plus the user_bash hook", () => {
@@ -120,11 +127,11 @@ describe("bash-execution ownership", () => {
         expect(registered.hooks.get("user_bash")).toHaveLength(1);
     });
 
-    test("uses local operations only when sandbox is explicitly disabled", async () => {
-        publish({ state: "disabled" });
+    test("routes ! and !! to the host even while Sandbox is enabled", async () => {
+        publish({ state: "enabled", createBashOperations: () => ({ exec: async () => ({ exitCode: 0 }) }), analysis: { run: async () => ({ output: "", stderr: "", runtime: "quickjs", durationMs: 0, truncated: false }), shutdown: async () => undefined } });
         const registered = register();
         const userBash = registered.hooks.get("user_bash")?.[0];
-        const response = userBash?.({}, {} as ExtensionContext) as {
+        const response = userBash?.({ command: "printf local-fallback" }, {} as ExtensionContext) as {
             operations: BashOperations;
         };
         const chunks: string[] = [];
@@ -138,24 +145,21 @@ describe("bash-execution ownership", () => {
         expect(result.exitCode).toBe(0);
         expect(chunks.join("")).toBe("local-fallback");
 
-        const context = executionContext();
-        for (const toolName of ["bash", "safe_bash"] as const) {
-            const tool = registered.tools.get(toolName)!;
-            const toolResult = await tool.execute(
-                `${toolName}-disabled`,
-                { command: `printf ${toolName}` },
-                undefined,
-                undefined,
-                context,
-            );
-            expect(toolResult.content[0]).toMatchObject({
-                type: "text",
-                text: expect.stringContaining(toolName),
-            });
-        }
+        const hiddenResponse = userBash?.(
+            { command: "printf hidden-host", excludeFromContext: true },
+            {} as ExtensionContext,
+        ) as { operations: BashOperations };
+        const hiddenChunks: string[] = [];
+        await hiddenResponse.operations.exec(
+            "printf hidden-host",
+            process.cwd(),
+            { onData: (chunk) => hiddenChunks.push(chunk.toString()) },
+        );
+        expect(hiddenChunks.join("")).toBe("hidden-host");
+
     });
 
-    test("routes bash, safe_bash, and user_bash through one enabled runtime", async () => {
+    test("routes bash and safe_bash through Sandbox, and !s and !!s explicitly through Sandbox", async () => {
         const commands: string[] = [];
         const operations: BashOperations = {
             exec: async (command, _cwd, options) => {
@@ -191,10 +195,16 @@ describe("bash-execution ownership", () => {
             );
         }
         const userBash = registered.hooks.get("user_bash")?.[0];
-        const response = userBash?.({}, context) as {
+        const response = userBash?.({ command: "s printf user_bash" }, context) as {
             operations: BashOperations;
         };
-        await response.operations.exec("printf user_bash", process.cwd(), {
+        await response.operations.exec("s printf user_bash", process.cwd(), {
+            onData: () => undefined,
+        });
+        const hiddenResponse = userBash?.({ command: "s printf hidden", excludeFromContext: true }, context) as {
+            operations: BashOperations;
+        };
+        await hiddenResponse.operations.exec("s printf hidden", process.cwd(), {
             onData: () => undefined,
         });
 
@@ -202,6 +212,7 @@ describe("bash-execution ownership", () => {
             "printf bash",
             "printf safe_bash",
             "printf user_bash",
+            "printf hidden",
         ]);
     });
 
@@ -210,11 +221,11 @@ describe("bash-execution ownership", () => {
             publish({ state });
             const registered = register();
             const userBash = registered.hooks.get("user_bash")?.[0];
-            const response = userBash?.({}, {} as ExtensionContext) as {
+            const response = userBash?.({ command: "s true" }, {} as ExtensionContext) as {
                 operations: BashOperations;
             };
             await expect(
-                response.operations.exec("true", process.cwd(), {
+                response.operations.exec("s true", process.cwd(), {
                     onData: () => undefined,
                 }),
             ).rejects.toThrow(
@@ -238,5 +249,18 @@ describe("bash-execution ownership", () => {
                 );
             }
         }
+    });
+
+    test("rejects !s without a command without falling back to the host", async () => {
+        publish({ state: "disabled" });
+        const registered = register();
+        const userBash = registered.hooks.get("user_bash")?.[0];
+        const response = userBash?.({ command: "s" }, executionContext()) as {
+            operations: BashOperations;
+        };
+
+        await expect(
+            response.operations.exec("s", process.cwd(), { onData() {} }),
+        ).rejects.toThrow("Usage: !s <command>");
     });
 });

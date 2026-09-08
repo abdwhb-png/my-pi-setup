@@ -71,6 +71,7 @@ import {
     ownsSandboxRuntime,
     publishSandboxRuntime,
     releaseSandboxRuntime,
+    type SandboxAnalysisRuntime,
     type SandboxBashOperationOptions,
 } from "../_shared/sandbox-runtime/index.ts";
 import { createUiColors, type UiColorsCreation } from "../_shared/ui/ui-colors";
@@ -138,6 +139,7 @@ const DOCKER_ICON = "🐳";
 const OFF_ICON = "⚠️";
 const WIDGET_ID = "pi-sandbox";
 const DOCKER_BREAK_GLASS_DURATION_MS = 5 * 60 * 1000;
+const ANALYSIS_RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 300_000] as const;
 
 /** Return a bounded, path-safe state filename scoped to one public Pi session identity. */
 export function sessionStateFilename(sessionId: string): string {
@@ -340,6 +342,8 @@ export function renderSandboxStatusDetails(
         `  Deny Write: ${config.filesystem?.denyWrite?.join(", ") || "(none)"}`,
         "",
         "Use /sandbox on or /sandbox off to toggle.",
+        "Shell: ! <command> host; !! <command> host outside model context; !s <command> Sandbox; !!s <command> Sandbox outside model context.",
+        "!s without a command fails closed and does not fall back to the host.",
     ];
     return lines.join("\n");
 }
@@ -970,11 +974,25 @@ export default function (pi: ExtensionAPI) {
     };
 
     let transitionGeneration = 0;
+    let analysisRetryTimer: ReturnType<typeof setTimeout> | undefined;
+    let analysisRetryAttempt = 0;
+    let analysisAttemptGeneration: number | undefined;
+
+    const clearAnalysisRecovery = (): void => {
+        if (analysisRetryTimer !== undefined) {
+            clearTimeout(analysisRetryTimer);
+            analysisRetryTimer = undefined;
+        }
+        analysisRetryAttempt = 0;
+        analysisAttemptGeneration = undefined;
+    };
+
     const beginTransition = (
         ctx?: ExtensionContext,
         initial = false,
     ): number | undefined => {
         clearBreakGlassExpiry();
+        clearAnalysisRecovery();
         transitionGeneration += 1;
         const generation = transitionGeneration;
         const published = publishSandboxRuntime(runtimeOwner, {
@@ -1103,52 +1121,101 @@ export default function (pi: ExtensionAPI) {
         if (failure !== undefined) throw failure;
     };
 
-    const cleanupCandidates = async (
-        candidateSandbox: SandboxService,
-        candidateAnalysis: AnalysisSandboxService,
+    const cleanupSandboxCandidate = async (
+        candidate: SandboxService,
     ): Promise<void> => {
-        const analysisCleanup =
-            inFlightAnalysisCandidates.has(candidateAnalysis) ||
-            pendingAnalysisCleanup.has(candidateAnalysis)
-                ? cleanupAnalysisService(candidateAnalysis)
-                : Promise.resolve();
-        const sandboxCleanup =
-            inFlightSandboxCandidates.has(candidateSandbox) ||
-            pendingSandboxCleanup.has(candidateSandbox)
-                ? cleanupSandboxService(candidateSandbox)
-                : Promise.resolve();
-        const results = await Promise.allSettled([
-            analysisCleanup,
-            sandboxCleanup,
-        ]);
-        let failure: unknown;
-        if (results[0]?.status === "rejected") {
-            failure = results[0].reason;
+        if (
+            !inFlightSandboxCandidates.has(candidate) &&
+            !pendingSandboxCleanup.has(candidate)
+        ) {
+            return;
         }
-        if (results[1]?.status === "rejected") {
-            if (failure === undefined) failure = results[1].reason;
-            else attachCleanupFailure(failure, results[1].reason);
+        await cleanupSandboxService(candidate);
+    };
+
+    const startAnalysisAttempt = (
+        ctx: ExtensionContext,
+        generation: number,
+        availability: SandboxAnalysisRuntime,
+    ): void => {
+        if (
+            !isCurrentTransition(generation) ||
+            analysisAttemptGeneration === generation
+        ) {
+            return;
         }
-        if (failure !== undefined) throw failure;
+        const candidate = createAnalysisSandboxService();
+        analysisAttemptGeneration = generation;
+        inFlightAnalysisCandidates.add(candidate);
+
+        void (async () => {
+            try {
+                await candidate.preflight();
+                if (
+                    !isCurrentTransition(generation) ||
+                    sandboxService === null
+                ) {
+                    await cleanupAnalysisService(candidate).catch(() => {
+                        // The next transition retries retained cleanup.
+                    });
+                    return;
+                }
+                analysisService = candidate;
+                inFlightAnalysisCandidates.delete(candidate);
+                availability.state = "ready";
+                availability.service = candidate;
+                delete availability.diagnostic;
+                analysisRetryAttempt = 0;
+            } catch (error) {
+                await cleanupAnalysisService(candidate).catch(() => {
+                    // Analysis cleanup must not disable a healthy Bash runtime.
+                });
+                if (!isCurrentTransition(generation)) return;
+                availability.state = "retrying";
+                delete availability.service;
+                availability.diagnostic =
+                    error instanceof Error ? error.message : String(error);
+                ctx.ui.notify(
+                    "Analysis indisponible, réessai en cours",
+                    "warning",
+                );
+                const delay =
+                    ANALYSIS_RETRY_DELAYS_MS[
+                        Math.min(
+                            analysisRetryAttempt,
+                            ANALYSIS_RETRY_DELAYS_MS.length - 1,
+                        )
+                    ];
+                analysisRetryAttempt += 1;
+                analysisRetryTimer = setTimeout(() => {
+                    analysisRetryTimer = undefined;
+                    startAnalysisAttempt(ctx, generation, availability);
+                }, delay);
+                analysisRetryTimer.unref?.();
+            } finally {
+                if (analysisAttemptGeneration === generation) {
+                    analysisAttemptGeneration = undefined;
+                }
+            }
+        })();
     };
 
     const enableServices = async (
         cwd: string,
         config: SandboxConfig,
         generation: number,
+        ctx: ExtensionContext,
     ): Promise<boolean> => {
         const candidateSandbox = createSandboxService({
             backend: createZeroboxBackend(),
             config,
         });
-        const candidateAnalysis = createAnalysisSandboxService();
         inFlightSandboxCandidates.add(candidateSandbox);
-        inFlightAnalysisCandidates.add(candidateAnalysis);
         const abandonStaleCandidate = async (): Promise<false> => {
             try {
-                await cleanupCandidates(candidateSandbox, candidateAnalysis);
+                await cleanupSandboxCandidate(candidateSandbox);
             } catch {
-                // cleanupCandidates retains failures for the next transition.
+                // Cleanup is retained for the next transition.
             }
             return false;
         };
@@ -1157,14 +1224,14 @@ export default function (pi: ExtensionAPI) {
             if (!isCurrentTransition(generation)) {
                 return abandonStaleCandidate();
             }
-            await candidateAnalysis.preflight();
+            await shutdownServices(candidateSandbox);
             if (!isCurrentTransition(generation)) {
                 return abandonStaleCandidate();
             }
-            await shutdownServices(candidateSandbox, candidateAnalysis);
-            if (!isCurrentTransition(generation)) {
-                return abandonStaleCandidate();
-            }
+            const analysis: SandboxAnalysisRuntime = {
+                state: "retrying",
+                diagnostic: "Analysis starting",
+            };
             const published = publishSandboxRuntime(runtimeOwner, {
                 state: "enabled",
                 dockerAccess: summarizeDockerAccess(config.docker),
@@ -1174,7 +1241,7 @@ export default function (pi: ExtensionAPI) {
                         bashProcessSupervisor,
                         options,
                     ),
-                analysis: candidateAnalysis,
+                analysis,
                 createThinkBashOperations: (options) =>
                     createSandboxedBashOps(
                         candidateSandbox,
@@ -1184,17 +1251,17 @@ export default function (pi: ExtensionAPI) {
                     ),
             });
             if (!published) {
-                await cleanupCandidates(candidateSandbox, candidateAnalysis);
+                await cleanupSandboxCandidate(candidateSandbox);
                 return false;
             }
             sandboxService = candidateSandbox;
-            analysisService = candidateAnalysis;
             inFlightSandboxCandidates.delete(candidateSandbox);
-            inFlightAnalysisCandidates.delete(candidateAnalysis);
+            analysisRetryAttempt = 0;
+            startAnalysisAttempt(ctx, generation, analysis);
             return true;
         } catch (error) {
             try {
-                await cleanupCandidates(candidateSandbox, candidateAnalysis);
+                await cleanupSandboxCandidate(candidateSandbox);
             } catch (cleanup) {
                 attachCleanupFailure(error, cleanup);
             }
@@ -1296,6 +1363,7 @@ export default function (pi: ExtensionAPI) {
                         ctx.cwd,
                         baseConfig,
                         generation,
+                        ctx,
                     );
                     if (!isCurrentTransition(generation) || !enabled) return;
                     sandboxEnabled = true;
@@ -1437,7 +1505,12 @@ export default function (pi: ExtensionAPI) {
         }
 
         try {
-            const enabled = await enableServices(ctx.cwd, config, generation);
+            const enabled = await enableServices(
+                ctx.cwd,
+                config,
+                generation,
+                ctx,
+            );
             if (!isCurrentTransition(generation) || !enabled) return;
             sandboxEnabled = true;
             updateSandboxStatus(ctx, "on", config.docker);
@@ -1761,6 +1834,7 @@ export default function (pi: ExtensionAPI) {
                         ctx.cwd,
                         runtimeConfig,
                         generation,
+                        ctx,
                     );
                     if (!isCurrentTransition(generation) || !enabled) return;
                     sandboxEnabled = true;
@@ -1955,6 +2029,7 @@ export default function (pi: ExtensionAPI) {
                         ctx.cwd,
                         config,
                         generation,
+                        ctx,
                     );
                     if (!isCurrentTransition(generation) || !enabled) return;
                     sandboxEnabled = true;
@@ -2043,6 +2118,7 @@ export default function (pi: ExtensionAPI) {
                         ctx.cwd,
                         resolved.config,
                         generation,
+                        ctx,
                     );
                     if (!isCurrentTransition(generation) || !enabled) return;
                     sandboxEnabled = true;
@@ -2092,6 +2168,7 @@ export default function (pi: ExtensionAPI) {
                         ctx.cwd,
                         config,
                         generation,
+                        ctx,
                     );
                     if (!isCurrentTransition(generation) || !enabled) return;
                     sandboxEnabled = true;

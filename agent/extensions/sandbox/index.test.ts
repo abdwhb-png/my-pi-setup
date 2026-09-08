@@ -393,6 +393,19 @@ describe('renderSandboxStatusDetails', () => {
         expect(output).not.toContain('host control');
     });
 
+    it('documents host and explicit Sandbox shell prefixes', () => {
+        const output = renderSandboxStatusDetails(
+            resolvedWithDocker({ mode: 'disabled' }),
+            true,
+        );
+
+        expect(output).toContain('! <command> host');
+        expect(output).toContain('!! <command> host outside model context');
+        expect(output).toContain('!s <command> Sandbox');
+        expect(output).toContain('!!s <command> Sandbox outside model context');
+        expect(output).toContain('!s without a command fails closed');
+    });
+
     it('warns for full Docker access without exposing the endpoint', () => {
         const output = renderSandboxStatusDetails(
             resolvedWithDocker({

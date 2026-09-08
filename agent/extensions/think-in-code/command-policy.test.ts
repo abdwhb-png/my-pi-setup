@@ -113,14 +113,17 @@ describe("Think command policy", () => {
                           createBashOperations: () => ({ exec: async () => { throw new Error("development operations must not run for Think"); } }),
                           createThinkBashOperations: () => operations,
                           analysis: {
-                              run: async () => ({
-                                  output: "unused",
-                                  stderr: "",
-                                  runtime: "quickjs",
-                                  durationMs: 0,
-                                  truncated: false,
-                              }),
-                              shutdown: async () => undefined,
+                              state: "ready",
+                              service: {
+                                  run: async () => ({
+                                      output: "unused",
+                                      stderr: "",
+                                      runtime: "quickjs",
+                                      durationMs: 0,
+                                      truncated: false,
+                                  }),
+                                  shutdown: async () => undefined,
+                              },
                           },
                       }
                     : { state },

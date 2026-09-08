@@ -34,7 +34,7 @@ describe("sandbox runtime v2", () => {
             state: "enabled" as const,
             createBashOperations: () => ({ exec: async () => { calls.push(label); return { exitCode: 0 }; } }),
             createThinkBashOperations: () => ({ exec: async () => { calls.push(`think-${label}`); return { exitCode: 0 }; } }),
-            analysis: { run: async () => ({ output: label, stderr: "", runtime: "quickjs" as const, durationMs: 1, truncated: false }), shutdown: async () => undefined },
+            analysis: { state: "ready" as const, service: { run: async () => ({ output: label, stderr: "", runtime: "quickjs" as const, durationMs: 1, truncated: false }), shutdown: async () => undefined } },
         });
         publishSandboxRuntime(owner, snapshot("old"));
         const bash = createSandboxBashOperations();
@@ -73,7 +73,7 @@ describe("sandbox runtime v2", () => {
                 state: "enabled",
                 createBashOperations: () => ({ exec }),
                 createThinkBashOperations: () => ({ exec }),
-                analysis,
+                analysis: { state: "ready", service: analysis },
             }),
         ).toBe(true);
 
@@ -126,7 +126,7 @@ describe("sandbox runtime v2", () => {
             state: "enabled",
             createBashOperations: () => ({ exec: async (_command, _cwd, options) => { timeout = options.timeout ?? 0; runs++; return { exitCode: 0 }; } }),
             createThinkBashOperations: () => { throw new Error("wrong profile"); },
-            analysis: { run: async () => { throw new Error("wrong path"); }, shutdown: async () => undefined },
+            analysis: { state: "ready" as const, service: { run: async () => { throw new Error("wrong path"); }, shutdown: async () => undefined } },
         });
         await pending;
         expect(runs).toBe(1);
@@ -154,7 +154,7 @@ describe("sandbox runtime v2", () => {
                 state: "enabled",
                 createBashOperations: () => ({ exec: async () => { runs++; return { exitCode: 0 }; } }),
                 createThinkBashOperations: () => { throw new Error("wrong profile"); },
-                analysis: { run: async () => { throw new Error("wrong path"); }, shutdown: async () => undefined },
+                analysis: { state: "ready", service: { run: async () => { throw new Error("wrong path"); }, shutdown: async () => undefined } },
             });
             expect(await pending).toBeInstanceOf(Error);
             expect(runs).toBe(0);
@@ -169,7 +169,7 @@ describe("sandbox runtime v2", () => {
             state: "enabled",
             createBashOperations: () => ({ exec: () => { runs++; return new Promise((resolve) => { finish = resolve; }); } }),
             createThinkBashOperations: () => { throw new Error("wrong profile"); },
-            analysis: { run: async () => { throw new Error("wrong path"); }, shutdown: async () => undefined },
+            analysis: { state: "ready" as const, service: { run: async () => { throw new Error("wrong path"); }, shutdown: async () => undefined } },
         });
         const pending = createSandboxBashOperations().exec("true", "/tmp", { onData() {} });
         publishSandboxRuntime(owner, { state: "reconfiguring" });
@@ -185,7 +185,7 @@ describe("sandbox runtime v2", () => {
         const enabled = { state: "enabled" as const,
             createBashOperations: () => ({ exec: async () => { runs++; return { exitCode: 0 }; } }),
             createThinkBashOperations: () => { throw new Error("wrong profile"); },
-            analysis: { run: async () => { throw new Error("wrong path"); }, shutdown: async () => undefined },
+            analysis: { state: "ready" as const, service: { run: async () => { throw new Error("wrong path"); }, shutdown: async () => undefined } },
         };
         const pending = createSandboxBashOperations().exec("true", "/tmp", { onData() {}, timeout: 1 }).catch((error: Error) => error);
         publishSandboxRuntime(owner, enabled);

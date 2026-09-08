@@ -62,17 +62,26 @@ export interface ThinkInCodeRegistrationOptions {
 
 const ROLE_TOOL_POLICY_EVENT = "pi-roles:tool-policy";
 
-function sandboxUnavailableReason(): string | undefined {
+function sandboxUnavailableError(): SandboxUnavailableError | undefined {
     const runtime = getSandboxRuntime();
-    if (runtime.state === "enabled" || runtime.state === "reconfiguring")
-        return undefined;
+    if (runtime.state === "enabled") {
+        if (runtime.analysis.state === "ready") return undefined;
+        return new SandboxUnavailableError(
+            "analysis-unavailable",
+            runtime.analysis.diagnostic,
+        );
+    }
     const kind: SandboxUnavailableKind =
         runtime.state === "disabled"
             ? "disabled"
             : runtime.state === "error"
               ? "initialization-failed"
               : "uninitialized";
-    return new SandboxUnavailableError(kind).message;
+    return new SandboxUnavailableError(kind);
+}
+
+function sandboxUnavailableReason(): string | undefined {
+    return sandboxUnavailableError()?.message;
 }
 
 export function registerThinkInCode(
@@ -90,22 +99,25 @@ export function registerThinkInCode(
     let telemetrySequence = 0;
     let telemetryWarningReported = false;
     let auditRecommendationTurnActive = false;
-    let restoreExecuteWhenSandboxAvailable = false;
+    const hiddenThinkTools = new Set<string>();
     let rolePolicyListenerRegistered = false;
 
     function syncSandboxToolVisibility(): void {
         const activeTools = new Set(pi.getActiveTools());
-        const runtimeState = getSandboxRuntime().state;
-        if (runtimeState !== "enabled" && runtimeState !== "reconfiguring") {
-            if (activeTools.delete(TOOL_NAMES.execute)) {
-                restoreExecuteWhenSandboxAvailable = true;
-                pi.setActiveTools([...activeTools]);
+        if (sandboxUnavailableReason() !== undefined) {
+            let changed = false;
+            for (const toolName of THINK_TOOL_NAMES) {
+                if (activeTools.delete(toolName)) {
+                    hiddenThinkTools.add(toolName);
+                    changed = true;
+                }
             }
+            if (changed) pi.setActiveTools([...activeTools]);
             return;
         }
-        if (restoreExecuteWhenSandboxAvailable) {
-            activeTools.add(TOOL_NAMES.execute);
-            restoreExecuteWhenSandboxAvailable = false;
+        if (hiddenThinkTools.size > 0) {
+            for (const toolName of hiddenThinkTools) activeTools.add(toolName);
+            hiddenThinkTools.clear();
             pi.setActiveTools([...activeTools]);
         }
     }
@@ -212,6 +224,10 @@ export function registerThinkInCode(
                     config.retentionHours,
                 ),
             async execute(toolCallId, params, signal, onUpdate, ctx) {
+                const unavailable = sandboxUnavailableError();
+                if (unavailable !== undefined) {
+                    throw unavailable;
+                }
                 return asResult(
                     handlers.execute(
                         params as Record<string, unknown>,
@@ -237,6 +253,10 @@ export function registerThinkInCode(
                     config.retentionHours,
                 ),
             async execute(toolCallId, params, _signal, _onUpdate, _ctx) {
+                const unavailable = sandboxUnavailableError();
+                if (unavailable !== undefined) {
+                    throw unavailable;
+                }
                 return asResult(
                     handlers.artifactSearch({
                         ...(params as Record<string, unknown>),
@@ -276,7 +296,12 @@ export function registerThinkInCode(
                 reason: "think audit is recommendation-only; all tool execution is disabled for this analysis turn.",
             };
         }
-        if (event.toolName !== TOOL_NAMES.execute) return undefined;
+        if (
+            event.toolName !== TOOL_NAMES.execute &&
+            event.toolName !== TOOL_NAMES.artifactSearch
+        ) {
+            return undefined;
+        }
         const reason = sandboxUnavailableReason();
         if (!reason) return undefined;
         syncSandboxToolVisibility();

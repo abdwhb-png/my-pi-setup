@@ -21,6 +21,17 @@ export interface AnalysisSandboxPort {
     shutdown(): Promise<void>;
 }
 
+/**
+ * Analysis becomes ready independently from the Bash sandbox. The object is
+ * intentionally mutable: changing only Analysis readiness must not interrupt
+ * Bash operations that captured the enabled runtime snapshot.
+ */
+export interface SandboxAnalysisRuntime {
+    state: "ready" | "retrying";
+    diagnostic?: string;
+    service?: AnalysisSandboxPort;
+}
+
 export interface SandboxBashOperationOptions {
     onExecution?: ExecutionObserver;
     stdin?: string;
@@ -41,7 +52,7 @@ export type SandboxRuntimeSnapshot =
           createThinkBashOperations(
               options: SandboxBashOperationOptions,
           ): BashOperations;
-          analysis: AnalysisSandboxPort;
+          analysis: SandboxAnalysisRuntime;
       };
 
 interface SandboxRuntimeRegistry {
@@ -106,6 +117,7 @@ export type SandboxUnavailableKind =
     | "uninitialized"
     | "disabled"
     | "initialization-failed"
+    | "analysis-unavailable"
     | "reconfiguration-timeout"
     | "session-changed"
     | "execution-interrupted";
@@ -117,6 +129,7 @@ const VALID_UNAVAILABLE_KINDS: ReadonlySet<SandboxUnavailableKind> = new Set([
     "uninitialized",
     "disabled",
     "initialization-failed",
+    "analysis-unavailable",
     "reconfiguration-timeout",
     "session-changed",
     "execution-interrupted",
@@ -126,6 +139,7 @@ const SURFACED_REASON: Readonly<Record<SandboxUnavailableKind, string>> = {
     disabled: "Sandbox execution unavailable: disabled",
     "initialization-failed":
         "Sandbox execution unavailable: initialization failed",
+    "analysis-unavailable": "analysis-unavailable",
     "reconfiguration-timeout":
         "Sandbox reconfiguration did not finish in time; the request was not executed",
     "session-changed":
@@ -331,8 +345,17 @@ export function getSandboxAnalysisPort(): AnalysisSandboxPort {
                 session,
                 signal,
                 budget,
-                (snapshot, remaining) =>
-                    snapshot.analysis.run(
+                (snapshot, remaining) => {
+                    if (
+                        snapshot.analysis.state !== "ready" ||
+                        !snapshot.analysis.service
+                    ) {
+                        throw new SandboxUnavailableError(
+                            "analysis-unavailable",
+                            snapshot.analysis.diagnostic,
+                        );
+                    }
+                    return snapshot.analysis.service.run(
                         {
                             ...request,
                             limits: {
@@ -341,7 +364,8 @@ export function getSandboxAnalysisPort(): AnalysisSandboxPort {
                             },
                         },
                         signal,
-                    ),
+                    );
+                },
             );
         },
         async shutdown() {
@@ -350,8 +374,12 @@ export function getSandboxAnalysisPort(): AnalysisSandboxPort {
                 current.owner === owner &&
                 current.session === session &&
                 current.snapshot.state === "enabled"
-            )
-                await current.snapshot.analysis.shutdown();
+            ) {
+                const analysis = current.snapshot.analysis;
+                if (analysis.state === "ready" && analysis.service) {
+                    await analysis.service.shutdown();
+                }
+            }
         },
     };
 }
