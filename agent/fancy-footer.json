@@ -1,5 +1,10 @@
 {
     "refreshMs": 1500,
+    "responsive": {
+        "enabled": false,
+        "compactBelowRows": 37,
+        "maxBelowEditorRows": 2
+    },
     "iconFamily": "emoji",
     "gaugeStyle": "blocks",
     "gaugeWidth": 10,
@@ -53,6 +58,15 @@
         "git-status": {
             "enabled": false
         },
+        "pull-request": {
+            "enabled": false
+        },
+        "pull-request-ci-status": {
+            "enabled": false
+        },
+        "pull-request-review-threads": {
+            "enabled": false
+        },
         "extension-statuses": {
             "row": 0
         }
@@ -94,11 +108,6 @@
             "position": 0,
             "align": "left"
         },
-        "pi-sandbox": {
-            "row": 2,
-            "position": 1,
-            "align": "left"
-        },
         "audit-mode": {
             "row": 2,
             "position": 2,
@@ -121,8 +130,13 @@
             "row": 2,
             "align": "right"
         },
-        "brainstorm-forcer": {
+        "pi-sandbox": {
             "row": 3,
+            "position": 1,
+            "align": "left"
+        },
+        "brainstorm-forcer": {
+            "row": 4,
             "align": "left"
         },
         "pi-lens": {

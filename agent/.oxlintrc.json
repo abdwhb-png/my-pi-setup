@@ -1,103 +1,96 @@
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "typescript",
-    "unicorn",
-    "oxc"
-  ],
-  "options": {
-    "typeAware": true
-  },
-  "categories": {
-    "correctness": "error",
-    "suspicious": "warn",
-    "perf": "warn"
-  },
-  "rules": {
-    "typescript/no-deprecated": "error",
-    // Unsafe operations (calls, assigns) if an 'any' leaks in
-    "@typescript-eslint/no-unsafe-call": "off", // appeler une fonction dont le type est any
-    "@typescript-eslint/no-unsafe-argument": "off", // passer une valeur any comme argument à une fonction
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "plugins": ["typescript", "unicorn", "oxc"],
+    "options": {
+        "typeAware": true
+    },
+    "categories": {
+        "correctness": "error",
+        "suspicious": "warn",
+        "perf": "warn"
+    },
+    "rules": {
+        "typescript/no-deprecated": "error",
+        // Unsafe operations (calls, assigns) if an 'any' leaks in
+        "@typescript-eslint/no-unsafe-call": "off", // appeler une fonction dont le type est any
+        "@typescript-eslint/no-unsafe-argument": "off", // passer une valeur any comme argument à une fonction
 
-    "eslint/no-unused-vars": "warn",
-    "no-underscore-dangle": [
-      "warn",
-      {
-        "allow": [
-          "_output",
-          "_freshSession",
-          "_makeSampleReport",
-          "_MAX_RETRIES"
-        ]
-      }
-    ],
-    "no-control-regex": "off",
-  },
-  "env": {
-    "builtin": true
-  },
-  "ignorePatterns": [
-    "skills/",
-    "scripts/",
-    "*.test.ts",
-    "extensions-legacy/",
-    "extensions/aldoborrero-pi-agent-kit/",
-    "extensions/ogulcancelik-pi-extensions/",
-    "extensions/herdr-agent-state.ts"
-  ],
-  "overrides": [
-    {
-      "files": [
-        "**/*.test.ts"
-      ],
-      "rules": {
-        "no-console": "off",
-        "no-unused-vars": "off",
-        "no-underscore-dangle": "off",
-        "unicorn/consistent-function-scoping": "off"
-      }
-    },
-    {
-      "files": [
-        "extensions/update/core.ts",
-        "extensions/ephemeral/apply.ts"
-      ],
-      "rules": {
-        "no-await-in-loop": "off"
-      }
-    },
-    {
-      "files": [
-        "extensions/_shared/**",
-        "extensions/ai-providers/**",
-        "extensions/audit-mode/**",
-        "extensions/pi-overrides/**",
-        "extensions/pi-roles-addons/**",
-        "extensions/safe-bash/**",
-        "extensions/sandbox/**",
-        "extensions/save-tokens/**",
-        "extensions/slow-mode/**",
-        "extensions/package-finalizer.ts",
-        "extensions/pi-file-resolver.ts"
-      ],
-      "rules": {
-        "@typescript-eslint/no-unsafe-assignment": "error", // assigner une valeur any à une variable normalement typée
-        "@typescript-eslint/no-unsafe-member-access": "error", // accéder à une propriété d'un objet dont le type est any
-        "@typescript-eslint/no-unsafe-return": "error", // retourner une valeur any depuis une fonction normalement typée
-        // Warn on explicit usage of the 'any' keyword
-        "@typescript-eslint/no-explicit-any": "warn",
-        // Blocks explicit usage of the 'unknown' keyword using the modern replacement for ban-types
-        "@typescript-eslint/no-restricted-types": [
-          "warn",
-          {
-            "types": {
-              "unknown": {
-                "message": "Prefer concrete types over 'unknown' where possible.",
-              }
+        "eslint/no-unused-vars": "warn",
+        "no-underscore-dangle": [
+            "warn",
+            {
+                "allow": [
+                    "_output",
+                    "_freshSession",
+                    "_makeSampleReport",
+                    "_MAX_RETRIES"
+                ]
             }
-          }
-        ]
-      }
-    }
-  ]
+        ],
+        "no-control-regex": "off"
+    },
+    "env": {
+        "builtin": true
+    },
+    "ignorePatterns": [
+        "skills/",
+        "scripts/",
+        "*.test.ts",
+        "extensions-legacy/",
+        "extensions/aldoborrero-pi-agent-kit/",
+        "extensions/ogulcancelik-pi-extensions/",
+        "extensions/herdr-agent-state.ts"
+    ],
+    "overrides": [
+        {
+            "files": ["**/*.test.ts"],
+            "rules": {
+                "no-console": "off",
+                "no-unused-vars": "off",
+                "no-underscore-dangle": "off",
+                "unicorn/consistent-function-scoping": "off"
+            }
+        },
+        {
+            "files": [
+                "extensions/update/core.ts",
+                "extensions/ephemeral/apply.ts"
+            ],
+            "rules": {
+                "no-await-in-loop": "off"
+            }
+        },
+        {
+            "files": [
+                "extensions/_shared/**",
+                "extensions/ai-providers/**",
+                "extensions/audit-mode/**",
+                "extensions/pi-overrides/**",
+                "extensions/safe-bash/**",
+                "extensions/sandbox/**",
+                "extensions/save-tokens/**",
+                "extensions/slow-mode/**",
+                "extensions/package-finalizer.ts",
+                "extensions/pi-file-resolver.ts"
+            ],
+            "rules": {
+                "@typescript-eslint/no-unsafe-assignment": "error", // assigner une valeur any à une variable normalement typée
+                "@typescript-eslint/no-unsafe-member-access": "error", // accéder à une propriété d'un objet dont le type est any
+                "@typescript-eslint/no-unsafe-return": "error", // retourner une valeur any depuis une fonction normalement typée
+                // Warn on explicit usage of the 'any' keyword
+                "@typescript-eslint/no-explicit-any": "warn",
+                // Blocks explicit usage of the 'unknown' keyword using the modern replacement for ban-types
+                "@typescript-eslint/no-restricted-types": [
+                    "warn",
+                    {
+                        "types": {
+                            "unknown": {
+                                "message": "Prefer concrete types over 'unknown' where possible."
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    ]
 }

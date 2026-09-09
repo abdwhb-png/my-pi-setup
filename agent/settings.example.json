@@ -19,11 +19,9 @@
         "npm:pi-mcp-adapter",
         "npm:@juicesharp/rpiv-todo",
         "npm:pi-hermes-memory",
-        "npm:pi-intercom",
         "~/projects/pi-integrations/plannotator/apps/pi-extension",
         "~/projects/pi-integrations/pi-fancy-footer",
         "npm:@gotgenes/pi-permission-system",
-        "~/projects/pi-integrations/pi-roles",
         "npm:@ogulcancelik/pi-herdr",
         "./extensions/tool-groups"
     ],
@@ -53,11 +51,7 @@
         }
     },
     "thinkInCode": {
-        "languages": [
-            "javascript",
-            "typescript",
-            "python"
-        ],
+        "languages": ["javascript", "typescript", "python"],
         "retentionHours": 24,
         "projectQuotaBytes": 536870912,
         "restoreTokenBudget": 1500,
@@ -122,7 +116,6 @@
     "pi-roles": {
         "roleScope": "both",
         "defaultRole": "pi-agent",
-        "intercom": "both",
         "showStatus": false
     },
     "subagents": {
@@ -156,7 +149,7 @@
                     "cpa/qwen/qwen3.6-plus-preview:free"
                 ],
                 "thinking": "high",
-                "tools": ["@inspect", "@lens", "safe_bash", "write", "intercom"]
+                "tools": ["@inspect", "@lens", "safe_bash", "write"]
             },
             "researcher": {
                 "model": "cpa/ocg/go-deepseek-v4-pro",
@@ -180,7 +173,7 @@
                     "cpa/deepseek/deepseek-v4-pro",
                     "cpa/nvidia/nemotron-3-super-120b-a12b:free"
                 ],
-                "tools": ["@inspect", "@lens", "write_plan", "intercom"]
+                "tools": ["@inspect", "@lens", "write_plan"]
             },
             "oracle": {
                 "model": "zai/glm-5.2",
@@ -211,8 +204,7 @@
                     "@lens",
                     "safe_bash",
                     "write",
-                    "@web",
-                    "intercom"
+                    "@web"
                 ]
             },
             "plan-reviewer": {

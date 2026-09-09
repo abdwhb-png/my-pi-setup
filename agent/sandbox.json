@@ -15,8 +15,10 @@
             "github.com",
             "*.github.com",
             "localhost:8317",
-            "localhost:8320"
+            "localhost:8320",
+            "localhost:18740"
         ],
+        "allowedHostDomains": ["*.dev.test:443"],
         "deniedDomains": []
     }
 }
