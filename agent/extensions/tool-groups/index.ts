@@ -250,6 +250,12 @@ export function createToolGroupsExtension(
                 resolveMcp,
             );
 
+            // Keep the requested concrete allowlist independent from current
+            // visibility. An owning extension may temporarily hide a tool
+            // while one of its runtime dependencies starts, then restore it
+            // later in the same session.
+            cliToolPolicy = [...requested.names];
+
             const candidates = requested.names.filter((name) =>
                 allowedNames.has(name),
             );
@@ -259,7 +265,6 @@ export function createToolGroupsExtension(
                 pi,
                 candidates,
             );
-            cliToolPolicy = [...reconciled];
             pi.setActiveTools(
                 childAllowedTools
                     ? reconciled.filter((name) => childAllowedTools.has(name))
@@ -339,11 +344,23 @@ export function createToolGroupsExtension(
             }
 
             let cliAllowed: Set<string> | undefined;
+            if (appliedRequestedTools && requestedTools?.length) {
+                const resolvedCli = resolveToolAliases(
+                    requestedTools,
+                    allToolNames,
+                    groups,
+                    resolveMcp,
+                );
+                cliToolPolicy = [...resolvedCli.names];
+                diagnostics.push(...resolvedCli.diagnostics);
+            }
             if (cliToolPolicy) {
                 cliAllowed = new Set(cliToolPolicy);
                 names = names
                     ? names.filter((name) => cliAllowed!.has(name))
-                    : [...cliToolPolicy];
+                    : pi
+                          .getActiveTools()
+                          .filter((name) => cliAllowed!.has(name));
             }
 
             if (childAllowedTools) {

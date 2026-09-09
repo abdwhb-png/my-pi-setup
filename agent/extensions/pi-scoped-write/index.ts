@@ -6,7 +6,7 @@ import {
     type ExtensionContext,
     withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
-import { getActiveRole } from "../_shared/pi-roles.ts";
+import { getActiveRole } from "../_shared/pi-roles/index.ts";
 import {
     createArtifactRootRegistry,
     createScopedWriter,

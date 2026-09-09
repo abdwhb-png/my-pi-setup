@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
-import { parseRoleSource } from '../../../../projects/pi-integrations/pi-roles/src/roles.ts';
+import { parseRoleSource } from '../pi-roles/core/roles.ts';
 import {
     isToolGroupsPackageLast,
     TOOL_GROUPS_PACKAGE_SOURCE,
@@ -252,7 +252,7 @@ describe('tool-groups configuration invariants', () => {
             'utf8',
         );
 
-        expect(instructions).toContain('Prefer existing tool groups');
+        expect(instructions).toContain('Prefer named groups');
         expect(instructions).toContain('agent/tool-groups.json');
         expect(instructions).toContain('exact least-privilege allowlist');
     });

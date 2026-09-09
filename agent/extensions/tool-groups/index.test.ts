@@ -348,6 +348,38 @@ describe('tool-groups extension', () => {
         expect(pi.getActiveTools()).toEqual(['read']);
     });
 
+    it('admits a requested group member after its owner restores temporary visibility', () => {
+        const pi = makeMockPi([]);
+        const factory = createToolGroupsExtension(
+            () => ({
+                groups: {
+                    think: ['think_artifact_search', 'think_execute'],
+                },
+            }),
+            () => ['@think'],
+        );
+        factory(pi as never);
+
+        pi._handlers.get('session_start')!(
+            { type: 'session_start', reason: 'startup' },
+            makeMockCtx(),
+        );
+        expect(pi.getActiveTools()).toEqual([]);
+
+        // The owning extension restores its tools when its dependency becomes
+        // ready. Registration can also finish after tool-groups session_start
+        // because extension startup handlers are asynchronous.
+        pi.registerTool({ name: 'think_execute' });
+        pi.registerTool({ name: 'think_artifact_search' });
+        pi.setActiveTools(['read', 'think_execute', 'think_artifact_search']);
+        pi.events.emit('pi-tool-groups:policy-refresh', undefined);
+
+        expect(pi.getActiveTools()).toEqual([
+            'think_execute',
+            'think_artifact_search',
+        ]);
+    });
+
     it('filters resolved child aliases through a private concrete tool policy', () => {
         const pi = makeMockPi(['read', 'write_report', 'structured_output']);
         pi.registerTool({ name: 'write_report' });
