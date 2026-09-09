@@ -20,6 +20,31 @@ import {
     type AnalysisHostDependencies,
 } from "./host.ts";
 import { normalizeAnalysisRequest } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
+import type { SandboxExecutionContextV1 } from "../../_shared/sandbox-runtime/execution-context.ts";
+
+const analysisContext: SandboxExecutionContextV1 = {
+    version: 1,
+    profile: "analysis-strict",
+    filesystem: { allowRead: ["/runtime"], denyRead: ["/tmp"], denyReadGlobs: [], allowWrite: ["<sandbox-home>", "<sandbox-tmp>"], denyWrite: ["/tmp"], denyWriteGlobs: [] },
+    network: {
+        mode: "deny-all",
+        allow: [],
+        allowHost: [],
+        deny: [],
+        domainClientProxyRequired: false,
+        loopback: {
+            hostNamespace: "isolated",
+            hostBridgePorts: [],
+            hostBridgeTransport: "disabled",
+            unlistedHostPorts: "blocked",
+            localListeners: "disabled",
+        },
+    },
+    tmp: { path: "/tmp", namespace: "lease-private" },
+    ipc: { hostUserDbus: "unavailable", hostUnixSockets: "unavailable" },
+    docker: { mode: "off", profile: "None", targets: [], hostAccessException: false },
+    environment: { inherit: [], set: ["HOME", "PATH", "TMPDIR"], deny: [] },
+};
 
 function deferred<T>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -52,6 +77,7 @@ function dependencies() {
                 readablePaths = paths;
                 return {
                     spawn: {
+                        sandboxContext: analysisContext,
                         file: "/managed/zerobox",
                         args: ["--status-fd=3", "--", command.file, ...command.args],
                         cwd: command.cwd,
@@ -102,6 +128,7 @@ describe("analysis sandbox host", () => {
 
         expect(result).toEqual({
             execution: unknownExecution(),
+            sandboxContext: analysisContext,
             output: "42",
             stderr: "",
             runtime: "quickjs",
@@ -188,6 +215,9 @@ describe("analysis sandbox host", () => {
         expect(rejection).toBe(primary);
         if (!(rejection instanceof Error)) throw new Error("expected Error");
         expect(Reflect.get(rejection, "cleanupError")).toBe(cleanup);
+        expect(Reflect.get(rejection, "sandboxExecutionContext")).toEqual(
+            analysisContext,
+        );
     });
 
     it("surfaces service shutdown failure in the host protocol response", async () => {
@@ -200,6 +230,7 @@ describe("analysis sandbox host", () => {
                 {
                     ok: false,
                     error: "worker failed",
+                    sandboxContext: analysisContext,
                 },
                 { shutdown },
             ),
@@ -207,6 +238,7 @@ describe("analysis sandbox host", () => {
             ok: false,
             error: "worker failed; cleanup failed: lease cleanup failed",
             execution: { ...unknownExecution(), phase: 'cleanup', outcome: 'failed' },
+            sandboxContext: analysisContext,
         });
         expect(shutdown).toHaveBeenCalledTimes(1);
     });

@@ -12,11 +12,11 @@ const QUICKJS_VARIANT_VERSION = "0.32.0";
 const AGENT_TYPESCRIPT_VERSION = "7.0.2";
 const SANDBOX_TYPESCRIPT_API_VERSION = "6.0.3";
 const SANDBOX_TYPESCRIPT_NATIVE_VERSION = "7.0.2";
-const ZEROBOX_VERSION = "0.3.3-fork.16";
+const ZEROBOX_VERSION = "0.3.3-fork.17";
 const ZEROBOX_SHA256 =
-    "8c5f1388169ff1911bcf497da511ec449e2d5968a2a0ae5b3a25116cd1e1b68a";
+    "abbbb91b3500556e77f9552d15be0f732e01862f6236c828455264bebcfec64b";
 const ZEROBOX_LOCAL_DIFF_SHA256 =
-    "a0660809cbe954389541da48fa007e714f64ffb9c6f66797d3a3f62098d9f18b";
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const MANAGED_ZEROBOX_PATH = join(homedir(), ".pi", "bin", "zerobox");
 const ZEROBOX_SOURCE_ROOT = join(
     homedir(),
@@ -25,7 +25,7 @@ const ZEROBOX_SOURCE_ROOT = join(
     "sandboxes",
     "zerobox",
 );
-const ZEROBOX_SOURCE_COMMIT = "d21bf650c100d09f79e4d217513ba66f0675c6c9";
+const ZEROBOX_SOURCE_COMMIT = "fff8a45a6092f78f7c4fefd57ad3fc9ac449ff94";
 const PREVIOUS_ZEROBOX_ROLLBACK_ROOT = join(
     homedir(),
     ".local",
@@ -158,7 +158,7 @@ describe("sandbox dependency contract", () => {
         ).json();
         expect(provenance).toEqual({
             version: ZEROBOX_VERSION,
-            tag: "v0.3.3-fork.16",
+            tag: "v0.3.3-fork.17",
             forkCommit: ZEROBOX_SOURCE_COMMIT,
             upstreamTag: "v0.3.3",
             upstreamCommit: "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
@@ -179,7 +179,16 @@ describe("sandbox dependency contract", () => {
         expect(createHash("sha256").update(binary).digest("hex")).toBe(
             ZEROBOX_SHA256,
         );
-        const sourceDiff = execFileSync("git", ["diff", "--binary", ZEROBOX_SOURCE_COMMIT], { cwd: ZEROBOX_SOURCE_ROOT });
+        const sourceDiff = execFileSync(
+            "git",
+            [
+                "diff",
+                "--binary",
+                ZEROBOX_SOURCE_COMMIT,
+                `v${ZEROBOX_VERSION}^{commit}`,
+            ],
+            { cwd: ZEROBOX_SOURCE_ROOT },
+        );
         expect(createHash("sha256").update(sourceDiff).digest("hex")).toBe(ZEROBOX_LOCAL_DIFF_SHA256);
         expect(
             execFileSync(MANAGED_ZEROBOX_PATH, ["--version"], {
@@ -192,7 +201,7 @@ describe("sandbox dependency contract", () => {
         expect(
             execFileSync(
                 "git",
-                ["rev-parse", "v0.3.3-fork.16^{commit}"],
+                ["rev-parse", "v0.3.3-fork.17^{commit}"],
                 { cwd: ZEROBOX_SOURCE_ROOT, encoding: "utf8" },
             ).trim(),
         ).toBe(ZEROBOX_SOURCE_COMMIT);

@@ -46,6 +46,8 @@ describe("accepted Zerobox safe_bash contract", () => {
             const command = [
                 "curl --fail --silent --show-error --insecure --max-time 15 https://shein-ecom.dev.test/ >/dev/null",
                 "curl --fail --silent --show-error --max-time 15 http://localhost:18740/ >/dev/null",
+                "printf 'GET / HTTP/1.0\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' | nc -w 5 127.0.0.1 18740 | grep -Eq '^HTTP/[0-9.]+ [0-9]{3}'",
+                "! nc -z -w 2 127.0.0.1 1",
             ].join(" && ");
 
             await session.run(
@@ -142,18 +144,185 @@ describe("accepted Zerobox safe_bash contract", () => {
             extensions: [SANDBOX_EXTENSION, BASH_EXECUTION_EXTENSION],
             propagateErrors: false,
         });
-        await session.run(
+        const running = session.run(
             when("Run the failing script", [
                 calls("safe_bash", { command: "./failure.sh" }),
                 says("Failure observed."),
             ]),
         );
+        const modelInputs: Array<{
+            systemPrompt: string;
+            messages: string;
+        }> = [];
+        const originalStream = session.session.agent.streamFunction;
+        session.session.agent.streamFunction = (model, context, options) => {
+            modelInputs.push({
+                systemPrompt: context.systemPrompt ?? "",
+                messages: JSON.stringify(context.messages),
+            });
+            return originalStream(model, context, options);
+        };
+        await running;
 
         const [result] = session.events.toolResultsFor("safe_bash");
         expect(result).toMatchObject({ isError: true, mocked: false });
         expect(result?.text).toBe(
             "real-safe-bash-error\n\n\nCommand exited with code 37",
         );
+        expect(result?.details).toMatchObject({
+            execution: {
+                status: "sandboxed",
+                profile: "bash-general",
+                outcome: "failed",
+                exitCode: 37,
+            },
+            sandboxExecutionContext: {
+                version: 1,
+                profile: "bash-general",
+                network: {
+                    loopback: {
+                        hostNamespace: "isolated",
+                        hostBridgePorts: [8317, 8320, 18740],
+                        hostBridgeTransport: "managed-policy-proxy",
+                        unlistedHostPorts: "blocked",
+                    },
+                },
+            },
+        });
+        expect(modelInputs[0]?.systemPrompt).toContain(
+            "Sandbox execution context v1",
+        );
+        expect(modelInputs[0]?.systemPrompt).toContain('"analysis-strict"');
+        expect(modelInputs[0]?.systemPrompt).toContain(
+            '"hostBridgePorts":[8317,8320,18740]',
+        );
+        expect(modelInputs.at(-1)?.messages).toContain(
+            "real-safe-bash-error",
+        );
+        expect(modelInputs.at(-1)?.messages).toContain(
+            "facts, not a causal diagnosis",
+        );
+        expect(
+            modelInputs
+                .at(-1)
+                ?.messages.match(/facts, not a causal diagnosis/g),
+        ).toHaveLength(1);
+    }, 30_000);
+
+    it("treats exit zero with stderr as a successful process", async () => {
+        inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
+        delete process.env[SESSION_STATUS_ENV];
+        fixture = await mkdtemp(resolve(AGENT_ROOT, ".zerobox-safe-bash-"));
+        session = await createTestSession({
+            cwd: fixture,
+            extensions: [SANDBOX_EXTENSION, BASH_EXECUTION_EXTENSION],
+            propagateErrors: false,
+        });
+
+        await session.run(
+            when("Run a successful noisy command", [
+                calls("safe_bash", {
+                    command: "printf 'ordinary warning\\n' >&2; exit 0",
+                }),
+                says("Success observed."),
+            ]),
+        );
+
+        const [result] = session.events.toolResultsFor("safe_bash");
+        expect(result).toMatchObject({
+            mocked: false,
+            isError: false,
+            details: {
+                execution: {
+                    status: "sandboxed",
+                    outcome: "succeeded",
+                    exitCode: 0,
+                },
+            },
+        });
+        expect(result?.text).toContain("ordinary warning");
+        expect(result?.details).not.toHaveProperty("sandboxExecutionContext");
+    }, 30_000);
+
+    it("keeps git init config readable through the installed dynamic-deny runtime", async () => {
+        inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
+        delete process.env[SESSION_STATUS_ENV];
+        fixture = await mkdtemp(resolve(AGENT_ROOT, ".zerobox-safe-bash-"));
+        session = await createTestSession({
+            cwd: fixture,
+            extensions: [SANDBOX_EXTENSION, BASH_EXECUTION_EXTENSION],
+            propagateErrors: false,
+        });
+
+        await session.run(
+            when("Initialize a Git repository", [
+                calls("safe_bash", {
+                    command: [
+                        "git init -b dev repo >/dev/null",
+                        "test -f repo/.git/config",
+                        'test "$(git -C repo config --get core.repositoryformatversion)" = 0',
+                        "cat repo/.git/config",
+                    ].join(" && "),
+                }),
+                says("Git repository initialized."),
+            ]),
+        );
+
+        const [result] = session.events.toolResultsFor("safe_bash");
+        expect(result).toMatchObject({
+            mocked: false,
+            isError: false,
+            details: {
+                execution: {
+                    status: "sandboxed",
+                    profile: "bash-general",
+                    outcome: "succeeded",
+                    exitCode: 0,
+                },
+            },
+        });
+        expect(result?.text).toContain("repositoryformatversion = 0");
+    }, 30_000);
+
+    it("keeps the host user D-Bus and systemctl user manager unavailable", async () => {
+        inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
+        delete process.env[SESSION_STATUS_ENV];
+        fixture = await mkdtemp(resolve(AGENT_ROOT, ".zerobox-safe-bash-"));
+        session = await createTestSession({
+            cwd: fixture,
+            extensions: [SANDBOX_EXTENSION, BASH_EXECUTION_EXTENSION],
+            propagateErrors: false,
+        });
+        const unixProbe = [
+            "const net=require('node:net')",
+            "const path='/run/user/'+process.getuid()+'/bus'",
+            "const socket=net.createConnection(path)",
+            "socket.once('connect',()=>process.exit(42))",
+            "socket.once('error',()=>process.exit(0))",
+            "setTimeout(()=>process.exit(43),2000)",
+        ].join(";");
+
+        await session.run(
+            when("Check host user services", [
+                calls("safe_bash", {
+                    command: `! systemctl --user show-environment >/dev/null 2>&1 && /usr/bin/node -e ${JSON.stringify(unixProbe)}`,
+                }),
+                says("Isolation observed."),
+            ]),
+        );
+
+        const [result] = session.events.toolResultsFor("safe_bash");
+        expect(result).toMatchObject({
+            mocked: false,
+            isError: false,
+            details: {
+                execution: {
+                    status: "sandboxed",
+                    outcome: "succeeded",
+                    exitCode: 0,
+                },
+            },
+        });
     }, 30_000);
 
     it("keeps direct node_modules edits denied by Pi Permission System", async () => {

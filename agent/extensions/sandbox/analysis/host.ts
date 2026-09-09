@@ -21,6 +21,10 @@ import {
     type AnalysisResult,
     type NormalizedAnalysisRequest,
 } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
+import {
+    sandboxExecutionContextFromError,
+    withSandboxExecutionContext,
+} from "../../_shared/sandbox-runtime/execution-context.ts";
 import type { SandboxNodeEnvironment } from "../node-shim";
 import {
     SandboxExecutionError,
@@ -217,6 +221,7 @@ export async function executeAnalysisHostRequest(
     let hasPrimaryFailure = false;
     let result: AnalysisResult | undefined;
     let execution = handle.spawn.execution ?? unknownExecution();
+    const sandboxContext = handle.spawn.sandboxContext;
     try {
         const child = await dependencies.runChild({
             ...handle.spawn,
@@ -253,6 +258,7 @@ export async function executeAnalysisHostRequest(
         }
         result = {
             execution,
+            ...(sandboxContext ? { sandboxContext } : {}),
             output: response.result.output,
             stderr: [response.result.stderr, child.stderr]
                 .filter(Boolean)
@@ -263,14 +269,17 @@ export async function executeAnalysisHostRequest(
         };
     } catch (error) {
         hasPrimaryFailure = true;
-        primaryFailure = withExecutionError(error, {
-            ...execution,
-            outcome:
-                execution.outcome === "pending" ||
-                execution.outcome === "succeeded"
-                    ? "failed"
-                    : execution.outcome,
-        });
+        primaryFailure = withSandboxExecutionContext(
+            withExecutionError(error, {
+                ...execution,
+                outcome:
+                    execution.outcome === "pending" ||
+                    execution.outcome === "succeeded"
+                        ? "failed"
+                        : execution.outcome,
+            }),
+            sandboxContext,
+        );
     }
     let cleanupFailure: unknown;
     let hasCleanupFailure = false;
@@ -286,11 +295,14 @@ export async function executeAnalysisHostRequest(
         throw primaryFailure;
     }
     if (hasCleanupFailure)
-        throw withExecutionError(cleanupFailure, {
-            ...execution,
-            phase: "cleanup",
-            outcome: "failed",
-        });
+        throw withSandboxExecutionContext(
+            withExecutionError(cleanupFailure, {
+                ...execution,
+                phase: "cleanup",
+                outcome: "failed",
+            }),
+            sandboxContext,
+        );
     if (!result) throw new Error("Analysis host produced no result");
     return result;
 }
@@ -661,6 +673,13 @@ export async function appendAnalysisHostShutdownFailure(
             error: response.ok
                 ? `Analysis host cleanup failed: ${cleanupMessage}`
                 : `${response.error}; cleanup failed: ${cleanupMessage}`,
+            ...(response.ok
+                ? response.result.sandboxContext
+                    ? { sandboxContext: response.result.sandboxContext }
+                    : {}
+                : response.sandboxContext
+                  ? { sandboxContext: response.sandboxContext }
+                  : {}),
         };
     }
 }
@@ -692,6 +711,11 @@ if (import.meta.main) {
                 outcome: "failed",
             },
             error: error instanceof Error ? error.message : String(error),
+            ...(sandboxExecutionContextFromError(error)
+                ? {
+                      sandboxContext: sandboxExecutionContextFromError(error),
+                  }
+                : {}),
         };
     } finally {
         process.removeListener("SIGTERM", abort);

@@ -35,6 +35,89 @@ function deferred<T = void>() {
 }
 
 describe("sandbox service", () => {
+    it("publishes all profile contexts from the effective policy builders", async () => {
+        const service = createSandboxService({
+            backend: {
+                probe: async () => SANDBOX_CAPABILITIES,
+                prepare: async () => {
+                    throw new Error("not exercised");
+                },
+            },
+            config: validatePiSandboxConfig({
+                filesystem: {
+                    allowWrite: ["."],
+                    denyRead: [".env", "**/*.pem"],
+                },
+                network: {
+                    allowedDomains: ["localhost:18740"],
+                    allowedHostDomains: ["*.dev.test:443"],
+                },
+                environment: {
+                    allowedVariables: ["CUSTOM"],
+                    variables: { CONFIGURED_SECRET: "never-visible" },
+                },
+            }),
+            hostEnv: { CUSTOM: "also-never-visible" },
+            createLease: async () => fakeLease(1),
+            recoverStaleLeases: async () => undefined,
+        });
+        await service.startBashSession("/workspace");
+
+        const contexts = service.getProfileContexts();
+        const bashAllowWrite = contexts["bash-general"].filesystem.allowWrite;
+
+        expect(Object.keys(contexts)).toEqual([
+            "bash-general",
+            "think-strict",
+            "analysis-strict",
+        ]);
+        expect(contexts["bash-general"]).toMatchObject({
+            profile: "bash-general",
+            filesystem: {
+                allowWrite: expect.arrayContaining(["/workspace"]),
+                denyReadGlobs: ["**/*.pem"],
+            },
+            network: {
+                allow: ["localhost:18740"],
+                allowHost: ["*.dev.test:443"],
+                domainClientProxyRequired: true,
+                loopback: {
+                    hostNamespace: "isolated",
+                    hostBridgePorts: [18740],
+                    hostBridgeTransport: "managed-policy-proxy",
+                    unlistedHostPorts: "blocked",
+                    localListeners: "sandbox-only",
+                },
+            },
+            tmp: { namespace: "host" },
+            ipc: {
+                hostUserDbus: "unavailable",
+                hostUnixSockets: "unavailable",
+            },
+        });
+        expect(Array.isArray(bashAllowWrite)).toBe(true);
+        expect(bashAllowWrite.some((path) => path === "/outside")).toBe(false);
+        expect(contexts["think-strict"]).toMatchObject({
+            profile: "think-strict",
+            tmp: { namespace: "lease-private" },
+        });
+        expect(contexts["analysis-strict"]).toMatchObject({
+            profile: "analysis-strict",
+            network: {
+                mode: "deny-all",
+                domainClientProxyRequired: false,
+                loopback: {
+                    hostBridgePorts: [],
+                    hostBridgeTransport: "disabled",
+                },
+            },
+            tmp: { namespace: "lease-private" },
+        });
+        expect(JSON.stringify(contexts)).not.toContain("never-visible");
+        expect(JSON.stringify(contexts)).not.toContain("/lease/1");
+        await service.shutdown();
+    });
+
     it("isolates Think collection from development and analysis leases", async () => {
         const leases: PrivateTempLease[] = [];
         const policies: SandboxPolicy[] = [];

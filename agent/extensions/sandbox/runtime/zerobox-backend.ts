@@ -13,6 +13,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
+import { createSandboxExecutionContext } from "../../_shared/sandbox-runtime/execution-context.ts";
 import {
     SANDBOX_CAPABILITIES,
     SandboxExecutionError,
@@ -439,6 +440,11 @@ class ZeroboxBackend implements SandboxBackend {
             }
             return {
                 file: this.#binaryPath,
+                sandboxContext: createSandboxExecutionContext(
+                    materializedPolicy,
+                    lease,
+                    { homeDir: homedir() },
+                ),
                 execution: {
                     status: "unknown",
                     profile: policy.name,

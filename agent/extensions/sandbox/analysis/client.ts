@@ -16,6 +16,7 @@ import {
     type AnalysisResult,
     type NormalizedAnalysisRequest,
 } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
+import { withSandboxExecutionContext } from "../../_shared/sandbox-runtime/execution-context.ts";
 
 export { analysisHostResponseBudget } from "../../_shared/sandbox-runtime/analysis-protocol.ts";
 
@@ -177,12 +178,15 @@ function runAnalysisHostProcess(
             }
             if (!response.ok) {
                 reject(
-                    withExecutionError(
-                        new Error(response.error),
-                        response.execution ?? {
-                            ...unknownExecution(),
-                            outcome: "failed",
-                        },
+                    withSandboxExecutionContext(
+                        withExecutionError(
+                            new Error(response.error),
+                            response.execution ?? {
+                                ...unknownExecution(),
+                                outcome: "failed",
+                            },
+                        ),
+                        response.sandboxContext,
                     ),
                 );
                 return;

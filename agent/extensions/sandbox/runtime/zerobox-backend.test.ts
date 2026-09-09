@@ -33,7 +33,7 @@ function successfulRun(
     args: string[],
 ): ZeroboxCommandResult {
     return args.includes("--version")
-        ? { exitCode: 0, stdout: "zerobox 0.3.3-fork.16\n", stderr: "" }
+        ? { exitCode: 0, stdout: "zerobox 0.3.3-fork.17\n", stderr: "" }
         : { exitCode: 0, stdout: "", stderr: "" };
 }
 
@@ -130,6 +130,34 @@ describe("Zerobox backend", () => {
                 PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             });
             expect(JSON.stringify(spec)).not.toContain("must-not-pass");
+            expect(spec.sandboxContext).toMatchObject({
+                version: 1,
+                profile: "bash-general",
+                network: {
+                    allow: ["example.com", "localhost:8317"],
+                    allowHost: ["*.dev.test:443"],
+                    deny: ["blocked.example.com"],
+                    domainClientProxyRequired: true,
+                    loopback: {
+                        hostNamespace: "isolated",
+                        hostBridgePorts: [8317],
+                        hostBridgeTransport: "managed-policy-proxy",
+                        unlistedHostPorts: "blocked",
+                        localListeners: "sandbox-only",
+                    },
+                },
+                environment: {
+                    inherit: expect.arrayContaining(["USER", "CUSTOM"]),
+                    set: expect.arrayContaining(["CUSTOM", "HOME", "PATH"]),
+                    deny: [],
+                },
+            });
+            expect(JSON.stringify(spec.sandboxContext)).not.toContain(
+                "target-only",
+            );
+            expect(JSON.stringify(spec.sandboxContext)).not.toContain(
+                lease.root,
+            );
             expect(JSON.stringify(spec.args)).not.toContain("bwrap");
             expect(JSON.stringify(spec.args)).not.toContain("disable-userns");
 
@@ -399,7 +427,7 @@ describe("Zerobox backend", () => {
                 platform: "linux",
                 probeRoot,
                 expectedProvenance: {
-                    version: "0.3.3-fork.16",
+                    version: "0.3.3-fork.17",
                     binarySha256: EXPECTED_SHA,
                 },
                 hashFile: async () => EXPECTED_SHA,

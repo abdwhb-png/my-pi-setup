@@ -92,9 +92,18 @@ test("Sandbox shell reports an upstream failure even when the final pipeline com
     try {
         await service.startBashSession(import.meta.dir);
         const events: object[] = [];
-        const operations = createSandboxedBashOps(service, supervisor, { onExecution: value => events.push(value) });
+        const contexts: object[] = [];
+        const operations = createSandboxedBashOps(service, supervisor, {
+            onExecution: value => events.push(value),
+            onSandboxContext: value => contexts.push(value),
+        });
         const result = await operations.exec("(printf failed; exit 7) | tail -n 1", import.meta.dir, { timeout: 10, onData: () => {} });
         expect(result.exitCode).toBe(7);
         expect(events.at(-1)).toMatchObject({ outcome: "failed", exitCode: 7 });
+        expect(contexts).toHaveLength(1);
+        expect(contexts[0]).toMatchObject({
+            version: 1,
+            profile: "bash-general",
+        });
     } finally { supervisor.shutdown(); await service.shutdown(); }
 }, 30_000);

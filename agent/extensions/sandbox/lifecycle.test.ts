@@ -13,6 +13,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DockerTargetAccess } from "./docker-access.ts";
+import type { SandboxProfileContextsV1 } from "../_shared/sandbox-runtime/execution-context.ts";
 import type {
     BashOperations,
     ExtensionAPI,
@@ -41,9 +42,38 @@ const prepareBash = mock(
         }),
     }),
 );
+const profileContext = {
+    version: 1 as const,
+    profile: "bash-general" as const,
+    filesystem: { allowRead: ["/workspace"], denyRead: [], denyReadGlobs: [], allowWrite: ["/workspace"], denyWrite: [], denyWriteGlobs: [] },
+    network: {
+        mode: "deny-all" as const,
+        allow: [],
+        allowHost: [],
+        deny: [],
+        domainClientProxyRequired: false,
+        loopback: {
+            hostNamespace: "isolated" as const,
+            hostBridgePorts: [],
+            hostBridgeTransport: "disabled" as const,
+            unlistedHostPorts: "blocked" as const,
+            localListeners: "sandbox-only" as const,
+        },
+    },
+    tmp: { path: "/tmp" as const, namespace: "host" as const },
+    ipc: { hostUserDbus: "unavailable" as const, hostUnixSockets: "unavailable" as const },
+    docker: { mode: "off" as const, profile: "None", targets: [], hostAccessException: false },
+    environment: { inherit: [], set: ["HOME"], deny: [] },
+};
+const profileContexts: SandboxProfileContextsV1 = {
+    "bash-general": profileContext,
+    "think-strict": { ...profileContext, profile: "think-strict", tmp: { path: "/tmp", namespace: "lease-private" } },
+    "analysis-strict": { ...profileContext, profile: "analysis-strict", tmp: { path: "/tmp", namespace: "lease-private" } },
+};
 const createSandboxService = mock((_options: unknown) => ({
     probe: initialize,
     startBashSession: initialize,
+    getProfileContexts: () => profileContexts,
     prepareBash,
     prepareAnalysis: mock(async () => {
         throw new Error("not exercised");
@@ -101,7 +131,7 @@ const {
     isSandboxUnavailableError,
 } = await import("../_shared/sandbox-runtime/index.ts");
 
-type Handler = (event: unknown, ctx: ExtensionContext) => Promise<void>;
+type Handler = (event: any, ctx: ExtensionContext) => unknown;
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void>;
 type CommandDefinition = {
     handler: CommandHandler;
@@ -312,6 +342,41 @@ describe("sandbox lifecycle", () => {
         await registered.handlers.get("session_shutdown")?.({}, ctx);
         expect(analysisShutdown).toHaveBeenCalledTimes(1);
         expect(getSandboxRuntime().state).toBe("uninitialized");
+    });
+
+    it("injects one effective sandbox section before the first model request", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+
+        const first = await registered.handlers.get("before_agent_start")?.(
+            { systemPrompt: "base prompt" },
+            ctx,
+        ) as { systemPrompt: string };
+        const second = await registered.handlers.get("before_agent_start")?.(
+            { systemPrompt: first.systemPrompt },
+            ctx,
+        ) as { systemPrompt: string };
+
+        expect(first.systemPrompt).toContain("Sandbox execution context v1");
+        expect(first.systemPrompt).toContain('"state":"enabled"');
+        expect(first.systemPrompt).toContain('"bash-general"');
+        expect(first.systemPrompt).toContain('"analysis-strict"');
+        expect(second.systemPrompt).toBe(first.systemPrompt);
+
+        await sandboxCommand(registered).handler("off", ctx);
+        const disabled = await registered.handlers.get("before_agent_start")?.(
+            { systemPrompt: first.systemPrompt },
+            ctx,
+        ) as { systemPrompt: string };
+        expect(disabled.systemPrompt).toContain('"state":"disabled"');
+        expect(disabled.systemPrompt).toContain("OS isolation is absent");
+        expect(disabled.systemPrompt).toContain(
+            "safe_bash guards are independent",
+        );
+        expect(
+            disabled.systemPrompt.match(/Sandbox execution context v1/g),
+        ).toHaveLength(1);
     });
 
     it("keeps Bash active while Analysis retries, then restores Analysis without restarting Bash", async () => {

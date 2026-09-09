@@ -1,3 +1,8 @@
+import { homedir } from "node:os";
+import {
+    createSandboxExecutionContext,
+    type SandboxProfileContextsV1,
+} from "../../_shared/sandbox-runtime/execution-context.ts";
 import {
     SandboxExecutionError,
     type PrivateTempLease,
@@ -25,6 +30,7 @@ export interface SandboxExecutionHandle {
 export interface SandboxService {
     probe(): Promise<SandboxCapabilities>;
     startBashSession(cwd: string): Promise<void>;
+    getProfileContexts(): SandboxProfileContextsV1;
     prepareBash(command: SandboxCommand): Promise<SandboxSpawnSpec>;
     prepareThinkBash(command: SandboxCommand): Promise<SandboxSpawnSpec>;
     prepareAnalysis(
@@ -148,6 +154,41 @@ class DefaultSandboxService implements SandboxService {
             this.#bashLease = lease;
             this.#bashCwd = cwd;
         });
+    }
+
+    getProfileContexts(): SandboxProfileContextsV1 {
+        this.#assertOpen();
+        if (!this.#bashLease || !this.#bashCwd) {
+            throw new SandboxExecutionError("setup-failed");
+        }
+        const input = {
+            cwd: this.#bashCwd,
+            lease: this.#bashLease,
+            config: this.#config,
+            hostEnv: this.#hostEnv,
+        };
+        const options = { homeDir: homedir() };
+        return {
+            "bash-general": createSandboxExecutionContext(
+                createBashPolicy(input),
+                this.#bashLease,
+                options,
+            ),
+            "think-strict": createSandboxExecutionContext(
+                createThinkPolicy(input),
+                this.#bashLease,
+                options,
+            ),
+            "analysis-strict": createSandboxExecutionContext(
+                createAnalysisPolicy({
+                    cwd: this.#bashCwd,
+                    lease: this.#bashLease,
+                    readablePaths: [],
+                }),
+                this.#bashLease,
+                options,
+            ),
+        };
     }
 
     prepareBash(command: SandboxCommand): Promise<SandboxSpawnSpec> {

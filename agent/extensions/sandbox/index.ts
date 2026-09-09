@@ -66,6 +66,10 @@ import {
 import { createWidget } from "../_shared/fancy-footer";
 import type { DockerAccessSummary } from "../_shared/sandbox-runtime/docker-summary.ts";
 import {
+    injectSandboxSystemContext,
+    type SandboxModelContextSnapshotV1,
+} from "../_shared/sandbox-runtime/execution-context.ts";
+import {
     claimSandboxRuntime,
     getSandboxActiveExecutionCount,
     getSandboxRuntime,
@@ -960,9 +964,13 @@ export function createSandboxedBashOps(
                 cwd,
                 stdin: options.stdin,
             };
-            return profile === "think-strict"
+            const spawn = await (profile === "think-strict"
                 ? service.prepareThinkBash(sandboxCommand)
-                : service.prepareBash(sandboxCommand);
+                : service.prepareBash(sandboxCommand));
+            if (spawn.sandboxContext) {
+                options.onSandboxContext?.(spawn.sandboxContext);
+            }
+            return spawn;
         },
     });
 }
@@ -1290,6 +1298,7 @@ export default function (pi: ExtensionAPI) {
             };
             const published = publishSandboxRuntime(runtimeOwner, {
                 state: "enabled",
+                contexts: candidateSandbox.getProfileContexts(),
                 dockerAccess: summarizeDockerAccess(config.docker),
                 createBashOperations: (options) =>
                     createSandboxedBashOps(
@@ -1330,6 +1339,26 @@ export default function (pi: ExtensionAPI) {
         description: "Disable OS-level sandboxing for bash commands",
         type: "boolean",
         default: false,
+    });
+
+    pi.on("before_agent_start", (event) => {
+        const runtime = getSandboxRuntime();
+        const snapshot: SandboxModelContextSnapshotV1 = {
+            version: 1,
+            state:
+                runtime.state === "uninitialized"
+                    ? "reconfiguring"
+                    : runtime.state,
+            ...(runtime.state === "enabled" && runtime.contexts
+                ? { profiles: runtime.contexts }
+                : {}),
+        };
+        return {
+            systemPrompt: injectSandboxSystemContext(
+                event.systemPrompt,
+                snapshot,
+            ),
+        };
     });
 
     let sandboxEnabled = false;
