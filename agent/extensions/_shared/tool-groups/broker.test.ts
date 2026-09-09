@@ -39,6 +39,30 @@ describe('getSharedVisibilityBroker', () => {
         const b = getSharedVisibilityBroker();
         expect(a).toBe(b);
     });
+
+    it('replaces a pre-upgrade broker retained across reload', () => {
+        const legacyKey = Symbol.for('pi.workflow-tool-visibility-broker.v1');
+        const currentKey = Symbol.for('pi.workflow-tool-visibility-broker.v2');
+        const root = globalThis as Record<PropertyKey, unknown>;
+        const previousLegacy = Object.getOwnPropertyDescriptor(root, legacyKey);
+        const previousCurrent = Object.getOwnPropertyDescriptor(root, currentKey);
+        const legacy = {
+            registerWorkflowGroup() {},
+            getWorkflowGroups: () => [],
+        };
+        try {
+            root[legacyKey] = legacy;
+            Reflect.deleteProperty(root, currentKey);
+            const broker = getSharedVisibilityBroker();
+            expect(broker).not.toBe(legacy);
+            expect(broker.contribution([])).toEqual({ grants: [], deny: [] });
+        } finally {
+            if (previousLegacy) Object.defineProperty(root, legacyKey, previousLegacy);
+            else Reflect.deleteProperty(root, legacyKey);
+            if (previousCurrent) Object.defineProperty(root, currentKey, previousCurrent);
+            else Reflect.deleteProperty(root, currentKey);
+        }
+    });
 });
 
 // ---------------------------------------------------------------------------

@@ -235,7 +235,9 @@ export function createVisibilityBroker(): VisibilityBroker {
  * Share state through globalThis and Symbol.for because Pi uses independent
  * Jiti module caches. Keep createVisibilityBroker available for isolated tests.
  */
-const SHARED_BROKER_KEY = Symbol.for("pi.workflow-tool-visibility-broker.v1");
+// v2 adds the declarative contribution/reset contract. Keep it isolated from
+// v1 objects that can remain on globalThis across an in-process Pi reload.
+const SHARED_BROKER_KEY = Symbol.for("pi.workflow-tool-visibility-broker.v2");
 
 type BrokerGlobal = typeof globalThis & {
     [SHARED_BROKER_KEY]?: VisibilityBroker;
