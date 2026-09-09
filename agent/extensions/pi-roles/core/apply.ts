@@ -30,6 +30,7 @@ import {
     writeActiveRoleState,
     type RoleToolPolicyPayload,
 } from "../../_shared/pi-roles/index.ts";
+import { getToolPolicy } from "../../_shared/tool-policy/index.ts";
 import { debugLog } from "./debug.ts";
 import {
     ROLE_NOTIFICATION_MESSAGE_TYPE,
@@ -150,7 +151,7 @@ export function effectiveIntercomMode(
  *   - When `intercomMode !== "off"` and the `intercom` tool is registered,
  *     ensure `intercom` is in the active list (we add it if absent).
  */
-export function filterToolsForRuntime(
+export function prepareRoleTools(
     directive: ToolsDirective,
     availableToolNames: ReadonlySet<string>,
     intercomMode: IntercomMode,
@@ -162,9 +163,6 @@ export function filterToolsForRuntime(
     const warnings: string[] = [];
 
     if (directive.kind === "inherit") {
-        // We may still need to ensure intercom is present, but we shouldn't
-        // mutate the active toolset out from under the user when they didn't
-        // ask us to. Inheritance is a true "leave it alone".
         return { kind: "inherit", warnings };
     }
 
@@ -174,20 +172,12 @@ export function filterToolsForRuntime(
         if (seen.has(name)) continue;
         seen.add(name);
 
-        if (name.startsWith("mcp:")) {
-            if (availableToolNames.has(name)) {
-                kept.push(name);
-            } else if (warnOnMissingMcp) {
-                warnings.push(
-                    `Tool "${name}" is not registered (pi-mcp-adapter may not be installed or the server is not configured). Skipping.`,
-                );
-            }
-            continue;
-        }
-
-        if (!availableToolNames.has(name)) {
+        if (
+            !availableToolNames.has(name) &&
+            (!name.startsWith("mcp:") || warnOnMissingMcp)
+        ) {
             warnings.push(
-                `Tool "${name}" is not registered. Passing through; another extension may register it later.`,
+                `Tool "${name}" is not currently registered. Keep this request for coordinator resolution and late registration.`,
             );
         }
         kept.push(name);
@@ -286,7 +276,7 @@ export async function applyRole(
     const allTools = pi.getAllTools();
     const availableNames = new Set(allTools.map((t) => t.name));
     const intercomAvailable = availableNames.has("intercom");
-    const filtered = filterToolsForRuntime(
+    const filtered = prepareRoleTools(
         role.tools,
         availableNames,
         intercomMode,
@@ -294,13 +284,6 @@ export async function applyRole(
         applyCtx.warnOnMissingMcp,
     );
     warnings.push(...filtered.warnings);
-    if (filtered.kind === "set") {
-        pi.setActiveTools(filtered.names);
-    } else {
-        // No role in the extends chain explicitly defined tools.
-        // Reset to all available (SDK default behavior).
-        pi.setActiveTools(allTools.map((t) => t.name));
-    }
     if (intercomMode !== "off" && !intercomAvailable) {
         warnings.push(
             `Role requests intercom mode "${intercomMode}" but the intercom tool is not registered. Install pi-intercom to enable.`,
@@ -321,6 +304,7 @@ export async function applyRole(
                   mode: "all",
                   toolNames: [],
               };
+    getToolPolicy().setRole(toolPolicy);
     pi.events.emit(ROLE_TOOL_POLICY_EVENT, toolPolicy);
 
     // 4. Footer status

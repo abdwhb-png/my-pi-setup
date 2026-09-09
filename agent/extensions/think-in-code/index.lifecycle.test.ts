@@ -1,3 +1,4 @@
+import { mountPolicy } from "../__tests__/policy-fixture.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -84,6 +85,7 @@ describe("think-in-code extension lifecycle", () => {
                     emit: () => undefined,
                 },
             } as unknown as ExtensionAPI;
+            const policy = mountPolicy({ registered: () => ["think_execute", "think_artifact_search"], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) });
             registerThinkInCode(pi, {
                 resolveRoot: () => join(fixture!, "state"),
             });
@@ -91,6 +93,7 @@ describe("think-in-code extension lifecycle", () => {
             for (const handler of handlers.get("session_start") ?? []) {
                 await handler({}, context(project, "analysis-ready"));
             }
+            policy.start();
             expect(activeTools).toEqual([]);
 
             publishSandboxRuntime(owner, {
@@ -157,6 +160,7 @@ describe("think-in-code extension lifecycle", () => {
                 },
                 events: { on: () => () => undefined },
             } as unknown as ExtensionAPI;
+            const policy = mountPolicy({ registered: () => ["think_execute", "think_artifact_search"], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) });
             registerThinkInCode(pi, {
                 resolveRoot: () => join(fixture!, "state"),
             });
@@ -165,6 +169,7 @@ describe("think-in-code extension lifecycle", () => {
                 await handler({}, context(project, "analysis-unavailable"));
             }
 
+            policy.start();
             expect(activeTools).toEqual([]);
             const gate = handlers.get("tool_call")?.[0];
             for (const toolName of ["think_execute", "think_artifact_search"]) {

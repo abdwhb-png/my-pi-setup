@@ -1,3 +1,5 @@
+import { TestHooks, mountPolicy } from '../__tests__/policy-fixture.ts';
+import { toolPresentation } from '../_shared/tool-policy/presentation.ts';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -60,10 +62,7 @@ function createMockExtensionApi(
     initialSessionName?: string,
     commands?: SlashCommandInfo[],
 ) {
-    const handlers = new Map<
-        string,
-        (event: object, ctx: object) => Promise<unknown> | unknown
-    >();
+    const handlers = new TestHooks();
     const registeredTools = new Map<
         string,
         {
@@ -104,6 +103,7 @@ function createMockExtensionApi(
         ) {
             handlers.set(event, (value, ctx) =>
                 handler(value, {
+                    ui: { addAutocompleteProvider() {}, notify() {} },
                     sessionManager: { getEntries: () => [] },
                     ...ctx,
                 }),
@@ -140,6 +140,7 @@ function createMockExtensionApi(
         ),
         sendMessage: mock(() => undefined),
     } as unknown as ExtensionAPI;
+    mountPolicy({ registered: () => [...new Set(["read", "bash", "edit", "write", ...registeredTools.keys()])], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) }, handlers);
     return {
         pi,
         handlers,
@@ -151,6 +152,25 @@ function createMockExtensionApi(
 }
 
 describe('pi-overrides', () => {
+    it('keeps convenience tools below explicit role lists and hides powershell off Windows', async () => {
+        const { pi, handlers } = createMockExtensionApi();
+        pi.registerTool({ name: 'powershell' } as never);
+        piOverrides(pi);
+        await handlers.get('session_start')!({}, { cwd: '/tmp' });
+        const policy = (await import('../_shared/tool-policy/index.ts')).getToolPolicy();
+        policy.setRole({ version: 1, roleName: 'inspect', mode: 'set', toolNames: ['read'] });
+        expect(pi.getActiveTools()).toEqual(['read']);
+        policy.setRole({ version: 1, roleName: 'all', mode: 'all', toolNames: [] });
+        expect(pi.getActiveTools().includes('powershell')).toBe(process.platform === 'win32');
+    });
+    it('routes shell commands only to tools present in the outgoing request', () => {
+        const { pi } = createMockExtensionApi();
+        piOverrides(pi);
+        expect(toolPresentation([{ name: 'safe_bash' }]).join('\n')).toContain('Use safe_bash for local shell commands');
+        expect(toolPresentation([{ name: 'read' }]).join('\n')).not.toContain('safe_bash');
+        expect(toolPresentation([{ name: 'read' }]).join('\n')).toContain('read');
+        expect(toolPresentation([])).toEqual([]);
+    });
     beforeEach(() => {
         resetAuditState('standard');
         settingsManagerCreate.mockClear();

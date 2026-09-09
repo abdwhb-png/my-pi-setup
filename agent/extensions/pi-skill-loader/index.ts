@@ -11,6 +11,7 @@ import {
 import { Box, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
+import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
 import {
     extractDollarPrefix,
     findDollarSkills,
@@ -39,6 +40,11 @@ export {
 };
 
 export default function piSkillLoader(pi: ExtensionAPI): void {
+    const visibility = registerToolPolicyContribution(
+        pi,
+        "pi-skill-loader",
+        () => ({ defaults: ["search_skill", "find_skill", "load_skill"] }),
+    );
     let skillList: SkillEntry[] = [];
     let rescuedSkills: RescuedSkill[] = [];
 
@@ -551,12 +557,6 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
             },
         });
 
-        const current = pi.getActiveTools();
-        const added = ["search_skill", "find_skill", "load_skill"].filter(
-            (t) => !current.includes(t),
-        );
-        if (added.length > 0) {
-            pi.setActiveTools([...new Set([...current, ...added])]);
-        }
+        visibility.refresh();
     });
 }

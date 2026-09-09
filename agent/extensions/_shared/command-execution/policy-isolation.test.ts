@@ -89,7 +89,7 @@ describe("Safe Bash and Think policy isolation", () => {
         } as unknown as ExtensionAPI;
         registerSafeBash(pi, { createOperations: () => operations });
         const approvingContext = context(fixture, true);
-        await handlers.get("session_start")?.[0]?.({}, approvingContext);
+        for (const handler of handlers.get("session_start") ?? []) await handler({}, approvingContext);
 
         const thinkConfig: ThinkInCodeConfig = {
             ...DEFAULT_THINK_IN_CODE_CONFIG,

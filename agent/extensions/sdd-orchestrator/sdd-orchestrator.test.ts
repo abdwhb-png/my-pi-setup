@@ -1,3 +1,4 @@
+import { mountWorkflowPolicy } from "../__tests__/policy-fixture.ts";
 import {
     afterEach,
     beforeEach,
@@ -187,7 +188,7 @@ function fakePi() {
         'sdd_cancel',
         'sdd_direct_complete',
     ];
-    return {
+    const fixture = {
         api: {
             on(event: string, handler: Function) {
                 const registered = handlers.get(event) ?? [];
@@ -203,6 +204,7 @@ function fakePi() {
             appendEntry(type: string, data: unknown) {
                 entries.push({ type, data });
             },
+            getAllTools: () => [...new Set(['read', 'edit', 'write', ...tools.keys()])].map(name => ({ name })),
             getActiveTools: () => [...activeToolNames],
             setActiveTools: (names: string[]) => {
                 activeToolNames = [...names];
@@ -215,6 +217,8 @@ function fakePi() {
         handlers,
         getActiveToolNames: () => [...activeToolNames],
     };
+    mountWorkflowPolicy(fixture.api as never);
+    return fixture;
 }
 
 class LifecycleEventBus implements EventBus {

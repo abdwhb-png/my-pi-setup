@@ -1,26 +1,17 @@
 /**
  * Visibility broker for workflow-scoped tool groups.
  *
- * Sole owner of `setActiveTools` for workflow-group members. Workflow
- * extensions (brainstorm-forcer, sdd-orchestrator) register their own groups
- * programmatically and request activation/deactivation at run start/stop.
- * The broker composes the active set as `baseline ∪ activeWorkflowMembers`
- * and enforces one exclusive workflow lease at a time.
- *
- * Pure module: takes a minimal `ToolControl` (getActiveTools/setActiveTools)
- * so it is fully unit-testable without the pi runtime.
- *
- * `registerWorkflowGroup` intentionally does NOT require members to exist in a
- * frozen tool registry: pi's `setActiveTools` silently ignores unknown tool
- * names anyway, and requiring existence would race against extension load
- * order. Member-list integrity is asserted by exact-count tests in each
- * workflow extension instead.
+ * Keep one exclusive workflow lease. Expose its declarative contribution to
+ * the shared tool-policy coordinator, which owns active-list calculation.
+ * Update the lease before invalidating policy. Do not write Pi tools here.
  */
 
 /** Minimal API surface the broker needs from the extension host. */
+import { getToolPolicy } from "../tool-policy/index.ts";
+import type { ToolPolicyContribution } from "../tool-policy/index.ts";
+
 export interface ToolControl {
     getActiveTools(): string[];
-    setActiveTools(toolNames: string[]): void;
 }
 
 /** Result of a workflow activation/deactivation request. */
@@ -33,6 +24,8 @@ export interface WorkflowResult {
 
 /** Exclusive lease registry, keyed by group name. */
 export interface VisibilityBroker {
+    contribution(registered: readonly string[]): ToolPolicyContribution;
+    resetSession(): void;
     /**
      * Register a workflow group with its member tool names.
      * A group may be registered once; identical re-registration is a no-op;
@@ -77,10 +70,6 @@ function findGroup(
     return groups.find((g) => g.name === name);
 }
 
-function membersOf(groups: WorkflowGroup[], name: string): string[] {
-    return findGroup(groups, name)?.members ?? [];
-}
-
 function makeResult(
     ok: boolean,
     changed: boolean,
@@ -97,6 +86,22 @@ export function createVisibilityBroker(): VisibilityBroker {
     let activeWorkflow: string | null = null;
 
     return {
+        contribution(registered) {
+            const active = findGroup(groups, activeWorkflow ?? "");
+            return {
+                grants: active
+                    ? registered.filter((name) => active.members.includes(name))
+                    : [],
+                deny: registered.filter(
+                    (name) =>
+                        memberToGroup.has(name) &&
+                        memberToGroup.get(name) !== activeWorkflow,
+                ),
+            };
+        },
+        resetSession(): void {
+            activeWorkflow = null;
+        },
         registerWorkflowGroup(groupName: string, members: string[]): void {
             if (!groupName || !/^[a-z][a-z0-9_-]*$/.test(groupName)) {
                 throw new Error(`Invalid workflow group name: ${groupName}`);
@@ -171,47 +176,31 @@ export function createVisibilityBroker(): VisibilityBroker {
             }
 
             const active = control.getActiveTools();
-            // Preserve original order, dedupe, then append missing workflow members
-            const seen = new Set<string>();
-            const merged: string[] = [];
-            for (const name of active) {
-                if (!seen.has(name)) {
-                    seen.add(name);
-                    merged.push(name);
-                }
-            }
-            for (const name of group.members) {
-                if (!seen.has(name)) {
-                    seen.add(name);
-                    merged.push(name);
-                }
-            }
-            const changed =
-                merged.length !== active.length ||
-                merged.some((n, i) => n !== active[i]);
-            if (changed) {
-                control.setActiveTools(merged);
-            }
             activeWorkflow = groupName;
-            return makeResult(true, changed);
+            getToolPolicy().refresh();
+            const next = control.getActiveTools();
+            return makeResult(
+                true,
+                active.length !== next.length ||
+                    active.some((name, index) => name !== next[index]),
+            );
         },
 
         deactivateWorkflow(
             control: ToolControl,
             groupName: string,
         ): WorkflowResult {
-            const members = membersOf(groups, groupName);
             const active = control.getActiveTools();
-            const memberSet = new Set(members);
-            const target = active.filter((n) => !memberSet.has(n));
-            const changed = target.length !== active.length;
-            if (changed) {
-                control.setActiveTools(target);
-            }
             if (activeWorkflow === groupName) {
                 activeWorkflow = null;
             }
-            return makeResult(true, changed);
+            getToolPolicy().refresh();
+            const next = control.getActiveTools();
+            return makeResult(
+                true,
+                active.length !== next.length ||
+                    active.some((name, index) => name !== next[index]),
+            );
         },
 
         getActiveWorkflow(_control: ToolControl): string | null {
@@ -229,21 +218,11 @@ export function createVisibilityBroker(): VisibilityBroker {
         },
 
         reconcileWithLease(
-            control: ToolControl,
+            _control: ToolControl,
             toolNames: string[],
         ): string[] {
-            const activeWorkflow = this.getActiveWorkflow(control);
-            const activeGroup = findGroup(groups, activeWorkflow ?? "");
-            const protectedMembers = new Set(activeGroup?.members ?? []);
-            const workflowMembers = new Set<string>();
-            for (const g of groups) {
-                for (const m of g.members) {
-                    workflowMembers.add(m);
-                }
-            }
-            return toolNames.filter(
-                (n) => !workflowMembers.has(n) || protectedMembers.has(n),
-            );
+            const denied = new Set(this.contribution(toolNames).deny);
+            return toolNames.filter((name) => !denied.has(name));
         },
     };
 }
@@ -253,9 +232,8 @@ export function createVisibilityBroker(): VisibilityBroker {
  *
  * Workflow extensions (brainstorm, sdd) and tool-groups extension all consume
  * the same instance so the one-exclusive-lease rule holds across extensions.
- * pi loads extensions independently with no wiring seam, so a module singleton
- * is the pragmatic way to share state while keeping `createVisibilityBroker`
- * available for isolated tests.
+ * Share state through globalThis and Symbol.for because Pi uses independent
+ * Jiti module caches. Keep createVisibilityBroker available for isolated tests.
  */
 const SHARED_BROKER_KEY = Symbol.for("pi.workflow-tool-visibility-broker.v1");
 

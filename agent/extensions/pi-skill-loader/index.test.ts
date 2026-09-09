@@ -14,6 +14,7 @@ import {
   isMarkdownLinkTransformRequest,
   MARKDOWN_LINKS_TRANSFORM_EVENT,
 } from "../_shared/markdown-links.ts";
+import { TestHooks, mountPolicy } from "../__tests__/policy-fixture.ts";
 import piSkillLoader from "./index";
 
 function makeSourceInfo(overrides: Partial<SourceInfo> = {}): SourceInfo {
@@ -52,7 +53,7 @@ function createMockAPI(customCommands?: SlashCommandInfo[]) {
   }>();
   let activeTools: string[] = ["read", "edit", "write"];
   const sentMessages: Array<{ customType: string; content: string; display: boolean }> = [];
-  const handlers = new Map<string, (event: object, ctx?: object) => Promise<unknown> | unknown>();
+  const handlers = new TestHooks();
   const events = createEventBus();
 
   const pi = {
@@ -86,6 +87,7 @@ function createMockAPI(customCommands?: SlashCommandInfo[]) {
     },
   } as unknown as ExtensionAPI;
 
+  mountPolicy({ registered: () => [...new Set(["read", "edit", "write", ...registeredTools.keys()])], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) }, handlers);
   return { pi, commands, registeredTools, registeredCommands, registeredRenderers, activeTools, sentMessages, handlers };
 }
 

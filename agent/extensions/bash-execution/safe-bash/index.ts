@@ -19,6 +19,7 @@
  *     settings.json; they reset to the configured value on next session start.
  */
 import { randomUUID } from "node:crypto";
+import { registerToolPolicyContribution } from "../../_shared/tool-policy/index.ts";
 
 import type {
     BashOperations,
@@ -39,7 +40,7 @@ import { createBashPrefixRenderer } from "../../_shared/command-execution/prefix
 import { loadBashRewrites } from "../../_shared/command-execution/rewrites";
 import { appendCompressionFooter } from "../../_shared/compression-render";
 import type { SandboxBashOperationOptions } from "../../_shared/sandbox-runtime/index.ts";
-import { applyMode, restoreBash, shouldBlockBashCall } from "./apply-mode.ts";
+import { shouldBlockBashCall } from "./apply-mode.ts";
 import { registerSafeBashAuditCommand } from "./audit-command.ts";
 import {
     loadSafeBashConfig,
@@ -77,6 +78,9 @@ export function registerSafeBash(
     let currentRewriteRules = loadBashRewrites(process.cwd()).rules;
     let currentConfig: SafeBashConfig | null = null;
     let telemetryRecorder: SafeBashTelemetryRecorder | null = null;
+    const visibility = registerToolPolicyContribution(pi, "safe-bash", () => ({
+        deny: currentMode === "replace" ? ["bash"] : [],
+    }));
     let telemetrySequence = 0;
     let auditRecommendationTurnActive = false;
     const commandExecutionService = createCommandExecutionService<"safe_bash">({
@@ -223,11 +227,7 @@ export function registerSafeBash(
 
     function setMode(next: SafeBashMode): SafeBashMode {
         currentMode = next;
-        if (next === "replace") {
-            applyMode(pi, "replace");
-        } else {
-            restoreBash(pi);
-        }
+        visibility.refresh();
         return currentMode;
     }
 
@@ -256,7 +256,7 @@ export function registerSafeBash(
     });
 
     pi.on("before_agent_start", () => {
-        if (currentMode === "replace") applyMode(pi, "replace");
+        visibility.refresh();
         refreshSafeBashTool();
     });
 

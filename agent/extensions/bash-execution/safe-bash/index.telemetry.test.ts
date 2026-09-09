@@ -1,5 +1,6 @@
 /// <reference types="bun" />
 
+import { TestHooks, mountPolicy } from "../../__tests__/policy-fixture.ts";
 import { describe, expect, it, mock } from "bun:test";
 import type {
     ExtensionAPI,
@@ -67,8 +68,9 @@ function setup(options: {
     select?: () => Promise<string | undefined>;
 } = {}) {
     let tool: ToolDefinition | undefined;
-    const handlers = new Map<string, Handler>();
+    const handlers = new TestHooks();
     const commands = new Map<string, CommandHandler>();
+    let activeTools = ["read", "bash", "safe_bash"];
     const pi = {
         registerTool: (definition: ToolDefinition) => {
             tool = definition;
@@ -82,9 +84,10 @@ function setup(options: {
         on: (event: string, handler: Handler) => {
             handlers.set(event, handler);
         },
-        getActiveTools: () => ["bash", "safe_bash"],
-        setActiveTools: () => undefined,
+        getActiveTools: () => activeTools,
+        setActiveTools: (names: string[]) => { activeTools = names; },
     } as unknown as ExtensionAPI;
+    const policy = mountPolicy({ registered: () => ["read", "bash", "safe_bash"], active: () => pi.getActiveTools(), apply: names => pi.setActiveTools(names) }, handlers);
     registerSafeBash(pi, {
         createOperations: (operationOptions) =>
             createBashOperations(operationOptions),
@@ -102,10 +105,25 @@ function setup(options: {
             select: options.select,
         },
     } as unknown as ExtensionContext;
-    return { tool, handlers, commands, ctx };
+    return { tool, handlers, commands, ctx, pi, policy };
 }
 
 describe("safe_bash telemetry integration", () => {
+    it('changes mode declaratively without widening an explicit role, and keeps the hard execution gate', async () => {
+        const { handlers, commands, ctx, pi, policy } = setup();
+        await handlers.get('session_start')!({}, ctx);
+        policy.setRole({ version: 1, roleName: 'all', mode: 'all', toolNames: [] });
+        await commands.get('safe-bash')!('replace', ctx);
+        expect(pi.getActiveTools()).toEqual(['read', 'safe_bash']);
+        pi.setActiveTools(['bash']); // An external O3 writer cannot bypass the execution gate.
+        expect(await handlers.get('tool_call')!({ toolName: 'bash' }, ctx)).toMatchObject({ block: true });
+        await commands.get('safe-bash')!('coexist', ctx);
+        expect(pi.getActiveTools()).toEqual(['read', 'bash', 'safe_bash']);
+        policy.setRole({ version: 1, roleName: 'inspect', mode: 'set', toolNames: ['read'] });
+        await commands.get('safe-bash')!('replace', ctx);
+        await commands.get('safe-bash')!('coexist', ctx);
+        expect(pi.getActiveTools()).toEqual(['read']);
+    });
     it("blocks every tool during recommendation-only audit analysis", async () => {
         const { handlers, ctx } = setup();
         beginAudit?.();

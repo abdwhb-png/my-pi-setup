@@ -77,7 +77,7 @@ describe("think-in-code audit lifecycle", () => {
                 getEntries: () => [],
             },
         } as unknown as ExtensionContext;
-        await handlers.get("session_start")?.[0]?.({}, context);
+        for (const handler of handlers.get("session_start") ?? []) await handler({}, context);
 
         const canonical = await realpath(fixture);
         const telemetryRoot = join(

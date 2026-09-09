@@ -3,13 +3,11 @@ import type {
     ExtensionContext,
     ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
-import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { createMcpRefResolver } from "pi-mcp-adapter";
+import type { RoleToolPolicyPayload } from "../_shared/pi-roles/index.ts";
 import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import { loadToolGroupsConfig } from "../_shared/tool-groups/config.ts";
-import { isToolGroupsPackageLast } from "../_shared/tool-groups/package-order.ts";
-import { resolveToolAliases } from "../_shared/tool-groups/resolver.ts";
 import {
     SUBAGENT_EXTENSION_BINDINGS_ENV,
     TOOL_GROUP_PREFIX,
@@ -20,9 +18,9 @@ import {
     type ToolGroupDiagnostic,
 } from "../_shared/tool-groups/types.ts";
 import {
-    collectToolPolicyAugmentations,
-    TOOL_POLICY_REFRESH_EVENT,
-} from "./policy-augmenters.ts";
+    getToolPolicy,
+    registerToolPolicyContribution,
+} from "../_shared/tool-policy/index.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -55,9 +53,17 @@ function loadChildToolPolicyFromEnv(): ToolGroupsChildPolicy | undefined {
     }
 }
 
+const REQUESTED_TOOLS_KEY = Symbol.for("pi.tool-policy.cli-requested.v1");
+type RequestedToolsRegistry = typeof globalThis & {
+    [REQUESTED_TOOLS_KEY]?: string[];
+};
+
 function loadRequestedToolsFromEnv(): string[] | undefined {
+    const registry = globalThis as RequestedToolsRegistry;
     const raw = process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV];
-    if (!raw) return undefined;
+    // Consume the environment to avoid leaking the parent ceiling to children,
+    // but retain launch intent across separately loaded /reload generations.
+    if (!raw) return registry[REQUESTED_TOOLS_KEY]?.slice();
     delete process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV];
 
     try {
@@ -67,9 +73,8 @@ function loadRequestedToolsFromEnv(): string[] | undefined {
             (name): name is string =>
                 typeof name === "string" && name.trim().length > 0,
         );
-        return names.some((name) => name.startsWith(TOOL_GROUP_PREFIX))
-            ? names
-            : undefined;
+        registry[REQUESTED_TOOLS_KEY] = [...names];
+        return names;
     } catch {
         return undefined;
     }
@@ -84,25 +89,6 @@ function diagnosticsKey(diags: ToolGroupDiagnostic[]): string {
 function formatDiagnostics(diags: ToolGroupDiagnostic[]): string {
     const lines = diags.map((d) => `  [${d.code}] ${d.message}`);
     return `Tool-group diagnostics:\n${lines.join("\n")}`;
-}
-
-function checkToolGroupsPackageOrder(cwd: string): void {
-    try {
-        const agentDir = getAgentDir();
-        const sm = SettingsManager.create(cwd, agentDir);
-        const packages = sm.getPackages();
-        if (
-            packages.length > 0 &&
-            !isToolGroupsPackageLast(packages, agentDir)
-        ) {
-            console.warn(
-                "[tool-groups] Package order drift detected: tool-groups package is not loaded last. " +
-                    "Run /reload to ensure tool-group configuration is applied correctly.",
-            );
-        }
-    } catch {
-        // Silently ignore — settings may not be available during early startup.
-    }
 }
 
 /**
@@ -123,7 +109,9 @@ interface RoleToolPolicy {
     toolNames: string[];
 }
 
-function parseRoleToolPolicy(value: unknown): RoleToolPolicy | undefined {
+function parseRoleToolPolicy(
+    value: unknown,
+): RoleToolPolicyPayload | undefined {
     if (typeof value !== "object" || value === null) return undefined;
     const candidate = value as Partial<RoleToolPolicy>;
     if (
@@ -135,12 +123,19 @@ function parseRoleToolPolicy(value: unknown): RoleToolPolicy | undefined {
     ) {
         return undefined;
     }
-    return {
-        version: 1,
-        roleName: candidate.roleName,
-        mode: candidate.mode,
-        toolNames: [...candidate.toolNames],
-    };
+    return candidate.mode === "all"
+        ? {
+              version: 1,
+              roleName: candidate.roleName,
+              mode: "all",
+              toolNames: [],
+          }
+        : {
+              version: 1,
+              roleName: candidate.roleName,
+              mode: "set",
+              toolNames: [...candidate.toolNames],
+          };
 }
 
 export function createToolGroupsExtension(
@@ -164,14 +159,6 @@ export function createToolGroupsExtension(
             : undefined;
         const resolveMcp = buildMcpResolver(cwd);
 
-        if (
-            Object.keys(groups).length === 0 &&
-            !requestedTools?.length &&
-            !childToolPolicy
-        ) {
-            return;
-        }
-
         for (const [groupName] of Object.entries(groups)) {
             const toolName = `${TOOL_GROUP_PREFIX}${groupName}`;
             pi.registerTool({
@@ -187,295 +174,74 @@ export function createToolGroupsExtension(
             });
         }
 
-        let lastDiagKey: string | undefined;
-        let appliedRequestedTools = false;
-        let cliToolPolicy: string[] | undefined;
-        let roleToolPolicy: RoleToolPolicy | undefined;
-
-        const unsubscribeRoleToolPolicy = pi.events.on(
-            ROLE_TOOL_POLICY_EVENT,
-            (payload) => {
-                const parsed = parseRoleToolPolicy(payload);
-                if (parsed) {
-                    roleToolPolicy = parsed;
-                    expandAliases(undefined);
-                    enforceConfiguredPolicy();
-                }
+        const policy = getToolPolicy();
+        const broker = getSharedVisibilityBroker();
+        const workflow = registerToolPolicyContribution(
+            pi,
+            "workflows",
+            ({ registered }) => broker.contribution(registered),
+        );
+        const detach = policy.bind(
+            {
+                registered: () => pi.getAllTools().map((tool) => tool.name),
+                active: () => pi.getActiveTools(),
+                apply: (names) => pi.setActiveTools(names),
+            },
+            {
+                groups,
+                requested: requestedTools,
+                childAllowed: childAllowedTools
+                    ? [...childAllowedTools]
+                    : undefined,
+                resolveMcp,
+                onSessionStart: () => broker.resetSession(),
             },
         );
-        const unsubscribePolicyRefresh = pi.events.on(
-            TOOL_POLICY_REFRESH_EVENT,
-            () => {
-                enforceConfiguredPolicy();
-            },
-        );
-
-        function reportDiagnostics(
-            diagnostics: ToolGroupDiagnostic[],
-            ctx: ExtensionContext,
-        ): void {
-            if (diagnostics.length > 0) {
-                const key = diagnosticsKey(diagnostics);
-                if (key !== lastDiagKey) {
-                    lastDiagKey = key;
-                    const msg = formatDiagnostics(diagnostics);
-                    if (ctx.hasUI) {
-                        ctx.ui.notify(msg, "warning");
-                    } else {
-                        console.warn(msg);
-                    }
-                }
-            } else {
-                lastDiagKey = undefined;
-            }
-        }
-
-        function applyRequestedTools(ctx: ExtensionContext): void {
-            if (appliedRequestedTools) return;
-            appliedRequestedTools = true;
-            if (!requestedTools?.length) return;
-
-            const allToolNames = pi.getAllTools().map((tool) => tool.name);
-            const currentlyAllowed = resolveToolAliases(
-                pi.getActiveTools(),
-                allToolNames,
-                groups,
-                resolveMcp,
-            );
-            const allowedNames = new Set(currentlyAllowed.names);
-            const requested = resolveToolAliases(
-                requestedTools,
-                allToolNames,
-                groups,
-                resolveMcp,
-            );
-
-            // Keep the requested concrete allowlist independent from current
-            // visibility. An owning extension may temporarily hide a tool
-            // while one of its runtime dependencies starts, then restore it
-            // later in the same session.
-            cliToolPolicy = [...requested.names];
-
-            const candidates = requested.names.filter((name) =>
-                allowedNames.has(name),
-            );
-            // Workflow-group members are only visible while their workflow owns
-            // the session; the broker strips them otherwise (sole chokepoint).
-            const reconciled = getSharedVisibilityBroker().reconcileWithLease(
-                pi,
-                candidates,
-            );
-            pi.setActiveTools(
-                childAllowedTools
-                    ? reconciled.filter((name) => childAllowedTools.has(name))
-                    : reconciled,
-            );
-            reportDiagnostics(requested.diagnostics, ctx);
-        }
-
-        function expandAliases(
-            _event: unknown,
-            ctx?: ExtensionContext,
-        ): { action: "continue" } | void {
-            const active = pi.getActiveTools();
-            const hasAliases = active.some((name) =>
-                name.startsWith(TOOL_GROUP_PREFIX),
-            );
-            if (!hasAliases) {
-                return;
-            }
-
-            const allToolNames = pi.getAllTools().map((t) => t.name);
-            const result = resolveToolAliases(
-                active,
-                allToolNames,
-                groups,
-                resolveMcp,
-            );
-
-            const reconciled = getSharedVisibilityBroker().reconcileWithLease(
-                pi,
-                result.names,
-            );
-            pi.setActiveTools(reconciled);
-
-            if (ctx) reportDiagnostics(result.diagnostics, ctx);
-        }
-
-        /**
-         * Workflow visibility guard that runs unconditionally, not just when the
-         * active set holds @aliases. Strips workflow-group members (brainstorm_*,
-         * sdd_*) unless their workflow holds the lease. Without this, those tools
-         * stay in the active list after a reload because no alias is present to
-         * trigger expandAliases.
-         */
-        function resolveConfiguredPolicy():
-            | {
-                  names: string[];
-                  diagnostics: ToolGroupDiagnostic[];
-              }
-            | undefined {
-            const allToolNames = pi.getAllTools().map((tool) => tool.name);
-            const diagnostics: ToolGroupDiagnostic[] = [];
-            let names: string[] | undefined;
-
-            if (roleToolPolicy?.mode === "set") {
-                const resolvedRole = resolveToolAliases(
-                    roleToolPolicy.toolNames,
-                    allToolNames,
-                    groups,
-                    resolveMcp,
+        let lastDiagnosticKey: string | undefined;
+        let lastDrift: string | undefined;
+        const report = (ctx: ExtensionContext) => {
+            const result = policy.refresh();
+            if (!result) return;
+            const key = diagnosticsKey(result.diagnostics);
+            if (key && key !== lastDiagnosticKey)
+                ctx.ui.notify(formatDiagnostics(result.diagnostics), "warning");
+            lastDiagnosticKey = key;
+            const drift = JSON.stringify(result.externalDrift);
+            if (result.externalDrift && drift !== lastDrift)
+                ctx.ui.notify(
+                    "Tool visibility changed outside the coordinator (Plannotator/Pi Lens are not migrated). See /context.",
+                    "warning",
                 );
-                names = resolvedRole.names;
-                diagnostics.push(...resolvedRole.diagnostics);
-            }
-
-            const broker = getSharedVisibilityBroker();
-            const policyAugmentations = collectToolPolicyAugmentations();
-            if (policyAugmentations.length > 0) {
-                const available = new Set(allToolNames);
-                const augmented = names ? [...names] : [...pi.getActiveTools()];
-                for (const name of policyAugmentations) {
-                    if (available.has(name) && !augmented.includes(name)) {
-                        augmented.push(name);
-                    }
-                }
-                names = broker.reconcileWithLease(pi, augmented);
-            }
-
-            let cliAllowed: Set<string> | undefined;
-            if (appliedRequestedTools && requestedTools?.length) {
-                const resolvedCli = resolveToolAliases(
-                    requestedTools,
-                    allToolNames,
-                    groups,
-                    resolveMcp,
-                );
-                cliToolPolicy = [...resolvedCli.names];
-                diagnostics.push(...resolvedCli.diagnostics);
-            }
-            if (cliToolPolicy) {
-                cliAllowed = new Set(cliToolPolicy);
-                names = names
-                    ? names.filter((name) => cliAllowed!.has(name))
-                    : pi
-                          .getActiveTools()
-                          .filter((name) => cliAllowed!.has(name));
-            }
-
-            if (childAllowedTools) {
-                if (!names) {
-                    const resolvedActive = resolveToolAliases(
-                        pi.getActiveTools(),
-                        allToolNames,
-                        groups,
-                        resolveMcp,
-                    );
-                    names = resolvedActive.names;
-                    diagnostics.push(...resolvedActive.diagnostics);
-                }
-                names = names.filter((name) => childAllowedTools.has(name));
-            }
-
-            if (!names) return undefined;
-
-            const activeWorkflow = broker.getActiveWorkflow(pi);
-            if (activeWorkflow) {
-                for (const name of pi.getActiveTools()) {
-                    if (
-                        broker.isMemberOf(activeWorkflow, name) &&
-                        (!cliAllowed || cliAllowed.has(name)) &&
-                        (!childAllowedTools || childAllowedTools.has(name)) &&
-                        !names.includes(name)
-                    ) {
-                        names.push(name);
-                    }
-                }
-            }
-
-            return {
-                names: broker.reconcileWithLease(pi, names),
-                diagnostics,
-            };
-        }
-
-        function enforceConfiguredPolicy(ctx?: ExtensionContext): void {
-            const policy = resolveConfiguredPolicy();
-            if (!policy) return;
-            const active = pi.getActiveTools();
-            if (
-                policy.names.length !== active.length ||
-                policy.names.some((name, index) => name !== active[index])
-            ) {
-                pi.setActiveTools(policy.names);
-            }
-            if (ctx) reportDiagnostics(policy.diagnostics, ctx);
-        }
-
-        function reconcileWorkflowVisibility(): void {
-            const active = pi.getActiveTools();
-            const reconciled = getSharedVisibilityBroker().reconcileWithLease(
-                pi,
-                active,
-            );
-            if (
-                reconciled.length !== active.length ||
-                reconciled.some((n, i) => n !== active[i])
-            ) {
-                pi.setActiveTools(reconciled);
-            }
-        }
-
-        pi.on("session_start", (event, ctx) => {
-            applyRequestedTools(ctx);
-            expandAliases(event, ctx);
-            enforceConfiguredPolicy(ctx);
-            reconcileWorkflowVisibility();
-            checkToolGroupsPackageOrder(cwd);
+            lastDrift = drift;
+        };
+        const unsubscribe = pi.events.on(ROLE_TOOL_POLICY_EVENT, (payload) => {
+            const parsed = parseRoleToolPolicy(payload);
+            if (parsed) policy.setRole(parsed);
         });
-
-        pi.on("input", (event, ctx) => {
-            expandAliases(event, ctx);
-            enforceConfiguredPolicy(ctx);
-            reconcileWorkflowVisibility();
-            return { action: "continue" as const };
+        pi.on("session_start", (_event, ctx) => {
+            policy.beginSession(ctx.sessionManager.getSessionId());
+            policy.start();
+            report(ctx);
         });
-
-        pi.on("before_agent_start", (event, ctx) => {
-            expandAliases(event, ctx);
-            enforceConfiguredPolicy(ctx);
-            reconcileWorkflowVisibility();
+        pi.on("input", (_event, ctx) => {
+            report(ctx);
+            return { action: "continue" };
         });
-
+        pi.on("before_agent_start", (_event, ctx) => {
+            report(ctx);
+        });
         pi.on("tool_call", (event) => {
-            const policy = resolveConfiguredPolicy();
-            if (!policy || policy.names.includes(event.toolName)) {
-                return undefined;
-            }
-            if (cliToolPolicy && !cliToolPolicy.includes(event.toolName)) {
-                return {
-                    block: true as const,
-                    reason: `Tool "${event.toolName}" is not allowed by CLI tool policy.`,
-                };
-            }
-            if (childAllowedTools && !childAllowedTools.has(event.toolName)) {
-                return {
-                    block: true as const,
-                    reason: `Tool "${event.toolName}" is not allowed by child tool policy.`,
-                };
-            }
-            const roleName = roleToolPolicy?.roleName ?? "CLI tool policy";
+            const result = policy.refresh();
+            if (!result || result.names.includes(event.toolName)) return;
             return {
-                block: true as const,
-                reason: `Tool "${event.toolName}" is not allowed by active role "${roleName}".`,
+                block: true,
+                reason: `Tool "${event.toolName}" is not allowed by ${result.excluded[event.toolName] ?? "active role / workflow tool policy"}.`,
             };
         });
-
         pi.on("session_shutdown", () => {
-            unsubscribeRoleToolPolicy();
-            unsubscribePolicyRefresh();
-            roleToolPolicy = undefined;
-            cliToolPolicy = undefined;
+            unsubscribe();
+            workflow.dispose();
+            detach();
         });
     };
 }

@@ -1,3 +1,14 @@
+import { getToolPolicy } from "./_shared/tool-policy/index.ts";
+import {
+    injectProviderToolsCatalog,
+    type CatalogResult,
+} from "./_shared/tool-policy/provider-catalog.ts";
+export {
+    TOOLS_LIST_HEADING,
+    TOOL_GUIDELINES_HEADING,
+    buildToolsListSnippet,
+    appendToolsListPrompt,
+} from "./_shared/tool-policy/provider-catalog.ts";
 /**
  * /context
  *
@@ -13,8 +24,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type {
-    BeforeAgentStartEvent,
-    BeforeAgentStartEventResult,
     ExtensionAPI,
     ExtensionCommandContext,
     ExtensionContext,
@@ -343,53 +352,6 @@ export function calculateExtensionFiles(commands: any[]): string[] {
         .toSorted((a, b) => a.localeCompare(b));
 }
 
-/** Marker used to detect and avoid double-appending the tools list. Matches the heading Pi's default branch emits. */
-export const TOOLS_LIST_HEADING = "Available tools:";
-export const TOOL_GUIDELINES_HEADING = "Tool usage guidelines:";
-
-interface ToolPromptInfo {
-    name: string;
-    description?: string;
-    promptGuidelines?: string[];
-}
-
-export function buildToolsListSnippet(tools: ToolPromptInfo[]): string {
-    const lines = tools
-        .filter((t) => t.name && t.description)
-        .map((t) => `- ${t.name}: ${t.description!.trim().split(/\r?\n/)[0]}`);
-    if (lines.length === 0) return `${TOOLS_LIST_HEADING}\n(none)`;
-    return `${TOOLS_LIST_HEADING}\n${lines.join("\n")}`;
-}
-
-/**
- * Append the tools list to a system prompt when a SYSTEM.md override is set.
- *
- * Idempotent: if the tools heading is already present — from this handler or
- * Pi's default branch — the prompt is returned unchanged so chained
- * `before_agent_start` handlers do not stack duplicates.
- */
-export function appendToolsListPrompt(
-    systemPrompt: string,
-    tools: ToolPromptInfo[],
-): string {
-    if (systemPrompt.includes(TOOLS_LIST_HEADING)) {
-        return systemPrompt;
-    }
-    const guidelines = [
-        ...new Set(
-            tools
-                .flatMap((tool) => tool.promptGuidelines ?? [])
-                .map((guideline) => guideline.trim())
-                .filter(Boolean),
-        ),
-    ];
-    const guidelineBlock =
-        guidelines.length > 0
-            ? `\n\n${TOOL_GUIDELINES_HEADING}\n${guidelines.map((guideline) => `- ${guideline}`).join("\n")}`
-            : "";
-    return `${systemPrompt}\n\n${buildToolsListSnippet(tools)}${guidelineBlock}`;
-}
-
 export function buildContextSendMessage(
     files: Array<{ path: string; content: string }>,
 ): string {
@@ -419,6 +381,7 @@ type ContextViewData = {
     agentFiles: string[];
     extensions: string[];
     tools: string[];
+    toolCatalogStatus?: string[];
     skills: string[];
     loadedSkills: string[];
     session: { totalTokens: number; totalCost: number };
@@ -574,6 +537,8 @@ export class ContextView implements Component {
                 ),
         );
 
+        for (const status of this.data.toolCatalogStatus ?? [])
+            lines.push(text(status));
         // Tools section
         lines.push(
             muted(`Tools (${this.data.tools.length}): `) +
@@ -764,35 +729,83 @@ export default function contextExtension(pi: ExtensionAPI) {
         }
     });
 
-    pi.on(
-        "before_agent_start",
-        (
-            event: BeforeAgentStartEvent,
-            _ctx: ExtensionContext,
-        ): BeforeAgentStartEventResult | undefined => {
-            // With a SYSTEM.md override, pi's default branch is skipped: it emits
-            // skills + AGENTS files but NOT the tools list. Without an override the
-            // default branch already lists tools, so skip to avoid duplication.
-            if (!event.systemPromptOptions.customPrompt) return undefined;
-
-            const activeToolNames = pi.getActiveTools();
-            const toolInfoByName = new Map(
-                pi.getAllTools().map((t) => [t.name, t] as const),
+    let customPrompt = false;
+    let lastCatalog:
+        | Omit<Extract<CatalogResult, { supported: true }>, "payload">
+        | Extract<CatalogResult, { supported: false }>
+        | undefined;
+    let requestNumber = 0;
+    let catalogApi: string | undefined;
+    let warning: string | undefined;
+    let lastInjected = false;
+    pi.on("session_start", () => {
+        customPrompt = false;
+        lastCatalog = undefined;
+        requestNumber = 0;
+        warning = undefined;
+        catalogApi = undefined;
+        lastInjected = false;
+    });
+    pi.on("before_agent_start", (event) => {
+        customPrompt = event.systemPromptOptions.customPrompt !== undefined;
+    });
+    pi.on("before_provider_request", (event, ctx) => {
+        const api = ctx.model?.api ?? "unknown";
+        catalogApi = api;
+        const result = injectProviderToolsCatalog(api, event.payload);
+        lastCatalog = result.supported
+            ? { supported: true, tools: result.tools, block: result.block }
+            : result;
+        lastInjected = customPrompt && result.supported;
+        requestNumber++;
+        if (!lastCatalog.supported) {
+            if (warning !== lastCatalog.reason)
+                ctx.ui.notify(
+                    "Tools catalog unavailable: " + lastCatalog.reason,
+                    "warning",
+                );
+            warning = lastCatalog.reason;
+            return undefined;
+        }
+        warning = undefined;
+        return customPrompt && result.supported ? result.payload : undefined;
+    });
+    const catalogStatus = (active: string[]) => {
+        const policy = getToolPolicy().inspect();
+        const lines = [`Active now: ${active.join(", ") || "(none)"}`];
+        if (lastCatalog?.supported) {
+            const sent = lastCatalog.tools.map((t) => t.name);
+            lines.push(
+                `Last request #${requestNumber} (${catalogApi}): ${sent.join(", ") || "(none)"}`,
             );
-            const tools = activeToolNames
-                .map((name) => ({
-                    name,
-                    description: toolInfoByName.get(name)?.description ?? "",
-                    promptGuidelines:
-                        toolInfoByName.get(name)?.promptGuidelines ?? [],
-                }))
-                .filter((t) => t.name);
-
-            return {
-                systemPrompt: appendToolsListPrompt(event.systemPrompt, tools),
-            };
-        },
-    );
+            lines.push(
+                lastInjected
+                    ? `Injected catalog: ~${estimateTokens(lastCatalog.block)} tokens (outside Pi's base system-prompt estimate).`
+                    : "Catalog observed only; Pi default prompt unchanged.",
+            );
+            const added = active.filter((n) => !sent.includes(n));
+            const removed = sent.filter((n) => !active.includes(n));
+            if (added.length || removed.length)
+                lines.push(
+                    `Current vs last request: +[${added.join(", ")}] -[${removed.join(", ")}]. Current changes may apply to a later agent run.`,
+                );
+        } else {
+            lines.push(
+                lastCatalog
+                    ? "Catalog unsupported: " + lastCatalog.reason
+                    : "No provider catalog observed yet.",
+            );
+        }
+        if (policy?.externalDrift)
+            lines.push(
+                "Outside coordinator: +" +
+                    policy.externalDrift.added.join(", ") +
+                    " -" +
+                    policy.externalDrift.removed.join(", "),
+            );
+        if (policy) lines.push("Policy sources: " + policy.sources.join(", "));
+        return lines;
+    };
 
     pi.registerCommand("context", {
         description: "Show loaded context overview",
@@ -848,6 +861,7 @@ export default function contextExtension(pi: ExtensionAPI) {
             const makePlainText = () => {
                 const lines: string[] = [];
                 lines.push("Context");
+                lines.push(...catalogStatus(activeToolNames));
                 if (usage) {
                     lines.push(
                         `Window: ~${effectiveTokens.toLocaleString()} / ${ctxWindow.toLocaleString()} (${percent.toFixed(1)}% used, ~${remainingTokens.toLocaleString()} left)`,
@@ -918,6 +932,7 @@ export default function contextExtension(pi: ExtensionAPI) {
                 tools: activeToolNames.toSorted((a, b) => a.localeCompare(b)),
                 skills,
                 loadedSkills,
+                toolCatalogStatus: catalogStatus(activeToolNames),
                 session: {
                     totalTokens: sessionUsage.totalTokens,
                     totalCost: sessionUsage.totalCost,

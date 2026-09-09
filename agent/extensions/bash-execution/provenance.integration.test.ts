@@ -8,6 +8,7 @@ import { archiveOriginalToolResult } from '../save-tokens/tool-results/archive.t
 import { createToolResultHandler } from '../save-tokens/tool-results/core.ts';
 import bashExecution from './index.ts';
 import piOverrides from '../pi-overrides/index.ts';
+import { createToolGroupsExtension } from '../tool-groups/index.ts';
 
 test.each(['before', 'after'] as const)('real Pi compression preserves provenance when registered %s the receipt hook', async order => {
     const cwd = await mkdtemp(resolve(import.meta.dir, '.compressed-provenance-'));
@@ -116,6 +117,7 @@ test("native read and search operations identify their host namespace", async ()
     await writeFile(resolve(cwd, "sample.txt"), "needle\n");
     const session = await createTestSession({
         cwd, extensions: [resolve(import.meta.dir, "index.ts"), resolve(import.meta.dir, "../pi-overrides/index.ts")],
+        extensionFactories: [createToolGroupsExtension(() => ({ groups: {} }), () => undefined, () => undefined)],
     });
     try {
         await session.run(when("Inspect the file", [

@@ -50,11 +50,11 @@ export function prepareToolGroupArgs(args: string[], toolGroupsAvailable = true)
   }
 
   const hasAlias = toolOptions.some(({ tools }) => tools.some((name) => name.startsWith("@")));
+  const requestedTools = toolOptions.length ? [...new Set(toolOptions.flatMap(({ tools }) => tools))] : undefined;
   if (!hasAlias) {
-    return { args, requestedTools: undefined };
+    return { args, requestedTools };
   }
 
-  const requestedTools = [...new Set(toolOptions.flatMap(({ tools }) => tools))];
   const removedIndexes = new Set(toolOptions.flatMap(({ start, end }) => [start, end]));
   return {
     args: args.filter((_, index) => !removedIndexes.has(index)),
@@ -105,7 +105,7 @@ export async function runPackageFinalizer(cwd: string, options?: { force?: boole
 export function runRealPi(realPiPath: string, args: string[], cwd: string, requestedTools?: string[]): number {
   const env: NodeJS.ProcessEnv = { ...process.env, PI_PACKAGE_FINALIZER_ACTIVE: "1" };
   delete env[TOOL_GROUPS_REQUESTED_TOOLS_ENV];
-  if (requestedTools?.length) {
+  if (requestedTools !== undefined) {
     env[TOOL_GROUPS_REQUESTED_TOOLS_ENV] = JSON.stringify(requestedTools);
   }
 

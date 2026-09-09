@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { TestHooks, mountPolicy } from "../__tests__/policy-fixture.ts";
 import herdrExtension from "./index";
 
 const currentPane = {
@@ -51,7 +52,7 @@ function registerRuntime(
 ) {
 	const tools = new Map<string, any>();
 	const commands = new Map<string, any>();
-	const handlers = new Map<string, any>();
+	const handlers = new TestHooks();
 	const eventHandlers = new Map<string, Set<(payload: unknown) => void>>();
 	let activeTools = ["read"];
 	const pi = {
@@ -87,6 +88,8 @@ function registerRuntime(
 			return typeof result === "string" ? response(undefined, result) : response(result);
 		},
 	};
+	const policy = mountPolicy({ registered: () => ["read", ...tools.keys()], active: pi.getActiveTools, apply: pi.setActiveTools }, handlers);
+	pi.events.on("pi-roles:tool-policy", payload => policy.setRole(payload as any));
 	herdrExtension(pi as any);
 	return { tools, commands, handlers, pi };
 }
@@ -126,7 +129,7 @@ describe("pi-herdr", () => {
 			},
 		};
 
-		runtime.handlers.get("session_start")({ reason: "startup" }, ctx);
+		runtime.handlers.get("session_start")!({ reason: "startup" }, ctx);
 		expect(runtime.pi.getActiveTools()).toEqual(["read"]);
 
 		await runtime.commands.get("herdr-tools").handler("on", ctx);
@@ -141,7 +144,7 @@ describe("pi-herdr", () => {
 		await runtime.commands.get("herdr-tools").handler("off", ctx);
 		expect(runtime.pi.getActiveTools()).toEqual(["read"]);
 		expect(
-			runtime.handlers.get("tool_call")({ toolName: "herdr_pane" }, ctx),
+			runtime.handlers.get("tool_call")!({ toolName: "herdr_pane" }, ctx),
 		).toEqual({
 			block: true,
 			reason: "Herdr tools are hidden. Use /herdr-tools on or switch to herdr-orchestrator.",
@@ -158,7 +161,7 @@ describe("pi-herdr", () => {
 			toolNames: ["read", "herdr_layout", "herdr_pane", "herdr_agent"],
 		};
 
-		runtime.handlers.get("session_start")({ reason: "startup" }, ctx);
+		runtime.handlers.get("session_start")!({ reason: "startup" }, ctx);
 		runtime.pi.events.emit("pi-roles:tool-policy", herdrPolicy);
 		expect(runtime.pi.getActiveTools()).toEqual([
 			"read",
@@ -183,11 +186,12 @@ describe("pi-herdr", () => {
 	test("clears a manual grant when the session reloads", async () => {
 		const runtime = registerRuntime(() => ({}));
 		const ctx = { ui: { notify() {} } };
+		runtime.handlers.get("session_start")!({ reason: "startup" }, ctx);
 
 		await runtime.commands.get("herdr-tools").handler("on", ctx);
 		expect(runtime.pi.getActiveTools()).toContain("herdr_layout");
 
-		runtime.handlers.get("session_start")({ reason: "reload" }, ctx);
+		runtime.handlers.get("session_start")!({ reason: "reload" }, ctx);
 		expect(runtime.pi.getActiveTools()).toEqual(["read"]);
 	});
 

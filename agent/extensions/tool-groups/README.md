@@ -9,11 +9,13 @@ Register groups in `toolGroups.groups` or the legacy `tool-groups.json`
 fallback. Each group maps to an ordered list of exact tools, nested `@group`
 references, or glob patterns.
 
-The extension expands aliases in the active tool set during `session_start`,
-`input`, and `before_agent_start`. Concrete members replace the aliases before
-the model can call tools. When `pi-roles` publishes `pi-roles:tool-policy`, the
-extension keeps that policy sticky across late tool registration and blocks
-out-of-policy calls at `tool_call`.
+Use `_shared/tool-policy` to declare role intent, explicit feature grants and
+availability restrictions. This extension hosts its sole runtime writer.
+Resolve policy from the registered catalog, never from a previously filtered
+list. Keep `pi-roles:tool-policy` events and hard `tool_call` gates.
+
+See [the coordinator contract](../_shared/tool-policy/README.md) for lifecycle,
+provider presentation and external-package coexistence.
 
 For an aliased CLI `--tools` or `-t` list, the Pi wrapper defers filtering until
 `session_start`. This keeps the complete registry available for nested groups
@@ -136,17 +138,16 @@ supported list syntax.
 - The extension consumes and deletes the private variable at startup; the
   wrapper also clears inherited stale bridge state for later Pi launches.
 - Startup resolves the deferred list against the complete registry and
-  intersects it with restrictions made by earlier `session_start` handlers.
+  intersects it with declarative role, feature and child restrictions.
 - A pi-subagents child may receive a private `tool-groups.policy/1`
   `extensionBindings` entry with concrete `allowedTools`. After alias
   expansion, startup and `tool_call` enforcement intersect active tools with
   that list. Malformed policy data fails closed.
 - Calling a placeholder directly throws. It has no prompt guidance.
 - Expansion preserves first-occurrence order and removes duplicates.
-- Diagnostics are deduplicated by code, group, and member. New diagnostics use
-  a UI notification when available and `console.warn` otherwise.
-- Expansion is a no-op when the active set contains no `@` alias and no role policy is active.
-- Role policies are resolved again before every model turn, removing tools registered asynchronously after `session_start`.
+- Diagnostics are deduplicated by code, group and member and reported through Pi UI notifications.
+- Initialize the runtime owner even when no groups are configured.
+- Reevaluate on policy, registry and session changes. Observe external writes without adopting them or overwriting every request.
 - `tool_call` enforces the same resolved policy, so stale history cannot execute a hidden tool.
 
 Diagnostic codes:
@@ -173,30 +174,15 @@ This extension changes active-tool lists and enforces an active `pi-roles` tool 
 
 Permission policies continue to target concrete tool names.
 
-## Package Order
+## Package Order and O3
 
-`./extensions/tool-groups` must be the last entry in global `packages`. Pi runs
-lifecycle handlers in extension load order, so the resolver must observe
-earlier handlers that change active tools.
+Do not depend on integrated extension listener order. Publish declarative
+contributions to the shared coordinator. The wrapper's existing last-package
+pin remains compatible but is no longer an internal correctness requirement.
 
-```json
-{
-    "packages": [
-        "npm:pi-subagents",
-        "npm:@gotgenes/pi-permission-system",
-        "./extensions/tool-groups"
-    ]
-}
-```
-
-The Pi wrapper pins the package before each real Pi launch and after successful
-package mutations. Package-finalizer repairs drift from direct binary use for
-the next reload. If the current process still has stale order, startup warns:
-
-```text
-[tool-groups] Package order drift detected: tool-groups package is not loaded
-last. Run /reload to ensure tool-group configuration is applied correctly.
-```
+Leave Plannotator and Pi Lens unchanged. Their writes remain outside the
+coordinator. Report drift through `/context`, keep integrated execution gates,
+and derive the injected custom-prompt catalog from the outgoing payload.
 
 ## `--no-extensions`
 

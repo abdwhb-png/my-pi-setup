@@ -229,7 +229,7 @@ describe('calculateExtensionFiles', () => {
 });
 
 describe('custom system prompt tool contract', () => {
-    it('injects active tool descriptions and usage guidelines through context.ts', () => {
+    it('does not inject a potentially stale catalog at before_agent_start', () => {
         const beforeAgentStartHandlers: Array<
             (event: any, context: any) => unknown
         > = [];
@@ -257,20 +257,10 @@ describe('custom system prompt tool contract', () => {
         contextExtension(pi as unknown as ExtensionAPI);
 
         expect(beforeAgentStartHandlers).toHaveLength(1);
-        const result = beforeAgentStartHandlers[0](
-            {
-                systemPrompt: 'unchanged custom prompt',
-                systemPromptOptions: { customPrompt: 'SYSTEM.md' },
-            },
-            {},
-        ) as { systemPrompt: string };
-        expect(result.systemPrompt).toContain('unchanged custom prompt');
-        expect(result.systemPrompt).toContain(
-            '- think_execute: Derive a bounded result without exposing raw source',
-        );
-        expect(result.systemPrompt).toContain(
-            'Tool usage guidelines:\n- Use think_execute only when a bounded derivation is needed.\n- Keep native tools when exact output must be observed.',
-        );
+        const result = beforeAgentStartHandlers[0]({
+            systemPrompt: 'unchanged custom prompt', systemPromptOptions: { customPrompt: 'SYSTEM.md' },
+        }, {});
+        expect(result).toBeUndefined();
     });
 });
 

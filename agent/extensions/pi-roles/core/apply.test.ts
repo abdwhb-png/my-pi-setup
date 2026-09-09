@@ -2,20 +2,21 @@
  * Phase 3 tests for src/apply.ts.
  *
  * The pure helpers (`parseModelId`, `findModelInRegistry`,
- * `effectiveIntercomMode`, `filterToolsForRuntime`, `composeSessionName`)
+ * `effectiveIntercomMode`, `prepareRoleTools`, `composeSessionName`)
  * are tested directly. `applyRole` is tested against a hand-rolled fake
  * `ExtensionAPI` + `ExtensionContext` — we only stub the methods apply.ts
  * actually calls, which keeps the surface area manageable and lets tests
  * fail loudly if apply.ts starts touching unexpected pi.* methods.
  */
 
+import { mountPolicy } from "../../__tests__/policy-fixture.ts";
 import { describe, expect, it, mock } from "bun:test";
 import {
   applyRole,
   composeFooterStatus,
   composeSessionName,
   effectiveIntercomMode,
-  filterToolsForRuntime,
+  prepareRoleTools,
   findModelInRegistry,
   parseModelId,
   type ApplyContext,
@@ -79,7 +80,7 @@ function makeFake(
   const models = opts.models ?? [];
   const tools = opts.tools ?? [];
   const setModelResult = opts.setModelResult ?? true;
-  return {
+  const fake: FakeApi = {
     pi: {
       setModel: mock(async () => setModelResult),
       setThinkingLevel: mock(),
@@ -100,6 +101,10 @@ function makeFake(
       },
     },
   };
+  let active: string[] = ["__initial__"];
+  mountPolicy({ registered: () => tools.map(t => t.name), active: () => active, apply: names => { active = names; fake.pi.setActiveTools(names); } });
+  fake.pi.setActiveTools.mockClear();
+  return fake;
 }
 
 function applyCtxOf(fake: FakeApi, opts: Partial<ApplyContext> = {}): ApplyContext {
@@ -179,9 +184,9 @@ describe("effectiveIntercomMode", () => {
   });
 });
 
-describe("filterToolsForRuntime", () => {
+describe("prepareRoleTools", () => {
   it("inherit short-circuits", () => {
-    const r = filterToolsForRuntime(
+    const r = prepareRoleTools(
       { kind: "inherit" },
       new Set(["read"]),
       "off",
@@ -191,31 +196,31 @@ describe("filterToolsForRuntime", () => {
     expect(r.kind).toBe("inherit");
   });
 
-  it("drops missing mcp:* and warns", () => {
-    const r = filterToolsForRuntime(
+  it("preserves missing mcp:* intent and warns", () => {
+    const r = prepareRoleTools(
       { kind: "set", names: ["read", "mcp:fs", "mcp:gh"] },
       new Set(["read", "mcp:fs"]),
       "off",
       false,
       true,
     );
-    expect(r).toMatchObject({ kind: "set", names: ["read", "mcp:fs"] });
+    expect(r).toMatchObject({ kind: "set", names: ["read", "mcp:fs", "mcp:gh"] });
     expect(r.warnings.some((w) => w.includes("mcp:gh"))).toBe(true);
   });
 
-  it("missing mcp:* without warnOnMissingMcp = silent drop", () => {
-    const r = filterToolsForRuntime(
+  it("preserves missing mcp:* without optional warnings", () => {
+    const r = prepareRoleTools(
       { kind: "set", names: ["mcp:fs"] },
       new Set(),
       "off",
       false,
       false,
     );
-    expect(r).toMatchObject({ kind: "set", names: [], warnings: [] });
+    expect(r).toMatchObject({ kind: "set", names: ["mcp:fs"], warnings: [] });
   });
 
   it("unknown non-mcp tool warns but passes through", () => {
-    const r = filterToolsForRuntime(
+    const r = prepareRoleTools(
       { kind: "set", names: ["read", "future-tool"] },
       new Set(["read"]),
       "off",
@@ -227,7 +232,7 @@ describe("filterToolsForRuntime", () => {
   });
 
   it("dedupes tool names", () => {
-    const r = filterToolsForRuntime(
+    const r = prepareRoleTools(
       { kind: "set", names: ["read", "read", "write"] },
       new Set(["read", "write"]),
       "off",
@@ -238,7 +243,7 @@ describe("filterToolsForRuntime", () => {
   });
 
   it("appends intercom when mode!=off and intercom is registered", () => {
-    const r = filterToolsForRuntime(
+    const r = prepareRoleTools(
       { kind: "set", names: ["read"] },
       new Set(["read", "intercom"]),
       "send",
@@ -249,7 +254,7 @@ describe("filterToolsForRuntime", () => {
   });
 
   it("does not double-append intercom when already present", () => {
-    const r = filterToolsForRuntime(
+    const r = prepareRoleTools(
       { kind: "set", names: ["intercom", "read"] },
       new Set(["read", "intercom"]),
       "both",
@@ -260,7 +265,7 @@ describe("filterToolsForRuntime", () => {
   });
 
   it("does not append intercom when intercom is unavailable", () => {
-    const r = filterToolsForRuntime(
+    const r = prepareRoleTools(
       { kind: "set", names: ["read"] },
       new Set(["read"]),
       "both",
@@ -379,7 +384,13 @@ describe("applyRole", () => {
     const fake = makeFake();
     const role = makeRole({ tools: { kind: "set", names: [] } });
     await applyRole(role, applyCtxOf(fake));
-    expect(fake.pi.setActiveTools).toHaveBeenCalledWith([]);
+    expect((await import("../../_shared/tool-policy/index.ts")).getToolPolicy().inspect()?.names).toEqual([]);
+  });
+
+  it('preserves unresolved MCP intent for the coordinator and late registration', async () => {
+    const fake = makeFake({ tools: [{ name: 'read' }] });
+    await applyRole(makeRole({ tools: { kind: 'set', names: ['read', 'mcp:late_server_tool'] } }), applyCtxOf(fake));
+    expect((await import('../../_shared/tool-policy/index.ts')).getToolPolicy().getRole()?.toolNames).toEqual(['read', 'mcp:late_server_tool']);
   });
 
   it("intercom requested but tool not registered → warning", async () => {

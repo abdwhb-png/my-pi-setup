@@ -71,10 +71,10 @@ describe("pi-wrapper-lib", () => {
     });
   });
 
-  it("leaves concrete-only tool filters unchanged", async () => {
+  it("leaves concrete-only CLI args unchanged but forwards their policy ceiling", async () => {
     const mod = await import("./pi-wrapper-lib.ts");
     const args = ["--tools", "read,grep", "-p", "task"];
-    expect(mod.prepareToolGroupArgs(args)).toEqual({ args, requestedTools: undefined });
+    expect(mod.prepareToolGroupArgs(args)).toEqual({ args, requestedTools: ["read", "grep"] });
   });
 
   it("does not defer aliases when extensions are disabled", async () => {

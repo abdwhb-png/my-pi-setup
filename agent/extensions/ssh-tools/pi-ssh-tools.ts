@@ -16,6 +16,7 @@ import {
     type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
 
 type SshProfile = {
     name: string;
@@ -44,7 +45,6 @@ const SSH_TOOL_NAMES = [
     "ssh_edit",
     "ssh_bash",
 ] as const;
-const SSH_TOOL_NAME_SET = new Set<string>(SSH_TOOL_NAMES);
 const SSH_CONFIG_PATH = join(homedir(), ".ssh", "config");
 
 function shellQuote(value: string): string {
@@ -346,23 +346,11 @@ function createRemoteBashOps(target: ActiveSshTarget): BashOperations {
     };
 }
 
-function enableSshTools(pi: ExtensionAPI) {
-    const next = new Set(pi.getActiveTools());
-    for (const name of SSH_TOOL_NAMES) {
-        next.add(name);
-    }
-    pi.setActiveTools(Array.from(next));
-}
-
-function disableSshTools(pi: ExtensionAPI) {
-    const next = pi
-        .getActiveTools()
-        .filter((name) => !SSH_TOOL_NAME_SET.has(name));
-    pi.setActiveTools(next);
-}
-
 export default function sshToolsExtension(pi: ExtensionAPI) {
     let activeTarget: ActiveSshTarget | null = null;
+    const visibility = registerToolPolicyContribution(pi, "ssh-tools", () =>
+        activeTarget ? { grants: SSH_TOOL_NAMES } : { deny: SSH_TOOL_NAMES },
+    );
 
     const readBase = createReadToolDefinition("/");
     const writeBase = createWriteToolDefinition("/");
@@ -396,13 +384,15 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         profile: SshProfile,
         ctx: ExtensionCommandContext,
     ) => {
+        const assertCurrent = visibility.captureGuard();
         const remoteCwd = await resolveRemoteCwd(profile);
+        assertCurrent();
         activeTarget = {
             name: profile.name,
             remote: profile.remote,
             remoteCwd,
         };
-        enableSshTools(pi);
+        visibility.refresh();
         updateStatus(ctx);
         ctx.ui.notify(
             `SSH mode on: ${activeTarget.name} (${activeTarget.remoteCwd})`,
@@ -412,7 +402,7 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
 
     const deactivate = (ctx: ExtensionCommandContext) => {
         activeTarget = null;
-        disableSshTools(pi);
+        visibility.refresh();
         updateStatus(ctx);
         ctx.ui.notify("SSH mode off", "info");
     };
@@ -564,6 +554,7 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
                 : null;
         },
         handler: async (args, ctx) => {
+            const assertCurrent = visibility.captureGuard();
             const input = args.trim();
             const profiles = refreshProfiles();
 
@@ -601,6 +592,7 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
                     ...profiles.map((profile) => profile.name),
                 ];
                 const picked = await ctx.ui.select("SSH target", items);
+                assertCurrent();
                 if (!picked) {
                     return;
                 }
@@ -618,7 +610,7 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
 
     pi.on("session_start", (_event, ctx) => {
         activeTarget = null;
-        disableSshTools(pi);
+        visibility.refresh();
         updateStatus(ctx);
     });
 

@@ -1,807 +1,168 @@
-import { describe, expect, it, mock } from 'bun:test';
-import {
-    SUBAGENT_EXTENSION_BINDINGS_ENV,
-    TOOL_GROUPS_CHILD_POLICY_BINDING,
-} from '../_shared/tool-groups/types.ts';
+import { describe, expect, test, mock } from 'bun:test';
+import { createToolGroupsExtension } from './index.ts';
+import { getToolPolicy, registerToolPolicyContribution } from '../_shared/tool-policy/index.ts';
+import { getSharedVisibilityBroker } from '../_shared/tool-groups/broker.ts';
+import { TestHooks, trackPolicyCleanup } from '../__tests__/policy-fixture.ts';
+import { SUBAGENT_EXTENSION_BINDINGS_ENV, TOOL_GROUPS_REQUESTED_TOOLS_ENV } from '../_shared/tool-groups/types.ts';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-// No module mock needed: createToolGroupsExtension accepts injected loadConfig,
-// and importing index.ts involves no config I/O until the returned factory
-// executes.  The transitive import chain (config.ts → config-loader.ts →
-// @earendil-works/pi-coding-agent) resolves statically.
-const { createToolGroupsExtension: createRuntimeToolGroupsExtension } =
-    await import('./index.ts');
-
-function createToolGroupsExtension(
-    loadConfig: Parameters<typeof createRuntimeToolGroupsExtension>[0],
-    loadRequestedTools: Parameters<
-        typeof createRuntimeToolGroupsExtension
-    >[1] = () => undefined,
-    loadChildPolicy: () => { allowedTools: readonly string[] } | undefined = () =>
-        undefined,
-): ReturnType<typeof createRuntimeToolGroupsExtension> {
-    return createRuntimeToolGroupsExtension(
-        loadConfig,
-        loadRequestedTools,
-        loadChildPolicy,
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type MockHandler = (event: unknown, ctx: unknown) => unknown;
-
-interface MockPi {
-    on(event: string, handler: MockHandler): void;
-    events: {
-        on(event: string, handler: (payload: unknown) => void): () => void;
-        emit(event: string, payload: unknown): void;
-    };
-    registerTool(tool: Record<string, unknown>): void;
-    getActiveTools(): string[];
-    getAllTools(): { name: string }[];
-    setActiveTools(names: string[]): void;
-    _handlers: Map<string, MockHandler>;
-    _registeredTools: Record<string, unknown>[];
-}
-
-interface MockCtx {
-    hasUI: boolean;
-    ui: { notify: (...args: any[]) => void };
-    mode: string;
-    cwd: string;
-    sessionManager: undefined;
-    modelRegistry: undefined;
-    model: undefined;
-    isIdle: () => boolean;
-    isProjectTrusted: () => boolean;
-    signal: undefined;
-    abort: () => void;
-    hasPendingMessages: () => boolean;
-    shutdown: () => void;
-    getContextUsage: () => undefined;
-    compact: () => void;
-    getSystemPrompt: () => string;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeMockPi(
-    initialTools: string[] = ['read', 'edit', 'write'],
-): MockPi {
-    const handlers = new Map<string, MockHandler>();
-    const eventHandlers = new Map<string, Set<(payload: unknown) => void>>();
-    const registeredTools: Record<string, unknown>[] = [
-        { name: 'read', description: '', parameters: {} },
-        { name: 'edit', description: '', parameters: {} },
-        { name: 'write', description: '', parameters: {} },
-        { name: 'ls', description: '', parameters: {} },
-        { name: 'bash', description: '', parameters: {} },
-    ];
-    let activeTools = [...initialTools];
-
-    return {
-        on(event: string, handler: MockHandler) {
-            handlers.set(event, handler);
-        },
+function fixture(options: { active?: string[]; registered?: string[]; groups?: Record<string, string[]>; requested?: string[]; child?: string[]; useEnv?: boolean } = {}) {
+    let active = options.active ?? ['read', 'edit', 'write'];
+    const registry = new Map((options.registered ?? ['read', 'edit', 'write', 'ls', 'bash', 'herdr']).map(name => [name, { name } as any]));
+    const hooks = new TestHooks();
+    const listeners = new Map<string, Set<(value: unknown) => void>>();
+    const notify = mock();
+    const ctx = { ui: { notify }, sessionManager: { getSessionId: () => hooks.sessionId } };
+    const pi = {
+        on: (event: string, handler: any) => hooks.set(event, handler),
         events: {
-            on(event: string, handler: (payload: unknown) => void) {
-                const listeners = eventHandlers.get(event) ?? new Set();
-                listeners.add(handler);
-                eventHandlers.set(event, listeners);
-                return () => listeners.delete(handler);
-            },
-            emit(event: string, payload: unknown) {
-                for (const handler of eventHandlers.get(event) ?? []) {
-                    handler(payload);
-                }
-            },
+            on(name: string, fn: (value: unknown) => void) { const set = listeners.get(name) ?? new Set(); set.add(fn); listeners.set(name, set); return () => { set.delete(fn); }; },
+            emit(name: string, value: unknown) { for (const fn of listeners.get(name) ?? []) fn(value); },
         },
-        registerTool(tool: Record<string, unknown>) {
-            registeredTools.push(tool);
-        },
-        getActiveTools: () => [...activeTools],
-        getAllTools: () =>
-            registeredTools.map((t) => ({ name: t.name as string })),
-        setActiveTools: (names: string[]) => {
-            activeTools = [...names];
-        },
-
-        _handlers: handlers,
-        _registeredTools: registeredTools,
-    };
+        registerTool: (tool: any) => registry.set(tool.name, tool),
+        getAllTools: () => [...registry.values()],
+        getActiveTools: () => [...active],
+        setActiveTools: (names: string[]) => { active = [...names]; },
+    } as unknown as ExtensionAPI;
+    const factory = createToolGroupsExtension(() => ({ groups: options.groups ?? {} }),
+        options.useEnv ? undefined : () => options.requested,
+        options.useEnv ? undefined : () => options.child ? { allowedTools: options.child } : undefined);
+    factory(pi);
+    trackPolicyCleanup(() => { hooks.get('session_shutdown')?.({}, ctx); });
+    const start = () => hooks.get('session_start')!({}, ctx);
+    const role = (names?: string[]) => pi.events.emit('pi-roles:tool-policy', { version: 1, roleName: 'fixture', mode: names === undefined ? 'all' : 'set', toolNames: names ?? [] });
+    return { pi, hooks, registry, ctx, notify, start, role, active: () => active, policy: getToolPolicy() };
 }
 
-function makeMockCtx(hasUI = false): MockCtx {
-    const notify = mock<(msg: string, type?: string) => void>();
-    return {
-        hasUI,
-        ui: { notify },
-        mode: 'test',
-        cwd: '/tmp',
-        sessionManager: undefined,
-        modelRegistry: undefined,
-        model: undefined,
-        isIdle: () => true,
-        isProjectTrusted: () => true,
-        signal: undefined,
-        abort: () => {},
-        hasPendingMessages: () => false,
-        shutdown: () => {},
-        getContextUsage: () => undefined,
-        compact: () => {},
-        getSystemPrompt: () => '',
-    };
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe('tool-groups extension', () => {
-    it('registers one placeholder tool per group', () => {
-        const pi = makeMockPi();
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read', 'ls'], write: ['edit'] },
-        }));
-        factory(pi as never);
-
-        const placeholders = pi._registeredTools.filter((t) =>
-            (t.name as string).startsWith('@'),
-        );
-        expect(placeholders).toHaveLength(2);
-        const names = placeholders.map((t) => t.name as string);
-        expect(names).toContain('@read');
-        expect(names).toContain('@write');
-    });
-
-    it('registers session_start, input, before_agent_start handlers', () => {
-        const pi = makeMockPi();
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read'] },
-        }));
-        factory(pi as never);
-
-        expect(pi._handlers.has('session_start')).toBe(true);
-        expect(pi._handlers.has('input')).toBe(true);
-        expect(pi._handlers.has('before_agent_start')).toBe(true);
-        expect(pi._handlers.has('tool_call')).toBe(true);
-    });
-
-    it('resolves role aliases synchronously when policy is published', () => {
-        const pi = makeMockPi();
-        const factory = createToolGroupsExtension(() => ({
-            groups: { inspect: ['read', 'ls'] },
-        }));
-        factory(pi as never);
-
-        pi.setActiveTools(['@inspect']);
-        pi.events.emit('pi-roles:tool-policy', {
-            version: 1,
-            roleName: 'atlas-orchestrator',
-            mode: 'set',
-            toolNames: ['@inspect'],
-        });
-
-        expect(pi.getActiveTools()).toEqual(['read', 'ls']);
-        expect(pi.getActiveTools().every((name) => !name.startsWith('@'))).toBe(
-            true,
-        );
-    });
-
-    it('resolves aliases synchronously for an all-tools role policy', () => {
-        const pi = makeMockPi();
-        const factory = createToolGroupsExtension(() => ({
-            groups: { inspect: ['read', 'ls'] },
-        }));
-        factory(pi as never);
-
-        pi.setActiveTools(pi.getAllTools().map((tool) => tool.name));
-        pi.events.emit('pi-roles:tool-policy', {
-            version: 1,
-            roleName: 'pi-agent',
-            mode: 'all',
-            toolNames: [],
-        });
-
-        expect(pi.getActiveTools()).toEqual([
-            'read',
-            'edit',
-            'write',
-            'ls',
-            'bash',
-        ]);
-        expect(pi.getActiveTools().every((name) => !name.startsWith('@'))).toBe(
-            true,
-        );
-    });
-
-    it('removes and blocks a late tool outside the active role policy', () => {
-        const pi = makeMockPi(['@inspect']);
-        const factory = createToolGroupsExtension(() => ({
-            groups: { inspect: ['read', 'ls'] },
-        }));
-        factory(pi as never);
-
-        pi.events.emit('pi-roles:tool-policy', {
-            version: 1,
-            roleName: 'quick-planner',
-            mode: 'set',
-            toolNames: ['@inspect'],
-        });
-        pi._handlers.get('session_start')!(
-            { type: 'session_start', reason: 'reload' },
-            makeMockCtx(),
-        );
-
-        pi.registerTool({ name: 'ctx_execute' });
-        pi.setActiveTools([...pi.getActiveTools(), 'ctx_execute']);
-        pi._handlers.get('input')!(
-            { type: 'input', text: 'continue', source: 'interactive' },
-            makeMockCtx(),
-        );
-
-        expect(pi.getActiveTools()).toEqual(['read', 'ls']);
-        expect(
-            pi._handlers.get('tool_call')!(
-                { type: 'tool_call', toolName: 'ctx_execute' },
-                makeMockCtx(),
-            ),
-        ).toEqual({
-            block: true,
-            reason: 'Tool "ctx_execute" is not allowed by active role "quick-planner".',
-        });
-        expect(
-            pi._handlers.get('tool_call')!(
-                { type: 'tool_call', toolName: 'read' },
-                makeMockCtx(),
-            ),
-        ).toBeUndefined();
-    });
-
-    it('warns when a top-level role tool is absent from the runtime', () => {
-        const pi = makeMockPi(['@inspect']);
-        const ctx = makeMockCtx(true);
-        const factory = createToolGroupsExtension(() => ({
-            groups: { inspect: ['read', 'ls'] },
-        }));
-        factory(pi as never);
-
-        pi.events.emit('pi-roles:tool-policy', {
-            version: 1,
-            roleName: 'quick-planner',
-            mode: 'set',
-            toolNames: ['@inspect', 'ask_user_question'],
-        });
-        pi._handlers.get('session_start')!(
-            { type: 'session_start', reason: 'reload' },
-            ctx,
-        );
-
-        expect(pi.getActiveTools()).toEqual(['read', 'ls']);
-        expect(ctx.ui.notify).toHaveBeenCalledWith(
-            'Tool-group diagnostics:\n  [unknown-tool] Unknown tool: ask_user_question',
-            'warning',
-        );
-    });
-
-    it('does nothing when groups config is empty', () => {
-        const pi = makeMockPi();
-        const factory = createToolGroupsExtension(
-            () => ({ groups: {} }),
-            () => undefined,
-        );
-        factory(pi as never);
-
-        const placeholders = pi._registeredTools.filter((t) =>
-            (t.name as string).startsWith('@'),
-        );
-        expect(placeholders).toHaveLength(0);
-        expect(pi._handlers.has('session_start')).toBe(false);
-    });
-
-    it('fails closed when a deferred alias has no configured group', () => {
-        const pi = makeMockPi(['read', 'edit', 'write']);
-        const factory = createToolGroupsExtension(
-            () => ({ groups: {} }),
-            () => ['@missing'],
-        );
-        factory(pi as never);
-
-        const handler = pi._handlers.get('session_start')!;
-        handler({ type: 'session_start', reason: 'startup' }, makeMockCtx());
-
-        expect(pi.getActiveTools()).toEqual([]);
-    });
-
-    it('expands @read alias on session_start', () => {
-        const pi = makeMockPi(['@read', 'edit']);
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read', 'ls'] },
-        }));
-        factory(pi as never);
-
-        const handler = pi._handlers.get('session_start')!;
-        handler({ type: 'session_start', reason: 'startup' }, makeMockCtx());
-
-        const active = pi.getActiveTools();
-        expect(active).toContain('read');
-        expect(active).toContain('ls');
-        expect(active).toContain('edit');
-        expect(active).not.toContain('@read');
-    });
-
-    it('intersects deferred CLI aliases with earlier session_start restrictions', () => {
-        const pi = makeMockPi(['read']);
-        const factory = createToolGroupsExtension(
-            () => ({ groups: { inspect: ['read', 'write'] } }),
-            () => ['@inspect'],
-        );
-        factory(pi as never);
-
-        const handler = pi._handlers.get('session_start')!;
-        handler({ type: 'session_start', reason: 'startup' }, makeMockCtx());
-
-        expect(pi.getActiveTools()).toEqual(['read']);
-    });
-
-    it('admits a requested group member after its owner restores temporary visibility', () => {
-        const pi = makeMockPi([]);
-        const factory = createToolGroupsExtension(
-            () => ({
-                groups: {
-                    think: ['think_artifact_search', 'think_execute'],
-                },
-            }),
-            () => ['@think'],
-        );
-        factory(pi as never);
-
-        pi._handlers.get('session_start')!(
-            { type: 'session_start', reason: 'startup' },
-            makeMockCtx(),
-        );
-        expect(pi.getActiveTools()).toEqual([]);
-
-        // The owning extension restores its tools when its dependency becomes
-        // ready. Registration can also finish after tool-groups session_start
-        // because extension startup handlers are asynchronous.
-        pi.registerTool({ name: 'think_execute' });
-        pi.registerTool({ name: 'think_artifact_search' });
-        pi.setActiveTools(['read', 'think_execute', 'think_artifact_search']);
-        pi.events.emit('pi-tool-groups:policy-refresh', undefined);
-
-        expect(pi.getActiveTools()).toEqual([
-            'think_execute',
-            'think_artifact_search',
-        ]);
-    });
-
-    it('filters resolved child aliases through a private concrete tool policy', () => {
-        const pi = makeMockPi(['read', 'write_report', 'structured_output']);
-        pi.registerTool({ name: 'write_report' });
-        pi.registerTool({ name: 'structured_output' });
-        const factory = createToolGroupsExtension(
-            () => ({
-                groups: { review: ['read', 'write_report'] },
-            }),
-            () => ['@review', 'structured_output'],
-            () => ({ allowedTools: ['read', 'structured_output'] }),
-        );
-        factory(pi as never);
-
-        const ctx = makeMockCtx();
-        pi._handlers.get('session_start')!(
-            { type: 'session_start', reason: 'startup' },
-            ctx,
-        );
-
-        expect(pi.getActiveTools()).toEqual(['read', 'structured_output']);
-        expect(
-            pi._handlers.get('tool_call')!(
-                { type: 'tool_call', toolName: 'write_report' },
-                ctx,
-            ),
-        ).toEqual({
-            block: true,
-            reason: 'Tool "write_report" is not allowed by child tool policy.',
-        });
-        expect(
-            pi._handlers.get('tool_call')!(
-                { type: 'tool_call', toolName: 'read' },
-                ctx,
-            ),
-        ).toBeUndefined();
-    });
-
-    it('loads the concrete child policy from pi-subagents extensionBindings', () => {
-        const previous = process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
-        process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = JSON.stringify({
-            [TOOL_GROUPS_CHILD_POLICY_BINDING]: {
-                allowedTools: ['read', 'structured_output'],
-            },
-        });
+describe('tool-groups runtime owner', () => {
+    test('retains the consumed CLI ceiling across owner reloads', () => {
+        const key = Symbol.for('pi.tool-policy.cli-requested.v1');
+        const previousRegistry = Object.getOwnPropertyDescriptor(globalThis, key);
+        const before = process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV];
         try {
-            const pi = makeMockPi([
-                'read',
-                'write_report',
-                'structured_output',
-            ]);
-            pi.registerTool({ name: 'write_report' });
-            pi.registerTool({ name: 'structured_output' });
-            const factory = createRuntimeToolGroupsExtension(
-                () => ({ groups: { review: ['read', 'write_report'] } }),
-                () => ['@review', 'structured_output'],
-            );
-            factory(pi as never);
-
-            pi._handlers.get('session_start')!(
-                { type: 'session_start', reason: 'startup' },
-                makeMockCtx(),
-            );
-
-            expect(pi.getActiveTools()).toEqual([
-                'read',
-                'structured_output',
-            ]);
+            process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV] = JSON.stringify(['read']);
+            const first = fixture({ useEnv: true }); first.start(); first.role();
+            expect(first.active()).toEqual(['read']);
+            first.hooks.get('session_shutdown')!({}, first.ctx);
+            expect(process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV]).toBeUndefined();
+            const reloaded = fixture({ useEnv: true }); reloaded.start(); reloaded.role();
+            expect(reloaded.active()).toEqual(['read']);
         } finally {
-            if (previous === undefined)
-                delete process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
-            else process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = previous;
+            if (before === undefined) delete process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV]; else process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV] = before;
+            if (previousRegistry) Object.defineProperty(globalThis, key, previousRegistry); else Reflect.deleteProperty(globalThis, key);
         }
     });
-
-    it('fails closed when its child policy binding is malformed', () => {
-        const previous = process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
-        process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = JSON.stringify({
-            [TOOL_GROUPS_CHILD_POLICY_BINDING]: { allowedTools: 'read' },
-        });
+    test('starts even with no configured groups and registers the lifecycle/gate', () => {
+        const f = fixture(); f.start();
+        for (const event of ['session_start', 'input', 'before_agent_start', 'tool_call']) expect(f.hooks.has(event)).toBe(true);
+        expect(f.active()).toEqual(['read', 'edit', 'write']);
+    });
+    test('registers non-executable alias placeholders with no prompt hints', () => {
+        const f = fixture({ groups: { inspect: ['read', 'ls'] } });
+        const alias = f.registry.get('@inspect');
+        expect(alias.parameters.type).toBe('object');
+        expect(alias.promptSnippet).toBeUndefined();
+        expect(alias.promptGuidelines).toBeUndefined();
+        expect(() => alias.execute()).toThrow('group alias');
+    });
+    test('expands initial aliases once and role aliases synchronously', () => {
+        const f = fixture({ active: ['@inspect', 'edit'], groups: { inspect: ['read', 'ls'] } });
+        f.start(); expect(f.active()).toEqual(['read', 'ls', 'edit']);
+        f.role(['@inspect']); expect(f.active()).toEqual(['read', 'ls']);
+        f.role(); expect(f.active()).toEqual(['read', 'edit', 'write', 'ls', 'bash', 'herdr']);
+    });
+    test('preserves explicit empty roles', () => {
+        const f = fixture(); f.start(); f.role([]); expect(f.active()).toEqual([]);
+    });
+    test('reports unknown aliases and missing top-level role tools without executing placeholders', () => {
+        const f = fixture(); f.start(); f.role(['@missing', 'not_installed']);
+        f.hooks.get('before_agent_start')!({}, f.ctx);
+        expect(f.active()).toEqual([]);
+        expect(JSON.stringify(f.notify.mock.calls)).toContain('missing');
+        expect(JSON.stringify(f.notify.mock.calls)).toContain('not_installed');
+    });
+    test('deduplicates diagnostics until the declared policy changes', () => {
+        const f = fixture(); f.start(); f.role(['@missing-a']);
+        f.hooks.get('input')!({}, f.ctx); f.hooks.get('input')!({}, f.ctx);
+        expect(f.notify).toHaveBeenCalledTimes(1);
+        f.role(['@missing-b']); f.hooks.get('input')!({}, f.ctx);
+        expect(f.notify).toHaveBeenCalledTimes(2);
+    });
+    test('registry changes reevaluate the policy and gate late tools', () => {
+        const f = fixture(); f.start(); f.role(['read']);
+        f.registry.set('late', { name: 'late' }); f.pi.setActiveTools(['read', 'late']);
+        expect(f.hooks.get('input')!({}, f.ctx)).toEqual({ action: 'continue' });
+        expect(f.active()).toEqual(['read']);
+        expect(f.hooks.get('tool_call')!({ toolName: 'late' }, f.ctx)?.block).toBe(true);
+        f.role(); expect(f.active()).toContain('late');
+    });
+    test('observes external O3 writes without adopting them or overwriting each request', () => {
+        const f = fixture(); f.start(); f.role();
+        f.pi.setActiveTools(['read']);
+        f.hooks.get('input')!({}, f.ctx); f.hooks.get('before_agent_start')!({}, f.ctx);
+        expect(f.active()).toEqual(['read']);
+        expect(f.policy.inspect()?.externalDrift?.removed).toContain('edit');
+        expect(f.notify).toHaveBeenCalledTimes(1);
+        f.role(['edit']); expect(f.active()).toEqual(['edit']);
+    });
+    test('CLI aliases and child ceilings constrain explicit grants', () => {
+        const f = fixture({ groups: { inspect: ['read', 'edit', 'herdr'] }, requested: ['@inspect'], child: ['read', 'herdr'] });
+        let enabled = false;
+        const grant = registerToolPolicyContribution(f.pi, 'manual-entry', () => ({ grants: enabled ? ['herdr', 'write'] : [] }));
+        f.start(); f.role(['read']); enabled = true; grant.refresh();
+        expect(f.active()).toEqual(['read', 'herdr']);
+        expect(f.hooks.get('tool_call')!({ toolName: 'write' }, f.ctx)?.block).toBe(true);
+        enabled = false; grant.refresh(); expect(f.active()).toEqual(['read']);
+    });
+    test('availability restoration uses role intent, not a filtered saved list', () => {
+        const f = fixture({ requested: ['read', 'edit'] }); let ready = false;
+        const c = registerToolPolicyContribution(f.pi, 'sandbox', () => ({ deny: ready ? [] : ['edit'] }));
+        f.start(); f.role(['read', 'edit']); expect(f.active()).toEqual(['read']);
+        ready = true; c.refresh(); expect(f.active()).toEqual(['read', 'edit']);
+        f.role(['read']); ready = false; c.refresh(); ready = true; c.refresh(); expect(f.active()).toEqual(['read']);
+    });
+    test('malformed child environment fails closed and requested aliases are consumed', () => {
+        const beforeChild = process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
+        const beforeRequested = process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV];
         try {
-            const pi = makeMockPi(['read', 'write']);
-            const factory = createRuntimeToolGroupsExtension(
-                () => ({ groups: { inspect: ['read'] } }),
-                () => ['@inspect'],
-            );
-            factory(pi as never);
-
-            pi._handlers.get('session_start')!(
-                { type: 'session_start', reason: 'startup' },
-                makeMockCtx(),
-            );
-
-            expect(pi.getActiveTools()).toEqual([]);
+            process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = '{bad';
+            process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV] = JSON.stringify(['@inspect']);
+            const f = fixture({ groups: { inspect: ['read'] }, useEnv: true }); f.start();
+            expect(f.active()).toEqual([]);
+            expect(process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV]).toBeUndefined();
         } finally {
-            if (previous === undefined)
-                delete process.env[SUBAGENT_EXTENSION_BINDINGS_ENV];
-            else process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = previous;
+            if (beforeChild === undefined) delete process.env[SUBAGENT_EXTENSION_BINDINGS_ENV]; else process.env[SUBAGENT_EXTENSION_BINDINGS_ENV] = beforeChild;
+            if (beforeRequested === undefined) delete process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV]; else process.env[TOOL_GROUPS_REQUESTED_TOOLS_ENV] = beforeRequested;
         }
     });
-
-    it("input handler expands and returns {action:'continue'}", () => {
-        const pi = makeMockPi(['@read']);
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read', 'ls'] },
-        }));
-        factory(pi as never);
-
-        const handler = pi._handlers.get('input')!;
-        const result = handler(
-            { type: 'input', text: 'hello', source: 'interactive' },
-            makeMockCtx(),
-        );
-
-        expect(result).toEqual({ action: 'continue' });
-
-        const active = pi.getActiveTools();
-        expect(active).toContain('read');
-        expect(active).toContain('ls');
+    test('workflow lease is exclusive, masks inactive members and survives role changes until revoked', () => {
+        const broker = getSharedVisibilityBroker();
+        broker.registerWorkflowGroup('fixture-a', ['workflow_a']);
+        broker.registerWorkflowGroup('fixture-b', ['workflow_b']);
+        const f = fixture({ registered: ['read', 'edit', 'workflow_a', 'workflow_b'] }); f.start(); f.role();
+        expect(f.active()).toEqual(['read', 'edit']);
+        expect(broker.activateWorkflow(f.pi, 'fixture-a').ok).toBe(true);
+        expect(f.active()).toEqual(['read', 'edit', 'workflow_a']);
+        expect(broker.activateWorkflow(f.pi, 'fixture-b').ok).toBe(false);
+        f.role(['read']); expect(f.active()).toEqual(['read', 'workflow_a']);
+        broker.deactivateWorkflow(f.pi, 'fixture-a'); expect(f.active()).toEqual(['read']);
+        expect(f.hooks.get('tool_call')!({ toolName: 'workflow_a' }, f.ctx)?.block).toBe(true);
     });
-
-    it('before_agent_start handler expands aliases', () => {
-        const pi = makeMockPi(['@read']);
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read', 'ls'] },
-        }));
-        factory(pi as never);
-
-        const handler = pi._handlers.get('before_agent_start')!;
-        handler({ type: 'before_agent_start', prompt: 'test' }, makeMockCtx());
-
-        const active = pi.getActiveTools();
-        expect(active).toContain('read');
-        expect(active).toContain('ls');
+    test('workflow activation reports the actual capped result, not an attempted merge', () => {
+        const broker = getSharedVisibilityBroker();
+        broker.registerWorkflowGroup('fixture-capped', ['workflow_capped']);
+        const f = fixture({ registered: ['read', 'workflow_capped'], active: ['read'], child: ['read'] });
+        f.start();
+        expect(broker.activateWorkflow(f.pi, 'fixture-capped')).toMatchObject({ ok: true, changed: false });
+        expect(f.active()).toEqual(['read']);
     });
-
-    it('no-op when active tools have no @ alias', () => {
-        const pi = makeMockPi(['read', 'edit']);
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read', 'ls'] },
-        }));
-        factory(pi as never);
-
-        const before = pi.getActiveTools();
-        const handler = pi._handlers.get('session_start')!;
-        handler({ type: 'session_start', reason: 'startup' }, makeMockCtx());
-
-        expect(pi.getActiveTools()).toEqual(before);
-    });
-
-    it('placeholder tool execute throws unexpanded error synchronously', () => {
-        const pi = makeMockPi();
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read'] },
-        }));
-        factory(pi as never);
-
-        const readTool = pi._registeredTools.find(
-            (t) => (t.name as string) === '@read',
-        );
-        expect(readTool).toBeDefined();
-
-        expect(() =>
-            (readTool as Record<string, (...args: unknown[]) => void>).execute(
-                'call-1',
-                {},
-                undefined,
-                undefined,
-                makeMockCtx(),
-            ),
-        ).toThrow(/group alias/);
-    });
-
-    it('deduplicates and re-emits diagnostics', () => {
-        const pi = makeMockPi(['@missing-a']);
-        const notify = mock<(msg: string, type?: string) => void>();
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read'] },
-        }));
-        factory(pi as never);
-
-        const handler = pi._handlers.get('session_start')!;
-        const ctx = { ...makeMockCtx(true), ui: { notify } };
-
-        // 1. First call → missing-group for @missing-a
-        handler({ type: 'session_start', reason: 'startup' }, ctx);
-        expect(notify).toHaveBeenCalledTimes(1);
-
-        // 2. Reset alias, call again with same diag → dedup (no new notification)
-        pi.setActiveTools(['@missing-a']);
-        handler({ type: 'session_start', reason: 'startup' }, ctx);
-        expect(notify).toHaveBeenCalledTimes(1);
-
-        // 3. Reset to different alias → different diagnostic → re-emit
-        pi.setActiveTools(['@missing-b']);
-        handler({ type: 'session_start', reason: 'startup' }, ctx);
-        expect(notify).toHaveBeenCalledTimes(2);
-        expect(
-            (notify as unknown as { mock: { calls: Array<[string]> } }).mock
-                .calls[1][0],
-        ).toContain('missing-b');
-    });
-
-    it('placeholder tools have empty schema and no promptSnippet', () => {
-        const pi = makeMockPi();
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read'] },
-        }));
-        factory(pi as never);
-
-        const tool = pi._registeredTools.find(
-            (t) => (t.name as string) === '@read',
-        );
-        expect(tool).toBeDefined();
-        expect(tool!.promptSnippet).toBeUndefined();
-        expect(tool!.promptGuidelines).toBeUndefined();
-        expect((tool!.parameters as { type: string }).type).toBe('object');
-    });
-
-    it('session_start handler runs drift check without throwing', () => {
-        const pi = makeMockPi(['@read']);
-        const warn = mock<(msg: string) => void>();
-        const origWarn = console.warn;
-        console.warn = warn;
-        try {
-            const factory = createToolGroupsExtension(() => ({
-                groups: { read: ['read'] },
-            }));
-            factory(pi as never);
-
-            const handler = pi._handlers.get('session_start')!;
-            // Should not throw even if settings are incomplete or drift is absent.
-            expect(() =>
-                handler(
-                    { type: 'session_start', reason: 'startup' },
-                    makeMockCtx(),
-                ),
-            ).not.toThrow();
-        } finally {
-            console.warn = origWarn;
-        }
-    });
-
-    it('strips a workflow member from the active set on before_agent_start when no lease is held', async () => {
-        const wfMember = 'tool_groups_wf_strip_test';
-        const { getSharedVisibilityBroker } = await import(
-            '../_shared/tool-groups/broker.ts',
-        );
-        // Unique group so it never collides with brainstorm/sdd registered by
-        // other suites in the same process.
-        getSharedVisibilityBroker().registerWorkflowGroup('tool-groups-wf-test', [
-            wfMember,
-        ]);
-
-        const pi = makeMockPi(['read', wfMember]);
-        const factory = createToolGroupsExtension(() => ({
-            groups: { read: ['read'] },
-        }));
-        factory(pi as never);
-
-        const handler = pi._handlers.get('before_agent_start')!;
-        handler({ type: 'before_agent_start' }, makeMockCtx());
-
-        expect(pi.getActiveTools()).not.toContain(wfMember);
-    });
-
-    it('applies an extension-owned policy augmenter after the role policy', async () => {
-        const member = 'tool_groups_policy_augmenter_probe';
-        const { registerToolPolicyAugmenter } = await import(
-            './policy-augmenters.ts'
-        );
-        let enabled = false;
-        const unregister = registerToolPolicyAugmenter(
-            'tool-groups-policy-augmenter-test',
-            () => (enabled ? [member] : []),
-        );
-
-        const pi = makeMockPi(['read', member]);
-        pi.registerTool({ name: member });
-        const factory = createToolGroupsExtension(() => ({
-            groups: { inspect: ['read'] },
-        }));
-        factory(pi as never);
-
-        pi.events.emit('pi-roles:tool-policy', {
-            version: 1,
-            roleName: 'reviewer',
-            mode: 'set',
-            toolNames: ['read'],
-        });
-        expect(pi.getActiveTools()).toEqual(['read']);
-
-        enabled = true;
-        pi._handlers.get('input')!(
-            { type: 'input', text: 'continue', source: 'interactive' },
-            makeMockCtx(),
-        );
-        expect(pi.getActiveTools()).toEqual(['read', member]);
-        expect(
-            pi._handlers.get('tool_call')!(
-                { type: 'tool_call', toolName: member },
-                makeMockCtx(),
-            ),
-        ).toBeUndefined();
-
-        enabled = false;
-        pi._handlers.get('input')!(
-            { type: 'input', text: 'continue', source: 'interactive' },
-            makeMockCtx(),
-        );
-        expect(pi.getActiveTools()).toEqual(['read']);
-        unregister();
-    });
-
-    it('reapplies the effective policy when an extension requests a refresh', async () => {
-        const member = 'tool_groups_policy_refresh_probe';
-        const { registerToolPolicyAugmenter, TOOL_POLICY_REFRESH_EVENT } =
-            await import('./policy-augmenters.ts');
-        let enabled = false;
-        const unregister = registerToolPolicyAugmenter(
-            'tool-groups-policy-refresh-test',
-            () => (enabled ? [member] : []),
-        );
-
-        const pi = makeMockPi(['read']);
-        pi.registerTool({ name: member });
-        const factory = createToolGroupsExtension(() => ({
-            groups: { inspect: ['read'] },
-        }));
-        factory(pi as never);
-        pi.events.emit('pi-roles:tool-policy', {
-            version: 1,
-            roleName: 'reviewer',
-            mode: 'set',
-            toolNames: ['read'],
-        });
-
-        enabled = true;
-        pi.events.emit(TOOL_POLICY_REFRESH_EVENT, undefined);
-        expect(pi.getActiveTools()).toEqual(['read', member]);
-
-        enabled = false;
-        pi.events.emit(TOOL_POLICY_REFRESH_EVENT, undefined);
-        expect(pi.getActiveTools()).toEqual(['read']);
-        unregister();
-    });
-
-    it('keeps policy augmenters below the CLI tool policy ceiling', async () => {
-        const member = 'tool_groups_policy_augmenter_cli_probe';
-        const { registerToolPolicyAugmenter, TOOL_POLICY_REFRESH_EVENT } =
-            await import('./policy-augmenters.ts');
-        let enabled = false;
-        const unregister = registerToolPolicyAugmenter(
-            'tool-groups-policy-augmenter-cli-test',
-            () => (enabled ? [member] : []),
-        );
-
-        const pi = makeMockPi(['read', member]);
-        pi.registerTool({ name: member });
-        const factory = createToolGroupsExtension(
-            () => ({ groups: { inspect: ['read', member] } }),
-            () => ['read'],
-        );
-        factory(pi as never);
-
-        const ctx = makeMockCtx();
-        pi._handlers.get('session_start')!(
-            { type: 'session_start', reason: 'startup' },
-            ctx,
-        );
-        enabled = true;
-        pi.events.emit(TOOL_POLICY_REFRESH_EVENT, undefined);
-
-        expect(pi.getActiveTools()).toEqual(['read']);
-        expect(
-            pi._handlers.get('tool_call')!(
-                { type: 'tool_call', toolName: member },
-                ctx,
-            ),
-        ).toEqual({
-            block: true,
-            reason: `Tool "${member}" is not allowed by CLI tool policy.`,
-        });
-        unregister();
-    });
-
-    it('keeps policy augmenters below the child tool policy ceiling', async () => {
-        const member = 'tool_groups_policy_augmenter_child_probe';
-        const { registerToolPolicyAugmenter, TOOL_POLICY_REFRESH_EVENT } =
-            await import('./policy-augmenters.ts');
-        let enabled = false;
-        const unregister = registerToolPolicyAugmenter(
-            'tool-groups-policy-augmenter-child-test',
-            () => (enabled ? [member] : []),
-        );
-
-        const pi = makeMockPi(['read', member]);
-        pi.registerTool({ name: member });
-        const factory = createToolGroupsExtension(
-            () => ({ groups: { inspect: ['read', member] } }),
-            () => undefined,
-            () => ({ allowedTools: ['read'] }),
-        );
-        factory(pi as never);
-
-        const ctx = makeMockCtx();
-        pi._handlers.get('session_start')!(
-            { type: 'session_start', reason: 'startup' },
-            ctx,
-        );
-        enabled = true;
-        pi.events.emit(TOOL_POLICY_REFRESH_EVENT, undefined);
-
-        expect(pi.getActiveTools()).toEqual(['read']);
-        expect(
-            pi._handlers.get('tool_call')!(
-                { type: 'tool_call', toolName: member },
-                ctx,
-            ),
-        ).toEqual({
-            block: true,
-            reason: `Tool "${member}" is not allowed by child tool policy.`,
-        });
-        unregister();
+    test('reload/startup replaces contribution handles and shutdown removes event subscriptions', () => {
+        const f = fixture();
+        const c = registerToolPolicyContribution(f.pi, 'reload-probe', () => ({ deny: ['edit'] }));
+        f.start(); const stale = c.captureRefresh();
+        f.start(); expect(() => stale()).toThrow('Stale');
+        f.hooks.get('session_shutdown')!({}, f.ctx);
+        expect(f.policy.inspect()).toBeUndefined();
+        f.role(['edit']); expect(f.policy.getRole()).toBeUndefined();
     });
 });

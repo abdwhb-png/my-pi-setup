@@ -8,9 +8,9 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
-    registerToolPolicyAugmenter,
-    TOOL_POLICY_REFRESH_EVENT,
-} from "../tool-groups/policy-augmenters.ts";
+    getToolPolicy,
+    registerToolPolicyContribution,
+} from "../_shared/tool-policy/index.ts";
 
 type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 type ReadSource = "visible" | "recent" | "recent-unwrapped" | "detection";
@@ -97,7 +97,6 @@ interface RoleToolPolicy {
 const HERDR_ROLE = "herdr-orchestrator";
 const HERDR_TOOL_NAMES = ["herdr_layout", "herdr_pane", "herdr_agent"] as const;
 const HERDR_TOOL_NAME_SET = new Set<string>(HERDR_TOOL_NAMES);
-const ROLE_TOOL_POLICY_EVENT = "pi-roles:tool-policy";
 
 const StatusEnum = StringEnum(
     ["idle", "working", "blocked", "done", "unknown"] as const,
@@ -314,29 +313,22 @@ export default function (pi: ExtensionAPI) {
     if (process.env.HERDR_ENV !== "1" || !process.env.HERDR_PANE_ID) return;
 
     let manualGrant = false;
-    let roleGrant = false;
-    const unregisterToolPolicyAugmenter = registerToolPolicyAugmenter(
+    const visibility = registerToolPolicyContribution(
+        pi,
         "pi-herdr",
-        () => (herdrEnabled() ? HERDR_TOOL_NAMES : []),
+        ({ role }) => {
+            return manualGrant || parseRoleGrant(role)
+                ? { grants: HERDR_TOOL_NAMES }
+                : { deny: HERDR_TOOL_NAMES };
+        },
     );
 
     function herdrEnabled(): boolean {
-        return manualGrant || roleGrant;
+        return manualGrant || parseRoleGrant(getToolPolicy().getRole());
     }
 
     function syncVisibility(): void {
-        const active = pi.getActiveTools();
-        const next = active.filter((name) => !HERDR_TOOL_NAME_SET.has(name));
-        if (herdrEnabled()) {
-            next.push(...HERDR_TOOL_NAMES);
-        }
-        if (
-            next.length !== active.length ||
-            next.some((name, index) => name !== active[index])
-        ) {
-            pi.setActiveTools(next);
-        }
-        pi.events.emit(TOOL_POLICY_REFRESH_EVENT, undefined);
+        visibility.refresh();
     }
 
     function parseRoleGrant(payload: unknown): boolean {
@@ -356,19 +348,12 @@ export default function (pi: ExtensionAPI) {
         | "manual"
         | "role"
         | "manual + role" {
+        const roleGrant = parseRoleGrant(getToolPolicy().getRole());
         if (manualGrant && roleGrant) return "manual + role";
         if (manualGrant) return "manual";
         if (roleGrant) return "role";
         return "hidden";
     }
-
-    const unsubscribeRolePolicy = pi.events.on(
-        ROLE_TOOL_POLICY_EVENT,
-        (payload) => {
-            roleGrant = parseRoleGrant(payload);
-            syncVisibility();
-        },
-    );
 
     pi.registerCommand("herdr-tools", {
         description: "Temporarily show or hide Herdr tools for this session",
@@ -394,10 +379,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("tool_call", (event) => {
-        if (
-            !HERDR_TOOL_NAME_SET.has(event.toolName) ||
-            herdrEnabled()
-        ) {
+        if (!HERDR_TOOL_NAME_SET.has(event.toolName) || herdrEnabled()) {
             return undefined;
         }
         return {
@@ -408,10 +390,7 @@ export default function (pi: ExtensionAPI) {
 
     pi.on("session_shutdown", () => {
         manualGrant = false;
-        roleGrant = false;
-        syncVisibility();
-        unsubscribeRolePolicy();
-        unregisterToolPolicyAugmenter();
+        visibility.dispose();
     });
 
     async function execHerdr(args: string[], signal?: AbortSignal) {

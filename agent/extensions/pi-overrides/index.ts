@@ -24,6 +24,8 @@ import { getActivePolicy } from "../_shared/audit-mode/audit-state";
 import { appendCompressionFooter } from "../_shared/compression-render";
 import { executeOnHost } from "../_shared/execution-provenance/index.ts";
 import { expandHomePath } from "../_shared/home-path.ts";
+import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
+import { registerToolPresentation } from "../_shared/tool-policy/presentation.ts";
 import { managedOutputArchive } from "../save-tokens/tool-results/archive.ts";
 import {
     loadFileResolverConfig,
@@ -394,6 +396,32 @@ function registerCompactSessionNames(
 }
 
 export default function piOverrides(pi: ExtensionAPI): void {
+    registerToolPresentation(pi, "pi-overrides", (tools) => {
+        const names = new Set(
+            tools.filter((tool) => !tool.deferred).map((tool) => tool.name),
+        );
+        const hints: string[] = [];
+        if (names.has("safe_bash"))
+            hints.push(
+                "Use safe_bash for local shell commands. Follow its permission and sandbox restrictions.",
+            );
+        const native = ["read", "grep", "find", "ls", "edit", "write"].filter(
+            (name) => names.has(name),
+        );
+        if (native.length)
+            hints.push(
+                `Use the available native file tools for reading, searching, or editing as appropriate: ${native.join(", ")}.`,
+            );
+        return hints;
+    });
+    const visibility = registerToolPolicyContribution(
+        pi,
+        "pi-overrides",
+        () => ({
+            defaults: ["grep", "find", "ls"],
+            deny: process.platform !== "win32" ? ["powershell"] : [],
+        }),
+    );
     // --- Register piFileResolver
     piFileResolver(pi);
     registerPromptThinking(pi);
@@ -537,23 +565,7 @@ export default function piOverrides(pi: ExtensionAPI): void {
             renderResult: makeRenderResult(findTextByCallId, findDef),
         });
 
-        // Augment default active toolset with native grep/find/ls.
-        // Pi core defaults to ["read", "bash", "edit", "write"] — add the
-        // read-only built-ins so the LLM can use them directly instead of
-        // shelling out via bash. This augments rather than replaces so it
-        // composes safely with pi-roles inherit semantics.
-        const current = pi.getActiveTools();
-        const added = ["grep", "find", "ls"].filter(
-            (t) => !current.includes(t),
-        );
-        const newTools = [...new Set([...current, ...added])];
-        pi.setActiveTools(newTools);
-        if (ctx.hasUI && added.length > 0) {
-            ctx.ui.notify(
-                `🛠️ Updated active tools: ${newTools.join(", ")}`,
-                "info",
-            );
-        }
+        visibility.refresh();
     });
 }
 

@@ -117,7 +117,7 @@ describe('createVisibilityBroker.registerWorkflowGroup', () => {
 // ---------------------------------------------------------------------------
 
 describe('createVisibilityBroker.activateWorkflow', () => {
-    it('adds workflow members to the current active set, preserving baseline (exclusive lease)', () => {
+    it('declares a workflow lease without writing the active list itself', () => {
         const { control, active } = makeControl(['read', 'edit', 'write']);
         const broker = makeBroker();
         broker.registerWorkflowGroup('brainstorm', [
@@ -126,12 +126,9 @@ describe('createVisibilityBroker.activateWorkflow', () => {
 
         const result = broker.activateWorkflow(control, 'brainstorm');
         expect(result.ok).toBe(true);
-        expect(active().sort()).toEqual([
-            'brainstorm_submit_discovery',
-            'edit',
-            'read',
-            'write',
-        ]);
+        expect(broker.getActiveWorkflow(control)).toBe('brainstorm');
+        expect(active()).toEqual(['read', 'edit', 'write']);
+        expect(broker.reconcileWithLease(control, ['read', 'brainstorm_submit_discovery'])).toEqual(['read', 'brainstorm_submit_discovery']);
     });
 
     it('refuses to activate a second exclusive workflow while one is active', () => {
@@ -146,11 +143,8 @@ describe('createVisibilityBroker.activateWorkflow', () => {
         const second = broker.activateWorkflow(control, 'sdd');
         expect(second.ok).toBe(false);
         expect(second.error).toMatch(/exclusive|active/i);
-        // active set still has brainstorm, not sdd
-        expect(active().sort()).toEqual([
-            'brainstorm_submit_discovery',
-            'read',
-        ]);
+        expect(broker.getActiveWorkflow(control)).toBe('brainstorm');
+        expect(active()).toEqual(['read']);
     });
 
     it('enforces one lease across distinct extension API wrappers', () => {
@@ -191,16 +185,18 @@ describe('createVisibilityBroker.activateWorkflow', () => {
 });
 
 describe('createVisibilityBroker.deactivateWorkflow', () => {
-    it('removes workflow members from active set, restoring baseline', () => {
+    it('revokes the lease so the coordinator can hide workflow members', () => {
         const { control, active } = makeControl(['read', 'edit', 'write']);
         const broker = makeBroker();
         broker.registerWorkflowGroup('brainstorm', [
             'brainstorm_submit_discovery',
         ]);
         broker.activateWorkflow(control, 'brainstorm');
-        expect(active()).toContain('brainstorm_submit_discovery');
+        expect(broker.getActiveWorkflow(control)).toBe('brainstorm');
 
         expect(broker.deactivateWorkflow(control, 'brainstorm').ok).toBe(true);
+        expect(broker.getActiveWorkflow(control)).toBeNull();
+        expect(broker.reconcileWithLease(control, ['read', 'brainstorm_submit_discovery'])).toEqual(['read']);
         expect(active().sort()).toEqual(['edit', 'read', 'write']);
     });
 

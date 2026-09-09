@@ -1,3 +1,4 @@
+import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
 /**
  * Think-in-Code native extension.
  *
@@ -61,8 +62,6 @@ export interface ThinkInCodeRegistrationOptions {
     resolveRoot?: () => string;
 }
 
-const ROLE_TOOL_POLICY_EVENT = "pi-roles:tool-policy";
-
 function sandboxUnavailableError(): SandboxUnavailableError | undefined {
     const runtime = getSandboxRuntime();
     if (runtime.state === "enabled") {
@@ -100,28 +99,17 @@ export function registerThinkInCode(
     let telemetrySequence = 0;
     let telemetryWarningReported = false;
     let auditRecommendationTurnActive = false;
-    const hiddenThinkTools = new Set<string>();
-    let rolePolicyListenerRegistered = false;
+    const visibility = registerToolPolicyContribution(
+        pi,
+        "think-in-code",
+        () => ({
+            deny: sandboxUnavailableReason() ? THINK_TOOL_NAMES : [],
+        }),
+    );
     let unsubscribeSandboxRuntime: (() => void) | undefined;
 
     function syncSandboxToolVisibility(): void {
-        const activeTools = new Set(pi.getActiveTools());
-        if (sandboxUnavailableReason() !== undefined) {
-            let changed = false;
-            for (const toolName of THINK_TOOL_NAMES) {
-                if (activeTools.delete(toolName)) {
-                    hiddenThinkTools.add(toolName);
-                    changed = true;
-                }
-            }
-            if (changed) pi.setActiveTools([...activeTools]);
-            return;
-        }
-        if (hiddenThinkTools.size > 0) {
-            for (const toolName of hiddenThinkTools) activeTools.add(toolName);
-            hiddenThinkTools.clear();
-            pi.setActiveTools([...activeTools]);
-        }
+        visibility.refresh();
     }
 
     function warnTelemetry(ctx: ExtensionContext, message: string): void {
@@ -290,25 +278,10 @@ export function registerThinkInCode(
         telemetryWarningReported = false;
         auditRecommendationTurnActive = false;
         commandExecution?.approvals.clear();
-        unsubscribeSandboxRuntime ??= subscribeSandboxRuntime(() => {
-            const before = pi.getActiveTools();
-            syncSandboxToolVisibility();
-            const after = pi.getActiveTools();
-            if (
-                before.length !== after.length ||
-                before.some((name, index) => name !== after[index])
-            ) {
-                pi.events.emit("pi-tool-groups:policy-refresh", undefined);
-            }
-        });
-        if (!rolePolicyListenerRegistered) {
-            // Register after all extension factories have loaded so this
-            // capability filter runs after role/tool-group policy listeners.
-            pi.events.on(ROLE_TOOL_POLICY_EVENT, () => {
-                syncSandboxToolVisibility();
-            });
-            rolePolicyListenerRegistered = true;
-        }
+        unsubscribeSandboxRuntime?.();
+        unsubscribeSandboxRuntime = subscribeSandboxRuntime(
+            visibility.captureRefresh(),
+        );
         await openStore(ctx);
         registerTools();
         syncSandboxToolVisibility();

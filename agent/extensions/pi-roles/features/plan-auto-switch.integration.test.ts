@@ -44,8 +44,11 @@ interface SessionEntry {
 const tempDirectories: string[] = [];
 const sessions: TestSession[] = [];
 
-afterEach(() => {
-    for (const session of sessions.splice(0)) session.dispose();
+afterEach(async () => {
+    for (const session of sessions.splice(0)) {
+        await session.session.extensionRunner?.emit({ type: 'session_shutdown', reason: 'quit' });
+        session.dispose();
+    }
     for (const directory of tempDirectories.splice(0)) {
         rmSync(directory, { recursive: true, force: true });
     }
@@ -298,6 +301,7 @@ describe('plan-auto-switch real Pi lifecycle', () => {
             'write',
         ]);
         expect(session.session.systemPrompt).not.toContain('Available tools:');
+        await expectFinalProviderCatalog(session);
         expect(emittedPolicies.at(-1)).toEqual({
             version: 1,
             roleName: targetRole,
@@ -352,6 +356,7 @@ describe('plan-auto-switch real Pi lifecycle', () => {
                     competingTriggerTurnFixture,
                     piRoles,
                     approvalFixture,
+                    toolGroups,
                 ],
             });
         } finally {
@@ -391,4 +396,54 @@ describe('plan-auto-switch real Pi lifecycle', () => {
             entries.indexOf(processed),
         );
     });
+});
+
+/** Exercise the real request builder and all registered provider hooks, without network I/O. */
+async function expectFinalProviderCatalog(session: TestSession): Promise<void> {
+    const { stream } = await import('@earendil-works/pi-ai/api/openai-completions');
+    const model = session.session.agent.state.model;
+    session.session.agent.state.model = { ...model, api: 'openai-completions' };
+    const names = session.session.agent.state.tools.map(tool => tool.name);
+    let transported = '';
+    const fetch: typeof globalThis.fetch = Object.assign(async (_url: unknown, init?: RequestInit) => {
+        transported = String(init?.body);
+        return new Response('fixture transport stop', { status: 400 });
+    }, { preconnect() {} });
+    await stream({ ...model, api: 'openai-completions' }, {
+        systemPrompt: session.session.systemPrompt,
+        messages: [{ role: 'user', content: 'Verify final catalog', timestamp: 0 }],
+        tools: session.session.agent.state.tools,
+    }, {
+        apiKey: 'fixture-not-a-secret', fetch, maxRetries: 0,
+        onPayload: payload => session.session.extensionRunner.emitBeforeProviderRequest(payload),
+    }).result();
+    const payload = JSON.parse(transported) as { tools: Array<{ function: { name: string } }>; messages: Array<{ role: string; content: string }> };
+    expect(payload.tools.map(tool => tool.function.name)).toEqual(names);
+    const system = payload.messages.filter(message => message.role === 'system' || message.role === 'developer').map(message => message.content).join('\n');
+    expect(system.includes('<pi-runtime-tools>')).toBe(true);
+    for (const name of names) expect(system).toContain(`- ${name}`);
+    expect(names).toEqual(expect.arrayContaining(['edit', 'write', 'safe_bash']));
+}
+
+it.each(['manual', 'switch_role', 'apply-patches'] as const)('%s sends the final pi-agent catalog through the real provider builder', async route => {
+    const cwd = createFixtureProject('pi-agent');
+    const rolesDirectory = join(cwd, '.pi', 'roles');
+    writeRole(rolesDirectory, 'debug', 'read, switch_role');
+    const prompts = join(cwd, '.pi', 'prompts');
+    mkdirSync(prompts, { recursive: true });
+    writeFileSync(join(prompts, 'apply-patches.md'), '---\nrole: pi-agent\ndescription: Apply fixture patches\n---\nApply fixture patches.');
+    const session = await createTestSession({ cwd, systemPrompt: 'custom system prompt',
+        extensionFactories: [approvalFixture, contextExtension, piRoles, toolGroups] });
+    sessions.push(session);
+    await session.session.prompt('/role debug');
+    expect(session.session.getActiveToolNames()).not.toContain('edit');
+    if (route === 'manual') {
+        await session.session.prompt('/role pi-agent');
+        await session.session.extensionRunner.emitBeforeAgentStart('apply', undefined, session.session.systemPrompt, { cwd, customPrompt: 'custom system prompt' });
+    } else {
+        await session.run(when(route === 'apply-patches' ? '/apply-patches' : 'Switch role', route === 'apply-patches'
+            ? [says('Applied fixture patches.')]
+            : [calls('switch_role', { roleName: 'pi-agent' }), says('Ready.')]));
+    }
+    await expectFinalProviderCatalog(session);
 });

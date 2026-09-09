@@ -1,5 +1,6 @@
 /// <reference types="bun" />
 
+import { mountWorkflowPolicy } from "../__tests__/policy-fixture.ts";
 import { beforeEach, afterEach, describe, expect, it, mock } from "bun:test";
 import {
   SessionManager,
@@ -133,6 +134,7 @@ function createMockAPI(sessionManager?: SessionManager) {
     events,
   } as unknown as ExtensionAPI;
 
+  mountWorkflowPolicy(pi);
   return {
     pi,
     commands,

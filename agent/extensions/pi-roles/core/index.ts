@@ -1,3 +1,7 @@
+import {
+    getToolPolicy,
+    registerToolPolicyContribution,
+} from "../../_shared/tool-policy/index.ts";
 /**
  * pi-roles extension entry point.
  *
@@ -79,6 +83,7 @@ interface RuntimeState {
 }
 
 export default function registerPiRolesCore(pi: ExtensionAPI): void {
+    registerToolPolicyContribution(pi, "pi-roles", () => ({}));
     const state: RuntimeState = {
         activeRole: null,
         pendingRoleAfterReset: null,
@@ -125,6 +130,7 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
 
     // --------------------------------------------------------------- session_start
     pi.on("session_start", async (event, ctx) => {
+        getToolPolicy().beginSession(ctx.sessionManager.getSessionId());
         refreshFromDisk(ctx.cwd);
 
         const restored = findRestoredState(ctx);
