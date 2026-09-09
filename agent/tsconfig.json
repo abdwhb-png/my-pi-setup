@@ -16,12 +16,6 @@
             ],
             "pi-fancy-footer/api": [
                 "../../projects/pi-integrations/pi-fancy-footer/src/api.ts"
-            ],
-            "pi-roles": [
-                "../../projects/pi-integrations/pi-roles/src/index.ts"
-            ],
-            "pi-roles/protocol": [
-                "../../projects/pi-integrations/pi-roles/src/protocol.ts"
             ]
         }
     },
