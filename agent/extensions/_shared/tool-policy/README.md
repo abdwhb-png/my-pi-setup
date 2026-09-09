@@ -63,15 +63,19 @@ Do not claim that the coordinator controls these two external packages.
 ## Provider presentation
 
 Detect custom `SYSTEM.md` through `before_agent_start`, but do not build a
-catalog there. In `before_provider_request`, derive names and descriptions
-from that request's definitions. Replace only the generated
+catalog there. `context.ts` only reads catalog diagnostics. The finalizer
+implemented by `pi-overrides` is registered last by the `tool-groups` runtime
+owner, which is pinned as the final package. In `before_provider_request`,
+derive names, descriptions and tool selection from the final request
+definitions. Replace only the generated
 `<pi-runtime-tools>…</pi-runtime-tools>` block. Preserve arbitrary user headings,
 unrelated instructions, multimodal content, schemas and cache metadata.
 
 Use the validated adapters for OpenAI Completions, Responses, Azure Responses,
 Codex Responses, Anthropic, Google, Vertex, Bedrock, Mistral and pi-messages.
 Include names without descriptions and an explicit empty catalog. Distinguish
-prefix definitions from definitions delivered through deferred-tool transport.
+callable, disabled, unspecified and deferred definitions. Honor provider-native
+`tool_choice` and `toolChoice`; never advertise disabled schemas as callable.
 Warn explicitly when an API or shape is unsupported, and show that coverage
 gap in `/context`. Do not fall back to a previous catalog or `getActiveTools()`.
 
@@ -83,9 +87,9 @@ Keep `/context` observations limited to catalog metadata, active names,
 differences and declared sources. Do not retain or log request payloads,
 complete prompts, arguments or secrets. Leave Pi's default prompt unchanged.
 
-For new provider hooks, do not mutate tool definitions after catalog injection.
-The installed GLM/Codex hooks change request options only and are tested in
-both orders. Revisit this boundary if a future hook rewrites outgoing tools.
+Keep `tool-groups` last in the resolved extension order and register the
+finalizer after its policy hooks. The architecture and real-runner tests enforce
+that invariant and cover a preceding hook which rewrites outgoing tools.
 
 ## Validation
 

@@ -229,7 +229,7 @@ describe('calculateExtensionFiles', () => {
 });
 
 describe('custom system prompt tool contract', () => {
-    it('does not inject a potentially stale catalog at before_agent_start', () => {
+    it('leaves provider prompt mutation to the finalizer', () => {
         const beforeAgentStartHandlers: Array<
             (event: any, context: any) => unknown
         > = [];
@@ -256,11 +256,7 @@ describe('custom system prompt tool contract', () => {
 
         contextExtension(pi as unknown as ExtensionAPI);
 
-        expect(beforeAgentStartHandlers).toHaveLength(1);
-        const result = beforeAgentStartHandlers[0]({
-            systemPrompt: 'unchanged custom prompt', systemPromptOptions: { customPrompt: 'SYSTEM.md' },
-        }, {});
-        expect(result).toBeUndefined();
+        expect(beforeAgentStartHandlers).toHaveLength(0);
     });
 });
 

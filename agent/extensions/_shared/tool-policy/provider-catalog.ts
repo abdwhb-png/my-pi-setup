@@ -18,20 +18,77 @@ function record(value: ProviderPayload): value is ObjectValue {
 export interface CatalogTool extends PresentedTool {
     promptGuidelines?: readonly string[];
 }
-export function buildToolsListSnippet(tools: readonly CatalogTool[]): string {
+function toolLine(tool: CatalogTool): string {
+    return `- ${tool.name}${tool.description?.trim() ? ": " + tool.description.trim().split(/\r?\n/)[0] : ""}`;
+}
+export type ToolSelection =
+    | { mode: "auto" }
+    | { mode: "required" }
+    | { mode: "none" }
+    | { mode: "named"; names: readonly string[] }
+    | { mode: "unspecified" };
+
+function callableTools(
+    tools: readonly CatalogTool[],
+    selection: ToolSelection,
+): CatalogTool[] | undefined {
+    const immediate = tools.filter((t) => !t.deferred);
+    switch (selection.mode) {
+        case "auto":
+        case "required":
+            return immediate;
+        case "none":
+            return [];
+        case "named": {
+            const names = new Set(selection.names);
+            return immediate.filter((tool) => names.has(tool.name));
+        }
+        case "unspecified":
+            return immediate.length ? undefined : [];
+    }
+    return undefined;
+}
+
+export function buildToolsListSnippet(
+    tools: readonly CatalogTool[],
+    selection: ToolSelection = { mode: "auto" },
+): string {
     const immediate = tools.filter((t) => !t.deferred);
     const deferred = tools.filter((t) => t.deferred);
-    const line = (t: CatalogTool) =>
-        `- ${t.name}${t.description?.trim() ? ": " + t.description.trim().split(/\r?\n/)[0] : ""}`;
+    const callable = callableTools(tools, selection);
+    const callableNames = new Set(callable?.map((tool) => tool.name));
+    const unavailable =
+        callable === undefined
+            ? immediate
+            : immediate.filter((tool) => !callableNames.has(tool.name));
     return [
         TOOLS_LIST_HEADING,
-        ...(immediate.length
-            ? immediate.map(line)
-            : ["(no immediate function tools)"]),
+        ...(immediate.length === 0
+            ? ["(no immediate function tools)"]
+            : callable === undefined
+              ? ["(callability unspecified by this provider request)"]
+              : callable.length
+                ? callable.map(toolLine)
+                : ["(no immediately callable function tools)"]),
+        ...(selection.mode === "required"
+            ? ["Tool selection: one of the available tools is required."]
+            : selection.mode === "named"
+              ? [
+                    `Tool selection: restricted to ${selection.names.join(", ") || "(missing named tool)"}.`,
+                ]
+              : []),
+        ...(unavailable.length
+            ? [
+                  selection.mode === "unspecified"
+                      ? "Tool schemas present (callability unspecified):"
+                      : "Schemas disabled for this request:",
+                  ...unavailable.map(toolLine),
+              ]
+            : []),
         ...(deferred.length
             ? [
                   "Deferred tools (definitions supplied through the deferred-tool transport):",
-                  ...deferred.map(line),
+                  ...deferred.map(toolLine),
               ]
             : []),
     ].join("\n");
@@ -45,12 +102,14 @@ export function stripToolsCatalog(prompt: string): string {
 export function appendToolsListPrompt(
     prompt: string,
     tools: readonly CatalogTool[],
+    selection: ToolSelection = { mode: "auto" },
 ): string {
+    const callable = callableTools(tools, selection) ?? [];
     const guidelines = [
         ...new Set(
             [
-                ...tools.flatMap((t) => t.promptGuidelines ?? []),
-                ...toolPresentation(tools),
+                ...callable.flatMap((t) => t.promptGuidelines ?? []),
+                ...toolPresentation(callable),
             ]
                 .map((s) => s.trim())
                 .filter(Boolean),
@@ -58,7 +117,7 @@ export function appendToolsListPrompt(
     ];
     const body = [
         CATALOG_START,
-        buildToolsListSnippet(tools),
+        buildToolsListSnippet(tools, selection),
         ...(guidelines.length
             ? [TOOL_GUIDELINES_HEADING, ...guidelines.map((s) => `- ${s}`)]
             : []),
@@ -72,6 +131,8 @@ export type CatalogResult =
           supported: true;
           payload: ProviderPayload;
           tools: PresentedTool[];
+          callableTools: PresentedTool[] | undefined;
+          selection: ToolSelection;
           block: string;
       }
     | { supported: false; reason: string };
@@ -202,6 +263,110 @@ function messagePrompt(
     return result;
 }
 
+function namedSelection(names: ProviderPayload): ToolSelection {
+    if (!isArray(names) || !names.every((name) => typeof name === "string"))
+        throw new Error("Invalid named tool selection");
+    const unique = [
+        ...new Set(names.map((name) => name.trim()).filter(Boolean)),
+    ];
+    if (!unique.length) throw new Error("Empty named tool selection");
+    return { mode: "named", names: unique };
+}
+
+function standardSelection(value: ProviderPayload): ToolSelection {
+    if (value === undefined) return { mode: "unspecified" };
+    if (typeof value === "string") {
+        switch (value.toLowerCase()) {
+            case "auto":
+            case "validated":
+                return { mode: "auto" };
+            case "required":
+            case "any":
+                return { mode: "required" };
+            case "none":
+                return { mode: "none" };
+            default:
+                throw new Error(`Unsupported tool selection: ${value}`);
+        }
+    }
+    if (!record(value)) throw new Error("Invalid tool selection");
+    if (typeof value.type === "string") {
+        switch (value.type.toLowerCase()) {
+            case "auto":
+            case "validated":
+                return { mode: "auto" };
+            case "required":
+            case "any":
+                return { mode: "required" };
+            case "none":
+                return { mode: "none" };
+            case "function":
+                if (
+                    record(value.function) &&
+                    typeof value.function.name === "string"
+                )
+                    return namedSelection([value.function.name]);
+                if (typeof value.name === "string")
+                    return namedSelection([value.name]);
+                break;
+            case "tool":
+                if (typeof value.name === "string")
+                    return namedSelection([value.name]);
+                break;
+        }
+    }
+    if (record(value.function) && typeof value.function.name === "string")
+        return namedSelection([value.function.name]);
+    if (typeof value.name === "string") return namedSelection([value.name]);
+    if (value.auto !== undefined) return { mode: "auto" };
+    if (value.any !== undefined) return { mode: "required" };
+    if (record(value.tool) && typeof value.tool.name === "string")
+        return namedSelection([value.tool.name]);
+    throw new Error("Unsupported tool selection object");
+}
+
+function googleSelection(config: ObjectValue): ToolSelection {
+    if (config.toolConfig === undefined) return { mode: "unspecified" };
+    if (!record(config.toolConfig))
+        throw new Error("Invalid Google tool config");
+    const functionCallingConfig = config.toolConfig.functionCallingConfig;
+    if (functionCallingConfig === undefined) return { mode: "unspecified" };
+    if (!record(functionCallingConfig))
+        throw new Error("Invalid Google function calling config");
+    const mode = standardSelection(functionCallingConfig.mode);
+    if (mode.mode === "none") return mode;
+    return functionCallingConfig.allowedFunctionNames === undefined
+        ? mode
+        : namedSelection(functionCallingConfig.allowedFunctionNames);
+}
+
+function providerSelection(api: string, value: ObjectValue): ToolSelection {
+    switch (api) {
+        case "openai-completions":
+        case "openai-responses":
+        case "azure-openai-responses":
+        case "openai-codex-responses":
+        case "anthropic-messages":
+            return standardSelection(value.tool_choice);
+        case "mistral-conversations":
+            return standardSelection(value.toolChoice);
+        case "google-generative-ai":
+        case "google-vertex":
+            if (!record(value.config)) throw new Error("Missing Google config");
+            return googleSelection(value.config);
+        case "bedrock-converse-stream":
+            return record(value.toolConfig)
+                ? standardSelection(value.toolConfig.toolChoice)
+                : { mode: "unspecified" };
+        case "pi-messages":
+            if (value.options === undefined) return { mode: "unspecified" };
+            if (!record(value.options)) throw new Error("Invalid Pi options");
+            return standardSelection(value.options.toolChoice);
+        default:
+            return { mode: "unspecified" };
+    }
+}
+
 /** The outgoing payload, not getActiveTools(), is the authority for this request. */
 export function injectProviderToolsCatalog(
     api: string,
@@ -214,6 +379,7 @@ export function injectProviderToolsCatalog(
         };
     try {
         let tools: PresentedTool[];
+        const selection = providerSelection(api, value);
         let rewrite: (transform: (text: string) => string) => ProviderPayload;
         switch (api) {
             case "openai-completions":
@@ -349,14 +515,17 @@ export function injectProviderToolsCatalog(
                 unique.set(tool.name, tool);
         }
         tools = [...unique.values()];
+        const selected = callableTools(tools, selection);
         const payload = rewrite((prompt) =>
-            appendToolsListPrompt(prompt, tools),
+            appendToolsListPrompt(prompt, tools, selection),
         );
         return {
             supported: true,
             payload,
             tools,
-            block: appendToolsListPrompt("", tools).trim(),
+            callableTools: selected,
+            selection,
+            block: appendToolsListPrompt("", tools, selection).trim(),
         };
     } catch (error) {
         return {

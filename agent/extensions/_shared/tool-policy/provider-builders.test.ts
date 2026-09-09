@@ -41,7 +41,7 @@ for (const api of apis) test(`${api}: real request builder reaches only the simu
         transport: 'sse', maxRetries: 0,
         env: { GOOGLE_CLOUD_PROJECT: 'fixture', GOOGLE_CLOUD_LOCATION: 'us-central1', AWS_REGION: 'us-east-1', AZURE_OPENAI_API_VERSION: '2025-04-01-preview' },
         ...(!['google-generative-ai', 'google-vertex', 'bedrock-converse-stream'].includes(api) ? { fetch } : {}),
-        onPayload(payload) {
+        onPayload(payload: unknown) {
             const result = injectProviderToolsCatalog(api, payload);
             expect(result.supported).toBe(true);
             if (!result.supported) throw new Error(result.reason);
@@ -56,4 +56,39 @@ for (const api of apis) test(`${api}: real request builder reaches only the simu
     expect(transformed, result.errorMessage).toBeDefined();
     expect(transported, result.errorMessage).toEqual(transformed);
     expect(JSON.stringify(transported)).toContain('<pi-runtime-tools>');
+
+    transported = undefined;
+    transformed = undefined;
+    let callableNames: string[] | undefined;
+    let noneBlock = '';
+    const noneResult = await stream(model, { systemPrompt: 'Custom SYSTEM', messages: [{ role: 'user', content: 'fixture', timestamp: 0 }],
+        tools: ['edit', 'safe_bash'].map(name => ({ name, description: `${name} description`, parameters: Type.Object({}) })) }, {
+        ...options,
+        toolChoice: 'none',
+        onPayload(payload: unknown) {
+            const catalog = injectProviderToolsCatalog(api, payload);
+            expect(catalog.supported).toBe(true);
+            if (!catalog.supported) throw new Error(catalog.reason);
+            callableNames = catalog.callableTools?.map(tool => tool.name);
+            noneBlock = catalog.block;
+            transformed = catalog.payload;
+            return transformed;
+        },
+    }).result();
+    if (api === 'azure-openai-responses') {
+        // The installed Azure builder does not serialize StreamOptions.toolChoice.
+        // The finalizer must report the resulting payload as unspecified.
+        expect(callableNames, noneResult.errorMessage).toBeUndefined();
+        expect(noneBlock).toContain('(callability unspecified by this provider request)');
+    } else {
+        expect(callableNames, noneResult.errorMessage).toEqual([]);
+        expect(noneBlock).toMatch(/\(no immediate(?:ly callable)? function tools\)/);
+    }
+    if (api === 'mistral-conversations') {
+        // Mistral renames camelCase request fields after onPayload.
+        expect(transported).toMatchObject({ tool_choice: 'none' });
+        expect(JSON.stringify(transported)).toContain('no immediately callable function tools');
+    } else {
+        expect(transported, noneResult.errorMessage).toEqual(transformed);
+    }
 });

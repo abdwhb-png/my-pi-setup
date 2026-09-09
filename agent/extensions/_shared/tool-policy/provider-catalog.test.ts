@@ -49,6 +49,55 @@ test('reports an explicit empty catalog', () => {
     const result = injectProviderToolsCatalog('openai-completions', { messages: [{ role: 'system', content: 'Custom' }] });
     expect(result.supported && result.block).toContain('(no immediate function tools)');
 });
+test('does not advertise schemas as callable when OpenAI disables tool selection', () => {
+    const result = injectProviderToolsCatalog('openai-completions', {
+        messages: [{ role: 'system', content: 'Custom' }],
+        tools: [{ type: 'function', function: fn }],
+        tool_choice: 'none',
+    });
+    expect(result).toMatchObject({
+        supported: true,
+        selection: { mode: 'none' },
+        callableTools: [],
+    });
+    expect(result.supported && result.block).toContain('(no immediately callable function tools)');
+    expect(result.supported && result.block).toContain('Schemas disabled for this request:');
+    expect(result.supported && result.block).toContain('- edit: Edit a file');
+});
+for (const [api, payload] of [
+    ['mistral-conversations', { messages: [], tools: [{ type: 'function', function: fn }], toolChoice: 'none' }],
+    ['openai-responses', { input: [], instructions: 'Custom', tools: [{ type: 'function', ...fn }], tool_choice: 'none' }],
+    ['azure-openai-responses', { input: [], instructions: 'Custom', tools: [{ type: 'function', ...fn }], tool_choice: 'none' }],
+    ['openai-codex-responses', { input: [], instructions: 'Custom', tools: [{ type: 'function', ...fn }], tool_choice: 'none' }],
+    ['anthropic-messages', { messages: [], system: 'Custom', tools: [{ ...fn, input_schema: {} }], tool_choice: { type: 'none' } }],
+    ['google-generative-ai', { contents: [], config: { systemInstruction: 'Custom', tools: [{ functionDeclarations: [fn] }], toolConfig: { functionCallingConfig: { mode: 'NONE', allowedFunctionNames: ['edit'] } } } }],
+    ['google-vertex', { contents: [], config: { systemInstruction: 'Custom', tools: [{ functionDeclarations: [fn] }], toolConfig: { functionCallingConfig: { mode: 'NONE' } } } }],
+    ['pi-messages', { context: { systemPrompt: 'Custom', messages: [], tools: [fn] }, options: { toolChoice: 'none' } }],
+] as const) {
+    test(`${api}: honors the provider-native disabled selection`, () => {
+        const result = injectProviderToolsCatalog(api, payload);
+        expect(result).toMatchObject({
+            supported: true,
+            selection: { mode: 'none' },
+            callableTools: [],
+        });
+        expect(result.supported && result.block).toContain('(no immediately callable function tools)');
+        expect(result.supported && result.block).toContain('Schemas disabled for this request:\n- edit: Edit a file');
+    });
+}
+test('restricts callable tools to a provider-selected name', () => {
+    const result = injectProviderToolsCatalog('openai-responses', {
+        input: [], instructions: 'Custom',
+        tools: [{ type: 'function', ...fn }, { type: 'function', name: 'read', parameters: {} }],
+        tool_choice: { type: 'function', name: 'edit' },
+    });
+    expect(result).toMatchObject({
+        supported: true,
+        selection: { mode: 'named', names: ['edit'] },
+        callableTools: [{ name: 'edit' }],
+    });
+    expect(result.supported && result.block).toContain('Schemas disabled for this request:\n- read');
+});
 test('keeps valid empty system block shapes for Google and Bedrock', () => {
     const google = injectProviderToolsCatalog('google-vertex', { contents: [], config: { systemInstruction: { parts: [] }, tools: [] } });
     const bedrock = injectProviderToolsCatalog('bedrock-converse-stream', { messages: [], system: [] });
@@ -62,4 +111,5 @@ test('rejects unknown API and malformed schema rather than using live or cached 
     expect(injectProviderToolsCatalog('future-api', {}).supported).toBe(false);
     expect(injectProviderToolsCatalog('openai-completions', { messages: [], tools: [{}] }).supported).toBe(false);
     expect(injectProviderToolsCatalog('google-vertex', { messages: [], tools: [] }).supported).toBe(false);
+    expect(injectProviderToolsCatalog('openai-completions', { messages: [], tools: [], tool_choice: 'surprise' }).supported).toBe(false);
 });

@@ -1,8 +1,5 @@
 import { getToolPolicy } from "./_shared/tool-policy/index.ts";
-import {
-    injectProviderToolsCatalog,
-    type CatalogResult,
-} from "./_shared/tool-policy/provider-catalog.ts";
+import { getProviderCatalogSnapshot } from "./_shared/tool-policy/provider-catalog-state.ts";
 export {
     TOOLS_LIST_HEADING,
     TOOL_GUIDELINES_HEADING,
@@ -729,57 +726,27 @@ export default function contextExtension(pi: ExtensionAPI) {
         }
     });
 
-    let customPrompt = false;
-    let lastCatalog:
-        | Omit<Extract<CatalogResult, { supported: true }>, "payload">
-        | Extract<CatalogResult, { supported: false }>
-        | undefined;
-    let requestNumber = 0;
-    let catalogApi: string | undefined;
-    let warning: string | undefined;
-    let lastInjected = false;
-    pi.on("session_start", () => {
-        customPrompt = false;
-        lastCatalog = undefined;
-        requestNumber = 0;
-        warning = undefined;
-        catalogApi = undefined;
-        lastInjected = false;
-    });
-    pi.on("before_agent_start", (event) => {
-        customPrompt = event.systemPromptOptions.customPrompt !== undefined;
-    });
-    pi.on("before_provider_request", (event, ctx) => {
-        const api = ctx.model?.api ?? "unknown";
-        catalogApi = api;
-        const result = injectProviderToolsCatalog(api, event.payload);
-        lastCatalog = result.supported
-            ? { supported: true, tools: result.tools, block: result.block }
-            : result;
-        lastInjected = customPrompt && result.supported;
-        requestNumber++;
-        if (!lastCatalog.supported) {
-            if (warning !== lastCatalog.reason)
-                ctx.ui.notify(
-                    "Tools catalog unavailable: " + lastCatalog.reason,
-                    "warning",
-                );
-            warning = lastCatalog.reason;
-            return undefined;
-        }
-        warning = undefined;
-        return customPrompt && result.supported ? result.payload : undefined;
-    });
     const catalogStatus = (active: string[]) => {
         const policy = getToolPolicy().inspect();
+        const snapshot = getProviderCatalogSnapshot();
         const lines = [`Active now: ${active.join(", ") || "(none)"}`];
-        if (lastCatalog?.supported) {
+        if (snapshot?.observation.supported) {
+            const lastCatalog = snapshot.observation;
             const sent = lastCatalog.tools.map((t) => t.name);
             lines.push(
-                `Last request #${requestNumber} (${catalogApi}): ${sent.join(", ") || "(none)"}`,
+                `Last request #${snapshot.requestNumber} (${snapshot.api}): ${sent.join(", ") || "(none)"}`,
+            );
+            const callable = lastCatalog.callableTools?.map(
+                (tool) => tool.name,
             );
             lines.push(
-                lastInjected
+                `Callable in last request: ${callable ? callable.join(", ") || "(none)" : "(unspecified)"}`,
+            );
+            lines.push(
+                `Tool selection: ${lastCatalog.selection.mode === "named" ? `named (${lastCatalog.selection.names.join(", ")})` : lastCatalog.selection.mode}`,
+            );
+            lines.push(
+                snapshot.injected
                     ? `Injected catalog: ~${estimateTokens(lastCatalog.block)} tokens (outside Pi's base system-prompt estimate).`
                     : "Catalog observed only; Pi default prompt unchanged.",
             );
@@ -791,8 +758,8 @@ export default function contextExtension(pi: ExtensionAPI) {
                 );
         } else {
             lines.push(
-                lastCatalog
-                    ? "Catalog unsupported: " + lastCatalog.reason
+                snapshot && !snapshot.observation.supported
+                    ? "Catalog unsupported: " + snapshot.observation.reason
                     : "No provider catalog observed yet.",
             );
         }

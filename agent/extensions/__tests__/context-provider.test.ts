@@ -1,16 +1,20 @@
 import { expect, test } from 'bun:test';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import contextExtension from '../context.ts';
+import { registerProviderCatalogFinalizer } from '../pi-overrides/provider-catalog-finalizer.ts';
 import { tmpdir } from 'node:os';
 
 test('custom prompt catalog follows outgoing schemas rather than the earlier active tools', async () => {
     const hooks = new Map<string, (event: any, ctx: any) => any>();
-    contextExtension({
+    const pi = {
         on: (name: string, handler: any) => { hooks.set(name, handler); },
         registerCommand() {},
         getActiveTools: () => ['read'],
         getAllTools: () => [{ name: 'read', description: 'old read-only role' }],
-    } as unknown as ExtensionAPI);
+    } as unknown as ExtensionAPI;
+    contextExtension(pi);
+    expect(hooks.has('before_provider_request')).toBe(false);
+    registerProviderCatalogFinalizer(pi);
     hooks.get('before_agent_start')?.({ systemPrompt: 'Custom SYSTEM', systemPromptOptions: { customPrompt: 'Custom SYSTEM' } }, {});
     expect(hooks.has('before_provider_request')).toBe(true);
     const payload = { messages: [{ role: 'system', content: 'Custom SYSTEM' }], tools: [{ type: 'function', function: { name: 'edit', description: 'Edit files', parameters: {} } }] };
@@ -33,6 +37,7 @@ test('/context separates current tools from the last request and reports unsuppo
         sendMessage: (message: { content: string }) => { sent = message.content; },
     } as unknown as ExtensionAPI;
     contextExtension(pi);
+    registerProviderCatalogFinalizer(pi);
     const ctx = { cwd: tmpdir(), hasUI: false, model: { api: 'openai-completions' },
         ui: { notify: (message: string) => notices.push(message) }, getSystemPrompt: () => 'Do not log this prompt',
         getContextUsage: () => undefined, sessionManager: { getEntries: () => [] } };
@@ -41,6 +46,8 @@ test('/context separates current tools from the last request and reports unsuppo
     await commands.get('context').handler('', ctx);
     expect(sent).toContain('Active now: read');
     expect(sent).toContain('Last request #1 (openai-completions): edit');
+    expect(sent).toContain('Callable in last request: (unspecified)');
+    expect(sent).toContain('Tool selection: unspecified');
     expect(sent).toContain('Current vs last request: +[read] -[edit]');
     expect(sent).not.toContain('Do not log this prompt');
     ctx.model.api = 'future-api';
