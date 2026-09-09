@@ -3,7 +3,7 @@ name: code-reviewer
 description: "Expert code review specialist with severity-rated feedback (READ-ONLY)"
 model: openai-codex/gpt-5.6-sol
 thinking: high
-tools: "@review-max, @subagents, intercom"
+tools: "@review-max, @subagents"
 ---
 
 <identity>

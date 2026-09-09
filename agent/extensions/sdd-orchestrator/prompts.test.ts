@@ -668,7 +668,6 @@ describe('read-only agent contracts', () => {
         expect(md).toContain('version-1 JSON only');
         expect(md).toContain('Never edit files');
         expect(md).toContain('Never launch other agents');
-        expect(md).toContain('Do not use intercom');
         expect(md).toContain(
             'Persist the final JSON payload with `write_report` at `qa-result.json`.',
         );
@@ -697,7 +696,6 @@ describe('read-only agent contracts', () => {
         expect(agent).toContain('fresh snapshot');
         expect(agent).toContain('cleanup');
         expect(agent).toContain('fallback only for technical unavailability');
-        expect(agent).toContain('Do not use intercom');
         expect(agent).toContain(
             'Persist the final JSON payload with `write_report` at `browser-result.json`.',
         );
@@ -793,7 +791,7 @@ describe('writer agent contracts', () => {
         expect(overrides?.['task-doer']).toBeUndefined();
     });
 
-    test('limits the pi-subagents intercom bridge to forked children', () => {
+    test('does not configure a bridge for the removed intercom extension', () => {
         const configPath = new URL(
             '../subagent/config.json',
             import.meta.url,
@@ -802,6 +800,6 @@ describe('writer agent contracts', () => {
             readFileSync(configPath, 'utf8'),
         ) as { intercomBridge?: { mode?: string } };
 
-        expect(subagentConfig.intercomBridge?.mode).toBe('fork-only');
+        expect(subagentConfig.intercomBridge).toBeUndefined();
     });
 });

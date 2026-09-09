@@ -191,7 +191,6 @@ test('legacy agent operates only on an explicitly authorized exact run', () => {
         '@lens',
         '@implement',
         'subagent',
-        'intercom',
     ]);
     expect(legacy).toContain('explicit user authorization for one exact run ID');
     expectInOrder(legacy, [
