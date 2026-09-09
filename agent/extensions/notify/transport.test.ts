@@ -5,6 +5,63 @@ import {
 } from "./transport.ts";
 
 describe("notification transport", () => {
+    it("executes SnoreToast directly under WSL and surfaces process failure", () => {
+        const nativeNotify = mock(
+            (
+                _options: NativeNotificationOptions,
+                callback: (error?: Error | null) => void,
+            ) => callback(null),
+        );
+        const launchSnoreToast = mock(
+            (
+                _executablePath: string,
+                _args: string[],
+                callback: (error?: Error | null) => void,
+            ) => {
+                const error = new Error("permission denied") as NodeJS.ErrnoException;
+                error.code = "EACCES";
+                callback(error);
+            },
+        );
+        const write = mock((_value: string) => undefined);
+        const warn = mock((_message: string) => undefined);
+        const transport = createNotificationTransport({
+            platform: "linux",
+            isWsl: true,
+            isTTY: true,
+            write,
+            nativeNotify,
+            snoreToastPath: "/fixture/snoretoast-x64.exe",
+            launchSnoreToast,
+            warn,
+        });
+
+        transport.send({
+            type: "action-required",
+            project: "demo-project",
+            promptKind: "custom",
+        });
+
+        expect(nativeNotify).toHaveBeenCalledTimes(0);
+        expect(launchSnoreToast).toHaveBeenCalledWith(
+            "/fixture/snoretoast-x64.exe",
+            [
+                "-t",
+                "Pi · demo-project",
+                "-m",
+                "Action required · custom dialog",
+                "-s",
+                "Notification.Default",
+            ],
+            expect.any(Function),
+        );
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(write).toHaveBeenCalledWith("\x07");
+        expect(warn).toHaveBeenCalledWith(
+            "[notify] Native notification failed: permission denied",
+        );
+    });
+
     it("sends a generic audible native prompt notification", () => {
         const nativeNotify = mock(
             (

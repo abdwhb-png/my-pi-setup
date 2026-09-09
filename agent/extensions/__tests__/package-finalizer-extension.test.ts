@@ -1,9 +1,45 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import {
+    chmodSync,
+    constants,
+    accessSync,
+    mkdtempSync,
+    mkdirSync,
+    writeFileSync,
+    readFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 describe('package-finalizer extension', () => {
+    it('restores SnoreToast executable permissions under WSL', async () => {
+        const mod = await import('../package-finalizer.ts');
+        const cwd = mkdtempSync(join(tmpdir(), 'pi-finalizer-cwd-'));
+        const agentDir = mkdtempSync(join(tmpdir(), 'pi-finalizer-agent-'));
+        const vendorDir = join(
+            agentDir,
+            'node_modules',
+            'node-notifier',
+            'vendor',
+            'snoreToast',
+        );
+        mkdirSync(vendorDir, { recursive: true });
+
+        for (const executable of ['snoretoast-x64.exe', 'snoretoast-x86.exe']) {
+            const executablePath = join(vendorDir, executable);
+            writeFileSync(executablePath, 'fixture');
+            chmodSync(executablePath, 0o644);
+        }
+
+        await mod.runPackageFinalizerStartup(cwd, agentDir, { isWsl: true });
+
+        for (const executable of ['snoretoast-x64.exe', 'snoretoast-x86.exe']) {
+            expect(() =>
+                accessSync(join(vendorDir, executable), constants.X_OK),
+            ).not.toThrow();
+        }
+    });
+
     it('runs startup repair in non-force mode', async () => {
         const mod = await import('../package-finalizer.ts');
         const cwd = mkdtempSync(join(tmpdir(), 'pi-finalizer-cwd-'));

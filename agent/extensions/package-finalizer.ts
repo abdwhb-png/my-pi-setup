@@ -1,22 +1,30 @@
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { loadPackageLifecycleTrustConfig } from './_shared/package-install/config.ts';
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { loadPackageLifecycleTrustConfig } from "./_shared/package-install/config.ts";
 import {
     getDefaultAgentDir,
     repairConfiguredPiPackages,
     type RepairLogger,
     type RepairSummary,
-} from './_shared/package-install/finalizer.ts';
-import { repairConfiguredPackageTrust } from './_shared/package-install/lifecycle-trust.ts';
-import { pinToolGroupsPackageLast } from './_shared/tool-groups/package-order.ts';
+} from "./_shared/package-install/finalizer.ts";
+import { repairConfiguredPackageTrust } from "./_shared/package-install/lifecycle-trust.ts";
+import {
+    isWslRuntime,
+    repairSnoreToastExecutables,
+} from "./_shared/package-install/snoretoast.ts";
+import { pinToolGroupsPackageLast } from "./_shared/tool-groups/package-order.ts";
+
+interface PackageFinalizerStartupOptions {
+    isWsl?: boolean;
+}
 
 function createStartupLogger(showStatus: boolean): RepairLogger {
     return {
         info(message: string) {
-            if (message.includes('Built ') || message.includes('Linked ')) {
+            if (message.includes("Built ") || message.includes("Linked ")) {
                 console.log(message);
                 return;
             }
-            if (showStatus && message.includes('[package-lifecycle-trust]')) {
+            if (showStatus && message.includes("[package-lifecycle-trust]")) {
                 console.log(message);
             }
         },
@@ -29,6 +37,7 @@ function createStartupLogger(showStatus: boolean): RepairLogger {
 export async function runPackageFinalizerStartup(
     cwd: string,
     agentDir = getDefaultAgentDir(),
+    options: PackageFinalizerStartupOptions = {},
 ): Promise<RepairSummary> {
     // Pin tool-groups package to last position before repairing packages.
     const pinResult = await pinToolGroupsPackageLast(cwd, agentDir);
@@ -39,6 +48,19 @@ export async function runPackageFinalizerStartup(
         logger: createStartupLogger(false),
         force: false,
     });
+
+    if (options.isWsl ?? isWslRuntime()) {
+        const snoreToast = repairSnoreToastExecutables(agentDir);
+        for (const repairedPath of snoreToast.repaired) {
+            console.log(
+                `[package-finalizer] Repaired SnoreToast executable permission: ${repairedPath}`,
+            );
+        }
+        for (const warning of snoreToast.warnings) {
+            console.warn(warning);
+            result.warnings.push(warning);
+        }
+    }
 
     if (pinResult.changed) {
         const msg = `[package-finalizer] Tool-groups package order repaired. Run /reload to apply updated tool-group configuration.`;
