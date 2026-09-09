@@ -17,7 +17,7 @@ import {
     findUnprocessedSwitchRequest,
     getDefaultRole,
     writeRoleSwitchRequest,
-} from "../_shared/pi-roles";
+} from "../_shared/pi-roles/index.ts";
 import { queueWhenIdle } from "../_shared/queue-when-idle";
 import { expandHomePath, parseYeetCommandArgs } from "./command-args";
 import { CommitConfirmDialog } from "./confirm";

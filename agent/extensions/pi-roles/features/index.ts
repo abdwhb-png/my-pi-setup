@@ -1,5 +1,5 @@
 /**
- * Addons for the pi-roles package/extension.
+ * Integrated features for the pi-roles extension.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -10,7 +10,7 @@ import promptRoleSwitch from "./prompt-role-switch.ts";
 import roleSubagents from "./role-subagents.ts";
 import sessionPlanPersistenceGuard from "./session-plan-persistence-guard.ts";
 
-export default function aldoborreroExtensions(pi: ExtensionAPI) {
+export default function registerRoleFeatures(pi: ExtensionAPI): void {
     atlasPiSubagents(pi);
     planAutoSwitch(pi);
     registerPlanSubmissionGuard(pi);

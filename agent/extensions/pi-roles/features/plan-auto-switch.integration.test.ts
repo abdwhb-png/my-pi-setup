@@ -11,15 +11,19 @@ import {
     when,
     type TestSession,
 } from '@abdwhb-png/pi-test-harness';
-import piRoles from 'pi-roles';
+import piRoles from '../index.ts';
+import contextExtension from '../../context.ts';
+import toolGroups from '../../tool-groups/index.ts';
 import {
     ACTIVE_ROLE_ENTRY_TYPE,
     ROLE_SWITCH_PROCESSED_TYPE,
     ROLE_SWITCH_REQUEST_ENTRY_TYPE,
+    ROLE_TOOL_POLICY_EVENT,
     getDefaultRole,
-} from '../_shared/pi-roles';
-import yeet from '../yeet';
-import planAutoSwitch, {
+    type RoleToolPolicyPayload,
+} from '../../_shared/pi-roles/index.ts';
+import yeet from '../../yeet/index.ts';
+import {
     PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED,
 } from './plan-auto-switch';
 
@@ -48,6 +52,19 @@ afterEach(() => {
 });
 
 function approvalFixture(pi: ExtensionAPI): void {
+    pi.registerTool({
+        name: 'safe_bash',
+        label: 'Safe Bash fixture',
+        description: 'Provide the safe_bash schema for the runtime migration test.',
+        parameters: Type.Object({}),
+        async execute() {
+            return {
+                content: [{ type: 'text' as const, text: 'Safe bash fixture.' }],
+                details: {},
+            };
+        },
+    });
+
     pi.registerTool({
         name: APPROVE_PLAN_FIXTURE_TOOL,
         label: 'Approve plan fixture',
@@ -118,13 +135,14 @@ function competingTriggerTurnFixture(pi: ExtensionAPI): void {
     });
 }
 
-function writeRole(directory: string, name: string): void {
+function writeRole(directory: string, name: string, tools: string): void {
     writeFileSync(
         join(directory, `${name}.md`),
         [
             '---',
             `name: ${name}`,
             `description: Integration fixture for ${name}`,
+            `tools: ${tools}`,
             '---',
             `# ${name}`,
         ].join('\n'),
@@ -143,8 +161,10 @@ function createFixtureProject(targetRole: string): string {
 
     const rolesDirectory = join(cwd, '.pi', 'roles');
     mkdirSync(rolesDirectory, { recursive: true });
-    writeRole(rolesDirectory, 'plan');
-    if (targetRole !== 'plan') writeRole(rolesDirectory, targetRole);
+    writeRole(rolesDirectory, 'plan', `read, ${APPROVE_PLAN_FIXTURE_TOOL}`);
+    if (targetRole !== 'plan') {
+        writeRole(rolesDirectory, targetRole, 'edit, write, safe_bash');
+    }
 
     writeFileSync(
         join(cwd, '.pi', 'settings.json'),
@@ -187,16 +207,25 @@ describe('plan-auto-switch real Pi lifecycle', () => {
         const cwd = createFixtureProject(targetRole);
         const previousInitialRole = process.env.PI_ROLE;
         process.env.PI_ROLE = 'plan';
+        const emittedPolicies: RoleToolPolicyPayload[] = [];
+        const rolePolicyProbe = (pi: ExtensionAPI): void => {
+            pi.events.on(ROLE_TOOL_POLICY_EVENT, (policy) => {
+                emittedPolicies.push(policy as RoleToolPolicyPayload);
+            });
+        };
 
         let session: TestSession;
         try {
             session = await createTestSession({
                 cwd,
+                systemPrompt: 'custom system prompt',
                 extensionFactories: [
-                    piRoles,
-                    planAutoSwitch,
-                    yeet,
                     approvalFixture,
+                    yeet,
+                    contextExtension,
+                    piRoles,
+                    rolePolicyProbe,
+                    toolGroups,
                 ],
             });
         } finally {
@@ -253,6 +282,45 @@ describe('plan-auto-switch real Pi lifecycle', () => {
         expect(approval).toBeDefined();
         expect(approvalMarker).toBeDefined();
         expect(activeRole?.data).toMatchObject({ name: targetRole });
+        expect(
+            entries.filter(
+                (entry) => entry.customType === ROLE_SWITCH_REQUEST_ENTRY_TYPE,
+            ),
+        ).toHaveLength(1);
+        expect(
+            entries.filter(
+                (entry) => entry.customType === ROLE_SWITCH_PROCESSED_TYPE,
+            ),
+        ).toHaveLength(1);
+        expect(session.session.getActiveToolNames().toSorted()).toEqual([
+            'edit',
+            'safe_bash',
+            'write',
+        ]);
+        expect(session.session.systemPrompt).not.toContain('Available tools:');
+        expect(emittedPolicies.at(-1)).toEqual({
+            version: 1,
+            roleName: targetRole,
+            mode: 'set',
+            toolNames: ['edit', 'write', 'safe_bash'],
+        });
+
+        const runner = session.session.extensionRunner;
+        expect(
+            runner
+                .getRegisteredCommands()
+                .filter((command) => command.name === 'role'),
+        ).toHaveLength(1);
+        expect(
+            runner
+                .getRegisteredCommands()
+                .filter((command) => command.name === 'abandon-plan'),
+        ).toHaveLength(1);
+        expect(
+            runner
+                .getAllRegisteredTools()
+                .filter((tool) => tool.definition.name === 'switch_role'),
+        ).toHaveLength(1);
 
         const automaticContinuation = session.events.messages.find(
             (message) => {
@@ -283,7 +351,6 @@ describe('plan-auto-switch real Pi lifecycle', () => {
                 extensionFactories: [
                     competingTriggerTurnFixture,
                     piRoles,
-                    planAutoSwitch,
                     approvalFixture,
                 ],
             });

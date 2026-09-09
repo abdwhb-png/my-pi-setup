@@ -11,13 +11,11 @@ import {
     when,
     type TestSession,
 } from "@abdwhb-png/pi-test-harness";
-import piRoles from "pi-roles";
+import piRoles from "../index.ts";
 import {
     ACTIVE_ROLE_ENTRY_TYPE,
     ROLE_SWITCH_PROCESSED_TYPE,
-} from "../_shared/pi-roles.ts";
-import planAutoSwitch from "./plan-auto-switch.ts";
-import registerPlanSubmissionGuard from "./plan-submission-guard.ts";
+} from "../../_shared/pi-roles/index.ts";
 
 const sessions: TestSession[] = [];
 const directories: string[] = [];
@@ -124,8 +122,6 @@ describe("plan submission guard real Pi lifecycle", () => {
                 cwd,
                 extensionFactories: [
                     piRoles,
-                    registerPlanSubmissionGuard,
-                    planAutoSwitch,
                     planToolFixtures,
                 ],
             });
@@ -161,8 +157,6 @@ describe("plan submission guard real Pi lifecycle", () => {
                 cwd,
                 extensionFactories: [
                     piRoles,
-                    registerPlanSubmissionGuard,
-                    planAutoSwitch,
                     planToolFixtures,
                 ],
             });

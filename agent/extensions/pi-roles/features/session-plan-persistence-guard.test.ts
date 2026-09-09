@@ -4,7 +4,7 @@ const getActiveRole = mock();
 const readFrontmatter = mock();
 const registerRoleTransitionPolicy = mock();
 
-mock.module("../_shared/pi-roles.ts", () => ({
+mock.module("../../_shared/pi-roles/index.ts", () => ({
     ACTIVE_ROLE_ENTRY_TYPE: "pi-roles:active-role",
     getActiveRole,
     readFrontmatter,

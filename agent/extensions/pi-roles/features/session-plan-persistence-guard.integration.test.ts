@@ -9,9 +9,9 @@ import {
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import piRoles from "pi-roles";
-import plansExtension from "../plans/index.ts";
-import registerSessionPlanPersistenceGuard, {
+import piRoles from "../index.ts";
+import plansExtension from "../../plans/index.ts";
+import {
     buildPlanPersistenceFollowUp,
 } from "./session-plan-persistence-guard.ts";
 
@@ -66,7 +66,6 @@ describe("session plan persistence guard real Pi lifecycle", () => {
                 extensionFactories: [
                     piRoles,
                     plansExtension,
-                    registerSessionPlanPersistenceGuard,
                 ],
             });
         } finally {

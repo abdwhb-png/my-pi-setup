@@ -13,7 +13,7 @@ import {
     getActiveRole,
     readFrontmatter,
     registerRoleTransitionPolicy,
-} from "../_shared/pi-roles.ts";
+} from "../../_shared/pi-roles/index.ts";
 import {
     getPlanReviewState,
     listPlanReviewStates,
@@ -26,7 +26,7 @@ import {
 } from "./plan-submission-lifecycle.ts";
 
 const HANDOFF_GUARD = "plan-submission";
-const POLICY_KEY = "pi-roles-addons.plan-submission-guard";
+const POLICY_KEY = "pi-roles.plan-submission-guard";
 
 type LifecycleEntry = {
     type: string;

@@ -16,7 +16,7 @@ import {
     loadPlannotatorConfig,
     resolvePlanFileDir,
 } from "@plannotator/pi-extension/config.js";
-import { getActiveRole, readFrontmatter } from "../_shared/pi-roles.ts";
+import { getActiveRole, readFrontmatter } from "../_shared/pi-roles/index.ts";
 import { createScopedWriter, type ScopedWriteActor } from "../_shared/scoped-write.ts";
 import { recordSavedPlan } from "./tracker.ts";
 

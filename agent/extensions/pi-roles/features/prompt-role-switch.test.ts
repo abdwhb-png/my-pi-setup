@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const writeRoleSwitchRequestSpy = mock(() => {});
-mock.module("../_shared/pi-roles", () => ({
+mock.module("../../_shared/pi-roles/index.ts", () => ({
     readFrontmatter(path: string) {
         const content = readFileSync(path, "utf8");
         const role = /^role:\s*(.+)$/m.exec(content)?.[1];

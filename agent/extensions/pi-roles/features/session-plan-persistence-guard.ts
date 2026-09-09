@@ -14,11 +14,11 @@ import {
     registerRoleTransitionPolicy,
     type RoleTransitionDecision,
     type RoleTransitionPolicyInput,
-} from "../_shared/pi-roles.ts";
+} from "../../_shared/pi-roles/index.ts";
 
 const HANDOFF_GUARD = "session-plan-persistence";
 const SAVED_ENTRY = "session-plan-persistence-guard:saved";
-const POLICY_KEY = "session-plan-persistence-guard";
+const POLICY_KEY = "pi-roles.session-plan-persistence-guard";
 const INTERVENTION_CAP = 5;
 
 const SuccessfulSaveDetailsSchema = Type.Object({

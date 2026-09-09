@@ -21,7 +21,7 @@ mock.module('./session-plan-persistence-guard.ts', () => ({
     default: sessionPlanPersistenceGuard,
 }));
 
-test('pi-roles addons registers no tools owned by pi-scoped-write', async () => {
+test('pi-roles features register no tools owned by pi-scoped-write', async () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     expect(source).not.toContain('write_plan');
     expect(source).not.toContain('edit_plan');
@@ -31,9 +31,9 @@ test('pi-roles addons registers no tools owned by pi-scoped-write', async () => 
         on: () => undefined,
         registerTool: (tool: { name: string; execute: Function }) => registered.set(tool.name, tool),
     } as unknown as ExtensionAPI;
-    const { default: registerAddons } = await import('./index.ts');
+    const { default: registerRoleFeatures } = await import('./index.ts');
 
-    registerAddons(pi);
+    registerRoleFeatures(pi);
 
     expect(planSubmissionGuard).toHaveBeenCalledWith(pi);
     expect(sessionPlanPersistenceGuard).toHaveBeenCalledWith(pi);

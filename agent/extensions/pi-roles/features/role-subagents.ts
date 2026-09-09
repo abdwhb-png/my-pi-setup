@@ -19,7 +19,7 @@ import {
     getActiveRole,
     parseCommaList,
     readFrontmatter,
-} from "../_shared/pi-roles";
+} from "../../_shared/pi-roles/index.ts";
 
 /** Cache: role path → allowed subagent names (null = unrestricted). */
 const subagentCache = new Map<string, string[] | null>();
@@ -88,5 +88,6 @@ export default function roleSubagents(pi: ExtensionAPI): void {
             ctx,
         );
         if (result) return result;
+        return undefined;
     });
 }

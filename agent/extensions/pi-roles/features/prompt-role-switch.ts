@@ -2,8 +2,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     readFrontmatter,
     writeRoleSwitchRequest,
-} from "../_shared/pi-roles.ts";
-import { findInvokedSlashCommand } from "../_shared/slash-command-source.ts";
+} from "../../_shared/pi-roles/index.ts";
+import { findInvokedSlashCommand } from "../../_shared/slash-command-source.ts";
 
 /**
  * Switch roles from the authoritative prompt command registered by Pi.

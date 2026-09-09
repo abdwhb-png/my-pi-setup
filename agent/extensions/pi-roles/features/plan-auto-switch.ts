@@ -26,12 +26,12 @@ import {
     findUnprocessedSwitchRequest,
     getDefaultRole,
     writeRoleSwitchRequest,
-} from "../_shared/pi-roles";
+} from "../../_shared/pi-roles/index.ts";
 import {
     createLatestIdleTaskScheduler,
     queueWhenIdle,
     type IdleTaskScheduler,
-} from "../_shared/queue-when-idle";
+} from "../../_shared/queue-when-idle.ts";
 
 /** Custom entry type emitted by plannotator-bridge on plan approval. */
 const PLAN_APPROVED_ENTRY_TYPE = "plannotator:plan-approved";

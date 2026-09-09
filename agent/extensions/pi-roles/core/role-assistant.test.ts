@@ -1,0 +1,55 @@
+/**
+ * Phase 6 tests: the bundled `role-assistant.md` exists, parses, and
+ * surfaces in `discoverRoles` results so the fallback path works.
+ */
+
+import { describe, expect, it } from "bun:test";
+import { discoverRoles, findBuiltInAssistant, resolveRole } from "./roles.ts";
+import { builtInRoleAssistantPath, loadBuiltInRoleAssistant } from "./role-assistant.ts";
+import { BUILTIN_ROLE_ASSISTANT_NAME, BUILTIN_ROLE_DEFAULT_NAME } from "./schemas.ts";
+import { existsSync } from "node:fs";
+
+describe("built-in role-assistant", () => {
+  it("file exists at the resolved path", () => {
+    expect(existsSync(builtInRoleAssistantPath())).toBe(true);
+  });
+
+  it("parses without errors", () => {
+    const role = loadBuiltInRoleAssistant();
+    expect(role.frontmatter.name).toBe(BUILTIN_ROLE_ASSISTANT_NAME);
+    expect(role.frontmatter.description).toBeTruthy();
+    expect(role.body.length).toBeGreaterThan(0);
+    expect(role.source).toBe("built-in");
+  });
+
+  it("has no model/thinking/tools restrictions (fallback inherits everything)", () => {
+    const role = loadBuiltInRoleAssistant();
+    expect(role.frontmatter.model).toBeUndefined();
+    expect(role.frontmatter.thinking).toBeUndefined();
+    // tools field absent → inherit (don't restrict the user's available tools)
+    expect(role.frontmatter.tools).toBeUndefined();
+  });
+
+  it("appears alongside pi-agent in discoverRoles output as built-in", () => {
+    // Use "project" scope to avoid shadowing from ~/.pi/agent/roles/.
+    const result = discoverRoles("/tmp", "project");
+    const found = findBuiltInAssistant(result.roles);
+    expect(found).toBeDefined();
+    expect(found!.source).toBe("built-in");
+
+    // Both built-in roles are present
+    const builtInNames = result.roles
+      .filter((r) => r.source === "built-in")
+      .map((r) => r.frontmatter.name)
+      .sort();
+    expect(builtInNames).toEqual([BUILTIN_ROLE_DEFAULT_NAME, BUILTIN_ROLE_ASSISTANT_NAME]);
+  });
+
+  it("resolveRole on the built-in returns a usable ResolvedRole", () => {
+    const result = discoverRoles("/tmp", "user");
+    const resolved = resolveRole(BUILTIN_ROLE_ASSISTANT_NAME, result.roles);
+    expect(resolved.name).toBe(BUILTIN_ROLE_ASSISTANT_NAME);
+    expect(resolved.body.length).toBeGreaterThan(0);
+    expect(resolved.tools).toEqual({ kind: "inherit" });
+  });
+});

@@ -2,7 +2,7 @@ import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { getActiveRole } from "../_shared/pi-roles";
+import { getActiveRole } from "../../_shared/pi-roles/index.ts";
 
 export const ATLAS_PI_SUBAGENTS_MARKER = "<atlas-pi-subagents>";
 

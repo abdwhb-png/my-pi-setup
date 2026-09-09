@@ -15,7 +15,7 @@ mock.module("@plannotator/pi-extension/config.js", () => ({
     loadPlannotatorConfig: () => ({ config: { planFileDir: "pi-plans" } }),
     resolvePlanFileDir: () => "pi-plans",
 }));
-mock.module("../_shared/pi-roles.ts", () => ({
+mock.module("../_shared/pi-roles/index.ts", () => ({
     getActiveRole,
     readFrontmatter,
 }));
