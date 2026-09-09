@@ -25,6 +25,7 @@ import type {
 import {
     getSandboxRuntime,
     SandboxUnavailableError,
+    subscribeSandboxRuntime,
     type SandboxUnavailableKind,
 } from "../_shared/sandbox-runtime/index.ts";
 import { registerThinkAuditCommand } from "./audit-command.ts";
@@ -101,6 +102,7 @@ export function registerThinkInCode(
     let auditRecommendationTurnActive = false;
     const hiddenThinkTools = new Set<string>();
     let rolePolicyListenerRegistered = false;
+    let unsubscribeSandboxRuntime: (() => void) | undefined;
 
     function syncSandboxToolVisibility(): void {
         const activeTools = new Set(pi.getActiveTools());
@@ -212,7 +214,14 @@ export function registerThinkInCode(
             name: TOOL_NAMES.execute,
             label: "🧠 Think Execute",
             description:
-                "Use autonomously when large or raw command output, a project file, inline content, prior Think archives, or up to 16 command outputs must be filtered, parsed, aggregated, extracted, compared, or summarized without entering model context. Normal results contain a compact JSON status header, including indexStatus, followed by the bounded derivation. Direct source echoes and terminal failures set isError and return a safe JSON code, reason, and recovery. Never use it to edit files or as general memory. Produced derivations are indexed temporarily for artifact search.",
+                "Derive a bounded result from command output, a project file, inline content, prior Think archives, or up to 16 command outputs without placing the raw source in model context. Use it when only filtering, parsing, aggregation, extraction, comparison, or summarization is needed. Normal results contain a compact JSON status header, including indexStatus, followed by the bounded derivation. Direct source echoes and terminal failures set isError and return a safe JSON code, reason, and recovery. Never use it to edit files or as general memory. Produced derivations are indexed temporarily for artifact search.",
+            promptSnippet:
+                "Derive a bounded result without placing the raw source in context",
+            promptGuidelines: [
+                "Use think_execute when only a bounded derivation is needed from source data, such as filtering, extraction, aggregation, comparison, or summarization.",
+                "Keep native tools as the natural choice when their exact output must be observed, edited, or reused directly.",
+                "Treat expected source size as a secondary signal for context savings, not as a threshold or the definition of think_execute.",
+            ],
             parameters: schemas.execute,
             renderCall: renderThinkExecuteCall,
             renderResult: (result, renderOptions, theme, renderContext) =>
@@ -242,6 +251,11 @@ export function registerThinkInCode(
             label: "🧠 Think Artifact Search",
             description:
                 "Search only non-expired derivations and metadata produced by think_execute in this project. Never use it as general memory or to inspect current source. Returns bounded snippets and archive IDs, never raw archive bytes. Store failures set isError and return a safe code and recovery.",
+            promptSnippet:
+                "Search temporary derivations produced by prior Think executions",
+            promptGuidelines: [
+                "Use think_artifact_search only for non-expired Think artifacts, never as general memory or current-source discovery.",
+            ],
             parameters: schemas.artifactSearch,
             renderCall: renderThinkArtifactSearchCall,
             renderResult: (result, renderOptions, theme, renderContext) =>
@@ -276,6 +290,17 @@ export function registerThinkInCode(
         telemetryWarningReported = false;
         auditRecommendationTurnActive = false;
         commandExecution?.approvals.clear();
+        unsubscribeSandboxRuntime ??= subscribeSandboxRuntime(() => {
+            const before = pi.getActiveTools();
+            syncSandboxToolVisibility();
+            const after = pi.getActiveTools();
+            if (
+                before.length !== after.length ||
+                before.some((name, index) => name !== after[index])
+            ) {
+                pi.events.emit("pi-tool-groups:policy-refresh", undefined);
+            }
+        });
         if (!rolePolicyListenerRegistered) {
             // Register after all extension factories have loaded so this
             // capability filter runs after role/tool-group policy listeners.
@@ -315,6 +340,8 @@ export function registerThinkInCode(
     pi.on("session_shutdown", async () => {
         auditRecommendationTurnActive = false;
         commandExecution?.approvals.clear();
+        unsubscribeSandboxRuntime?.();
+        unsubscribeSandboxRuntime = undefined;
         hookState?.shutdown();
         await telemetryRecorder?.flush();
         coordinator?.close();

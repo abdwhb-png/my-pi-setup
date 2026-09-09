@@ -345,10 +345,15 @@ export function calculateExtensionFiles(commands: any[]): string[] {
 
 /** Marker used to detect and avoid double-appending the tools list. Matches the heading Pi's default branch emits. */
 export const TOOLS_LIST_HEADING = "Available tools:";
+export const TOOL_GUIDELINES_HEADING = "Tool usage guidelines:";
 
-export function buildToolsListSnippet(
-    tools: Array<{ name: string; description?: string }>,
-): string {
+interface ToolPromptInfo {
+    name: string;
+    description?: string;
+    promptGuidelines?: string[];
+}
+
+export function buildToolsListSnippet(tools: ToolPromptInfo[]): string {
     const lines = tools
         .filter((t) => t.name && t.description)
         .map((t) => `- ${t.name}: ${t.description!.trim().split(/\r?\n/)[0]}`);
@@ -365,12 +370,24 @@ export function buildToolsListSnippet(
  */
 export function appendToolsListPrompt(
     systemPrompt: string,
-    tools: Array<{ name: string; description?: string }>,
+    tools: ToolPromptInfo[],
 ): string {
     if (systemPrompt.includes(TOOLS_LIST_HEADING)) {
         return systemPrompt;
     }
-    return `${systemPrompt}\n\n${buildToolsListSnippet(tools)}`;
+    const guidelines = [
+        ...new Set(
+            tools
+                .flatMap((tool) => tool.promptGuidelines ?? [])
+                .map((guideline) => guideline.trim())
+                .filter(Boolean),
+        ),
+    ];
+    const guidelineBlock =
+        guidelines.length > 0
+            ? `\n\n${TOOL_GUIDELINES_HEADING}\n${guidelines.map((guideline) => `- ${guideline}`).join("\n")}`
+            : "";
+    return `${systemPrompt}\n\n${buildToolsListSnippet(tools)}${guidelineBlock}`;
 }
 
 export function buildContextSendMessage(
@@ -766,6 +783,8 @@ export default function contextExtension(pi: ExtensionAPI) {
                 .map((name) => ({
                     name,
                     description: toolInfoByName.get(name)?.description ?? "",
+                    promptGuidelines:
+                        toolInfoByName.get(name)?.promptGuidelines ?? [],
                 }))
                 .filter((t) => t.name);
 

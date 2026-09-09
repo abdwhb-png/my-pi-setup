@@ -65,6 +65,7 @@ interface SandboxRuntimeRegistry {
     snapshot: SandboxRuntimeSnapshot;
     diagnostic?: string;
     waiters?: Set<() => void>;
+    listeners?: Set<(snapshot: SandboxRuntimeSnapshot) => void>;
     activeExecutions?: number;
 }
 
@@ -85,7 +86,7 @@ export function claimSandboxRuntime(owner: symbol): void {
     current.snapshot = { state: "uninitialized" };
     current.diagnostic = undefined;
     current.activeExecutions = 0;
-    wakeWaiters(current);
+    notifyRuntimeChange(current);
 }
 
 export function ownsSandboxRuntime(owner: symbol): boolean {
@@ -101,7 +102,25 @@ export function publishSandboxRuntime(
     if (current.owner !== owner) return false;
     current.snapshot = snapshot;
     current.diagnostic = snapshot.state === "error" ? diagnostic : undefined;
-    wakeWaiters(current);
+    notifyRuntimeChange(current);
+    return true;
+}
+
+/** Observe runtime availability changes without polling between agent turns. */
+export function subscribeSandboxRuntime(
+    listener: (snapshot: SandboxRuntimeSnapshot) => void,
+): () => void {
+    const current = registry();
+    const listeners = (current.listeners ??= new Set());
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+}
+
+/** Publish an in-place update to the mutable Analysis readiness state. */
+export function notifySandboxRuntimeUpdated(owner: symbol): boolean {
+    const current = registry();
+    if (current.owner !== owner) return false;
+    notifyRuntimeChange(current);
     return true;
 }
 
@@ -111,7 +130,7 @@ export function releaseSandboxRuntime(owner: symbol): boolean {
     current.owner = undefined;
     current.snapshot = { state: "uninitialized" };
     current.diagnostic = undefined;
-    wakeWaiters(current);
+    notifyRuntimeChange(current);
     return true;
 }
 
@@ -227,8 +246,15 @@ function unavailableError(): SandboxUnavailableError {
     );
 }
 
-function wakeWaiters(current: SandboxRuntimeRegistry): void {
+function notifyRuntimeChange(current: SandboxRuntimeRegistry): void {
     for (const wake of current.waiters ?? []) wake();
+    for (const listener of current.listeners ?? []) {
+        try {
+            listener(current.snapshot);
+        } catch {
+            // Runtime publication must not fail because an observer failed.
+        }
+    }
 }
 
 /** A transition never grants a local fallback or extends an execution deadline. */

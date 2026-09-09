@@ -24,42 +24,6 @@ const SNAPSHOT_READY_TYPE = "think-in-code:snapshot:ready";
 const SNAPSHOT_CONSUMED_TYPE = "think-in-code:snapshot:consumed";
 const LEGACY_ROUTING_ENTRY_TYPE = "think-in-code:routing";
 const CUSTOM_ENTRY_VERSION = 1;
-const SYSTEM_INSTRUCTION_PREFIX = "Think-in-Code:";
-
-export function buildThinkSystemInstruction(
-    activeToolNames: readonly string[],
-): string | undefined {
-    const active = new Set(activeToolNames);
-    const canExecute = active.has("think_execute");
-    const canSearch = active.has("think_artifact_search");
-    if (!canExecute && !canSearch) return undefined;
-
-    const uses: string[] = [];
-    if (canExecute) {
-        uses.push(
-            "use think_execute for bounded derivation over large/raw command, file, inline, or archived input",
-        );
-    }
-    if (canSearch) {
-        uses.push(
-            "use think_artifact_search only for temporary prior Think execution artifacts, never general memory or current-source discovery",
-        );
-    }
-    return `${SYSTEM_INSTRUCTION_PREFIX} ${uses.join("; ")}. Use these tools autonomously and do not narrate tool routing.`;
-}
-
-function injectThinkSystemInstruction(
-    systemPrompt: string,
-    instruction: string | undefined,
-): string {
-    const base = systemPrompt
-        .split("\n")
-        .filter((line) => !line.startsWith(SYSTEM_INSTRUCTION_PREFIX))
-        .join("\n")
-        .trimEnd();
-    return instruction ? `${base}\n\n${instruction}` : base;
-}
-
 type CustomEntryLike = Pick<SessionEntry, "type"> & {
     customType?: string;
     data?: unknown;
@@ -303,23 +267,6 @@ export function registerHooks(
     pi.on("session_start", (_event, ctx) => {
         sessionId = options.sessionIdAt(ctx);
         state.start(sessionId, ctx.sessionManager.getEntries());
-    });
-    pi.on("before_agent_start", (event) => {
-        try {
-            const instruction = buildThinkSystemInstruction(
-                pi.getActiveTools(),
-            );
-            const systemPrompt = injectThinkSystemInstruction(
-                event.systemPrompt,
-                instruction,
-            );
-            if (instruction || systemPrompt !== event.systemPrompt) {
-                return { systemPrompt };
-            }
-        } catch {
-            /* fail open */
-        }
-        return undefined;
     });
     pi.on("tool_result", (event) => {
         try {

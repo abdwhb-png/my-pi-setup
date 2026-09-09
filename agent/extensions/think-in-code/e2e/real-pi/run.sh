@@ -111,6 +111,18 @@ if ! jq -e '
 fi
 
 if ! jq -e '
+    select(.phase == "functional" and .label == "functional-start")
+    | (.tools | sort) == ["think_artifact_search", "think_execute"]
+      and .thinkSchemaGuidancePresent == true
+      and .contextToolListPresent == true
+      and .contextToolGuidelinesPresent == true
+      and .autonomousThinkRoutingPresent == false
+' "$trace" >/dev/null; then
+    echo "Think tools and schema guidance were not coherent" >&2
+    exit 1
+fi
+
+if ! jq -e '
     select(.phase == "functional" and .label == "after-execute")
     | .toolResults[-1]
     | .toolName == "think_execute"

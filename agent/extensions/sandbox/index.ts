@@ -73,6 +73,7 @@ import {
     claimSandboxRuntime,
     getSandboxActiveExecutionCount,
     getSandboxRuntime,
+    notifySandboxRuntimeUpdated,
     ownsSandboxRuntime,
     publishSandboxRuntime,
     releaseSandboxRuntime,
@@ -1230,6 +1231,7 @@ export default function (pi: ExtensionAPI) {
                 availability.service = candidate;
                 delete availability.diagnostic;
                 analysisRetryAttempt = 0;
+                notifySandboxRuntimeUpdated(runtimeOwner);
             } catch (error) {
                 await cleanupAnalysisService(candidate).catch(() => {
                     // Analysis cleanup must not disable a healthy Bash runtime.

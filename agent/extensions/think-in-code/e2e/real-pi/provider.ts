@@ -50,6 +50,30 @@ function traceContext(context: Context, label: string): void {
             phase,
             label,
             tools: context.tools?.map((candidate) => candidate.name) ?? [],
+            thinkSchemaGuidancePresent:
+                context.tools
+                    ?.find((candidate) => candidate.name === "think_execute")
+                    ?.description.includes("bounded result") === true &&
+                context.tools
+                    ?.find((candidate) => candidate.name === "think_execute")
+                    ?.description.includes(
+                        "Use it when only filtering, parsing, aggregation, extraction, comparison, or summarization is needed",
+                    ) === true,
+            contextToolListPresent:
+                context.systemPrompt?.includes(
+                    "Available tools:\n- think_execute: Derive a bounded result",
+                ) === true,
+            contextToolGuidelinesPresent:
+                context.systemPrompt?.includes(
+                    "Tool usage guidelines:\n- Use think_execute when only a bounded derivation is needed",
+                ) === true &&
+                context.systemPrompt?.includes(
+                    "Keep native tools as the natural choice when their exact output must be observed",
+                ) === true,
+            autonomousThinkRoutingPresent:
+                context.systemPrompt?.includes(
+                    "Use these tools autonomously",
+                ) === true,
             ctxTools:
                 context.tools
                     ?.map((candidate) => candidate.name)

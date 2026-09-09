@@ -11,9 +11,7 @@ import {
     MARKDOWN_LINKS_TRANSFORM_EVENT,
 } from '../_shared/markdown-links.ts';
 import contextExtension, {
-    appendToolsListPrompt,
     buildContextSendMessage,
-    buildToolsListSnippet,
     calculateExtensionFiles,
     ContextView,
     getSkillPathFromCommand,
@@ -230,73 +228,118 @@ describe('calculateExtensionFiles', () => {
     });
 });
 
-describe('buildToolsListSnippet', () => {
-    it('should render one line per tool with description', () => {
-        const tools = [
-            { name: 'read', description: 'Read files from disk' },
-            { name: 'bash', description: 'Run shell commands' },
-        ];
-        const result = buildToolsListSnippet(tools);
-        expect(result).toBe(
-            'Available tools:\n- read: Read files from disk\n- bash: Run shell commands',
+describe('custom system prompt tool contract', () => {
+    it('injects active tool descriptions and usage guidelines through context.ts', () => {
+        const beforeAgentStartHandlers: Array<
+            (event: any, context: any) => unknown
+        > = [];
+        const pi = {
+            events: createEventBus(),
+            on(event: string, handler: (event: any, context: any) => unknown) {
+                if (event === 'before_agent_start') {
+                    beforeAgentStartHandlers.push(handler);
+                }
+            },
+            registerCommand: mock(() => {}),
+            getAllTools: () => [
+                {
+                    name: 'think_execute',
+                    description: 'Derive a bounded result without exposing raw source',
+                    promptGuidelines: [
+                        'Use think_execute only when a bounded derivation is needed.',
+                        'Keep native tools when exact output must be observed.',
+                    ],
+                },
+            ],
+            getActiveTools: () => ['think_execute'],
+        };
+
+        contextExtension(pi as unknown as ExtensionAPI);
+
+        expect(beforeAgentStartHandlers).toHaveLength(1);
+        const result = beforeAgentStartHandlers[0](
+            {
+                systemPrompt: 'unchanged custom prompt',
+                systemPromptOptions: { customPrompt: 'SYSTEM.md' },
+            },
+            {},
+        ) as { systemPrompt: string };
+        expect(result.systemPrompt).toContain('unchanged custom prompt');
+        expect(result.systemPrompt).toContain(
+            '- think_execute: Derive a bounded result without exposing raw source',
         );
-    });
-
-    it('should skip tools without a description', () => {
-        const tools = [
-            { name: 'read', description: 'Read files from disk' },
-            { name: 'secret-tool' },
-        ];
-        const result = buildToolsListSnippet(tools);
-        expect(result).toBe('Available tools:\n- read: Read files from disk');
-    });
-
-    it('should render (none) when no tools have descriptions', () => {
-        const result = buildToolsListSnippet([]);
-        expect(result).toBe('Available tools:\n(none)');
-    });
-
-    it('should collapse multi-line descriptions to first line', () => {
-        const tools = [
-            { name: 'bash', description: 'Run commands\nsecond line' },
-        ];
-        const result = buildToolsListSnippet(tools);
-        expect(result).toBe('Available tools:\n- bash: Run commands');
+        expect(result.systemPrompt).toContain(
+            'Tool usage guidelines:\n- Use think_execute only when a bounded derivation is needed.\n- Keep native tools when exact output must be observed.',
+        );
     });
 });
 
-describe('appendToolsListPrompt', () => {
-    it('should append the tools block to a prompt', () => {
-        const result = appendToolsListPrompt(
-            'base prompt',
-            [{ name: 'read', description: 'Read files' }],
-        );
-        expect(result).toBe(
-            'base prompt\n\nAvailable tools:\n- read: Read files',
-        );
-    });
+describe('/context runtime tool reporting', () => {
+    it('renders the active runtime schemas after a role switch', async () => {
+        const commands = new Map<
+            string,
+            { handler: (args: string, context: any) => Promise<void> }
+        >();
+        const pi = {
+            events: createEventBus(),
+            on: () => undefined,
+            appendEntry: () => undefined,
+            registerCommand(
+                name: string,
+                command: {
+                    handler: (args: string, context: any) => Promise<void>;
+                },
+            ) {
+                commands.set(name, command);
+            },
+            getCommands: () => [],
+            getActiveTools: () => ['edit', 'write', 'safe_bash'],
+            getAllTools: () => [
+                { name: 'edit', description: 'Edit files' },
+                { name: 'write', description: 'Write files' },
+                { name: 'safe_bash', description: 'Run sandboxed commands' },
+            ],
+            getThinkingLevel: () => 'high',
+        };
+        contextExtension(pi as unknown as ExtensionAPI);
 
-    it('should be idempotent and not double-append when heading already present', () => {
-        const once = appendToolsListPrompt(
-            'base prompt',
-            [{ name: 'read', description: 'Read files' }],
-        );
-        expect(appendToolsListPrompt(once, [{ name: 'bash', description: 'Run commands' }])).toBe(once);
-    });
+        let rendered = '';
+        const context = {
+            cwd: tmpdir(),
+            hasUI: true,
+            model: null,
+            getSystemPrompt: () => 'custom system prompt',
+            getContextUsage: () => null,
+            sessionManager: { getEntries: () => [] },
+            ui: {
+                async custom(
+                    factory: (
+                        tui: unknown,
+                        theme: unknown,
+                        keybindings: unknown,
+                        done: () => void,
+                    ) => ContextView,
+                ) {
+                    const view = factory(
+                        {
+                            terminal: { rows: 80 },
+                            requestRender: () => undefined,
+                        },
+                        {
+                            fg: (_color: string, text: string) => text,
+                            bold: (text: string) => text,
+                        },
+                        undefined,
+                        () => undefined,
+                    );
+                    rendered = view.render(120).join('\n');
+                },
+            },
+        };
 
-    it('should append nothing for tools without descriptions', () => {
-        const result = appendToolsListPrompt('base prompt', [{ name: 'x' }]);
-        expect(result).toBe('base prompt\n\nAvailable tools:\n(none)');
-    });
+        await commands.get('context')?.handler('', context);
 
-    it('should skip when the default-branch tools heading is already present', () => {
-        const defaultPrompt =
-            'header\nAvailable tools:\n- read: Read files\nGuidelines:';
-        const result = appendToolsListPrompt(
-            defaultPrompt,
-            [{ name: 'bash', description: 'Run commands' }],
-        );
-        expect(result).toBe(defaultPrompt);
+        expect(rendered).toContain('Tools (3): edit, safe_bash, write');
     });
 });
 

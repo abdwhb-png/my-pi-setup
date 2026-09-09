@@ -42,6 +42,86 @@ function context(cwd: string, sessionId: string): ExtensionContext {
 }
 
 describe("think-in-code extension lifecycle", () => {
+    it("restores both Think tools as soon as Analysis becomes ready", async () => {
+        fixture = await mkdtemp(join(tmpdir(), "think-analysis-ready-"));
+        const project = join(fixture, "project");
+        await mkdir(project);
+        const owner = Symbol("think-analysis-ready");
+        claimSandboxRuntime(owner);
+        const runtimeBase = {
+            state: "enabled" as const,
+            createBashOperations: () => ({
+                exec: async () => ({ exitCode: 0 }),
+            }),
+            createThinkBashOperations: () => ({
+                exec: async () => ({ exitCode: 0 }),
+            }),
+        };
+        publishSandboxRuntime(owner, {
+            ...runtimeBase,
+            analysis: { state: "retrying" },
+        });
+        const handlers = new Map<string, EventHandler[]>();
+
+        try {
+            let activeTools = ["think_execute", "think_artifact_search"];
+            const pi = {
+                on: (name: string, handler: EventHandler) => {
+                    handlers.set(name, [
+                        ...(handlers.get(name) ?? []),
+                        handler,
+                    ]);
+                },
+                registerTool: () => undefined,
+                registerCommand: () => undefined,
+                appendEntry: () => undefined,
+                getActiveTools: () => activeTools,
+                setActiveTools: (names: string[]) => {
+                    activeTools = [...names];
+                },
+                events: {
+                    on: () => () => undefined,
+                    emit: () => undefined,
+                },
+            } as unknown as ExtensionAPI;
+            registerThinkInCode(pi, {
+                resolveRoot: () => join(fixture!, "state"),
+            });
+
+            for (const handler of handlers.get("session_start") ?? []) {
+                await handler({}, context(project, "analysis-ready"));
+            }
+            expect(activeTools).toEqual([]);
+
+            publishSandboxRuntime(owner, {
+                ...runtimeBase,
+                analysis: {
+                    state: "ready",
+                    service: {
+                        run: async () => ({
+                            output: "derived",
+                            stderr: "",
+                            runtime: "quickjs" as const,
+                            durationMs: 1,
+                            truncated: false,
+                        }),
+                        shutdown: async () => undefined,
+                    },
+                },
+            });
+
+            expect(activeTools).toEqual([
+                "think_execute",
+                "think_artifact_search",
+            ]);
+        } finally {
+            for (const handler of handlers.get("session_shutdown") ?? []) {
+                await handler({});
+            }
+            releaseSandboxRuntime(owner);
+        }
+    });
+
     it("blocks both Think tools with analysis-unavailable before source or store work", async () => {
         fixture = await mkdtemp(join(tmpdir(), "think-analysis-unavailable-"));
         const project = join(fixture, "project");
@@ -58,9 +138,9 @@ describe("think-in-code extension lifecycle", () => {
             }),
             analysis: { state: "retrying" },
         });
+        const handlers = new Map<string, EventHandler[]>();
 
         try {
-            const handlers = new Map<string, EventHandler[]>();
             const tools = new Map<string, Record<string, unknown>>();
             let activeTools = ["think_execute", "think_artifact_search"];
             const pi = {
@@ -117,6 +197,9 @@ describe("think-in-code extension lifecycle", () => {
                 ).rejects.toMatchObject({ kind: "analysis-unavailable" });
             }
         } finally {
+            for (const handler of handlers.get("session_shutdown") ?? []) {
+                await handler({});
+            }
             releaseSandboxRuntime(owner);
         }
     });
@@ -151,7 +234,19 @@ describe("think-in-code extension lifecycle", () => {
         for (const tool of registered) {
             expect(tool.renderCall).toBeFunction();
             expect(tool.renderResult).toBeFunction();
+            expect(tool.promptSnippet).toBeString();
+            expect(tool.promptGuidelines).toBeArray();
         }
+        const execute = registered.find(
+            (tool) => tool.name === "think_execute",
+        );
+        expect(execute?.promptGuidelines).toEqual(
+            expect.arrayContaining([
+                expect.stringContaining("only a bounded derivation is needed"),
+                expect.stringContaining("native tools"),
+                expect.stringContaining("secondary signal"),
+            ]),
+        );
     });
 
     it("rebinds capture hooks to the current project store on a second session_start", async () => {

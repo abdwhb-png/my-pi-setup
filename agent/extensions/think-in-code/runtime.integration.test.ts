@@ -256,7 +256,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(registered).not.toContain("mcp:ctx_execute");
     });
 
-    it("describes when to use every Think tool autonomously", async () => {
+    it("describes Think as bounded derivation rather than a native-tool replacement", async () => {
         const state = makeBrokerState();
         const home = createHarnessProject();
         const session = await createTestSession({
@@ -268,7 +268,12 @@ describe("think-in-code real Pi runtime wiring", () => {
         await session.session.agent.waitForIdle();
 
         const descriptions = collectToolDescriptions(session);
-        expect(descriptions.get("think_execute")).toMatch(/use autonomously/i);
+        expect(descriptions.get("think_execute")).toMatch(
+            /when only filtering, parsing, aggregation, extraction, comparison, or summarization is needed/i,
+        );
+        expect(descriptions.get("think_execute")).not.toMatch(
+            /use autonomously/i,
+        );
         expect(descriptions.get("think_execute")).toMatch(
             /filter|parse|aggregate|extract|compare|summar/i,
         );

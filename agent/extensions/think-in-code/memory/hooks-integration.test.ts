@@ -91,17 +91,9 @@ describe("registerHooks receipt lifecycle", () => {
         return { handlers, entries };
     }
 
-    it("injects only execution and artifact-search guidance", async () => {
+    it("does not rewrite the system prompt", async () => {
         const { handlers } = await setup();
-        const result = (await handlers.get("before_agent_start")?.(
-            { prompt: "remember this preference", systemPrompt: "Base" },
-            makeContext("session"),
-        )) as { systemPrompt: string };
-
-        expect(result.systemPrompt).toContain("think_execute");
-        expect(result.systemPrompt).toContain("think_artifact_search");
-        expect(result.systemPrompt).not.toContain("think_note");
-        expect(result.systemPrompt).not.toContain("remember this preference");
+        expect(handlers.has("before_agent_start")).toBe(false);
     });
 
     it("does not register a general tool-call capture hook", async () => {
@@ -113,10 +105,6 @@ describe("registerHooks receipt lifecycle", () => {
         const { handlers } = await setup();
         const ctx = makeContext("session");
         await handlers.get("session_start")?.({}, ctx);
-        await handlers.get("before_agent_start")?.(
-            { prompt: "private preference", systemPrompt: "Base" },
-            ctx,
-        );
         await handlers.get("tool_result")?.(
             {
                 toolName: "bash",
