@@ -3,6 +3,10 @@ import {
     unknownExecution,
     type ExecutionProvenance,
 } from "../_shared/execution-provenance/index.ts";
+import {
+    recordSandboxExecutionContext,
+    sandboxExecutionContextFromError,
+} from "../_shared/sandbox-runtime/execution-context.ts";
 import type { AnalysisSandboxPort } from "../_shared/sandbox-runtime/index.ts";
 import { isThinkExecutionError } from "./public-contract.ts";
 
@@ -33,15 +37,30 @@ export async function withThinkExecution<
     try {
         const result = await run({
             run: async (port, ...args) => {
+                const [request] = args;
                 try {
                     const result = await port.run(...args);
                     analysisExecution = result.execution ?? unknownExecution();
+                    if (result.sandboxContext) {
+                        recordSandboxExecutionContext(
+                            request.id,
+                            result.sandboxContext,
+                        );
+                    }
                     return result;
                 } catch (error) {
                     analysisExecution = executionFromDetails(error) ?? {
                         ...unknownExecution(),
                         outcome: "failed",
                     };
+                    const sandboxContext =
+                        sandboxExecutionContextFromError(error);
+                    if (sandboxContext) {
+                        recordSandboxExecutionContext(
+                            request.id,
+                            sandboxContext,
+                        );
+                    }
                     throw error;
                 }
             },

@@ -3,6 +3,10 @@ import {
     parseExecutionProvenance,
     type ExecutionProvenance,
 } from "../execution-provenance/index.ts";
+import {
+    parseSandboxExecutionContext,
+    type SandboxExecutionContextV1,
+} from "./execution-context.ts";
 
 export const ANALYSIS_LIMITS = Object.freeze({
     wallTimeMs: 60_000,
@@ -83,6 +87,7 @@ export interface NormalizedAnalysisRequest extends Omit<
 
 export interface AnalysisResult {
     execution?: ExecutionProvenance;
+    sandboxContext?: SandboxExecutionContextV1;
     output: string;
     stderr: string;
     runtime: AnalysisWorker;
@@ -92,7 +97,12 @@ export interface AnalysisResult {
 
 export type AnalysisHostResponse =
     | { ok: true; result: AnalysisResult }
-    | { ok: false; error: string; execution?: ExecutionProvenance };
+    | {
+          ok: false;
+          error: string;
+          execution?: ExecutionProvenance;
+          sandboxContext?: SandboxExecutionContextV1;
+      };
 
 export function parseAnalysisHostResponse(
     value: unknown,
@@ -107,6 +117,13 @@ export function parseAnalysisHostResponse(
             error: response.error,
             ...(parseExecutionProvenance(response.execution)
                 ? { execution: parseExecutionProvenance(response.execution) }
+                : {}),
+            ...(parseSandboxExecutionContext(response.sandboxContext)
+                ? {
+                      sandboxContext: parseSandboxExecutionContext(
+                          response.sandboxContext,
+                      ),
+                  }
                 : {}),
         };
     }
@@ -133,6 +150,13 @@ export function parseAnalysisHostResponse(
         result: {
             ...(parseExecutionProvenance(result.execution)
                 ? { execution: parseExecutionProvenance(result.execution) }
+                : {}),
+            ...(parseSandboxExecutionContext(result.sandboxContext)
+                ? {
+                      sandboxContext: parseSandboxExecutionContext(
+                          result.sandboxContext,
+                      ),
+                  }
                 : {}),
             output: result.output,
             stderr: result.stderr,

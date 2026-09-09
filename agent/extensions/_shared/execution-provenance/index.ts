@@ -4,6 +4,11 @@ import type {
     SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
+    clearSandboxExecutionContexts,
+    mergeSandboxContextForFailure,
+    sandboxExecutionContextFromDetails,
+} from "../sandbox-runtime/execution-context.ts";
+import {
     hostExecution,
     unknownExecution,
     type ExecutionProvenance,
@@ -205,6 +210,14 @@ function archiveContext(details: unknown): string {
     return `\nOutput archive: ${JSON.stringify({ kind: "output-text", sourceExecution: "sourceExecution" in archive ? (parseExecutionProvenance(archive.sourceExecution) ?? unknownExecution()) : unknownExecution(), storage: "storage" in archive ? (parseExecutionProvenance(archive.storage) ?? unknownExecution()) : unknownExecution() })}`;
 }
 
+function sandboxFailureContext(isError: boolean, details: unknown): string {
+    if (!isError) return "";
+    const context = sandboxExecutionContextFromDetails(details);
+    return context
+        ? `\nSandbox environment at dispatch (facts, not a causal diagnosis): ${JSON.stringify(context)}`
+        : "";
+}
+
 /** Decorate a context copy, leaving persisted output and raw archives untouched. */
 export function addExecutionContext(
     messages: AgentMessage[],
@@ -251,12 +264,33 @@ export function addExecutionContext(
         if (
             details &&
             typeof details === "object" &&
+            "sandboxContextReceiptVisible" in details &&
+            details.sandboxContextReceiptVisible === true
+        )
+            return message;
+        if (
+            details &&
+            typeof details === "object" &&
             "executionReceiptVisible" in details &&
             details.executionReceiptVisible === true
         )
             return message;
         // Think owns a JSON header with separate source and analysis executions.
-        if (thinkReceipt(message.toolName, message.content)) return message;
+        if (thinkReceipt(message.toolName, message.content)) {
+            const context = sandboxFailureContext(message.isError, details);
+            if (!context) return message;
+            return {
+                ...message,
+                details: {
+                    ...(details && typeof details === "object" ? details : {}),
+                    sandboxContextReceiptVisible: true,
+                },
+                content: [
+                    ...message.content,
+                    { type: "text" as const, text: context.slice(1) },
+                ],
+            };
+        }
         const execution = resolveExecution(message.toolCallId, details);
         return {
             ...message,
@@ -268,7 +302,7 @@ export function addExecutionContext(
                 ...message.content,
                 {
                     type: "text" as const,
-                    text: `Execution provenance: ${JSON.stringify(execution)}${archiveContext(details)}`,
+                    text: `Execution provenance: ${JSON.stringify(execution)}${archiveContext(details)}${sandboxFailureContext(message.isError, details)}`,
                 },
             ],
         };
@@ -278,15 +312,22 @@ export function addExecutionContext(
 export function registerExecutionProvenance(pi: ExtensionAPI): void {
     pi.on("tool_result", (event) => {
         const think = thinkReceipt(event.toolName, event.content);
-        if (think)
-            return {
-                details: {
-                    ...(event.details && typeof event.details === "object"
-                        ? event.details
-                        : {}),
-                    ...think,
-                },
+        if (think) {
+            const details = {
+                ...(event.details && typeof event.details === "object"
+                    ? event.details
+                    : {}),
+                ...think,
             };
+            return {
+                details: mergeSandboxContextForFailure(
+                    event.toolCallId,
+                    details,
+                    think.analysisExecution,
+                    event.isError,
+                ),
+            };
+        }
         const execution = resolveExecution(event.toolCallId, event.details);
         const settled =
             execution.outcome === "pending"
@@ -297,7 +338,15 @@ export function registerExecutionProvenance(pi: ExtensionAPI): void {
                           : ("succeeded" as const),
                   }
                 : execution;
-        return { details: mergeExecutionDetails(event.details, settled) };
+        const details = mergeExecutionDetails(event.details, settled);
+        return {
+            details: mergeSandboxContextForFailure(
+                event.toolCallId,
+                details,
+                settled,
+                event.isError,
+            ),
+        };
     });
     pi.on("context", (event, ctx) => ({
         messages: addExecutionContext(
@@ -307,11 +356,14 @@ export function registerExecutionProvenance(pi: ExtensionAPI): void {
     }));
     pi.on("agent_end", () => {
         registry().records.clear();
+        clearSandboxExecutionContexts();
     });
     pi.on("session_start", () => {
         registry().records.clear();
+        clearSandboxExecutionContexts();
     });
     pi.on("session_shutdown", () => {
         registry().records.clear();
+        clearSandboxExecutionContexts();
     });
 }

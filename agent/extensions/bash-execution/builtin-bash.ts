@@ -20,6 +20,7 @@ import {
     recordExecution,
     unknownExecution,
 } from "../_shared/execution-provenance/index.ts";
+import { recordSandboxExecutionContext } from "../_shared/sandbox-runtime/execution-context.ts";
 import {
     createSandboxBashOperations,
     getSandboxRuntime,
@@ -88,6 +89,8 @@ export function registerBuiltinBash(
                         stdin: params.stdin,
                         onExecution: (execution) =>
                             recordExecution(id, execution),
+                        onSandboxContext: (context) =>
+                            recordSandboxExecutionContext(id, context),
                         rewriteCommand: (command) =>
                             applyFirstRewrite(command, "bash", rewriteRules),
                     },

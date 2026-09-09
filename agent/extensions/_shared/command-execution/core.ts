@@ -13,6 +13,8 @@ import {
     type ExecutionObserver,
     type ExecutionProvenance,
 } from "../execution-provenance/index.ts";
+import { recordSandboxExecutionContext } from "../sandbox-runtime/execution-context.ts";
+import type { SandboxExecutionContextV1 } from "../sandbox-runtime/execution-context.ts";
 import type { CreateBashOperationsOptions } from "./exec.ts";
 import { classifySafeExecutionError, SafeExecutionError } from "./failure.ts";
 import {
@@ -93,6 +95,7 @@ export interface CommandExecutionService<
 
 export interface CommandExecutionOperationsOptions {
     onExecution?: ExecutionObserver;
+    onSandboxContext?: (context: SandboxExecutionContextV1) => void;
     stdin?: string;
     rewriteCommand?: CreateBashOperationsOptions["rewriteCommand"];
 }
@@ -184,6 +187,8 @@ export function createCommandExecutionService<
             const operations = options.createOperations({
                 onExecution: (execution) =>
                     recordExecution(request.toolCallId, execution),
+                onSandboxContext: (context) =>
+                    recordSandboxExecutionContext(request.toolCallId, context),
                 stdin: request.stdin,
                 rewriteCommand: (command) =>
                     applyFirstRewrite(command, request.operation, [

@@ -10,6 +10,31 @@ import {
     parseAnalysisHostResponse,
     parseAnalysisRequest,
 } from "./analysis-protocol.ts";
+import type { SandboxExecutionContextV1 } from "./execution-context.ts";
+
+const sandboxContext: SandboxExecutionContextV1 = {
+    version: 1,
+    profile: "analysis-strict",
+    filesystem: { allowRead: ["/runtime"], denyRead: ["/tmp"], denyReadGlobs: [], allowWrite: ["<sandbox-home>", "<sandbox-tmp>"], denyWrite: ["/tmp"], denyWriteGlobs: [] },
+    network: {
+        mode: "deny-all",
+        allow: [],
+        allowHost: [],
+        deny: [],
+        domainClientProxyRequired: false,
+        loopback: {
+            hostNamespace: "isolated",
+            hostBridgePorts: [],
+            hostBridgeTransport: "disabled",
+            unlistedHostPorts: "blocked",
+            localListeners: "disabled",
+        },
+    },
+    tmp: { path: "/tmp", namespace: "lease-private" },
+    ipc: { hostUserDbus: "unavailable", hostUnixSockets: "unavailable" },
+    docker: { mode: "off", profile: "None", targets: [], hostAccessException: false },
+    environment: { inherit: [], set: ["HOME", "PATH", "TMPDIR"], deny: [] },
+};
 
 describe("analysis protocol", () => {
     it("maps languages to fixed workers and downward-clamps limits", () => {
@@ -236,6 +261,34 @@ describe("analysis protocol", () => {
         expect(() =>
             parseAnalysisHostResponse({ ok: true, result: { output: 42 } }),
         ).toThrow("host response");
+    });
+
+    it("preserves a validated analysis sandbox context on success and failure", () => {
+        const success = parseAnalysisHostResponse({
+            ok: true,
+            result: {
+                output: "42",
+                stderr: "",
+                runtime: "quickjs",
+                durationMs: 10,
+                truncated: false,
+                sandboxContext,
+            },
+        });
+        const failure = parseAnalysisHostResponse({
+            ok: false,
+            error: "worker failed",
+            sandboxContext,
+        });
+
+        expect(success).toMatchObject({
+            ok: true,
+            result: { sandboxContext: { profile: "analysis-strict" } },
+        });
+        expect(failure).toMatchObject({
+            ok: false,
+            sandboxContext: { profile: "analysis-strict" },
+        });
     });
 
     it("rejects unsupported languages and non-positive limits", () => {
