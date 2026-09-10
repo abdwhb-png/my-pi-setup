@@ -6,10 +6,13 @@ Sandbox runtime contract and records local, redacted attempt telemetry for
 later review. It exports installation functions and is not a Pi extension
 entrypoint.
 
-With Sandbox enabled, `bash`, `user_bash`, and `safe_bash` use Zerobox.
-`/sandbox off` or `--no-sandbox` explicitly selects the local adapter owned by
-`bash-execution`. Missing, uninitialized, or failed Sandbox runtime state blocks
-all three surfaces instead of falling back locally.
+The shell profile selects Zerobox or explicitly approved host execution.
+`/sandbox off` requests the authorized host profile. `--no-sandbox` can use an
+existing host grant and never creates one. The strict Think engine stays active.
+Set `hostCapability: "editor" | "dependencies" | "dev-services"` to request an
+existing local integration grant with one literal command. Keep the `command`
+argument on the `pi-permission-system` Bash surface. Apply every Safe Bash guard
+before dispatch. See [the capability contract](../../sandbox/docs/shell-capabilities.md).
 
 Pattern matching cannot prove a command harmless, and processes running as the same OS user can modify local telemetry.
 

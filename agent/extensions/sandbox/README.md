@@ -5,10 +5,11 @@ filesystem, network, environment and Docker access explicit.
 
 ## Start here
 
-1. Put ordinary Sandbox settings in `~/.pi/agent/settings.json` under
-   `sandbox`, or in `<project>/.pi/settings.json` for one project.
-2. Open Pi in the project and run `/sandbox doctor`.
-3. Run `/sandbox on` when the status is correct.
+1. Restart Pi completely after adopting this contract. A fresh installation
+   starts isolated, with closed network and private `/tmp`.
+2. Open Pi in the project and run `/sandbox capabilities` and `/sandbox doctor`.
+3. If migration is required, run `/sandbox capabilities migrate` and choose
+   isolated defaults or explicitly retain the displayed old openings.
 4. If the project needs Docker, run `/sandbox docker grant` from that project.
    Choose a service and an access profile, review the change, then confirm it.
    If the broker excludes that container, review the separate target exception.
@@ -22,7 +23,11 @@ Docker is off by default. Its authority is kept separately in
 | --- | --- |
 | `/sandbox` | Show configured and active permissions, including Docker operations. |
 | `/sandbox doctor` | Validate canonical configuration, compare it with the active runtime and check target eligibility. |
-| `/sandbox on` / `/sandbox off` | Enable or disable Sandbox for this session. |
+| `/sandbox profile isolated\|integrated\|host [--session]` | Select a shell profile. First host activation requires approval. |
+| `/sandbox capabilities [list]` | Show authority, effective rights, installed integrations and admitted operations. |
+| `/sandbox capabilities grant\|revoke <capability> [--session]` | Change this project's local rights. |
+| `/sandbox capabilities migrate [--session]` | Review old settings in one user decision. |
+| `/sandbox on` / `/sandbox off` | Compatible aliases for isolated / authorized host shell. Add `--session` for temporary selection. |
 | `/sandbox docker` | Compare the saved grant, project restrictions and active Docker rights. |
 | `/sandbox docker grant` | Create or replace this project's global targeted Docker grant. |
 | `/sandbox docker break-glass [duration]` | Allow arbitrary `exec` for one exact current container. The default is `5m`; accepted durations are `1m` through `30m`. |
@@ -47,6 +52,7 @@ A saved grant can be inactive or reduced by project settings. The notification
 states the actual activation outcome. Target eligibility in doctor does not
 prove every granted operation works.
 
+- [Shell profiles and capabilities](docs/shell-capabilities.md): scope, integrations, examples and migration.
 - [Configuration](docs/configuration.md): ordinary Sandbox settings and precedence.
 - [Docker authority](docs/docker-authority.md): guided and manual Docker grants.
 - [Troubleshooting](docs/troubleshooting.md): errors and corrective actions.

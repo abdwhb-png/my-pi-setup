@@ -2,7 +2,7 @@
 
 Date : 2026-09-09
 
-Statut : direction validée par l’utilisateur. Document de brainstorming prêt pour la planification. Les contrats techniques ci-dessous cadrent le plan, sans constituer une implémentation validée.
+Statut : direction et plan validés par l’utilisateur. Les décisions Q1–Q6 ci-dessous précisent le contrat implémenté. Consultez le bilan de livraison pour les preuves et les limites.
 
 ## Destination
 
@@ -12,7 +12,7 @@ La demande initiale concernait les difficultés de `safe_bash`, Dev Services et 
 
 ## Recherche et preuves
 
-Les observations suivantes proviennent du code et de sondes réalisés pendant le diagnostic. Consultez le [rapport d’audit](../audits/2026-09-09-safe-bash-dev-services-sfw.md) pour les traces, les versions et les limites des mesures.
+Les observations suivantes décrivent l’état historique avant implémentation, vérifié pendant le diagnostic. Consultez le [rapport d’audit](../audits/2026-09-09-safe-bash-dev-services-sfw.md) pour les traces, les versions et les limites des mesures.
 
 | Source consultée | Observation établie | Conséquence pour le design |
 | --- | --- | --- |
@@ -97,20 +97,18 @@ Affichez les opérations hôte même si elles ont été déclenchées depuis une
 
 La voie sélectionnée combine un défaut isolé et des capacités hôte locales contrôlées. Elle ne promet pas de conserver une isolation totale pour les opérations auxquelles l’utilisateur accorde un accès hôte.
 
-## Points à résoudre pendant la planification
+## Décisions de planification validées
 
-Ces questions ne bloquent pas la documentation de la direction. Résolvez-les avant d’implémenter les composants concernés.
+| Repère | Contrat retenu |
+| --- | --- |
+| **Q1 — Autorisations** | Stockez les accords dans `~/.pi/agent/sandbox.capabilities.json`, propriétaire local, fichier régulier sans lien, mode `0600`, écriture atomique. Liez-les à Linux machine-id + uid et au projet canonique. Proposez une portée session. Refusez une copie issue d’une autre machine jusqu’à migration explicite. |
+| **Q2 — Intégrations** | Conservez `safe_bash.command` et ajoutez `hostCapability`. Acceptez un argv littéral pour Zed, SFW (npm et sources npm de Pi) et Dev Services. Résolvez les lanceurs installés approuvés. Signalez l’autorité hôte de Dev Services. |
+| **Q3 — Portée** | Limitez la V1 au shell. Affichez que les outils natifs de fichiers, extensions et MCP restent sur l’hôte. Protégez spécifiquement le magasin contre `write`/`edit`. Maintenez Think strict dans tous les profils. |
+| **Q4 — Révocation** | Publiez immédiatement les nouveaux droits. Laissez terminer les opérations admises et leurs anciens runtimes, puis libérez leurs ressources. Préservez délais et annulation explicite. |
+| **Q5 — Migration** | Présentez les anciennes ouvertures réseau, fichiers et `/tmp`. Demandez une seule sélection pour les conserver localement ou choisir les défauts isolés. Bloquez les nouvelles commandes concernées en attente. Préservez sessions existantes, services et données. |
+| **Q6 — Interface et modèles** | Exposez profil demandé/effectif, capacité, backend et namespace temporaire. Donnez des erreurs actionnables. Livrez des scénarios reproductibles et mesurez séparément la fiabilité des modèles, sans appel LLM dans les tests automatiques. |
 
-| Repère | Question précise | Méthode de résolution |
-| --- | --- | --- |
-| **Q1 — Autorisations** | Quel stockage protégé, quelle identité de projet et quelle portée pour les autorisations persistantes et temporaires ? | Inspectez l’autorité Docker et pi-permission-system. Réutilisez les mécanismes valides, puis testez les tentatives d’auto-autorisation et le changement de machine. |
-| **Q2 — Intégrations initiales** | Quels appels et arguments autoriser pour Zed, SFW et Dev Services ? | Définissez le contrat de chaque intégration à partir du parcours réel. Testez Zed sans effet non demandé et SFW dans un projet jetable autorisé. |
-| **Q3 — Portée de l’isolation** | Quels outils natifs, extensions, MCP et sous-agents peuvent accéder à l’hôte hors du runtime Bash ? | Inventoriez leurs frontières d’exécution. Documentez la couverture et les limites avant de qualifier une session entière d’isolée. |
-| **Q4 — Révocation** | Que devient une opération déjà lancée lorsqu’une capacité est retirée ? | Examinez le superviseur et les services distants. Définissez le comportement des nouvelles opérations, des processus existants et des opérations non annulables. |
-| **Q5 — Migration** | Comment convertir les réglages actuels en capacités explicites sans élargissement silencieux ni perturbation des services ? | Produisez une comparaison avant/après, exposez les écarts et obtenez une décision pour les changements d’autorité. Préservez les données et les refus existants. |
-| **Q6 — Interface et modèles** | Quels schémas et messages permettent aux modèles économiques de choisir correctement le parcours ? | Préparez des exemples minimaux, puis mesurez des scénarios identiques. Fixez les seuils d’acceptation avant de conclure sur leur fiabilité. |
-
-Revenez vers l’utilisateur seulement si la résolution de ces questions implique un nouvel arbitrage de sécurité, de portée ou d’expérience utilisateur. Résolvez les questions factuelles dans le code et avec des sondes ciblées.
+Fermez le réseau et rendez `/tmp` privé par défaut. Accordez séparément les domaines réseau et le partage de `/tmp`. N’ajoutez pas automatiquement le port général Dev Services. Utilisez D3 seulement après autorisation locale et sélection explicite.
 
 ## Validation attendue
 
@@ -123,8 +121,8 @@ Revenez vers l’utilisateur seulement si la résolution de ces questions impliq
 
 Appliquez RED → GREEN → REFACTOR aux changements de comportement lors de l’implémentation. Commencez par les tests publics les plus petits capables de révéler le défaut, puis complétez par les preuves système nécessaires.
 
-## Passage à la planification
+## Livraison
 
-Utilisez ce document comme contrat de direction. Préparez ensuite un plan avec les modules concernés, les contrats d’autorisation, la migration, les tests et les critères d’acceptation. Identifiez les besoins de preuve avant chaque changement de production.
+Appliquez le [contrat des profils et capacités](../../agent/extensions/sandbox/docs/shell-capabilities.md). Consultez le [bilan de validation](../implementation/2026-09-10-sandbox-local-capabilities.md) et les [scénarios modèles économiques](../evaluations/sandbox-local-capabilities.md).
 
-N’implémentez pas les profils, n’ouvrez pas de permissions, n’installez pas de dépendances et ne redémarrez pas de services dans cette étape de documentation. Aucun nouvel accord n’est nécessaire pour produire ce document. La définition détaillée et l’exécution du plan constituent les étapes suivantes.
+Redémarrez Pi complètement pour charger le nouveau contrat. Effectuez ensuite la migration interactive dans chaque projet concerné. Ne convertissez aucun réglage en autorisation sans la décision utilisateur prévue.

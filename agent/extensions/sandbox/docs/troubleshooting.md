@@ -1,7 +1,26 @@
 # Troubleshooting
 
-Run `/sandbox doctor` in the project first. It reads only canonical settings
-and `~/.pi/agent/sandbox.global.json`; it never writes configuration.
+Run `/sandbox doctor` and `/sandbox capabilities` in the project first. They
+inspect configuration and authority without writing it. Doctor separates the
+shell diagnostic from canonical Docker configuration.
+
+## Shell profiles and local authority
+
+| Diagnostic | Action |
+| --- | --- |
+| `migration-required` | Run `/sandbox capabilities migrate` interactively and review the displayed openings once. |
+| `machine-mismatch` | Review foreign grants with migration. Do not copy a machine identity to activate them. |
+| `authorization-required` | Inspect `/sandbox capabilities`; ask the user for the named grant if needed. Never retry through another host route. |
+| `invalid-authority` | Inspect file owner, regular-file status, symlinks and permissions from a trusted host context. Do not overwrite it from the model. |
+| `integration-unavailable` | Repair the named installed host tool, then grant its installed path again. |
+| `unsupported-command` | Use the adapter's documented literal argv. Unsupported managers and shell compositions require a separately approved route. |
+| Shell policy changed | Refresh the requested profile through `/sandbox profile ...`; the rejected call did not execute. |
+| SFW nonzero exit | Keep its raw error and exit code. Stop. Do not call an unwrapped package manager. |
+| A temporary file is invisible | Compare namespaces. Use a project artifact shared with native file tools. |
+
+Read the [capability contract](shell-capabilities.md) before changing isolation.
+Native file tools remain on the host. A successfully spawned CLI does not prove
+that a GUI opened or that a remote service completed its operation.
 
 | Message | Meaning and action |
 | --- | --- |

@@ -1,10 +1,10 @@
 # Bash Execution
 
-Use `bash`, `safe_bash`, and `!` with the `bash-general` profile for development
-commands. This profile shares the host `/tmp` while retaining the other sandbox
-rules and explicit project denies. Read process status from each result's
-execution provenance. A disabled sandbox reports `unsandboxed`; missing proof
-reports `unknown`. Preserve raw output when adding or compressing metadata.
+Use `bash`, `safe_bash`, and `!` through the selected shell profile. A fresh
+installation selects `isolated`: Zerobox, no network, private `/tmp`. Select
+`integrated` for explicit local capabilities or approve `host` for a local shell.
+Read actual status, backend, shell profile, capability and temporary namespace
+from execution provenance. Preserve raw output when adding metadata.
 
 `bash-execution` is the only Pi extension entrypoint that owns the three Bash
 surfaces:
@@ -16,14 +16,20 @@ surfaces:
 
 The extension resolves operations through
 `agent/extensions/_shared/sandbox-runtime/`. It owns one local process
-supervisor and uses that adapter only when Sandbox is explicitly disabled.
+supervisor for approved host operations. Resolve local authority first, then
+select the backend. Engine failure never grants host execution.
 
-| Sandbox runtime state | `bash`, `user_bash`, `safe_bash` |
+| Selected shell route | Execution |
 | --- | --- |
-| `enabled` | Zerobox operations published by Sandbox |
-| `disabled` | Local operations owned by Bash Execution |
-| `uninitialized` | Blocked before spawn |
-| `error` | Blocked with a bounded reason |
+| `isolated`, ordinary `integrated` | Zerobox, with effective local grants and narrower preferences |
+| Explicit `safe_bash.hostCapability` | Approved integration, literal argv, supervised host process |
+| Approved `host` profile | Local shell, existing permission pipeline |
+| Missing authorization or unavailable selected backend | Blocked, with no automatic fallback |
+
+Use `!s <command>` to request sandbox execution explicitly. Think-in-Code keeps
+its strict engine and private HOME and `/tmp` even when the shell profile is
+`host`. Native file tools remain on the host outside this shell boundary.
+See [profiles and capabilities](../sandbox/docs/shell-capabilities.md).
 
 `sandbox/` owns Zerobox and publishes `pi.sandbox-runtime.v2`; it does not
 register or import a Bash tool. Shared guard, rewrite, execution and supervision
