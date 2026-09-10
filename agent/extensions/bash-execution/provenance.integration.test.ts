@@ -1,3 +1,5 @@
+import { publishShellRuntime, releaseShellRuntime } from '../sandbox/capabilities/runtime.ts';
+import { emptyGrants } from '../sandbox/capabilities/authority.ts';
 import { expect, test } from "bun:test";
 import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -17,6 +19,7 @@ test.each(['before', 'after'] as const)('real Pi compression preserves provenanc
     const owner = Symbol('compressed-provenance');
     claimSandboxRuntime(owner);
     publishSandboxRuntime(owner, { state: 'disabled' });
+    publishShellRuntime(owner, () => ({ state: 'ready', projectRoot: cwd, requestedProfile: 'host', profile: 'host', grants: { ...emptyGrants(), host: true }, requestedGrants: emptyGrants(), authorityPath: '/unused' }));
     let callsToBackend = 0;
     const handler = createToolResultHandler({ backend: { id: 'headroom', compress: async () => { callsToBackend++; return { output: 'derived summary' }; } }, aggregates: false, archiveOriginal: archiveOriginalToolResult });
     const compressor = (pi: ExtensionAPI) => { pi.on('tool_result', event => handler(event, { provider: 'test', id: 'test', contextWindow: 100000 })); };
@@ -39,6 +42,7 @@ test.each(['before', 'after'] as const)('real Pi compression preserves provenanc
     } finally {
         session.dispose();
         releaseSandboxRuntime(owner);
+        releaseShellRuntime(owner);
         if (previous === undefined) delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
         else process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previous;
         await rm(cwd, { recursive: true, force: true });
@@ -79,6 +83,7 @@ test("real Pi persists host execution provenance and exposes it to the model on 
     const owner = Symbol("provenance-test");
     claimSandboxRuntime(owner);
     publishSandboxRuntime(owner, { state: "disabled" });
+    publishShellRuntime(owner, () => ({ state: "ready", projectRoot: cwd, requestedProfile: "host", profile: "host", grants: { ...emptyGrants(), host: true }, requestedGrants: emptyGrants(), authorityPath: "/unused" }));
     const session = await createTestSession({
         cwd, extensions: [resolve(import.meta.dir, "index.ts")],
     });
@@ -108,6 +113,7 @@ test("real Pi persists host execution provenance and exposes it to the model on 
     } finally {
         session.dispose();
         releaseSandboxRuntime(owner);
+        releaseShellRuntime(owner);
         await rm(cwd, { recursive: true, force: true });
     }
 }, 30_000);
@@ -142,9 +148,13 @@ test("native read and search operations identify their host namespace", async ()
 
 test("user bash persists process provenance without modifying its output", async () => {
     const cwd = await mkdtemp(resolve(import.meta.dir, '.user-provenance-'));
+    const previousCwd = process.cwd();
+    // Pi's user Bash executor uses the process cwd, as in the interactive CLI.
+    process.chdir(cwd);
     const owner = Symbol('user-bash-test');
     claimSandboxRuntime(owner);
     publishSandboxRuntime(owner, { state: 'disabled' });
+    publishShellRuntime(owner, () => ({ state: 'ready', projectRoot: cwd, requestedProfile: 'host', profile: 'host', grants: { ...emptyGrants(), host: true }, requestedGrants: emptyGrants(), authorityPath: '/unused' }));
     const session = await createTestSession({ cwd, extensions: [resolve(import.meta.dir, 'index.ts')] });
     try {
         const command = 'printf user-output';
@@ -164,6 +174,8 @@ test("user bash persists process provenance without modifying its output", async
     } finally {
         session.dispose();
         releaseSandboxRuntime(owner);
+        releaseShellRuntime(owner);
+        process.chdir(previousCwd);
         await rm(cwd, { recursive: true, force: true });
     }
 }, 30_000);

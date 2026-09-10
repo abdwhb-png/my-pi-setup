@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { getPermissionsService } from "@gotgenes/pi-permission-system";
+import { emptyGrants, saveProjectCapabilities, capabilityAuthorityPath, localMachineId } from "../capabilities/authority.ts";
 import {
     calls,
     createTestSession,
@@ -26,6 +27,19 @@ describe("accepted Zerobox safe_bash contract", () => {
     let fixture: string | undefined;
     let session: TestSession | undefined;
     let inheritedSessionStatus: string | undefined;
+    let previousAgentDir: string | undefined;
+    let testAgentDir: string;
+    beforeEach(async () => {
+        previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        testAgentDir = await mkdtemp(resolve(AGENT_ROOT, ".contract-authority-"));
+        process.env.PI_CODING_AGENT_DIR = testAgentDir;
+        const directory = resolve(testAgentDir, "extensions/pi-permission-system");
+        await mkdir(directory, { recursive: true });
+        await writeFile(resolve(directory, "config.json"), JSON.stringify({
+            authorizerChain: [], shellTools: { safe_bash: { commandArgument: "command" } },
+            permission: { "*": "allow", write: { "node_modules/*": "deny", "*sandbox.global.json": "deny" }, edit: { "node_modules/*": "deny", "*sandbox.global.json": "deny" } },
+        }));
+    });
 
     it.skipIf(!process.env.PI_SANDBOX_LOCAL_NETWORK_CONTRACT)(
         "routes configured local services through real bash and safe_bash",
@@ -33,6 +47,10 @@ describe("accepted Zerobox safe_bash contract", () => {
             inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
             delete process.env[SESSION_STATUS_ENV];
             fixture = await mkdtemp(resolve(AGENT_ROOT, ".zerobox-local-net-"));
+            await saveProjectCapabilities(capabilityAuthorityPath(testAgentDir), {
+                projectRoot: fixture, profile: "integrated",
+                grants: { ...emptyGrants(), domains: ["localhost:18740"], hostDomains: ["shein-ecom.dev.test:443"] },
+            }, localMachineId());
             await mkdir(resolve(fixture, ".pi"));
             await writeFile(
                 resolve(fixture, ".pi/settings.json"),
@@ -89,6 +107,9 @@ describe("accepted Zerobox safe_bash contract", () => {
                 inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
                 delete process.env[SESSION_STATUS_ENV];
                 const cwd = process.env.PI_SANDBOX_DEV_WORKFLOW_CWD!;
+                await saveProjectCapabilities(capabilityAuthorityPath(testAgentDir), {
+                    projectRoot: cwd, profile: "isolated", grants: emptyGrants(),
+                }, localMachineId());
                 session = await createTestSession({
                     cwd,
                     extensions: [
@@ -107,13 +128,14 @@ describe("accepted Zerobox safe_bash contract", () => {
                 console.info(`${command}: ${((performance.now() - start) / 1000).toFixed(2)}s`);
                 expect(result?.text).not.toContain("Sandbox setup failed");
                 expect(result, result?.text).toMatchObject({ mocked: false, isError: false });
-                expect(result?.details).toMatchObject({ execution: { status: 'sandboxed', profile: 'bash-general', tmpNamespace: 'host', outcome: 'succeeded', exitCode: 0 } });
+                expect(result?.details).toMatchObject({ execution: { status: 'sandboxed', profile: 'bash-general', tmpNamespace: 'lease-private', outcome: 'succeeded', exitCode: 0 } });
             },
             180_000,
         );
     }
 
     afterEach(async () => {
+        await session?.session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
         session?.dispose();
         session = undefined;
         if (fixture) await rm(fixture, { recursive: true, force: true });
@@ -123,6 +145,9 @@ describe("accepted Zerobox safe_bash contract", () => {
         } else {
             process.env[SESSION_STATUS_ENV] = inheritedSessionStatus;
         }
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        await rm(testAgentDir, { recursive: true, force: true });
     });
 
     it("preserves the real stderr and exit code from a shebang process", async () => {
@@ -182,8 +207,8 @@ describe("accepted Zerobox safe_bash contract", () => {
                 network: {
                     loopback: {
                         hostNamespace: "isolated",
-                        hostBridgePorts: [8317, 8320, 18740],
-                        hostBridgeTransport: "managed-policy-proxy",
+                        hostBridgePorts: [],
+                        hostBridgeTransport: "disabled",
                         unlistedHostPorts: "blocked",
                     },
                 },
@@ -194,7 +219,7 @@ describe("accepted Zerobox safe_bash contract", () => {
         );
         expect(modelInputs[0]?.systemPrompt).toContain('"analysis-strict"');
         expect(modelInputs[0]?.systemPrompt).toContain(
-            '"hostBridgePorts":[8317,8320,18740]',
+            '"hostBridgePorts":[]',
         );
         expect(modelInputs.at(-1)?.messages).toContain(
             "real-safe-bash-error",
@@ -393,6 +418,7 @@ describe("accepted Zerobox safe_bash contract", () => {
         const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
         process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
         try {
+            await saveProjectCapabilities(capabilityAuthorityPath(isolatedAgentDir), { projectRoot: fixture, profile: "isolated", grants: emptyGrants() });
             session = await createTestSession({
                 cwd: fixture,
                 extensions: [SANDBOX_EXTENSION, BASH_EXECUTION_EXTENSION],

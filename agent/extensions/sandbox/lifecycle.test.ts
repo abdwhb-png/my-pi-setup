@@ -291,8 +291,22 @@ function renderWidget(): string | null {
     return result === null || result === undefined ? null : String(result);
 }
 
+const { emptyGrants, saveProjectCapabilities, readCapabilityAuthority, capabilityAuthorityPath } = await import("./capabilities/authority.ts");
+const { currentShellPolicy } = await import("./capabilities/runtime.ts");
+
 const ENV_KEY = "PI_SANDBOX_SESSION_STATUS";
 const SESSION_ID = "session-a";
+const originalAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+let isolatedAgentDirectory: string;
+beforeEach(async () => {
+    isolatedAgentDirectory = await mkdtemp(join(tmpdir(), "sandbox-authority-fixture-"));
+    process.env.PI_CODING_AGENT_DIR = isolatedAgentDirectory;
+});
+afterEach(async () => {
+    if (originalAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDirectory;
+    await rm(isolatedAgentDirectory, { recursive: true, force: true });
+});
 
 describe("sandbox lifecycle", () => {
     let cwd: string;
@@ -304,6 +318,7 @@ describe("sandbox lifecycle", () => {
             join(cwd, ".pi", "sandbox.json"),
             JSON.stringify({ enabled: true }),
         );
+        await saveProjectCapabilities(capabilityAuthorityPath(isolatedAgentDirectory), { projectRoot: cwd, profile: "isolated", grants: { ...emptyGrants(), host: true } });
         initialize.mockReset();
         inspectDockerAccess.mockReset();
         inspectDockerAccess.mockResolvedValue([]);
@@ -321,6 +336,13 @@ describe("sandbox lifecycle", () => {
     afterEach(async () => {
         await rm(cwd, { recursive: true, force: true });
         delete process.env[ENV_KEY];
+    });
+
+    it("blocks native writes to the local capability authority", async () => {
+        const registered = registerSandbox();
+        const gate = registered.handlers.get("tool_call");
+        const result = await gate?.({ toolName: "write", input: { path: join(isolatedAgentDirectory, "sandbox.capabilities.json"), content: "{}" } }, context(cwd));
+        expect(result).toMatchObject({ block: true });
     });
 
     it("publishes and shuts down the strict analysis service with the sandbox", async () => {
@@ -369,11 +391,9 @@ describe("sandbox lifecycle", () => {
             { systemPrompt: first.systemPrompt },
             ctx,
         ) as { systemPrompt: string };
-        expect(disabled.systemPrompt).toContain('"state":"disabled"');
-        expect(disabled.systemPrompt).toContain("OS isolation is absent");
-        expect(disabled.systemPrompt).toContain(
-            "safe_bash guards are independent",
-        );
+        expect(disabled.systemPrompt).toContain('"state":"enabled"');
+        expect(disabled.systemPrompt).toContain("Shell profile: host");
+        expect(disabled.systemPrompt).toContain("Native file tools");
         expect(
             disabled.systemPrompt.match(/Sandbox execution context v1/g),
         ).toHaveLength(1);
@@ -460,7 +480,7 @@ describe("sandbox lifecycle", () => {
         expect(reset).not.toHaveBeenCalled();
 
         await sandboxCommand(registered).handler("off", ctx);
-        expect(getSandboxRuntime().state).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("enabled");
     });
 
     it("surfaces and retries cleanup failure after invalid configuration", async () => {
@@ -484,74 +504,50 @@ describe("sandbox lifecycle", () => {
             "error",
         ]);
 
-        await sandboxCommand(registered).handler("off", ctx);
+        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ enabled: true }));
+        await registered.handlers.get("session_start")?.({}, ctx);
         expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxRuntime().state).toBe("disabled");
-    });
-
-    it("waits for sandbox on transitions and rejects pending calls when switched off", async () => {
-        await writeFile(
-            join(cwd, ".pi", "sandbox.json"),
-            JSON.stringify({ enabled: false }),
-        );
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        expect(getSandboxRuntime().state).toBe("disabled");
-
-        const enabling = deferred();
-        initialize.mockImplementation(() => enabling.promise);
-        const enableTransition = sandboxCommand(registered).handler("on", ctx);
-        expect(getSandboxRuntime().state).toBe("reconfiguring");
-        const pendingAnalysis = getSandboxAnalysisPort().run({ id: "wait", language: "javascript", program: "1" });
-        enabling.resolve();
-        await enableTransition;
-        await expect(pendingAnalysis).rejects.toMatchObject({
-            kind: "analysis-unavailable",
-        });
         expect(getSandboxRuntime().state).toBe("enabled");
-
-        const disabling = deferred();
-        reset.mockImplementation(() => disabling.promise);
-        const disableTransition = sandboxCommand(registered).handler("off", ctx);
-        expect(getSandboxRuntime().state).toBe("reconfiguring");
-        const pendingBash = createSandboxBashOperations().exec("true", cwd, { onData() {} }).catch((error: Error) => error);
-        disabling.resolve();
-        await disableTransition;
-        expect((await pendingBash as Error).message).toContain("disabled");
-        expect(getSandboxRuntime().state).toBe("disabled");
     });
 
-    it("tells the agent when a configuration change interrupts a running execution", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd);
+    it("keeps pending shell operations behind profile transitions and preserves Think on host", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
-        const running = createSandboxBashOperations().exec("sleep 30", cwd, {
-            onData: () => undefined,
-        });
-        await Bun.sleep(20);
-
-        await sandboxCommand(registered).handler("off", ctx);
-
-        await expect(running).rejects.toThrow("interrupted by reconfiguration");
-        expect(registered.sentMessages).toContainEqual({
-            message: expect.objectContaining({
-                customType: "sandbox-runtime-feedback",
-                display: false,
-                content: expect.stringMatching(
-                    /1 running Sandbox execution was interrupted.*was not retried/is,
-                ),
-            }),
-            options: { deliverAs: "steer" },
-        });
+        const enabling = deferred(); initialize.mockImplementationOnce(() => enabling.promise);
+        const transition = sandboxCommand(registered).handler("on --session", ctx);
+        expect(getSandboxRuntime().state).toBe("reconfiguring");
+        const pending = getSandboxAnalysisPort().run({ id: "wait", language: "javascript", program: "1" }).catch((error: Error) => error);
+        enabling.resolve(); await transition; await pending;
+        expect(getSandboxRuntime().state).toBe("enabled");
+        await sandboxCommand(registered).handler("off --session", ctx);
+        expect(getSandboxRuntime().state).toBe("enabled");
+        expect(currentShellPolicy()?.profile).toBe("host");
+        await expect(getSandboxAnalysisPort().run({ id: "think-host", language: "javascript", program: "1" })).resolves.toMatchObject({ output: "ok" });
     });
 
-    it("exposes only on and off and rejects the removed toggle aliases", async () => {
+    it("lets admitted operations finish after profile revocation without interruption feedback", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const running = createSandboxBashOperations().exec("sleep 0.12", cwd, { onData() {} });
+        await Bun.sleep(20);
+        await sandboxCommand(registered).handler("off --session", ctx);
+        expect(getSandboxRuntime().state).toBe("enabled");
+        expect(currentShellPolicy()?.profile).toBe("host");
+        await expect(running).resolves.toMatchObject({ exitCode: 0 });
+        expect(registered.sentMessages).toEqual([]);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("exposes profiles, capabilities and compatible on/off aliases", async () => {
         const registered = registerSandbox();
         const ctx = context(cwd);
         const command = sandboxCommand(registered);
 
         expect(command.getArgumentCompletions?.("")).toEqual([
+            { value: "profile isolated", label: "profile isolated" },
+            { value: "profile integrated", label: "profile integrated" },
+            { value: "profile host", label: "profile host" },
+            { value: "capabilities", label: "capabilities" },
             { value: "doctor", label: "doctor" },
             { value: "on", label: "on" },
             { value: "off", label: "off" },
@@ -582,8 +578,8 @@ describe("sandbox lifecycle", () => {
         await command.handler("disable", ctx);
 
         expect(notifyCalls(ctx).slice(-2)).toEqual([
-            ["Usage: /sandbox [doctor|on|off|docker ...]", "error"],
-            ["Usage: /sandbox [doctor|on|off|docker ...]", "error"],
+            ["Usage: /sandbox [profile isolated|integrated|host | capabilities | doctor | on | off | docker ...]", "error"],
+            ["Usage: /sandbox [profile isolated|integrated|host | capabilities | doctor | on | off | docker ...]", "error"],
         ]);
         expect(initialize).not.toHaveBeenCalled();
         expect(reset).not.toHaveBeenCalled();
@@ -651,8 +647,9 @@ describe("sandbox lifecycle", () => {
             expect(notifyCalls(ctx).at(-1)).toEqual([
                 [
                     "Sandbox doctor",
+                    `Shell capabilities unavailable: Could not parse sandbox config ${join(cwd, ".pi", "sandbox.json")}: JSON Parse error: Expected '}'`,
                     `Docker authority: ${join(agentDir, "sandbox.global.json")} (not configured)`,
-                    "Effective Sandbox: off (default)",
+                    "Effective Sandbox: on (default)",
                     "Saved Docker grant: off",
                     "Configured Docker: off",
                     "Runtime: uninitialized",
@@ -1403,60 +1400,29 @@ describe("sandbox lifecycle", () => {
         expect(settings.sandbox.docker).toEqual({ mode: "disabled" });
     });
 
-    it("keeps a later off request authoritative over an in-flight enable", async () => {
-        await writeFile(
-            join(cwd, ".pi", "sandbox.json"),
-            JSON.stringify({ enabled: false }),
-        );
-        const registered = registerSandbox();
-        const ctx = context(cwd);
+    it("keeps the latest profile authoritative over an in-flight runtime initialization", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
-
-        const preflight = deferred();
-        analysisPreflight.mockImplementationOnce(() => preflight.promise);
-        const enabling = sandboxCommand(registered).handler("on", ctx);
-        await Bun.sleep(10);
-        const disabling = sandboxCommand(registered).handler("off", ctx);
-        await disabling;
-        expect(getSandboxRuntime().state).toBe("disabled");
-
-        preflight.resolve();
-        await enabling;
-        expect(getSandboxRuntime().state).toBe("disabled");
-        expect(analysisShutdown).toHaveBeenCalledTimes(1);
-        expect(reset).toHaveBeenCalledTimes(1);
+        const starting = deferred(); initialize.mockImplementationOnce(() => starting.promise);
+        const enabling = sandboxCommand(registered).handler("on --session", ctx);
+        await sandboxCommand(registered).handler("off --session", ctx);
+        expect(currentShellPolicy()?.profile).toBe("host");
+        starting.resolve(); await enabling;
+        expect(currentShellPolicy()?.profile).toBe("host");
+        expect(getSandboxRuntime().state).toBe("enabled");
     });
 
-    it("surfaces cleanup failure from an in-flight candidate before disabling", async () => {
-        await writeFile(
-            join(cwd, ".pi", "sandbox.json"),
-            JSON.stringify({ enabled: false }),
-        );
-        const registered = registerSandbox();
-        const ctx = context(cwd);
+    it("retains a retired runtime cleanup failure and retries it on shutdown", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
-
-        const preflight = deferred();
-        analysisPreflight.mockImplementationOnce(() => preflight.promise);
-        reset.mockRejectedValueOnce(new Error("late candidate cleanup failed"));
-        const enabling = sandboxCommand(registered).handler("on", ctx);
+        reset.mockRejectedValueOnce(new Error("retired cleanup failed"));
+        await sandboxCommand(registered).handler("off --session", ctx);
         await Bun.sleep(10);
-
-        await sandboxCommand(registered).handler("off", ctx);
-        expect(reset).toHaveBeenCalledTimes(1);
-        expect(getSandboxRuntime().state).toBe("error");
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            expect.stringContaining("late candidate cleanup failed"),
-            "error",
-        ]);
-
-        preflight.resolve();
-        await enabling;
-        expect(reset).toHaveBeenCalledTimes(1);
-        expect(getSandboxRuntime().state).toBe("error");
-
-        await sandboxCommand(registered).handler("off", ctx);
-        expect(getSandboxRuntime().state).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("enabled");
+        expect(notifyCalls(ctx).some(([message]) => message.includes("Retired runtime cleanup failed"))).toBe(true);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+        expect(reset.mock.calls.length).toBeGreaterThanOrEqual(2);
+        expect(getSandboxRuntime().state).toBe("uninitialized");
     });
 
     it("does not publish a candidate after session shutdown supersedes startup", async () => {
@@ -1483,7 +1449,7 @@ describe("sandbox lifecycle", () => {
         await registered.handlers.get("session_start")?.({}, ctx);
         reset.mockRejectedValueOnce(new Error("reset failed"));
 
-        await sandboxCommand(registered).handler("off", ctx);
+        await sandboxCommand(registered).handler("docker off", ctx);
 
         expect(getSandboxRuntime().state).toBe("error");
         let captured: unknown;
@@ -1517,9 +1483,9 @@ describe("sandbox lifecycle", () => {
         expect(captured.message).not.toContain("reset failed");
         expect(serialized).not.toContain("reset failed");
 
-        await sandboxCommand(registered).handler("off", ctx);
+        await registered.handlers.get("session_start")?.({}, ctx);
         expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxRuntime().state).toBe("disabled");
+        expect(getSandboxRuntime().state).toBe("enabled");
     });
 
     it("supports Pi's awaited shutdown-old then start-new reload sequence", async () => {
@@ -1572,230 +1538,84 @@ describe("sandbox lifecycle", () => {
     });
 });
 
-describe("sandbox per-session persistence and propagation", () => {
+describe("sandbox grants, migration and session scope", () => {
     let cwd: string;
-    let sessionDir: string;
-    let originalEnv: string | undefined;
-
-    const stateFile = (sessionId = SESSION_ID): string =>
-        join(sessionDir, sessionStateFilename(sessionId));
-
     beforeEach(async () => {
-        cwd = await mkdtemp(join(tmpdir(), "sandbox-persist-"));
-        sessionDir = await mkdtemp(join(tmpdir(), "sandbox-session-"));
-        await mkdir(join(cwd, ".pi"));
-        await writeFile(
-            join(cwd, ".pi", "sandbox.json"),
-            JSON.stringify({ enabled: true }),
-        );
-        initialize.mockReset();
-        initialize.mockImplementation(async () => undefined);
-        reset.mockReset();
-        reset.mockImplementation(async () => undefined);
-        analysisShutdown.mockClear();
-        analysisPreflight.mockReset();
-        analysisPreflight.mockImplementation(async () => undefined);
-        createAnalysisSandboxService.mockClear();
-        capturedWidgetDef.def = null;
-        originalEnv = process.env[ENV_KEY];
-        delete process.env[ENV_KEY];
+        cwd = await mkdtemp(join(tmpdir(), "sandbox-scope-"));
+        initialize.mockReset(); initialize.mockResolvedValue(undefined);
+        reset.mockReset(); reset.mockResolvedValue(undefined);
+        analysisShutdown.mockReset(); analysisShutdown.mockResolvedValue(undefined);
+        analysisPreflight.mockReset(); analysisPreflight.mockResolvedValue(undefined);
+        capturedWidgetDef.def = null; delete process.env[ENV_KEY];
     });
-
-    afterEach(async () => {
-        await rm(cwd, { recursive: true, force: true });
-        await rm(sessionDir, { recursive: true, force: true });
-        if (originalEnv === undefined) delete process.env[ENV_KEY];
-        else process.env[ENV_KEY] = originalEnv;
-    });
-
-    it("restores the sandbox status from its session-scoped state file", async () => {
-        await writeFile(
-            stateFile(),
-            JSON.stringify({ enabled: false, updatedAt: "2026-01-01T00:00:00.000Z" }),
-        );
-        const registered = registerSandbox();
-        const ctx = context(cwd, sessionDir);
-
-        await registered.handlers.get("session_start")?.({}, ctx);
-
-        expect(getSandboxRuntime().state).toBe("disabled");
-        const widget = renderWidget();
-        expect(widget).not.toBeNull();
-        expect(widget).toContain("⚠");
-        expect(widget).toContain("fg:warning:");
-
-        // notify called with warning containing "DISABLED"
-        const calls = notifyCalls(ctx);
-        const warningCalls = calls.filter(([, level]) => level === "warning");
-        expect(warningCalls.length).toBeGreaterThan(0);
-        expect(warningCalls[0][0]).toContain("DISABLED");
-        expect(warningCalls[0][0]).toContain("session-file");
-    });
-
-    it("PI_SANDBOX_SESSION_STATUS=disabled forces disabled and overrides file", async () => {
-        await writeFile(
-            stateFile(),
-            JSON.stringify({ enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" }),
-        );
+    afterEach(async () => { delete process.env[ENV_KEY]; await rm(cwd, { recursive: true, force: true }); });
+    it("legacy environment cannot authorize host execution or disable Think", async () => {
         process.env[ENV_KEY] = "disabled";
-
-        const registered = registerSandbox();
-        const ctx = context(cwd, sessionDir);
-
+        const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
-
-        expect(getSandboxRuntime().state).toBe("disabled");
-        const calls = notifyCalls(ctx);
-        const warningCalls = calls.filter(([, level]) => level === "warning");
-        expect(warningCalls.some(([m]) => m.includes("env"))).toBe(true);
-    });
-
-    it("does NOT emit a security warning when explicitlyDisabled is false (default source)", async () => {
-        // Reach into the extension: directly verify the warning gate helper.
-        // (Default-off cannot be exercised here without controlling the global
-        //  ~/.pi/agent/sandbox.json; that case is unit-tested in index.test.ts.)
-        const { explicitlyDisabled } = await import("./index.ts");
-        const resolved = {
-            config: { enabled: false } as Parameters<
-                typeof explicitlyDisabled
-            >[0]["config"],
-            source: "default" as const,
-        };
-        expect(explicitlyDisabled(resolved)).toBe(false);
-    });
-
-    it("--no-sandbox flag wins over session file and emits warning", async () => {
-        await writeFile(
-            stateFile(),
-            JSON.stringify({ enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" }),
-        );
-        const handlers = new Map<string, Handler>();
-        const pi = {
-            registerFlag: () => undefined,
-            registerTool: () => undefined,
-            registerCommand: () => undefined,
-            on: (event: string, handler: Handler) => handlers.set(event, handler),
-            getFlag: () => true, // --no-sandbox
-        } as unknown as ExtensionAPI;
-        sandboxExtension(pi);
-        const ctx = context(cwd, sessionDir);
-
-        await handlers.get("session_start")?.({}, ctx);
-
-        expect(getSandboxRuntime().state).toBe("disabled");
-        const fileExists = await readFile(
-            stateFile(),
-            "utf-8",
-        ).then(
-            () => true,
-            () => false,
-        );
-        // --no-sandbox does not modify the persisted file (it's a one-shot override).
-        expect(fileExists).toBe(true);
-
-        const calls = notifyCalls(ctx);
-        const warningCalls = calls.filter(([, level]) => level === "warning");
-        expect(
-            warningCalls.some(([m]) => m.includes("--no-sandbox")),
-        ).toBe(true);
-    });
-
-    it("/sandbox off persists file and sets env var + emits security warning", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd, sessionDir);
-        await registered.handlers.get("session_start")?.({}, ctx);
-
-        await sandboxCommand(registered).handler("off", ctx);
-
-        expect(getSandboxRuntime().state).toBe("disabled");
-        expect(process.env[ENV_KEY]).toBe("disabled");
-        const saved = JSON.parse(await readFile(stateFile(), "utf-8"));
-        expect(saved.enabled).toBe(false);
-        expect(typeof saved.updatedAt).toBe("string");
-
-        const calls = notifyCalls(ctx);
-        const securityWarning = calls.filter(
-            ([m, level]) =>
-                level === "warning" &&
-                (m.includes("security risk") || m.includes("DISABLED")),
-        );
-        expect(securityWarning.length).toBeGreaterThan(0);
-    });
-
-    it("/sandbox on persists file and sets env var", async () => {
-        await writeFile(
-            stateFile(),
-            JSON.stringify({ enabled: false, updatedAt: "2026-01-01T00:00:00.000Z" }),
-        );
-        const registered = registerSandbox();
-        const ctx = context(cwd, sessionDir);
-        await registered.handlers.get("session_start")?.({}, ctx);
-
-        await sandboxCommand(registered).handler("on", ctx);
-
         expect(getSandboxRuntime().state).toBe("enabled");
-        expect(process.env[ENV_KEY]).toBe("enabled");
-        const saved = JSON.parse(await readFile(stateFile(), "utf-8"));
-        expect(saved.enabled).toBe(true);
-    });
-
-    it("does not leak a session toggle into the next Pi session", async () => {
-        const first = registerSandbox();
-        const firstContext = context(cwd, sessionDir, SESSION_ID);
-        await first.handlers.get("session_start")?.({}, firstContext);
-        await sandboxCommand(first).handler("off", firstContext);
-        expect(process.env[ENV_KEY]).toBe("disabled");
-
-        await first.handlers.get("session_shutdown")?.({}, firstContext);
-        expect(process.env[ENV_KEY]).toBeUndefined();
-
-        const second = registerSandbox();
-        await second.handlers
-            .get("session_start")
-            ?.({}, context(cwd, sessionDir, "session-b"));
-        expect(getSandboxRuntime().state).toBe("enabled");
-    });
-
-    it("restores a genuinely inherited session override after shutdown", async () => {
-        process.env[ENV_KEY] = "disabled";
-        const registered = registerSandbox();
-        const ctx = context(cwd, sessionDir);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        await sandboxCommand(registered).handler("on", ctx);
-        expect(process.env[ENV_KEY]).toBe("enabled");
-
+        expect(currentShellPolicy()).toMatchObject({ state: "authorization-required", profile: "isolated", requestedProfile: "host" });
         await registered.handlers.get("session_shutdown")?.({}, ctx);
         expect(process.env[ENV_KEY]).toBe("disabled");
     });
-
-    it("subagent child sees env var and applies it on its own session_start", async () => {
-        // Simulate the parent having toggled on. The child process inherits env.
-        process.env[ENV_KEY] = "disabled";
-        // The child has its OWN session dir (fresh sandbox session), but inherits the env.
-        const childSessionDir = await mkdtemp(join(tmpdir(), "sandbox-child-"));
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, childSessionDir);
-
-            await registered.handlers.get("session_start")?.({}, ctx);
-
-            expect(getSandboxRuntime().state).toBe("disabled");
-            const widget = renderWidget();
-            expect(widget).toContain("⚠");
-        } finally {
-            await rm(childSessionDir, { recursive: true, force: true });
-        }
+    it("legacy session state requests host access without creating an authorization", async () => {
+        const sessionDir = join(cwd, "session"); await mkdir(sessionDir);
+        await writeFile(join(sessionDir, sessionStateFilename(SESSION_ID)), JSON.stringify({ enabled: false }));
+        const registered = registerSandbox(); const ctx = context(cwd, sessionDir);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        expect(currentShellPolicy()?.state).toBe("authorization-required");
+        expect(getSandboxRuntime().state).toBe("enabled");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
     });
-
-    it("widget renders the disabled warning glyph after /sandbox off", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd, sessionDir);
+    it("off requires approval and stores a project grant while keeping Think isolated", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd, undefined, SESSION_ID, true, { confirm: [true] });
         await registered.handlers.get("session_start")?.({}, ctx);
         await sandboxCommand(registered).handler("off", ctx);
-
-        const widget = renderWidget();
-        expect(widget).not.toBeNull();
-        expect(widget).toContain("⚠");
-        expect(widget).toContain("fg:warning:");
+        expect(currentShellPolicy()?.profile).toBe("host");
+        expect(getSandboxRuntime().state).toBe("enabled");
+        expect(readCapabilityAuthority(capabilityAuthorityPath(isolatedAgentDirectory)).projects[0]?.grants.host).toBe(true);
+        expect(process.env[ENV_KEY]).toBeUndefined();
+        expect(renderWidget()).toContain("⚠");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+        const second = registerSandbox(); const next = context(cwd);
+        await second.handlers.get("session_start")?.({}, next);
+        expect(currentShellPolicy()?.profile).toBe("host");
+        await second.handlers.get("session_shutdown")?.({}, next);
+    });
+    it("declining off starts no new runtime and leaves host access absent", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd, undefined, SESSION_ID, true, { confirm: [false] });
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const snapshot = getSandboxRuntime();
+        await sandboxCommand(registered).handler("off", ctx);
+        expect(getSandboxRuntime()).toBe(snapshot);
+        expect(currentShellPolicy()?.profile).toBe("isolated");
+        expect(readCapabilityAuthority(capabilityAuthorityPath(isolatedAgentDirectory)).projects).toEqual([]);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+    it("session grants do not propagate through environment or into another Pi session", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd, undefined, SESSION_ID, true, { confirm: [true] });
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await sandboxCommand(registered).handler("off --session", ctx);
+        expect(currentShellPolicy()?.profile).toBe("host");
+        expect(readCapabilityAuthority(capabilityAuthorityPath(isolatedAgentDirectory)).projects).toEqual([]);
+        expect(process.env[ENV_KEY]).toBeUndefined();
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+        const second = registerSandbox();
+        await second.handlers.get("session_start")?.({}, ctx);
+        expect(currentShellPolicy()?.profile).toBe("isolated");
+        await second.handlers.get("session_shutdown")?.({}, ctx);
+    });
+    it("requires one explicit migration decision and preserves legacy preferences", async () => {
+        await mkdir(join(cwd, ".pi")); const legacy = join(cwd, ".pi", "sandbox.json");
+        const content = JSON.stringify({ enabled: true, network: { allowedDomains: ["github.com"] } }); await writeFile(legacy, content);
+        const registered = registerSandbox(); const ctx = context(cwd, undefined, SESSION_ID, true, { select: ["Use isolated defaults (no network, private /tmp)"] });
+        await registered.handlers.get("session_start")?.({}, ctx);
+        expect(currentShellPolicy()?.state).toBe("migration-required");
+        await sandboxCommand(registered).handler("on", ctx);
+        expect(currentShellPolicy()?.state).toBe("migration-required");
+        await sandboxCommand(registered).handler("capabilities migrate", ctx);
+        expect(currentShellPolicy()).toMatchObject({ state: "ready", profile: "isolated" });
+        expect(await readFile(legacy, "utf8")).toBe(content);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
     });
 });

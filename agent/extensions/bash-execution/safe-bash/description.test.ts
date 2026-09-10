@@ -9,6 +9,7 @@ describe("buildSafeBashDescription", () => {
             enforceNativeTools: true,
         });
         expect(result.startsWith(SAFE_BASH_BASE_DESCRIPTION)).toBe(true);
+        expect(result).toContain("selected isolation profile");
         expect(result).toContain("Mode=coexist");
         expect(result).toContain("deny(default)=");
         expect(result).toContain("bypass=none");

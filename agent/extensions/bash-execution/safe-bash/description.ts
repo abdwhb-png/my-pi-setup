@@ -2,7 +2,7 @@ import { DANGER_GROUP_IDS } from "../../_shared/command-execution/guard.ts";
 import type { SafeBashConfig } from "./config.ts";
 
 export const SAFE_BASH_BASE_DESCRIPTION =
-    "Execute a bash command through shared sandbox execution.";
+    "Execute a shell command under the selected isolation profile and command permissions. hostCapability requests an approved host integration.";
 
 export interface SafeBashDescriptionInput {
     config: Pick<
@@ -50,8 +50,7 @@ export function buildSafeBashDescription(
     if (ask.length > 0) guardParts.push(`ask=[${ask.join(",")}]`);
     if (explicitDeny.length > 0)
         guardParts.push(`deny=[${explicitDeny.join(",")}]`);
-    if (cwdOnly.length > 0)
-        guardParts.push(`cwd-only=[${cwdOnly.join(",")}]`);
+    if (cwdOnly.length > 0) guardParts.push(`cwd-only=[${cwdOnly.join(",")}]`);
     if (defaultDenyCount > 0)
         guardParts.push(`deny(default)=${defaultDenyCount}`);
     else if (guardParts.length === 0) guardParts.push("deny(default)=0");
@@ -71,7 +70,7 @@ export function buildSafeBashDescription(
 
     // Guidance for agent to avoid wasted attempts
     const guidance =
-        "Denied groups are blocked; ask groups require user confirm; use write/edit not rm.";
+        "Denied groups stay blocked; ask groups require user confirmation.";
 
     return `${SAFE_BASH_BASE_DESCRIPTION} ${modePart}. Guard: ${guardSummary}. AllowedShell: ${bypass}. ${nativePart}. ${guidance}`;
 }
@@ -98,5 +97,5 @@ export function buildSafeBashPromptSnippet(
     if (cwdOnly.length > 0) parts.push(`cwd:${cwdOnly.join(",")}`);
     parts.push(`bypass:${bypass}`);
     parts.push(input.enforceNativeTools ? "native=enforced" : "native=relaxed");
-    return `🔒bash sandbox — ${parts.join(" ")}`;
+    return `🔒guarded shell — ${parts.join(" ")}`;
 }

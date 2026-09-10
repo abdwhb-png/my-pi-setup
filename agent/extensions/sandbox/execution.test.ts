@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 
-import { describe, expect, it, mock } from "bun:test";
+import { beforeEach, afterEach, describe, expect, it, mock } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,27 +49,30 @@ function registerSandbox(options: { noSandbox?: boolean } = {}): {
 const context = {
     cwd: process.cwd(),
     hasUI: false,
+    isProjectTrusted: () => true,
     ui: { notify: mock(() => undefined) },
 } as unknown as ExtensionContext;
 
 describe("sandbox runtime publication", () => {
-    it("publishes a disabled snapshot with no local execution adapter", async () => {
+    let previousAgentDir: string | undefined;
+    let agentDir: string;
+    beforeEach(async () => {
+        previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        agentDir = await mkdtemp(join(tmpdir(), "sandbox-execution-agent-"));
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+    });
+    afterEach(async () => {
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        await rm(agentDir, { recursive: true, force: true });
+    });
+    it("keeps the strict engine enabled when the legacy flag requests host shell", async () => {
         const registered = registerSandbox({ noSandbox: true });
-        await registered.start({}, context);
-
-        expect(getSandboxRuntime()).toEqual({ state: "disabled" });
-        await expect(
-            getSandboxAnalysisPort().run({
-                id: "disabled-analysis",
-                language: "javascript",
-                program: "export default 1",
-            }),
-        ).rejects.toThrow("Sandbox execution unavailable: disabled");
-        await expect(
-            createSandboxBashOperations().exec("true", context.cwd, {
-                onData: () => undefined,
-            }),
-        ).rejects.toThrow("Sandbox execution unavailable: disabled");
+        try {
+            await registered.start({}, context);
+            expect(getSandboxRuntime().state).toBe("enabled");
+            expect(getSandboxAnalysisPort()).toBeDefined();
+        } finally { await registered.stop?.({}, context); }
     });
 
     it("publishes a bounded error snapshot for malformed config", async () => {

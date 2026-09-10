@@ -1,3 +1,4 @@
+import { emptyGrants } from './capabilities/authority.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
     existsSync,
@@ -149,7 +150,7 @@ describe('loadSandboxConfig', () => {
             },
         });
 
-        expect(resolved.config.enabled).toBe(false);
+        expect(resolved.config.enabled).toBe(true);
         expect(resolved.source).toBe('default');
     });
 });
@@ -360,6 +361,7 @@ describe('renderSandboxStatusDetails', () => {
     ): LoadSandboxConfigResult {
         return {
             source: 'project-config',
+            shell: { state: 'ready', requestedProfile: 'isolated', profile: 'isolated', projectRoot: '/project', authorityPath: '/authority', grants: emptyGrants(), requestedGrants: emptyGrants() },
             config: {
                 enabled: true,
                 network: {
@@ -398,14 +400,14 @@ describe('renderSandboxStatusDetails', () => {
         expect(output).not.toContain('host control');
     });
 
-    it('documents host and explicit Sandbox shell prefixes', () => {
+    it('documents selected-profile and explicit Sandbox shell prefixes', () => {
         const output = renderSandboxStatusDetails(
             resolvedWithDocker({ mode: 'disabled' }),
             true,
         );
 
-        expect(output).toContain('! <command> host');
-        expect(output).toContain('!! <command> host outside model context');
+        expect(output).toContain('! <command> selected profile');
+        expect(output).toContain('!! <command> selected profile outside model context');
         expect(output).toContain('!s <command> Sandbox');
         expect(output).toContain('!!s <command> Sandbox outside model context');
         expect(output).toContain('!s without a command fails closed');
@@ -674,10 +676,10 @@ describe('loadSandboxConfig resolution priority', () => {
         });
     }
 
-    it('returns source "default" with enabled=false when nothing overrides', () => {
+    it('returns source "default" with isolation enabled when nothing overrides', () => {
         const result = load();
         expect(result.source).toBe('default');
-        expect(result.config.enabled).toBe(false);
+        expect(result.config.enabled).toBe(true);
     });
 
     it('global enabled=true wins over default with source "global-config"', () => {
@@ -690,7 +692,7 @@ describe('loadSandboxConfig resolution priority', () => {
         expect(result.config.enabled).toBe(true);
     });
 
-    it('project enabled=false wins over global enabled=true with source "project-config"', () => {
+    it('project enabled=false requests host access without disabling the engine', () => {
         writeFileSync(
             join(agentDir, 'sandbox.json'),
             JSON.stringify({ enabled: true }),
@@ -702,7 +704,7 @@ describe('loadSandboxConfig resolution priority', () => {
         );
         const result = load();
         expect(result.source).toBe('project-config');
-        expect(result.config.enabled).toBe(false);
+        expect(result.config.enabled).toBe(true);
     });
 
     it('session file enabled=true wins over project enabled=false with source "session-file"', () => {
@@ -717,7 +719,7 @@ describe('loadSandboxConfig resolution priority', () => {
         expect(result.config.enabled).toBe(true);
     });
 
-    it('env "disabled" wins over session file "enabled" with source "env"', () => {
+    it('env "disabled" requests host access without granting it', () => {
         saveSessionSandboxStatus(sessionDir, SESSION_ID, 'enabled');
         const result = load({
             sessionDir,
@@ -731,12 +733,13 @@ describe('loadSandboxConfig resolution priority', () => {
                 envOverride: envSandboxStatus(),
             });
             expect(overridden.source).toBe('env');
-            expect(overridden.config.enabled).toBe(false);
+            expect(overridden.config.enabled).toBe(true);
+            expect(overridden.shell.state).toBe('authorization-required');
         });
         expect(result.source).toBe('session-file');
     });
 
-    it('does not override network or filesystem fields with session/env overrides', () => {
+    it('legacy session preferences preserve denials and cannot authorize network openings', () => {
         mkdirSync(join(cwd, '.pi'));
         writeFileSync(
             join(cwd, '.pi', 'sandbox.json'),
@@ -748,8 +751,9 @@ describe('loadSandboxConfig resolution priority', () => {
         );
         saveSessionSandboxStatus(sessionDir, SESSION_ID, 'disabled');
         const result = load({ sessionDir, sessionId: SESSION_ID });
-        expect(result.config.enabled).toBe(false);
-        expect(result.config.network?.allowedDomains).toContain('example.com');
+        expect(result.config.enabled).toBe(true);
+        expect(result.config.network?.allowedDomains).toEqual([]);
+        expect(result.shell.state).toBe('migration-required');
         expect(result.config.filesystem?.denyRead).toContain('.secret');
     });
 
@@ -834,6 +838,7 @@ describe('explicitlyDisabled', () => {
         return {
             config: { enabled } as LoadSandboxConfigResult['config'],
             source,
+            shell: { state: 'ready', requestedProfile: 'isolated', profile: 'isolated', projectRoot: '/project', authorityPath: '/authority', grants: emptyGrants(), requestedGrants: emptyGrants() },
         };
     }
 

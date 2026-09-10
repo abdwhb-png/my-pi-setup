@@ -44,6 +44,7 @@ import {
     existsSync,
     mkdirSync,
     readFileSync,
+    realpathSync,
     renameSync,
     unlinkSync,
     writeFileSync,
@@ -77,14 +78,38 @@ import {
     ownsSandboxRuntime,
     publishSandboxRuntime,
     releaseSandboxRuntime,
+    whenSandboxRuntimeIdle,
     type SandboxAnalysisRuntime,
     type SandboxBashOperationOptions,
+    type SandboxRuntimeSnapshot,
 } from "../_shared/sandbox-runtime/index.ts";
 import { createUiColors, type UiColorsCreation } from "../_shared/ui/ui-colors";
 import {
     createAnalysisSandboxService,
     type AnalysisSandboxService,
 } from "./analysis/client.ts";
+import {
+    capabilityAuthorityPath,
+    localMachineId,
+    parseShellProfile,
+    readCapabilityAuthority,
+    type ProjectCapabilities,
+    type ShellProfile,
+} from "./capabilities/authority.ts";
+import { createCapabilityCommands } from "./capabilities/commands.ts";
+import {
+    resolveShellPolicy,
+    shellSandboxFingerprint,
+    type ShellCapabilityResolution,
+} from "./capabilities/policy.ts";
+import { protectsCapabilityAuthority } from "./capabilities/protection.ts";
+import {
+    activeShellOperations,
+    currentShellPolicy,
+    formatShellPolicy,
+    publishShellRuntime,
+    releaseShellRuntime,
+} from "./capabilities/runtime.ts";
 import {
     inspectDockerAccess,
     formatDockerAccess,
@@ -187,6 +212,7 @@ export type SandboxConfigSource =
 export interface LoadSandboxConfigResult {
     config: SandboxConfig;
     source: SandboxConfigSource;
+    shell: ShellCapabilityResolution;
 }
 
 /** True when the resolved status came from any explicit source and disabled. */
@@ -339,6 +365,7 @@ export function renderSandboxStatusDetails(
     const lines = [
         `Sandbox: ${securityLabel}`,
         `Source: ${source}`,
+        formatShellPolicy(resolved.shell),
         "",
         "Network:",
         `  Allowed: ${config.network?.allowedDomains?.join(", ") || "(none)"}`,
@@ -366,8 +393,8 @@ export function renderSandboxStatusDetails(
         `  Allow Write: ${config.filesystem?.allowWrite?.join(", ") || "(none)"}`,
         `  Deny Write: ${config.filesystem?.denyWrite?.join(", ") || "(none)"}`,
         "",
-        "Use /sandbox on or /sandbox off to toggle.",
-        "Shell: ! <command> host; !! <command> host outside model context; !s <command> Sandbox; !!s <command> Sandbox outside model context.",
+        "Use /sandbox profile isolated|integrated|host. The on/off aliases select isolated/host.",
+        "Shell: ! <command> selected profile; !! <command> selected profile outside model context; !s <command> Sandbox; !!s <command> Sandbox outside model context.",
         "!s without a command fails closed and does not fall back to the host.",
     ];
     return lines.join("\n");
@@ -405,22 +432,11 @@ function activeDockerLines(configured: SandboxDockerPolicy): string[] {
 export interface SandboxConfig extends PiSandboxConfig {}
 
 const DEFAULT_CONFIG: SandboxConfig = {
-    enabled: false,
+    enabled: true,
     network: {
         allowLocalBinding: true,
         allowedHostDomains: [],
-        allowedDomains: [
-            "npmjs.org",
-            "*.npmjs.org",
-            "registry.npmjs.org",
-            "registry.yarnpkg.com",
-            "pypi.org",
-            "*.pypi.org",
-            "github.com",
-            "*.github.com",
-            "api.github.com",
-            "raw.githubusercontent.com",
-        ],
+        allowedDomains: [],
         deniedDomains: [],
     },
     filesystem: {
@@ -439,6 +455,8 @@ const DEFAULT_CONFIG: SandboxConfig = {
 
 type SandboxConfigLayer = Partial<Omit<SandboxConfig, "docker">> & {
     docker?: unknown;
+    profile?: ShellProfile;
+    integrations?: string[];
 };
 
 interface SandboxSettingsContainer {
@@ -463,6 +481,10 @@ export interface LoadSandboxConfigOptions {
     envOverride?: "enabled" | "disabled";
     /** Read legacy sandbox.json files when settings do not define Sandbox. */
     includeLegacy?: boolean;
+    projectTrusted?: boolean;
+    machineId?: string;
+    sessionCapabilities?: ProjectCapabilities;
+    profile?: ShellProfile;
 }
 
 function errorMessage(error: unknown): string {
@@ -865,6 +887,7 @@ export function loadSandboxConfig(
     if (!hasProjectSettings && options.includeLegacy !== false) {
         projectConfig = readLegacyConfig(projectConfigPath);
     }
+    if (options.projectTrusted === false) projectConfig = {};
 
     if (globalConfig.docker !== undefined) {
         throw new SandboxExecutionError("invalid-policy", {
@@ -913,10 +936,64 @@ export function loadSandboxConfig(
         projectOverride: projectDockerOverride,
     });
     const { docker: _defaultDocker, ...mergedBaseConfig } = merged;
-    return {
+    const authorityPath = capabilityAuthorityPath(
+        options.agentDir ?? getAgentDir(),
+    );
+    const machineId = options.machineId ?? localMachineId();
+    const authority = readCapabilityAuthority(authorityPath, machineId);
+    const saved =
+        authority.machineId === machineId
+            ? authority.projects.find(
+                  (p) => p.projectRoot === realpathSync(cwd),
+              )
+            : undefined;
+    const requestedProfile =
+        options.profile ??
+        options.sessionCapabilities?.profile ??
+        saved?.profile ??
+        globalConfig.profile ??
+        (merged.enabled === false ? "host" : undefined);
+    const policy = resolveShellPolicy({
+        cwd,
         config: validatePiSandboxConfig(mergedBaseConfig, docker),
-        source,
-    };
+        authority,
+        authorityPath,
+        machineId,
+        requestedProfile:
+            requestedProfile === undefined
+                ? undefined
+                : parseShellProfile(requestedProfile),
+        projectProfile:
+            projectConfig.profile === undefined
+                ? undefined
+                : parseShellProfile(projectConfig.profile),
+        session: options.sessionCapabilities,
+        hasLegacySettings: [globalConfig, projectConfig].some((layer) =>
+            Object.keys(layer).some(
+                (key) =>
+                    !["profile", "integrations", "tmpNamespace"].includes(key),
+            ),
+        ),
+        domainsRequested:
+            globalConfig.network?.allowedDomains !== undefined ||
+            projectConfig.network?.allowedDomains !== undefined,
+        hostDomainsRequested:
+            globalConfig.network?.allowedHostDomains !== undefined ||
+            projectConfig.network?.allowedHostDomains !== undefined,
+        tmpRequested:
+            (projectConfig.tmpNamespace ?? globalConfig.tmpNamespace) === "host"
+                ? "host"
+                : (projectConfig.tmpNamespace ?? globalConfig.tmpNamespace) ===
+                    "lease-private"
+                  ? "private"
+                  : undefined,
+        integrationsRequested:
+            projectConfig.integrations ?? globalConfig.integrations,
+        writePathsRequested:
+            projectConfig.filesystem?.allowWrite !== undefined ||
+            globalConfig.filesystem?.allowWrite !== undefined,
+    });
+    return { ...policy, config: { ...policy.config, enabled: true }, source };
 }
 
 function deepMerge(
@@ -928,13 +1005,33 @@ function deepMerge(
     if (overrides.enabled !== undefined) result.enabled = overrides.enabled;
     if (overrides.network) {
         result.network = { ...base.network, ...overrides.network };
+        result.network.deniedDomains = [
+            ...new Set([
+                ...base.network.deniedDomains,
+                ...(overrides.network.deniedDomains ?? []),
+            ]),
+        ];
     }
     if (overrides.filesystem) {
         result.filesystem = { ...base.filesystem, ...overrides.filesystem };
+        result.filesystem.denyRead = [
+            ...new Set([
+                ...base.filesystem.denyRead,
+                ...(overrides.filesystem.denyRead ?? []),
+            ]),
+        ];
+        result.filesystem.denyWrite = [
+            ...new Set([
+                ...base.filesystem.denyWrite,
+                ...(overrides.filesystem.denyWrite ?? []),
+            ]),
+        ];
     }
     if (overrides.environment) {
         result.environment = { ...base.environment, ...overrides.environment };
     }
+    if (overrides.tmpNamespace !== undefined)
+        result.tmpNamespace = overrides.tmpNamespace;
 
     return result;
 }
@@ -951,7 +1048,7 @@ export function createSandboxedBashOps(
             status: "unknown",
             profile,
             backend: "zerobox",
-            tmpNamespace: profile === "bash-general" ? "host" : "lease-private",
+            tmpNamespace: "unknown",
             phase: "setup",
             outcome: "pending",
         },
@@ -980,8 +1077,23 @@ export default function (pi: ExtensionAPI) {
     const runtimeOwner = Symbol("sandbox-extension-owner");
     const bashProcessSupervisor = createBashProcessSupervisor();
     claimSandboxRuntime(runtimeOwner);
-    const inheritedSessionStatus = process.env[ENV_SESSION_STATUS];
-    let ownedSessionStatus: "enabled" | "disabled" | undefined;
+    pi.on("tool_call", (event, ctx) => {
+        if (event.toolName !== "write" && event.toolName !== "edit") return;
+        const path = event.input.path;
+        if (
+            typeof path === "string" &&
+            protectsCapabilityAuthority(
+                path,
+                ctx.cwd,
+                capabilityAuthorityPath(getAgentDir()),
+            )
+        ) {
+            return {
+                block: true,
+                reason: "Local capability authority can only be changed through an explicit user /sandbox capabilities command.",
+            };
+        }
+    });
     let breakGlassExpiryTimer: ReturnType<typeof setTimeout> | undefined;
 
     const clearBreakGlassExpiry = (): void => {
@@ -989,18 +1101,6 @@ export default function (pi: ExtensionAPI) {
             clearTimeout(breakGlassExpiryTimer);
             breakGlassExpiryTimer = undefined;
         }
-    };
-
-    const restoreSessionStatus = (): void => {
-        if (ownedSessionStatus === undefined) return;
-        if (process.env[ENV_SESSION_STATUS] === ownedSessionStatus) {
-            if (inheritedSessionStatus === undefined) {
-                delete process.env[ENV_SESSION_STATUS];
-            } else {
-                process.env[ENV_SESSION_STATUS] = inheritedSessionStatus;
-            }
-        }
-        ownedSessionStatus = undefined;
     };
 
     let transitionGeneration = 0;
@@ -1041,16 +1141,22 @@ export default function (pi: ExtensionAPI) {
     const beginTransition = (
         ctx?: ExtensionContext,
         initial = false,
+        drain = false,
     ): number | undefined => {
         clearBreakGlassExpiry();
         clearAnalysisRecovery();
         transitionGeneration += 1;
         const generation = transitionGeneration;
-        const published = publishSandboxRuntime(runtimeOwner, {
-            state: initial ? "uninitialized" : "reconfiguring",
-        });
+        const published = publishSandboxRuntime(
+            runtimeOwner,
+            {
+                state: initial ? "uninitialized" : "reconfiguring",
+            },
+            undefined,
+            drain ? "drain" : "interrupt",
+        );
         if (!published) return undefined;
-        if (ctx && !initial) {
+        if (ctx && !initial && !drain) {
             const interruptedExecutions =
                 getSandboxActiveExecutionCount(runtimeOwner);
             if (interruptedExecutions > 0) {
@@ -1069,8 +1175,6 @@ export default function (pi: ExtensionAPI) {
     };
     const isCurrentTransition = (generation: number): boolean =>
         transitionGeneration === generation;
-    const publishDisabled = () =>
-        publishSandboxRuntime(runtimeOwner, { state: "disabled" });
     const publishError = (error: unknown) =>
         publishSandboxRuntime(
             runtimeOwner,
@@ -1083,6 +1187,9 @@ export default function (pi: ExtensionAPI) {
     const pendingAnalysisCleanup = new Set<AnalysisSandboxService>();
     const inFlightSandboxCandidates = new Set<SandboxService>();
     const inFlightAnalysisCandidates = new Set<AnalysisSandboxService>();
+    const serviceSnapshots = new Map<SandboxService, SandboxRuntimeSnapshot>();
+    const retiredSandbox = new Set<SandboxService>();
+    const retiredAnalysis = new Set<AnalysisSandboxService>();
 
     const createCleanupCoordinator = <T extends { shutdown(): Promise<void> }>(
         pending: Set<T>,
@@ -1131,6 +1238,7 @@ export default function (pi: ExtensionAPI) {
     const shutdownServices = async (
         excludedSandbox?: SandboxService,
         excludedAnalysis?: AnalysisSandboxService,
+        includeRetired = false,
     ): Promise<void> => {
         const currentSandbox = sandboxService;
         const currentAnalysis = analysisService;
@@ -1139,15 +1247,25 @@ export default function (pi: ExtensionAPI) {
                 ...pendingAnalysisCleanup,
                 ...inFlightAnalysisCandidates,
                 ...(currentAnalysis ? [currentAnalysis] : []),
+                ...(includeRetired ? retiredAnalysis : []),
             ]),
-        ].filter((service) => service !== excludedAnalysis);
+        ].filter(
+            (service) =>
+                service !== excludedAnalysis &&
+                (includeRetired || !retiredAnalysis.has(service)),
+        );
         const sandboxTargets = [
             ...new Set([
                 ...pendingSandboxCleanup,
                 ...inFlightSandboxCandidates,
                 ...(currentSandbox ? [currentSandbox] : []),
+                ...(includeRetired ? retiredSandbox : []),
             ]),
-        ].filter((service) => service !== excludedSandbox);
+        ].filter(
+            (service) =>
+                service !== excludedSandbox &&
+                (includeRetired || !retiredSandbox.has(service)),
+        );
         const [analysisResults, sandboxResults] = await Promise.all([
             Promise.allSettled(analysisTargets.map(cleanupAnalysisService)),
             Promise.allSettled(sandboxTargets.map(cleanupSandboxService)),
@@ -1271,6 +1389,7 @@ export default function (pi: ExtensionAPI) {
         config: SandboxConfig,
         generation: number,
         ctx: ExtensionContext,
+        drain = false,
     ): Promise<boolean> => {
         const candidateSandbox = createSandboxService({
             backend: createZeroboxBackend(),
@@ -1290,7 +1409,37 @@ export default function (pi: ExtensionAPI) {
             if (!isCurrentTransition(generation)) {
                 return abandonStaleCandidate();
             }
-            await shutdownServices(candidateSandbox);
+            if (drain && sandboxService) {
+                const oldSandbox = sandboxService;
+                const oldAnalysis = analysisService;
+                const oldSnapshot = serviceSnapshots.get(oldSandbox);
+                retiredSandbox.add(oldSandbox);
+                if (oldAnalysis) retiredAnalysis.add(oldAnalysis);
+                void (
+                    oldSnapshot
+                        ? whenSandboxRuntimeIdle(oldSnapshot)
+                        : Promise.resolve()
+                )
+                    .then(async () => {
+                        await cleanupSandboxService(oldSandbox);
+                        if (oldAnalysis)
+                            await cleanupAnalysisService(oldAnalysis);
+                    })
+                    .catch((error) =>
+                        ctx.ui.notify(
+                            `Retired runtime cleanup failed: ${errorMessage(error)}`,
+                            "error",
+                        ),
+                    )
+                    .finally(() => {
+                        retiredSandbox.delete(oldSandbox);
+                        if (oldAnalysis) retiredAnalysis.delete(oldAnalysis);
+                        serviceSnapshots.delete(oldSandbox);
+                    });
+                analysisService = null;
+                // Retry failed candidates without terminating admitted retired operations.
+                await shutdownServices(candidateSandbox);
+            } else await shutdownServices(candidateSandbox);
             if (!isCurrentTransition(generation)) {
                 return abandonStaleCandidate();
             }
@@ -1300,6 +1449,7 @@ export default function (pi: ExtensionAPI) {
             };
             const published = publishSandboxRuntime(runtimeOwner, {
                 state: "enabled",
+                sandboxFingerprint: shellSandboxFingerprint(config),
                 contexts: candidateSandbox.getProfileContexts(),
                 dockerAccess: summarizeDockerAccess(config.docker),
                 createBashOperations: (options) =>
@@ -1322,6 +1472,7 @@ export default function (pi: ExtensionAPI) {
                 return false;
             }
             sandboxService = candidateSandbox;
+            serviceSnapshots.set(candidateSandbox, getSandboxRuntime());
             inFlightSandboxCandidates.delete(candidateSandbox);
             analysisRetryAttempt = 0;
             startAnalysisAttempt(ctx, generation, analysis);
@@ -1337,8 +1488,69 @@ export default function (pi: ExtensionAPI) {
         }
     };
 
+    let selectedProfile: ShellProfile | undefined;
+    const machineId =
+        process.platform === "linux"
+            ? localMachineId()
+            : `unsupported-${process.platform}`;
+    const loadShell = (
+        ctx: ExtensionContext,
+        session?: ProjectCapabilities,
+        profile?: ShellProfile,
+    ) =>
+        loadSandboxConfig(ctx.cwd, {
+            projectTrusted: ctx.isProjectTrusted(),
+            machineId,
+            sessionDir: ctx.sessionManager?.getSessionDir(),
+            sessionId: ctx.sessionManager?.getSessionId(),
+            envOverride: envSandboxStatus(),
+            sessionCapabilities: session,
+            profile: profile ?? selectedProfile,
+        });
+    const capabilityCommands = createCapabilityCommands({
+        agentDir: getAgentDir(),
+        machineId,
+        load: (ctx: ExtensionContext, session, profile) =>
+            loadShell(ctx, session, profile).shell,
+        apply: async (ctx, session, profile) => {
+            selectedProfile = profile;
+            const resolved = loadShell(ctx, session, profile);
+            publishShellRuntime(
+                runtimeOwner,
+                () => loadShell(ctx, capabilityCommands.session()).shell,
+            );
+            const generation = beginTransition(ctx, false, true);
+            if (generation === undefined) return;
+            try {
+                if (
+                    !(await enableServices(
+                        ctx.cwd,
+                        resolved.config,
+                        generation,
+                        ctx,
+                        true,
+                    )) ||
+                    !isCurrentTransition(generation)
+                )
+                    return;
+                sandboxEnabled = true;
+                updateSandboxStatus(
+                    ctx,
+                    resolved.shell.profile === "host" ? "off" : "on",
+                    resolved.config.docker,
+                );
+            } catch (error) {
+                if (!isCurrentTransition(generation)) return;
+                publishError(error);
+                updateSandboxStatus(ctx, "error");
+                throw error;
+            }
+        },
+    });
+
     pi.registerFlag("no-sandbox", {
-        description: "Disable OS-level sandboxing for bash commands",
+        description:
+            "Request the host shell profile using an existing local authorization",
         type: "boolean",
         default: false,
     });
@@ -1355,11 +1567,23 @@ export default function (pi: ExtensionAPI) {
                 ? { profiles: runtime.contexts }
                 : {}),
         };
+        let shellContext: string;
+        try {
+            const policy = currentShellPolicy();
+            shellContext = policy
+                ? formatShellPolicy(policy)
+                : "Shell capabilities unavailable. Shell calls are blocked. Native file tools remain on the host.";
+        } catch (error) {
+            shellContext = `Shell capabilities unavailable: ${errorMessage(error)}`;
+        }
+        const cleanPrompt = event.systemPrompt
+            .replace(
+                /\n?<!-- pi:shell-capabilities:start -->[\s\S]*?<!-- pi:shell-capabilities:end -->/g,
+                "",
+            )
+            .trimEnd();
         return {
-            systemPrompt: injectSandboxSystemContext(
-                event.systemPrompt,
-                snapshot,
-            ),
+            systemPrompt: `${injectSandboxSystemContext(cleanPrompt, snapshot).trimEnd()}\n<!-- pi:shell-capabilities:start -->\n${shellContext}\n<!-- pi:shell-capabilities:end -->`,
         };
     });
 
@@ -1483,62 +1707,24 @@ export default function (pi: ExtensionAPI) {
         breakGlassExpiryTimer.unref?.();
     }
 
-    /**
-     * Persist the sandbox status under the current Pi session identity and
-     * set the live env var for spawned subagent children to inherit.
-     * No-op when `sessionManager` is absent (test contexts).
-     */
-    function persistSessionStatus(
-        ctx: ExtensionContext,
-        status: "enabled" | "disabled",
-    ): void {
-        const sessionDir = ctx.sessionManager?.getSessionDir();
-        const sessionId = ctx.sessionManager?.getSessionId();
-        if (!sessionDir || !sessionId) return;
-        saveSessionSandboxStatus(sessionDir, sessionId, status);
-        process.env[ENV_SESSION_STATUS] = status;
-        ownedSessionStatus = status;
-    }
-
+    // Resolve local shell authority independently from strict engine startup.
     pi.on("session_start", async (_event, ctx) => {
         if (!ownsSandboxRuntime(runtimeOwner)) return;
         claimSandboxRuntime(runtimeOwner);
         const noSandbox = pi.getFlag("no-sandbox") as boolean;
+        capabilityCommands.reset();
+        selectedProfile = noSandbox ? "host" : undefined;
+        publishShellRuntime(
+            runtimeOwner,
+            () => loadShell(ctx, capabilityCommands.session()).shell,
+        );
         const generation = beginTransition(ctx, true);
         if (generation === undefined) return;
         bashProcessSupervisor.shutdown();
 
-        if (noSandbox) {
-            sandboxEnabled = false;
-            try {
-                await shutdownServices();
-            } catch (error) {
-                if (!isCurrentTransition(generation)) return;
-                publishError(error);
-                updateSandboxStatus(ctx, "error");
-                ctx.ui.notify(
-                    `Sandbox cleanup failed: ${errorMessage(error)}`,
-                    "error",
-                );
-                return;
-            }
-            if (!isCurrentTransition(generation)) return;
-            publishDisabled();
-            updateSandboxStatus(ctx, "off");
-            ctx.ui.notify(
-                `⚠ Sandbox disabled via --no-sandbox — bash commands run unsandboxed.`,
-                "warning",
-            );
-            return;
-        }
-
         let resolved: LoadSandboxConfigResult;
         try {
-            resolved = loadSandboxConfig(ctx.cwd, {
-                sessionDir: ctx.sessionManager?.getSessionDir(),
-                sessionId: ctx.sessionManager?.getSessionId(),
-                envOverride: envSandboxStatus(),
-            });
+            resolved = loadShell(ctx, capabilityCommands.session());
         } catch (error) {
             sandboxEnabled = false;
             let reportedError = error;
@@ -1561,33 +1747,12 @@ export default function (pi: ExtensionAPI) {
             return;
         }
 
-        const { config, source } = resolved;
-
-        if (!config.enabled) {
-            sandboxEnabled = false;
-            try {
-                await shutdownServices();
-            } catch (error) {
-                if (!isCurrentTransition(generation)) return;
-                publishError(error);
-                updateSandboxStatus(ctx, "error");
-                ctx.ui.notify(
-                    `Sandbox cleanup failed: ${errorMessage(error)}`,
-                    "error",
-                );
-                return;
-            }
-            if (!isCurrentTransition(generation)) return;
-            publishDisabled();
-            updateSandboxStatus(ctx, "off");
-            if (explicitlyDisabled(resolved)) {
-                ctx.ui.notify(
-                    `⚠ Sandbox is DISABLED for this session — bash commands run unsandboxed. (Source: ${source}; preference is persisted.)`,
-                    "warning",
-                );
-            }
-            return;
-        }
+        const { config } = resolved;
+        if (resolved.shell.state !== "ready")
+            ctx.ui.notify(
+                resolved.shell.diagnostic ?? resolved.shell.state,
+                "warning",
+            );
 
         if (process.platform !== "linux") {
             sandboxEnabled = false;
@@ -1609,7 +1774,15 @@ export default function (pi: ExtensionAPI) {
             );
             if (!isCurrentTransition(generation) || !enabled) return;
             sandboxEnabled = true;
-            updateSandboxStatus(ctx, "on", config.docker);
+            updateSandboxStatus(
+                ctx,
+                resolved.shell.state !== "ready"
+                    ? "restricted"
+                    : resolved.shell.profile === "host"
+                      ? "off"
+                      : "on",
+                config.docker,
+            );
             notifySandboxEnabled(ctx, "Sandbox initialized", config.docker);
         } catch (err) {
             if (!isCurrentTransition(generation)) return;
@@ -1624,17 +1797,16 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("session_shutdown", async () => {
+        releaseShellRuntime(runtimeOwner);
         const generation = beginTransition();
         bashProcessSupervisor.shutdown();
         try {
-            await shutdownServices();
+            await shutdownServices(undefined, undefined, true);
         } catch (error) {
             if (generation !== undefined && isCurrentTransition(generation)) {
                 publishError(error);
             }
             throw error;
-        } finally {
-            restoreSessionStatus();
         }
         if (generation === undefined || !isCurrentTransition(generation)) {
             return;
@@ -1647,6 +1819,13 @@ export default function (pi: ExtensionAPI) {
             "Configure sandbox or show status (/sandbox, /sandbox on|off, /sandbox docker ...)",
         getArgumentCompletions: (prefix: string) => {
             const values = [
+                "profile isolated",
+                "profile integrated",
+                "profile host",
+                "capabilities",
+                "capabilities migrate",
+                "capabilities grant",
+                "capabilities revoke",
                 "doctor",
                 "on",
                 "off",
@@ -1664,7 +1843,11 @@ export default function (pi: ExtensionAPI) {
             const trimmed = prefix.trimStart().toLowerCase();
             if (!trimmed) {
                 return values
-                    .slice(0, 4)
+                    .filter(
+                        (value) =>
+                            !value.includes(" ") ||
+                            value.startsWith("profile "),
+                    )
                     .map((value) => ({ value, label: value }));
             }
             const filtered = values.filter((value) =>
@@ -1675,6 +1858,7 @@ export default function (pi: ExtensionAPI) {
                 : null;
         },
         handler: async (args, ctx) => {
+            if (await capabilityCommands.handle(args, ctx)) return;
             const arg = args.trim().toLowerCase();
 
             if (arg === "doctor") {
@@ -1689,6 +1873,14 @@ export default function (pi: ExtensionAPI) {
                         includeLegacy: false,
                     });
                     let accessLines: string[] = [];
+                    let shellLines: string;
+                    try {
+                        shellLines = formatShellPolicy(
+                            loadShell(ctx, capabilityCommands.session()).shell,
+                        );
+                    } catch (error) {
+                        shellLines = `Shell capabilities unavailable: ${configurationErrorMessage(error)}`;
+                    }
                     if (resolved.config.docker.mode === "targeted") {
                         try {
                             accessLines = formatDockerAccess(
@@ -1706,6 +1898,11 @@ export default function (pi: ExtensionAPI) {
                     ctx.ui.notify(
                         [
                             "Sandbox doctor",
+                            shellLines,
+                            ...activeShellOperations().map(
+                                (op) =>
+                                    `Admitted operation #${op.id}: ${op.profile}${op.capability ? ` / ${op.capability}` : ""}; finishes under its original admission.`,
+                            ),
                             `Docker authority: ${authorityPath} (${existsSync(authorityPath) ? "valid" : "not configured"})`,
                             `Effective Sandbox: ${resolved.config.enabled ? "on" : "off"} (${resolved.source})`,
                             ...formatDockerSummary(
@@ -2261,83 +2458,6 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
 
-            // /sandbox on
-            if (arg === "on") {
-                if (sandboxEnabled && sandboxService) {
-                    ctx.ui.notify("Sandbox is already enabled", "info");
-                    return;
-                }
-
-                if (process.platform !== "linux") {
-                    const error = `Sandbox not supported on ${process.platform}`;
-                    publishError(error);
-                    updateSandboxStatus(ctx, "restricted");
-                    ctx.ui.notify(error, "error");
-                    return;
-                }
-
-                const generation = beginTransition(ctx);
-                if (generation === undefined) return;
-                try {
-                    const { config } = loadSandboxConfig(ctx.cwd, {
-                        sessionDir: ctx.sessionManager?.getSessionDir(),
-                        sessionId: ctx.sessionManager?.getSessionId(),
-                        envOverride: envSandboxStatus(),
-                    });
-                    const enabled = await enableServices(
-                        ctx.cwd,
-                        config,
-                        generation,
-                        ctx,
-                    );
-                    if (!isCurrentTransition(generation) || !enabled) return;
-                    sandboxEnabled = true;
-                    updateSandboxStatus(ctx, "on", config.docker);
-                    persistSessionStatus(ctx, "enabled");
-                    notifySandboxEnabled(ctx, "Sandbox enabled", config.docker);
-                } catch (err) {
-                    if (!isCurrentTransition(generation)) return;
-                    sandboxEnabled = false;
-                    publishError(err);
-                    updateSandboxStatus(ctx, "error");
-                    ctx.ui.notify(
-                        `Sandbox initialization failed: ${err instanceof Error ? err.message : String(err)}`,
-                        "error",
-                    );
-                }
-                return;
-            }
-
-            // /sandbox off
-            if (arg === "off") {
-                ctx.ui.notify(
-                    "⚠ Disabling sandbox is a security risk — bash commands will run with full system access. (This preference is persisted for this session.)",
-                    "warning",
-                );
-                sandboxEnabled = false;
-                const generation = beginTransition(ctx);
-                if (generation === undefined) return;
-                bashProcessSupervisor.shutdown();
-                try {
-                    await shutdownServices();
-                } catch (error) {
-                    if (!isCurrentTransition(generation)) return;
-                    publishError(error);
-                    updateSandboxStatus(ctx, "error");
-                    ctx.ui.notify(
-                        `Sandbox cleanup failed: ${errorMessage(error)}`,
-                        "error",
-                    );
-                    return;
-                }
-                if (!isCurrentTransition(generation)) return;
-                publishDisabled();
-                updateSandboxStatus(ctx, "off");
-                persistSessionStatus(ctx, "disabled");
-                ctx.ui.notify("Sandbox disabled", "info");
-                return;
-            }
-
             // /sandbox (no args) — show status
             if (!arg) {
                 let resolved: LoadSandboxConfigResult;
@@ -2369,7 +2489,7 @@ export default function (pi: ExtensionAPI) {
             }
 
             ctx.ui.notify(
-                "Usage: /sandbox [doctor|on|off|docker ...]",
+                "Usage: /sandbox [profile isolated|integrated|host | capabilities | doctor | on | off | docker ...]",
                 "error",
             );
         },

@@ -33,7 +33,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { shouldEnforceNativeTools } from "../../_shared/audit-mode/audit-tool-routing";
 import { createCommandExecutionService } from "../../_shared/command-execution/core.ts";
-import { bashWithStdinSchema } from "../../_shared/command-execution/exec";
+import { safeBashWithCapabilitiesSchema } from "../../_shared/command-execution/exec";
 import { isSafeExecutionError } from "../../_shared/command-execution/failure.ts";
 import { GuardSessionApprovals } from "../../_shared/command-execution/policy.ts";
 import { createBashPrefixRenderer } from "../../_shared/command-execution/prefix-renderer";
@@ -126,7 +126,7 @@ export function registerSafeBash(
         const description = buildSafeBashDescription(input);
         const promptSnippet = buildSafeBashPromptSnippet(input);
         return defineTool<
-            typeof bashWithStdinSchema,
+            typeof safeBashWithCapabilitiesSchema,
             BashToolDetails | undefined
         >({
             name: "safe_bash",
@@ -135,8 +135,9 @@ export function registerSafeBash(
             promptSnippet,
             promptGuidelines: [
                 `safe_bash guard: ${input.config.mode} mode; blocked/ask groups per description — use native grep/find/ls when native-redirect enforced`,
+                "Omit hostCapability for ordinary shell execution. For approved integrations use literal commands: editor → zed project-file; dependencies → npm install package (SFW is added automatically); dev-services → target command such as npm test. Host integrations reject shell compositions. Native file tools remain on the host.",
             ],
-            parameters: bashWithStdinSchema,
+            parameters: safeBashWithCapabilitiesSchema,
             renderCall: createBashPrefixRenderer("🔒"),
             renderResult: (result, renderOptions, theme, context) => {
                 const component = bashDefinition.renderResult!(
@@ -156,6 +157,7 @@ export function registerSafeBash(
                         toolCallId,
                         operation: "safe_bash",
                         command: params.command,
+                        hostCapability: params.hostCapability,
                         timeout: params.timeout,
                         stdin: params.stdin,
                         signal,

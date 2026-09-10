@@ -13,11 +13,17 @@ import {
     type AnalysisSandboxPort,
 } from "../_shared/sandbox-runtime/index.ts";
 import bashExecutionExtension from "./index.ts";
+import { emptyGrants, type ShellProfile } from "../sandbox/capabilities/authority.ts";
+import { publishShellRuntime, releaseShellRuntime } from "../sandbox/capabilities/runtime.ts";
 
 type RegisteredTool = Parameters<ExtensionAPI["registerTool"]>[0];
 type Hook = (event: unknown, ctx: ExtensionContext) => unknown;
 
 const owners: symbol[] = [];
+function publishProfile(owner: symbol, profile: ShellProfile = "isolated") {
+    publishShellRuntime(owner, () => ({ state: "ready", projectRoot: process.cwd(), profile, requestedProfile: profile,
+        grants: { ...emptyGrants(), host: profile === "host" }, requestedGrants: emptyGrants(), authorityPath: "/unused" }));
+}
 
 function executionContext(): ExtensionContext {
     return {
@@ -45,6 +51,7 @@ function publish(
     const owner = Symbol("bash-execution-test-runtime");
     owners.push(owner);
     claimSandboxRuntime(owner);
+    publishProfile(owner);
     publishSandboxRuntime(
         owner,
         state.state === "enabled"
@@ -84,14 +91,15 @@ function register(): {
 }
 
 afterEach(() => {
-    for (const owner of owners.splice(0)) releaseSandboxRuntime(owner);
+    for (const owner of owners.splice(0)) { releaseSandboxRuntime(owner); releaseShellRuntime(owner); }
 });
 
 describe("bash-execution ownership", () => {
-    test("Bash and safe_bash wait for new permissions while user_bash stays on the host", async () => {
+    test("Bash and safe_bash wait for the new sandbox policy", async () => {
         const owner = Symbol("reconfiguration");
         owners.push(owner);
         claimSandboxRuntime(owner);
+        publishProfile(owner);
         let runs = 0;
         const snapshot = {
             state: "enabled" as const,
@@ -127,8 +135,9 @@ describe("bash-execution ownership", () => {
         expect(registered.hooks.get("user_bash")).toHaveLength(1);
     });
 
-    test("routes ! and !! to the host even while Sandbox is enabled", async () => {
+    test("routes ! and !! to the explicitly granted host profile while Think's engine remains enabled", async () => {
         publish({ state: "enabled", createBashOperations: () => ({ exec: async () => ({ exitCode: 0 }) }), analysis: { run: async () => ({ output: "", stderr: "", runtime: "quickjs", durationMs: 0, truncated: false }), shutdown: async () => undefined } });
+        publishProfile(owners.at(-1)!, "host");
         const registered = register();
         const userBash = registered.hooks.get("user_bash")?.[0];
         const response = userBash?.({ command: "printf local-fallback" }, {} as ExtensionContext) as {

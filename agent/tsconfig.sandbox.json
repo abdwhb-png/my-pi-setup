@@ -1,0 +1,11 @@
+{
+    "extends": "./tsconfig.typecheck.json",
+    "include": [
+        "extensions/sandbox/**/*.ts",
+        "extensions/bash-execution/**/*.ts",
+        "extensions/_shared/sandbox-runtime/**/*.ts",
+        "extensions/_shared/command-execution/**/*.ts",
+        "extensions/_shared/execution-provenance/**/*.ts"
+    ],
+    "exclude": ["**/node_modules", "**/dist", "**/build"]
+}
