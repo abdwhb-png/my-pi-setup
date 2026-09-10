@@ -40,6 +40,10 @@ function successfulRun(
 describe("Zerobox backend", () => {
     it("writes a private profile and returns exact public CLI argv", async () => {
         const parent = await mkdtemp(join(tmpdir(), "z-"));
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = join(parent, "agent");
+        await mkdir(getAgentDir());
+        await writeFile(join(getAgentDir(), "sandbox.global.json"), "{}", { mode: 0o600 });
         const binaryPath = join(parent, "zerobox");
         await writeFile(binaryPath, "fixture", { mode: 0o755 });
         await chmod(binaryPath, 0o755);
@@ -113,6 +117,7 @@ describe("Zerobox backend", () => {
                 expect.stringMatching(/^--profile=bash-general-[a-f0-9]{24}$/),
                 "--strict-sandbox",
                 "--status-fd=3",
+                `--private-tmp=${lease.tmpDir}`,
                 "--allow-local-binding",
                 "-C",
                 parent,
@@ -170,32 +175,28 @@ describe("Zerobox backend", () => {
                 strict_sandbox: true,
                 allow_read: [
                     "/",
-                    "/tmp",
                     lease.homeDir,
                     lease.tmpDir,
                     lease.proxyRunsDir,
                 ],
                 deny_read: [
-                    join(parent, "secret"),
                     "/proc/1/root",
                     "/mnt/c",
                     join(parent, "r"),
                     join(getAgentDir(), "sandbox.global.json"),
                 ],
-                deny_read_globs: ["*.pem"],
+                deny_read_globs: ["*.pem", join(parent, "secret"), join(getAgentDir(), "sandbox.capabilities.json")],
                 allow_write: [
-                    "/tmp",
                     lease.homeDir,
                     lease.tmpDir,
                 ],
                 deny_write: [
-                    join(parent, ".env"),
                     "/proc/1/root",
                     "/mnt/c",
                     join(parent, "r"),
                     join(getAgentDir(), "sandbox.global.json"),
                 ],
-                deny_write_globs: ["private/**"],
+                deny_write_globs: ["private/**", join(parent, ".env"), join(getAgentDir(), "sandbox.capabilities.json")],
                 allow_net: ["example.com", "localhost:8317"],
                 allow_host_net: ["*.dev.test:443"],
                 deny_net: ["blocked.example.com"],
@@ -243,6 +244,8 @@ describe("Zerobox backend", () => {
             expect(replacement.args[0]).not.toBe(spec.args[0]);
             await replacement.cleanup?.();
         } finally {
+            if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
             await lease.dispose();
             await rm(parent, { recursive: true, force: true });
         }

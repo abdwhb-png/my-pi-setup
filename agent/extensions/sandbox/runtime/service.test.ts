@@ -89,7 +89,7 @@ describe("sandbox service", () => {
                     localListeners: "sandbox-only",
                 },
             },
-            tmp: { namespace: "host" },
+            tmp: { namespace: "lease-private" },
             ipc: {
                 hostUserDbus: "unavailable",
                 hostUnixSockets: "unavailable",
@@ -154,10 +154,10 @@ describe("sandbox service", () => {
             "bash-general", "think-strict", "think-strict", "analysis-strict",
         ]);
         expect(policies.map(p => p.tmpNamespace)).toEqual([
-            "host", "lease-private", "lease-private", "lease-private",
+            "lease-private", "lease-private", "lease-private", "lease-private",
         ]);
         expect(policies[1]?.filesystem.allowWrite).toContain(command.cwd);
-        expect(policies[1]?.filesystem.denyRead).toContain("/tmp");
+        expect(policies[1]?.filesystem.allowWrite).not.toContain("/tmp");
         expect(policies[3]?.environment.set.TMPDIR).toBe("/tmp");
         await service.startBashSession("/other-workspace");
         expect(leases[1]?.dispose).toHaveBeenCalledTimes(1);

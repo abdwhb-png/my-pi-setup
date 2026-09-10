@@ -47,6 +47,18 @@ const lease = {
 };
 
 describe("sandbox policies", () => {
+    it("isolates Bash temporary files by default while keeping Bash HOME and strict Think HOME", () => {
+        const config = validatePiSandboxConfig({ filesystem: { allowWrite: ["."] } });
+        const bash = createBashPolicy({ cwd, lease, config, hostEnv: {} });
+        expect(bash.tmpNamespace).toBe("lease-private");
+        expect(bash.filesystem.allowWrite).not.toContain("/tmp");
+        expect(bash.environment.set.HOME).toBe(homedir());
+        const shared = createBashPolicy({ cwd, lease, config: { ...config, tmpNamespace: "host" } });
+        expect(shared.tmpNamespace).toBe("host");
+        const think = createThinkPolicy({ cwd, lease, config: { ...config, tmpNamespace: "host" } });
+        expect(think.tmpNamespace).toBe("lease-private");
+        expect(think.environment.set.HOME).toBe(lease.homeDir);
+    });
     it("honors an explicit project denial of the host tmp root", () => {
         const config = validatePiSandboxConfig({ filesystem: { allowWrite: ["."], denyRead: ["/tmp"] } });
         const policy = createBashPolicy({ cwd, lease, config });
@@ -56,6 +68,7 @@ describe("sandbox policies", () => {
     });
     it("shares host tmp for development while retaining explicit project restrictions", () => {
         const config = validatePiSandboxConfig({
+            tmpNamespace: "host",
             filesystem: { allowWrite: ["."], denyRead: ["/tmp/project-secret"] },
         });
         const policy = createBashPolicy({ cwd, lease, config, hostEnv: {} });

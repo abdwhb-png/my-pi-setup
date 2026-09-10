@@ -255,12 +255,77 @@ async function assertAndMaterializeFilesystemPolicy(
             isPrivateWritableRoot,
         );
     }
+    const prepareDenies = async (paths: string[], inherited: string[] = []) => {
+        const exact: string[] = [];
+        const dynamic: string[] = [];
+        for (const path of new Set(paths)) {
+            if (path === "/proc/1/root") {
+                exact.push(path);
+                continue;
+            }
+            // An ancestor deny already covers this path. Avoid redundant mounts
+            // below an inaccessible directory without relaxing the policy.
+            if (
+                [...paths, ...inherited].some(
+                    (parent) =>
+                        parent !== path && isEqualOrDescendant(path, parent),
+                )
+            )
+                continue;
+            try {
+                const stat = await lstat(path);
+                if (stat.isSymbolicLink()) {
+                    // Mounting a mask through a symlink can target a directory
+                    // hidden by another deny (for example WSL home links).
+                    const pattern = path.replace(/[\\*?[\]{}]/g, "\\$&");
+                    dynamic.push(pattern);
+                    const target = await materializePotentialPath(path);
+                    if (
+                        ![...paths, ...inherited].some((parent) =>
+                            isEqualOrDescendant(target, parent),
+                        )
+                    )
+                        exact.push(target);
+                } else exact.push(path);
+            } catch (error) {
+                if (
+                    !(error instanceof Error) ||
+                    !("code" in error) ||
+                    (error.code !== "ENOENT" && error.code !== "ENOTDIR")
+                )
+                    throw error;
+                // Keep future paths denied through the existing FUSE contract.
+                // Never create missing paths on the host merely to mask them.
+                const pattern = path.replace(/[\\*?[\]{}]/g, "\\$&");
+                dynamic.push(pattern);
+            }
+        }
+        return { exact, dynamic };
+    };
+    const [readDenies, writeDenies] = await Promise.all([
+        prepareDenies(policy.filesystem.denyRead),
+        prepareDenies(policy.filesystem.denyWrite, policy.filesystem.denyRead),
+    ]);
     return {
         ...policy,
         filesystem: {
             ...policy.filesystem,
             allowRead: [...new Set(allowRead)],
             allowWrite: [...new Set(allowWrite)],
+            denyRead: readDenies.exact,
+            denyWrite: writeDenies.exact,
+            denyReadGlobs: [
+                ...new Set([
+                    ...policy.filesystem.denyReadGlobs,
+                    ...readDenies.dynamic,
+                ]),
+            ],
+            denyWriteGlobs: [
+                ...new Set([
+                    ...policy.filesystem.denyWriteGlobs,
+                    ...writeDenies.dynamic,
+                ]),
+            ],
         },
     };
 }

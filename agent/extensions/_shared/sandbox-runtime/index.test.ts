@@ -28,6 +28,22 @@ afterEach(() => {
 });
 
 describe("sandbox runtime v2", () => {
+    test("draining preserves the target failure of an already admitted operation", async () => {
+        const owner = claim("drain");
+        const failure = new Error("target failed with its original diagnostic");
+        let rejectTarget!: (error: Error) => void;
+        publishSandboxRuntime(owner, {
+            state: "enabled",
+            createBashOperations: () => ({ exec: () => new Promise((_resolve, reject) => { rejectTarget = reject; }) }),
+            createThinkBashOperations: () => { throw new Error("unused"); },
+            analysis: { state: "retrying" },
+        });
+        const pending = createSandboxBashOperations().exec("false", "/tmp", { onData() {} });
+        const result = pending.catch(error => error);
+        publishSandboxRuntime(owner, { state: "reconfiguring" }, undefined, "drain");
+        rejectTarget(failure);
+        expect(await result).toBe(failure);
+    });
     test("waits through reconfiguration and resolves previously created operations against the new runtime", async () => {
         const owner = claim("reconfigure");
         const calls: string[] = [];

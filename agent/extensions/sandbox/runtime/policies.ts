@@ -84,6 +84,7 @@ interface PiEnvironmentConfig {
 }
 
 export interface PiSandboxConfig {
+    tmpNamespace?: "host" | "lease-private";
     enabled?: boolean;
     filesystem: PiFilesystemConfig;
     network: PiNetworkConfig;
@@ -293,7 +294,19 @@ export function validatePiSandboxConfig(
         if (Object.hasOwn(raw, field))
             unsupported(new Error(`ASRT field: ${field}`));
     }
-    assertKnownFields(raw, ["enabled", "filesystem", "network", "environment"]);
+    assertKnownFields(raw, [
+        "enabled",
+        "filesystem",
+        "network",
+        "environment",
+        "tmpNamespace",
+    ]);
+    if (
+        raw.tmpNamespace !== undefined &&
+        raw.tmpNamespace !== "host" &&
+        raw.tmpNamespace !== "lease-private"
+    )
+        invalid(new Error("Invalid temporary namespace"));
     if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") {
         invalid(new Error("enabled must be boolean"));
     }
@@ -385,6 +398,7 @@ export function validatePiSandboxConfig(
 
     return {
         enabled: raw.enabled as boolean | undefined,
+        tmpNamespace: raw.tmpNamespace,
         filesystem: normalizedFilesystem,
         network: normalizedNetwork,
         environment: {
@@ -465,7 +479,8 @@ function createShellPolicy(
     input: BashPolicyInput,
     name: "bash-general" | "think-strict",
 ): SandboxPolicy {
-    const privateTmp = name === "think-strict";
+    const strictHome = name === "think-strict";
+    const privateTmp = strictHome || input.config.tmpNamespace !== "host";
     const hostEnv = input.hostEnv ?? process.env;
     const denied = new Set(input.config.environment.deniedVariables);
     const inherit = unique([
@@ -487,11 +502,14 @@ function createShellPolicy(
     const allowHost = input.config.network.allowedHostDomains;
     const leaseParent = dirname(input.lease.root);
     const fixedDeniedRoots = [
-        ...(privateTmp ? ["/tmp", "/private/tmp"] : []),
+        // --private-tmp mounts the lease over /tmp after filesystem setup.
+        // Masking /tmp first makes nested host denies (including Docker sockets)
+        // impossible to materialize in bubblewrap's read-only intermediate root.
         "/proc/1/root",
         "/mnt/c",
         leaseParent,
         resolve(getAgentDir(), "sandbox.global.json"),
+        resolve(getAgentDir(), "sandbox.capabilities.json"),
     ];
     const configuredAllowRead =
         input.config.filesystem.allowRead.length > 0
@@ -577,9 +595,9 @@ function createShellPolicy(
                 ...configuredVariables,
                 PATH: buildBashPath(),
                 // Path expansion does not grant any additional filesystem access.
-                HOME: privateTmp ? input.lease.homeDir : homedir(),
+                HOME: strictHome ? input.lease.homeDir : homedir(),
                 // Preserve writable tool caches while HOME keeps normal path semantics.
-                ...(!privateTmp
+                ...(!strictHome
                     ? {
                           XDG_CACHE_HOME: resolve(
                               input.lease.homeDir,
@@ -621,10 +639,12 @@ export function createAnalysisPolicy(
                 input.lease.homeDir,
                 input.lease.tmpDir,
             ]),
-            denyRead: ["/tmp", "/private/tmp", leaseParent],
+            // The restricted analysis filesystem needs a /tmp mount point
+            // before the backend overlays its private namespace.
+            denyRead: ["/tmp", leaseParent],
             denyReadGlobs: [],
             allowWrite: [input.lease.homeDir, input.lease.tmpDir],
-            denyWrite: ["/tmp", "/private/tmp", leaseParent],
+            denyWrite: ["/tmp", leaseParent],
             denyWriteGlobs: [],
         },
         network: { mode: "deny-all", allow: [], allowHost: [], deny: [] },

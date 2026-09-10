@@ -10,13 +10,13 @@ import { validatePiSandboxConfig } from "./policies.ts";
 import { createSandboxService } from "./service.ts";
 import { createZeroboxBackend } from "./zerobox-backend.ts";
 
-test("development shares host tmp while both Think profiles isolate it and sibling leases", async () => {
+test.each(["lease-private", "host"] as const)("Bash tmp %s preserves strict Think isolation and sibling leases", async namespace => {
     const cwd = await mkdtemp(join(import.meta.dir, ".tmp-profiles-"));
     const hostTmp = await mkdtemp("/tmp/pi-host-contract-");
     const sibling = await createPrivateTempLease();
     const service = createSandboxService({
         backend: createZeroboxBackend(),
-        config: validatePiSandboxConfig({ filesystem: { allowWrite: ["."] } }),
+        config: validatePiSandboxConfig({ tmpNamespace: namespace, filesystem: { allowWrite: ["."] } }),
     });
     const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
     try {
@@ -37,7 +37,7 @@ test("development shares host tmp while both Think profiles isolate it and sibli
                 },
                 afterClose: async () => { await dispose?.(); },
             });
-            const command = profile === "bash-general"
+            const command = profile === "bash-general" && namespace === "host"
                 ? `test "$(cat ${quote(join(hostTmp, "from-host"))})" = 'from host' && printf 'from shell' > ${quote(join(hostTmp, "from-shell"))}`
                 : `test "$TMPDIR" = /tmp && test ! -e ${quote(join(hostTmp, "from-host"))} && test ! -e ${quote(sibling.markerPath)} && printf private > /tmp/own && test "$(cat /tmp/own)" = private`;
             let output = "";
@@ -47,10 +47,11 @@ test("development shares host tmp while both Think profiles isolate it and sibli
             expect(result.exitCode, `${profile}: ${output}`).toBe(0);
             expect(events.at(-1)).toMatchObject({
                 status: "sandboxed", profile, backend: "zerobox", outcome: "succeeded", exitCode: 0,
-                tmpNamespace: profile === "bash-general" ? "host" : "lease-private",
+                tmpNamespace: profile === "bash-general" ? namespace : "lease-private",
             });
         }
-        expect(await readFile(join(hostTmp, "from-shell"), "utf8")).toBe("from shell");
+        if (namespace === "host") expect(await readFile(join(hostTmp, "from-shell"), "utf8")).toBe("from shell");
+        else await expect(readFile(join(hostTmp, "from-shell"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
         await service.shutdown();
         await sibling.dispose();

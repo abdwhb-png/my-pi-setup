@@ -11,8 +11,10 @@ import { createBashProcessSupervisor } from "../_shared/command-execution/exec.t
 import { createSandboxedBashOps } from "./index.ts";
 
 test("real Docker and Compose clients enforce Administration, inspection, and break-glass", async () => {
-    const root = await mkdtemp("/tmp/pi-docker-exec-");
-    const endpoint = join(root, "engine.sock");
+    // Keep the project visible while Bash overlays the host /tmp namespace.
+    const root = await mkdtemp(join(import.meta.dir, ".pi-docker-exec-"));
+    const socketRoot = await mkdtemp("/tmp/pi-docker-exec-");
+    const endpoint = join(socketRoot, "engine.sock");
     const id = "a".repeat(64), execId = "b".repeat(64);
     const labels = { "com.docker.compose.project": "fixtureexec", "com.docker.compose.service": "api", "com.docker.compose.oneoff": "False" };
     const summary = { Id: id, Names: ["/fixture-api"], Image: "fixture", Command: "fixture", Created: 1, State: "running", Status: "Up", Ports: [], Labels: labels, Mounts: [] };
@@ -75,14 +77,16 @@ test("real Docker and Compose clients enforce Administration, inspection, and br
                 await service.startBashSession(root);
                 const operations = createSandboxedBashOps(service, supervisor);
                 for (const command of ["docker exec fixture-api true", "docker compose exec -T api true"]) {
+                    const executionsBefore = bodies.length;
                     let output = "";
                     const result = await operations.exec(command, root, { onData: (chunk) => { output += chunk.toString(); }, timeout: 15 }).catch((error) => { throw new Error(`${String(error)}; ${JSON.stringify({ requests, unexpected, output })}`); });
                     if (profile.label === "Administration") {
                         expect({ output, requests, unexpected }).toMatchObject({ output: expect.stringContaining("fixture exec ok") });
                         expect(result.exitCode).toBe(0);
                     } else {
-                        expect({ output, requests, unexpected }).toMatchObject({ output: expect.stringContaining("Docker operation is not granted") });
+                        expect(output).toMatch(/Docker operation (?:is not granted|forbidden)/);
                         expect(result.exitCode).not.toBe(0);
+                        expect(bodies.length).toBe(executionsBefore);
                     }
                 }
             } finally { supervisor.shutdown(); await service.shutdown(); }
@@ -139,5 +143,6 @@ test("real Docker and Compose clients enforce Administration, inspection, and br
         for (const socket of sockets) socket.destroy();
         await new Promise<void>((resolve) => server.close(() => resolve()));
         await rm(root, { recursive: true, force: true });
+        await rm(socketRoot, { recursive: true, force: true });
     }
 }, 60_000);

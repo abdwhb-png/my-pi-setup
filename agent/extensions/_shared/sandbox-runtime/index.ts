@@ -35,6 +35,8 @@ export interface SandboxAnalysisRuntime {
 }
 
 export interface SandboxBashOperationOptions {
+    beforeDispatch?: (sandboxFingerprint: string | undefined) => void;
+    hostCapability?: "editor" | "dependencies" | "dev-services";
     onExecution?: ExecutionObserver;
     onSandboxContext?: (context: SandboxExecutionContextV1) => void;
     stdin?: string;
@@ -50,6 +52,7 @@ export type SandboxRuntimeSnapshot =
           state: "enabled";
           contexts?: SandboxProfileContextsV1;
           dockerAccess?: DockerAccessSummary;
+          sandboxFingerprint?: string;
           createBashOperations(
               options: SandboxBashOperationOptions,
           ): BashOperations;
@@ -59,6 +62,11 @@ export type SandboxRuntimeSnapshot =
           analysis: SandboxAnalysisRuntime;
       };
 
+interface SnapshotExecutions {
+    count: number;
+    waiters: Set<() => void>;
+}
+
 interface SandboxRuntimeRegistry {
     owner?: symbol;
     session?: number;
@@ -67,6 +75,8 @@ interface SandboxRuntimeRegistry {
     waiters?: Set<() => void>;
     listeners?: Set<(snapshot: SandboxRuntimeSnapshot) => void>;
     activeExecutions?: number;
+    draining?: Set<SandboxRuntimeSnapshot>;
+    executionsBySnapshot?: Map<SandboxRuntimeSnapshot, SnapshotExecutions>;
 }
 
 const RUNTIME_KEY = Symbol.for("pi.sandbox-runtime.v2");
@@ -97,9 +107,15 @@ export function publishSandboxRuntime(
     owner: symbol,
     snapshot: SandboxRuntimeSnapshot,
     diagnostic?: string,
+    transition: "interrupt" | "drain" = "interrupt",
 ): boolean {
     const current = registry();
     if (current.owner !== owner) return false;
+    if (
+        transition === "drain" &&
+        current.executionsBySnapshot?.has(current.snapshot)
+    )
+        (current.draining ??= new Set()).add(current.snapshot);
     current.snapshot = snapshot;
     current.diagnostic = snapshot.state === "error" ? diagnostic : undefined;
     notifyRuntimeChange(current);
@@ -142,6 +158,16 @@ export function getSandboxRuntime(): SandboxRuntimeSnapshot {
 export function getSandboxActiveExecutionCount(owner: symbol): number {
     const current = registry();
     return current.owner === owner ? (current.activeExecutions ?? 0) : 0;
+}
+
+/** Wait for admitted operations on this exact generation, never for new work. */
+export function whenSandboxRuntimeIdle(
+    snapshot: SandboxRuntimeSnapshot,
+): Promise<void> {
+    const active = registry().executionsBySnapshot?.get(snapshot);
+    return !active?.count
+        ? Promise.resolve()
+        : new Promise((resolve) => active.waiters.add(resolve));
 }
 
 export type SandboxUnavailableKind =
@@ -291,15 +317,35 @@ async function withActiveRuntime<T>(
             if (remaining <= 0)
                 throw new SandboxUnavailableError("reconfiguration-timeout");
             current.activeExecutions = (current.activeExecutions ?? 0) + 1;
+            const generations = (current.executionsBySnapshot ??= new Map<
+                SandboxRuntimeSnapshot,
+                SnapshotExecutions
+            >());
+            let admitted = generations.get(snapshot);
+            if (!admitted) {
+                admitted = { count: 0, waiters: new Set() };
+                generations.set(snapshot, admitted);
+            }
+            admitted.count += 1;
             try {
                 // Dispatch in the same turn as the snapshot check: no stale adapter gap.
                 // oxlint-disable-next-line no-await-in-loop -- Exactly one dispatch follows readiness; its failure must retain this snapshot.
                 return await run(snapshot, remaining);
             } catch (error) {
-                if (getSandboxRuntime() !== snapshot && !signal?.aborted)
+                if (
+                    getSandboxRuntime() !== snapshot &&
+                    !current.draining?.has(snapshot) &&
+                    !signal?.aborted
+                )
                     throw new SandboxUnavailableError("execution-interrupted");
                 throw error;
             } finally {
+                admitted.count -= 1;
+                if (admitted.count === 0) {
+                    generations.delete(snapshot);
+                    current.draining?.delete(snapshot);
+                    for (const resolve of admitted.waiters) resolve();
+                }
                 const latest = registry();
                 if (latest.owner === owner && latest.session === session) {
                     latest.activeExecutions = Math.max(
@@ -347,6 +393,8 @@ function bashOperations(
                 executionOptions.signal,
                 budget,
                 async (snapshot, remaining) => {
+                    if (!think)
+                        options.beforeDispatch?.(snapshot.sandboxFingerprint);
                     const operations = think
                         ? snapshot.createThinkBashOperations(options)
                         : snapshot.createBashOperations(options);
@@ -358,7 +406,8 @@ function bashOperations(
                     });
                     if (
                         result.exitCode === null &&
-                        getSandboxRuntime() !== snapshot
+                        getSandboxRuntime() !== snapshot &&
+                        !registry().draining?.has(snapshot)
                     )
                         throw new SandboxUnavailableError(
                             "execution-interrupted",
