@@ -10,6 +10,7 @@ import {
     type ProjectCapabilities,
     type ShellProfile,
 } from "./authority.ts";
+import { canonicalPotentialPath } from "./protection.ts";
 
 export interface ShellCapabilityResolution {
     state:
@@ -47,6 +48,8 @@ export function resolveShellPolicy(input: ShellPolicyInput): {
     shell: ShellCapabilityResolution;
 } {
     const projectRoot = realpathSync(input.cwd);
+    const resolvePath = (path: string) =>
+        canonicalPotentialPath(resolve(projectRoot, expandRelative(path)));
     const machineMatches = input.authority.machineId === input.machineId;
     const stored = machineMatches
         ? input.authority.projects.find((p) => p.projectRoot === projectRoot)
@@ -59,11 +62,9 @@ export function resolveShellPolicy(input: ShellPolicyInput): {
         ...emptyGrants(),
         domains: input.config.network.allowedDomains,
         hostDomains: input.config.network.allowedHostDomains,
-        readPaths: input.config.filesystem.allowRead.map((p) =>
-            resolve(projectRoot, expandRelative(p)),
-        ),
+        readPaths: input.config.filesystem.allowRead.map(resolvePath),
         writePaths: input.config.filesystem.allowWrite
-            .map((p) => resolve(projectRoot, expandRelative(p)))
+            .map(resolvePath)
             .filter((p) => p !== projectRoot),
         host: requestedProfile === "host",
         // Legacy Bash shared /tmp. Migration must explicitly accept retaining it.
@@ -110,9 +111,7 @@ export function resolveShellPolicy(input: ShellPolicyInput): {
                 ];
         }
     }
-    const requestedRead = input.config.filesystem.allowRead.map((p) =>
-        resolve(projectRoot, expandRelative(p)),
-    );
+    const requestedRead = input.config.filesystem.allowRead.map(resolvePath);
     const allowedRead = requestedRead.filter((p) =>
         [projectRoot, ...grants.readPaths].some(
             (allowed) => p === allowed || p.startsWith(`${allowed}/`),
@@ -142,7 +141,7 @@ export function resolveShellPolicy(input: ShellPolicyInput): {
                       : allowedRead,
             allowWrite: input.writePathsRequested
                 ? input.config.filesystem.allowWrite
-                      .map((p) => resolve(projectRoot, expandRelative(p)))
+                      .map(resolvePath)
                       .filter((p) =>
                           [projectRoot, ...grants.writePaths].some(
                               (allowed) =>

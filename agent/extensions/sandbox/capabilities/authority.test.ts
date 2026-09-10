@@ -99,3 +99,15 @@ test("an approved host shell is independent from strict-engine read preferences"
     expect(resolved.shell.profile).toBe("host");
     expect(resolved.config.filesystem.allowRead).toEqual([root]);
 });
+
+test("repository filesystem preferences cannot grant writes through an escaping symlink", () => {
+    const project = fixture(); const outside = fixture();
+    symlinkSync(outside.root, join(project.root, "escape"));
+    const resolved = resolveShellPolicy({
+        cwd: project.root, config: validatePiSandboxConfig({ filesystem: { allowWrite: ["escape"] } }),
+        authority: { version: 1, machineId: "a", projects: [] }, authorityPath: project.path, machineId: "a",
+        hasLegacySettings: false, domainsRequested: false, hostDomainsRequested: false, writePathsRequested: true,
+    });
+    expect(resolved.config.filesystem.allowWrite).toEqual([]);
+    expect(resolved.shell.requestedGrants.writePaths).toEqual([outside.root]);
+});

@@ -18,3 +18,12 @@ test("authority protection covers aliases, hard links, archives and missing desc
         expect(protectsCapabilityAuthority("project.ts", root, authority)).toBe(false);
     } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("a dangling alias cannot create the missing authority through native write", async () => {
+    const root = await mkdtemp(join(tmpdir(), "capability-missing-authority-"));
+    const authority = join(root, "sandbox.capabilities.json");
+    try {
+        await symlink(authority, join(root, "dangling"));
+        expect(protectsCapabilityAuthority("dangling", root, authority)).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});

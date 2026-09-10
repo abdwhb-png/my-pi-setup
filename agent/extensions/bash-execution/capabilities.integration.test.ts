@@ -6,16 +6,17 @@ import { resolve, join } from "node:path";
 import { emptyGrants, HOST_CAPABILITIES } from "../sandbox/capabilities/authority.ts";
 import { publishShellRuntime, releaseShellRuntime } from "../sandbox/capabilities/runtime.ts";
 
-test("real Pi blocks native write and edit of local authority and aliases", async () => {
+test.each([true, false])("real Pi blocks native write and edit of local authority and aliases (exists=%s)", async exists => {
     const root = await mkdtemp(join(tmpdir(), "pi-authority-tools-"));
     const cwd = join(root, "project"); await mkdir(cwd);
     const previous = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = root;
     const authority = join(root, "sandbox.capabilities.json");
     const original = JSON.stringify({ version: 1, machineId: "foreign-fixture", projects: [] });
-    await writeFile(authority, original, { mode: 0o600 });
+    if (exists) await writeFile(authority, original, { mode: 0o600 });
     await symlink(authority, join(cwd, "alias"));
-    await link(authority, join(cwd, "hardlink"));
+    if (exists) await link(authority, join(cwd, "hardlink"));
+    else await symlink(authority, join(cwd, "hardlink"));
     let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
     try {
         session = await createTestSession({ cwd, extensions: [resolve(import.meta.dir, "../sandbox/index.ts")], propagateErrors: false });
@@ -31,7 +32,8 @@ test("real Pi blocks native write and edit of local authority and aliases", asyn
         }
         expect(session.events.toolResultsFor("write")).toHaveLength(2);
         expect(session.events.toolResultsFor("edit")).toHaveLength(1);
-        expect(await readFile(authority, "utf8")).toBe(original);
+        if (exists) expect(await readFile(authority, "utf8")).toBe(original);
+        else await expect(readFile(authority, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
         await session?.session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" }); session?.dispose();
         if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
