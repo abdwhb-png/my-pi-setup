@@ -14,9 +14,9 @@ const SANDBOX_TYPESCRIPT_API_VERSION = "6.0.3";
 const SANDBOX_TYPESCRIPT_NATIVE_VERSION = "7.0.2";
 const ZEROBOX_VERSION = "0.3.3-fork.17";
 const ZEROBOX_SHA256 =
-    "abbbb91b3500556e77f9552d15be0f732e01862f6236c828455264bebcfec64b";
+    "1a8202290afac9a4f8396ef7e0d8918cbcf82c4a89ebe6c303c3536e04aad53d";
 const ZEROBOX_LOCAL_DIFF_SHA256 =
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    "6795151e4d41ec8127265377480f635282fb500eb1cb18dcea65c66268414086";
 const MANAGED_ZEROBOX_PATH = join(homedir(), ".pi", "bin", "zerobox");
 const ZEROBOX_SOURCE_ROOT = join(
     homedir(),
@@ -26,6 +26,7 @@ const ZEROBOX_SOURCE_ROOT = join(
     "zerobox",
 );
 const ZEROBOX_SOURCE_COMMIT = "fff8a45a6092f78f7c4fefd57ad3fc9ac449ff94";
+const ZEROBOX_BUILD_COMMIT = "5c530891c2883bfbfd192883002cfc9b0f50e632";
 const PREVIOUS_ZEROBOX_ROLLBACK_ROOT = join(
     homedir(),
     ".local",
@@ -169,6 +170,7 @@ describe("sandbox dependency contract", () => {
             binarySha256: ZEROBOX_SHA256,
             localBuild: {
                 baseCommit: ZEROBOX_SOURCE_COMMIT,
+                sourceCommit: ZEROBOX_BUILD_COMMIT,
                 sourceDiffSha256: ZEROBOX_LOCAL_DIFF_SHA256,
             },
         });
@@ -185,7 +187,7 @@ describe("sandbox dependency contract", () => {
                 "diff",
                 "--binary",
                 ZEROBOX_SOURCE_COMMIT,
-                `v${ZEROBOX_VERSION}^{commit}`,
+                ZEROBOX_BUILD_COMMIT,
             ],
             { cwd: ZEROBOX_SOURCE_ROOT },
         );
