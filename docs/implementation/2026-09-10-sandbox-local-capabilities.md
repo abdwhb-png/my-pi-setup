@@ -17,6 +17,7 @@ jusqu’à la migration utilisateur et au redémarrage complet de Pi. Consultez
 | C1 | `a3fa596` | Canonicalisation des accès demandés et protection des alias vers une autorité absente. |
 | C2 | `aa201af` | Installation du broker Docker corrigé et provenance vérifiée. |
 | C3 | `c04c4b4` | Alignement des contrats Audit, SDD, CPA et raccourcis avec Pi installé. |
+| C4 | `aad0c85` | Schéma compatible avec les alias TypeBox du chargeur Node/Jiti de Pi. |
 
 Le runtime a été commité avant l’autorité pour introduire son contrat de
 namespace avant ses consommateurs. Aucun paquet de permissions ni manifeste
@@ -85,6 +86,18 @@ utilisent désormais le vrai runtime Pi. Les raccourcis sont validés avant leur
 enregistrement. SDD refuse le statut externe supprimé `turn_budget_exhausted`
 sans modifier son budget interne. Les fixtures CPA utilisent le type public
 actuel, sans modifier les changements utilisateur dans `cpa.ts` et `cpa.test.ts`.
+
+Après cette validation, le chargement utilisateur a révélé une différence
+non couverte : Pi redirige `@sinclair/typebox` vers `typebox`, où
+`Type.Composite` n’existe pas. Le test ajouté
+`extensions/bash-execution/index-loader.test.ts` reproduit l’échec des deux
+extensions dans un sous-processus Node utilisant le véritable chargeur Pi.
+Le schéma utilise désormais `Type.Object` avec les propriétés Bash partagées.
+Le même test charge les deux extensions et vérifie le schéma public enregistré.
+Les **38 tests ciblés** du chargement, de l’exécution, des permissions et du
+routage passent, ainsi que le contrôle de types global et les contrôles de
+formatage/lint ciblés. La suite de 607 tests ci-dessus avait précédé cette
+correction et ne constituait donc pas une preuve du chargement Node/Jiti.
 
 Dans le dépôt propriétaire `~/.pi/agent/git/github.com/abdwhb-png/pi-mcp-adapter`,
 le commit local `53733d3` normalise les fragments texte du socket Unix en Buffer.
