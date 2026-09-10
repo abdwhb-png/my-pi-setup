@@ -15,12 +15,12 @@ migration incorrect.
 
 ## Synthèse
 
-| Gravité | Nombre |
-| --- | ---: |
-| CRITICAL | 0 |
-| HIGH | 1 |
-| MEDIUM | 4 |
-| LOW | 1 |
+| Gravité  | Nombre |
+| -------- | -----: |
+| CRITICAL |      0 |
+| HIGH     |      1 |
+| MEDIUM   |      4 |
+| LOW      |      1 |
 
 ## Constats
 
@@ -46,7 +46,7 @@ La reproduction a utilisé le vrai outil Pi `safe_bash` dans le harness, une
 politique `integrated` sans capacité `editor`, puis l’appel :
 
 ```json
-{"command":"zed SYSTEM.md","hostCapability":"editor"}
+{ "command": "zed SYSTEM.md", "hostCapability": "editor" }
 ```
 
 Le résultat public contient `isError: true`, le texte générique ci-dessus et une
@@ -146,17 +146,17 @@ et ajouter un test de régression.
 
 ## Conformité au plan
 
-| Exigence | État après revue |
-| --- | --- |
-| D1 / V1 | Confirmé par les tests Zerobox ciblés : réseau fermé, `/tmp` privé, aucun hôte automatique. |
-| D2 | Implémenté; preuve de bout en bout du vrai `bash` incomplète, voir F3. |
-| D3 | Profil hôte explicite et permission Git refusée couverts; succès des intégrations incomplets, voir F4. |
-| L1 | Résolveur partagé, état `Symbol.for`, autorité séparée et préférences restrictives présents. Revue de sécurité exclue. |
-| L2 / V4 | Think strict, namespaces et drainage sandbox couverts; opération hôte en vol non couverte, voir F5. |
-| L3 / V5 | Adaptateurs et argv littéral présents; succès complets hors chaîne Pi, voir F2 et F4. |
-| L4 / V6 | Permission avant processus et codes réels couverts; diagnostic de capacité cassé, voir F1. |
-| Migration | Alias et décision unique présents; message session incorrect, voir F6. |
-| Modèles économiques | Scénarios livrés; campagne LLM volontairement non exécutée. |
+| Exigence            | État après revue                                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| D1 / V1             | Confirmé par les tests Zerobox ciblés : réseau fermé, `/tmp` privé, aucun hôte automatique.                            |
+| D2                  | Implémenté; preuve de bout en bout du vrai `bash` incomplète, voir F3.                                                 |
+| D3                  | Profil hôte explicite et permission Git refusée couverts; succès des intégrations incomplets, voir F4.                 |
+| L1                  | Résolveur partagé, état `Symbol.for`, autorité séparée et préférences restrictives présents. Revue de sécurité exclue. |
+| L2 / V4             | Think strict, namespaces et drainage sandbox couverts; opération hôte en vol non couverte, voir F5.                    |
+| L3 / V5             | Adaptateurs et argv littéral présents; succès complets hors chaîne Pi, voir F2 et F4.                                  |
+| L4 / V6             | Permission avant processus et codes réels couverts; diagnostic de capacité cassé, voir F1.                             |
+| Migration           | Alias et décision unique présents; message session incorrect, voir F6.                                                 |
+| Modèles économiques | Scénarios livrés; campagne LLM volontairement non exécutée.                                                            |
 
 ## Vérifications indépendantes
 
@@ -187,3 +187,33 @@ la cause et l’action à entreprendre lorsqu’une capacité manque. Corriger F
 F6 dans le même lot de restitution. Ajouter ensuite les trois validations de
 bout en bout F3 à F5. Le verdict pourra passer à `APPROVE` après ces corrections
 et une nouvelle revue indépendante sans constat HIGH.
+
+## Remédiation du 10 septembre 2026
+
+Les six constats ont été corrigés et vérifiés dans le checkout d’origine. Le
+verdict ci-dessus décrit la révision examinée par la revue indépendante; cette
+section consigne les corrections ultérieures sans remplacer ce verdict par une
+auto-approbation.
+
+| Constat | Correction et preuve                                                                                                                                                                                                                                                   |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1      | `CapabilityError` utilise une marque globale, un ensemble fermé de codes et des diagnostics bornés. Le classificateur partagé conserve les messages actionnables et la provenance connue. Un test du vrai `safe_bash` couvre les six codes sans démarrer de processus. |
+| F2      | L’adaptateur Zed normalise les chemins absents, inaccessibles, non réguliers ou hors projet en `unsupported-command`. Le cas fichier absent traverse le point public `safe_bash`.                                                                                      |
+| F3      | Un test déterministe charge Sandbox et Bash Execution, appelle le vrai `bash` en profil intégré et vérifie réseau hôte inaccessible, autorité inchangée, backend Zerobox et `/tmp` privé.                                                                              |
+| F4      | Les trois intégrations réussies traversent désormais le schéma public `safe_bash`, les hooks Pi et la permission `bash`. Les smokes installés optionnels utilisent aussi ce point public.                                                                              |
+| F5      | Une fixture Dev Services reste active pendant la révocation : l’opération admise termine, l’appel suivant est refusé et le compteur revient à zéro. Timeout et annulation explicite sont couverts séparément.                                                          |
+| F6      | `migrate --session` annonce une application de session et laisse l’autorité étrangère inchangée. Seule la migration persistante promet une sauvegarde et un archivage.                                                                                                 |
+
+Les vérifications finales donnent :
+
+- suite transversale : **621 réussites, 8 parcours optionnels désactivés, aucun échec**, sur 629 tests dans 63 fichiers;
+- suite ciblée de remédiation : **269 réussites, 8 parcours optionnels désactivés, aucun échec**;
+- dernier contrôle F1/F2 après refactor : **36 réussites, aucun échec**;
+- typecheck global et typecheck Sandbox : réussis;
+- lint des fichiers de remédiation : aucune erreur; avertissements antérieurs conservés dans `authority.ts`.
+
+Le lint global reste rouge sur des erreurs hors périmètre dans
+`pi-overrides/pi-file-resolver.ts`, `flow-title.ts`, `_shared/config-loader.ts`
+et `ai-providers/commands/providers.ts`. Les trois smokes hôte installés n’ont
+pas été relancés pendant la remédiation; ils restent optionnels et leurs
+derniers parcours réels réussis sont documentés dans le bilan de livraison.

@@ -5,6 +5,12 @@ import {
     isSandboxUnavailableError,
     type SandboxErrorCode,
 } from "../sandbox-runtime/index.ts";
+import {
+    CAPABILITY_ERROR_CODES,
+    capabilityErrorMessage,
+    isCapabilityError,
+    type CapabilityErrorCode,
+} from "../shell-capability-error.ts";
 /**
  * Safe-execution failure normalization.
  *
@@ -31,6 +37,9 @@ import {
  *     the command line for known patterns, never the captured stdin).
  *   - `redirect`: a native-tool redirect denied the command before
  *     execution. Same provenance as `guard`.
+ *   - `capability`: the shell capability authority or a host integration
+ *     refused the request before execution. The public reason is rebuilt from
+ *     a closed code and a bounded diagnostic.
  *   - `unavailable`: the Sandbox runtime was not initialized or failed. The
  *     model-facing reason is bounded by the runtime contract.
  *   - `analyzer`: a downstream analyzer (QuickJS/Python) failure; the
@@ -55,6 +64,7 @@ export type SafeExecutionFailureKind =
     | "bash_aborted"
     | "guard"
     | "redirect"
+    | "capability"
     | "sandbox"
     | "unavailable"
     | "analyzer"
@@ -62,8 +72,8 @@ export type SafeExecutionFailureKind =
 
 export interface SafeExecutionFailure {
     kind: SafeExecutionFailureKind;
-    /** Stable sandbox code when `kind` is `sandbox`. */
-    code?: SandboxErrorCode;
+    /** Stable code when `kind` is `sandbox` or `capability`. */
+    code?: SandboxErrorCode | CapabilityErrorCode;
     /** Safe, bounded reason that may appear in LLM-facing surfaces. */
     reason: string;
     /** Original error message, retained only for capture warnings / telemetry. */
@@ -148,6 +158,14 @@ export function normalizeAbnormalError(message: string): SafeExecutionFailure {
 export function classifySafeExecutionError(
     error: unknown,
 ): SafeExecutionFailure {
+    if (isCapabilityError(error)) {
+        return {
+            kind: "capability",
+            code: error.code,
+            reason: capabilityErrorMessage(error.code, error.diagnostic),
+            raw: error.diagnostic ?? "",
+        };
+    }
     if (isSandboxExecutionError(error)) {
         const cause = error.getCause();
         const technical =
@@ -220,6 +238,9 @@ const SAFE_EXECUTION_BRAND: unique symbol = Symbol.for(
 const VALID_SANDBOX_ERROR_CODES: ReadonlySet<string> = new Set(
     SANDBOX_ERROR_CODES,
 );
+const VALID_CAPABILITY_ERROR_CODES: ReadonlySet<string> = new Set(
+    CAPABILITY_ERROR_CODES,
+);
 
 /** Closed enum of valid kinds. */
 const VALID_SAFE_EXECUTION_KINDS: ReadonlySet<SafeExecutionFailureKind> =
@@ -229,6 +250,7 @@ const VALID_SAFE_EXECUTION_KINDS: ReadonlySet<SafeExecutionFailureKind> =
         "bash_aborted",
         "guard",
         "redirect",
+        "capability",
         "sandbox",
         "unavailable",
         "analyzer",
@@ -265,8 +287,13 @@ export function isSafeExecutionError(
         return false;
     }
     const code = record.code;
-    if (kind !== "sandbox") return code === undefined;
-    return typeof code === "string" && VALID_SANDBOX_ERROR_CODES.has(code);
+    if (kind === "sandbox")
+        return typeof code === "string" && VALID_SANDBOX_ERROR_CODES.has(code);
+    if (kind === "capability")
+        return (
+            typeof code === "string" && VALID_CAPABILITY_ERROR_CODES.has(code)
+        );
+    return code === undefined;
 }
 
 /**
@@ -293,13 +320,13 @@ export function isSafeExecutionError(
 export class SafeExecutionError extends Error {
     readonly kind!: SafeExecutionFailureKind;
     readonly raw!: string;
-    readonly code?: SandboxErrorCode;
+    readonly code?: SandboxErrorCode | CapabilityErrorCode;
 
     constructor(
         kind: SafeExecutionFailureKind,
         reason: string,
         raw: string,
-        code?: SandboxErrorCode,
+        code?: SandboxErrorCode | CapabilityErrorCode,
     ) {
         super(reason);
         this.name = SAFE_EXECUTION_ERROR_NAME;
@@ -341,7 +368,7 @@ export class SafeExecutionError extends Error {
         return this.raw;
     }
 
-    getCode(): SandboxErrorCode | undefined {
+    getCode(): SandboxErrorCode | CapabilityErrorCode | undefined {
         return this.code;
     }
 }

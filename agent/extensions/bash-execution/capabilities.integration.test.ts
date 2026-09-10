@@ -3,7 +3,11 @@ import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harnes
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
-import { emptyGrants, HOST_CAPABILITIES } from "../sandbox/capabilities/authority.ts";
+import {
+    CapabilityError,
+    emptyGrants,
+    HOST_CAPABILITIES,
+} from "../sandbox/capabilities/authority.ts";
 import { publishShellRuntime, releaseShellRuntime } from "../sandbox/capabilities/runtime.ts";
 
 test.each([true, false])("real Pi blocks native write and edit of local authority and aliases (exists=%s)", async exists => {
@@ -80,6 +84,267 @@ test("real Pi keeps safe_bash on the Bash permission surface for every host capa
         await session?.session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
         session?.dispose(); releaseShellRuntime(owner);
         if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
+        await rm(root, { recursive: true, force: true });
+    }
+}, 30_000);
+
+test.each([
+    {
+        code: "invalid-authority" as const,
+        expected: "/sandbox capabilities",
+        state: "throw" as const,
+    },
+    {
+        code: "authorization-required" as const,
+        expected: "/sandbox capabilities grant editor",
+        state: "ready" as const,
+        expectedProfile: "integrated" as const,
+    },
+    {
+        code: "migration-required" as const,
+        expected: "/sandbox capabilities migrate",
+        state: "migration-required" as const,
+        expectedProfile: "isolated" as const,
+    },
+    {
+        code: "machine-mismatch" as const,
+        expected: "/sandbox capabilities migrate",
+        state: "machine-mismatch" as const,
+        expectedProfile: "isolated" as const,
+    },
+    {
+        code: "integration-unavailable" as const,
+        expected: "/sandbox capabilities",
+        state: "unavailable" as const,
+        expectedProfile: "integrated" as const,
+    },
+    {
+        code: "unsupported-command" as const,
+        expected:
+            "Zed may open existing files inside the approved project only",
+        state: "missing-file" as const,
+        expectedProfile: "integrated" as const,
+    },
+])(
+    "real Pi surfaces actionable safe_bash capability failure $code",
+    async ({ code, expected, state, expectedProfile }) => {
+        const root = await mkdtemp(join(tmpdir(), "pi-capability-error-"));
+        const cwd = join(root, "project");
+        await mkdir(cwd);
+        await writeFile(join(cwd, "existing.ts"), "export {};\n");
+        const launcher = join(root, "zed");
+        const marker = join(root, "spawned");
+        await writeFile(
+            launcher,
+            `#!/bin/sh\nprintf spawned > '${marker}'\n`,
+            { mode: 0o700 },
+        );
+        const owner = Symbol(`capability-error-${code}`);
+        const grants = emptyGrants();
+        if (state === "unavailable") grants.integrations.editor = {};
+        if (state === "missing-file")
+            grants.integrations.editor = { zed: launcher };
+        publishShellRuntime(owner, () => {
+            if (state === "throw")
+                throw new CapabilityError(
+                    "invalid-authority",
+                    "Inspect the local authority with /sandbox capabilities.",
+                );
+            return {
+                state:
+                    state === "migration-required" ||
+                    state === "machine-mismatch"
+                        ? state
+                        : "ready",
+                projectRoot: cwd,
+                profile:
+                    state === "migration-required" ||
+                    state === "machine-mismatch"
+                        ? "isolated"
+                        : "integrated",
+                requestedProfile: "integrated",
+                grants,
+                requestedGrants: emptyGrants(),
+                authorityPath: join(root, "sandbox.capabilities.json"),
+                diagnostic:
+                    state === "migration-required" ||
+                    state === "machine-mismatch"
+                        ? "Use /sandbox capabilities migrate."
+                        : undefined,
+            };
+        });
+        let session:
+            | Awaited<ReturnType<typeof createTestSession>>
+            | undefined;
+        try {
+            session = await createTestSession({
+                cwd,
+                extensions: [resolve(import.meta.dir, "index.ts")],
+                propagateErrors: false,
+            });
+            await session.run(
+                when("Open the approved project file", [
+                    calls("safe_bash", {
+                        command:
+                            state === "unavailable"
+                                ? "zed existing.ts"
+                                : "zed absent.ts",
+                        hostCapability: "editor",
+                    }),
+                    says("Observed refusal"),
+                ]),
+            );
+
+            const result = session.events.toolResultsFor("safe_bash")[0];
+            expect(result?.isError).toBe(true);
+            expect(result?.text).toContain(code);
+            expect(result?.text).toContain(expected);
+            expect(result?.text).not.toContain(
+                "Command failed (raw output redacted)",
+            );
+            if (expectedProfile)
+                expect(result?.details).toMatchObject({
+                    execution: { shellProfile: expectedProfile },
+                });
+            await expect(readFile(marker, "utf8")).rejects.toMatchObject({
+                code: "ENOENT",
+            });
+        } finally {
+            await session?.session.extensionRunner?.emit({
+                type: "session_shutdown",
+                reason: "quit",
+            });
+            session?.dispose();
+            releaseShellRuntime(owner);
+            await rm(root, { recursive: true, force: true });
+        }
+    },
+    30_000,
+);
+
+test("real Pi runs every approved host integration through safe_bash and Bash permissions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-capability-success-"));
+    const cwd = join(root, "project");
+    await mkdir(cwd);
+    const projectFile = join(cwd, "sample.ts");
+    await writeFile(projectFile, "export {};\n");
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = root;
+    const configDir = join(root, "extensions/pi-permission-system");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+        join(configDir, "config.json"),
+        JSON.stringify({
+            authorizerChain: [],
+            shellTools: { safe_bash: { commandArgument: "command" } },
+            permission: { "*": "allow" },
+        }),
+    );
+    const markers = {
+        editor: join(root, "editor.args"),
+        dependencies: join(root, "dependencies.args"),
+        "dev-services": join(root, "dev-services.args"),
+    };
+    const launcher = async (name: keyof typeof markers, output: string) => {
+        const path = join(root, name);
+        await writeFile(
+            path,
+            `#!/bin/sh\nprintf '%s\\n' "$@" > '${markers[name]}'\nprintf '${output}'\n`,
+            { mode: 0o700 },
+        );
+        return path;
+    };
+    const zed = await launcher("editor", "editor-ok");
+    const sfw = await launcher("dependencies", "dependencies-ok");
+    const devServices = await launcher("dev-services", "dev-services-ok");
+    const npm = join(root, "npm");
+    await writeFile(npm, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    const owner = Symbol("capability-success");
+    publishShellRuntime(owner, () => ({
+        state: "ready",
+        projectRoot: cwd,
+        profile: "integrated",
+        requestedProfile: "integrated",
+        grants: {
+            ...emptyGrants(),
+            integrations: {
+                editor: { zed },
+                dependencies: { sfw, npm },
+                "dev-services": { "dev-services": devServices },
+            },
+        },
+        requestedGrants: emptyGrants(),
+        authorityPath: join(root, "sandbox.capabilities.json"),
+    }));
+    let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
+    try {
+        session = await createTestSession({
+            cwd,
+            propagateErrors: false,
+            extensions: [
+                resolve(
+                    import.meta.dir,
+                    "../../npm/node_modules/@gotgenes/pi-permission-system/src/index.ts",
+                ),
+                resolve(import.meta.dir, "index.ts"),
+            ],
+        });
+        await session.run(
+            when("Use each approved local integration", [
+                calls("safe_bash", {
+                    command: "zed sample.ts",
+                    hostCapability: "editor",
+                }),
+                calls("safe_bash", {
+                    command: "npm install sample@1.0.0 --no-audit",
+                    hostCapability: "dependencies",
+                }),
+                calls("safe_bash", {
+                    command: "npm test",
+                    hostCapability: "dev-services",
+                }),
+                says("All integrations completed"),
+            ]),
+        );
+
+        const results = session.events.toolResultsFor("safe_bash");
+        expect(results).toHaveLength(3);
+        for (const [index, capability] of HOST_CAPABILITIES.entries()) {
+            expect(results[index]).toMatchObject({
+                isError: false,
+                mocked: false,
+                details: {
+                    execution: {
+                        status: "unsandboxed",
+                        backend: "host",
+                        shellProfile: "integrated",
+                        hostCapability: capability,
+                        tmpNamespace: "host",
+                        exitCode: 0,
+                        outcome: "succeeded",
+                    },
+                },
+            });
+            expect(results[index]?.text).toContain(`${capability}-ok`);
+        }
+        expect(await readFile(markers.editor, "utf8")).toBe(
+            `${projectFile}\n`,
+        );
+        expect(await readFile(markers.dependencies, "utf8")).toBe(
+            `${npm}\ninstall\nsample@1.0.0\n--no-audit\n--ignore-scripts\n`,
+        );
+        expect(await readFile(markers["dev-services"], "utf8")).toBe(
+            `--path\n${cwd}\nrun\nnpm\ntest\n`,
+        );
+    } finally {
+        await session?.session.extensionRunner?.emit({
+            type: "session_shutdown",
+            reason: "quit",
+        });
+        session?.dispose();
+        releaseShellRuntime(owner);
+        if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previous;
         await rm(root, { recursive: true, force: true });
     }
 }, 30_000);

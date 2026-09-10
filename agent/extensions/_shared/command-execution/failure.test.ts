@@ -6,6 +6,7 @@ import {
     SandboxExecutionError,
     SandboxUnavailableError,
 } from "../sandbox-runtime/index.ts";
+import { CapabilityError } from "../shell-capability-error.ts";
 import {
     SafeExecutionError,
     classifySafeExecutionError,
@@ -63,6 +64,24 @@ describe("safe-execution failure normalization", () => {
         expect(failure.reason).toBe("Sandbox setup failed");
         expect(failure.reason).not.toContain("SECRET_TECHNICAL_CAUSE");
         expect(failure.raw).toContain("SECRET_TECHNICAL_CAUSE");
+    });
+
+    it("recognizes capability failures across Jiti caches and bounds their public diagnostic", () => {
+        const loader = loadFailureModule();
+        const classify = loader.classifySafeExecutionError as typeof classifySafeExecutionError;
+        const error = new CapabilityError(
+            "authorization-required",
+            `Use /sandbox capabilities grant editor.${" x".repeat(2_000)}`,
+        );
+
+        const failure = classify(error);
+
+        expect(failure.kind).toBe("capability");
+        expect(failure.code).toBe("authorization-required");
+        expect(failure.reason).toContain(
+            "/sandbox capabilities grant editor",
+        );
+        expect(failure.reason.length).toBeLessThanOrEqual(1_100);
     });
 
     it("preserves the safe sandbox code through the broker wrapper", () => {

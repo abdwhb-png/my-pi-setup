@@ -1618,4 +1618,44 @@ describe("sandbox grants, migration and session scope", () => {
         expect(await readFile(legacy, "utf8")).toBe(content);
         await registered.handlers.get("session_shutdown")?.({}, ctx);
     });
+    it("describes foreign migration as session-only without promising persistence or archive", async () => {
+        const authorityPath = capabilityAuthorityPath(isolatedAgentDirectory);
+        await saveProjectCapabilities(
+            authorityPath,
+            {
+                projectRoot: cwd,
+                profile: "host",
+                grants: { ...emptyGrants(), host: true },
+            },
+            "foreign-machine-fixture",
+        );
+        const original = await readFile(authorityPath, "utf8");
+        const registered = registerSandbox();
+        const ctx = context(cwd, undefined, SESSION_ID, true, {
+            select: ["Use isolated defaults (no network, private /tmp)"],
+        });
+        await registered.handlers.get("session_start")?.({}, ctx);
+
+        await sandboxCommand(registered).handler(
+            "capabilities migrate --session",
+            ctx,
+        );
+
+        const select = ctx.ui.select as unknown as ReturnType<typeof mock>;
+        expect(String(select.mock.calls[0]?.[0])).not.toContain(
+            "will be archived",
+        );
+        const notifications = notifyCalls(ctx).map(([message]) => message);
+        expect(notifications.at(-1)).toContain("applied for this session");
+        expect(notifications.at(-1)).toContain(
+            "Foreign authority remains unchanged",
+        );
+        expect(notifications.at(-1)).not.toContain("Migration saved");
+        expect(await readFile(authorityPath, "utf8")).toBe(original);
+        expect(currentShellPolicy()).toMatchObject({
+            state: "ready",
+            profile: "isolated",
+        });
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
 });

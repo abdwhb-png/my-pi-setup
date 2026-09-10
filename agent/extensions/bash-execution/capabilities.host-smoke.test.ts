@@ -1,26 +1,82 @@
 import { expect, test } from "bun:test";
+import {
+    calls,
+    createTestSession,
+    says,
+    when,
+} from "@abdwhb-png/pi-test-harness";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { createBashProcessSupervisor } from "../_shared/command-execution/exec.ts";
-import { discoverIntegration, prepareHostIntegration } from "../sandbox/capabilities/adapters.ts";
+import { discoverIntegration } from "../sandbox/capabilities/adapters.ts";
 import { emptyGrants, type HostCapability } from "../sandbox/capabilities/authority.ts";
 import type { ShellCapabilityResolution } from "../sandbox/capabilities/policy.ts";
+import {
+    publishShellRuntime,
+    releaseShellRuntime,
+} from "../sandbox/capabilities/runtime.ts";
 
 // Explicit operator opt-in: these tests open a GUI, download a benign npm package,
 // or execute a harmless command in an already registered Dev Services project.
 const enabled = process.env.PI_SANDBOX_HOST_SMOKE === "1";
-async function run(capability: HostCapability, cwd: string, command: string, env: NodeJS.ProcessEnv = process.env) {
+async function run(
+    capability: HostCapability,
+    cwd: string,
+    command: string,
+    environment: Record<string, string> = {},
+) {
     const policy: ShellCapabilityResolution = { state: "ready", projectRoot: cwd, profile: "integrated", requestedProfile: "integrated",
         grants: { ...emptyGrants(), integrations: { [capability]: discoverIntegration(capability, cwd) } }, requestedGrants: emptyGrants(), authorityPath: join(cwd, "unused-authority") };
-    const supervisor = createBashProcessSupervisor(); const events: object[] = []; let output = "";
+    const owner = Symbol(`installed-${capability}-smoke`);
+    const previous = new Map(
+        Object.keys(environment).map((name) => [name, process.env[name]]),
+    );
+    for (const [name, value] of Object.entries(environment))
+        process.env[name] = value;
+    publishShellRuntime(owner, () => policy);
+    let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
     try {
-        const operations = supervisor.createOperations({ env, onExecution: event => events.push(event),
-            prepareSpawn: context => prepareHostIntegration(policy, capability, context.command, context.cwd, context.env) });
-        const result = await operations.exec(command, cwd, { timeout: 90, onData: chunk => { output += chunk.toString(); } });
-        expect(result.exitCode, output).toBe(0);
-        expect(events.at(-1)).toMatchObject({ backend: "host", shellProfile: "integrated", hostCapability: capability, exitCode: 0, outcome: "succeeded", tmpNamespace: "host" });
-        return output;
-    } finally { supervisor.shutdown(); }
+        session = await createTestSession({
+            cwd,
+            extensions: [resolve(import.meta.dir, "index.ts")],
+            propagateErrors: false,
+        });
+        await session.run(
+            when(`Run installed ${capability} smoke`, [
+                calls("safe_bash", {
+                    command,
+                    hostCapability: capability,
+                    timeout: 90,
+                }),
+                says("Smoke observed"),
+            ]),
+        );
+        const result = session.events.toolResultsFor("safe_bash")[0];
+        expect(result, result?.text).toMatchObject({
+            mocked: false,
+            isError: false,
+            details: {
+                execution: {
+                    backend: "host",
+                    shellProfile: "integrated",
+                    hostCapability: capability,
+                    exitCode: 0,
+                    outcome: "succeeded",
+                    tmpNamespace: "host",
+                },
+            },
+        });
+        return result?.text ?? "";
+    } finally {
+        await session?.session.extensionRunner?.emit({
+            type: "session_shutdown",
+            reason: "quit",
+        });
+        session?.dispose();
+        releaseShellRuntime(owner);
+        for (const [name, value] of previous)
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+    }
 }
 
 test.skipIf(!enabled)("installed SFW performs a benign npm installation with a fresh npm cache", async () => {
@@ -28,7 +84,7 @@ test.skipIf(!enabled)("installed SFW performs a benign npm installation with a f
     try {
         await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "pi-sandbox-capability-smoke", private: true, version: "1.0.0", packageManager: "npm@12.0.1" }));
         await writeFile(join(cwd, ".npmrc"), "ignore-scripts=true\nmin-release-age=7\nallow-git=none\n");
-        await run("dependencies", cwd, "npm install is-number@7.0.0 --save-exact --no-audit --no-fund", { ...process.env, npm_config_cache: join(cwd, ".fresh-npm-cache") });
+        await run("dependencies", cwd, "npm install is-number@7.0.0 --save-exact --no-audit --no-fund", { npm_config_cache: join(cwd, ".fresh-npm-cache") });
         const manifest = JSON.parse(await readFile(join(cwd, "node_modules/is-number/package.json"), "utf8"));
         expect({ name: manifest.name, version: manifest.version }).toEqual({ name: "is-number", version: "7.0.0" });
     } finally { await rm(cwd, { recursive: true, force: true }); }

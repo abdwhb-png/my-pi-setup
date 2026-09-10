@@ -15,7 +15,19 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import {
+    CapabilityError,
+    isCapabilityError,
+} from "../../_shared/shell-capability-error.ts";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
+
+export {
+    CAPABILITY_ERROR_CODES,
+    CapabilityError,
+    capabilityErrorMessage,
+    isCapabilityError,
+    type CapabilityErrorCode,
+} from "../../_shared/shell-capability-error.ts";
 
 export const HOST_CAPABILITIES = [
     "editor",
@@ -43,22 +55,6 @@ export interface CapabilityAuthority {
     machineId: string;
     projects: ProjectCapabilities[];
 }
-export class CapabilityError extends Error {
-    constructor(
-        public readonly code:
-            | "invalid-authority"
-            | "authorization-required"
-            | "migration-required"
-            | "machine-mismatch"
-            | "integration-unavailable"
-            | "unsupported-command",
-        message: string,
-    ) {
-        super(`${code}: ${message}`);
-        this.name = "CapabilityError";
-    }
-}
-
 export function emptyGrants(): CapabilityGrants {
     return {
         domains: [],
@@ -250,7 +246,7 @@ export function readCapabilityAuthority(
     try {
         return parseAuthority(JSON.parse(readFileSync(path, "utf8")));
     } catch (error) {
-        if (error instanceof CapabilityError) throw error;
+        if (isCapabilityError(error)) throw error;
         throw new CapabilityError(
             "invalid-authority",
             "Cannot parse capability authority",

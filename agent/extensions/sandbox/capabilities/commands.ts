@@ -155,7 +155,13 @@ export function createCapabilityCommands<
                 } else if (words[1] === "migrate") {
                     migration = true;
                     const choice = await ctx.ui.select(
-                        `Migrate this project's shell policy${current.state === "machine-mismatch" ? " (foreign grants will be archived; no other project is activated)" : ""}`,
+                        `Migrate this project's shell policy${
+                            current.state === "machine-mismatch"
+                                ? temporary
+                                    ? " (foreign authority remains unchanged)"
+                                    : " (foreign grants will be archived; no other project is activated)"
+                                : ""
+                        }`,
                         [
                             "Use isolated defaults (no network, private /tmp)",
                             "Retain the listed legacy openings on this machine",
@@ -285,8 +291,17 @@ export function createCapabilityCommands<
                     session = undefined;
                 }
                 await options.apply(ctx, session, next.profile);
+                const outcome = migration
+                    ? temporary
+                        ? current.state === "machine-mismatch"
+                            ? "Migration applied for this session. Foreign authority remains unchanged"
+                            : "Migration applied for this session. Persistent authority remains unchanged"
+                        : "Migration saved"
+                    : temporary
+                      ? "Shell capabilities updated for this session"
+                      : "Shell capabilities updated";
                 ctx.ui.notify(
-                    `${migration ? "Migration saved" : "Shell capabilities updated"}. New commands use the new policy. Already admitted operations continue.`,
+                    `${outcome}. New commands use the new policy. Already admitted operations continue.`,
                     "info",
                 );
             } catch (error) {

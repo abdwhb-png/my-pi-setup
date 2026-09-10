@@ -12,6 +12,7 @@ import { hostExecution } from "../../_shared/execution-provenance/types.ts";
 import {
     CapabilityError,
     expandCapabilityPath,
+    isCapabilityError,
     type HostCapability,
 } from "./authority.ts";
 import type { ShellCapabilityResolution } from "./policy.ts";
@@ -102,7 +103,7 @@ export function approvedExecutable(
         accessSync(path, constants.X_OK);
         return path;
     } catch (error) {
-        if (error instanceof CapabilityError) throw error;
+        if (isCapabilityError(error)) throw error;
         throw new CapabilityError(
             "integration-unavailable",
             `${name} is unavailable at its approved path`,
@@ -140,7 +141,7 @@ export function discoverIntegration(
                 );
                 break;
             } catch (error) {
-                if (!(error instanceof CapabilityError)) throw error;
+                if (!isCapabilityError(error)) throw error;
             }
         }
     }
@@ -173,12 +174,21 @@ export function prepareHostIntegration(
                 unsupported(
                     "Editor flags are not supported; pass project files",
                 );
-            const path = realpathSync(resolve(cwd, value));
-            if (!inside(path, policy.projectRoot) || !statSync(path).isFile())
-                unsupported(
+            try {
+                const path = realpathSync(resolve(cwd, value));
+                if (
+                    !inside(path, policy.projectRoot) ||
+                    !statSync(path).isFile()
+                )
+                    return unsupported(
+                        "Zed may open existing files inside the approved project only",
+                    );
+                return path;
+            } catch {
+                return unsupported(
                     "Zed may open existing files inside the approved project only",
                 );
-            return path;
+            }
         });
         file = executable("zed");
     } else if (capability === "dependencies") {

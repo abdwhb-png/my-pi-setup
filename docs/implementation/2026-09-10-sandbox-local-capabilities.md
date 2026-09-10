@@ -7,17 +7,17 @@ jusqu’à la migration utilisateur et au redémarrage complet de Pi. Consultez
 
 ## Lots livrés
 
-| Lot | Commit | Changement |
-| --- | --- | --- |
-| L2 | `45fbce9` | `/tmp` privé par défaut, générations conservées jusqu’à la fin des opérations admises, préparation des chemins interdits absents ou liés. |
-| L1 | `58b700d` | Autorité locale, identité Linux/projet, préférences restrictives, protection du magasin. |
-| L3 | `729b87f` | Adaptateurs Zed, SFW/npm/Pi et Dev Services, supervision et provenance hôte. |
-| L4 | `8d209f8` | Commandes utilisateur, migration, routage `safe_bash`, contrôles Pi et contexte du modèle. |
-| L5 | `1395f0a` | Guide, migration, scénarios d’évaluation et bilan initial. |
-| C1 | `a3fa596` | Canonicalisation des accès demandés et protection des alias vers une autorité absente. |
-| C2 | `aa201af` | Installation du broker Docker corrigé et provenance vérifiée. |
-| C3 | `c04c4b4` | Alignement des contrats Audit, SDD, CPA et raccourcis avec Pi installé. |
-| C4 | `aad0c85` | Schéma compatible avec les alias TypeBox du chargeur Node/Jiti de Pi. |
+| Lot | Commit    | Changement                                                                                                                                |
+| --- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| L2  | `45fbce9` | `/tmp` privé par défaut, générations conservées jusqu’à la fin des opérations admises, préparation des chemins interdits absents ou liés. |
+| L1  | `58b700d` | Autorité locale, identité Linux/projet, préférences restrictives, protection du magasin.                                                  |
+| L3  | `729b87f` | Adaptateurs Zed, SFW/npm/Pi et Dev Services, supervision et provenance hôte.                                                              |
+| L4  | `8d209f8` | Commandes utilisateur, migration, routage `safe_bash`, contrôles Pi et contexte du modèle.                                                |
+| L5  | `1395f0a` | Guide, migration, scénarios d’évaluation et bilan initial.                                                                                |
+| C1  | `a3fa596` | Canonicalisation des accès demandés et protection des alias vers une autorité absente.                                                    |
+| C2  | `aa201af` | Installation du broker Docker corrigé et provenance vérifiée.                                                                             |
+| C3  | `c04c4b4` | Alignement des contrats Audit, SDD, CPA et raccourcis avec Pi installé.                                                                   |
+| C4  | `aad0c85` | Schéma compatible avec les alias TypeBox du chargeur Node/Jiti de Pi.                                                                     |
 
 Le runtime a été commité avant l’autorité pour introduire son contrat de
 namespace avant ses consommateurs. Aucun paquet de permissions ni manifeste
@@ -35,22 +35,25 @@ bun test --isolate extensions/sandbox/ extensions/bash-execution/ \
   extensions/_shared/execution-provenance/
 ```
 
-Dernière suite élargie dans le checkout d’origine : **607 réussites, 8 parcours
-optionnels désactivés, aucun échec**, sur 615 tests dans 62 fichiers.
+Dernière suite élargie dans le checkout d’origine : **621 réussites, 8 parcours
+optionnels désactivés, aucun échec**, sur 629 tests dans 63 fichiers.
 Le résultat initial du worktree était bien **602 réussites, 8 parcours
 désactivés et 1 échec Docker préexistant**. Il reste une preuve du décalage
 avant correction, pas le résultat de la livraison finale.
 Les 8 parcours optionnels comprennent les 3 essais hôte relancés séparément
-ci-dessous et 5 scénarios dépendant de services/projets locaux particuliers.
+ci-dessous, un essai réseau dépendant d’un service local et 4 replays de
+workflows optionnels.
 
 Les tests importent les modules de production. Les preuves couvrent notamment
 le réseau fermé, `/tmp` privé et partagé explicitement, les espaces Think,
 la protection réelle du magasin, les aliases/hardlinks natifs, la révocation,
 les opérations admises, les refus Git sur les trois capacités, les échecs SFW
-sans poursuite et les codes de sortie réels. Les cas runtime Pi utilisent ses
-hooks et le paquet de permissions installé, sans LLM. Le test SFW refusé utilise
-un lanceur simulé qui sort avec le code 31 : il prouve l’arrêt du parcours, pas
-la détection réelle d’un paquet malveillant.
+sans poursuite et les codes de sortie réels. Ils couvrent aussi les six erreurs
+de capacité au point public `safe_bash`, le vrai `bash` en D2, les trois succès
+d’intégration à travers Pi et la révocation pendant une opération hôte. Les cas
+runtime Pi utilisent ses hooks et le paquet de permissions installé, sans LLM.
+Le test SFW refusé utilise un lanceur simulé qui sort avec le code 31 : il prouve
+l’arrêt du parcours, pas la détection réelle d’un paquet malveillant.
 
 ```sh
 PI_SANDBOX_HOST_SMOKE=1 \
@@ -74,6 +77,11 @@ Le script `lint` force un parcours global avec `oxlint .`; le binaire local a
 donc été utilisé directement pour limiter ce contrôle aux fichiers de la tâche.
 `git diff --check` passe.
 
+Le lint global courant reste rouge sur des erreurs hors de ce lot dans
+`pi-overrides/pi-file-resolver.ts`, `flow-title.ts`, `_shared/config-loader.ts`
+et `ai-providers/commands/providers.ts`. Le lint ciblé de la remédiation passe;
+ses avertissements restants sont ceux déjà présents dans l’autorité.
+
 ```sh
 bun run typecheck
 ./node_modules/.bin/tsc --noEmit -p tsconfig.sandbox.json
@@ -96,8 +104,9 @@ Le schéma utilise désormais `Type.Object` avec les propriétés Bash partagée
 Le même test charge les deux extensions et vérifie le schéma public enregistré.
 Les **38 tests ciblés** du chargement, de l’exécution, des permissions et du
 routage passent, ainsi que le contrôle de types global et les contrôles de
-formatage/lint ciblés. La suite de 607 tests ci-dessus avait précédé cette
-correction et ne constituait donc pas une preuve du chargement Node/Jiti.
+formatage/lint ciblés. La suite de 607 tests avait précédé cette correction et
+ne constituait donc pas une preuve du chargement Node/Jiti. La suite finale de
+621 tests l’inclut avec les remédiations de la revue indépendante.
 
 Dans le dépôt propriétaire `~/.pi/agent/git/github.com/abdwhb-png/pi-mcp-adapter`,
 le commit local `53733d3` normalise les fragments texte du socket Unix en Buffer.
@@ -152,16 +161,16 @@ fichiers ensemble si nécessaire. Le SHA-256 du binaire précédent est
 
 ## Racines vérifiées
 
-| Composant | Racine installée et version |
-| --- | --- |
-| Pi | `~/.pi/agent/node_modules/@earendil-works/pi-coding-agent`, `0.85.0`; `dist/index.js` résout vers `~/projects/pi-core/packages/coding-agent/dist/index.js` |
-| Harness de test | `~/.pi/agent/node_modules/@abdwhb-png/pi-test-harness`, `0.7.0` |
-| Permissions | `~/.pi/agent/npm/node_modules/@gotgenes/pi-permission-system`, `24.0.0` |
-| Extensions lors de la validation finale | `~/.pi/agent/extensions` |
-| Subagents | `~/.pi/agent/git/github.com/abdwhb-png/pi-subagents/src/api/delegation.ts`, `0.62.0` |
-| Adaptateur MCP corrigé | `~/.pi/agent/git/github.com/abdwhb-png/pi-mcp-adapter`, `2.27.0`, commit local `53733d3` |
-| Zerobox | `~/.pi/bin/zerobox`, SHA-256 `1a8202290afac9a4f8396ef7e0d8918cbcf82c4a89ebe6c303c3536e04aad53d` |
-| SFW / npm | Binaire SFW `1.15.1`, npm `12.0.1` |
+| Composant                               | Racine installée et version                                                                                                                                |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pi                                      | `~/.pi/agent/node_modules/@earendil-works/pi-coding-agent`, `0.85.0`; `dist/index.js` résout vers `~/projects/pi-core/packages/coding-agent/dist/index.js` |
+| Harness de test                         | `~/.pi/agent/node_modules/@abdwhb-png/pi-test-harness`, `0.7.0`                                                                                            |
+| Permissions                             | `~/.pi/agent/npm/node_modules/@gotgenes/pi-permission-system`, `24.0.0`                                                                                    |
+| Extensions lors de la validation finale | `~/.pi/agent/extensions`                                                                                                                                   |
+| Subagents                               | `~/.pi/agent/git/github.com/abdwhb-png/pi-subagents/src/api/delegation.ts`, `0.62.0`                                                                       |
+| Adaptateur MCP corrigé                  | `~/.pi/agent/git/github.com/abdwhb-png/pi-mcp-adapter`, `2.27.0`, commit local `53733d3`                                                                   |
+| Zerobox                                 | `~/.pi/bin/zerobox`, SHA-256 `1a8202290afac9a4f8396ef7e0d8918cbcf82c4a89ebe6c303c3536e04aad53d`                                                            |
+| SFW / npm                               | Binaire SFW `1.15.1`, npm `12.0.1`                                                                                                                         |
 
 Les dépendances existantes ont été réutilisées. Les dépendances Analysis ont
 été copiées localement dans le worktree pour respecter ses chemins lisibles

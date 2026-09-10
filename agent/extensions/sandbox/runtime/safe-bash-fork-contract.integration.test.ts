@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { getPermissionsService } from "@gotgenes/pi-permission-system";
 import { emptyGrants, saveProjectCapabilities, capabilityAuthorityPath, localMachineId } from "../capabilities/authority.ts";
@@ -94,6 +95,78 @@ describe("accepted Zerobox safe_bash contract", () => {
         },
         90_000,
     );
+
+    it("keeps ordinary D2 bash in Zerobox with host network closed and private tmp", async () => {
+        inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
+        delete process.env[SESSION_STATUS_ENV];
+        fixture = await mkdtemp(resolve(AGENT_ROOT, ".zerobox-d2-bash-"));
+        const authorityPath = capabilityAuthorityPath(testAgentDir);
+        await saveProjectCapabilities(
+            authorityPath,
+            {
+                projectRoot: fixture,
+                profile: "integrated",
+                grants: emptyGrants(),
+            },
+            localMachineId(),
+        );
+        const authority = await readFile(authorityPath, "utf8");
+        let requests = 0;
+        const server = createServer((_request, response) => {
+            requests++;
+            response.end("host listener");
+        });
+        await new Promise<void>((done) =>
+            server.listen(0, "127.0.0.1", done),
+        );
+        const address = server.address();
+        if (!address || typeof address === "string")
+            throw new Error("Missing listener address");
+        try {
+            session = await createTestSession({
+                cwd: fixture,
+                extensions: [SANDBOX_EXTENSION, BASH_EXECUTION_EXTENSION],
+                propagateErrors: false,
+            });
+            const command = [
+                `if curl --noproxy '*' --fail --silent --max-time 2 http://127.0.0.1:${address.port}; then exit 41; fi`,
+                `if printf compromised > ${JSON.stringify(authorityPath)}; then exit 42; fi`,
+                "test \"$TMPDIR\" = /tmp",
+                "printf d2-isolated",
+            ].join("; ");
+
+            await session.run(
+                when("Verify ordinary integrated-profile shell isolation", [
+                    calls("bash", { command, timeout: 10 }),
+                    says("Isolation observed"),
+                ]),
+            );
+
+            const result = session.events.toolResultsFor("bash")[0];
+            expect(result, result?.text).toMatchObject({
+                mocked: false,
+                isError: false,
+                details: {
+                    execution: {
+                        status: "sandboxed",
+                        profile: "bash-general",
+                        backend: "zerobox",
+                        shellProfile: "integrated",
+                        tmpNamespace: "lease-private",
+                        outcome: "succeeded",
+                        exitCode: 0,
+                    },
+                },
+            });
+            expect(result?.text).toContain("d2-isolated");
+            expect(requests).toBe(0);
+            expect(await readFile(authorityPath, "utf8")).toBe(authority);
+        } finally {
+            await new Promise<void>((done, reject) =>
+                server.close((error) => (error ? reject(error) : done())),
+            );
+        }
+    }, 30_000);
 
     for (const command of [
         "bun run --cwd apps/web build",

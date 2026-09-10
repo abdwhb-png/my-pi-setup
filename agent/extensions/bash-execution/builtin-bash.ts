@@ -29,6 +29,7 @@ import {
 import { prepareHostIntegration } from "../sandbox/capabilities/adapters.ts";
 import { CapabilityError } from "../sandbox/capabilities/authority.ts";
 import {
+    currentShellPolicy,
     requireShellPolicy,
     trackShellOperation,
 } from "../sandbox/capabilities/runtime.ts";
@@ -43,8 +44,15 @@ export function resolveBashOperations(
             try {
                 policy = requireShellPolicy(cwd, options.hostCapability);
             } catch (error) {
+                let currentPolicy;
+                try {
+                    currentPolicy = currentShellPolicy();
+                } catch {
+                    // Preserve the original policy refusal when resolution itself failed.
+                }
                 options.onExecution?.({
                     ...unknownExecution(),
+                    shellProfile: currentPolicy?.profile,
                     hostCapability: options.hostCapability,
                     phase: "policy",
                     outcome: "blocked",
