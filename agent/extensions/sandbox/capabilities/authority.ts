@@ -1,0 +1,339 @@
+import { createHash, randomUUID } from "node:crypto";
+import {
+    closeSync,
+    existsSync,
+    fsyncSync,
+    lstatSync,
+    mkdirSync,
+    openSync,
+    readFileSync,
+    realpathSync,
+    renameSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { validatePiSandboxConfig } from "../runtime/policies.ts";
+
+export const HOST_CAPABILITIES = [
+    "editor",
+    "dependencies",
+    "dev-services",
+] as const;
+export type HostCapability = (typeof HOST_CAPABILITIES)[number];
+export type ShellProfile = "isolated" | "integrated" | "host";
+export interface CapabilityGrants {
+    domains: string[];
+    hostDomains: string[];
+    readPaths: string[];
+    writePaths: string[];
+    hostTmp: boolean;
+    host: boolean;
+    integrations: Partial<Record<HostCapability, Record<string, string>>>;
+}
+export interface ProjectCapabilities {
+    projectRoot: string;
+    profile: ShellProfile;
+    grants: CapabilityGrants;
+}
+export interface CapabilityAuthority {
+    version: 1;
+    machineId: string;
+    projects: ProjectCapabilities[];
+}
+export class CapabilityError extends Error {
+    constructor(
+        public readonly code:
+            | "invalid-authority"
+            | "authorization-required"
+            | "migration-required"
+            | "machine-mismatch"
+            | "integration-unavailable"
+            | "unsupported-command",
+        message: string,
+    ) {
+        super(`${code}: ${message}`);
+        this.name = "CapabilityError";
+    }
+}
+
+export function emptyGrants(): CapabilityGrants {
+    return {
+        domains: [],
+        hostDomains: [],
+        readPaths: [],
+        writePaths: [],
+        hostTmp: false,
+        host: false,
+        integrations: {},
+    };
+}
+export function expandCapabilityPath(value: string): string {
+    return value === "~"
+        ? homedir()
+        : value.startsWith("~/")
+          ? resolve(homedir(), value.slice(2))
+          : resolve(value);
+}
+export function persistedCapabilityPath(value: string): string {
+    const home = homedir();
+    return value === home
+        ? "~"
+        : value.startsWith(`${home}/`)
+          ? `~/${value.slice(home.length + 1)}`
+          : value;
+}
+export function capabilityAuthorityPath(agentDir: string): string {
+    return join(agentDir, "sandbox.capabilities.json");
+}
+export function localMachineId(): string {
+    // Bind grants to this Linux/WSL installation and user, not a portable Pi directory.
+    const identity = readFileSync("/etc/machine-id", "utf8").trim();
+    if (!identity)
+        throw new CapabilityError(
+            "invalid-authority",
+            "Machine identity is unavailable",
+        );
+    return createHash("sha256")
+        .update(`${identity}:${process.getuid?.()}`)
+        .digest("hex");
+}
+function invalid(message: string): never {
+    throw new CapabilityError("invalid-authority", message);
+}
+function object(value: unknown, keys: string[]): Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+        invalid("Expected an object");
+    const record = value as Record<string, unknown>;
+    for (const key of Object.keys(record))
+        if (!keys.includes(key)) invalid(`Unknown authority field: ${key}`);
+    return record;
+}
+function strings(value: unknown): string[] {
+    if (
+        !Array.isArray(value) ||
+        value.some((v) => typeof v !== "string" || !v || v.includes("\0"))
+    )
+        invalid("Expected nonempty strings");
+    return [...new Set(value as string[])];
+}
+function boolean(value: unknown): boolean {
+    if (typeof value !== "boolean") invalid("Expected a boolean");
+    return value;
+}
+function localPaths(value: unknown): string[] {
+    return strings(value).map((path) => {
+        if (!isAbsolute(path) && path !== "~" && !path.startsWith("~/"))
+            invalid("Expected absolute or home-relative capability paths");
+        return expandCapabilityPath(path);
+    });
+}
+export function parseShellProfile(value: unknown): ShellProfile {
+    if (value !== "isolated" && value !== "integrated" && value !== "host")
+        invalid("Unknown shell profile");
+    return value;
+}
+export function parseGrants(value: unknown): CapabilityGrants {
+    const raw = object(value, [
+        "domains",
+        "hostDomains",
+        "readPaths",
+        "writePaths",
+        "hostTmp",
+        "host",
+        "integrations",
+    ]);
+    const integrations = object(raw.integrations, [...HOST_CAPABILITIES]);
+    const result: CapabilityGrants["integrations"] = {};
+    for (const name of HOST_CAPABILITIES) {
+        if (integrations[name] === undefined) continue;
+        const keys =
+            name === "editor"
+                ? ["zed"]
+                : name === "dependencies"
+                  ? ["sfw", "npm", "pi"]
+                  : ["dev-services"];
+        const executables = object(integrations[name], keys);
+        const paths: Record<string, string> = {};
+        for (const [key, value] of Object.entries(executables)) {
+            if (
+                typeof value !== "string" ||
+                (!isAbsolute(value) && !value.startsWith("~/")) ||
+                value.includes("\0")
+            )
+                invalid(
+                    "Executables must have local absolute or home-relative paths",
+                );
+            paths[key] = expandCapabilityPath(value);
+        }
+        result[name] = paths;
+    }
+    const domains = strings(raw.domains);
+    const hostDomains = strings(raw.hostDomains);
+    try {
+        validatePiSandboxConfig({
+            network: {
+                allowedDomains: domains,
+                allowedHostDomains: hostDomains,
+            },
+        });
+    } catch {
+        invalid("Invalid capability network destinations");
+    }
+    return {
+        domains,
+        hostDomains,
+        readPaths: localPaths(raw.readPaths),
+        writePaths: localPaths(raw.writePaths),
+        hostTmp: boolean(raw.hostTmp),
+        host: boolean(raw.host),
+        integrations: result,
+    };
+}
+function parseAuthority(raw: unknown): CapabilityAuthority {
+    const value = object(raw, ["version", "machineId", "projects"]);
+    if (
+        value.version !== 1 ||
+        typeof value.machineId !== "string" ||
+        !value.machineId
+    )
+        invalid("Unsupported authority version or identity");
+    if (!Array.isArray(value.projects)) invalid("Expected project grants");
+    const roots = new Set<string>();
+    const projects = value.projects.map((entry) => {
+        const project = object(entry, ["projectRoot", "profile", "grants"]);
+        if (
+            typeof project.projectRoot !== "string" ||
+            (!isAbsolute(project.projectRoot) &&
+                !project.projectRoot.startsWith("~/"))
+        )
+            invalid("Expected a project root");
+        const projectRoot = expandCapabilityPath(project.projectRoot);
+        if (roots.has(projectRoot)) invalid("Duplicate project grants");
+        roots.add(projectRoot);
+        return {
+            projectRoot,
+            profile: parseShellProfile(project.profile),
+            grants: parseGrants(project.grants),
+        };
+    });
+    return { version: 1, machineId: value.machineId, projects };
+}
+export function readCapabilityAuthority(
+    path: string,
+    machineId = localMachineId(),
+): CapabilityAuthority {
+    // lstat also rejects dangling links; existsSync alone would silently treat them as absent.
+    let metadata;
+    try {
+        metadata = lstatSync(path);
+    } catch (error) {
+        if (
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT"
+        )
+            return { version: 1, machineId, projects: [] };
+        throw error;
+    }
+    if (
+        !metadata.isFile() ||
+        metadata.isSymbolicLink() ||
+        (metadata.mode & 0o077) !== 0 ||
+        (process.getuid && metadata.uid !== process.getuid())
+    )
+        invalid(
+            "Capability authority must be an owned regular file with mode 0600",
+        );
+    try {
+        return parseAuthority(JSON.parse(readFileSync(path, "utf8")));
+    } catch (error) {
+        if (error instanceof CapabilityError) throw error;
+        throw new CapabilityError(
+            "invalid-authority",
+            "Cannot parse capability authority",
+        );
+    }
+}
+
+/** Call only from an explicit user command. This API never obtains approval itself. */
+export async function saveProjectCapabilities(
+    path: string,
+    project: ProjectCapabilities,
+    machineId = localMachineId(),
+    options: { replaceForeign?: boolean } = {},
+): Promise<string | undefined> {
+    return withFileMutationQueue(path, async () => {
+        let authority = readCapabilityAuthority(path, machineId);
+        let archive: string | undefined;
+        if (authority.machineId !== machineId) {
+            if (!options.replaceForeign)
+                throw new CapabilityError(
+                    "machine-mismatch",
+                    "Review migration explicitly; existing authority was preserved",
+                );
+            archive = `${path}.${randomUUID()}.foreign`;
+            writeFileSync(archive, readFileSync(path), {
+                flag: "wx",
+                mode: 0o600,
+            });
+            authority = { version: 1, machineId, projects: [] };
+        }
+        const projectRoot = realpathSync(project.projectRoot);
+        const normalized = parseAuthority({
+            version: 1,
+            machineId,
+            projects: [{ ...project, projectRoot }],
+        }).projects[0];
+        authority.projects = [
+            ...authority.projects.filter((p) => p.projectRoot !== projectRoot),
+            normalized,
+        ];
+        const serialized = {
+            ...authority,
+            projects: authority.projects.map((p) => ({
+                ...p,
+                projectRoot: persistedCapabilityPath(p.projectRoot),
+                grants: {
+                    ...p.grants,
+                    readPaths: p.grants.readPaths.map(persistedCapabilityPath),
+                    writePaths: p.grants.writePaths.map(
+                        persistedCapabilityPath,
+                    ),
+                    integrations: Object.fromEntries(
+                        Object.entries(p.grants.integrations).map(
+                            ([name, executables]) => [
+                                name,
+                                Object.fromEntries(
+                                    Object.entries(executables).map(
+                                        ([key, value]) => [
+                                            key,
+                                            persistedCapabilityPath(value),
+                                        ],
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+            })),
+        };
+        mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+        const temporary = `${path}.${randomUUID()}.tmp`;
+        try {
+            const fd = openSync(temporary, "wx", 0o600);
+            try {
+                writeFileSync(fd, `${JSON.stringify(serialized, null, 2)}\n`);
+                fsyncSync(fd);
+            } finally {
+                closeSync(fd);
+            }
+            renameSync(temporary, path);
+        } finally {
+            if (existsSync(temporary)) unlinkSync(temporary);
+        }
+        return archive;
+    });
+}
