@@ -13,8 +13,15 @@
  * streamSimple handles all streaming. No custom streamSimple needed.
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    renameSync,
+    writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -57,35 +64,77 @@ export interface CpaProviderHandle {
     refreshStartupProjection(ctx: LifecycleCtx): Promise<void>;
 }
 
-/**
- * Plain console.warn sink used at startup. Counts are emitted as a single
- * summary line (no theme available during synchronous registration).
- */
-const consoleDriftSink = (counts: CatalogDiffCounts): void => {
-    console.warn(
-        `[cpa] Catalog drift: ${counts.newCount} new model(s), ${counts.missingFallbackCount} missing fallback(s)`,
+/** Persists informational drift from non-interactive CPA invocations. */
+const HEADLESS_DRIFT_DIAGNOSTIC_PATH = join(
+    getAgentDir(),
+    "cache",
+    "ai-providers",
+    "cpa-catalog-drift.v1.json",
+);
+
+type HeadlessCatalogDrift = CatalogDiffCounts & { recordedAt: number };
+
+function formatCatalogDrift(counts: CatalogDiffCounts): string {
+    return `[cpa] Catalog drift: ${counts.newCount} new model(s), ${counts.missingFallbackCount} missing fallback(s)`;
+}
+
+function persistHeadlessCatalogDrift(counts: CatalogDiffCounts): void {
+    const directory = dirname(HEADLESS_DRIFT_DIAGNOSTIC_PATH);
+    const temporaryPath = join(
+        directory,
+        `.${basename(HEADLESS_DRIFT_DIAGNOSTIC_PATH)}.${process.pid}.${randomUUID()}.tmp`,
     );
-};
+    try {
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(
+            temporaryPath,
+            `${JSON.stringify({ ...counts, recordedAt: Date.now() })}\n`,
+            "utf8",
+        );
+        renameSync(temporaryPath, HEADLESS_DRIFT_DIAGNOSTIC_PATH);
+    } catch (error) {
+        process.stderr.write(
+            `[cpa] Failed to persist headless catalog drift: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+    }
+}
+
+function loadHeadlessCatalogDrift(): HeadlessCatalogDrift | undefined {
+    try {
+        const value: unknown = JSON.parse(
+            readFileSync(HEADLESS_DRIFT_DIAGNOSTIC_PATH, "utf8"),
+        );
+        if (
+            !value ||
+            typeof value !== "object" ||
+            !Number.isFinite((value as HeadlessCatalogDrift).recordedAt) ||
+            !Number.isInteger((value as HeadlessCatalogDrift).newCount) ||
+            !Number.isInteger(
+                (value as HeadlessCatalogDrift).missingFallbackCount,
+            )
+        ) {
+            return undefined;
+        }
+        return value as HeadlessCatalogDrift;
+    } catch {
+        return undefined;
+    }
+}
 
 /**
- * Themed runtime sink. Builds a colored TUI notification with `createUiColors`
- * lazily — colors are only resolved when drift actually flows, so callers
- * that never drift pay no theme-lookup cost and headless runs never touch
- * `ctx.ui.theme`.
- *   - new models highlighted as "primary"
- *   - missing fallbacks highlighted as "warning"
- * Falls back to {@link consoleDriftSink} when the UI is unavailable (headless).
+ * Routes interactive drift to TUI. Headless children persist the diagnostic
+ * out-of-band so an informational catalog difference never contaminates the
+ * child stderr Hermes uses for real execution failures.
  */
 function themedDriftSink(
     ctx: LifecycleCtx,
+    saveHeadlessCatalogDrift: (counts: CatalogDiffCounts) => void,
 ): (counts: CatalogDiffCounts) => void {
-    if (!ctx.hasUI || !ctx.ui.theme) {
-        return consoleDriftSink;
-    }
+    if (!ctx.hasUI) return saveHeadlessCatalogDrift;
     return (counts) => {
         const theme = ctx.ui.theme;
         if (!theme) {
-            consoleDriftSink(counts);
+            ctx.ui.notify(formatCatalogDrift(counts), "info");
             return;
         }
         const colors = createUiColors(theme);
@@ -178,6 +227,7 @@ export function registerCpaProvider(
         ) => Promise<void>;
         isSubagentChild?: () => boolean;
         exitProcess?: (code: number) => void;
+        saveHeadlessCatalogDrift?: (counts: CatalogDiffCounts) => void;
     },
 ): CpaProviderHandle {
     const buildModels = options?.buildModels ?? buildCpaModels;
@@ -200,6 +250,8 @@ export function registerCpaProvider(
         (() => Boolean(process.env.PI_SUBAGENT_CHILD_AGENT));
     const exitProcess =
         options?.exitProcess ?? ((code: number) => process.exit(code));
+    const saveHeadlessCatalogDrift =
+        options?.saveHeadlessCatalogDrift ?? persistHeadlessCatalogDrift;
     const cpaConfig = loadAiProvidersConfig().cpa;
     const catalogGuard = createCpaCatalogGuard({
         refreshTtlMs: cpaConfig?.refreshTtlMs ?? 30_000,
@@ -230,7 +282,10 @@ export function registerCpaProvider(
     async function refreshCatalog(
         ctx: LifecycleCtx,
         force = false,
-        sink: (counts: CatalogDiffCounts) => void = themedDriftSink(ctx),
+        sink: (counts: CatalogDiffCounts) => void = themedDriftSink(
+            ctx,
+            saveHeadlessCatalogDrift,
+        ),
     ) {
         const apiKey = getCliproxyApiKey();
         const result = await catalogGuard.refresh({
@@ -418,6 +473,22 @@ export function registerCpaProvider(
         description: "Refresh CPA models and validate the active model",
         handler: async (_args, ctx) => {
             await handle.refreshProjection(ctx, { force: true });
+        },
+    });
+
+    pi.registerCommand("cpa-drift", {
+        description: "Show latest headless CPA catalog drift diagnostic",
+        handler: (_args, ctx) => {
+            const drift = loadHeadlessCatalogDrift();
+            const message = drift
+                ? `${formatCatalogDrift(drift)}. Recorded ${new Date(drift.recordedAt).toISOString()}.`
+                : "[cpa] No headless catalog drift diagnostic recorded.";
+            if (ctx.hasUI) {
+                ctx.ui.notify(message, "info");
+            } else {
+                process.stdout.write(`${message}\n`);
+            }
+            return Promise.resolve();
         },
     });
 

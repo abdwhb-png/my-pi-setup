@@ -716,4 +716,60 @@ describe('registerCpaProvider', () => {
             .filter((m) => m.includes('Catalog drift'));
         expect(driftConsole.length).toBe(0);
     });
+
+    test('does not write catalog drift to stderr in a headless child', async () => {
+        const { pi, registeredHandlers } = createMockExtensionAPI();
+        const driftModel: ProviderModelConfig = {
+            id: 'ocg/go-headless-drift-model',
+            name: 'Headless drift',
+            reasoning: true,
+            input: ['text'],
+            contextWindow: 2000,
+            maxTokens: 200,
+            cost: { input: 0.5, output: 1.0, cacheRead: 0, cacheWrite: 0 },
+        };
+        const mockBuild = mock(() =>
+            Promise.resolve({
+                models: [...STATIC_FALLBACK_MODELS, driftModel],
+                entries: [fakeEntry], source: 'live' as const,
+            }),
+        );
+        const saveHeadlessCatalogDrift = mock(() => {});
+        registerCpaProvider(pi, {
+            buildModels: mockBuild,
+            saveHeadlessCatalogDrift,
+        } as Parameters<typeof registerCpaProviderProduction>[1]);
+
+        const warnSpy = mock(() => {});
+        const originalWarn = console.warn;
+        console.warn = warnSpy;
+        try {
+            const handler = registeredHandlers.find(
+                (entry) => entry.event === 'input',
+            )!;
+            await handler.handler(
+                { text: 'review memory' },
+                {
+                    model: {
+                        provider: 'cpa',
+                        id: STATIC_FALLBACK_MODELS[0].id,
+                    },
+                    modelRegistry: { find: () => STATIC_FALLBACK_MODELS[0] },
+                    hasUI: false,
+                    shutdown: mock(() => {}),
+                },
+            );
+        } finally {
+            console.warn = originalWarn;
+        }
+
+        const driftConsole = (warnSpy.mock.calls as unknown[][])
+            .map((call) => String(call[0]))
+            .filter((message) => message.includes('Catalog drift'));
+        expect(driftConsole).toEqual([]);
+        expect(saveHeadlessCatalogDrift).toHaveBeenCalledWith({
+            newCount: 1,
+            missingFallbackCount: 0,
+        });
+    });
 });

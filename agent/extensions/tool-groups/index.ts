@@ -21,6 +21,7 @@ import {
     getToolPolicy,
     registerToolPolicyContribution,
 } from "../_shared/tool-policy/index.ts";
+import { registerProviderCatalogFinalizer } from "../pi-overrides/provider-catalog-finalizer.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -243,6 +244,9 @@ export function createToolGroupsExtension(
             workflow.dispose();
             detach();
         });
+        // Keep this last: tool-groups is pinned as the final package and owns
+        // the final view of the provider payload after every earlier hook.
+        registerProviderCatalogFinalizer(pi);
     };
 }
 
