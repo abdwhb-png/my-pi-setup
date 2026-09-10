@@ -1,5 +1,7 @@
 /** Facts about one execution, independent of its output text. */
 export interface ExecutionProvenance {
+    shellProfile?: "isolated" | "integrated" | "host";
+    hostCapability?: "editor" | "dependencies" | "dev-services";
     status: "sandboxed" | "unsandboxed" | "unknown";
     profile:
         | "bash-general"

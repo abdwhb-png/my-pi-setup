@@ -34,6 +34,24 @@ export const bashWithStdinSchema = Type.Object({
 });
 
 export type BashWithStdinInput = Static<typeof bashWithStdinSchema>;
+export const safeBashWithCapabilitiesSchema = Type.Composite([
+    bashWithStdinSchema,
+    Type.Object({
+        hostCapability: Type.Optional(
+            Type.Union(
+                [
+                    Type.Literal("editor"),
+                    Type.Literal("dependencies"),
+                    Type.Literal("dev-services"),
+                ],
+                {
+                    description:
+                        "Request an already approved local integration. Omit for the normal shell profile. Never grants access by itself.",
+                },
+            ),
+        ),
+    }),
+]);
 
 export interface BashPreparationContext {
     command: string;
@@ -435,7 +453,13 @@ function createTrackedBashOperations(
                     const exitPromise = waitForChildProcess(child);
                     await readyPromise;
                     if (supervision && spawnSpec.execution)
-                        report({ status: "sandboxed", phase: "process" });
+                        report({
+                            status:
+                                spawnSpec.execution.backend === "host"
+                                    ? "unsandboxed"
+                                    : "sandboxed",
+                            phase: "process",
+                        });
                     const stdinPromise =
                         options.stdin === undefined
                             ? Promise.resolve()

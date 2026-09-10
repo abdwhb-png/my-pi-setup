@@ -121,6 +121,16 @@ export function parseExecutionProvenance(
             "timed-out",
             "blocked",
         ].includes(String(record.outcome)) ||
+        (record.shellProfile !== undefined &&
+            (typeof record.shellProfile !== "string" ||
+                !["isolated", "integrated", "host"].includes(
+                    record.shellProfile,
+                ))) ||
+        (record.hostCapability !== undefined &&
+            (typeof record.hostCapability !== "string" ||
+                !["editor", "dependencies", "dev-services"].includes(
+                    record.hostCapability,
+                ))) ||
         (record.exitCode !== undefined &&
             record.exitCode !== null &&
             !Number.isSafeInteger(record.exitCode))
@@ -135,6 +145,12 @@ export function parseExecutionProvenance(
         phase: record.phase,
         outcome: record.outcome,
         ...(record.exitCode !== undefined ? { exitCode: record.exitCode } : {}),
+        ...(record.shellProfile !== undefined
+            ? { shellProfile: record.shellProfile }
+            : {}),
+        ...(record.hostCapability !== undefined
+            ? { hostCapability: record.hostCapability }
+            : {}),
     } as ExecutionProvenance;
 }
 

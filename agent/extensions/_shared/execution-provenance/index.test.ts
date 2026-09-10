@@ -49,6 +49,12 @@ test('wire provenance rejects non-scalar values and does not copy arbitrary data
     expect(parseExecutionProvenance({ ...hostExecution(), raw: 'do not propagate' })).toEqual(hostExecution());
 });
 
+test('wire provenance preserves validated shell profile and host capability', () => {
+    const execution = { ...hostExecution(), shellProfile: 'integrated' as const, hostCapability: 'editor' as const };
+    expect(parseExecutionProvenance(execution)).toEqual(execution);
+    expect(parseExecutionProvenance({ ...execution, hostCapability: 'arbitrary' })).toBeUndefined();
+});
+
 test('Think JSON failure is its own receipt and remains parseable', () => {
     const message: AgentMessage = { role: 'toolResult', toolCallId: 'think-error', toolName: 'think_execute', content: [{ type: 'text', text: JSON.stringify({ tool: 'think_execute', status: 'error', sourceExecution: hostExecution(), analysisExecution: hostExecution() }) }], isError: true, timestamp: 1 };
     expect(addExecutionContext([message])[0]).toEqual(message);
