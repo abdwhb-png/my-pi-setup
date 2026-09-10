@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { createCpaCatalogGuard } from './cpa-catalog-guard.ts';
+import type { CpaCatalogResult } from './cpa-models.ts';
 
 const liveModel: ProviderModelConfig = {
     id: 'ocg/go-deepseek-v4-pro',
@@ -23,7 +24,7 @@ describe('createCpaCatalogGuard', () => {
         const result = await guard.refresh({
             force: true,
             activeModel: { provider: 'cpa', id: 'ocg/deepseek-v4-pro' },
-            loadCatalog: async () => ({ models: [liveModel], source: 'live' }),
+            loadCatalog: async () => ({ models: [liveModel], entries: [], source: 'live' }),
             registerModels,
             hasModel: (_provider, id) => id === liveModel.id,
         });
@@ -48,6 +49,7 @@ describe('createCpaCatalogGuard', () => {
             activeModel: { provider: 'cpa', id: 'ocg/go-deepseek-v4-pro' },
             loadCatalog: async () => ({
                 models: [liveModel],
+                entries: [],
                 source: 'fallback',
             }),
             registerModels,
@@ -66,6 +68,7 @@ describe('createCpaCatalogGuard', () => {
         let currentTime = 1_000;
         const loadCatalog = mock(async () => ({
             models: [liveModel],
+            entries: [],
             source: 'live' as const,
         }));
         const guard = createCpaCatalogGuard({
@@ -93,15 +96,9 @@ describe('createCpaCatalogGuard', () => {
 
     test('shares one in-flight catalog refresh across concurrent callers', async () => {
         let resolveCatalog:
-            | ((value: {
-                  models: ProviderModelConfig[];
-                  source: 'live';
-              }) => void)
+            | ((value: CpaCatalogResult) => void)
             | undefined;
-        const catalogPromise = new Promise<{
-            models: ProviderModelConfig[];
-            source: 'live';
-        }>((resolve) => {
+        const catalogPromise = new Promise<CpaCatalogResult>((resolve) => {
             resolveCatalog = resolve;
         });
         const loadCatalog = mock(() => catalogPromise);
@@ -118,7 +115,7 @@ describe('createCpaCatalogGuard', () => {
 
         const first = guard.refresh(input);
         const second = guard.refresh(input);
-        resolveCatalog?.({ models: [liveModel], source: 'live' });
+        resolveCatalog?.({ models: [liveModel], entries: [], source: 'live' });
 
         expect(await first).toEqual({
             state: 'valid',
@@ -134,11 +131,9 @@ describe('createCpaCatalogGuard', () => {
     });
 
     test('preserves a confirmed stale decision when a later refresh falls back', async () => {
-        let catalog: {
-            models: ProviderModelConfig[];
-            source: 'live' | 'fallback';
-        } = {
+        let catalog: CpaCatalogResult = {
             models: [liveModel],
+            entries: [],
             source: 'live',
         };
         const guard = createCpaCatalogGuard({
@@ -154,7 +149,7 @@ describe('createCpaCatalogGuard', () => {
         };
 
         await guard.refresh(input);
-        catalog = { models: [liveModel], source: 'fallback' };
+        catalog = { models: [liveModel], entries: [], source: 'fallback' };
         const result = await guard.refresh(input);
 
         expect(result).toEqual({
@@ -165,11 +160,9 @@ describe('createCpaCatalogGuard', () => {
     });
 
     test('does not carry a stale decision to a different active model', async () => {
-        let catalog: {
-            models: ProviderModelConfig[];
-            source: 'live' | 'fallback';
-        } = {
+        let catalog: CpaCatalogResult = {
             models: [liveModel],
+            entries: [],
             source: 'live',
         };
         const guard = createCpaCatalogGuard({
@@ -187,7 +180,7 @@ describe('createCpaCatalogGuard', () => {
             ...baseInput,
             activeModel: { provider: 'cpa', id: 'ocg/deepseek-v4-pro' },
         });
-        catalog = { models: [liveModel], source: 'fallback' };
+        catalog = { models: [liveModel], entries: [], source: 'fallback' };
         const result = await guard.refresh({
             ...baseInput,
             activeModel: { provider: 'cpa', id: liveModel.id },

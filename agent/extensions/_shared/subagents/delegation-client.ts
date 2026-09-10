@@ -19,7 +19,6 @@ const terminalStatuses = [
     "timed_out",
     "cancelled",
     "interrupted",
-    "turn_budget_exhausted",
     "tool_budget_exhausted",
     "structured_output_failed",
     "acceptance_failed",

@@ -1,45 +1,26 @@
 /**
  * Tests for the audit-mode owner extension.
  *
- * Uses bun:test. Mocks @earendil-works/pi-coding-agent since it requires
- * the pi runtime. Imports the real shared audit-mode modules directly.
+ * Exercises registration and commands through the real Pi runtime.
  */
 
-import { mock, describe, it, expect, beforeEach } from "bun:test";
+import { mock, describe, it, expect, beforeEach, afterAll, spyOn } from "bun:test";
+import { createTestSession } from "@abdwhb-png/pi-test-harness";
+import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import activate, { renderAuditWidget } from "./index.ts";
 
 // ─── Mock pi framework ───────────────────────────────────────────────────────
 
 type NotifySeverity = "info" | "warning" | "error";
-type EventHandler = (...args: never[]) => void;
 
 type NotifyCall = [message: string, severity: NotifySeverity];
 const mockNotify = mock<(...args: NotifyCall) => void>();
-const mockCtx = {
-  cwd: "/tmp/test-project",
-  ui: { notify: mockNotify },
-};
-
-const eventHandlers: Record<string, EventHandler> = {};
-let commandHandler: ((args: string, ctx: typeof mockCtx) => void) | null = null;
-let completionsFn: ((prefix: string) => { value: string; label: string }[] | null) | null = null;
-
-const mockPi = {
-  on: mock((event: string, handler: EventHandler) => {
-    eventHandlers[event] = handler;
-  }),
-  registerCommand: mock(
-    (
-      _name: string,
-      opts: {
-        handler: (args: string, ctx: typeof mockCtx) => void;
-        getArgumentCompletions?: (prefix: string) => { value: string; label: string }[] | null;
-      },
-    ) => {
-      commandHandler = opts.handler;
-      completionsFn = opts.getArgumentCompletions ?? null;
-    },
-  ),
-};
+const session = await createTestSession({ extensionFactories: [activate] });
+const runner = session.session.extensionRunner;
+if (!runner) throw new Error("Pi extension runtime unavailable");
+runner.setUIContext({ ...runner.createContext().ui, notify: mockNotify });
+const command = runner.getCommand("audit-mode");
+const completionsFn = command?.getArgumentCompletions;
 
 // ─── Configurable SettingsManager factory ────────────────────────────────────
 // Tests set `settingsFactory` to control what each `fireSessionStart` returns.
@@ -54,23 +35,18 @@ let settingsFactory: SettingsFactory = (_cwd) => ({
   getProjectSettings: () => ({}),
 });
 
-void mock.module("@earendil-works/pi-coding-agent", () => ({
-  SettingsManager: {
-    create: (cwd: string) => settingsFactory(cwd),
-  },
-}));
-
-// ─── Dynamic import after mock setup ────────────────────────────────────────
-
-const { default: activate } = await import("./index.ts");
-
-const { renderAuditWidget } = await import("./index.ts");
-
-// Activate the extension with the mock pi object.
-// The mock only implements the slim API surface this test exercises; the real
-// `ExtensionAPI` is large and repo lint forbids `unknown`, so we bypass it.
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion
-activate(mockPi as Parameters<typeof activate>[0]);
+const settingsSpy = spyOn(SettingsManager, "create").mockImplementation(cwd => {
+  const fixture = settingsFactory(cwd ?? session.cwd);
+  const manager = SettingsManager.inMemory();
+  spyOn(manager, "getGlobalSettings").mockImplementation(fixture.getGlobalSettings);
+  spyOn(manager, "getProjectSettings").mockImplementation(fixture.getProjectSettings);
+  return manager;
+});
+afterAll(async () => {
+  settingsSpy.mockRestore();
+  await runner.emit({ type: "session_shutdown", reason: "quit" });
+  session.dispose();
+});
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -79,27 +55,24 @@ const { getActiveProfile, resetAuditState, getActivePolicy } = await import(
   "../_shared/audit-mode/audit-state.ts"
 );
 
-async function fireSessionStart(cwd = "/tmp/test-project"): Promise<void> {
-  const handler = eventHandlers["session_start"];
-  if (!handler) throw new Error("session_start handler not registered");
-  await Promise.resolve(handler({}, { ...mockCtx, cwd }));
+async function fireSessionStart(): Promise<void> {
+  await runner.emit({ type: "session_start", reason: "resume" });
 }
 
 async function runCommand(args: string): Promise<void> {
-  if (!commandHandler) throw new Error("command handler not registered");
-  await Promise.resolve(commandHandler(args, mockCtx));
+  if (!command) throw new Error("command handler not registered");
+  await command.handler(args, runner.createCommandContext());
 }
 
 // ─── Test suite ─────────────────────────────────────────────────────────────
 
 describe("audit-mode extension — registration", () => {
   it("registers session_start handler", () => {
-    expect(eventHandlers["session_start"]).toBeDefined();
+    expect(runner.hasHandlers("session_start")).toBe(true);
   });
 
   it("registers audit-mode command", () => {
-    expect(mockPi.registerCommand.mock.calls.length).toBeGreaterThan(0);
-    expect(mockPi.registerCommand.mock.calls[0][0]).toBe("audit-mode");
+    expect(runner.getRegisteredCommands().map(value => value.name)).toContain("audit-mode");
   });
 });
 
@@ -270,8 +243,8 @@ describe("audit-mode command — unknown arg", () => {
 });
 
 describe("audit-mode command — completions", () => {
-  it("returns all subcommands on empty prefix", () => {
-    const completions = completionsFn?.("") ?? [];
+  it("returns all subcommands on empty prefix", async () => {
+    const completions = await completionsFn?.("") ?? [];
     const values = completions.map((c) => c.value);
     expect(values).toContain("on");
     expect(values).toContain("off");
@@ -279,8 +252,8 @@ describe("audit-mode command — completions", () => {
     expect(values).toContain("status");
   });
 
-  it("filters completions by prefix", () => {
-    const completions = completionsFn?.("a") ?? [];
+  it("filters completions by prefix", async () => {
+    const completions = await completionsFn?.("a") ?? [];
     const values = completions.map((c) => c.value);
     expect(values).toContain("advanced");
     expect(values).not.toContain("on");

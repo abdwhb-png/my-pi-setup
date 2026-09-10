@@ -235,7 +235,6 @@ test('settles every terminal status and ignores malformed terminal payloads', as
         'timed_out',
         'cancelled',
         'interrupted',
-        'turn_budget_exhausted',
         'tool_budget_exhausted',
         'structured_output_failed',
         'acceptance_failed',
@@ -262,6 +261,7 @@ test('settles every terminal status and ignores malformed terminal payloads', as
         settled = true;
     });
     const malformed = [
+        { ...response('req-malformed'), status: 'turn_budget_exhausted' },
         { requestId: 'req-malformed', status: 'running' },
         { requestId: 'req-malformed', status: 'completed' },
         { requestId: 'req-malformed' },

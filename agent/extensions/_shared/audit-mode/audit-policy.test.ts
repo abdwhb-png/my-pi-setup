@@ -66,6 +66,11 @@ describe("DEFAULT_PROFILES", () => {
 // ─── normalizeAuditSettings ─────────────────────────────────────────────────
 
 describe("normalizeAuditSettings", () => {
+  it("drops unknown and non-boolean override fields", () => {
+    expect(normalizeAuditSettings({ profiles: { audit: {
+      enforceNativeTools: "false", "listing.showHidden": true, unexpected: true,
+    } } })).toEqual({ profiles: { audit: { "listing.showHidden": true } } });
+  });
   it("returns empty object for undefined input", () => {
     expect(normalizeAuditSettings(undefined)).toEqual({});
   });

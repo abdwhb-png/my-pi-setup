@@ -3488,7 +3488,6 @@ test('non-success terminal policies fail closed without relaunching', async () =
         'timed_out',
         'cancelled',
         'interrupted',
-        'turn_budget_exhausted',
         'tool_budget_exhausted',
         'acceptance_failed',
         'invalid_request',
