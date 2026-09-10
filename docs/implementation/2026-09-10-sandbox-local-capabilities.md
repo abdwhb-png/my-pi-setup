@@ -13,10 +13,16 @@ jusqu’à la migration utilisateur et au redémarrage complet de Pi. Consultez
 | L1 | `58b700d` | Autorité locale, identité Linux/projet, préférences restrictives, protection du magasin. |
 | L3 | `729b87f` | Adaptateurs Zed, SFW/npm/Pi et Dev Services, supervision et provenance hôte. |
 | L4 | `8d209f8` | Commandes utilisateur, migration, routage `safe_bash`, contrôles Pi et contexte du modèle. |
+| L5 | `1395f0a` | Guide, migration, scénarios d’évaluation et bilan initial. |
+| C1 | `a3fa596` | Canonicalisation des accès demandés et protection des alias vers une autorité absente. |
+| C2 | `aa201af` | Installation du broker Docker corrigé et provenance vérifiée. |
+| C3 | `c04c4b4` | Alignement des contrats Audit, SDD, CPA et raccourcis avec Pi installé. |
 
 Le runtime a été commité avant l’autorité pour introduire son contrat de
 namespace avant ses consommateurs. Aucun paquet de permissions ni manifeste
-de dépendances n’a été modifié. Le binaire Zerobox installé reste inchangé.
+de dépendances n’a été modifié. Les cinq lots initiaux ont été intégrés dans
+le checkout d’origine. À la demande de l’utilisateur, les écarts Docker et
+TypeScript initialement signalés ont ensuite été corrigés dans ce checkout.
 
 ## Vérifications exécutées
 
@@ -28,10 +34,11 @@ bun test --isolate extensions/sandbox/ extensions/bash-execution/ \
   extensions/_shared/execution-provenance/
 ```
 
-Dernière suite élargie dans le worktree : **602 réussites, 8 parcours optionnels
-désactivés, 1 échec Docker préexistant**, sur 611 tests. Après cette exécution,
-un cas supplémentaire vérifie que le profil hôte autorisé reste indépendant
-des préférences de lecture du moteur strict : les 8 tests d’autorité passent.
+Dernière suite élargie dans le checkout d’origine : **607 réussites, 8 parcours
+optionnels désactivés, aucun échec**, sur 615 tests dans 62 fichiers.
+Le résultat initial du worktree était bien **602 réussites, 8 parcours
+désactivés et 1 échec Docker préexistant**. Il reste une preuve du décalage
+avant correction, pas le résultat de la livraison finale.
 Les 8 parcours optionnels comprennent les 3 essais hôte relancés séparément
 ci-dessous et 5 scénarios dépendant de services/projets locaux particuliers.
 
@@ -59,7 +66,9 @@ commande bénigne sur le projet déjà enregistré. Aucun service ni donnée de
 projet n’a été redémarré ou supprimé par cette validation.
 
 Le formatage a utilisé `bun run fmt:files` et les exclusions du dépôt. Le lint
-ciblé des 40 fichiers TypeScript se termine avec **0 erreur et 97 avertissements**.
+initial des 40 fichiers TypeScript se termine avec **0 erreur et 97 avertissements**.
+Les fichiers corrigés ensuite ont également passé leur lint ciblé, avec des
+avertissements conservés et aucune erreur.
 Le script `lint` force un parcours global avec `oxlint .`; le binaire local a
 donc été utilisé directement pour limiter ce contrôle aux fichiers de la tâche.
 `git diff --check` passe.
@@ -69,27 +78,64 @@ bun run typecheck
 ./node_modules/.bin/tsc --noEmit -p tsconfig.sandbox.json
 ```
 
-Le contrôle global dans le worktree reste en échec avec **25 diagnostics hors
-des fichiers de la tâche**. Il inclut des erreurs des autres extensions et des
-résolutions de dépendances propres au worktree. Le contrôle ciblé reste bloqué
-par un diagnostic transitif préexistant dans `pi-mcp-adapter/unix-socket-transport.ts:33`
-(`string | NonSharedBuffer` transmis à une API attendant `Buffer`). Aucun
-diagnostic ne vise les modules modifiés. Ne présentez pas ces commandes comme
-un contrôle de types global réussi.
+Les deux contrôles de types passent dans le checkout d’origine. Les **201 tests
+des contrats corrigés passent** : Audit, raccourcis, catalogue CPA et délégation
+SDD. Audit normalise les entrées JSON non fiables et ses tests de commandes
+utilisent désormais le vrai runtime Pi. Les raccourcis sont validés avant leur
+enregistrement. SDD refuse le statut externe supprimé `turn_budget_exhausted`
+sans modifier son budget interne. Les fixtures CPA utilisent le type public
+actuel, sans modifier les changements utilisateur dans `cpa.ts` et `cpa.test.ts`.
 
-## Écart Docker confirmé avant changement
+Dans le dépôt propriétaire `~/.pi/agent/git/github.com/abdwhb-png/pi-mcp-adapter`,
+le commit local `53733d3` normalise les fragments texte du socket Unix en Buffer.
+Le défaut a été reproduit avant correction. Les **6 tests ciblés** du transport
+et de sa connexion MCP passent, ainsi que `bun run typecheck` de ce paquet.
 
-Le test `extensions/sandbox/docker-exec.integration.test.ts` échoue également
-dans le checkout d’origine au commit `6d4aa91`. Le runtime installé est
+```sh
+bun test --isolate extensions/audit-mode/index.test.ts extensions/_shared/audit-mode/ \
+  extensions/ogulcancelik-pi-extensions/quit-and-delete.test.ts \
+  extensions/ai-providers/providers/cpa-catalog-guard.test.ts \
+  extensions/sdd-orchestrator/delegation-client.test.ts \
+  extensions/sdd-orchestrator/workflow.test.ts
+```
+
+## Correction Docker et provenance
+
+Le test `extensions/sandbox/docker-exec.integration.test.ts` échouait également
+dans le checkout d’origine au commit `6d4aa91`. Le runtime installé était
 `0.3.3-fork.17`, commit source `fff8a45a6092f78f7c4fefd57ad3fc9ac449ff94`.
-Le checkout Zerobox consulté est plus récent (`d21bf650c100d09f79e4d217513ba66f0675c6c9`).
-Le binaire ancien renvoie `Docker operation forbidden` et son validateur
-`safe_exec_create_body` refuse `DetachKeys: ""`, accepté par le contrat de test
-plus récent. Le test adapté au `/tmp` privé atteint ce refus `unsafe Docker exec
-forbidden`. Le décalage n’a pas été corrigé en élargissant les autorisations ou
-en remplaçant le binaire. Traitez sa mise à jour et sa provenance dans une
-livraison Zerobox distincte. Les garanties Docker Administration/break-glass de
-ce test ne sont donc pas validées contre le binaire actuellement installé.
+Le checkout Zerobox consulté (`d21bf650c100d09f79e4d217513ba66f0675c6c9`)
+était **plus ancien**, avec des corrections Docker non commitées. Le bilan
+initial le qualifiait à tort de plus récent.
+Le binaire ancien renvoyait `Docker operation forbidden` et son validateur
+`safe_exec_create_body` refusait `DetachKeys: ""`, accepté par le contrat de test
+plus récent. Le test adapté au `/tmp` privé atteignait ce refus
+`unsafe Docker exec forbidden`.
+
+Le nouveau worktree `~/projects/shared-services/sandboxes/zerobox-local-capabilities`
+part du commit réellement installé `fff8a45`, conserve ses correctifs de
+renommages et intègre les trois fichiers Docker modifiés dans le checkout
+ancien. Le commit local `5c530891c2883bfbfd192883002cfc9b0f50e632` porte cette
+correction. Le checkout Zerobox ancien et ses modifications restent intacts.
+
+`./scripts/sync.sh` a rejoué les patches sans rejet. Les tests exécutés donnent
+**27 réussites pour le broker Docker**, **4 pour son protocole** et **10 pour
+les accès dynamiques aux fichiers**, avec un benchmark volontairement ignoré.
+Le formatage et Clippy strict selon les options CI applicables passent.
+Un premier appel Clippy avec `--all-targets`, absent du contrat CI, avait
+signalé les `expect()` des anciens tests. Il n’est pas présenté comme vert.
+La compilation release a réutilisé le cache local, avec `--locked --offline`.
+
+Le binaire installé est une **compilation locale de fork.17**, sans nouvelle
+publication ni déplacement du tag. Sa provenance distingue le tag d’origine,
+le commit construit et le hash de leur différence. Les **2 tests d’intégration
+Docker réels passent**, y compris Administration, inspection et break-glass.
+
+Conservez le retour arrière dans
+`~/.local/state/pi/rollback/zerobox-before-capabilities-20260910/` : il contient
+le binaire précédent et son `zerobox-provenance.json`. Restaurez ces deux
+fichiers ensemble si nécessaire. Le SHA-256 du binaire précédent est
+`abbbb91b3500556e77f9552d15be0f732e01862f6236c828455264bebcfec64b`.
 
 ## Racines vérifiées
 
@@ -98,8 +144,10 @@ ce test ne sont donc pas validées contre le binaire actuellement installé.
 | Pi | `~/.pi/agent/node_modules/@earendil-works/pi-coding-agent`, `0.85.0`; `dist/index.js` résout vers `~/projects/pi-core/packages/coding-agent/dist/index.js` |
 | Harness de test | `~/.pi/agent/node_modules/@abdwhb-png/pi-test-harness`, `0.7.0` |
 | Permissions | `~/.pi/agent/npm/node_modules/@gotgenes/pi-permission-system`, `24.0.0` |
-| Extensions modifiées pendant les tests | `~/.pi-worktrees/sandbox-local-capabilities/agent/extensions` |
-| Zerobox | `~/.pi/bin/zerobox`, SHA-256 `abbbb91b3500556e77f9552d15be0f732e01862f6236c828455264bebcfec64b` |
+| Extensions lors de la validation finale | `~/.pi/agent/extensions` |
+| Subagents | `~/.pi/agent/git/github.com/abdwhb-png/pi-subagents/src/api/delegation.ts`, `0.62.0` |
+| Adaptateur MCP corrigé | `~/.pi/agent/git/github.com/abdwhb-png/pi-mcp-adapter`, `2.27.0`, commit local `53733d3` |
+| Zerobox | `~/.pi/bin/zerobox`, SHA-256 `1a8202290afac9a4f8396ef7e0d8918cbcf82c4a89ebe6c303c3536e04aad53d` |
 | SFW / npm | Binaire SFW `1.15.1`, npm `12.0.1` |
 
 Les dépendances existantes ont été réutilisées. Les dépendances Analysis ont
