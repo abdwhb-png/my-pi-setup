@@ -13,6 +13,9 @@ Set `hostCapability: "editor" | "dependencies" | "dev-services"` to request an
 existing local integration grant with one literal command. Keep the `command`
 argument on the `pi-permission-system` Bash surface. Apply every Safe Bash guard
 before dispatch. See [the capability contract](../../sandbox/docs/shell-capabilities.md).
+Use `editor <project-file>` for the editor capability. The saved local grant
+selects the actual editor launcher, so the model contract does not depend on a
+product name.
 
 Pattern matching cannot prove a command harmless, and processes running as the same OS user can modify local telemetry.
 

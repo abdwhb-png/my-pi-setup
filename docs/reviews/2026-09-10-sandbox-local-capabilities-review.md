@@ -204,9 +204,15 @@ auto-approbation.
 | F5      | Une fixture Dev Services reste active pendant la révocation : l’opération admise termine, l’appel suivant est refusé et le compteur revient à zéro. Timeout et annulation explicite sont couverts séparément.                                                          |
 | F6      | `migrate --session` annonce une application de session et laisse l’autorité étrangère inchangée. Seule la migration persistante promet une sauvegarde et un archivage.                                                                                                 |
 
+Une clarification ultérieure a supprimé le nom Zed du contrat `editor`. Les
+nouvelles autorités enregistrent un `launcher` local sélectionné et le modèle
+utilise `editor <fichier>`. Zed reste un fournisseur compatible et son ancienne
+forme d’autorité reste lisible. Un test Pi réussi utilise un faux lanceur dont
+le nom ne correspond à aucun éditeur connu.
+
 Les vérifications finales donnent :
 
-- suite transversale : **621 réussites, 8 parcours optionnels désactivés, aucun échec**, sur 629 tests dans 63 fichiers;
+- suite transversale : **624 réussites, 8 parcours optionnels désactivés, aucun échec**, sur 632 tests dans 63 fichiers;
 - suite ciblée de remédiation : **269 réussites, 8 parcours optionnels désactivés, aucun échec**;
 - dernier contrôle F1/F2 après refactor : **36 réussites, aucun échec**;
 - typecheck global et typecheck Sandbox : réussis;

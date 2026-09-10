@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
-import { discoverIntegration } from "./adapters.ts";
+import { approvedExecutable, discoverIntegration } from "./adapters.ts";
 import {
     capabilityAuthorityPath,
     CapabilityError,
@@ -39,6 +39,7 @@ export interface CapabilityCommandOptions<C extends CapabilityCommandContext> {
 }
 const HELP =
     "Use /sandbox profile isolated|integrated|host, or /sandbox capabilities [grant|revoke editor|dependencies|dev-services|network|host-network|read-path|write-path|tmp|host] [--session]. Use /sandbox capabilities migrate to review existing settings.";
+const CUSTOM_EDITOR_LAUNCHER = "Choose another installed editor launcher path";
 
 export function createCapabilityCommands<
     C extends CapabilityCommandContext = CapabilityCommandContext,
@@ -197,20 +198,59 @@ export function createCapabilityCommands<
                                 capability,
                                 ctx.cwd,
                             );
-                            const required =
-                                capability === "editor"
-                                    ? ["zed"]
-                                    : capability === "dependencies"
-                                      ? ["sfw", "npm"]
-                                      : ["dev-services"];
-                            for (const executable of required) {
-                                if (!executables[executable])
+                            if (capability === "editor") {
+                                const discovered = new Map(
+                                    Object.entries(executables).map(
+                                        ([editorName, path]) => [
+                                            `${editorName}: ${path}`,
+                                            path,
+                                        ],
+                                    ),
+                                );
+                                const selection = await ctx.ui.select(
+                                    "Choose the local editor launcher for this project",
+                                    [
+                                        ...discovered.keys(),
+                                        CUSTOM_EDITOR_LAUNCHER,
+                                    ],
+                                );
+                                if (!selection) return true;
+                                let selectedPath = discovered.get(selection);
+                                if (selection === CUSTOM_EDITOR_LAUNCHER) {
+                                    const input = await ctx.ui.input(
+                                        "Approved editor launcher",
+                                        "Absolute or home-relative path to an installed launcher",
+                                    );
+                                    if (!input?.trim()) return true;
+                                    selectedPath = input.trim();
+                                }
+                                if (!selectedPath)
                                     throw new CapabilityError(
                                         "integration-unavailable",
-                                        `${executable} was not found in installed host tools. Install/configure it from the host first; no installation was attempted.`,
+                                        "Select one of the discovered editor launchers or enter its installed path",
                                     );
+                                next.grants.integrations.editor = {
+                                    launcher: approvedExecutable(
+                                        selectedPath,
+                                        next.projectRoot,
+                                        "editor launcher",
+                                    ),
+                                };
+                            } else {
+                                const required =
+                                    capability === "dependencies"
+                                        ? ["sfw", "npm"]
+                                        : ["dev-services"];
+                                for (const executable of required) {
+                                    if (!executables[executable])
+                                        throw new CapabilityError(
+                                            "integration-unavailable",
+                                            `${executable} was not found in installed host tools. Install/configure it from the host first; no installation was attempted.`,
+                                        );
+                                }
+                                next.grants.integrations[capability] =
+                                    executables;
                             }
-                            next.grants.integrations[capability] = executables;
                         }
                     } else if (name === "tmp") next.grants.hostTmp = grant;
                     else if (name === "host") {

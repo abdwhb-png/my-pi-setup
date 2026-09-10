@@ -24,8 +24,15 @@ async function run(
     command: string,
     environment: Record<string, string> = {},
 ) {
+    const discovered = discoverIntegration(capability, cwd);
+    const integration =
+        capability === "editor"
+            ? discovered.zed
+                ? { launcher: discovered.zed }
+                : {}
+            : discovered;
     const policy: ShellCapabilityResolution = { state: "ready", projectRoot: cwd, profile: "integrated", requestedProfile: "integrated",
-        grants: { ...emptyGrants(), integrations: { [capability]: discoverIntegration(capability, cwd) } }, requestedGrants: emptyGrants(), authorityPath: join(cwd, "unused-authority") };
+        grants: { ...emptyGrants(), integrations: { [capability]: integration } }, requestedGrants: emptyGrants(), authorityPath: join(cwd, "unused-authority") };
     const owner = Symbol(`installed-${capability}-smoke`);
     const previous = new Map(
         Object.keys(environment).map((name) => [name, process.env[name]]),
@@ -94,7 +101,7 @@ test.skipIf(!enabled)("installed Zed accepts a named file from the approved proj
     const cwd = await mkdtemp(join(import.meta.dir, ".zed-smoke-"));
     try {
         await writeFile(join(cwd, "sandbox-capability-smoke.txt"), "Pi sandbox capability smoke test. This temporary file contains no project data.\n");
-        await run("editor", cwd, "zed sandbox-capability-smoke.txt");
+        await run("editor", cwd, "editor sandbox-capability-smoke.txt");
         // Zed forwards the request asynchronously. Keep the fixture available for
         // the optional manual UI observation instead of deleting it on CLI exit.
         if (process.env.PI_SANDBOX_ZED_OBSERVE === "1") await Bun.sleep(30_000);

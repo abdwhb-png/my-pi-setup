@@ -12,6 +12,20 @@ test("malformed capability grants cannot become a valid authority", () => {
         expect(() => parseGrants(grants)).toThrow("invalid-authority");
     }
 });
+test("editor grants persist a generic launcher while legacy Zed grants remain readable", () => {
+    expect(
+        parseGrants({
+            ...emptyGrants(),
+            integrations: { editor: { launcher: "/opt/editor/open-file" } },
+        }).integrations.editor,
+    ).toEqual({ launcher: "/opt/editor/open-file" });
+    expect(
+        parseGrants({
+            ...emptyGrants(),
+            integrations: { editor: { zed: "/opt/zed/bin/zed" } },
+        }).integrations.editor,
+    ).toEqual({ zed: "/opt/zed/bin/zed" });
+});
 function fixture() {
     const root = mkdtempSync(join(tmpdir(), "pi-capability-"));
     roots.push(root);

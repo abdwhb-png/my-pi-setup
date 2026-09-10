@@ -121,7 +121,7 @@ test.each([
     {
         code: "unsupported-command" as const,
         expected:
-            "Zed may open existing files inside the approved project only",
+            "The editor may open existing files inside the approved project only",
         state: "missing-file" as const,
         expectedProfile: "integrated" as const,
     },
@@ -254,7 +254,7 @@ test("real Pi runs every approved host integration through safe_bash and Bash pe
         );
         return path;
     };
-    const zed = await launcher("editor", "editor-ok");
+    const editorLauncher = await launcher("editor", "editor-ok");
     const sfw = await launcher("dependencies", "dependencies-ok");
     const devServices = await launcher("dev-services", "dev-services-ok");
     const npm = join(root, "npm");
@@ -268,7 +268,7 @@ test("real Pi runs every approved host integration through safe_bash and Bash pe
         grants: {
             ...emptyGrants(),
             integrations: {
-                editor: { zed },
+                editor: { launcher: editorLauncher },
                 dependencies: { sfw, npm },
                 "dev-services": { "dev-services": devServices },
             },
@@ -292,7 +292,7 @@ test("real Pi runs every approved host integration through safe_bash and Bash pe
         await session.run(
             when("Use each approved local integration", [
                 calls("safe_bash", {
-                    command: "zed sample.ts",
+                    command: "editor sample.ts",
                     hostCapability: "editor",
                 }),
                 calls("safe_bash", {

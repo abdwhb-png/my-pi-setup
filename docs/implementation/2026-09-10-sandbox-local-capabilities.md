@@ -25,6 +25,13 @@ de dépendances n’a été modifié. Les cinq lots initiaux ont été intégré
 le checkout d’origine. À la demande de l’utilisateur, les écarts Docker et
 TypeScript initialement signalés ont ensuite été corrigés dans ce checkout.
 
+Après clarification du périmètre, la capacité `editor` a été découplée de Zed.
+Le modèle appelle `editor <fichier-du-projet>` et l’autorité conserve le chemin
+du lanceur local choisi sous une clé générique. La sélection interactive détecte
+plusieurs éditeurs courants ou accepte un chemin installé explicite. Zed reste
+un fournisseur testé et une ancienne clé `zed` reste lisible; aucune commande
+hôte arbitraire n’est accordée par cette compatibilité.
+
 ## Vérifications exécutées
 
 Exécutez les commandes depuis `~/.pi/agent`, avec les dépendances déjà installées.
@@ -35,8 +42,8 @@ bun test --isolate extensions/sandbox/ extensions/bash-execution/ \
   extensions/_shared/execution-provenance/
 ```
 
-Dernière suite élargie dans le checkout d’origine : **621 réussites, 8 parcours
-optionnels désactivés, aucun échec**, sur 629 tests dans 63 fichiers.
+Dernière suite élargie dans le checkout d’origine : **624 réussites, 8 parcours
+optionnels désactivés, aucun échec**, sur 632 tests dans 63 fichiers.
 Le résultat initial du worktree était bien **602 réussites, 8 parcours
 désactivés et 1 échec Docker préexistant**. Il reste une preuve du décalage
 avant correction, pas le résultat de la livraison finale.
@@ -106,7 +113,8 @@ Les **38 tests ciblés** du chargement, de l’exécution, des permissions et du
 routage passent, ainsi que le contrôle de types global et les contrôles de
 formatage/lint ciblés. La suite de 607 tests avait précédé cette correction et
 ne constituait donc pas une preuve du chargement Node/Jiti. La suite finale de
-621 tests l’inclut avec les remédiations de la revue indépendante.
+624 tests l’inclut avec les remédiations de la revue indépendante et le
+découplage de l’éditeur.
 
 Dans le dépôt propriétaire `~/.pi/agent/git/github.com/abdwhb-png/pi-mcp-adapter`,
 le commit local `53733d3` normalise les fragments texte du socket Unix en Buffer.

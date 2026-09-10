@@ -20,10 +20,13 @@ const loaded = await loadExtensions(paths, agentDir);
 assert.deepEqual(loaded.errors, [], JSON.stringify(loaded.errors));
 assert.equal(loaded.extensions.length, 2);
 const shell = loaded.extensions.find(extension => extension.tools.has("safe_bash"));
-const schema = shell.tools.get("safe_bash").definition.parameters;
+const definition = shell.tools.get("safe_bash").definition;
+const schema = definition.parameters;
 assert.deepEqual(schema.required, ["command"]);
 assert.deepEqual(Object.keys(schema.properties).sort(), ["command", "hostCapability", "stdin", "timeout"]);
 assert.deepEqual(schema.properties.hostCapability.anyOf.map(option => option.const), ["editor", "dependencies", "dev-services"]);
+assert.match(definition.promptGuidelines.join("\\n"), /editor → editor project-file/);
+assert.doesNotMatch(definition.promptGuidelines.join("\\n"), /editor → zed/);
 `;
     try {
         await execFileAsync("node", ["--input-type=module", "-e", script, loader, agentDir,

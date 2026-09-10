@@ -5,7 +5,15 @@ import {
     realpathSync,
     statSync,
 } from "node:fs";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import {
+    basename,
+    delimiter,
+    dirname,
+    extname,
+    isAbsolute,
+    join,
+    resolve,
+} from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { PreparedBashSpawn } from "../../_shared/command-execution/exec.ts";
 import { hostExecution } from "../../_shared/execution-provenance/types.ts";
@@ -16,6 +24,20 @@ import {
     type HostCapability,
 } from "./authority.ts";
 import type { ShellCapabilityResolution } from "./policy.ts";
+
+export const EDITOR_LAUNCHER_NAMES = [
+    "zed",
+    "code",
+    "cursor",
+    "codium",
+    "windsurf",
+    "subl",
+    "idea",
+    "webstorm",
+    "phpstorm",
+    "pycharm",
+    "fleet",
+] as const;
 
 function unsupported(message: string): never {
     throw new CapabilityError("unsupported-command", message);
@@ -119,7 +141,7 @@ export function discoverIntegration(
     const project = realpathSync(cwd);
     const names =
         name === "editor"
-            ? ["zed"]
+            ? EDITOR_LAUNCHER_NAMES
             : name === "dependencies"
               ? ["sfw", "npm", "pi"]
               : ["dev-services"];
@@ -166,8 +188,20 @@ export function prepareHostIntegration(
     let file: string;
     let args: string[];
     if (capability === "editor") {
-        if (argv.shift() !== "zed")
-            unsupported("Use: zed <project-file> [project-file ...]");
+        const editorLauncher = approvedExecutable(
+            configured.launcher ?? configured.zed,
+            policy.projectRoot,
+            "editor launcher",
+        );
+        const launcherBasename = basename(
+            editorLauncher,
+            extname(editorLauncher),
+        );
+        const requestedCommand = argv.shift();
+        const acceptedCommands = new Set(["editor", launcherBasename]);
+        if (configured.zed) acceptedCommands.add("zed");
+        if (!requestedCommand || !acceptedCommands.has(requestedCommand))
+            unsupported("Use: editor <project-file> [project-file ...]");
         if (!argv.length) unsupported("Provide at least one project file");
         args = argv.map((value) => {
             if (value.startsWith("-"))
@@ -181,16 +215,16 @@ export function prepareHostIntegration(
                     !statSync(path).isFile()
                 )
                     return unsupported(
-                        "Zed may open existing files inside the approved project only",
+                        "The editor may open existing files inside the approved project only",
                     );
                 return path;
             } catch {
                 return unsupported(
-                    "Zed may open existing files inside the approved project only",
+                    "The editor may open existing files inside the approved project only",
                 );
             }
         });
-        file = executable("zed");
+        file = editorLauncher;
     } else if (capability === "dependencies") {
         if (argv[0] === "sfw") argv.shift();
         const manager = argv.shift();

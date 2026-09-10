@@ -135,7 +135,7 @@ export function registerSafeBash(
             promptSnippet,
             promptGuidelines: [
                 `safe_bash guard: ${input.config.mode} mode; blocked/ask groups per description — use native grep/find/ls when native-redirect enforced`,
-                "Omit hostCapability for ordinary shell execution. For approved integrations use literal commands: editor → zed project-file; dependencies → npm install package (SFW is added automatically); dev-services → target command such as npm test. Host integrations reject shell compositions. Native file tools remain on the host.",
+                "Omit hostCapability for ordinary shell execution. For approved integrations use literal commands: editor → editor project-file; dependencies → npm install package (SFW is added automatically); dev-services → target command such as npm test. Host integrations reject shell compositions. Native file tools remain on the host.",
             ],
             parameters: safeBashWithCapabilitiesSchema,
             renderCall: createBashPrefixRenderer("🔒"),

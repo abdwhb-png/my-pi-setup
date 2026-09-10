@@ -26,6 +26,8 @@ launcher, a saved grant and a successful target operation.
 Run `/sandbox capabilities grant <name>` or `revoke <name>`, optionally followed
 by `--session`. Supported names are `editor`, `dependencies`, `dev-services`,
 `network`, `host-network`, `read-path`, `write-path`, `tmp` and `host`.
+Granting `editor` asks which discovered launcher to use and also accepts an
+explicit installed launcher path. The confirmation records that exact path.
 Network/path grants prompt for one destination. Revoking these names clears
 that category. Granting `host` authorizes it; selecting profile `host` activates
 it. Selecting isolated temporarily suppresses saved openings without deleting
@@ -52,7 +54,7 @@ rejected. Use ordinary sandbox shell syntax for normal multi-step commands.
 
 ```json
 {"command":"npm test","timeout":120}
-{"command":"zed 'src/example.ts'","hostCapability":"editor"}
+{"command":"editor 'src/example.ts'","hostCapability":"editor"}
 {"command":"npm install is-number@7.0.0 --save-exact","hostCapability":"dependencies","timeout":120}
 {"command":"pi update npm:example-package","hostCapability":"dependencies","timeout":120}
 {"command":"npm test","hostCapability":"dev-services","timeout":120}
@@ -64,7 +66,7 @@ own local grant. `pi update` remains the update interface.
 
 | Integration | Supported operation | Boundary and limitation |
 | --- | --- | --- |
-| `editor` | Installed Zed launcher, existing files inside the canonical project | Reject flags, directories and escaping symlinks. CLI success does not by itself prove a visible editor window. |
+| `editor` | Selected installed editor launcher, existing files inside the canonical project | The operation is product-independent. Zed is one discovered provider. Reject flags, directories and escaping symlinks. CLI success does not by itself prove a visible editor window. |
 | `dependencies` | SFW wrapping npm install/ci/update/uninstall/remove, or Pi install/update/remove with one `npm:` source | Preserve normal SFW updates. Force npm lifecycle scripts off. Block unsupported managers and routing flags. Stop on any failure without an unwrapped retry. |
 | `dev-services` | Existing client runs the literal target argv for the registered project | This grants command execution on the host. Pass `npm test`, not `./bin/dev run npm test`. The adapter does not open the general API port to the sandbox. |
 
@@ -79,6 +81,9 @@ sandbox for dependency code.
 Resolve launchers from approved installed paths. Exclude repository programs,
 relative PATH entries and `node_modules/.bin` from launcher discovery. Remove
 interpreter injection variables and SFW update-bypass variables before launch.
+The authority stores the editor under the generic `launcher` key. Existing
+`zed` grants remain readable as a compatibility alias, but new model calls use
+`editor <project-file>`.
 Supervise the launched process, its timeout and explicit cancellation. A GUI or
 remote service may retain work after its CLI exits; do not claim CLI supervision
 controls the entire external application lifecycle.

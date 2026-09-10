@@ -65,7 +65,7 @@ Permettez au projet et à la session de restreindre les autorisations accordées
 
 ### Exécution et intégrations
 
-Réutilisez le propriétaire Bash et le runtime partagé pour sélectionner l’exécuteur. Centralisez la résolution des autorisations et les preuves d’exécution. Maintenez les particularités de Zed, SFW et Dev Services dans leurs intégrations, sans ajouter leurs chemins ou protocoles au cœur générique de Zerobox.
+Réutilisez le propriétaire Bash et le runtime partagé pour sélectionner l’exécuteur. Centralisez la résolution des autorisations et les preuves d’exécution. Définissez l’ouverture de fichiers comme une opération d’éditeur indépendante du produit; Zed est un fournisseur local validé, pas le contrat exposé au modèle. Maintenez les particularités de SFW, Dev Services et des lanceurs locaux dans leurs adaptateurs, sans ajouter leurs chemins ou protocoles au cœur générique de Zerobox.
 
 Définissez les intégrations par les opérations qu’elles permettent. « Ouvrir un fichier du projet dans l’éditeur » et « Exécuter une commande arbitraire sur l’hôte » n’accordent pas la même autorité. Signalez explicitement la seconde, notamment pour les parcours Dev Services concernés.
 
@@ -102,7 +102,7 @@ La voie sélectionnée combine un défaut isolé et des capacités hôte locales
 | Repère | Contrat retenu |
 | --- | --- |
 | **Q1 — Autorisations** | Stockez les accords dans `~/.pi/agent/sandbox.capabilities.json`, propriétaire local, fichier régulier sans lien, mode `0600`, écriture atomique. Liez-les à Linux machine-id + uid et au projet canonique. Proposez une portée session. Refusez une copie issue d’une autre machine jusqu’à migration explicite. |
-| **Q2 — Intégrations** | Conservez `safe_bash.command` et ajoutez `hostCapability`. Acceptez un argv littéral pour Zed, SFW (npm et sources npm de Pi) et Dev Services. Résolvez les lanceurs installés approuvés. Signalez l’autorité hôte de Dev Services. |
+| **Q2 — Intégrations** | Conservez `safe_bash.command` et ajoutez `hostCapability`. Acceptez un argv littéral pour l’opération générique `editor <fichier>`, SFW (npm et sources npm de Pi) et Dev Services. Sélectionnez un lanceur d’éditeur local approuvé; Zed reste un fournisseur compatible. Signalez l’autorité hôte de Dev Services. |
 | **Q3 — Portée** | Limitez la V1 au shell. Affichez que les outils natifs de fichiers, extensions et MCP restent sur l’hôte. Protégez spécifiquement le magasin contre `write`/`edit`. Maintenez Think strict dans tous les profils. |
 | **Q4 — Révocation** | Publiez immédiatement les nouveaux droits. Laissez terminer les opérations admises et leurs anciens runtimes, puis libérez leurs ressources. Préservez délais et annulation explicite. |
 | **Q5 — Migration** | Présentez les anciennes ouvertures réseau, fichiers et `/tmp`. Demandez une seule sélection pour les conserver localement ou choisir les défauts isolés. Bloquez les nouvelles commandes concernées en attente. Préservez sessions existantes, services et données. |
@@ -115,7 +115,7 @@ Fermez le réseau et rendez `/tmp` privé par défaut. Accordez séparément les
 - **V1 — Défaut portable.** Vérifiez qu’une configuration neuve reste isolée, qu’une intégration installée ne s’active pas seule et qu’un dépôt ne peut pas s’accorder de droits hôte.
 - **V2 — Autorisations et refus.** Vérifiez les restrictions de projet et de session, les refus explicites, la révocation et l’absence de repli hôte après erreur.
 - **V3 — Frontières réelles.** Testez les outils via le runtime Pi et ses hooks, puis les processus réels pour les garanties système. Ne remplacez pas ces preuves par des tests de fonctions copiées ou des simulations du sandbox.
-- **V4 — Compatibilité.** Vérifiez les parcours Zed, SFW et Dev Services, leurs arguments, leur provenance et leurs erreurs. Pour SFW, distinguez version, téléchargement, installation complète et refus de sécurité contrôlé.
+- **V4 — Compatibilité.** Vérifiez l’éditeur avec un lanceur non-Zed et avec le fournisseur Zed installé, puis SFW et Dev Services, leurs arguments, leur provenance et leurs erreurs. Pour SFW, distinguez version, téléchargement, installation complète et refus de sécurité contrôlé.
 - **V5 — Régressions.** Préservez les refus Git, les contrats stricts de Think-in-Code et le fonctionnement intentionnel des services. Vérifiez les codes de sortie et les commandes composées.
 - **V6 — Accessibilité aux modèles économiques.** Comparez les mêmes tâches et autorisations avec les modèles retenus. Mesurez réussite complète, appels inutiles, interventions humaines, coût et identification correcte du lieu d’exécution. Ne déduisez pas une fiabilité statistique des sessions historiques.
 

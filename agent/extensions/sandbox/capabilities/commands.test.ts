@@ -1,5 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+    mkdirSync,
+    mkdtempSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCapabilityCommands } from "./commands.ts";
@@ -37,4 +42,54 @@ test("host profile selection requires one user decision and persists only this p
     expect(confirmations).toBe(1);
     expect(applied).toBe(1);
     expect(readCapabilityAuthority(capabilityAuthorityPath(root), "test-machine").projects[0]?.grants.host).toBe(true);
+});
+
+test("editor grant selects a custom local launcher without naming an editor product", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-cap-editor-"));
+    roots.push(root);
+    const project = join(root, "project");
+    mkdirSync(project);
+    const launcher = join(root, "workspace-viewer");
+    writeFileSync(launcher, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    const initial: ShellCapabilityResolution = {
+        state: "ready",
+        profile: "isolated",
+        requestedProfile: "isolated",
+        projectRoot: project,
+        grants: emptyGrants(),
+        requestedGrants: emptyGrants(),
+        authorityPath: capabilityAuthorityPath(root),
+    };
+    const previousPath = process.env.PATH;
+    process.env.PATH = "";
+    try {
+        const commands = createCapabilityCommands({
+            agentDir: root,
+            machineId: "test-machine",
+            load: () => initial,
+            apply: async () => {},
+        });
+        const handled = await commands.handle(
+            "capabilities grant editor --session",
+            {
+                cwd: project,
+                hasUI: true,
+                isProjectTrusted: () => true,
+                ui: {
+                    confirm: async () => true,
+                    notify: () => {},
+                    input: async () => launcher,
+                    select: async () =>
+                        "Choose another installed editor launcher path",
+                },
+            },
+        );
+        expect(handled).toBe(true);
+        expect(commands.session()?.grants.integrations.editor).toEqual({
+            launcher,
+        });
+    } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+    }
 });

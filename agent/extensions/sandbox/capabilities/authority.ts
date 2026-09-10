@@ -147,7 +147,7 @@ export function parseGrants(value: unknown): CapabilityGrants {
         if (integrations[name] === undefined) continue;
         const keys =
             name === "editor"
-                ? ["zed"]
+                ? ["launcher", "zed"]
                 : name === "dependencies"
                   ? ["sfw", "npm", "pi"]
                   : ["dev-services"];

@@ -37,6 +37,20 @@ test("editor accepts project files and rejects escapes, flags and repository lau
     policy.grants.integrations.editor!.zed = join(project, "a b.ts");
     expect(() => prepareHostIntegration(policy, "editor", "zed 'a b.ts'", project, {})).toThrow("integration-unavailable");
 });
+test("editor uses an approved generic launcher without exposing its product name to the model", () => {
+    const { project, launcher, policy } = fixture();
+    writeFileSync(join(project, "a b.ts"), "");
+    policy.grants.integrations.editor = { launcher };
+    const prepared = prepareHostIntegration(
+        policy,
+        "editor",
+        "editor 'a b.ts'",
+        project,
+        {},
+    );
+    expect(prepared.file).toBe(launcher);
+    expect(prepared.args).toEqual([join(project, "a b.ts")]);
+});
 test("literal commands preserve quoted arguments and reject shell evaluation", () => {
     expect(parseLiteralCommand("npm install 'a b' \"c d\" ''")).toEqual(["npm", "install", "a b", "c d", ""]);
     for (const command of ["npm test | cat", "npm test && true", "npm test > file", "npm $(id)", "npm `id`", "npm ${X}", "npm test\ntrue", "X=1 npm install", "npm test;true", "npm test &", "npm '*.ts' $(true)"]) {
