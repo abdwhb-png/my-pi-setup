@@ -1,19 +1,14 @@
 {
-    "authorizerChain": [
-        "pi-dangerous-mode"
-    ],
+    "debugLog": false,
+    "permissionReviewLog": true,
     "yoloMode": false,
-    "shellTools": {
-        "safe_bash": {
-            "commandArgument": "command"
-        }
-    },
+    "authorizerChain": ["pi-dangerous-mode", "pi-yolo-permission"],
     "permission": {
         "*": "allow",
         "path": {
             "*": "allow",
-            "*.env": "deny",
-            "*.env.*": "deny",
+            "*.env": "allow",
+            "*.env.*": "ask",
             "*.env.example": "allow",
             "agent/roles/*": "ask"
         },
@@ -27,17 +22,12 @@
             "docker inspect *": "allow",
             "git *": "ask",
             "git remote -v": "allow",
-            "git * remote -v": "allow",
             "git status *": "allow",
-            "git * status *": "allow",
             "git log *": "allow",
-            "git * log *": "allow",
             "git show *": "allow",
-            "git * show *": "allow",
             "git diff *": "allow",
-            "git * diff *": "allow",
-            "git stash list": "allow",
-            "git * stash list": "allow",
+            "git stash list *": "allow",
+            "git check-ignore *": "allow",
             "readlink *": "allow",
             "* */node_modules/*": "ask",
             "ls */node_modules/*": "allow",
@@ -51,6 +41,10 @@
         },
         "write": {
             "*": "allow",
+            "sandbox.global.json": "deny",
+            "agent/sandbox.global.json": "deny",
+            ".pi/agent/sandbox.global.json": "deny",
+            "*/.pi/agent/sandbox.global.json": "deny",
             "node_modules/*": "deny",
             "*/.pi/agent/git/*": "deny",
             "*/.pi/agent/npm/*": "deny",
@@ -61,6 +55,10 @@
         },
         "edit": {
             "*": "allow",
+            "sandbox.global.json": "deny",
+            "agent/sandbox.global.json": "deny",
+            ".pi/agent/sandbox.global.json": "deny",
+            "*/.pi/agent/sandbox.global.json": "deny",
             "node_modules/*": "deny",
             "*/.pi/agent/git/*": "deny",
             "*/.pi/agent/npm/*": "deny",
@@ -77,6 +75,11 @@
             "~/.bun/install/global/node_modules/@earendil-works/*": "allow",
             "~/.agents/*": "allow",
             "~/projects/*": "allow"
+        }
+    },
+    "shellTools": {
+        "safe_bash": {
+            "commandArgument": "command"
         }
     }
 }

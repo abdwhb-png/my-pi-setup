@@ -1,6 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+    getPermissionsService,
+    PERMISSIONS_READY_CHANNEL,
+} from "@gotgenes/pi-permission-system";
 import { loadConfig, type AddonConfig } from "./config.ts";
 import { checkAndBlock, InMemorySessionCache } from "./handler.ts";
+
+const YOLO_AUTHORIZER_NAME = "pi-yolo-permission";
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -10,6 +16,22 @@ export default function (pi: ExtensionAPI) {
     const sessionCache = new InMemorySessionCache();
     let config: AddonConfig = { inherit: {} };
     let sessionYolo = false;
+    const authorizerDisposers: Array<() => void> = [];
+
+    pi.events.on(PERMISSIONS_READY_CHANNEL, () => {
+        const service = getPermissionsService();
+        if (!service) return;
+
+        const dispose = service.registerAuthorizer(
+            YOLO_AUTHORIZER_NAME,
+            async (_details, _query, log) => {
+                if (!sessionYolo) return { kind: "defer" };
+                log.review("session_yolo.auto_allow", {});
+                return { kind: "allow" };
+            },
+        );
+        authorizerDisposers.push(dispose);
+    });
 
     pi.registerCommand("yolo-permission", {
         description:
@@ -73,6 +95,7 @@ export default function (pi: ExtensionAPI) {
     pi.on("session_shutdown", () => {
         sessionCache.clear();
         sessionYolo = false;
+        for (const dispose of authorizerDisposers.splice(0)) dispose();
     });
 
     pi.on("tool_call", async (event, ctx) => {
