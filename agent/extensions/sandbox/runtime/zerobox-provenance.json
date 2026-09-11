@@ -144,14 +144,22 @@
     {
       "path": "scripts/upstream-tcp-publication-revocation-race.patch",
       "sha256": "fc35d8783351a6eabc387bf246aa956afaefa64500993cc94d9f7813e1b30b53"
+    },
+    {
+      "path": "scripts/upstream-stream-half-close.patch",
+      "sha256": "f56e7bb90e7fb4bf9a26c5de53186dea85a33b2af2187bea21e1db4ca31478eb"
+    },
+    {
+      "path": "scripts/upstream-git-write-policy.patch",
+      "sha256": "75f495ced121f2dbf6217bdafc007f70453d727933e9350e79f87aa2c08ddb82"
     }
   ],
   "binaryName": "zerobox",
-  "binarySha256": "87a73d1bd2556ad629e3a675b8d39898aa693c4e0b7cc27c33078e4a3b298b7f",
+  "binarySha256": "edf7e5ca49eca11c45d4afb332f0e71cae62639e6d5dabd178d1f4b18f63dd19",
   "localBuild": {
-    "kind": "committed-worktree",
+    "kind": "modified-worktree",
     "baseCommit": "ebd12774aafa63fec1864e04f248150ec50136d4",
-    "sourceDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sourceDiffSha256": "00f53c0ecbc9bea33e9973da58d47646b53ffab43d05e07e9fd51625bffbaca7",
     "sourceDiffFormat": "git-diff-binary-head-plus-sorted-untracked-v1"
   },
   "omittedOptionalPatches": [

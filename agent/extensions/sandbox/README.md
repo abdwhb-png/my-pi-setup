@@ -9,7 +9,7 @@ Use exactly two active configuration locations:
 - `~/.pi/agent/sandbox.json`: global defaults and authorization ceilings.
 - `<project>/.pi/sandbox.json`: optional project restrictions and explicit Docker activation.
 
-Choose the execution mode with `/sandbox mode sandbox` or `/sandbox mode host`. Host mode requires a global ceiling that permits it and an explicit selection in the current session. The displayed profiles `default`, `custom` and `host` describe the result. Do not store a profile selector.
+Choose the execution mode with `/sandbox mode sandbox` or `/sandbox mode host`. Host mode requires global `host.allowed: true` and an explicit selection in the current session. The displayed profiles `default`, `custom` and `host` describe the result. Do not store a profile selector.
 
 A change to either configuration file is checked before the next shell admission. Invalid configuration blocks new calls. Setup failures never switch automatically to host execution.
 
@@ -17,8 +17,10 @@ A change to either configuration file is checked before the next shell admission
 
 | Command | Purpose |
 | --- | --- |
-| `/sandbox` | Show configured permissions and runtime status. |
-| `/sandbox doctor` | Inspect the resolved policy and configuration provenance. |
+| `/sandbox` | Show status and an action selector. |
+| `/sandbox status` | Print configured permissions and runtime status. |
+| `/sandbox mode` | Select sandbox or host, with an explanation if host is unavailable. |
+| `/sandbox doctor [executable]` | Inspect policy and optionally resolve an executable without running it. |
 | `/sandbox mode sandbox\|host` | Select the execution mode for this session. |
 | `/sandbox migrate` | Preview and confirm migration to the two-file format. |
 | `/sandbox recover` | Verify and recover an interrupted migration. |
@@ -38,4 +40,4 @@ Use ordinary shell commands. Native file tools, extensions and MCP tools execute
 - [Runtime and limits](docs/runtime.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
-A personal installation requires a separately approved activation of the matching Pi code, Zerobox binary and migrated configuration. Start a new Pi session after activation.
+A personal installation requires a separately approved activation of the matching Pi code, Zerobox binary and migrated configuration. Use `/reload` or start a new Pi session after activation. The widget shows the selected mode, derived profile, engine state and Docker access.

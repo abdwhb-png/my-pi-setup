@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
 import { DEFAULT_DOCKER_ENDPOINT } from "../runtime/docker-policy.ts";
 import type { PiSandboxConfig } from "../runtime/policies.ts";
 import { normalizeSandboxResources } from "../runtime/policies.ts";
@@ -14,6 +13,7 @@ import {
 } from "./authority.ts";
 
 export interface ShellCapabilityResolution {
+    hostAllowed?: boolean;
     state:
         | "ready"
         | "authorization-required"
@@ -105,18 +105,22 @@ function canonicalLayer(
             ? undefined
             : (() => {
                   const raw = layer.resources as Record<string, unknown>;
-                  const normalized = normalizeSandboxResources(raw);
+                  const normalizedResources = normalizeSandboxResources(raw);
                   return {
                       ...(Object.hasOwn(raw, "unixSockets")
                           ? {
-                                unixSockets: normalized.unixSockets.map(
-                                    (socket) =>
-                                        canonicalProjectPath(socket, root),
-                                ),
+                                unixSockets:
+                                    normalizedResources.unixSockets.map(
+                                        (socket) =>
+                                            canonicalProjectPath(socket, root),
+                                    ),
                             }
                           : {}),
                       ...(Object.hasOwn(raw, "tcpPublications")
-                          ? { tcpPublications: normalized.tcpPublications }
+                          ? {
+                                tcpPublications:
+                                    normalizedResources.tcpPublications,
+                            }
                           : {}),
                   };
               })();
@@ -124,20 +128,48 @@ function canonicalLayer(
         layer.environment?.path,
         "environment.path",
     )?.map(expandShellPathEntry);
+    const environmentVariables = variables(
+        layer.environment?.variables,
+        "environment.variables",
+    );
     return {
         ...layer,
-        ...(environmentPath === undefined
+        ...(environmentPath === undefined && environmentVariables === undefined
             ? {}
-            : { environment: { ...layer.environment, path: environmentPath } }),
+            : {
+                  environment: {
+                      ...layer.environment,
+                      ...(environmentPath === undefined
+                          ? {}
+                          : { path: environmentPath }),
+                      ...(environmentVariables === undefined
+                          ? {}
+                          : {
+                                variables: Object.fromEntries(
+                                    Object.entries(environmentVariables).map(
+                                        ([key, value]) => [
+                                            key,
+                                            value.startsWith("~/")
+                                                ? expandShellPathEntry(value)
+                                                : value,
+                                        ],
+                                    ),
+                                ),
+                            }),
+                  },
+              }),
         ...(filesystem === undefined ? {} : { filesystem }),
         ...(resources === undefined ? {} : { resources }),
     };
 }
 function list(value: unknown, field: string): string[] | undefined {
     if (value === undefined) return undefined;
-    if (!Array.isArray(value) || value.some((v) => typeof v !== "string"))
+    if (!Array.isArray(value))
         throw new Error(`${field} must be a string array`);
-    return value;
+    const entries: unknown[] = value;
+    if (!entries.every((entry): entry is string => typeof entry === "string"))
+        throw new Error(`${field} must be a string array`);
+    return entries;
 }
 function boolean(value: unknown, field: string): boolean | undefined {
     if (value === undefined) return undefined;
@@ -372,14 +404,18 @@ function mergeLayers(input: ShellPolicyInput): {
         list(sessionFs.allowWrite, "session filesystem.allowWrite"),
         projectWrite,
     );
-    const globalMode = global?.mode ?? "sandbox";
+    if (project?.host !== undefined || session?.host !== undefined)
+        throw new Error("host.allowed is reserved to the global sandbox.json");
+    const hostAllowed = global?.host?.allowed ?? global?.mode === "host";
     if (project?.mode === "host")
         throw new Error(
             "Host mode requires an explicit current-session selection",
         );
     const requestedMode = session?.mode ?? project?.mode ?? "sandbox";
-    if (requestedMode === "host" && globalMode !== "host")
-        throw new Error("Host mode is outside the global ceiling");
+    if (requestedMode === "host" && !hostAllowed)
+        throw new Error(
+            "Host mode is outside the global ceiling: set host.allowed in the global sandbox.json to authorize it",
+        );
     const tmpGlobal = global?.tmpNamespace ?? "lease-private";
     const tmpProject = project?.tmpNamespace ?? tmpGlobal;
     const tmp = session?.tmpNamespace ?? tmpProject;
@@ -628,6 +664,14 @@ export function resolveShellPolicy(input: ShellPolicyInput): {
     return {
         config,
         shell: {
+            hostAllowed:
+                input.global?.host?.allowed ?? input.global?.mode === "host",
+            ...(input.global?.mode !== undefined
+                ? {
+                      diagnostic:
+                          "Deprecated global mode field: use host.allowed for authorization; select the session mode with /sandbox mode. Explicit host.allowed takes precedence.",
+                  }
+                : {}),
             state: "ready",
             projectRoot: realpathSync(input.cwd),
             mode,
@@ -643,7 +687,16 @@ export function resolveShellPolicy(input: ShellPolicyInput): {
 }
 function normalized(value: unknown): string {
     const sort = (current: unknown): unknown => {
-        if (Array.isArray(current)) return [...current].sort().map(sort);
+        if (Array.isArray(current)) {
+            const entries: unknown[] = current;
+            return entries
+                .toSorted((left, right) => {
+                    const a = String(left);
+                    const b = String(right);
+                    return a < b ? -1 : a > b ? 1 : 0;
+                })
+                .map(sort);
+        }
         if (typeof current === "object" && current !== null) {
             return Object.fromEntries(
                 Object.entries(current as Record<string, unknown>)

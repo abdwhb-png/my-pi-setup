@@ -9,9 +9,10 @@ Run `/sandbox` and `/sandbox doctor` in the project to inspect the resolved poli
 | Global document belongs to another machine | Review its provenance. Do not copy a machine identity merely to activate foreign grants. |
 | Untrusted configuration file | Check owner, regular-file status and group/other write permissions. Symlink configuration files are refused. |
 | Unknown or reserved field | Use the v2 schema. Remove project fields reserved for global authority. False or inactive values do not exempt a field from validation. |
-| Host mode outside the global ceiling | Inspect the global mode. Host execution also needs an explicit `/sandbox mode host` selection in the current session. |
+| Host mode outside the global ceiling | Inspect global `host.allowed`. Host execution also needs an explicit `/sandbox mode host` selection in the current session. |
 | Shell policy changed during preparation | The pending command was not dispatched. Inspect the current mode and configuration before submitting it again. |
-| Tool not found or unreadable | Check configured PATH and the canonical executable target's read grant. A PATH entry alone grants no read permission. |
+| Tool not found or unreadable | Run `/sandbox doctor <executable>` and check configured PATH and the canonical executable target's read grant. A PATH entry alone grants no read permission. |
+| Git metadata is not writable | Inspect explicit `.git` denials and any external Git directory. A writable project includes local Git metadata. |
 | Filesystem deny targets logical private HOME | The internal HOME mount cannot enforce this deny. Correct the conflicting policy; the runtime will not silently ignore it. |
 | A temporary file is invisible | Compare the host, Bash and Think namespaces. Store a shared artifact in the project. |
 | Pipeline reports failure despite successful final stage | Bash uses `pipefail`. Inspect the earlier command's error. |

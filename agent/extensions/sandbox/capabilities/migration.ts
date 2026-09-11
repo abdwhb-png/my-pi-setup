@@ -52,6 +52,7 @@ interface MigrationMarker {
     temporaryPaths: string[];
 }
 export interface LegacyMigrationPreview {
+    required: boolean;
     legacyAuthorityPath: string;
     legacyDockerPath: string;
     authority?: CapabilityAuthority;
@@ -153,6 +154,10 @@ function activeFields(
 ): SandboxConfigLayer {
     if (!raw) return {};
     const result: SandboxConfigLayer = {};
+    if (scope === "global" && raw.host !== undefined) {
+        // Validate the selected document through the active reader before publication.
+        Object.assign(result, { host: raw.host });
+    }
     if (raw.mode === "sandbox" || raw.mode === "host") result.mode = raw.mode;
     else if (raw.mode !== undefined)
         inactive.push(
@@ -165,6 +170,7 @@ function activeFields(
         "filesystem",
         "environment",
         "tmpNamespace",
+        "resources",
     ] as const) {
         if (raw[key] !== undefined) Object.assign(result, { [key]: raw[key] });
     }
@@ -204,6 +210,8 @@ function activeFields(
                 "enabled",
                 "profile",
                 "mode",
+                "host",
+                "resources",
                 "network",
                 "filesystem",
                 "environment",
@@ -280,7 +288,13 @@ function serializeGlobal(
     machineId: string,
     ceiling: SandboxConfigLayer,
 ): GlobalSandboxConfig {
-    return { version: 2, machineId, ...ceiling };
+    const { mode, ...settings } = ceiling;
+    return {
+        version: 2,
+        machineId,
+        ...settings,
+        host: ceiling.host ?? { allowed: mode === "host" },
+    };
 }
 /** Compose the active parser, Docker resolver, shell resolver, and Pi compiler. */
 function validateDocuments(
@@ -532,6 +546,15 @@ export function previewLegacyMigration(
         path: string,
     ): Record<string, unknown> | undefined =>
         record(jsonObject(find(path), inactive)?.sandbox);
+    const currentGlobal = jsonObject(find(globalPath), inactive);
+    const required =
+        currentGlobal?.version !== 2 ||
+        currentGlobal.mode !== undefined ||
+        !!find(legacyAuthorityPath).bytes ||
+        !!find(legacyDockerPath).bytes ||
+        settingsSandbox(globalSettingsPath) !== undefined ||
+        (projectSettingsPath !== undefined &&
+            settingsSandbox(projectSettingsPath) !== undefined);
     const globalLayers = [
         activeFields(
             jsonObject(find(legacyDockerPath), inactive),
@@ -562,6 +585,7 @@ export function previewLegacyMigration(
               ]
             : [];
     return {
+        required,
         legacyAuthorityPath,
         legacyDockerPath,
         authority,
@@ -609,6 +633,18 @@ export function publishLegacyMigration(
             "Sandbox migration is incomplete; recover it before publishing again",
         );
     options.preview.sources.forEach(assertUnchanged);
+    if (!options.preview.required) {
+        validateDocuments(
+            options.globalPath,
+            options.projectPath,
+            options.machineId,
+        );
+        return {
+            published: false,
+            archives: [],
+            inactive: options.preview.inactive,
+        };
+    }
     const globalBody =
         JSON.stringify(
             serializeGlobal(options.machineId, options.globalCeiling),

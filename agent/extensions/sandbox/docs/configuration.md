@@ -57,7 +57,7 @@ Set global `tmpNamespace: "host"` only when the shell should share the complete 
 
 `network.allowLocalBinding` permits listeners inside the private network namespace. It does not publish them on the host. Outgoing network domains, local service access and incoming publication are distinct permissions.
 
-Use `environment.path` to configure tool lookup and `filesystem.allowRead` to permit the executable and required runtime files. A PATH entry alone grants no filesystem access. The generic tool baseline is described in [Runtime](runtime.md).
+Use `environment.path` to configure tool lookup and `filesystem.allowRead` to permit the executable and required runtime files. A PATH entry alone grants no filesystem access. Values in `environment.variables` that start with `~/` expand against the host home directory, without changing the private sandbox HOME or granting read access. Shell expressions such as `$HOME` and `$(command)` stay literal. Grant required files separately. Environment values are hidden in diagnostics. The generic tool baseline is described in [Runtime](runtime.md).
 
 ## Local resources
 
@@ -89,7 +89,7 @@ The server remains inside Zerobox. Publication activates only after its private 
 
 ## Modes and profiles
 
-Set global `mode: "host"` to permit host execution, then select it explicitly with `/sandbox mode host` in the current session. The global value alone does not switch a session to the host. Project `mode: "host"` is refused. Return with `/sandbox mode sandbox`.
+Set global `host: { "allowed": true }` to permit host execution, then select it explicitly with `/sandbox mode host` in the current session. The global value alone does not switch a session to the host. Project `host` and `mode: "host"` are refused. Missing `host.allowed` denies access. Legacy global `mode` is accepted with a deprecation diagnostic, and explicit `host.allowed` takes precedence. `/sandbox migrate` rewrites the legacy alias; an already-current configuration produces no changes or archives. Return with `/sandbox mode sandbox`.
 
 The displayed profile is derived from the effective configuration: `default` for the baseline, `custom` when it differs, and `host` for host execution. Restrictions can also produce `custom`. Restoring the baseline restores `default`. Do not configure a profile or use decision labels such as D1 as selectors.
 
@@ -100,3 +100,5 @@ The loader rereads both documents before admitting the next shell operation. A v
 Use `/sandbox migrate` for historical `settings.json` sandbox sections, old `sandbox.json`, `sandbox.global.json` and `sandbox.capabilities.json`. Review the proposed global ceiling before publication. Migration preserves exact archives and unrelated settings. Use `/sandbox recover` for an interrupted transaction.
 
 Docker target selection belongs to each project. Global Docker configuration authorizes the feature, optionally limits operations, and declares exact unsafe-target exceptions. See [Docker authority](docker-authority.md) for these separate rules.
+
+Git metadata inside a writable project follows ordinary filesystem rules. Explicitly deny `.git` writes when required. Git pointers and symlinks do not grant write access to external directories. Zerobox still protects `.agents` and `.codex` by default.

@@ -15,6 +15,7 @@ export interface ExecutionProvenance {
     tmpNamespace: "host" | "lease-private" | "unknown";
     phase: "setup" | "process" | "source" | "analysis" | "policy" | "cleanup";
     outcome:
+        | "unknown"
         | "pending"
         | "succeeded"
         | "failed"
@@ -35,7 +36,7 @@ export function unknownExecution(): ExecutionProvenance {
         backend: "unknown",
         tmpNamespace: "unknown",
         phase: "setup",
-        outcome: "pending",
+        outcome: "unknown",
     };
 }
 

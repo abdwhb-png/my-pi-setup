@@ -34,7 +34,9 @@
           "enum": [
             "sandbox",
             "host"
-          ]
+          ],
+          "deprecated": true,
+          "description": "Legacy host authorization alias. Use host.allowed; an explicit host.allowed takes precedence."
         },
         "tmpNamespace": {
           "enum": [
@@ -183,6 +185,20 @@
         },
         "resources": {
           "$ref": "#/$defs/resources"
+        },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "allowed"
+          ],
+          "properties": {
+            "allowed": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "description": "Authorize explicit host mode selection for a session. Never selects host mode automatically."
         }
       }
     },

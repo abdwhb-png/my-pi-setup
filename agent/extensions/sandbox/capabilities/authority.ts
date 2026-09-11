@@ -30,6 +30,8 @@ export interface CapabilityGrants {
     hostTmp: boolean;
 }
 export interface SandboxConfigLayer {
+    /** Global authorization only; never a session mode selection. */
+    host?: { allowed: boolean };
     mode?: SandboxMode;
     network?: Record<string, unknown>;
     filesystem?: Record<string, unknown>;
@@ -126,6 +128,7 @@ function validateLayer(
         layer,
         [
             "mode",
+            ...(scope === "global" ? ["host"] : []),
             "network",
             "filesystem",
             "environment",
@@ -135,6 +138,12 @@ function validateLayer(
         ],
         `${scope} sandbox config`,
     );
+    if (layer.host !== undefined) {
+        const host = record(layer.host, "global host");
+        known(host, ["allowed"], "global host");
+        if (typeof host.allowed !== "boolean")
+            invalid("global host.allowed must be a boolean");
+    }
     if (
         layer.mode !== undefined &&
         layer.mode !== "sandbox" &&
@@ -183,7 +192,7 @@ function validateLayer(
             scope + ".resources",
         );
     }
-    const { mode: _mode, docker: _docker, ...generic } = layer;
+    const { mode: _mode, host: _host, docker: _docker, ...generic } = layer;
     validatePiSandboxConfig(generic);
     return layer as SandboxConfigLayer;
 }
@@ -215,6 +224,7 @@ export function readGlobalSandboxConfig(
             "version",
             "machineId",
             "mode",
+            "host",
             "network",
             "filesystem",
             "environment",

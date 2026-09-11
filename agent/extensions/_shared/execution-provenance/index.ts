@@ -114,6 +114,7 @@ export function parseExecutionProvenance(
             "cleanup",
         ].includes(String(record.phase)) ||
         ![
+            "unknown",
             "pending",
             "succeeded",
             "failed",
@@ -335,6 +336,7 @@ export function addExecutionContext(
         const think = thinkReceipt(message.toolName, message.content);
         if (think) {
             const context =
+                `\nTool result: ${message.isError ? "failed" : "succeeded"}` +
                 sandboxFailureContext(message.isError, details) +
                 interruptionContext(think.sourceExecution) +
                 interruptionContext(think.analysisExecution);
@@ -362,7 +364,7 @@ export function addExecutionContext(
                 ...message.content,
                 {
                     type: "text" as const,
-                    text: `Execution provenance: ${JSON.stringify(execution)}${interruptionContext(execution)}${archiveContext(details)}${sandboxFailureContext(message.isError, details)}`,
+                    text: `Tool result: ${message.isError ? "failed" : "succeeded"}\nExecution provenance: ${JSON.stringify(execution)}${interruptionContext(execution)}${archiveContext(details)}${sandboxFailureContext(message.isError, details)}`,
                 },
             ],
         };
@@ -389,21 +391,12 @@ export function registerExecutionProvenance(pi: ExtensionAPI): void {
             };
         }
         const execution = resolveExecution(event.toolCallId, event.details);
-        const settled =
-            execution.outcome === "pending"
-                ? {
-                      ...execution,
-                      outcome: event.isError
-                          ? ("failed" as const)
-                          : ("succeeded" as const),
-                  }
-                : execution;
-        const details = mergeExecutionDetails(event.details, settled);
+        const details = mergeExecutionDetails(event.details, execution);
         return {
             details: mergeSandboxContextForFailure(
                 event.toolCallId,
                 details,
-                settled,
+                execution,
                 event.isError,
             ),
         };

@@ -27,6 +27,33 @@ function fixture() {
     return { agent, projectRoot, project };
 }
 
+test("migration publishes host authorization without persisting a selected mode", () => {
+    const { agent, projectRoot, project } = fixture();
+    const globalPath = join(agent, "sandbox.json");
+    writeFileSync(globalPath, JSON.stringify({ version: 2, machineId: "machine", mode: "host" }), { mode: 0o600 });
+    const preview = previewLegacyMigration(agent, "machine", projectRoot);
+    publishLegacyMigration({ preview, globalPath, projectPath: join(project, "sandbox.json"), machineId: "machine", globalCeiling: preview.proposedGlobal });
+    const saved = JSON.parse(readFileSync(globalPath, "utf8"));
+    expect(saved.host).toEqual({ allowed: true });
+    expect(saved).not.toHaveProperty("mode");
+    expect(loadSandboxConfig(projectRoot, { agentDir: agent, machineId: "machine" }).shell.mode).toBe("sandbox");
+});
+
+test("repeating migration leaves canonical configuration and archive count unchanged", () => {
+    const { agent, projectRoot, project } = fixture();
+    const globalPath = join(agent, "sandbox.json");
+    const projectPath = join(project, "sandbox.json");
+    const original = JSON.stringify({ version: 2, machineId: "machine", host: { allowed: false }, resources: { unixSockets: [] } });
+    writeFileSync(globalPath, original, { mode: 0o600 });
+    writeFileSync(projectPath, "{}", { mode: 0o600 });
+    const preview = previewLegacyMigration(agent, "machine", projectRoot);
+    const result = publishLegacyMigration({ preview, globalPath, projectPath, machineId: "machine", globalCeiling: preview.proposedGlobal });
+    expect(result.published).toBeFalse();
+    expect(result.archives).toEqual([]);
+    expect(readFileSync(globalPath, "utf8")).toBe(original);
+    expect(readdirSync(agent)).toEqual(["sandbox.json"]);
+});
+
 test("migrates empty legacy additional paths without closing the project baseline", () => {
     const { agent, projectRoot, project } = fixture();
     writeFileSync(join(agent, "sandbox.capabilities.json"), JSON.stringify({
@@ -211,9 +238,10 @@ test("recovers when an already-proposed global destination also matches its pre-
     const { agent, projectRoot, project } = fixture();
     const globalPath = join(agent, "sandbox.json");
     const projectPath = join(project, "sandbox.json");
-    const globalBody = JSON.stringify({ version: 2, machineId: "machine" }, null, 2) + "\n";
+    const globalBody = JSON.stringify({ version: 2, machineId: "machine", host: { allowed: false } }, null, 2) + "\n";
     const oldProject = "{\"network\":{\"allowedDomains\":[]}}\n";
     writeFileSync(globalPath, globalBody, { mode: 0o600 });
+    writeFileSync(join(agent, "settings.json"), JSON.stringify({ sandbox: {} }), { mode: 0o600 });
     writeFileSync(projectPath, oldProject, { mode: 0o600 });
     const preview = previewLegacyMigration(agent, "machine", projectRoot);
     let publishedGlobal = false;

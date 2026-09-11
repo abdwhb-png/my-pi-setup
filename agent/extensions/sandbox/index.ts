@@ -6,33 +6,12 @@
  * and process restrictions on Linux. Bash tool registration belongs to the
  * separate bash-execution extension.
  *
- * Config files (merged, project takes precedence):
- * - ~/.pi/agent/settings.json under key "sandbox" (global)
- * - <cwd>/.pi/settings.json under key "sandbox" (project-local)
- * - legacy fallback: ~/.pi/agent/sandbox.json and <cwd>/.pi/sandbox.json
- *
- * Example .pi/settings.json:
- * ```json
- * {
- *   "sandbox": {
- *     "enabled": true,
- *     "network": {
- *       "allowedDomains": ["github.com", "*.github.com"],
- *       "deniedDomains": []
- *     },
- *     "filesystem": {
- *       "denyRead": ["~/.ssh", "~/.aws"],
- *       "allowWrite": ["."],
- *       "denyWrite": [".env"]
- *     }
- *   }
- * }
- * ```
- *
- * Usage:
- * - `pi -e ./sandbox` - sandbox enabled with default/config settings
- * - `pi -e ./sandbox --no-sandbox` - disable sandboxing
- * - `/sandbox` - show current sandbox configuration
+ * Configuration: ~/.pi/agent/sandbox.json supplies global defaults and ceilings;
+ * <project>/.pi/sandbox.json supplies optional project restrictions.
+ * Use /sandbox for status and actions, /sandbox mode for explicit session mode
+ * selection, and /sandbox doctor [executable] for read-only diagnostics.
+ * Host execution requires global host.allowed; a configuration change never
+ * selects host mode automatically.
  *
  * Linux requires the provenance-pinned ~/.pi/bin/zerobox binary, mkfifo,
  * prlimit, and Node with JSPI support for the Python analyzer.
@@ -129,6 +108,7 @@ import {
     formatDockerGrantResult,
     formatActiveDocker,
 } from "./docker-presentation.ts";
+import { sandboxDoctor } from "./doctor.ts";
 import {
     DOCKER_OPERATIONS,
     SandboxExecutionError,
@@ -297,20 +277,22 @@ export function saveSessionSandboxStatus(
     }
 }
 
-/**
- * Pure render for the sandbox footer widget.
- *
- * Returns a pre-themed composite string: a dim label (`🛡️ sandbox:`) followed
- * by the status value colored by severity (accent / warning / danger). Hidden
- * (null) when the sandbox is off. The widget contribution sets `styled: true`
- * so pi-fancy-footer uses this string verbatim instead of re-wrapping it.
- */
+/** Render selected shell mode and policy independently of engine readiness. */
 export function renderSandboxWidget(
     theme: import("@earendil-works/pi-coding-agent").Theme,
     state: SandboxFooterState,
     docker: SandboxDockerFooterState = { mode: "off", unsafe: false },
+    shell?: Pick<ShellCapabilityResolution, "mode" | "profile">,
 ): string | null {
     const colors: UiColorsCreation = createUiColors(theme);
+    if (shell) {
+        const runtime = state === "on" ? "ready" : state;
+        const value =
+            shell.mode === "host"
+                ? `host · unsandboxed${state === "error" || state === "reconfiguring" ? ` · ${state}` : ""}`
+                : `sandbox · ${shell.profile} · ${runtime}`;
+        return `${colors.subtle("Shell:")} ${shell.mode === "host" ? colors.warning(value) : state === "error" ? colors.danger(value) : state === "on" ? colors.primary(value) : colors.warning(value)} | ${colors.subtle("Docker:")} ${colorForDockerState(colors, docker)}`;
+    }
     const dockerLabel = colors.subtle(`${DOCKER_ICON}docker:`);
     const dockerValue = colorForDockerState(colors, docker);
     if (state === "off") {
@@ -361,13 +343,21 @@ export function renderSandboxStatusDetails(
     runtimeState?: string,
 ): string {
     const { config, source } = resolved;
-    const status = sandboxActive ? "ENABLED" : "DISABLED";
+    const status =
+        resolved.shell.mode === "host"
+            ? "HOST (unsandboxed)"
+            : sandboxActive
+              ? "ENABLED"
+              : "DISABLED";
     const securityLabel = explicitlyDisabled(resolved) ? `${status} ⚠` : status;
-    const dockerStatus = sandboxActive
-        ? config.docker.mode === "disabled"
-            ? "off"
-            : config.docker.mode
-        : "off (sandbox disabled)";
+    const dockerStatus =
+        resolved.shell.mode === "host"
+            ? "off (shell mode is host)"
+            : sandboxActive
+              ? config.docker.mode === "disabled"
+                  ? "off"
+                  : config.docker.mode
+              : "off (sandbox disabled)";
     const lines = [
         `Sandbox: ${securityLabel}`,
         `Source: ${source}`,
@@ -1222,8 +1212,14 @@ export function createSandboxExtension(
     const reconfigureServices = async (
         ctx: ExtensionContext,
         resolved: LoadSandboxConfigResult,
+        presentation = resolved.shell,
     ): Promise<boolean> => {
         const previous = getSandboxRuntime();
+        const previousFooter = {
+            state: sandboxFooterState,
+            docker: sandboxDockerFooterState,
+            shell: sandboxShellFooterState,
+        };
         const generation = beginTransition(ctx, false, true);
         if (generation === undefined) return false;
         try {
@@ -1243,8 +1239,9 @@ export function createSandboxExtension(
             }
             updateSandboxStatus(
                 ctx,
-                resolved.shell.mode === "host" ? "off" : "on",
+                presentation.mode === "host" ? "off" : "on",
                 resolved.config.docker,
+                presentation,
             );
             if (activeDockerBreakGlass) {
                 scheduleBreakGlassExpiry(ctx, activeDockerBreakGlass);
@@ -1254,10 +1251,10 @@ export function createSandboxExtension(
             if (isCurrentTransition(generation)) {
                 sandboxEnabled = previous.state === "enabled";
                 publishSandboxRuntime(runtimeOwner, previous);
-                updateSandboxStatus(
-                    ctx,
-                    previous.state === "enabled" ? "on" : "error",
-                );
+                sandboxFooterState = previousFooter.state;
+                sandboxDockerFooterState = previousFooter.docker;
+                sandboxShellFooterState = previousFooter.shell;
+                w.update(ctx);
             }
             throw error;
         }
@@ -1314,7 +1311,7 @@ export function createSandboxExtension(
         ) {
             return;
         }
-        if (!(await reconfigureServices(ctx, forced))) {
+        if (!(await reconfigureServices(ctx, forced, loadShell(ctx).shell))) {
             throw new Error(
                 "Sandbox configuration changed but the replacement runtime was not admitted",
             );
@@ -1362,6 +1359,10 @@ export function createSandboxExtension(
 
     let sandboxEnabled = false;
     let sandboxFooterState: SandboxFooterState = "off";
+    let sandboxShellFooterState: Pick<
+        ShellCapabilityResolution,
+        "mode" | "profile"
+    > = { mode: "sandbox", profile: "default" };
     let sandboxDockerFooterState: SandboxDockerFooterState = {
         mode: "off",
         unsafe: false,
@@ -1381,6 +1382,7 @@ export function createSandboxExtension(
                 ctx.theme,
                 sandboxFooterState,
                 sandboxDockerFooterState,
+                sandboxShellFooterState,
             ),
     });
 
@@ -1388,11 +1390,21 @@ export function createSandboxExtension(
         ctx: ExtensionContext,
         status: SandboxFooterState,
         docker?: SandboxDockerPolicy,
+        shell?: Pick<ShellCapabilityResolution, "mode" | "profile">,
     ): void {
+        if (shell) sandboxShellFooterState = shell;
+        else {
+            // Retain the last selected state when configuration cannot be read.
+            try {
+                sandboxShellFooterState = loadShell(ctx).shell;
+            } catch {
+                /* The caller reports configuration failures. */
+            }
+        }
         sandboxFooterState = status;
         sandboxDockerFooterState = dockerFooterState(
             docker ?? { mode: "disabled" },
-            status === "on",
+            status === "on" && sandboxShellFooterState.mode === "sandbox",
         );
         w.update(ctx);
     }
@@ -1600,9 +1612,11 @@ export function createSandboxExtension(
 
     pi.registerCommand("sandbox", {
         description:
-            "Show Sandbox status or opt this project into the global Docker ceiling",
+            "Inspect shell policy, select the session mode, or configure Docker access",
         getArgumentCompletions: (prefix: string) => {
             const values = [
+                "status",
+                "mode",
                 "doctor",
                 "migrate",
                 "recover",
@@ -1624,7 +1638,75 @@ export function createSandboxExtension(
                 : null;
         },
         handler: async (args, ctx) => {
-            const arg = args.trim().toLowerCase();
+            let arg = args.trim().toLowerCase();
+            if ((!arg || arg === "mode") && ctx.hasUI) {
+                try {
+                    const resolved = loadShell(ctx);
+                    if (!arg) {
+                        const choice = await ctx.ui.select(
+                            renderSandboxStatusDetails(
+                                resolved,
+                                sandboxEnabled,
+                                getActiveDockerSummary(),
+                                getSandboxRuntime().state,
+                            ),
+                            [
+                                "Change session mode",
+                                "Inspect effective permissions",
+                                "Cancel",
+                            ],
+                        );
+                        if (!choice || choice === "Cancel") return;
+                        arg =
+                            choice === "Change session mode"
+                                ? "mode"
+                                : "doctor";
+                    }
+                    if (arg === "mode") {
+                        const hostChoice = resolved.shell.hostAllowed
+                            ? "host"
+                            : "host (unavailable: global host.allowed is false)";
+                        const choice = await ctx.ui.select(
+                            `Session mode: ${resolved.shell.mode}. The custom profile applies automatically from configuration.`,
+                            ["sandbox", hostChoice, "Cancel"],
+                        );
+                        if (!choice || choice === "Cancel") return;
+                        if (
+                            choice === hostChoice &&
+                            !resolved.shell.hostAllowed
+                        ) {
+                            ctx.ui.notify(
+                                `Host mode is unavailable. Set host.allowed in ${sandboxConfigPath(getAgentDir())} to authorize it. The project cannot grant host access.`,
+                                "warning",
+                            );
+                            return;
+                        }
+                        arg = `mode ${choice}`;
+                    }
+                } catch (error) {
+                    ctx.ui.notify(
+                        `Sandbox configuration failed: ${configurationErrorMessage(error)}`,
+                        "error",
+                    );
+                    return;
+                }
+            }
+            if (
+                [
+                    "2",
+                    "p2",
+                    "profile 2",
+                    "profile p2",
+                    "mode 2",
+                    "mode p2",
+                ].includes(arg)
+            ) {
+                ctx.ui.notify(
+                    "The custom profile (formerly P2) is automatic when sandbox.json grants resources. Use /sandbox mode sandbox, then /sandbox doctor to inspect the effective policy.",
+                    "info",
+                );
+                return;
+            }
             if (arg === "mode sandbox" || arg === "mode host") {
                 const nextSession = {
                     ...sessionConfig,
@@ -1672,6 +1754,14 @@ export function createSandboxExtension(
                         machineId,
                         ctx.cwd,
                     );
+                    if (!preview.required) {
+                        loadShell(ctx);
+                        ctx.ui.notify(
+                            "Sandbox configuration is already current. No files were changed or archived.",
+                            "info",
+                        );
+                        return;
+                    }
                     const useProposed = "Apply the proposed global ceiling";
                     const useStrict = "Use the strict default global ceiling";
                     const choice = await ctx.ui.select(
@@ -1976,20 +2066,32 @@ export function createSandboxExtension(
             }
             try {
                 const resolved = loadShell(ctx);
-                if (arg === "doctor") {
+                if (arg === "doctor" || arg.startsWith("doctor ")) {
+                    const runtime = getSandboxRuntime();
+                    const context =
+                        runtime.state === "enabled" &&
+                        runtime.sandboxFingerprint ===
+                            resolved.shell.sandboxFingerprint
+                            ? runtime.contexts?.["bash-general"]
+                            : undefined;
                     ctx.ui.notify(
-                        [
-                            "Sandbox doctor",
-                            formatShellPolicy(resolved.shell),
-                            `Global authority: ${sandboxConfigPath(getAgentDir())}`,
-                            `Docker: ${resolved.config.docker.mode}`,
-                            `Source: ${resolved.source}`,
-                        ].join("\n"),
+                        sandboxDoctor(
+                            resolved,
+                            arg === "doctor"
+                                ? undefined
+                                : args.trim().slice(7).trim(),
+                            context,
+                        ),
                         "info",
                     );
                     return;
                 }
-                if (!arg || arg === "docker") {
+                if (
+                    !arg ||
+                    arg === "status" ||
+                    arg === "mode" ||
+                    arg === "docker"
+                ) {
                     ctx.ui.notify(
                         renderSandboxStatusDetails(
                             resolved,
@@ -2002,7 +2104,7 @@ export function createSandboxExtension(
                     return;
                 }
                 ctx.ui.notify(
-                    "Usage: /sandbox [doctor | migrate | recover | mode sandbox|host | docker [on|off|break-glass [1m-30m]]]",
+                    "Usage: /sandbox [status | doctor [executable] | migrate | recover | mode [sandbox|host] | docker [on|off|break-glass [1m-30m]]]",
                     "error",
                 );
             } catch (error) {

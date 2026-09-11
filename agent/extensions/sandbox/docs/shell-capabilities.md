@@ -24,9 +24,9 @@ See [configuration](configuration.md) for the active schema and [Docker authorit
 
 ## Select and inspect
 
-Run `/sandbox doctor` to inspect the effective configuration and runtime state.
+Use `/sandbox` for status and actions, `/sandbox mode` to select a mode, or `/sandbox status` for a text report. Run `/sandbox doctor [executable]` to inspect the effective configuration and optionally resolve an executable without launching it.
 
-Run `/sandbox mode host` to select host execution for the current session. The global configuration must authorize it. A global host ceiling alone does not select host execution, and a project file cannot make that selection. Run `/sandbox mode sandbox` to return to the authorized sandbox configuration. Session selections do not carry into another session.
+Run `/sandbox mode host` to select host execution for the current session. The global configuration must authorize it with `host.allowed: true`. A global host ceiling alone does not select host execution, and a project file cannot make that selection. Run `/sandbox mode sandbox` to return to the authorized sandbox configuration. Session selections do not carry into another session.
 
 Use ordinary commands through `bash` or `safe_bash`. No tool parameter selects an editor, package manager or development service. A legacy `hostCapability` parameter produces a migration diagnostic before launch.
 
@@ -36,7 +36,7 @@ Use `! <command>` or `!! <command>` with the selected mode. Use `!s <command>` o
 
 Reload configuration before admitting a command. Invalid configuration blocks new admissions. A valid external change rebuilds the required runtime; operations already admitted drain using their original resources. A setup failure never selects a different backend.
 
-Keep execution evidence separate from labels. Record `mode` and `shellProfile` alongside the observed `status`, `backend` and temporary namespace. Preserve an unknown result when no execution evidence exists. When reading historical `integrated` results, use their observed backend to distinguish an old sandbox execution from an old specialized host execution.
+Keep execution evidence separate from labels. Record `mode` and `shellProfile` alongside the observed `status`, `backend` and temporary namespace. Preserve an unknown result when no execution evidence exists. The model context reports the final tool result separately from process provenance: a process can exit successfully while a later validation makes the tool fail. When reading historical `integrated` results, use their observed backend to distinguish an old sandbox execution from an old specialized host execution.
 
 This is a shell boundary. Native file tools, extensions and MCP tools execute outside it. Think-in-Code retains its strict environment and private HOME and temporary files regardless of the shell mode.
 

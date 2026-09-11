@@ -75,7 +75,10 @@ test('wire provenance records current mode/profile and converts historical profi
 
 test('Think JSON failure is its own receipt and remains parseable', () => {
     const message: AgentMessage = { role: 'toolResult', toolCallId: 'think-error', toolName: 'think_execute', content: [{ type: 'text', text: JSON.stringify({ tool: 'think_execute', status: 'error', sourceExecution: hostExecution(), analysisExecution: hostExecution() }) }], isError: true, timestamp: 1 };
-    expect(addExecutionContext([message])[0]).toEqual(message);
+    const decorated = addExecutionContext([message]);
+    expect(decorated[0]?.role === 'toolResult' && decorated[0].content[0]).toEqual(message.content[0]);
+    expect(JSON.stringify(decorated)).toContain('Tool result: failed');
+    expect(addExecutionContext(decorated)).toEqual(decorated);
 });
 
 test('Think source-command timeouts retain their JSON header and report external-work uncertainty', () => {

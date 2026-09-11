@@ -10,6 +10,7 @@ import {
     spyOn,
 } from "bun:test";
 import { renameSync } from "node:fs";
+import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import type { ChildProcess } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -471,6 +472,7 @@ describe("sandbox lifecycle", () => {
     });
 
     it("leaves configuration untouched when the interactive migration preview is cancelled", async () => {
+        await writeGlobalConfig({ mode: "sandbox" });
         const registered = registerSandbox();
         const ctx = context(cwd, undefined, "session-a", true, {
             select: ["Cancel"],
@@ -488,6 +490,7 @@ describe("sandbox lifecycle", () => {
     });
 
     it("publishes the selected migration ceiling and rebuilds the active runtime", async () => {
+        await writeGlobalConfig({ mode: "sandbox" });
         const registered = registerSandbox();
         const ctx = context(cwd, undefined, "session-a", true, {
             select: ["Apply the proposed global ceiling"],
@@ -524,6 +527,7 @@ describe("sandbox lifecycle", () => {
     });
 
     it("recovers an interrupted migration through the command before allowing a new Bash admission", async () => {
+        await writeGlobalConfig({ mode: "sandbox" });
         const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
         const globalPath = join(isolatedAgentDirectory, "sandbox.json");
@@ -1093,6 +1097,79 @@ describe("sandbox lifecycle", () => {
                     "exitCode" in replacementStopped &&
                     replacementStopped.exitCode === null),
         ).toBeTrue();
+    });
+
+    it("uses the real Pi command and UI boundary to select and cancel session modes", async () => {
+        await writeGlobalConfig({ host: { allowed: true } });
+        const selections: Array<string | undefined> = ["Change session mode", "host", undefined, "sandbox"];
+        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension], mockUI: { select: () => selections.shift() } });
+        try {
+            await session.session.prompt("/sandbox");
+            expect(currentShellPolicy()?.mode).toBe("host");
+            expect(session.events.uiCallsFor("select")).toHaveLength(2);
+            await session.session.prompt("/sandbox mode");
+            expect(currentShellPolicy()?.mode).toBe("host");
+            await session.session.prompt("/sandbox mode");
+            expect(currentShellPolicy()?.mode).toBe("sandbox");
+            await session.session.prompt("/sandbox status");
+            expect(session.events.uiCallsFor("notify").at(-1)?.args[0]).toContain("Mode: sandbox");
+        } finally {
+            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+            session.dispose();
+        }
+    });
+
+    it("inspects an executable without running it or exposing environment values", async () => {
+        const tool = join(cwd, "ProbeTool");
+        await writeFile(tool, "#!/bin/sh\nprintf executed > marker\n", { mode: 0o700 });
+        await writeGlobalConfig({ environment: { path: [cwd], variables: { FIXTURE_SECRET: "never-display-this" } } });
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await sandboxCommand(registered).handler("doctor ProbeTool", ctx);
+        const report = notifyCalls(ctx).at(-1)?.[0];
+        expect(report).toContain(`Resolved executable: ${tool}`);
+        expect(report).toContain("not executed");
+        expect(report).toContain(".git: follows explicit filesystem rules");
+        expect(report).not.toContain("never-display-this");
+        expect(await Bun.file(join(cwd, "marker")).exists()).toBe(false);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("offers session modes and preserves the current mode on cancellation or refusal", async () => {
+        await writeGlobalConfig({ host: { allowed: false }, environment: { path: ["~/bin"] } });
+        const registered = registerSandbox();
+        const ctx = context(cwd, undefined, "mode-menu", true, { select: [undefined, "host (unavailable: global host.allowed is false)"] });
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const command = sandboxCommand(registered);
+        await command.handler("mode", ctx);
+        expect(ctx.ui.select).toHaveBeenCalled();
+        expect(currentShellPolicy()?.mode).toBe("sandbox");
+        await command.handler("mode", ctx);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("host.allowed");
+        expect(currentShellPolicy()?.mode).toBe("sandbox");
+        await command.handler("status", ctx);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Shell profile: custom");
+        await command.handler("profile 2", ctx);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("automatic");
+        expect(capturedWidgetDef.def?.render({ theme: fakeTheme(), ctx })).toContain("sandbox · custom · ready");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("selects host from the main menu and keeps it selected during forced sandbox preparation", async () => {
+        await writeGlobalConfig({ host: { allowed: true } });
+        const registered = registerSandbox();
+        const ctx = context(cwd, undefined, "host-menu", true, { select: ["Change session mode", "host"] });
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await sandboxCommand(registered).handler("", ctx);
+        expect(currentShellPolicy()?.mode).toBe("host");
+        expect(capturedWidgetDef.def?.render({ theme: fakeTheme(), ctx })).toContain("host · unsandboxed");
+        await writeGlobalConfig({ host: { allowed: true }, network: { allowedDomains: ["example.test"] } });
+        const { resolveForcedSandboxPolicyForExecution } = await import("./capabilities/runtime.ts");
+        await resolveForcedSandboxPolicyForExecution(cwd);
+        expect(currentShellPolicy()?.mode).toBe("host");
+        expect(capturedWidgetDef.def?.render({ theme: fakeTheme(), ctx })).toContain("host · unsandboxed");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
     });
 
     it("derives custom and host profiles from v2 global and project mode layers", async () => {

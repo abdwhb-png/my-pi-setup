@@ -97,6 +97,12 @@ describe('active sandbox files', () => {
 });
 
 describe('renderSandboxWidget', () => {
+    it('shows the selected mode separately from its custom policy and engine state', () => {
+        const selected = { mode: 'sandbox' as const, profile: 'custom' as const };
+        expect(renderSandboxWidget(fakeTheme(), 'on', undefined, selected)).toContain('sandbox · custom · ready');
+        expect(renderSandboxWidget(fakeTheme(), 'reconfiguring', undefined, selected)).toContain('sandbox · custom · reconfiguring');
+        expect(renderSandboxWidget(fakeTheme(), 'off', undefined, { mode: 'host', profile: 'host' })).toContain('host · unsandboxed');
+    });
     it('always renders the off state with warning color and ⚠ glyph', () => {
         const rendered = renderSandboxWidget(fakeTheme(), 'off');
         expect(rendered).not.toBeNull();
@@ -182,6 +188,15 @@ describe('renderSandboxStatusDetails', () => {
             },
         };
     }
+
+    it('does not describe the broker as active for a host shell', () => {
+        const resolved = resolvedWithDocker({ mode: 'full', endpoint: 'unix:///hidden.sock' });
+        resolved.shell.mode = 'host';
+        resolved.shell.profile = 'host';
+        const output = renderSandboxStatusDetails(resolved, true);
+        expect(output).toContain('Sandbox: HOST (unsandboxed)');
+        expect(output).toContain('Docker: off (shell mode is host)');
+    });
 
     it('reports Docker off when the sandbox is disabled', () => {
         const output = renderSandboxStatusDetails(
