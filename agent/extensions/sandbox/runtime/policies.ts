@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -9,26 +9,14 @@ import {
     type SandboxLeasePaths,
     type SandboxNetworkPolicy,
     type SandboxPolicy,
+    type SandboxResourcesPolicy,
+    type SandboxTcpPublication,
 } from "./contracts.ts";
-
-export const BASH_SAFE_PATH_SEGMENTS = [
-    "~/.pi/bin",
-    "~/.bun/bin",
-    "~/miniconda3/condabin",
-    "~/.local/share/pnpm",
-    "~/.cargo/bin",
-    "~/.local/bin",
-    "~/.config/herd-lite/bin",
-    "/home/linuxbrew/.linuxbrew/bin",
-    "/home/linuxbrew/.linuxbrew/sbin",
-    "/usr/local/go/bin",
-    "/usr/local/bin",
-    "/usr/local/sbin",
-    "/usr/bin",
-    "/usr/sbin",
-    "/bin",
-    "/sbin",
-] as const;
+import {
+    buildShellPath,
+    expandShellPathEntry,
+    SHELL_SYSTEM_READ_PATHS,
+} from "./shell-baseline.ts";
 
 export const DEFAULT_BASH_INHERITED_VARIABLES = [
     "USER",
@@ -38,6 +26,9 @@ export const DEFAULT_BASH_INHERITED_VARIABLES = [
     "COLORTERM",
     "NO_COLOR",
 ] as const;
+
+/** Logical HOME mounted from the current private lease by Zerobox. */
+export const SANDBOX_PRIVATE_HOME = "/home/sandbox";
 
 const ASRT_ONLY_FIELDS = [
     "ignoreViolations",
@@ -81,7 +72,10 @@ interface PiEnvironmentConfig {
     allowedVariables: string[];
     deniedVariables: string[];
     variables: Record<string, string>;
+    path: string[];
 }
+
+export interface PiSandboxResources extends SandboxResourcesPolicy {}
 
 export interface PiSandboxConfig {
     tmpNamespace?: "host" | "lease-private";
@@ -90,6 +84,7 @@ export interface PiSandboxConfig {
     network: PiNetworkConfig;
     environment: PiEnvironmentConfig;
     docker: SandboxDockerPolicy;
+    resources?: PiSandboxResources;
 }
 
 export interface PolicyInput {
@@ -285,6 +280,155 @@ function validateDenyPaths(paths: string[]): void {
     }
 }
 
+interface ParsedSocketAddress {
+    address: string;
+    host: string;
+    family: 4 | 6;
+}
+
+function parseSocketAddress(
+    value: unknown,
+    field: string,
+): ParsedSocketAddress {
+    if (typeof value !== "string" || !value || /\s/.test(value))
+        invalid(new Error(`${field} must be an IP socket address`));
+    const bracketed = /^\[([^\]]+)\]:(\d+)$/.exec(value);
+    const plain = /^([^:]+):(\d+)$/.exec(value);
+    const match = bracketed ?? plain;
+    if (!match) invalid(new Error(`${field} must be an IP socket address`));
+    const detectedFamily = isIP(match[1]!);
+    if (
+        detectedFamily === 0 ||
+        (bracketed !== null && detectedFamily !== 6) ||
+        (plain !== null && detectedFamily !== 4)
+    )
+        invalid(new Error(`${field} must be an IP socket address`));
+    const family: 4 | 6 = detectedFamily === 4 ? 4 : 6;
+    let host = match[1]!;
+    if (family === 6) {
+        try {
+            const canonical = new URL(`http://[${host}]/`).hostname;
+            host = canonical.slice(1, -1);
+        } catch {
+            invalid(new Error(`${field} must be an IP socket address`));
+        }
+    }
+    if (host === "0.0.0.0" || host === "::")
+        invalid(new Error(`${field} must be a non-wildcard IP socket address`));
+    const port = Number(match[2]);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535)
+        invalid(new Error(`${field} must have a non-zero port`));
+    return {
+        address: family === 6 ? `[${host}]:${port}` : `${host}:${port}`,
+        host,
+        family,
+    };
+}
+
+function socketAddress(value: unknown, field: string): string {
+    return parseSocketAddress(value, field).address;
+}
+
+function loopbackSocketAddress(value: unknown, field: string): string {
+    const address = parseSocketAddress(value, field);
+    const loopback =
+        address.family === 6
+            ? address.host === "::1"
+            : Number(address.host.split(".", 1)[0]) === 127;
+    if (!loopback) invalid(new Error(`${field} must target private loopback`));
+    return address.address;
+}
+
+export function normalizeSandboxResources(value: unknown): PiSandboxResources {
+    if (value === undefined) return { unixSockets: [], tcpPublications: [] };
+    if (!isRecord(value)) invalid(new Error("resources must be an object"));
+    assertKnownFields(value, ["unixSockets", "tcpPublications"]);
+    const unixSockets = stringArray(
+        value.unixSockets,
+        "resources.unixSockets",
+    ).map(expandHome);
+    for (const socket of unixSockets) {
+        if (
+            !isAbsolute(socket) ||
+            socket.includes("\0") ||
+            GLOB_META.test(socket)
+        )
+            invalid(
+                new Error(
+                    "resources.unixSockets must contain absolute exact paths",
+                ),
+            );
+    }
+    const tcpPublications =
+        value.tcpPublications === undefined
+            ? []
+            : (() => {
+                  if (!Array.isArray(value.tcpPublications))
+                      invalid(
+                          new Error(
+                              "resources.tcpPublications must be an array",
+                          ),
+                      );
+                  return value.tcpPublications.map(
+                      (entry): SandboxTcpPublication => {
+                          if (!isRecord(entry))
+                              invalid(
+                                  new Error(
+                                      "TCP publication must be an object",
+                                  ),
+                              );
+                          assertKnownFields(entry, [
+                              "transport",
+                              "scope",
+                              "listen",
+                              "target",
+                          ]);
+                          if (entry.transport === "udp")
+                              unsupported(
+                                  new Error("UDP publications are unavailable"),
+                              );
+                          if (entry.transport !== "tcp")
+                              invalid(
+                                  new Error(
+                                      "TCP publication transport must be tcp",
+                                  ),
+                              );
+                          if (entry.scope !== "host" && entry.scope !== "lan")
+                              invalid(
+                                  new Error(
+                                      "TCP publication scope must be host or lan",
+                                  ),
+                              );
+                          const listen = socketAddress(
+                              entry.listen,
+                              "TCP publication listen",
+                          );
+                          if (entry.scope === "host")
+                              loopbackSocketAddress(
+                                  entry.listen,
+                                  "host TCP publication listen",
+                              );
+                          return {
+                              transport: "tcp",
+                              scope: entry.scope,
+                              listen,
+                              target: loopbackSocketAddress(
+                                  entry.target,
+                                  "TCP publication target",
+                              ),
+                          };
+                      },
+                  );
+              })();
+    const tuples = tcpPublications.map(
+        (item) =>
+            `${item.transport}\0${item.scope}\0${item.listen}\0${item.target}`,
+    );
+    if (new Set(tuples).size !== tuples.length)
+        invalid(new Error("Duplicate TCP publication"));
+    return { unixSockets: unique(unixSockets), tcpPublications };
+}
+
 export function validatePiSandboxConfig(
     raw: unknown,
     docker: SandboxDockerPolicy = { mode: "disabled" },
@@ -300,6 +444,7 @@ export function validatePiSandboxConfig(
         "network",
         "environment",
         "tmpNamespace",
+        "resources",
     ]);
     if (
         raw.tmpNamespace !== undefined &&
@@ -321,9 +466,15 @@ export function validatePiSandboxConfig(
         "denyWrite",
     ]);
     const normalizedFilesystem: PiFilesystemConfig = {
-        allowRead: stringArray(filesystem.allowRead, "filesystem.allowRead"),
+        allowRead:
+            filesystem.allowRead === undefined
+                ? ["."]
+                : stringArray(filesystem.allowRead, "filesystem.allowRead"),
         denyRead: stringArray(filesystem.denyRead, "filesystem.denyRead"),
-        allowWrite: stringArray(filesystem.allowWrite, "filesystem.allowWrite"),
+        allowWrite:
+            filesystem.allowWrite === undefined
+                ? ["."]
+                : stringArray(filesystem.allowWrite, "filesystem.allowWrite"),
         denyWrite: stringArray(filesystem.denyWrite, "filesystem.denyWrite"),
     };
     validateExactPaths([
@@ -382,6 +533,7 @@ export function validatePiSandboxConfig(
         "allowedVariables",
         "deniedVariables",
         "variables",
+        "path",
     ]);
     const allowedVariables = stringArray(
         environment.allowedVariables,
@@ -395,6 +547,20 @@ export function validatePiSandboxConfig(
         if (!ENV_NAME.test(name))
             invalid(new Error("Invalid environment variable name"));
     }
+    const path = stringArray(environment.path, "environment.path");
+    for (const entry of path) {
+        if (
+            entry.includes(":") ||
+            GLOB_META.test(entry) ||
+            !isAbsolute(expandShellPathEntry(entry))
+        ) {
+            invalid(
+                new Error(
+                    "environment.path entries must be absolute or home-relative",
+                ),
+            );
+        }
+    }
 
     return {
         enabled: raw.enabled as boolean | undefined,
@@ -405,8 +571,10 @@ export function validatePiSandboxConfig(
             allowedVariables,
             deniedVariables,
             variables: envVariables(environment.variables),
+            path: unique(path.map(expandShellPathEntry)),
         },
         docker,
+        resources: normalizeSandboxResources(raw.resources),
     };
 }
 
@@ -463,8 +631,39 @@ function assertAllowsDoNotOverrideDenies(
     }
 }
 
-export function buildBashPath(): string {
-    return BASH_SAFE_PATH_SEGMENTS.map(expandHome).join(delimiter);
+function assertNoLogicalPrivateHomeDeny(paths: string[], cwd: string): void {
+    for (const path of paths) {
+        const expanded = expandHome(path);
+        const absolute = isAbsolute(expanded)
+            ? expanded
+            : resolve(cwd, expanded);
+        const firstGlob = absolute.search(GLOB_META);
+        const prefix = absolute.slice(0, firstGlob);
+        const candidate =
+            firstGlob === -1
+                ? resolve(absolute)
+                : resolve(
+                      prefix === "/"
+                          ? "/"
+                          : prefix.endsWith("/")
+                            ? prefix.slice(0, -1)
+                            : dirname(prefix),
+                  );
+        if (
+            isEqualOrDescendant(SANDBOX_PRIVATE_HOME, candidate) ||
+            isEqualOrDescendant(candidate, SANDBOX_PRIVATE_HOME)
+        ) {
+            invalid(
+                new Error(
+                    "A filesystem deny cannot target the logical private HOME",
+                ),
+            );
+        }
+    }
+}
+
+export function buildBashPath(entries: string[] = []): string {
+    return buildShellPath(entries);
 }
 
 export function createBashPolicy(input: BashPolicyInput): SandboxPolicy {
@@ -501,22 +700,20 @@ function createShellPolicy(
     const allow = input.config.network.allowedDomains;
     const allowHost = input.config.network.allowedHostDomains;
     const leaseParent = dirname(input.lease.root);
-    const fixedDeniedRoots = [
+    const fixedDeniedReadRoots = [
         // --private-tmp mounts the lease over /tmp after filesystem setup.
         // Masking /tmp first makes nested host denies (including Docker sockets)
         // impossible to materialize in bubblewrap's read-only intermediate root.
         "/proc/1/root",
-        "/mnt/c",
         leaseParent,
-        resolve(getAgentDir(), "sandbox.global.json"),
-        resolve(getAgentDir(), "sandbox.capabilities.json"),
+        resolve(getAgentDir(), "sandbox.json"),
     ];
-    const configuredAllowRead =
-        input.config.filesystem.allowRead.length > 0
-            ? input.config.filesystem.allowRead.map((path) =>
-                  normalizePath(path, input.cwd),
-              )
-            : ["/"];
+    const fixedDeniedWriteRoots = ["/mnt/c", ...fixedDeniedReadRoots];
+    const configuredAllowRead = unique(
+        input.config.filesystem.allowRead.map((path) =>
+            normalizePath(path, input.cwd),
+        ),
+    );
     const configuredDenyRead = splitDenyPaths(
         input.config.filesystem.denyRead,
         input.cwd,
@@ -528,14 +725,19 @@ function createShellPolicy(
         input.config.filesystem.denyWrite,
         input.cwd,
     );
+    assertNoLogicalPrivateHomeDeny(input.config.filesystem.denyRead, input.cwd);
+    assertNoLogicalPrivateHomeDeny(
+        input.config.filesystem.denyWrite,
+        input.cwd,
+    );
     assertAllowsDoNotOverrideDenies(configuredAllowRead, [
         ...configuredDenyRead.exact,
-        ...fixedDeniedRoots,
+        ...fixedDeniedReadRoots,
     ]);
     assertAllowsDoNotOverrideDenies(configuredAllowWrite, [
         ...configuredDenyRead.exact,
         ...configuredDenyWrite.exact,
-        ...fixedDeniedRoots,
+        ...fixedDeniedWriteRoots,
     ]);
 
     return {
@@ -544,6 +746,7 @@ function createShellPolicy(
         tmpNamespace: privateTmp ? "lease-private" : "host",
         filesystem: {
             allowRead: unique([
+                ...SHELL_SYSTEM_READ_PATHS,
                 ...configuredAllowRead,
                 ...(!privateTmp &&
                 !configuredDenyRead.exact.some((path) =>
@@ -557,7 +760,7 @@ function createShellPolicy(
             ]),
             denyRead: unique([
                 ...configuredDenyRead.exact,
-                ...fixedDeniedRoots,
+                ...fixedDeniedReadRoots,
             ]),
             denyReadGlobs: configuredDenyRead.globs,
             allowWrite: unique([
@@ -574,7 +777,7 @@ function createShellPolicy(
             ]),
             denyWrite: unique([
                 ...configuredDenyWrite.exact,
-                ...fixedDeniedRoots,
+                ...fixedDeniedWriteRoots,
             ]),
             denyWriteGlobs: configuredDenyWrite.globs,
         },
@@ -593,32 +796,25 @@ function createShellPolicy(
             set: {
                 ...inheritedVariables,
                 ...configuredVariables,
-                PATH: buildBashPath(),
+                PATH: buildBashPath(input.config.environment.path),
                 // Path expansion does not grant any additional filesystem access.
-                HOME: strictHome ? input.lease.homeDir : homedir(),
-                // Preserve writable tool caches while HOME keeps normal path semantics.
-                ...(!strictHome
-                    ? {
-                          XDG_CACHE_HOME: resolve(
-                              input.lease.homeDir,
-                              ".cache",
-                          ),
-                          BUN_INSTALL_CACHE_DIR: resolve(
-                              input.lease.homeDir,
-                              ".bun/install/cache",
-                          ),
-                          npm_config_cache: resolve(
-                              input.lease.homeDir,
-                              ".npm",
-                          ),
-                      }
-                    : {}),
+                HOME: SANDBOX_PRIVATE_HOME,
+                XDG_CACHE_HOME: resolve(SANDBOX_PRIVATE_HOME, ".cache"),
+                BUN_INSTALL_CACHE_DIR: resolve(
+                    SANDBOX_PRIVATE_HOME,
+                    ".bun/install/cache",
+                ),
+                npm_config_cache: resolve(SANDBOX_PRIVATE_HOME, ".npm"),
                 // Do not load a host Docker context that could override the broker.
-                DOCKER_CONFIG: input.lease.homeDir,
+                DOCKER_CONFIG: SANDBOX_PRIVATE_HOME,
                 TMPDIR: "/tmp",
             },
             deny: input.config.environment.deniedVariables,
         },
+        resources:
+            name === "bash-general"
+                ? input.config.resources
+                : { unixSockets: [], tcpPublications: [] },
         docker: input.config.docker,
     };
 }
@@ -652,12 +848,13 @@ export function createAnalysisPolicy(
             inherit: [],
             set: {
                 PATH: "/usr/local/bin:/usr/bin:/bin",
-                HOME: input.lease.homeDir,
+                HOME: SANDBOX_PRIVATE_HOME,
                 TMPDIR: "/tmp",
             },
             deny: [],
         },
         docker: { mode: "disabled" },
+        resources: { unixSockets: [], tcpPublications: [] },
     };
 }
 

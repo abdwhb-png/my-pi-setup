@@ -1,12 +1,40 @@
 import { expect, test } from "bun:test";
 import { inspectDockerAccess, formatDockerAccess } from "./docker-access.ts";
+import { validatePiSandboxConfig } from "./runtime/policies.ts";
 
 const selector = { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" } as const;
 const policy = { mode: "targeted", endpoint: "unix:///var/run/docker.sock", targets: [{ selector, operations: ["ps"], allowUnsafeTarget: false }] } as const;
 
+test("preserves this for injected inspection and service factory methods", async () => {
+    const config = validatePiSandboxConfig({}, { mode: "targeted", endpoint: "unix:///fixture.sock", targets: [
+        { selector: { type: "container-name", name: "fixture" }, operations: ["ps"], allowUnsafeTarget: false },
+    ] });
+    const dependencies = {
+        calls: 0,
+        visible: new Set(["abc"]),
+        async request(path: string) {
+            this.calls += 1;
+            return path.startsWith("/containers/json") ? [{ Id: "abc", Names: ["/fixture"] }] : {};
+        },
+        async visibleIds() { this.calls += 1; return this.visible; },
+    };
+    expect((await inspectDockerAccess("/fixture", config, dependencies))[0]?.containers[0]?.access).toBe("accessible");
+    expect(dependencies.calls).toBe(3);
+    const factory = {
+        calls: 0,
+        request: (path: string) => dependencies.request(path),
+        createService(): never {
+            this.calls += 1;
+            throw new Error("fixture service factory reached");
+        },
+    };
+    await expect(inspectDockerAccess("/fixture", config, factory)).rejects.toThrow("fixture service factory reached");
+    expect(factory.calls).toBe(1);
+});
+
 test("reports a matching container excluded by the broker and only displays access facts", async () => {
     const paths: string[] = [];
-    const result = await inspectDockerAccess("/tmp", { ...policy, targets: [{ ...policy.targets[0], operations: ["ps"] }] }, {
+    const result = await inspectDockerAccess("/tmp", validatePiSandboxConfig({}, { ...policy, targets: [{ ...policy.targets[0], operations: ["ps"] }] }), {
         request: async path => {
             paths.push(path);
             return path.startsWith("/containers/json")
@@ -25,7 +53,7 @@ test("reports a matching container excluded by the broker and only displays acce
 });
 
 test("uses the broker verdict even when inspection contains host mounts", async () => {
-    const result = await inspectDockerAccess("/tmp", { ...policy, targets: [{ ...policy.targets[0], operations: ["ps"], allowUnsafeTarget: true }] }, {
+    const result = await inspectDockerAccess("/tmp", validatePiSandboxConfig({}, { ...policy, targets: [{ ...policy.targets[0], operations: ["ps"], allowUnsafeTarget: true }] }), {
         request: async path => path.startsWith("/containers/json")
             ? [{ Id: "abc123", Names: ["/cliproxy"], State: "running", Labels: { "com.docker.compose.project": "cliproxy", "com.docker.compose.service": "cli-proxy-api" } }]
             : { Mounts: [{ Type: "bind", Destination: "/auths", RW: true }] },
@@ -35,7 +63,7 @@ test("uses the broker verdict even when inspection contains host mounts", async 
 });
 
 test("reports an absent exact container name without probing unrelated containers", async () => {
-    const result = await inspectDockerAccess("/tmp", { mode: "targeted", endpoint: policy.endpoint, targets: [{ selector: { type: "container-name", name: "api" }, operations: ["ps"], allowUnsafeTarget: false }] }, {
+    const result = await inspectDockerAccess("/tmp", validatePiSandboxConfig({}, { mode: "targeted", endpoint: policy.endpoint, targets: [{ selector: { type: "container-name", name: "api" }, operations: ["ps"], allowUnsafeTarget: false }] }), {
         request: async () => [{ Id: "abc", Names: ["/api-other"], Labels: {} }],
         visibleIds: async () => { throw new Error("unrelated container was probed"); },
     });
@@ -43,7 +71,7 @@ test("reports an absent exact container name without probing unrelated container
 });
 
 test.each(["engine", "broker"])("does not report a target absent when %s inspection fails", async boundary => {
-    await expect(inspectDockerAccess("/tmp", { ...policy, targets: [{ ...policy.targets[0], operations: ["ps"] }] }, {
+    await expect(inspectDockerAccess("/tmp", validatePiSandboxConfig({}, { ...policy, targets: [{ ...policy.targets[0], operations: ["ps"] }] }), {
         request: async path => {
             if (boundary === "engine") throw new Error("fixture inspection unavailable");
             return path.startsWith("/containers/json") ? [{ Id: "abc", Names: ["/cliproxy"], Labels: { "com.docker.compose.project": "cliproxy", "com.docker.compose.service": "cli-proxy-api" } }] : {};

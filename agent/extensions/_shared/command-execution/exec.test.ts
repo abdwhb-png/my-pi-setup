@@ -19,6 +19,7 @@ mock.module('@earendil-works/pi-coding-agent', () => ({
 const {
     MAX_STDIN_BYTES,
     bashWithStdinSchema,
+    safeBashSchema,
     createBashOperations,
     createBashProcessSupervisor,
 } = await import('./exec');
@@ -90,6 +91,20 @@ describe('bashWithStdinSchema', () => {
         expect(bashWithStdinSchema.properties.command.type).toBe('string');
         expect(bashWithStdinSchema.properties.timeout.type).toBe('number');
         expect(bashWithStdinSchema.properties.stdin.type).toBe('string');
+    });
+
+    it('safe schema mirrors standard shell fields without hostCapability', () => {
+        expect(safeBashSchema.required).toEqual([
+            'command',
+        ]);
+        expect(safeBashSchema.properties).toMatchObject({
+            command: expect.objectContaining({ type: 'string' }),
+            timeout: expect.objectContaining({ type: 'number' }),
+            stdin: expect.objectContaining({ type: 'string' }),
+        });
+        expect(safeBashSchema.properties).not.toHaveProperty(
+            "hostCapability",
+        );
     });
 });
 

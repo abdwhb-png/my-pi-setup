@@ -1,66 +1,38 @@
 # Troubleshooting
 
-Run `/sandbox doctor` and `/sandbox capabilities` in the project first. They
-inspect configuration and authority without writing it. Doctor separates the
-shell diagnostic from canonical Docker configuration.
+Run `/sandbox` and `/sandbox doctor` in the project to inspect the resolved policy and runtime state. Correct the reported file or field before retrying an operation.
 
-## Shell profiles and local authority
-
-| Diagnostic | Action |
+| Diagnostic or symptom | Action |
 | --- | --- |
-| `migration-required` | Run `/sandbox capabilities migrate` interactively and review the displayed openings once. |
-| `machine-mismatch` | Review foreign grants with migration. Do not copy a machine identity to activate them. |
-| `authorization-required` | Inspect `/sandbox capabilities`; ask the user for the named grant if needed. Never retry through another host route. |
-| `invalid-authority` | Inspect file owner, regular-file status, symlinks and permissions from a trusted host context. Do not overwrite it from the model. |
-| `integration-unavailable` | Repair the named installed host tool, then grant its installed path again. |
-| `unsupported-command` | Use the adapter's documented literal argv. Unsupported managers and shell compositions require a separately approved route. |
-| Shell policy changed | Refresh the requested profile through `/sandbox profile ...`; the rejected call did not execute. |
-| SFW nonzero exit | Keep its raw error and exit code. Stop. Do not call an unwrapped package manager. |
-| A temporary file is invisible | Compare namespaces. Use a project artifact shared with native file tools. |
+| Migration required | Run `/sandbox migrate` interactively and review the proposed global ceiling and both destination files. |
+| Interrupted migration | Run `/sandbox recover`. A conflicting edit keeps admissions blocked until verified recovery is possible. |
+| Global document belongs to another machine | Review its provenance. Do not copy a machine identity merely to activate foreign grants. |
+| Untrusted configuration file | Check owner, regular-file status and group/other write permissions. Symlink configuration files are refused. |
+| Unknown or reserved field | Use the v2 schema. Remove project fields reserved for global authority. False or inactive values do not exempt a field from validation. |
+| Host mode outside the global ceiling | Inspect the global mode. Host execution also needs an explicit `/sandbox mode host` selection in the current session. |
+| Shell policy changed during preparation | The pending command was not dispatched. Inspect the current mode and configuration before submitting it again. |
+| Tool not found or unreadable | Check configured PATH and the canonical executable target's read grant. A PATH entry alone grants no read permission. |
+| Filesystem deny targets logical private HOME | The internal HOME mount cannot enforce this deny. Correct the conflicting policy; the runtime will not silently ignore it. |
+| A temporary file is invisible | Compare the host, Bash and Think namespaces. Store a shared artifact in the project. |
+| Pipeline reports failure despite successful final stage | Bash uses `pipefail`. Inspect the earlier command's error. |
+| Zerobox setup or provenance failure | Keep the setup diagnostic separate from a command exit. Repair the matching candidate installation; do not bypass through host mode. |
+| Reconfiguration wait expired | The pending command did not execute. Its original timeout includes the wait. |
+| Execution interrupted by reconfiguration | Inspect any effects already produced. The runtime did not replay the command. |
 
-Read the [capability contract](shell-capabilities.md) before changing isolation.
-Native file tools remain on the host. A successfully spawned CLI does not prove
-that a GUI opened or that a remote service completed its operation.
+## Docker
 
-| Message | Meaning and action |
+Docker needs global `allowed: true` with an explicit policy and project `enabled: true`. A missing activation at either level keeps it disabled. Use `/sandbox docker on` to save project activation within the global ceiling.
+
+| Diagnostic or symptom | Meaning |
 | --- | --- |
-| `targets is required for mode "targeted"` | Run `/sandbox docker grant`, or add an explicit target manually. |
-| `Untrusted global Docker authority file` | Make the authority a regular owner-owned `0600` file, not a symlink. |
-| `Project attempted to enable Docker` | Add the authority globally with `/sandbox docker grant`; project settings can only narrow it. |
-| Docker service cannot be selected | Run the command from the Compose project or use the manual container-name fallback. |
-| `Target access: blocked by the broker for this grant` | Review the reported host access with `/sandbox docker grant` and explicitly confirm an exception if appropriate. |
-| `Docker target ...: absent` | No current container matches the selector on the configured Docker endpoint. Check the Compose project and service names. |
-| `Docker target inspection unavailable` | The configuration was parsed, but live access could not be checked. Check the Docker daemon, CLI and Sandbox runtime, then rerun doctor. |
-| Sandbox configuration failed | Read the field path in the message, correct that canonical file, then run `/sandbox doctor` again. |
-| `Docker operation is not granted` | Inspect effective operations in `/sandbox`. Administration adds persistent `exec` only when the target has no host-access exception. |
-| `Docker target is not authorized` | Check the exact container name or Compose project/service selector. The container may also have disappeared. |
-| `Docker exec option forbidden` | Targeted exec refuses privileged/detached execution and non-empty detach keys, even with Administration. |
-| `Docker exec is restricted to read-only inspection` | This target has a persistent host-access exception. Use exactly `test -r PATH`, `stat -- PATH` or `ls -la -- PATH` below a declared bind destination, or explicitly run `/sandbox docker break-glass`. |
-| `Break-glass exec expired` | The exact-container grant reached its selected expiration. Any command still using the old runtime was interrupted and was not replayed. The agent receives this state automatically. Confirm a new break-glass grant only if arbitrary exec is still required. |
-| `saved; activation failed` | The authority file was saved, but no new runtime was activated. Correct the reported cause, then run `/sandbox on`. |
-| `Active Docker differs from the current configuration` | The files and running permissions differ. If `/sandbox` shows a session-only break-glass grant, the difference is intentional until it expires. Otherwise run `/sandbox on`. |
-| `reconfiguration did not finish in time` | The pending command was not executed. After recovery, submit it again if still needed. |
-| `execution was interrupted by reconfiguration` | An engaged process was stopped and was not replayed. Inspect its effects before deciding to retry. |
+| Docker enabled but no containers are available | Declare targets in the project's `.pi/sandbox.json`. Global authorization alone selects no target. |
+| Project attempts to set endpoint, mode or unsafe exception | These fields belong only in the global document. Select project targets and operations within the global operation limits. |
+| Docker operation not granted | The effective target operation list does not authorize it. |
+| Docker target not authorized | Check the exact container name or Compose project/service selector and live target eligibility. |
+| Empty successful `docker ps` | The broker may have excluded every container. This is not proof of usable target access. |
+| Target has host access | Inspect mounts and privileges. A global unsafe-target exception is separate from arbitrary exec permission. |
+| Exec restricted to read-only inspection | Use only the exact allowed bind probes, or obtain the distinct temporary break-glass authorization. |
+| Break-glass expired | The exact-container exception expired and operations using that expired runtime were interrupted. |
+| Saved configuration but failed runtime activation | New admissions remain blocked. Correct the activation failure before retrying. |
 
-If a new Docker grant is saved while Sandbox is active, Sandbox reloads the
-authority for the running session automatically.
-New Bash, safe_bash and Think calls wait at most 30 seconds during this change,
-within their original timeout. Cancellation, disablement, activation failure
-or session replacement ends the wait without executing the pending command.
-
-`docker ps` can return an empty list with exit code 0 when all matching
-containers are excluded. A valid `targeted` grant alone does not establish
-container access; use the target lines in `/sandbox doctor`.
-
-`/sandbox docker break-glass` lasts five minutes by default. Pass a whole-minute
-duration from `1m` through `30m` when needed, for example
-`/sandbox docker break-glass 15m`.
-
-Development Bash resolves `~` to your normal home directory. Its filesystem
-restrictions still apply: a home-relative path outside the configured write
-roots remains unwritable. Think retains a private HOME and private `/tmp`.
-
-Sandbox Bash enables `pipefail`: `bun test ... | tail -n 20` now returns a
-failure when Bun fails. Commands that intentionally tolerate an earlier pipe
-failure can explicitly use `set +o pipefail`. This also affects pipelines whose
-consumer exits early, such as `head`.
+A CLI's successful exit does not prove a GUI opened or a remote service completed an action. Preserve command output, exit status and observed runtime provenance separately. See [Docker authority](docker-authority.md) and [Runtime](runtime.md).

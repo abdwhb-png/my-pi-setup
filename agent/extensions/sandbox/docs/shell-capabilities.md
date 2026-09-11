@@ -1,132 +1,49 @@
-# Shell isolation and local host capabilities
+# Shell modes and resource configuration
 
-| Profile | Ordinary shell | Network and temporary files |
+Select an execution mode independently of the descriptive profile.
+
+| Profile | Mode | Meaning |
 | --- | --- | --- |
-| D1 `isolated` | Zerobox | Closed network, private `/tmp` |
-| D2 `integrated` | Zerobox with explicitly granted openings | Closed and private unless separately granted |
-| D3 `host` | Approved local shell | Host network and `/tmp` |
+| P1 — Default sandbox | `sandbox` | Use Zerobox with the project and tool baseline, closed network and private temporary files. |
+| P2 — Custom sandbox | `sandbox` | Apply the authorized resource configuration, including additional restrictions. |
+| P3 — Explicit host | `host` | Run through the local process supervisor after explicit session selection within the global authorization. |
 
-Treat this as a shell boundary. Native `read`, `write`, `edit`, extensions and
-MCP tools execute on the host. Think-in-Code retains strict isolation and private
-HOME and `/tmp` in every shell profile. Installation and project trust do not
-grant host capabilities. A failed sandbox never authorizes another backend.
+P1 and P2 use the same backend. The effective configuration determines `default` or `custom`; do not enable a second profile after editing a valid resource grant. Returning to the baseline produces `default` again. P1/P2/P3 are documentation references, not configuration fields. D1–D12 identify architectural decisions in the implementation plan.
+
+## Configuration ownership
+
+Use `~/.pi/agent/sandbox.json` for global defaults and ceilings. Place project restrictions in `<project>/.pi/sandbox.json`. Do not keep a global registry of projects or configure additional capability files.
+
+An absent project field inherits the global setting. An empty list closes that resource list. Restrictions take precedence over grants. Configure PATH and filesystem reads separately: finding a program through PATH does not grant access to its executable, symlink target, configuration or cache.
+
+For example, when a system command resolves to a Linux executable outside the tool baseline, grant that precise executable path in the global configuration. Keep the original command. Do not add a product adapter or grant an entire parent directory just to reach one executable.
+
+Docker uses a separate rule inside these same files: global `docker.allowed` authorizes its policy ceiling, while project `docker.enabled` opts in. Missing booleans mean disabled. Preserve the broker and its operation/target limits. A generic socket grant must not replace Docker authority.
+
+See [configuration](configuration.md) for the active schema and [Docker authority](docker-authority.md) for its limits.
 
 ## Select and inspect
 
-Run `/sandbox profile isolated|integrated|host`. Add `--session` to avoid
-persistence. `/sandbox on` and `/sandbox off` remain aliases for isolated and
-host. A host request without an existing grant requires a user confirmation.
-`--no-sandbox` requests the same profile but cannot grant it during startup.
+Run `/sandbox doctor` to inspect the effective configuration and runtime state.
 
-Run `/sandbox capabilities` to see requested and effective profiles, grants,
-installed launchers and admitted operations. Run `/sandbox doctor` for engine,
-configuration and Docker details. Preserve the distinction between an installed
-launcher, a saved grant and a successful target operation.
+Run `/sandbox mode host` to select host execution for the current session. The global configuration must authorize it. A global host ceiling alone does not select host execution, and a project file cannot make that selection. Run `/sandbox mode sandbox` to return to the authorized sandbox configuration. Session selections do not carry into another session.
 
-Run `/sandbox capabilities grant <name>` or `revoke <name>`, optionally followed
-by `--session`. Supported names are `editor`, `dependencies`, `dev-services`,
-`network`, `host-network`, `read-path`, `write-path`, `tmp` and `host`.
-Granting `editor` asks which discovered launcher to use and also accepts an
-explicit installed launcher path. The confirmation records that exact path.
-Network/path grants prompt for one destination. Revoking these names clears
-that category. Granting `host` authorizes it; selecting profile `host` activates
-it. Selecting isolated temporarily suppresses saved openings without deleting
-them. Revoke grants to remove them.
+Use ordinary commands through `bash` or `safe_bash`. No tool parameter selects an editor, package manager or development service. A legacy `hostCapability` parameter produces a migration diagnostic before launch.
 
-Keep grants in `~/.pi/agent/sandbox.capabilities.json`, outside repository
-preferences. The store binds the canonical project path to Linux machine-id
-and uid, validates owner/regular-file/non-symlink status, and writes atomically
-with mode `0600`. Copying it to another Linux/WSL installation does not activate
-rights. Explicit migration archives foreign authority before creating local
-rights for the selected project. With `--session`, migration leaves the foreign
-authority unchanged and creates no archive. Do not edit this file through
-native tools.
+Use `! <command>` or `!! <command>` with the selected mode. Use `!s <command>` or `!!s <command>` to request the sandbox. The double exclamation form keeps output outside model context. An empty `!s` request fails explicitly.
 
-Use existing grants in headless sessions. Missing grants block execution with
-the required user command. A headless model cannot approve its own request.
+## Admission and results
 
-## Model calls
+Reload configuration before admitting a command. Invalid configuration blocks new admissions. A valid external change rebuilds the required runtime; operations already admitted drain using their original resources. A setup failure never selects a different backend.
 
-Keep the permission-checked `command` intact. `hostCapability` requests a grant
-and never grants it. Use one command with literal arguments for integrations.
-Quote spaces. Pipelines, substitutions, redirections and compositions are
-rejected. Use ordinary sandbox shell syntax for normal multi-step commands.
+Keep execution evidence separate from labels. Record `mode` and `shellProfile` alongside the observed `status`, `backend` and temporary namespace. Preserve an unknown result when no execution evidence exists. When reading historical `integrated` results, use their observed backend to distinguish an old sandbox execution from an old specialized host execution.
 
-```json
-{"command":"npm test","timeout":120}
-{"command":"editor 'src/example.ts'","hostCapability":"editor"}
-{"command":"npm install is-number@7.0.0 --save-exact","hostCapability":"dependencies","timeout":120}
-{"command":"pi update npm:example-package","hostCapability":"dependencies","timeout":120}
-{"command":"npm test","hostCapability":"dev-services","timeout":120}
-```
+This is a shell boundary. Native file tools, extensions and MCP tools execute outside it. Think-in-Code retains its strict environment and private HOME and temporary files regardless of the shell mode.
 
-The package names above demonstrate syntax. Verify an actual dependency and
-version before installation. Manage Pi packages from the Pi project with its
-own local grant. `pi update` remains the update interface.
+## Migration
 
-| Integration | Supported operation | Boundary and limitation |
-| --- | --- | --- |
-| `editor` | Selected installed editor launcher, existing files inside the canonical project | The operation is product-independent. Zed is one discovered provider. Reject flags, directories and escaping symlinks. CLI success does not by itself prove a visible editor window. |
-| `dependencies` | SFW wrapping npm install/ci/update/uninstall/remove, or Pi install/update/remove with one `npm:` source | Preserve normal SFW updates. Force npm lifecycle scripts off. Block unsupported managers and routing flags. Stop on any failure without an unwrapped retry. |
-| `dev-services` | Existing client runs the literal target argv for the registered project | This grants command execution on the host. Pass `npm test`, not `./bin/dev run npm test`. The adapter does not open the general API port to the sandbox. |
+Run `/sandbox migrate` to review the source files, proposed global ceiling and project configuration before publication. Preserve byte-exact archives and unrelated Pi settings. Do not combine old per-project Docker grants into a broader global policy.
 
-For npm, supported options are `-D`/`--save-dev`, `-E`/`--save-exact`,
-`-O`/`--save-optional`, `-P`/`--save-prod`, `--no-save`, `--package-lock-only`,
-`--no-audit`, `--no-fund` and `--legacy-peer-deps`. Other flags need a separate
-reviewed route. Workspaces, arbitrary Pi Git/local sources and other package
-managers are outside this first integration. Host integrations have the user's
-host network and temporary namespace. SFW is a dependency control, not an OS
-sandbox for dependency code.
+Run `/sandbox recover` after an interrupted migration. Recovery verifies the recorded files before completing or restoring the transaction. Keep admissions blocked when a conflicting edit prevents safe recovery.
 
-Resolve launchers from approved installed paths. Exclude repository programs,
-relative PATH entries and `node_modules/.bin` from launcher discovery. Remove
-interpreter injection variables and SFW update-bypass variables before launch.
-The authority stores the editor under the generic `launcher` key. Existing
-`zed` grants remain readable as a compatibility alias, but new model calls use
-`editor <project-file>`.
-Supervise the launched process, its timeout and explicit cancellation. A GUI or
-remote service may retain work after its CLI exits; do not claim CLI supervision
-controls the entire external application lifecycle.
-
-## Results and transitions
-
-Read `details.execution.shellProfile`, `backend`, `hostCapability`,
-`tmpNamespace`, `status`, `phase`, `outcome` and `exitCode`. Use structured
-execution facts. Preserve stdout/stderr and the actual exit code. Never turn
-the words “failed” or “success” in program output into a different status.
-Permission refusal occurs before process launch. Capability absence, unavailable
-integration, unsupported argv, setup failure and target failure have different
-diagnostics. Missing execution proof remains `unknown`.
-
-Publish new rights immediately on profile changes or revocation. Let admitted
-operations finish with their original runtime, then release its leases. New
-calls use current rights. Keep timeouts and explicit cancellation effective.
-Show admitted operations in capabilities/doctor. Docker break-glass expiration
-retains its existing interrupting behavior and does not use graceful shell
-profile revocation.
-
-Private `/tmp` is not the native file tools' `/tmp`. Put shared artifacts in
-the project. Keep projects outside host `/tmp` when using a private namespace:
-the overlay hides host paths there. Grant shared `tmp` explicitly only when
-needed. Do not infer that a missing temporary file requires host execution.
-
-## Migrate existing installations
-
-Compare existing configuration with these new authority categories before
-activation. Run `/sandbox capabilities migrate` and make one selection:
-isolated defaults, retain the displayed legacy openings locally, or cancel.
-Pending migration blocks new shell calls. It does not stop existing services,
-delete data or silently convert settings into grants.
-
-| Existing setting | New treatment |
-| --- | --- |
-| `enabled: false`, session off, `--no-sandbox` | Host profile request. Require local host authorization. |
-| Domain allowlists / host-domain routes | Proposed network grants, inactive until explicitly retained. |
-| Previous shared host `/tmp` | Proposed `tmp` grant, private unless explicitly retained. |
-| Extra shell filesystem roots | Proposed read/write grants. Keep fixed and explicit denies. |
-| Docker authority | Preserve the existing separate `sandbox.global.json` authority and broker. |
-| Project trust or installed development tools | Grant nothing automatically. |
-
-Keep global/project settings as preferences that can narrow local grants.
-Restart Pi completely to load the new schema, hooks and global registries.
-Do not use `/reload` to activate this ownership change.
+The former `isolated`/`integrated` selectors, product grants, `sandbox.global.json`, `sandbox.capabilities.json` and `settings.json` sandbox sections are historical migration inputs. They are not active configuration sources.

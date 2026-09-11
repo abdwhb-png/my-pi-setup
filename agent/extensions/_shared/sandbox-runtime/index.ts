@@ -36,7 +36,6 @@ export interface SandboxAnalysisRuntime {
 
 export interface SandboxBashOperationOptions {
     beforeDispatch?: (sandboxFingerprint: string | undefined) => void;
-    hostCapability?: "editor" | "dependencies" | "dev-services";
     onExecution?: ExecutionObserver;
     onSandboxContext?: (context: SandboxExecutionContextV1) => void;
     stdin?: string;

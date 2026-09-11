@@ -1,0 +1,436 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pi Sandbox configuration v2",
+  "description": "Editor schema for the two active sandbox.json locations. The runtime additionally validates machine identity, ownership, canonical paths, resource ceilings and semantic rules.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/globalConfig"
+    },
+    {
+      "$ref": "#/$defs/projectConfig"
+    }
+  ],
+  "$defs": {
+    "globalConfig": {
+      "title": "Global ~/.pi/agent/sandbox.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "machineId"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "version": {
+          "const": 2
+        },
+        "machineId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "enum": [
+            "sandbox",
+            "host"
+          ]
+        },
+        "tmpNamespace": {
+          "enum": [
+            "lease-private",
+            "host"
+          ]
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowedDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowedHostDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "deniedDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowLocalBinding": {
+              "type": "boolean"
+            }
+          }
+        },
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowRead": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowWrite": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "denyRead": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "denyWrite": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowedVariables": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "deniedVariables": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "variables": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "path": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "docker": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowed": {
+              "type": "boolean",
+              "default": false
+            },
+            "mode": {
+              "enum": [
+                "targeted",
+                "full"
+              ],
+              "default": "targeted"
+            },
+            "endpoint": {
+              "type": "string",
+              "pattern": "^unix:///"
+            },
+            "operations": {
+              "$ref": "#/$defs/dockerOperations"
+            },
+            "unsafeTargets": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/dockerSelector"
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "const": "full"
+                  }
+                }
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "operations"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        }
+      }
+    },
+    "projectConfig": {
+      "title": "Project .pi/sandbox.json",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "sandbox"
+        },
+        "tmpNamespace": {
+          "enum": [
+            "lease-private",
+            "host"
+          ]
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowedDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowedHostDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "deniedDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowLocalBinding": {
+              "type": "boolean"
+            }
+          }
+        },
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowRead": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowWrite": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "denyRead": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "denyWrite": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowedVariables": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "deniedVariables": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "variables": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "path": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "docker": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "targets": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/projectDockerTarget"
+              }
+            }
+          }
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        }
+      }
+    },
+    "dockerSelector": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "name"
+          ],
+          "properties": {
+            "type": {
+              "const": "container-name"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "project",
+            "service"
+          ],
+          "properties": {
+            "type": {
+              "const": "compose-service"
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1
+            },
+            "service": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "projectDockerTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selector"
+      ],
+      "properties": {
+        "selector": {
+          "$ref": "#/$defs/dockerSelector"
+        },
+        "operations": {
+          "$ref": "#/$defs/dockerOperations"
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unixSockets": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tcpPublications": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/tcpPublication"
+          }
+        }
+      }
+    },
+    "tcpPublication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transport",
+        "scope",
+        "listen",
+        "target"
+      ],
+      "properties": {
+        "transport": {
+          "const": "tcp"
+        },
+        "scope": {
+          "enum": [
+            "host",
+            "lan"
+          ]
+        },
+        "listen": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "dockerOperations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "ps",
+          "inspect",
+          "logs",
+          "stats",
+          "exec",
+          "start",
+          "stop",
+          "restart"
+        ]
+      }
+    }
+  }
+}

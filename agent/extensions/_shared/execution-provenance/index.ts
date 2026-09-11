@@ -121,11 +121,19 @@ export function parseExecutionProvenance(
             "timed-out",
             "blocked",
         ].includes(String(record.outcome)) ||
+        (record.mode !== undefined &&
+            (typeof record.mode !== "string" ||
+                !["sandbox", "host"].includes(record.mode))) ||
         (record.shellProfile !== undefined &&
             (typeof record.shellProfile !== "string" ||
-                !["isolated", "integrated", "host"].includes(
-                    record.shellProfile,
-                ))) ||
+                ![
+                    "default",
+                    "custom",
+                    "host",
+                    // Historical records only. New provenance never emits these.
+                    "isolated",
+                    "integrated",
+                ].includes(record.shellProfile))) ||
         (record.hostCapability !== undefined &&
             (typeof record.hostCapability !== "string" ||
                 !["editor", "dependencies", "dev-services"].includes(
@@ -137,6 +145,21 @@ export function parseExecutionProvenance(
     )
         return;
     // All members of the owned wire contract have been validated above.
+    const observedHost =
+        record.status === "unsandboxed" &&
+        (record.backend === "host" || record.backend === "local");
+    const observedSandbox =
+        record.status === "sandboxed" && record.backend === "zerobox";
+    // `integrated` was used by both an old sandbox label and specialized host
+    // adapters. Convert it only when the recorded backend proves a mode.
+    const historicalShellProfile =
+        record.shellProfile === "isolated" && observedSandbox
+            ? { mode: "sandbox" as const, shellProfile: "default" as const }
+            : record.shellProfile === "integrated" && observedHost
+              ? { mode: "host" as const, shellProfile: "host" as const }
+              : record.shellProfile === "integrated" && observedSandbox
+                ? { mode: "sandbox" as const, shellProfile: "custom" as const }
+                : {};
     return {
         status: record.status,
         profile: record.profile,
@@ -145,12 +168,13 @@ export function parseExecutionProvenance(
         phase: record.phase,
         outcome: record.outcome,
         ...(record.exitCode !== undefined ? { exitCode: record.exitCode } : {}),
-        ...(record.shellProfile !== undefined
+        ...(record.mode !== undefined ? { mode: record.mode } : {}),
+        ...(record.shellProfile !== undefined &&
+        record.shellProfile !== "isolated" &&
+        record.shellProfile !== "integrated"
             ? { shellProfile: record.shellProfile }
             : {}),
-        ...(record.hostCapability !== undefined
-            ? { hostCapability: record.hostCapability }
-            : {}),
+        ...historicalShellProfile,
     } as ExecutionProvenance;
 }
 

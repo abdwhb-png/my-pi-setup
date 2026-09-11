@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { beforeEach, afterEach, describe, expect, it } from "bun:test";
 import {
     lstat,
     mkdtemp,
@@ -9,21 +9,51 @@ import {
     writeFile,
 } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
+import { createSocket } from "node:dgram";
 import { lookup } from "node:dns/promises";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 
 import { createBashOperations } from "../../_shared/command-execution/exec.ts";
-import { SandboxExecutionError, type SandboxCommand } from "./contracts.ts";
-import { createPrivateTempLease } from "./private-temp.ts";
+import { SandboxExecutionError, type SandboxCommand, type PrivateTempLease } from "./contracts.ts";
+import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./private-temp.ts";
 import { validatePiSandboxConfig } from "./policies.ts";
-import { createSandboxService, type SandboxService } from "./service.ts";
-import { createZeroboxBackend } from "./zerobox-backend.ts";
+import { createSandboxService as createRuntimeService, type SandboxService } from "./service.ts";
+import { createZeroboxBackend as createBackend } from "./zerobox-backend.ts";
 
 const fixtures: string[] = [];
 const services: SandboxService[] = [];
+let leaseDirectory: string;
+let probeRoot: string;
+let createdLeases: PrivateTempLease[];
+const enabled = process.platform === "linux" && !!process.env.PI_SANDBOX_ZEROBOX_BINARY && !!process.env.PI_SANDBOX_ZEROBOX_SHA256;
+
+beforeEach(async () => {
+    if (!enabled) return;
+    createdLeases = [];
+    leaseDirectory = await mkdtemp("/var/tmp/z-");
+    probeRoot = await mkdtemp("/var/tmp/p-");
+    fixtures.push(leaseDirectory, probeRoot);
+});
+
+function createZeroboxBackend() {
+    const binaryPath = process.env.PI_SANDBOX_ZEROBOX_BINARY;
+    const binarySha256 = process.env.PI_SANDBOX_ZEROBOX_SHA256;
+    if (!binaryPath || !binarySha256) throw new Error("Explicit candidate binary and SHA256 required");
+    return createBackend({ binaryPath, expectedProvenance: { version: "0.3.3-fork.17", binarySha256 }, probeRoot });
+}
+
+function createSandboxService(options: Parameters<typeof createRuntimeService>[0]) {
+    return createRuntimeService({ ...options,
+        createLease: async () => {
+            const lease = await createPrivateTempLease({ rootDir: leaseDirectory });
+            createdLeases.push(lease);
+            return lease;
+        },
+        recoverStaleLeases: async () => { await recoverStalePrivateTempLeases({ rootDir: leaseDirectory }); },
+    });
+}
 
 afterEach(async () => {
     await Promise.allSettled(services.splice(0).map((service) => service.shutdown()));
@@ -32,7 +62,7 @@ afterEach(async () => {
 
 async function workspaceFixture(): Promise<string> {
     const fixture = await mkdtemp(
-        join(import.meta.dir, "../../../.zbx-linux-"),
+        "/var/tmp/pi-linux-",
     );
     fixtures.push(fixture);
     return fixture;
@@ -91,12 +121,12 @@ function close(server: ReturnType<typeof createServer>) {
     return new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-describe("Pi Zerobox Linux contract", () => {
+describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
     it("enforces Bash filesystem, private environment, stdin, and process-tree limits", async () => {
         const cwd = await workspaceFixture();
         const ptraceProbe = "$p=fork(); if(!$p){sleep 2;exit}; $r=syscall(101,16,$p,0,0); kill 9,$p; wait; exit($r==0?0:1)";
         expect(Bun.spawnSync(["/usr/bin/perl", "-e", ptraceProbe]).exitCode).toBe(0);
-        const sibling = await createPrivateTempLease();
+        const sibling = await createPrivateTempLease({ rootDir: leaseDirectory });
         const hostTmp = join("/tmp", `pi-zbx-host-${process.pid}`);
         await writeFile(hostTmp, "host temp secret");
         await writeFile(join(cwd, ".env"), "protected");
@@ -106,7 +136,7 @@ describe("Pi Zerobox Linux contract", () => {
             backend: createZeroboxBackend(),
             config: validatePiSandboxConfig({
                 filesystem: {
-                    denyRead: ["~/.ssh", "~/.gnupg", hostTmp],
+                    denyRead: [hostTmp],
                     allowWrite: ["."],
                     denyWrite: [".env"],
                 },
@@ -130,7 +160,7 @@ describe("Pi Zerobox Linux contract", () => {
                 "printf changed > env-link",
                 "mv replacement .env",
                 `cat ${JSON.stringify(sibling.markerPath)}`,
-                "ls /mnt/c",
+                `ls ${JSON.stringify(probeRoot)}`,
                 `cat ${JSON.stringify(hostTmp)}`,
                 `cat /proc/1/root${hostTmp}`,
                 "unshare --user /bin/true",
@@ -152,7 +182,7 @@ describe("Pi Zerobox Linux contract", () => {
             );
             expect(environment.exitCode, environment.output).toBe(0);
             const parsed = JSON.parse(environment.output);
-            expect(parsed.HOME).toBe(homedir());
+            expect(parsed.HOME).toBe("/home/sandbox");
             expect(parsed.TMPDIR).toBe("/tmp");
             expect(parsed.ZEROBOX_HOME).toBeUndefined();
             expect(parsed.PATH).not.toContain("/mnt/c");
@@ -194,9 +224,7 @@ describe("Pi Zerobox Linux contract", () => {
     it("keeps leases created after child_started unreadable", async () => {
         const cwd = await workspaceFixture();
         const siblingRoot = join(
-            homedir(),
-            ".pi",
-            "zbx",
+            leaseDirectory,
             "l-f0a1b2",
         );
         const siblingMarker = join(siblingRoot, ".pi-sandbox-lease.json");
@@ -220,7 +248,7 @@ describe("Pi Zerobox Linux contract", () => {
             }
             await Bun.sleep(10);
         }
-        const sibling = await createPrivateTempLease({ randomId: "f0a1b2" });
+        const sibling = await createPrivateTempLease({ rootDir: leaseDirectory, randomId: "f0a1b2" });
         try {
             await writeFile(join(cwd, "go"), "go");
             expect((await execution).exitCode).not.toBe(0);
@@ -235,7 +263,10 @@ describe("Pi Zerobox Linux contract", () => {
         const hostTmp = join("/tmp", `pi-zbx-analysis-${process.pid}`);
         await writeFile(projectSecret, "project secret");
         await writeFile(hostTmp, "host temp secret");
-        const sibling = await createPrivateTempLease();
+        const sibling = await createPrivateTempLease({ rootDir: leaseDirectory });
+        const unixPath = join(project, "host.sock");
+        const unixServer = createServer(socket => socket.end("fixture"));
+        await new Promise<void>(resolve => unixServer.listen(unixPath, resolve));
         const service = createSandboxService({
             backend: createZeroboxBackend(),
             config: validatePiSandboxConfig({}),
@@ -251,7 +282,7 @@ describe("Pi Zerobox Linux contract", () => {
             "await new Promise((resolve) => { const socket = net.createConnection({host:'127.0.0.1',port:9}); socket.once('connect',()=>{result.tcp='exposed';socket.destroy();resolve();}); socket.once('error',()=>{result.tcp='blocked';resolve();}); });",
             "await new Promise((resolve) => { try { const server = net.createServer(); server.once('error',()=>{result.binding='blocked';resolve();}); server.listen(0,'127.0.0.1',()=>{result.binding='exposed';server.close(resolve);}); } catch { result.binding='blocked'; resolve(); } });",
             "await new Promise((resolve) => { let done=false; const finish=(value,socket)=>{if(done)return;done=true;result.udp=value;try{socket?.close();}catch{}resolve();}; try { const socket=dgram.createSocket('udp4'); socket.once('error',()=>finish('blocked',socket)); socket.send('x',9,'127.0.0.1',(error)=>finish(error?'blocked':'exposed',socket)); } catch { finish('blocked'); } });",
-            `await new Promise((resolve) => { try { const socket = net.createConnection({path:${JSON.stringify(`/run/user/${process.getuid?.() ?? 1000}/bus`)}}); socket.once('connect',()=>{result.unix='exposed';socket.destroy();resolve();}); socket.once('error',()=>{result.unix='blocked';resolve();}); } catch { result.unix='blocked'; resolve(); } });`,
+            `await new Promise((resolve) => { try { const socket = net.createConnection({path:${JSON.stringify(unixPath)}}); socket.once('connect',()=>{result.unix='exposed';socket.destroy();resolve();}); socket.once('error',()=>{result.unix='blocked';resolve();}); } catch { result.unix='blocked'; resolve(); } });`,
             "console.log(JSON.stringify(result));",
         ].join("\n");
         const command = {
@@ -287,13 +318,14 @@ describe("Pi Zerobox Linux contract", () => {
                 udp: "blocked",
                 unix: "blocked",
             });
-            expect(result.env.HOME).toMatch(/^\/home\/[^/]+\/\.pi\/zbx\/l-[a-f0-9]{6}\/home$/);
+            expect(result.env.HOME).toBe("/home/sandbox");
             expect(result.env.TMPDIR).toBe("/tmp");
             expect(result.env.ZEROBOX_HOME).toBeUndefined();
             expect(result.env.SECRET).toBeUndefined();
         } finally {
             delete process.env.PI_ZBX_SECRET;
             await sibling.dispose();
+            await close(unixServer);
             await rm(hostTmp, { force: true });
         }
     }, 30_000);
@@ -381,7 +413,8 @@ describe("Pi Zerobox Linux contract", () => {
             cwd,
         );
         expect(execution.exitCode, execution.output).toBe(0);
-        const leaseRoot = dirname(execution.output);
+        expect(createdLeases).toHaveLength(1);
+        const leaseRoot = createdLeases[0]!.root;
 
         await service.shutdown();
         services.splice(services.indexOf(service), 1);
@@ -508,8 +541,14 @@ describe("Pi Zerobox Linux contract", () => {
             void socket;
         });
         expect(hostUnix).toContain("200 OK");
+        const udp4 = createSocket("udp4");
+        const udp6 = createSocket("udp6");
+        await Promise.all([
+            new Promise<void>(resolve => udp4.bind(0, "127.0.0.1", resolve)),
+            new Promise<void>(resolve => udp6.bind(0, "::1", resolve)),
+        ]);
         const udpProbe = (family: "udp4" | "udp6", address: string) =>
-            `const d=require('node:dgram');const t=setTimeout(()=>process.exit(43),2000);try{const s=d.createSocket('${family}');s.once('error',()=>{clearTimeout(t);s.close();process.exit(0)});s.send('x',9,'${address}',e=>{clearTimeout(t);s.close();process.exit(e?0:42)})}catch{clearTimeout(t);process.exit(0)}`;
+            `const d=require('node:dgram');const t=setTimeout(()=>process.exit(43),2000);try{const s=d.createSocket('${family}');s.once('error',()=>{clearTimeout(t);s.close();process.exit(0)});s.send('x',${family === "udp4" ? udp4.address().port : udp6.address().port},'${address}',e=>{clearTimeout(t);s.close();process.exit(e?0:42)})}catch{clearTimeout(t);process.exit(0)}`;
         for (const [family, address] of [
             ["udp4", "127.0.0.1"],
             ["udp6", "::1"],
@@ -575,14 +614,19 @@ describe("Pi Zerobox Linux contract", () => {
                 ).exitCode,
                 "local test listeners must work inside the private network namespace",
             ).toBe(42);
+            const controlSecret = join(createdLeases[0]!.zeroboxHome, "control-secret");
+            await writeFile(controlSecret, "fixture control secret");
             const bridgeReadOnly = await collectExecution(
                 bashOperations(service),
-                `bridge="$DOCKER_CONFIG/../zerobox-home/tmp/runs"; test -d "$bridge" && test -r "$bridge" && ! touch "$bridge/target-write"`,
+                `bridge=${JSON.stringify(createdLeases[0]!.proxyRunsDir)}; test -d "$bridge" && test -r "$bridge" && ! touch "$bridge/target-write" && ! cat ${JSON.stringify(controlSecret)}`,
                 cwd,
             );
             expect(bridgeReadOnly.exitCode, bridgeReadOnly.output).toBe(0);
+            expect(await readFile(controlSecret, "utf8")).toBe("fixture control secret");
         } finally {
             for (const socket of openSockets) socket.destroy();
+            udp4.close();
+            udp6.close();
             await Promise.all([close(tcpServer), close(unixServer)]);
         }
     }, 30_000);
@@ -598,13 +642,21 @@ describe("Pi Zerobox Linux contract", () => {
         services.push(service);
         await service.startBashSession(cwd);
 
-        const timeoutExecution = collectExecution(
-            bashOperations(service),
-            "sleep 30 & child=$!; printf '%s' \"$child\" > child.pid; wait",
-            cwd,
-            { timeout: 0.2 },
+        const controller = new AbortController();
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        let ready = false;
+        const timeoutExecution = bashOperations(service).exec(
+            "sleep 30 & child=$!; printf '%s' \"$child\" > child.pid; printf READY; wait", cwd,
+            { signal: controller.signal, timeout: 10, onData: chunk => {
+                if (!ready && chunk.toString().includes("READY")) {
+                    ready = true;
+                    deadline = setTimeout(() => controller.abort(), 200);
+                }
+            } },
         );
-        await expect(timeoutExecution).rejects.toThrow("timeout:0.2");
+        try { await expect(timeoutExecution).rejects.toThrow(/abort/i); }
+        finally { if (deadline) clearTimeout(deadline); }
+        expect(ready).toBe(true);
         const childPid = Number(await readFile(join(cwd, "child.pid"), "utf8"));
         await Bun.sleep(50);
         expect(() => process.kill(childPid, 0)).toThrow();
@@ -623,6 +675,7 @@ describe("Pi Zerobox Linux contract", () => {
 
         const runAnalysisCommand = async (command: SandboxCommand) => {
             const handle = await service.prepareAnalysis(command, [
+                cwd,
                 "/bin",
                 "/lib",
                 "/lib64",

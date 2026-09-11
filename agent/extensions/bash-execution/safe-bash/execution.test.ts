@@ -82,6 +82,45 @@ describe('safe_bash explicit stdin', () => {
         expect(tool.parameters.properties.stdin).toBeDefined();
     });
 
+    it('rejects hostCapability in params before creating sandbox operations', async () => {
+        const createOperations = mock((operationsOptions: SandboxBashOperationOptions) =>
+            createBashOperations(operationsOptions),
+        );
+        await expect(
+            registerExtension({ createOperations }).execute(
+                'call-host-capability',
+                { command: 'editor sample.ts', hostCapability: null } as {
+                    command: string;
+                    hostCapability: null;
+                },
+                undefined,
+                undefined,
+                context,
+            ),
+        ).rejects.toThrow('migration-required');
+        expect(createOperations).toHaveBeenCalledTimes(0);
+    });
+
+    it('rejects hostCapability with nullish value before creating sandbox operations', async () => {
+        const createOperations = mock((operationsOptions: SandboxBashOperationOptions) =>
+            createBashOperations(operationsOptions),
+        );
+        const params = { command: 'editor sample.ts', hostCapability: undefined };
+        await expect(
+            registerExtension({ createOperations }).execute(
+                'call-host-capability-undefined',
+                params as {
+                    command: string;
+                    hostCapability: unknown;
+                },
+                undefined,
+                undefined,
+                context,
+            ),
+        ).rejects.toThrow('migration-required');
+        expect(createOperations).toHaveBeenCalledTimes(0);
+    });
+
     it('fails closed when sandbox execution is unavailable', async () => {
         // The sandbox broker uses a typed `SandboxUnavailableError` with a
         // closed enum kind and a process-global brand. The safe-execution

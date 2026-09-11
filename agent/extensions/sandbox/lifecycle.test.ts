@@ -9,7 +9,9 @@ import {
     mock,
     spyOn,
 } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { renameSync } from "node:fs";
+import type { ChildProcess } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DockerTargetAccess } from "./docker-access.ts";
@@ -36,7 +38,7 @@ const prepareBash = mock(
         env: { ...process.env } as Record<string, string>,
         statusProtocol: { fd: 3 as const, version: 1 as const },
         extraStdio: ["ignore" as const],
-        supervise: () => ({
+        supervise: (_child: ChildProcess) => ({
             ready: Promise.resolve(),
             settled: Promise.resolve(),
         }),
@@ -75,6 +77,7 @@ const createSandboxService = mock((_options: unknown) => ({
     startBashSession: initialize,
     getProfileContexts: () => profileContexts,
     prepareBash,
+    prepareThinkBash: prepareBash,
     prepareAnalysis: mock(async () => {
         throw new Error("not exercised");
     }),
@@ -129,7 +132,17 @@ const {
     getSandboxAnalysisPort,
     getSandboxRuntime,
     isSandboxUnavailableError,
+    createSandboxThinkBashOperations,
 } = await import("../_shared/sandbox-runtime/index.ts");
+const { resolveBashOperations } = await import(
+    "../bash-execution/builtin-bash.ts"
+);
+const { createBashProcessSupervisor } = await import(
+    "../_shared/command-execution/exec.ts"
+);
+const { previewLegacyMigration, publishLegacyMigration } = await import(
+    "./capabilities/migration.ts"
+);
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void>;
@@ -140,16 +153,16 @@ type CommandDefinition = {
     ) => Array<{ value: string; label: string }> | null;
 };
 
-type Deferred = {
-    promise: Promise<void>;
-    resolve: () => void;
+type Deferred<T = void> = {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
     reject: (error: Error) => void;
 };
 
-function deferred(): Deferred {
-    let resolve!: () => void;
+function deferred<T = void>(): Deferred<T> {
+    let resolve!: (value: T) => void;
     let reject!: (error: Error) => void;
-    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
         resolve = resolvePromise;
         reject = rejectPromise;
     });
@@ -160,7 +173,9 @@ function fakeTheme(): Theme {
     return { fg: (color: string, text: string) => `fg:${color}:${text}` } as unknown as Theme;
 }
 
-function registerSandbox() {
+function registerSandbox(
+    options?: Parameters<typeof sandboxExtension>[1],
+) {
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, CommandDefinition>();
     const sentMessages: Array<{ message: unknown; options: unknown }> = [];
@@ -176,7 +191,7 @@ function registerSandbox() {
         sendMessage: (message: unknown, options?: unknown) =>
             sentMessages.push({ message, options }),
     } as unknown as ExtensionAPI;
-    sandboxExtension(pi);
+    sandboxExtension(pi, options);
     return { handlers, commands, sentMessages };
 }
 
@@ -291,13 +306,20 @@ function renderWidget(): string | null {
     return result === null || result === undefined ? null : String(result);
 }
 
-const { emptyGrants, saveProjectCapabilities, readCapabilityAuthority, capabilityAuthorityPath } = await import("./capabilities/authority.ts");
+const { emptyGrants, readCapabilityAuthority, capabilityAuthorityPath } = await import("./capabilities/legacy-authority.ts");
 const { currentShellPolicy } = await import("./capabilities/runtime.ts");
 
 const ENV_KEY = "PI_SANDBOX_SESSION_STATUS";
 const SESSION_ID = "session-a";
 const originalAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 let isolatedAgentDirectory: string;
+async function writeLegacyAuthority(
+    path: string,
+    project: { projectRoot: string; profile: "isolated" | "integrated" | "host"; grants: ReturnType<typeof emptyGrants> },
+    machineId = "346675da6aa23f926127a4e419becc296bb9ef369a0823fbe8d35f60444d35ea",
+): Promise<void> {
+    await writeFile(path, JSON.stringify({ version: 1, machineId, projects: [project] }), { mode: 0o600 });
+}
 beforeEach(async () => {
     isolatedAgentDirectory = await mkdtemp(join(tmpdir(), "sandbox-authority-fixture-"));
     process.env.PI_CODING_AGENT_DIR = isolatedAgentDirectory;
@@ -307,6 +329,96 @@ afterEach(async () => {
     else process.env.PI_CODING_AGENT_DIR = originalAgentDirectory;
     await rm(isolatedAgentDirectory, { recursive: true, force: true });
 });
+const { localMachineId } = await import("./capabilities/authority.ts");
+
+async function writeActiveConfig(cwd: string): Promise<void> {
+    await writeFile(
+        join(isolatedAgentDirectory, "sandbox.json"),
+        JSON.stringify({ version: 2, machineId: localMachineId(), docker: { allowed: false } }),
+        { mode: 0o600 },
+    );
+    await writeFile(join(cwd, ".pi", "sandbox.json"), "{}", { mode: 0o600 });
+}
+
+async function writeGlobalConfig(config: Record<string, unknown>): Promise<void> {
+    await writeFile(
+        join(isolatedAgentDirectory, "sandbox.json"),
+        JSON.stringify({ version: 2, machineId: localMachineId(), ...config }),
+        { mode: 0o600 },
+    );
+}
+
+async function writeEnabledBreakGlassPolicy(cwd: string): Promise<void> {
+    await writeGlobalConfig({
+        docker: {
+            allowed: true,
+            mode: "targeted",
+            endpoint: "unix:///tmp/docker-fixture.sock",
+            operations: ["exec"],
+            unsafeTargets: [{ type: "container-name", name: "api" }],
+        },
+    });
+    await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({
+        docker: {
+            enabled: true,
+            targets: [{
+                selector: { type: "container-name", name: "api" },
+                operations: ["exec"],
+            }],
+        },
+    }), { mode: 0o600 });
+    inspectDockerAccess.mockResolvedValue([{
+        selector: { type: "container-name", name: "api" },
+        containers: [{
+            id: "0123456789abcdef",
+            name: "api-current",
+            state: "running",
+            access: "accessible",
+            facts: [],
+            mounts: [],
+        }],
+    }]);
+}
+
+async function runOrdinaryBash(cwd: string, command = "printf direct-config"): Promise<string> {
+    const output: string[] = [];
+    const supervisor = createBashProcessSupervisor();
+    try {
+        await expect(
+            resolveBashOperations(supervisor).exec(command, cwd, {
+                onData: (chunk) => output.push(chunk.toString()),
+            }),
+        ).resolves.toMatchObject({ exitCode: 0 });
+    } finally {
+        supervisor.shutdown();
+    }
+    return output.join("");
+}
+
+async function writeHostCeiling(
+    cwd: string,
+    project: Record<string, unknown> = {},
+    includeNetwork = true,
+): Promise<void> {
+    await writeFile(
+        join(isolatedAgentDirectory, "sandbox.json"),
+        JSON.stringify({
+            version: 2,
+            machineId: localMachineId(),
+            mode: "host",
+            ...(includeNetwork
+                ? { network: { allowedDomains: ["example.com"] } }
+                : {}),
+            docker: { allowed: false },
+        }),
+        { mode: 0o600 },
+    );
+    await writeFile(
+        join(cwd, ".pi", "sandbox.json"),
+        JSON.stringify(project),
+        { mode: 0o600 },
+    );
+}
 
 describe("sandbox lifecycle", () => {
     let cwd: string;
@@ -314,92 +426,702 @@ describe("sandbox lifecycle", () => {
     beforeEach(async () => {
         cwd = await mkdtemp(join(tmpdir(), "sandbox-lifecycle-"));
         await mkdir(join(cwd, ".pi"));
-        await writeFile(
-            join(cwd, ".pi", "sandbox.json"),
-            JSON.stringify({ enabled: true }),
-        );
-        await saveProjectCapabilities(capabilityAuthorityPath(isolatedAgentDirectory), { projectRoot: cwd, profile: "isolated", grants: { ...emptyGrants(), host: true } });
-        initialize.mockReset();
-        inspectDockerAccess.mockReset();
-        inspectDockerAccess.mockResolvedValue([]);
-        initialize.mockImplementation(async () => undefined);
-        reset.mockReset();
-        reset.mockImplementation(async () => undefined);
-        analysisShutdown.mockClear();
-        analysisPreflight.mockReset();
-        analysisPreflight.mockImplementation(async () => undefined);
-        createAnalysisSandboxService.mockClear();
-        capturedWidgetDef.def = null;
-        delete process.env[ENV_KEY];
+        await writeActiveConfig(cwd);
+        initialize.mockReset(); initialize.mockImplementation(async () => undefined);
+        reset.mockReset(); reset.mockImplementation(async () => undefined);
+        analysisShutdown.mockClear(); analysisPreflight.mockReset(); analysisPreflight.mockImplementation(async () => undefined);
+        createAnalysisSandboxService.mockClear(); capturedWidgetDef.def = null;
     });
+    afterEach(async () => { await rm(cwd, { recursive: true, force: true }); });
 
-    afterEach(async () => {
-        await rm(cwd, { recursive: true, force: true });
-        delete process.env[ENV_KEY];
-    });
-
-    it("blocks native writes to the local capability authority", async () => {
+    it("blocks writes to the active global authority", async () => {
         const registered = registerSandbox();
-        const gate = registered.handlers.get("tool_call");
-        const result = await gate?.({ toolName: "write", input: { path: join(isolatedAgentDirectory, "sandbox.capabilities.json"), content: "{}" } }, context(cwd));
+        const result = await registered.handlers.get("tool_call")?.(
+            { toolName: "write", input: { path: join(isolatedAgentDirectory, "sandbox.json"), content: "{}" } },
+            context(cwd),
+        );
         expect(result).toMatchObject({ block: true });
     });
 
-    it("publishes and shuts down the strict analysis service with the sandbox", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-
+    it("starts Bash and Analysis and drains a Docker preference reconfiguration", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
-
         expect(getSandboxRuntime().state).toBe("enabled");
         expect(createAnalysisSandboxService).toHaveBeenCalledTimes(1);
-        await expect(
-            getSandboxAnalysisPort().run({
-                id: "analysis-call",
-                language: "javascript",
-                program: "export default 1",
-            }),
-        ).resolves.toMatchObject({ output: "ok" });
-
+        await sandboxCommand(registered).handler("docker off", ctx);
+        expect(getSandboxRuntime().state).toBe("enabled");
+        expect(createSandboxService).toHaveBeenCalledTimes(2);
         await registered.handlers.get("session_shutdown")?.({}, ctx);
-        expect(analysisShutdown).toHaveBeenCalledTimes(1);
-        expect(getSandboxRuntime().state).toBe("uninitialized");
+        expect(reset).toHaveBeenCalled();
     });
 
-    it("injects one effective sandbox section before the first model request", async () => {
+    it("passes the explicit Analysis host seam into the Analysis service", async () => {
+        const runHost = mock(async () => ({
+            output: "preflight",
+            stderr: "",
+            runtime: "quickjs" as const,
+            durationMs: 0,
+            truncated: false,
+        }));
+        const registered = registerSandbox({ analysisServiceOptions: { runHost } });
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        expect(createAnalysisSandboxService).toHaveBeenCalledWith({ runHost });
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("leaves configuration untouched when the interactive migration preview is cancelled", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd, undefined, "session-a", true, {
+            select: ["Cancel"],
+        });
+        const globalPath = join(isolatedAgentDirectory, "sandbox.json");
+        const projectPath = join(cwd, ".pi", "sandbox.json");
+        const beforeGlobal = await readFile(globalPath);
+        const beforeProject = await readFile(projectPath);
+
+        await sandboxCommand(registered).handler("migrate", ctx);
+
+        expect(await readFile(globalPath)).toEqual(beforeGlobal);
+        expect(await readFile(projectPath)).toEqual(beforeProject);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("cancelled");
+    });
+
+    it("publishes the selected migration ceiling and rebuilds the active runtime", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd, undefined, "session-a", true, {
+            select: ["Apply the proposed global ceiling"],
+        });
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const before = createSandboxService.mock.calls.length;
+
+        await sandboxCommand(registered).handler("migrate", ctx);
+
+        const global = JSON.parse(
+            await readFile(join(isolatedAgentDirectory, "sandbox.json"), "utf8"),
+        );
+        expect(global).toMatchObject({ version: 2, machineId: localMachineId() });
+        expect(
+            JSON.parse(await readFile(join(cwd, ".pi", "sandbox.json"), "utf8")),
+        ).toEqual({});
+        expect(createSandboxService.mock.calls.length).toBe(before + 1);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("completed");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("keeps migration recovery interactive and reports when no durable marker exists", async () => {
+        const registered = registerSandbox();
+        const nonInteractive = {
+            ...context(cwd),
+            hasUI: false,
+        } as ExtensionContext;
+        await sandboxCommand(registered).handler("recover", nonInteractive);
+        expect(notifyCalls(nonInteractive).at(-1)?.[0]).toContain("interactively");
+
+        const ctx = context(cwd);
+        await sandboxCommand(registered).handler("recover", ctx);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("No interrupted sandbox migration");
+    });
+
+    it("recovers an interrupted migration through the command before allowing a new Bash admission", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const globalPath = join(isolatedAgentDirectory, "sandbox.json");
+        const projectPath = join(cwd, ".pi", "sandbox.json");
+        const beforeGlobal = await readFile(globalPath);
+        const beforeProject = await readFile(projectPath);
+        const preview = previewLegacyMigration(
+            isolatedAgentDirectory,
+            localMachineId(),
+            cwd,
+        );
+        let publishedGlobal = false;
+        expect(() =>
+            publishLegacyMigration({
+                preview,
+                globalPath,
+                projectPath,
+                machineId: localMachineId(),
+                globalCeiling: preview.proposedGlobal,
+                filesystem: {
+                    rename(from, to) {
+                        if (to === globalPath) publishedGlobal = true;
+                        if (to === projectPath && publishedGlobal)
+                            throw new Error("injected second rename failure");
+                        renameSync(from, to);
+                    },
+                },
+            }),
+        ).toThrow("injected second rename failure");
+        expect(await stat(globalPath + ".migration")).toBeDefined();
+
+        const supervisor = createBashProcessSupervisor();
+        const blockedOutput: string[] = [];
+        try {
+            await expect(
+                resolveBashOperations(supervisor).exec("printf blocked", cwd, {
+                    onData: (chunk) => blockedOutput.push(chunk.toString()),
+                }),
+            ).rejects.toThrow("Sandbox policy is invalid");
+        } finally {
+            supervisor.shutdown();
+        }
+        expect(blockedOutput).toEqual([]);
+
+        await sandboxCommand(registered).handler("recover", ctx);
+        await expect(stat(globalPath + ".migration")).rejects.toThrow();
+        expect(await readFile(globalPath)).toEqual(beforeGlobal);
+        expect(await readFile(projectPath)).toEqual(beforeProject);
+        await expect(runOrdinaryBash(cwd, "printf recovered")).resolves.toBe("recovered");
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("recovery restored");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("rebuilds the sandbox before ordinary Bash admits a directly edited policy", async () => {
+        await writeGlobalConfig({
+            network: { allowedDomains: ["before.example"] },
+            docker: { allowed: false },
+        });
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const before = createSandboxService.mock.calls.length;
+
+        await writeGlobalConfig({
+            network: { allowedDomains: ["after.example"] },
+            docker: { allowed: false },
+        });
+        await expect(runOrdinaryBash(cwd)).resolves.toBe("direct-config");
+
+        expect(createSandboxService.mock.calls.length).toBe(before + 1);
+        const candidate = createSandboxService.mock.calls.at(-1)?.[0] as {
+            config: { network: { allowedDomains: string[] } };
+        };
+        expect(candidate.config.network.allowedDomains).toEqual(["after.example"]);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("canonicalizes a project alias before preparing a directly edited policy", async () => {
+        await writeGlobalConfig({
+            network: { allowedDomains: ["before.example"] },
+            docker: { allowed: false },
+        });
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const before = createSandboxService.mock.calls.length;
+        const alias = join(cwd, "project-alias");
+        await symlink(cwd, alias, "dir");
+
+        await writeGlobalConfig({
+            network: { allowedDomains: ["after.example"] },
+            docker: { allowed: false },
+        });
+        await expect(runOrdinaryBash(alias, "printf alias-ready")).resolves.toBe("alias-ready");
+
+        expect(createSandboxService.mock.calls.length).toBe(before + 1);
+        const candidate = createSandboxService.mock.calls.at(-1)?.[0] as {
+            config: { network: { allowedDomains: string[] } };
+        };
+        expect(candidate.config.network.allowedDomains).toEqual(["after.example"]);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("blocks direct invalid policy, accepts its correction, and rebuilds after the config is removed", async () => {
+        await writeGlobalConfig({
+            network: { allowedDomains: ["configured.example"] },
+            docker: { allowed: false },
+        });
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const before = createSandboxService.mock.calls.length;
+        const globalPath = join(isolatedAgentDirectory, "sandbox.json");
+
+        await writeFile(globalPath, "{", { mode: 0o600 });
+        const supervisor = createBashProcessSupervisor();
+        const blockedOutput: string[] = [];
+        try {
+            await expect(
+                resolveBashOperations(supervisor).exec("printf blocked", cwd, {
+                    onData: (chunk) => blockedOutput.push(chunk.toString()),
+                }),
+            ).rejects.toThrow();
+        } finally {
+            supervisor.shutdown();
+        }
+        expect(createSandboxService.mock.calls.length).toBe(before);
+        expect(blockedOutput).toEqual([]);
+
+        await writeGlobalConfig({
+            network: { allowedDomains: ["corrected.example"] },
+            docker: { allowed: false },
+        });
+        await expect(runOrdinaryBash(cwd)).resolves.toBe("direct-config");
+        expect(createSandboxService.mock.calls.length).toBe(before + 1);
+
+        await unlink(globalPath);
+        await expect(runOrdinaryBash(cwd, "printf fallback-policy")).resolves.toBe("fallback-policy");
+        expect(createSandboxService.mock.calls.length).toBe(before + 2);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("blocks a directly invalid project policy and admits its corrected restriction", async () => {
+        await writeGlobalConfig({
+            network: { allowedDomains: ["first.example", "second.example"] },
+            docker: { allowed: false },
+        });
+        const projectPath = join(cwd, ".pi", "sandbox.json");
+        await writeFile(
+            projectPath,
+            JSON.stringify({ network: { allowedDomains: ["first.example"] } }),
+            { mode: 0o600 },
+        );
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const before = createSandboxService.mock.calls.length;
+
+        await writeFile(projectPath, "{", { mode: 0o600 });
+        const supervisor = createBashProcessSupervisor();
+        const blockedOutput: string[] = [];
+        try {
+            await expect(
+                resolveBashOperations(supervisor).exec("printf blocked", cwd, {
+                    onData: (chunk) => blockedOutput.push(chunk.toString()),
+                }),
+            ).rejects.toThrow();
+        } finally {
+            supervisor.shutdown();
+        }
+        expect(createSandboxService.mock.calls.length).toBe(before);
+        expect(blockedOutput).toEqual([]);
+
+        await writeFile(
+            projectPath,
+            JSON.stringify({ network: { allowedDomains: ["second.example"] } }),
+            { mode: 0o600 },
+        );
+        await expect(runOrdinaryBash(cwd)).resolves.toBe("direct-config");
+        expect(createSandboxService.mock.calls.length).toBe(before + 1);
+        const candidate = createSandboxService.mock.calls.at(-1)?.[0] as {
+            config: { network: { allowedDomains: string[] } };
+        };
+        expect(candidate.config.network.allowedDomains).toEqual(["second.example"]);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("keeps the newest direct edit when an earlier replacement is still starting", async () => {
+        await writeGlobalConfig({
+            network: { allowedDomains: ["initial.example"] },
+            docker: { allowed: false },
+        });
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const starting = deferred();
+        initialize.mockImplementationOnce(() => starting.promise);
+
+        await writeGlobalConfig({
+            network: { allowedDomains: ["stale.example"] },
+            docker: { allowed: false },
+        });
+        const supervisor = createBashProcessSupervisor();
+        const stale = resolveBashOperations(supervisor).exec("printf stale", cwd, {
+            onData() {},
+        });
+        await Promise.resolve();
+        await writeGlobalConfig({
+            network: { allowedDomains: ["latest.example"] },
+            docker: { allowed: false },
+        });
+        const latest = runOrdinaryBash(cwd, "printf latest");
+        starting.resolve();
+
+        await expect(stale).rejects.toThrow("replacement runtime was not admitted");
+        await expect(latest).resolves.toBe("latest");
+        supervisor.shutdown();
+        const candidate = createSandboxService.mock.calls.at(-1)?.[0] as {
+            config: { network: { allowedDomains: string[] } };
+        };
+        expect(candidate.config.network.allowedDomains).toEqual(["latest.example"]);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("does not select host mode without a global ceiling", async () => {
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await sandboxCommand(registered).handler("mode host", ctx);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("outside the global ceiling");
+        expect(currentShellPolicy()?.mode).toBe("sandbox");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("preserves project Docker restrictions when toggling enabled", async () => {
+        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ docker: { enabled: false, targets: [{ selector: { type: "container-name", name: "api" }, operations: ["ps"] }] } }));
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await sandboxCommand(registered).handler("docker on", ctx);
+        await sandboxCommand(registered).handler("docker off", ctx);
+        await sandboxCommand(registered).handler("docker on", ctx);
+        const saved = JSON.parse(await readFile(join(cwd, ".pi", "sandbox.json"), "utf8"));
+        expect(saved.docker).toMatchObject({ enabled: true, targets: [{ selector: { name: "api" }, operations: ["ps"] }] });
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("admits an ephemeral Docker break-glass exec only through active v2 global and project gates", async () => {
+        await writeEnabledBreakGlassPolicy(cwd);
+        const registered = registerSandbox();
+        const ctx = context(cwd, undefined, "session-a", true, { confirm: [true] });
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+        const candidate = createSandboxService.mock.calls.at(-1)?.[0] as {
+            config: { docker: { targets: Array<{ selector: { type: string } }> } };
+        };
+        expect(candidate.config.docker.targets).toContainEqual(expect.objectContaining({
+            selector: expect.objectContaining({ type: "ephemeral-container", id: "0123456789abcdef" }),
+        }));
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Break-glass exec active");
+        await expect(runOrdinaryBash(cwd, "printf admitted-break-glass")).resolves.toBe("admitted-break-glass");
+        const admitted = createSandboxService.mock.calls.at(-1)?.[0] as {
+            config: { docker: { targets: Array<{ selector: { type: string; id?: string } }> } };
+        };
+        expect(admitted.config.docker.targets).toContainEqual(expect.objectContaining({
+            selector: expect.objectContaining({ type: "ephemeral-container", id: "0123456789abcdef" }),
+        }));
+        const callsAfterActivation = createSandboxService.mock.calls.length;
+        await writeGlobalConfig({ docker: { allowed: false } });
+        await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+        expect(createSandboxService.mock.calls).toHaveLength(callsAfterActivation);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("targeted host-access grants");
+        await writeGlobalConfig({
+            docker: {
+                allowed: true,
+                mode: "targeted",
+                endpoint: "unix:///tmp/docker-fixture.sock",
+                operations: ["exec"],
+                unsafeTargets: [{ type: "container-name", name: "api" }],
+            },
+        });
+        await writeFile(
+            join(cwd, ".pi", "sandbox.json"),
+            JSON.stringify({ docker: { enabled: false } }),
+            { mode: 0o600 },
+        );
+        await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+        expect(createSandboxService.mock.calls).toHaveLength(callsAfterActivation);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain("targeted host-access grants");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it.each([
+        { label: "Docker authorization", docker: { allowed: false }, message: "no longer permits targeted host access" },
+        { label: "unsafe exception", docker: { allowed: true, endpoint: "unix:///tmp/docker-fixture.sock" }, message: "selected container is no longer authorized" },
+    ])("does not activate break-glass when its global $label is revoked during confirmation", async ({ docker, message }) => {
+        await writeEnabledBreakGlassPolicy(cwd);
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        const confirmation = deferred<boolean>();
+        const confirm = mock(() => confirmation.promise);
+        (ctx.ui as unknown as { confirm: typeof confirm }).confirm = confirm;
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const command = sandboxCommand(registered).handler(
+            "docker break-glass 1m",
+            ctx,
+        );
+        for (let attempt = 0; confirm.mock.calls.length === 0 && attempt < 8; attempt += 1) {
+            await Promise.resolve();
+        }
+        expect(confirm).toHaveBeenCalledTimes(1);
+        const startsBeforeRevocation = createSandboxService.mock.calls.length;
+        await writeGlobalConfig({ docker });
+        confirmation.resolve(true);
+        await command;
+        expect(createSandboxService.mock.calls).toHaveLength(startsBeforeRevocation);
+        expect(notifyCalls(ctx).at(-1)?.[0]).toContain(message);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("removes a break-glass grant at expiry and rebuilds from the current authority", async () => {
+        let expire: (() => void) | undefined;
+        const captureTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
+            expire = () => {
+                if (typeof callback === "function") callback();
+            };
+            return 0 as never;
+        }) as unknown as typeof setTimeout;
+        const timeout = spyOn(globalThis, "setTimeout").mockImplementation(captureTimeout);
+        const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+        try {
+            await writeEnabledBreakGlassPolicy(cwd);
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, "session-a", true, { confirm: [true] });
+            await registered.handlers.get("session_start")?.({}, ctx);
+            await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+            await writeGlobalConfig({ docker: { allowed: false } });
+            await expect(runOrdinaryBash(cwd, "printf revoke-break-glass")).resolves.toBe("revoke-break-glass");
+            const startsAfterRevocation = createSandboxService.mock.calls.length;
+            expect(clearTimeoutSpy).not.toHaveBeenCalled();
+            expect(expire).toBeDefined();
+            expire?.();
+            for (let attempt = 0; attempt < 8; attempt += 1) await Promise.resolve();
+            const restored = createSandboxService.mock.calls.at(-1)?.[0] as {
+                config: { docker: { mode: string; targets?: Array<{ selector: { type: string } }> } };
+            };
+            expect(restored.config.docker.mode).toBe("disabled");
+            expect(restored.config.docker.targets).toBeUndefined();
+            expect(createSandboxService.mock.calls).toHaveLength(startsAfterRevocation);
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        } finally {
+            timeout.mockRestore();
+            clearTimeoutSpy.mockRestore();
+        }
+    });
+
+    it("keeps an expired revoked grant's deadline separate from a later break-glass grant", async () => {
+        const callbacks: Array<() => void> = [];
+        let timerId = 0;
+        const timeout = spyOn(globalThis, "setTimeout").mockImplementation(
+            ((callback: Parameters<typeof setTimeout>[0]) => {
+                if (typeof callback === "function") callbacks.push(callback);
+                timerId += 1;
+                return timerId as never;
+            }) as unknown as typeof setTimeout,
+        );
+        const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+        try {
+            await writeEnabledBreakGlassPolicy(cwd);
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, "session-a", true, {
+                confirm: [true, true],
+            });
+            await registered.handlers.get("session_start")?.({}, ctx);
+            await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+            const firstDeadline = callbacks.at(-1);
+            expect(firstDeadline).toBeDefined();
+
+            await writeEnabledBreakGlassPolicy(cwd);
+            await writeGlobalConfig({
+                docker: {
+                    allowed: true,
+                    mode: "targeted",
+                    endpoint: "unix:///tmp/docker-fixture.sock",
+                    operations: ["exec"], unsafeTargets: [{ type: "container-name", name: "api" }],
+                },
+                filesystem: { denyRead: ["private-a"] },
+            });
+            await expect(runOrdinaryBash(cwd, "printf generation-a")).resolves.toBe("generation-a");
+            const reconfiguredDeadline = callbacks.at(-1);
+            expect(reconfiguredDeadline).not.toBe(firstDeadline);
+
+            await writeGlobalConfig({ docker: { allowed: false } });
+            await expect(runOrdinaryBash(cwd, "printf revoke-a")).resolves.toBe("revoke-a");
+            const clearedBeforeB = clearTimeoutSpy.mock.calls.length;
+            await writeEnabledBreakGlassPolicy(cwd);
+            await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+            const secondDeadline = callbacks.at(-1);
+            expect(secondDeadline).toBeDefined();
+            expect(secondDeadline).not.toBe(reconfiguredDeadline);
+            expect(clearTimeoutSpy.mock.calls).toHaveLength(clearedBeforeB);
+
+            const startsBeforeAExpiry = createSandboxService.mock.calls.length;
+            reconfiguredDeadline?.();
+            for (let attempt = 0; attempt < 8; attempt += 1) await Promise.resolve();
+            expect(createSandboxService.mock.calls).toHaveLength(startsBeforeAExpiry);
+
+            secondDeadline?.();
+            for (let attempt = 0; attempt < 8; attempt += 1) await Promise.resolve();
+            expect(createSandboxService.mock.calls.length).toBeGreaterThan(startsBeforeAExpiry);
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        } finally {
+            timeout.mockRestore();
+            clearTimeoutSpy.mockRestore();
+        }
+    });
+
+    it("terminates admitted A processes at A expiry while B remains alive until B expiry", async () => {
+        const callbacks = new Map<number, () => void>();
+        const realSetTimeout = globalThis.setTimeout;
+        const realClearTimeout = globalThis.clearTimeout;
+        let nextTimer = 0;
+        const timeout = spyOn(globalThis, "setTimeout").mockImplementation(
+            ((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
+                if (
+                    typeof callback === "function" &&
+                    typeof delay === "number" &&
+                    delay >= 59_000 &&
+                    delay <= 60_000
+                ) {
+                    nextTimer += 1;
+                    callbacks.set(nextTimer, callback);
+                    return nextTimer as never;
+                }
+                return realSetTimeout(callback, delay as number) as never;
+            }) as unknown as typeof setTimeout,
+        );
+        const clearTimeoutSpy = spyOn(globalThis, "clearTimeout").mockImplementation(
+            ((timer: number) => {
+                if (callbacks.delete(timer)) return;
+                realClearTimeout(timer as never);
+            }) as unknown as typeof clearTimeout,
+        );
+        try {
+            prepareBash.mockImplementation(async (command) => ({
+                file: command.file,
+                args: command.args,
+                cwd: command.cwd,
+                env: { ...process.env } as Record<string, string>,
+                statusProtocol: { fd: 3 as const, version: 1 as const },
+                extraStdio: ["ignore" as const],
+                supervise: (child: ChildProcess) => ({
+                    ready: Promise.resolve(),
+                    settled: new Promise<void>((resolve) =>
+                        child.once("close", () => resolve()),
+                    ),
+                }),
+            }));
+            const start = async (label: string) => {
+                let ready!: () => void;
+                const started = new Promise<void>((resolve) => { ready = resolve; });
+                const operation = resolveBashOperations(createBashProcessSupervisor())
+                    .exec(`printf ${label}; sleep 30`, cwd, {
+                        onData: (chunk) => {
+                            if (chunk.toString().includes(label)) ready();
+                        },
+                    })
+                    .then((result) => result, (error) => error);
+                await started;
+                return { operation };
+            };
+            await writeEnabledBreakGlassPolicy(cwd);
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, "session-a", true, { confirm: [true, true] });
+            await registered.handlers.get("session_start")?.({}, ctx);
+            await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+            const firstATimer = nextTimer;
+            const a1 = await start("A1_READY");
+            await writeGlobalConfig({ docker: { allowed: true, mode: "targeted", endpoint: "unix:///tmp/docker-fixture.sock", operations: ["exec"], unsafeTargets: [{ type: "container-name", name: "api" }] }, filesystem: { denyRead: ["reconfigure-a"] } });
+            const a2 = await start("A2_READY");
+            const activeATimer = nextTimer;
+            expect(activeATimer).toBeGreaterThan(firstATimer);
+            await writeGlobalConfig({ docker: { allowed: false } });
+            await expect(runOrdinaryBash(cwd, "printf revoke-a-live")).resolves.toBe("revoke-a-live");
+            await writeEnabledBreakGlassPolicy(cwd);
+            await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+            const b = await start("B_READY");
+            const bTimer = nextTimer;
+            expect(bTimer).toBeGreaterThan(activeATimer);
+            const aDeadline = callbacks.get(activeATimer);
+            const bDeadline = callbacks.get(bTimer);
+            aDeadline?.();
+            expect(await a1.operation).toMatchObject({ exitCode: null });
+            expect(await a2.operation).toMatchObject({ exitCode: null });
+            const bStillRunning = await Promise.race([
+                b.operation.then(() => false),
+                new Promise<boolean>((resolve) => setImmediate(() => resolve(true))),
+            ]);
+            expect(bStillRunning).toBeTrue();
+            bDeadline?.();
+            const bTerminated = await b.operation;
+            expect(
+                bTerminated instanceof Error ||
+                    (typeof bTerminated === "object" &&
+                        bTerminated !== null &&
+                        "exitCode" in bTerminated &&
+                        bTerminated.exitCode === null),
+            ).toBeTrue();
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        } finally {
+            timeout.mockRestore();
+            clearTimeoutSpy.mockRestore();
+        }
+    });
+
+    it("interrupts only resource-bearing retired operations after a resource revocation", async () => {
+        prepareBash.mockImplementation(async (command) => ({
+            file: command.file,
+            args: command.args,
+            cwd: command.cwd,
+            env: { ...process.env } as Record<string, string>,
+            statusProtocol: { fd: 3 as const, version: 1 as const },
+            extraStdio: ["ignore" as const],
+            supervise: (child: ChildProcess) => ({
+                ready: Promise.resolve(),
+                settled: new Promise<void>((resolve) =>
+                    child.once("close", () => resolve()),
+                ),
+            }),
+        }));
+        const start = async (label: string) => {
+            let ready!: () => void;
+            const started = new Promise<void>((resolve) => { ready = resolve; });
+            const operation = resolveBashOperations(createBashProcessSupervisor())
+                .exec(`printf ${label}; sleep 30`, cwd, {
+                    onData: (chunk) => {
+                        if (chunk.toString().includes(label)) ready();
+                    },
+                })
+                .then((result) => result, (error) => error);
+            await started;
+            return { operation };
+        };
+        await writeGlobalConfig({
+            docker: { allowed: false },
+            resources: { unixSockets: ["/tmp/resource-fixture.sock"] },
+        });
         const registered = registerSandbox();
         const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
+        const resourceBound = await start("RESOURCE_READY");
 
-        const first = await registered.handlers.get("before_agent_start")?.(
-            { systemPrompt: "base prompt" },
-            ctx,
-        ) as { systemPrompt: string };
-        const second = await registered.handlers.get("before_agent_start")?.(
-            { systemPrompt: first.systemPrompt },
-            ctx,
-        ) as { systemPrompt: string };
+        await writeGlobalConfig({
+            docker: { allowed: false },
+            resources: { unixSockets: [] },
+        });
+        await expect(runOrdinaryBash(cwd, "printf replacement-ready")).resolves.toBe(
+            "replacement-ready",
+        );
+        expect(await resourceBound.operation).toMatchObject({ exitCode: null });
 
-        expect(first.systemPrompt).toContain("Sandbox execution context v1");
-        expect(first.systemPrompt).toContain('"state":"enabled"');
-        expect(first.systemPrompt).toContain('"bash-general"');
-        expect(first.systemPrompt).toContain('"analysis-strict"');
-        expect(second.systemPrompt).toBe(first.systemPrompt);
-
-        await sandboxCommand(registered).handler("off", ctx);
-        const disabled = await registered.handlers.get("before_agent_start")?.(
-            { systemPrompt: first.systemPrompt },
-            ctx,
-        ) as { systemPrompt: string };
-        expect(disabled.systemPrompt).toContain('"state":"enabled"');
-        expect(disabled.systemPrompt).toContain("Shell profile: host");
-        expect(disabled.systemPrompt).toContain("Native file tools");
+        const replacement = await start("REPLACEMENT_READY");
+        const replacementStillRunning = await Promise.race([
+            replacement.operation.then(() => false),
+            new Promise<boolean>((resolve) => setImmediate(() => resolve(true))),
+        ]);
+        expect(replacementStillRunning).toBeTrue();
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+        const replacementStopped = await replacement.operation;
         expect(
-            disabled.systemPrompt.match(/Sandbox execution context v1/g),
-        ).toHaveLength(1);
+            replacementStopped instanceof Error ||
+                (typeof replacementStopped === "object" &&
+                    replacementStopped !== null &&
+                    "exitCode" in replacementStopped &&
+                    replacementStopped.exitCode === null),
+        ).toBeTrue();
     });
 
-    it("keeps Bash active while Analysis retries, then restores Analysis without restarting Bash", async () => {
+    it("derives custom and host profiles from v2 global and project mode layers", async () => {
+        await writeHostCeiling(cwd, {
+            network: { allowedDomains: ["example.com"] },
+        });
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        expect(currentShellPolicy()).toMatchObject({
+            mode: "sandbox",
+            profile: "custom",
+        });
+
+        await sandboxCommand(registered).handler("mode host", ctx);
+        expect(currentShellPolicy()).toMatchObject({
+            mode: "host",
+            profile: "host",
+        });
+
+        await sandboxCommand(registered).handler("mode sandbox", ctx);
+        expect(currentShellPolicy()).toMatchObject({
+            mode: "sandbox",
+            profile: "custom",
+        });
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("keeps Bash active while Analysis retries and restores Analysis without restarting Bash", async () => {
         analysisPreflight.mockRejectedValueOnce(
             new Error("analysis preflight failed"),
         );
@@ -408,9 +1130,7 @@ describe("sandbox lifecycle", () => {
 
         await registered.handlers.get("session_start")?.({}, ctx);
         await Bun.sleep(10);
-
-        const runtime = getSandboxRuntime();
-        expect(runtime).toMatchObject({
+        expect(getSandboxRuntime()).toMatchObject({
             state: "enabled",
             analysis: { state: "retrying" },
         });
@@ -422,6 +1142,7 @@ describe("sandbox lifecycle", () => {
             }),
         ).rejects.toMatchObject({ kind: "analysis-unavailable" });
         expect(initialize).toHaveBeenCalledTimes(1);
+
         const output: string[] = [];
         await expect(
             createSandboxBashOperations().exec("printf bash-ready", cwd, {
@@ -429,10 +1150,6 @@ describe("sandbox lifecycle", () => {
             }),
         ).resolves.toMatchObject({ exitCode: 0 });
         expect(output.join("")).toBe("bash-ready");
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            "Analysis indisponible, réessai en cours",
-            "warning",
-        ]);
 
         await Bun.sleep(5_100);
         expect(getSandboxRuntime()).toMatchObject({
@@ -447,6 +1164,7 @@ describe("sandbox lifecycle", () => {
                 program: "export default 1",
             }),
         ).resolves.toMatchObject({ output: "ok" });
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
     }, 8_000);
 
     it("cancels a scheduled Analysis retry when the session closes", async () => {
@@ -463,11 +1181,9 @@ describe("sandbox lifecycle", () => {
         expect(analysisPreflight).toHaveBeenCalledTimes(1);
     }, 8_000);
 
-    it("retains failed Analysis cleanup for the next transition without disabling Bash", async () => {
+    it("retains an Analysis cleanup failure and retries it at shutdown", async () => {
         analysisPreflight.mockRejectedValueOnce(new Error("preflight failed"));
-        analysisShutdown.mockRejectedValueOnce(
-            new Error("candidate cleanup failed"),
-        );
+        analysisShutdown.mockRejectedValueOnce(new Error("cleanup failed"));
         const registered = registerSandbox();
         const ctx = context(cwd);
 
@@ -477,1018 +1193,92 @@ describe("sandbox lifecycle", () => {
             state: "enabled",
             analysis: { state: "retrying" },
         });
-        expect(reset).not.toHaveBeenCalled();
+        expect(analysisShutdown).toHaveBeenCalledTimes(1);
 
-        await sandboxCommand(registered).handler("off", ctx);
-        expect(getSandboxRuntime().state).toBe("enabled");
-    });
-
-    it("surfaces and retries cleanup failure after invalid configuration", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-        await registered.handlers.get("session_start")?.({}, ctx);
-
-        await writeFile(
-            join(cwd, ".pi", "sandbox.json"),
-            JSON.stringify({
-                enabled: true,
-                network: { allowedDomains: ["127.0.0.1"] },
-            }),
-        );
-        reset.mockRejectedValueOnce(new Error("config cleanup failed"));
-
-        await registered.handlers.get("session_start")?.({}, ctx);
-        expect(getSandboxRuntime().state).toBe("error");
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            expect.stringContaining("cleanup failed: config cleanup failed"),
-            "error",
-        ]);
-
-        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ enabled: true }));
-        await registered.handlers.get("session_start")?.({}, ctx);
-        expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxRuntime().state).toBe("enabled");
-    });
-
-    it("keeps pending shell operations behind profile transitions and preserves Think on host", async () => {
-        const registered = registerSandbox(); const ctx = context(cwd);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        const enabling = deferred(); initialize.mockImplementationOnce(() => enabling.promise);
-        const transition = sandboxCommand(registered).handler("on --session", ctx);
-        expect(getSandboxRuntime().state).toBe("reconfiguring");
-        const pending = getSandboxAnalysisPort().run({ id: "wait", language: "javascript", program: "1" }).catch((error: Error) => error);
-        enabling.resolve(); await transition; await pending;
-        expect(getSandboxRuntime().state).toBe("enabled");
-        await sandboxCommand(registered).handler("off --session", ctx);
-        expect(getSandboxRuntime().state).toBe("enabled");
-        expect(currentShellPolicy()?.profile).toBe("host");
-        await expect(getSandboxAnalysisPort().run({ id: "think-host", language: "javascript", program: "1" })).resolves.toMatchObject({ output: "ok" });
-    });
-
-    it("lets admitted operations finish after profile revocation without interruption feedback", async () => {
-        const registered = registerSandbox(); const ctx = context(cwd);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        const running = createSandboxBashOperations().exec("sleep 0.12", cwd, { onData() {} });
-        await Bun.sleep(20);
-        await sandboxCommand(registered).handler("off --session", ctx);
-        expect(getSandboxRuntime().state).toBe("enabled");
-        expect(currentShellPolicy()?.profile).toBe("host");
-        await expect(running).resolves.toMatchObject({ exitCode: 0 });
-        expect(registered.sentMessages).toEqual([]);
         await registered.handlers.get("session_shutdown")?.({}, ctx);
-    });
-
-    it("exposes profiles, capabilities and compatible on/off aliases", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-        const command = sandboxCommand(registered);
-
-        expect(command.getArgumentCompletions?.("")).toEqual([
-            { value: "profile isolated", label: "profile isolated" },
-            { value: "profile integrated", label: "profile integrated" },
-            { value: "profile host", label: "profile host" },
-            { value: "capabilities", label: "capabilities" },
-            { value: "doctor", label: "doctor" },
-            { value: "on", label: "on" },
-            { value: "off", label: "off" },
-            { value: "docker", label: "docker" },
-        ]);
-        expect(command.getArgumentCompletions?.("docker ")).toEqual([
-            { value: "docker grant", label: "docker grant" },
-            { value: "docker break-glass", label: "docker break-glass" },
-            {
-                value: "docker break-glass 5m",
-                label: "docker break-glass 5m",
-            },
-            {
-                value: "docker break-glass 15m",
-                label: "docker break-glass 15m",
-            },
-            {
-                value: "docker break-glass 30m",
-                label: "docker break-glass 30m",
-            },
-            { value: "docker off", label: "docker off" },
-            { value: "docker targeted", label: "docker targeted" },
-            { value: "docker full", label: "docker full" },
-            { value: "docker inherit", label: "docker inherit" },
-        ]);
-
-        await command.handler("enable", ctx);
-        await command.handler("disable", ctx);
-
-        expect(notifyCalls(ctx).slice(-2)).toEqual([
-            ["Usage: /sandbox [profile isolated|integrated|host | capabilities | doctor | on | off | docker ...]", "error"],
-            ["Usage: /sandbox [profile isolated|integrated|host | capabilities | doctor | on | off | docker ...]", "error"],
-        ]);
-        expect(initialize).not.toHaveBeenCalled();
-        expect(reset).not.toHaveBeenCalled();
-    });
-
-    it("persists Docker off in project settings without losing legacy sandbox fields", async () => {
-        await writeFile(
-            join(cwd, ".pi", "sandbox.json"),
-            JSON.stringify({
-                enabled: true,
-                network: { allowedDomains: ["example.com"] },
-            }),
-        );
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-
-        await sandboxCommand(registered).handler("docker off", ctx);
-
-        const settings = JSON.parse(
-            await readFile(join(cwd, ".pi", "settings.json"), "utf8"),
-        );
-        expect(settings).toEqual({
-            sandbox: {
-                enabled: true,
-                network: { allowedDomains: ["example.com"] },
-                docker: { mode: "disabled" },
-            },
-        });
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            "Docker project preference saved: off",
-            "info",
-        ]);
-    });
-
-    it("shows Docker authority, project preference, effective policy, and runtime state", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-
-        await sandboxCommand(registered).handler("docker", ctx);
-
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            [
-                "Saved Docker grant: off",
-                "Project preference: inherit",
-                "Configured Docker: off",
-                "Runtime: uninitialized",
-            ].join("\n"),
-            "info",
-        ]);
-    });
-
-    it("diagnoses only the canonical Docker authority without writing configuration", async () => {
-        const agentDir = join(cwd, "agent-home");
-        await mkdir(agentDir);
-        await writeFile(join(cwd, ".pi", "sandbox.json"), "{ invalid");
-        await writeFile(join(agentDir, "sandbox.global.lg.json"), "{ invalid");
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd);
-
-            await sandboxCommand(registered).handler("doctor", ctx);
-
-            expect(notifyCalls(ctx).at(-1)).toEqual([
-                [
-                    "Sandbox doctor",
-                    `Shell capabilities unavailable: Could not parse sandbox config ${join(cwd, ".pi", "sandbox.json")}: JSON Parse error: Expected '}'`,
-                    `Docker authority: ${join(agentDir, "sandbox.global.json")} (not configured)`,
-                    "Effective Sandbox: on (default)",
-                    "Saved Docker grant: off",
-                    "Configured Docker: off",
-                    "Runtime: uninitialized",
-                    "Target visibility checks do not execute the granted operations.",
-                    "Next: /sandbox docker grant",
-                ].join("\n"),
-                "info",
-            ]);
-            await expect(
-                readFile(join(agentDir, "sandbox.global.json"), "utf8"),
-            ).rejects.toMatchObject({ code: "ENOENT" });
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-        }
-    });
-
-    it("reports the exact invalid authority field through doctor", async () => {
-        const agentDir = join(cwd, "agent-home");
-        await mkdir(agentDir);
-        await writeFile(
-            join(agentDir, "sandbox.global.json"),
-            JSON.stringify({
-                docker: {
-                    grants: [{ projectRoot: cwd, mode: "targeted" }],
-                },
-            }),
-            { mode: 0o600 },
-        );
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd);
-
-            await sandboxCommand(registered).handler("doctor", ctx);
-
-            expect(notifyCalls(ctx).at(-1)).toEqual([
-                [
-                    "Sandbox doctor",
-                    `Docker authority: ${join(agentDir, "sandbox.global.json")} (invalid)`,
-                    'Problem: docker.grants[0].targets is required for mode "targeted"; run /sandbox docker grant',
-                    "Next: /sandbox docker grant",
-                ].join("\n"),
-                "error",
-            ]);
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-        }
-    });
-
-    async function withExcludedDockerTarget(run: (ctx: ExtensionContext, path: string) => Promise<void>, confirmations: boolean[]) {
-        const agentDir = join(cwd, "agent-home");
-        const fakeBin = join(cwd, "bin");
-        await mkdir(agentDir);
-        await mkdir(fakeBin);
-        await writeFile(join(fakeBin, "docker"), '#!/bin/sh\nprintf \'{"name":"cliproxy","services":{"cli-proxy-api":{}}}\'\n', { mode: 0o700 });
-        const path = join(agentDir, "sandbox.global.json");
-        await writeFile(path, JSON.stringify({ docker: { grants: [{ projectRoot: cwd, mode: "targeted", targets: [{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, operations: ["ps"], allowUnsafeTarget: false }] }] } }), { mode: 0o600 });
-        inspectDockerAccess.mockResolvedValue([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", mounts: [{ source: "/host/config", destination: "/app/config", writable: false }], facts: [] }] }]);
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        const previousPath = process.env.PATH;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-        try { await run(context(cwd, undefined, SESSION_ID, true, { select: ["cliproxy / cli-proxy-api", "Exploitation"], confirm: confirmations }), path); }
-        finally {
-            if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            if (previousPath === undefined) delete process.env.PATH;
-            else process.env.PATH = previousPath;
-        }
-    }
-
-    it("does not save after declining the explicit exception for an excluded Docker target", async () => {
-        await withExcludedDockerTarget(async (ctx, path) => {
-            const before = await readFile(path, "utf8");
-            await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
-            expect(ctx.ui.confirm).toHaveBeenCalledWith("Authorize this Docker target despite host access?", expect.stringContaining("Host: /host/config → Container: /app/config"));
-            expect(await readFile(path, "utf8")).toBe(before);
-        }, [false]);
-    });
-
-    it("saves only a separately confirmed target exception and keeps exploitation without exec", async () => {
-        await withExcludedDockerTarget(async (ctx, path) => {
-            inspectDockerAccess.mockResolvedValueOnce([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", mounts: [{ source: "/host/config", destination: "/app/config", writable: false }], facts: [] }] }]);
-            inspectDockerAccess.mockResolvedValue([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "accessible", mounts: [], facts: [] }] }]);
-            await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
-            const target = JSON.parse(await readFile(path, "utf8")).docker.grants[0].targets[0];
-            expect(target.allowUnsafeTarget).toBe(true);
-            expect(target.operations).toEqual(["ps", "inspect", "logs", "stats", "start", "stop", "restart"]);
-            expect(ctx.ui.confirm).toHaveBeenCalledTimes(2);
-            expect(ctx.ui.confirm).toHaveBeenCalledWith(
-                "Authorize this Docker target despite host access?",
-                expect.stringContaining("Arbitrary exec remains unavailable"),
-            );
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host-access exception: enabled by the confirmed grant");
-            expect(notifyCalls(ctx).at(-1)?.[1]).toBe("info");
-        }, [true, true]);
-    });
-
-    it("doctor distinguishes a valid grant from a target excluded by the broker without writing", async () => {
-        await withExcludedDockerTarget(async (ctx, path) => {
-            const before = await readFile(path, "utf8");
-            await sandboxCommand(registerSandbox()).handler("doctor", ctx);
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Target access: blocked by the broker for this grant");
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host: /host/config → Container: /app/config");
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("(valid)");
-            expect(await readFile(path, "utf8")).toBe(before);
-        }, []);
-    });
-
-    it("doctor detects a saved configuration that differs from the active runtime", async () => {
-        await withExcludedDockerTarget(async (ctx) => {
-            const registered = registerSandbox();
-            await registered.handlers.get("session_start")?.({}, ctx);
-            await writeFile(join(cwd, ".pi", "settings.json"), JSON.stringify({ sandbox: { docker: { mode: "disabled" } } }));
-            await sandboxCommand(registered).handler("doctor", ctx);
-            const message = notifyCalls(ctx).at(-1)?.[0];
-            expect(message).toContain("Configured Docker: off");
-            expect(message).toContain("Active Docker: targeted · Custom");
-            expect(message).toContain("Active Docker differs from the current configuration");
-        }, []);
-    });
-
-    it("keeps a valid grant marked valid when target inspection is unavailable", async () => {
-        await withExcludedDockerTarget(async (ctx, path) => {
-            const before = await readFile(path, "utf8");
-            inspectDockerAccess.mockRejectedValue(new Error("engine unavailable"));
-            await sandboxCommand(registerSandbox()).handler("doctor", ctx);
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("(valid)");
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Docker target inspection unavailable: engine unavailable");
-            expect(await readFile(path, "utf8")).toBe(before);
-        }, []);
-    });
-
-    it("does not save a grant when target inspection fails", async () => {
-        await withExcludedDockerTarget(async (ctx, path) => {
-            const before = await readFile(path, "utf8");
-            inspectDockerAccess.mockRejectedValue(new Error("engine unavailable"));
-            await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
-            expect(ctx.ui.confirm).not.toHaveBeenCalled();
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Docker grant inspection failed");
-            expect(await readFile(path, "utf8")).toBe(before);
-        }, [true, true]);
-    });
-
-    it.each(["success", "reduced", "failure"] as const)("reports the confirmed exception and actual activation outcome: %s", async (outcome) => {
-        await withExcludedDockerTarget(async (ctx, path) => {
-            const registered = registerSandbox();
-            await registered.handlers.get("session_start")?.({}, ctx);
-            if (outcome === "reduced") {
-                await writeFile(join(cwd, ".pi", "settings.json"), JSON.stringify({ sandbox: { docker: { mode: "disabled" } } }));
-            }
-            if (outcome === "failure") analysisPreflight.mockRejectedValueOnce(new Error("fixture activation unavailable"));
-            const excluded = await inspectDockerAccess();
-            inspectDockerAccess.mockResolvedValueOnce(excluded);
-            inspectDockerAccess.mockResolvedValue(excluded.map((target) => ({ ...target, containers: target.containers.map((container) => ({ ...container, access: "accessible" as const })) })));
-            await sandboxCommand(registered).handler("docker grant", ctx);
-            const [message, level] = notifyCalls(ctx).at(-1)!;
-            expect(message).toContain("Saved Docker grant: targeted · Exploitation");
-            expect(message).toContain("Host-access exception: enabled by the confirmed grant");
-            expect(JSON.parse(await readFile(path, "utf8")).docker.grants[0].targets[0].allowUnsafeTarget).toBe(true);
-            expect(level).toBe("info");
-            expect(message).toContain(outcome === "reduced" ? "Active Docker: off" : "Active Docker: targeted · Exploitation");
-            if (outcome === "reduced") expect(message).not.toContain("saved and active");
-        }, [true, true]);
-    });
-
-    it("does not save after accepting the exception but cancelling the final grant", async () => {
-        await withExcludedDockerTarget(async (ctx, path) => {
-            const before = await readFile(path, "utf8");
-            inspectDockerAccess.mockResolvedValueOnce([{ selector: { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" }, containers: [{ id: "abc", name: "cliproxy", state: "running", access: "excluded", mounts: [], facts: [] }] }]);
-            inspectDockerAccess.mockResolvedValue([]);
-            await sandboxCommand(registerSandbox()).handler("docker grant", ctx);
-            expect(ctx.ui.confirm).toHaveBeenCalledTimes(2);
-            expect(await readFile(path, "utf8")).toBe(before);
-        }, [true, false]);
-    });
-
-    it("grants exploitation access to a selected Compose service", async () => {
-        const agentDir = join(cwd, "agent-home");
-        const otherProject = join(cwd, "other-project");
-        const fakeBin = join(cwd, "bin");
-        await mkdir(agentDir);
-        await mkdir(otherProject);
-        await mkdir(fakeBin);
-        await writeFile(
-            join(agentDir, "sandbox.global.json"),
-            JSON.stringify({
-                docker: {
-                    grants: [{ projectRoot: otherProject, mode: "full" }],
-                },
-            }),
-            { mode: 0o600 },
-        );
-        const dockerPath = join(fakeBin, "docker");
-        await writeFile(
-            dockerPath,
-            [
-                "#!/bin/sh",
-                'printf \'{"name":"cliproxy","services":{"cli-proxy-api":{}}}\'',
-            ].join("\n"),
-        );
-        await chmod(dockerPath, 0o700);
-
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        const previousPath = process.env.PATH;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, undefined, SESSION_ID, true, {
-                select: ["cliproxy / cli-proxy-api", "Exploitation"],
-                confirm: [true],
-            });
-
-            await sandboxCommand(registered).handler("docker grant", ctx);
-
-            expect(
-                JSON.parse(
-                    await readFile(join(agentDir, "sandbox.global.json"), "utf8"),
-                ),
-            ).toEqual({
-                $schema: "./extensions/sandbox/docs/sandbox.global.schema.json",
-                docker: {
-                    grants: [
-                        { projectRoot: otherProject, mode: "full" },
-                        {
-                            projectRoot: cwd,
-                            mode: "targeted",
-                            targets: [
-                                {
-                                    selector: {
-                                        type: "compose-service",
-                                        project: "cliproxy",
-                                        service: "cli-proxy-api",
-                                    },
-                                    operations: [
-                                        "ps",
-                                        "inspect",
-                                        "logs",
-                                        "stats",
-                                        "start",
-                                        "stop",
-                                        "restart",
-                                    ],
-                                    allowUnsafeTarget: false,
-                                },
-                            ],
-                        },
-                    ],
-                },
-            });
-            expect(
-                notifyCalls(ctx).at(-1)?.[0],
-            ).toContain("Docker grant saved, not active: Sandbox is disabled.");
-            const authorityMode =
-                (await stat(join(agentDir, "sandbox.global.json"))).mode & 0o777;
-            expect(authorityMode).toBe(0o600);
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-            if (previousPath === undefined) delete process.env.PATH;
-            else process.env.PATH = previousPath;
-        }
-    });
-
-    it("falls back to a manually named container when Docker Compose is unavailable", async () => {
-        const agentDir = join(cwd, "agent-home");
-        const fakeBin = join(cwd, "bin");
-        await mkdir(agentDir);
-        await mkdir(fakeBin);
-        const dockerPath = join(fakeBin, "docker");
-        await writeFile(dockerPath, "#!/bin/sh\nexit 127\n");
-        await chmod(dockerPath, 0o700);
-
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        const previousPath = process.env.PATH;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, undefined, SESSION_ID, true, {
-                input: ["manual-api"],
-                select: ["Observation"],
-                confirm: [true],
-            });
-
-            await sandboxCommand(registered).handler("docker grant", ctx);
-
-            const authority = JSON.parse(
-                await readFile(join(agentDir, "sandbox.global.json"), "utf8"),
-            );
-            expect(authority.docker.grants[0].targets[0]).toEqual({
-                selector: { type: "container-name", name: "manual-api" },
-                operations: ["ps", "inspect", "logs", "stats"],
-                allowUnsafeTarget: false,
-            });
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-            if (previousPath === undefined) delete process.env.PATH;
-            else process.env.PATH = previousPath;
-        }
-    });
-
-    it("grants administration access only when explicitly selected", async () => {
-        const agentDir = join(cwd, "agent-home");
-        const fakeBin = join(cwd, "bin");
-        await mkdir(agentDir);
-        await mkdir(fakeBin);
-        const dockerPath = join(fakeBin, "docker");
-        await writeFile(dockerPath, "#!/bin/sh\nexit 127\n");
-        await chmod(dockerPath, 0o700);
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        const previousPath = process.env.PATH;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, undefined, SESSION_ID, true, {
-                input: ["manual-api"],
-                select: ["Administration"],
-                confirm: [true],
-            });
-
-            await sandboxCommand(registered).handler("docker grant", ctx);
-
-            const authority = JSON.parse(
-                await readFile(join(agentDir, "sandbox.global.json"), "utf8"),
-            );
-            expect(authority.docker.grants[0].targets[0].operations).toEqual([
-                "ps",
-                "inspect",
-                "logs",
-                "stats",
-                "exec",
-                "start",
-                "stop",
-                "restart",
-            ]);
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-            if (previousPath === undefined) delete process.env.PATH;
-            else process.env.PATH = previousPath;
-        }
-    });
-
-    it("activates break-glass only for the current container and never persists it", async () => {
-        const agentDir = join(cwd, "agent-home");
-        const authorityPath = await configureBreakGlassTarget(cwd, agentDir);
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, undefined, SESSION_ID, true, { confirm: [true] });
-            await registered.handlers.get("session_start")?.({}, ctx);
-            const before = await readFile(authorityPath, "utf8");
-
-            const startedAt = Date.now();
-            await sandboxCommand(registered).handler(
-                "docker break-glass 15m",
-                ctx,
-            );
-
-            const runtime = getSandboxRuntime();
-            expect(runtime.state).toBe("enabled");
-            expect(runtime.state === "enabled" && runtime.dockerAccess?.breakGlass?.[0]?.containerId).toBe("0123456789abcdef");
-            const serviceOptions = createSandboxService.mock.calls.at(-1)?.[0] as unknown as { config: { docker: { targets: Array<{ selector: { type: string; id?: string; unsafeExecExpiresAtMs?: number } }> } } };
-            const ephemeral = serviceOptions.config.docker.targets.find((target) => target.selector.type === "ephemeral-container");
-            expect(ephemeral?.selector.id).toBe("0123456789abcdef");
-            expect(ephemeral?.selector.unsafeExecExpiresAtMs).toBeGreaterThanOrEqual(
-                startedAt + 15 * 60 * 1000,
-            );
-            expect(ephemeral?.selector.unsafeExecExpiresAtMs).toBeLessThanOrEqual(
-                Date.now() + 15 * 60 * 1000,
-            );
-            expect(await readFile(authorityPath, "utf8")).toBe(before);
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Break-glass exec active for container api-current");
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Host: /host/auths → Container: /auths (read-write)");
-            expect(registered.sentMessages).toContainEqual({
-                message: expect.objectContaining({
-                    customType: "sandbox-runtime-feedback",
-                    display: false,
-                    content: expect.stringContaining(
-                        "Docker break-glass is active for api-current (0123456789abcdef) until",
-                    ),
-                }),
-                options: { deliverAs: "steer" },
-            });
-        } finally {
-            if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-        }
-    });
-
-    it("rejects a break-glass duration outside the one-to-thirty-minute range", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-
-        await sandboxCommand(registered).handler("docker break-glass 31m", ctx);
-
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            "Docker break-glass duration must be between 1m and 30m. Usage: /sandbox docker break-glass [5m|15m|30m]",
-            "error",
-        ]);
-        expect(inspectDockerAccess).not.toHaveBeenCalled();
-        expect(registered.sentMessages).toEqual([]);
-    });
-
-    it("tells the agent when break-glass expires and reports interrupted executions", async () => {
-        const agentDir = join(cwd, "agent-home");
-        await configureBreakGlassTarget(cwd, agentDir);
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        let expiryCallback: (() => void) | undefined;
-        const originalSetTimeout = globalThis.setTimeout;
-        const timeout = spyOn(globalThis, "setTimeout").mockImplementation(
-            ((callback: (...args: unknown[]) => void, delay?: number) => {
-                if ((delay ?? 0) >= 60_000) {
-                    expiryCallback = () => callback();
-                    const handle = originalSetTimeout(() => undefined, delay);
-                    handle.unref();
-                    return handle;
-                }
-                return originalSetTimeout(callback, delay);
-            }) as typeof setTimeout,
-        );
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, undefined, SESSION_ID, true, {
-                confirm: [true],
-            });
-            await registered.handlers.get("session_start")?.({}, ctx);
-            await sandboxCommand(registered).handler("docker break-glass", ctx);
-            const running = createSandboxBashOperations().exec("sleep 30", cwd, {
-                onData: () => undefined,
-            });
-            await Bun.sleep(20);
-
-            expiryCallback?.();
-            expect(registered.sentMessages.at(-1)).toEqual({
-                message: expect.objectContaining({
-                    customType: "sandbox-runtime-feedback",
-                    display: false,
-                    content: expect.stringMatching(
-                        /break-glass expired.*no longer authorized/is,
-                    ),
-                }),
-                options: { deliverAs: "steer" },
-            });
-            await expect(running).rejects.toThrow("interrupted by reconfiguration");
-            await Bun.sleep(10);
-
-            expect(registered.sentMessages).toContainEqual({
-                message: expect.objectContaining({
-                    customType: "sandbox-runtime-feedback",
-                    display: false,
-                    content: expect.stringMatching(
-                        /1 running Sandbox execution was interrupted.*was not retried/is,
-                    ),
-                }),
-                options: { deliverAs: "steer" },
-            });
-        } finally {
-            timeout.mockRestore();
-            if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-        }
-    });
-
-    it("reconfigures an active Sandbox after saving a Docker grant", async () => {
-        const agentDir = join(cwd, "agent-home");
-        const fakeBin = join(cwd, "bin");
-        await mkdir(agentDir);
-        await mkdir(fakeBin);
-        const dockerPath = join(fakeBin, "docker");
-        await writeFile(dockerPath, "#!/bin/sh\nexit 127\n");
-        await chmod(dockerPath, 0o700);
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        const previousPath = process.env.PATH;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, undefined, SESSION_ID, true, {
-                input: ["manual-api"],
-                select: ["Observation"],
-                confirm: [true],
-            });
-            await registered.handlers.get("session_start")?.({}, ctx);
-            expect(getSandboxRuntime().state).toBe("enabled");
-
-            await sandboxCommand(registered).handler("docker grant", ctx);
-
-            expect(reset).toHaveBeenCalledTimes(1);
-            expect(initialize).toHaveBeenCalledTimes(2);
-            expect(getSandboxRuntime().state).toBe("enabled");
-            expect(notifyCalls(ctx).at(-1)).toEqual([
-                expect.stringContaining("Active Docker: targeted · Observation · 1 target"),
-                "info",
-            ]);
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("container-name: manual-api");
-            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Operations: ps, inspect, logs, stats");
-            const runtime = getSandboxRuntime();
-            expect(runtime.state === "enabled" && runtime.dockerAccess?.profile).toBe("Observation");
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-            if (previousPath === undefined) delete process.env.PATH;
-            else process.env.PATH = previousPath;
-        }
-    });
-
-    it("does not write a Docker grant after selection cancellation", async () => {
-        const agentDir = join(cwd, "agent-home");
-        const fakeBin = join(cwd, "bin");
-        await mkdir(agentDir);
-        await mkdir(fakeBin);
-        const dockerPath = join(fakeBin, "docker");
-        await writeFile(
-            dockerPath,
-            [
-                "#!/bin/sh",
-                'printf \'{"name":"cliproxy","services":{"cli-proxy-api":{}}}\'',
-            ].join("\n"),
-        );
-        await chmod(dockerPath, 0o700);
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        const previousPath = process.env.PATH;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, undefined, SESSION_ID, true, {
-                select: [undefined],
-            });
-
-            await sandboxCommand(registered).handler("docker grant", ctx);
-
-            await expect(
-                readFile(join(agentDir, "sandbox.global.json"), "utf8"),
-            ).rejects.toMatchObject({ code: "ENOENT" });
-            expect(notifyCalls(ctx).at(-1)).toEqual([
-                "Docker grant cancelled",
-                "info",
-            ]);
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-            if (previousPath === undefined) delete process.env.PATH;
-            else process.env.PATH = previousPath;
-        }
-    });
-
-    it("refuses a Docker grant for an untrusted project without discovery or writing", async () => {
-        const agentDir = join(cwd, "agent-home");
-        await mkdir(agentDir);
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, undefined, SESSION_ID, false);
-
-            await sandboxCommand(registered).handler("docker grant", ctx);
-
-            expect(notifyCalls(ctx).at(-1)).toEqual([
-                "Docker grants require a trusted project",
-                "error",
-            ]);
-            await expect(
-                readFile(join(agentDir, "sandbox.global.json"), "utf8"),
-            ).rejects.toMatchObject({ code: "ENOENT" });
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-        }
-    });
-
-    it("does not replace an untrusted global Docker authority file", async () => {
-        const agentDir = join(cwd, "agent-home");
-        const fakeBin = join(cwd, "bin");
-        await mkdir(agentDir);
-        await mkdir(fakeBin);
-        const authorityPath = join(agentDir, "sandbox.global.json");
-        await writeFile(authorityPath, '{"docker":{"grants":[]}}\n');
-        await chmod(authorityPath, 0o622);
-        const dockerPath = join(fakeBin, "docker");
-        await writeFile(dockerPath, "#!/bin/sh\nexit 127\n");
-        await chmod(dockerPath, 0o700);
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        const previousPath = process.env.PATH;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd, undefined, SESSION_ID, true, {
-                input: ["manual-api"],
-                select: ["Administration"],
-                confirm: [true],
-            });
-
-            await sandboxCommand(registered).handler("docker grant", ctx);
-
-            expect(await readFile(authorityPath, "utf8")).toBe(
-                '{"docker":{"grants":[]}}\n',
-            );
-            expect(notifyCalls(ctx).at(-1)).toEqual([
-                expect.stringContaining("Untrusted global Docker authority file"),
-                "error",
-            ]);
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-            if (previousPath === undefined) delete process.env.PATH;
-            else process.env.PATH = previousPath;
-        }
-    });
-
-    it("refuses Docker project changes for an untrusted project", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd, undefined, SESSION_ID, false);
-
-        await sandboxCommand(registered).handler("docker off", ctx);
-
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            "Docker project preference requires a trusted project",
-            "error",
-        ]);
-        await expect(
-            readFile(join(cwd, ".pi", "settings.json"), "utf8"),
-        ).rejects.toMatchObject({ code: "ENOENT" });
-    });
-
-    it("rejects Docker escalation without mutating project settings", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-
-        await sandboxCommand(registered).handler("docker targeted", ctx);
-
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            expect.stringContaining("Project attempted to enable Docker"),
-            "error",
-        ]);
-        await expect(
-            readFile(join(cwd, ".pi", "settings.json"), "utf8"),
-        ).rejects.toMatchObject({ code: "ENOENT" });
-    });
-
-    it("explains why full authority cannot become targeted without targets", async () => {
-        const agentDir = join(cwd, "agent-home");
-        await mkdir(agentDir);
-        await writeFile(
-            join(agentDir, "sandbox.global.json"),
-            JSON.stringify({
-                docker: {
-                    grants: [{ projectRoot: cwd, mode: "full" }],
-                },
-            }),
-            { mode: 0o600 },
-        );
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        process.env.PI_CODING_AGENT_DIR = agentDir;
-        try {
-            const registered = registerSandbox();
-            const ctx = context(cwd);
-
-            await sandboxCommand(registered).handler("docker targeted", ctx);
-
-            expect(notifyCalls(ctx).at(-1)).toEqual([
-                "Docker configuration failed: Targeted narrowing of full Docker requires targets",
-                "error",
-            ]);
-            await expect(
-                readFile(join(cwd, ".pi", "settings.json"), "utf8"),
-            ).rejects.toMatchObject({ code: "ENOENT" });
-        } finally {
-            if (previousAgentDir === undefined) {
-                delete process.env.PI_CODING_AGENT_DIR;
-            } else {
-                process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            }
-        }
-    });
-
-    it("restarts an active sandbox after saving a Docker preference", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        expect(getSandboxRuntime().state).toBe("enabled");
-
-        await sandboxCommand(registered).handler("docker off", ctx);
-
-        expect(reset).toHaveBeenCalledTimes(1);
-        expect(initialize).toHaveBeenCalledTimes(2);
-        expect(getSandboxRuntime().state).toBe("enabled");
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            "Docker project preference saved: off\nActive Docker: off",
-            "info",
-        ]);
-    });
-
-    it("fails closed and surfaces the real Docker reconfiguration error", async () => {
-        const registered = registerSandbox();
-        const ctx = context(cwd);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        initialize.mockRejectedValueOnce(new Error("docker broker unavailable"));
-
-        await sandboxCommand(registered).handler("docker off", ctx);
-
-        expect(getSandboxRuntime().state).toBe("error");
-        expect(notifyCalls(ctx).at(-1)).toEqual([
-            "Docker preference saved, but sandbox reconfiguration failed: docker broker unavailable",
-            "error",
-        ]);
-        const settings = JSON.parse(
-            await readFile(join(cwd, ".pi", "settings.json"), "utf8"),
-        );
-        expect(settings.sandbox.docker).toEqual({ mode: "disabled" });
-    });
-
-    it("keeps the latest profile authoritative over an in-flight runtime initialization", async () => {
-        const registered = registerSandbox(); const ctx = context(cwd);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        const starting = deferred(); initialize.mockImplementationOnce(() => starting.promise);
-        const enabling = sandboxCommand(registered).handler("on --session", ctx);
-        await sandboxCommand(registered).handler("off --session", ctx);
-        expect(currentShellPolicy()?.profile).toBe("host");
-        starting.resolve(); await enabling;
-        expect(currentShellPolicy()?.profile).toBe("host");
-        expect(getSandboxRuntime().state).toBe("enabled");
-    });
-
-    it("retains a retired runtime cleanup failure and retries it on shutdown", async () => {
-        const registered = registerSandbox(); const ctx = context(cwd);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        reset.mockRejectedValueOnce(new Error("retired cleanup failed"));
-        await sandboxCommand(registered).handler("off --session", ctx);
-        await Bun.sleep(10);
-        expect(getSandboxRuntime().state).toBe("enabled");
-        expect(notifyCalls(ctx).some(([message]) => message.includes("Retired runtime cleanup failed"))).toBe(true);
-        await registered.handlers.get("session_shutdown")?.({}, ctx);
-        expect(reset.mock.calls.length).toBeGreaterThanOrEqual(2);
+        expect(analysisShutdown).toHaveBeenCalledTimes(2);
         expect(getSandboxRuntime().state).toBe("uninitialized");
     });
 
-    it("does not publish a candidate after session shutdown supersedes startup", async () => {
+    it("lets an admitted operation drain after mode revocation", async () => {
+        await writeHostCeiling(cwd, {}, false);
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+
+        const supervisor = createBashProcessSupervisor();
+        const running = resolveBashOperations(supervisor).exec("sleep 0.12", cwd, {
+            onData() {},
+        });
+        await Bun.sleep(20);
+        await sandboxCommand(registered).handler("mode host", ctx);
+        expect(currentShellPolicy()).toMatchObject({
+            mode: "host",
+            profile: "host",
+        });
+        await expect(running).resolves.toMatchObject({ exitCode: 0 });
+        supervisor.shutdown();
+        expect(registered.sentMessages).toEqual([]);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("keeps the latest mode authoritative over an in-flight initialization", async () => {
+        await writeHostCeiling(cwd);
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+
+        const starting = deferred();
+        initialize.mockImplementationOnce(() => starting.promise);
+        const sandbox = sandboxCommand(registered).handler("mode sandbox", ctx);
+        await Promise.resolve();
+        await sandboxCommand(registered).handler("mode host", ctx);
+        starting.resolve();
+        await sandbox;
+
+        expect(currentShellPolicy()).toMatchObject({
+            mode: "host",
+            profile: "host",
+        });
+        expect(getSandboxRuntime().state).toBe("enabled");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("does not publish an Analysis candidate after shutdown supersedes startup", async () => {
         const preflight = deferred();
         analysisPreflight.mockImplementationOnce(() => preflight.promise);
         const registered = registerSandbox();
         const ctx = context(cwd);
 
-        const starting = registered.handlers.get("session_start")?.({}, ctx);
-        await Bun.sleep(10);
+        await registered.handlers.get("session_start")?.({}, ctx);
         await registered.handlers.get("session_shutdown")?.({}, ctx);
         expect(getSandboxRuntime().state).toBe("uninitialized");
 
         preflight.resolve();
-        await starting;
+        await Bun.sleep(10);
         expect(getSandboxRuntime().state).toBe("uninitialized");
-        expect(analysisShutdown).toHaveBeenCalledTimes(1);
+        expect(analysisShutdown).toHaveBeenCalledTimes(2);
         expect(reset).toHaveBeenCalledTimes(1);
     });
 
-    it("publishes error instead of local execution when reset fails", async () => {
+    it("fails closed when reset fails and succeeds on its retry", async () => {
         const registered = registerSandbox();
         const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
         reset.mockRejectedValueOnce(new Error("reset failed"));
 
-        await sandboxCommand(registered).handler("docker off", ctx);
-
+        await expect(
+            registered.handlers.get("session_shutdown")?.({}, ctx),
+        ).rejects.toThrow("reset failed");
         expect(getSandboxRuntime().state).toBe("error");
-        let captured: unknown;
-        try {
-            await createSandboxBashOperations().exec(...execArgs);
-            throw new Error("expected reset-failed to fail");
-        } catch (error) {
-            captured = error;
-        }
-        // Exact bounded public reason — the security contract never
-        // forwards the publisher's raw reset-failure text.
-        expect(captured).toBeInstanceOf(Error);
-        if (!(captured instanceof Error)) {
-            throw new Error("captured was not an Error");
-        }
-        expect(captured.message).toBe(
-            "Sandbox execution unavailable: initialization failed",
-        );
-        // Provenance: the error is the typed SandboxUnavailableError
-        // with the closed-set kind carried on the non-enumerable `kind`
-        // slot.
-        expect(isSandboxUnavailableError(captured)).toBe(true);
-        if (isSandboxUnavailableError(captured)) {
-            expect(captured.getKind()).toBe("initialization-failed");
-        }
-        // The raw reset secret (the publisher's raw error message) MUST
-        // NEVER reach the surfaced message nor a JSON dump. It is held
-        // only on the non-enumerable `initError` slot for telemetry,
-        // accessible via the typed accessor.
-        const serialized = JSON.stringify(captured);
-        expect(captured.message).not.toContain("reset failed");
-        expect(serialized).not.toContain("reset failed");
+        await expectUnavailable("initialization failed");
 
-        await registered.handlers.get("session_start")?.({}, ctx);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
         expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxRuntime().state).toBe("enabled");
+        expect(getSandboxRuntime().state).toBe("uninitialized");
     });
 
-    it("supports Pi's awaited shutdown-old then start-new reload sequence", async () => {
+    it("supports Pi's shutdown-old then start-new reload sequence", async () => {
         const first = registerSandbox();
         const ctx = context(cwd);
         await first.handlers.get("session_start")?.({}, ctx);
@@ -1497,12 +1287,12 @@ describe("sandbox lifecycle", () => {
 
         const second = registerSandbox();
         await second.handlers.get("session_start")?.({}, ctx);
-
         expect(reset).toHaveBeenCalledTimes(1);
         expect(getSandboxRuntime().state).toBe("enabled");
+        await second.handlers.get("session_shutdown")?.({}, ctx);
     });
 
-    it("cleans an obsolete instance without disturbing the newer runtime", async () => {
+    it("prevents an obsolete owner from altering the newer runtime", async () => {
         const first = registerSandbox();
         const ctx = context(cwd);
         await first.handlers.get("session_start")?.({}, ctx);
@@ -1510,152 +1300,66 @@ describe("sandbox lifecycle", () => {
         const second = registerSandbox();
         await second.handlers.get("session_start")?.({}, ctx);
         const currentRuntime = getSandboxRuntime();
-        expect(currentRuntime.state).toBe("enabled");
-
         await first.handlers.get("session_shutdown")?.({}, ctx);
 
         expect(reset).toHaveBeenCalledTimes(1);
         expect(analysisShutdown).toHaveBeenCalledTimes(1);
         expect(getSandboxRuntime()).toBe(currentRuntime);
-
         await second.handlers.get("session_shutdown")?.({}, ctx);
     });
 
-    it("keeps ownership and retries when session shutdown cleanup fails", async () => {
+    it("keeps Think private and available when the selected mode is host", async () => {
+        await writeHostCeiling(cwd);
         const registered = registerSandbox();
         const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
-        reset.mockRejectedValueOnce(new Error("shutdown cleanup failed"));
+        await sandboxCommand(registered).handler("mode host", ctx);
 
+        expect(currentShellPolicy()).toMatchObject({
+            mode: "host",
+            profile: "host",
+        });
+        expect(getSandboxRuntime()).toMatchObject({
+            state: "enabled",
+            contexts: {
+                "think-strict": { tmp: { namespace: "lease-private" } },
+            },
+            analysis: { state: "ready" },
+        });
+        const output: string[] = [];
         await expect(
-            registered.handlers.get("session_shutdown")?.({}, ctx),
-        ).rejects.toThrow("shutdown cleanup failed");
-        expect(getSandboxRuntime().state).toBe("error");
+            createSandboxThinkBashOperations().exec("printf think-private", cwd, {
+                onData: (chunk) => output.push(chunk.toString()),
+            }),
+        ).resolves.toMatchObject({ exitCode: 0 });
+        expect(output.join("")).toBe("think-private");
+        await expect(
+            getSandboxAnalysisPort().run({
+                id: "think-host",
+                language: "javascript",
+                program: "export default 1",
+            }),
+        ).resolves.toMatchObject({ output: "ok" });
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
 
-        await registered.handlers.get("session_shutdown")?.({}, ctx);
-        expect(reset).toHaveBeenCalledTimes(2);
-        expect(getSandboxRuntime().state).toBe("uninitialized");
-    });
-});
+    it("does not propagate a session mode grant into the next Pi session", async () => {
+        await writeHostCeiling(cwd, {}, false);
+        const first = registerSandbox();
+        const ctx = context(cwd);
+        await first.handlers.get("session_start")?.({}, ctx);
+        await sandboxCommand(first).handler("mode host", ctx);
+        expect(currentShellPolicy()?.mode).toBe("host");
+        expect(process.env[ENV_KEY]).toBeUndefined();
+        await first.handlers.get("session_shutdown")?.({}, ctx);
 
-describe("sandbox grants, migration and session scope", () => {
-    let cwd: string;
-    beforeEach(async () => {
-        cwd = await mkdtemp(join(tmpdir(), "sandbox-scope-"));
-        initialize.mockReset(); initialize.mockResolvedValue(undefined);
-        reset.mockReset(); reset.mockResolvedValue(undefined);
-        analysisShutdown.mockReset(); analysisShutdown.mockResolvedValue(undefined);
-        analysisPreflight.mockReset(); analysisPreflight.mockResolvedValue(undefined);
-        capturedWidgetDef.def = null; delete process.env[ENV_KEY];
-    });
-    afterEach(async () => { delete process.env[ENV_KEY]; await rm(cwd, { recursive: true, force: true }); });
-    it("legacy environment cannot authorize host execution or disable Think", async () => {
-        process.env[ENV_KEY] = "disabled";
-        const registered = registerSandbox(); const ctx = context(cwd);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        expect(getSandboxRuntime().state).toBe("enabled");
-        expect(currentShellPolicy()).toMatchObject({ state: "authorization-required", profile: "isolated", requestedProfile: "host" });
-        await registered.handlers.get("session_shutdown")?.({}, ctx);
-        expect(process.env[ENV_KEY]).toBe("disabled");
-    });
-    it("legacy session state requests host access without creating an authorization", async () => {
-        const sessionDir = join(cwd, "session"); await mkdir(sessionDir);
-        await writeFile(join(sessionDir, sessionStateFilename(SESSION_ID)), JSON.stringify({ enabled: false }));
-        const registered = registerSandbox(); const ctx = context(cwd, sessionDir);
-        await registered.handlers.get("session_start")?.({}, ctx);
-        expect(currentShellPolicy()?.state).toBe("authorization-required");
-        expect(getSandboxRuntime().state).toBe("enabled");
-        await registered.handlers.get("session_shutdown")?.({}, ctx);
-    });
-    it("off requires approval and stores a project grant while keeping Think isolated", async () => {
-        const registered = registerSandbox(); const ctx = context(cwd, undefined, SESSION_ID, true, { confirm: [true] });
-        await registered.handlers.get("session_start")?.({}, ctx);
-        await sandboxCommand(registered).handler("off", ctx);
-        expect(currentShellPolicy()?.profile).toBe("host");
-        expect(getSandboxRuntime().state).toBe("enabled");
-        expect(readCapabilityAuthority(capabilityAuthorityPath(isolatedAgentDirectory)).projects[0]?.grants.host).toBe(true);
-        expect(process.env[ENV_KEY]).toBeUndefined();
-        expect(renderWidget()).toContain("⚠");
-        await registered.handlers.get("session_shutdown")?.({}, ctx);
-        const second = registerSandbox(); const next = context(cwd);
-        await second.handlers.get("session_start")?.({}, next);
-        expect(currentShellPolicy()?.profile).toBe("host");
-        await second.handlers.get("session_shutdown")?.({}, next);
-    });
-    it("declining off starts no new runtime and leaves host access absent", async () => {
-        const registered = registerSandbox(); const ctx = context(cwd, undefined, SESSION_ID, true, { confirm: [false] });
-        await registered.handlers.get("session_start")?.({}, ctx);
-        const snapshot = getSandboxRuntime();
-        await sandboxCommand(registered).handler("off", ctx);
-        expect(getSandboxRuntime()).toBe(snapshot);
-        expect(currentShellPolicy()?.profile).toBe("isolated");
-        expect(readCapabilityAuthority(capabilityAuthorityPath(isolatedAgentDirectory)).projects).toEqual([]);
-        await registered.handlers.get("session_shutdown")?.({}, ctx);
-    });
-    it("session grants do not propagate through environment or into another Pi session", async () => {
-        const registered = registerSandbox(); const ctx = context(cwd, undefined, SESSION_ID, true, { confirm: [true] });
-        await registered.handlers.get("session_start")?.({}, ctx);
-        await sandboxCommand(registered).handler("off --session", ctx);
-        expect(currentShellPolicy()?.profile).toBe("host");
-        expect(readCapabilityAuthority(capabilityAuthorityPath(isolatedAgentDirectory)).projects).toEqual([]);
-        expect(process.env[ENV_KEY]).toBeUndefined();
-        await registered.handlers.get("session_shutdown")?.({}, ctx);
         const second = registerSandbox();
         await second.handlers.get("session_start")?.({}, ctx);
-        expect(currentShellPolicy()?.profile).toBe("isolated");
-        await second.handlers.get("session_shutdown")?.({}, ctx);
-    });
-    it("requires one explicit migration decision and preserves legacy preferences", async () => {
-        await mkdir(join(cwd, ".pi")); const legacy = join(cwd, ".pi", "sandbox.json");
-        const content = JSON.stringify({ enabled: true, network: { allowedDomains: ["github.com"] } }); await writeFile(legacy, content);
-        const registered = registerSandbox(); const ctx = context(cwd, undefined, SESSION_ID, true, { select: ["Use isolated defaults (no network, private /tmp)"] });
-        await registered.handlers.get("session_start")?.({}, ctx);
-        expect(currentShellPolicy()?.state).toBe("migration-required");
-        await sandboxCommand(registered).handler("on", ctx);
-        expect(currentShellPolicy()?.state).toBe("migration-required");
-        await sandboxCommand(registered).handler("capabilities migrate", ctx);
-        expect(currentShellPolicy()).toMatchObject({ state: "ready", profile: "isolated" });
-        expect(await readFile(legacy, "utf8")).toBe(content);
-        await registered.handlers.get("session_shutdown")?.({}, ctx);
-    });
-    it("describes foreign migration as session-only without promising persistence or archive", async () => {
-        const authorityPath = capabilityAuthorityPath(isolatedAgentDirectory);
-        await saveProjectCapabilities(
-            authorityPath,
-            {
-                projectRoot: cwd,
-                profile: "host",
-                grants: { ...emptyGrants(), host: true },
-            },
-            "foreign-machine-fixture",
-        );
-        const original = await readFile(authorityPath, "utf8");
-        const registered = registerSandbox();
-        const ctx = context(cwd, undefined, SESSION_ID, true, {
-            select: ["Use isolated defaults (no network, private /tmp)"],
-        });
-        await registered.handlers.get("session_start")?.({}, ctx);
-
-        await sandboxCommand(registered).handler(
-            "capabilities migrate --session",
-            ctx,
-        );
-
-        const select = ctx.ui.select as unknown as ReturnType<typeof mock>;
-        expect(String(select.mock.calls[0]?.[0])).not.toContain(
-            "will be archived",
-        );
-        const notifications = notifyCalls(ctx).map(([message]) => message);
-        expect(notifications.at(-1)).toContain("applied for this session");
-        expect(notifications.at(-1)).toContain(
-            "Foreign authority remains unchanged",
-        );
-        expect(notifications.at(-1)).not.toContain("Migration saved");
-        expect(await readFile(authorityPath, "utf8")).toBe(original);
         expect(currentShellPolicy()).toMatchObject({
-            state: "ready",
-            profile: "isolated",
+            mode: "sandbox",
+            profile: "default",
         });
-        await registered.handlers.get("session_shutdown")?.({}, ctx);
+        expect(process.env[ENV_KEY]).toBeUndefined();
+        await second.handlers.get("session_shutdown")?.({}, ctx);
     });
 });

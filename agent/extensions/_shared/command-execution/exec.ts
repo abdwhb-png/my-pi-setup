@@ -34,22 +34,7 @@ export const bashWithStdinSchema = Type.Object({
 });
 
 export type BashWithStdinInput = Static<typeof bashWithStdinSchema>;
-export const safeBashWithCapabilitiesSchema = Type.Object({
-    ...bashWithStdinSchema.properties,
-    hostCapability: Type.Optional(
-        Type.Union(
-            [
-                Type.Literal("editor"),
-                Type.Literal("dependencies"),
-                Type.Literal("dev-services"),
-            ],
-            {
-                description:
-                    "Request an already approved local integration. Omit for the normal shell profile. Never grants access by itself.",
-            },
-        ),
-    ),
-});
+export const safeBashSchema = bashWithStdinSchema;
 
 export interface BashPreparationContext {
     command: string;

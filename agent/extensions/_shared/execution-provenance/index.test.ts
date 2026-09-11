@@ -49,10 +49,18 @@ test('wire provenance rejects non-scalar values and does not copy arbitrary data
     expect(parseExecutionProvenance({ ...hostExecution(), raw: 'do not propagate' })).toEqual(hostExecution());
 });
 
-test('wire provenance preserves validated shell profile and host capability', () => {
-    const execution = { ...hostExecution(), shellProfile: 'integrated' as const, hostCapability: 'editor' as const };
+test('wire provenance records current mode/profile and converts historical profile labels', () => {
+    const execution = { ...hostExecution(), mode: 'host' as const, shellProfile: 'host' as const };
     expect(parseExecutionProvenance(execution)).toEqual(execution);
-    expect(parseExecutionProvenance({ ...execution, hostCapability: 'arbitrary' })).toBeUndefined();
+    expect(parseExecutionProvenance({ ...execution, mode: 'other' })).toBeUndefined();
+    expect(parseExecutionProvenance({ ...hostExecution(), shellProfile: 'integrated', hostCapability: 'editor' })).toMatchObject({
+        mode: 'host',
+        shellProfile: 'host',
+    });
+    const unknown = parseExecutionProvenance({ ...unknownExecution(), shellProfile: 'integrated', hostCapability: 'editor' });
+    expect(unknown).not.toHaveProperty('mode');
+    expect(unknown).not.toHaveProperty('shellProfile');
+    expect(parseExecutionProvenance({ ...hostExecution(), hostCapability: 'arbitrary' })).toBeUndefined();
 });
 
 test('Think JSON failure is its own receipt and remains parseable', () => {

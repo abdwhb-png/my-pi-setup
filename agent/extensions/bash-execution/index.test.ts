@@ -20,9 +20,10 @@ type RegisteredTool = Parameters<ExtensionAPI["registerTool"]>[0];
 type Hook = (event: unknown, ctx: ExtensionContext) => unknown;
 
 const owners: symbol[] = [];
-function publishProfile(owner: symbol, profile: ShellProfile = "isolated") {
-    publishShellRuntime(owner, () => ({ state: "ready", projectRoot: process.cwd(), profile, requestedProfile: profile,
-        grants: { ...emptyGrants(), host: profile === "host" }, requestedGrants: emptyGrants(), authorityPath: "/unused" }));
+function publishProfile(owner: symbol, profile: ShellProfile = "default") {
+    const mode = profile === "host" ? "host" : "sandbox";
+    publishShellRuntime(owner, () => ({ state: "ready", projectRoot: process.cwd(), mode, requestedMode: mode, profile, requestedProfile: profile,
+        grants: emptyGrants(), requestedGrants: emptyGrants(), authorityPath: "/unused" }));
 }
 
 function executionContext(): ExtensionContext {
@@ -271,5 +272,54 @@ describe("bash-execution ownership", () => {
         await expect(
             response.operations.exec("s", process.cwd(), { onData() {} }),
         ).rejects.toThrow("Usage: !s <command>");
+    });
+
+    test("refreshes the shell authority before dispatching !s", async () => {
+        let sandboxRuns = 0;
+        publish({
+            state: "enabled",
+            createBashOperations: () => ({
+                exec: async () => {
+                    sandboxRuns += 1;
+                    return { exitCode: 0 };
+                },
+            }),
+            analysis: {
+                run: async () => ({ output: "", stderr: "", runtime: "quickjs", durationMs: 0, truncated: false }),
+                shutdown: async () => undefined,
+            },
+        });
+        let prepared = 0;
+        publishShellRuntime(
+            owners.at(-1)!,
+            () => ({
+                state: "ready" as const,
+                mode: "sandbox" as const,
+                requestedMode: "sandbox" as const,
+                profile: "default" as const,
+                requestedProfile: "default" as const,
+                projectRoot: process.cwd(),
+                grants: emptyGrants(),
+                requestedGrants: emptyGrants(),
+                authorityPath: "/unused",
+            }),
+            async () => {
+                prepared += 1;
+                throw new Error("invalid active sandbox config");
+            },
+        );
+        const registered = register();
+        const userBash = registered.hooks.get("user_bash")?.[0];
+        const response = userBash?.({ command: "s printf blocked" }, executionContext()) as {
+            operations: BashOperations;
+        };
+
+        await expect(
+            response.operations.exec("s printf blocked", process.cwd(), {
+                onData: () => undefined,
+            }),
+        ).rejects.toThrow("invalid active sandbox config");
+        expect(prepared).toBe(1);
+        expect(sandboxRuns).toBe(0);
     });
 });

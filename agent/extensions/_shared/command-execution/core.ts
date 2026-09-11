@@ -78,7 +78,6 @@ export interface CommandExecutionRequest<
     toolCallId: string;
     operation: Operation;
     command: string;
-    hostCapability?: "editor" | "dependencies" | "dev-services";
     timeout?: number;
     stdin?: string;
     signal?: AbortSignal;
@@ -95,7 +94,6 @@ export interface CommandExecutionService<
 }
 
 export interface CommandExecutionOperationsOptions {
-    hostCapability?: "editor" | "dependencies" | "dev-services";
     onExecution?: ExecutionObserver;
     onSandboxContext?: (context: SandboxExecutionContextV1) => void;
     stdin?: string;
@@ -187,7 +185,6 @@ export function createCommandExecutionService<
             }
 
             const operations = options.createOperations({
-                hostCapability: request.hostCapability,
                 onExecution: (execution) =>
                     recordExecution(request.toolCallId, execution),
                 onSandboxContext: (context) =>

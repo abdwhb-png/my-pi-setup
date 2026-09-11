@@ -1,138 +1,160 @@
 {
-    "version": "0.3.3-fork.17",
-    "tag": "v0.3.3-fork.17",
-    "forkCommit": "fff8a45a6092f78f7c4fefd57ad3fc9ac449ff94",
-    "upstreamTag": "v0.3.3",
-    "upstreamCommit": "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
-    "engineRef": "rust-v0.131.0-alpha.22",
-    "engineCommit": "9b8cf56cdefb09f54564ccc295fd42f6647f558f",
-    "patches": [
-        {
-            "path": "scripts/upstream-secret-substitution.patch",
-            "sha256": "0af64b5861c921fc348f06c2d44f8ff0945681318bb7c478644c1e31712e7e39"
-        },
-        {
-            "path": "scripts/upstream-platform-defaults.patch",
-            "sha256": "38c04da92357dc542bdf3f364e14290914c5797f3253fb60984dec68e1bd8c8a"
-        },
-        {
-            "path": "scripts/upstream-deny-default-write.patch",
-            "sha256": "3c8f5177cd771ce0c580114a2552b7afa4e946dfb8dc976af69ddd4a90882e43"
-        },
-        {
-            "path": "scripts/upstream-zerobox-home-env.patch",
-            "sha256": "4e1e94732070acb2a817744d5b0b6c7f02aca7742775abf7d68b1647a0412440"
-        },
-        {
-            "path": "scripts/upstream-node-env-proxy.patch",
-            "sha256": "2d8760cb385fd1318b407d377bd1ff683ce07c602e03252bfe5e65dda489d268"
-        },
-        {
-            "path": "scripts/upstream-proxy-zombie-cleanup.patch",
-            "sha256": "0583c46be0db369917487058c4d2c5495b82a8a62db447d5b7f32827d9a64c50"
-        },
-        {
-            "path": "scripts/upstream-bwrap-fixes.patch",
-            "sha256": "f0d210a9bf3c60dbd7976033c414b8669c916b707e58871207eb272e457a27d5"
-        },
-        {
-            "path": "scripts/upstream-strict-bwrap.patch",
-            "sha256": "ce1ae44f0d60f1d99ab4db8d88ffa3e11ec97a4ebb8b11a2b42a4ed06515689a"
-        },
-        {
-            "path": "scripts/upstream-network-hardening.patch",
-            "sha256": "b207131c8a2727a50d37e88897ec3d2285abcf60e619d9cdd86eba36b81bd6ec"
-        },
-        {
-            "path": "scripts/upstream-proxy-root-plumbing.patch",
-            "sha256": "8bd66c8be1cb1adc46d850654c6880eb2b6d6cd253666223d2da79d5dc8963ca"
-        },
-        {
-            "path": "scripts/upstream-setup-status.patch",
-            "sha256": "277572af04f7153b39fe88ab0bf7c30074b7b58810211051d077cbd1926c59e0"
-        },
-        {
-            "path": "scripts/upstream-setup-supervisor-hardening.patch",
-            "sha256": "f6095ae940d141113a027fd1f08de84a3a602b6af42ccd4effb1924743dd9525"
-        },
-        {
-            "path": "scripts/upstream-setup-protocol-testing.patch",
-            "sha256": "06569ebf2316e3e34105475fae7b5ad9357a80687ec220633c4fd2d437062e5c"
-        },
-        {
-            "path": "scripts/upstream-setup-postfork-errors.patch",
-            "sha256": "628c4cf59986e8ffed51d3337cb1d6978f64bb6d1c021c33c53d413a71c71d1b"
-        },
-        {
-            "path": "scripts/upstream-setup-signal-order-test.patch",
-            "sha256": "4956ec05e970a714c37633705f9cc415c2e0f8790f4cf1d80cb9638dc19060cc"
-        },
-        {
-            "path": "scripts/upstream-setup-signal-window.patch",
-            "sha256": "9a039d2259823bdfbb92c196510ebd817ff478fd8f752fd61e013d39b9c864ca"
-        },
-        {
-            "path": "scripts/upstream-proxy-routed-socket-filter.patch",
-            "sha256": "efc4447ceb0ce882978641e4c4176c0f077319b5f3c5c041baebed63d770511b"
-        },
-        {
-            "path": "scripts/upstream-readable-carveouts.patch",
-            "sha256": "8031c86792a007ee569850b516c911d5e355bda5c90f13ff450c99c267e0f9e7"
-        },
-        {
-            "path": "scripts/upstream-target-env-isolation.patch",
-            "sha256": "bf1f8a45cc22ced5fef03ccb7a4a898b859179d762e3cd6bf65a206681e6b6e6"
-        },
-        {
-            "path": "scripts/upstream-readable-carveout-fd.patch",
-            "sha256": "ea36a3079bc2529a987ff7cbae96bc68570242ae9cc90da0895b7295a2a73a5e"
-        },
-        {
-            "path": "scripts/upstream-private-bind-mounts.patch",
-            "sha256": "94f3cd424b061ea01de6a7faab98335af0991f06fbee65168ecc937e76aa4f87"
-        },
-        {
-            "path": "scripts/upstream-docker-broker-route.patch",
-            "sha256": "62918257358c4b277e03df78a5e47620e094ef6683bf7a13b454e936e450aa33"
-        },
-        {
-            "path": "scripts/upstream-docker-broker-hidden-route.patch",
-            "sha256": "dbac1de2024c01adf3c20839abe7a6277a4780d938f8841b3fbf87710755f774"
-        },
-        {
-            "path": "scripts/upstream-docker-broker-resource-limits.patch",
-            "sha256": "5fbb9b4fffef9535c04c4d2c50f3fe13898726bde5fba1f0da8acd18a60e7751"
-        },
-        {
-            "path": "scripts/upstream-docker-broker-connection-permit.patch",
-            "sha256": "01d36d678c7ea381149f16268a70b8d06fbf4bb2d4b48b7c78f23b62c4428358"
-        },
-        {
-            "path": "scripts/upstream-setup-artifact-errors.patch",
-            "sha256": "c3ed22741b53a1be3690b7e8214507fc6f5c6b85ab9fa61077a0ffe3dd5e37d8"
-        },
-        {
-            "path": "scripts/upstream-private-stream-ipc.patch",
-            "sha256": "b02fc89137b1b5c0bf5553e0c6cd71e7044e1a21b73a4c32513a0d391117c6ee"
-        },
-        {
-            "path": "scripts/upstream-local-test-network.patch",
-            "sha256": "3ee6d7458c0756b6973a9e29b626104054451d53fdb74160a82c5f1826484501"
-        },
-        {
-            "path": "scripts/upstream-host-domain-routing.patch",
-            "sha256": "c48024a8b025077af0f66701b99c477317c16ec236f29570e60ba8c9c41584e0"
-        },
-        {
-            "path": "scripts/upstream-concurrent-deny-targets.patch",
-            "sha256": "6c2ce1c39412c9f73005652537b633573a7397cfadc6de3149c7be0bc9fc8d8d"
-        }
-    ],
-    "binaryName": "zerobox",
-    "binarySha256": "1a8202290afac9a4f8396ef7e0d8918cbcf82c4a89ebe6c303c3536e04aad53d",
-    "localBuild": {
-        "baseCommit": "fff8a45a6092f78f7c4fefd57ad3fc9ac449ff94",
-        "sourceCommit": "5c530891c2883bfbfd192883002cfc9b0f50e632",
-        "sourceDiffSha256": "6795151e4d41ec8127265377480f635282fb500eb1cb18dcea65c66268414086"
+  "version": "0.3.3-fork.17",
+  "upstreamTag": "v0.3.3",
+  "upstreamCommit": "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
+  "engineRef": "rust-v0.131.0-alpha.22",
+  "engineCommit": "9b8cf56cdefb09f54564ccc295fd42f6647f558f",
+  "patches": [
+    {
+      "path": "scripts/upstream-secret-substitution.patch",
+      "sha256": "0af64b5861c921fc348f06c2d44f8ff0945681318bb7c478644c1e31712e7e39"
+    },
+    {
+      "path": "scripts/upstream-platform-defaults.patch",
+      "sha256": "38c04da92357dc542bdf3f364e14290914c5797f3253fb60984dec68e1bd8c8a"
+    },
+    {
+      "path": "scripts/upstream-deny-default-write.patch",
+      "sha256": "3c8f5177cd771ce0c580114a2552b7afa4e946dfb8dc976af69ddd4a90882e43"
+    },
+    {
+      "path": "scripts/upstream-zerobox-home-env.patch",
+      "sha256": "4e1e94732070acb2a817744d5b0b6c7f02aca7742775abf7d68b1647a0412440"
+    },
+    {
+      "path": "scripts/upstream-node-env-proxy.patch",
+      "sha256": "2d8760cb385fd1318b407d377bd1ff683ce07c602e03252bfe5e65dda489d268"
+    },
+    {
+      "path": "scripts/upstream-proxy-zombie-cleanup.patch",
+      "sha256": "0583c46be0db369917487058c4d2c5495b82a8a62db447d5b7f32827d9a64c50"
+    },
+    {
+      "path": "scripts/upstream-bwrap-fixes.patch",
+      "sha256": "f0d210a9bf3c60dbd7976033c414b8669c916b707e58871207eb272e457a27d5"
+    },
+    {
+      "path": "scripts/upstream-strict-bwrap.patch",
+      "sha256": "ce1ae44f0d60f1d99ab4db8d88ffa3e11ec97a4ebb8b11a2b42a4ed06515689a"
+    },
+    {
+      "path": "scripts/upstream-network-hardening.patch",
+      "sha256": "b207131c8a2727a50d37e88897ec3d2285abcf60e619d9cdd86eba36b81bd6ec"
+    },
+    {
+      "path": "scripts/upstream-proxy-root-plumbing.patch",
+      "sha256": "8bd66c8be1cb1adc46d850654c6880eb2b6d6cd253666223d2da79d5dc8963ca"
+    },
+    {
+      "path": "scripts/upstream-setup-status.patch",
+      "sha256": "277572af04f7153b39fe88ab0bf7c30074b7b58810211051d077cbd1926c59e0"
+    },
+    {
+      "path": "scripts/upstream-setup-supervisor-hardening.patch",
+      "sha256": "f6095ae940d141113a027fd1f08de84a3a602b6af42ccd4effb1924743dd9525"
+    },
+    {
+      "path": "scripts/upstream-setup-protocol-testing.patch",
+      "sha256": "06569ebf2316e3e34105475fae7b5ad9357a80687ec220633c4fd2d437062e5c"
+    },
+    {
+      "path": "scripts/upstream-setup-postfork-errors.patch",
+      "sha256": "628c4cf59986e8ffed51d3337cb1d6978f64bb6d1c021c33c53d413a71c71d1b"
+    },
+    {
+      "path": "scripts/upstream-setup-signal-order-test.patch",
+      "sha256": "4956ec05e970a714c37633705f9cc415c2e0f8790f4cf1d80cb9638dc19060cc"
+    },
+    {
+      "path": "scripts/upstream-setup-signal-window.patch",
+      "sha256": "9a039d2259823bdfbb92c196510ebd817ff478fd8f752fd61e013d39b9c864ca"
+    },
+    {
+      "path": "scripts/upstream-proxy-routed-socket-filter.patch",
+      "sha256": "efc4447ceb0ce882978641e4c4176c0f077319b5f3c5c041baebed63d770511b"
+    },
+    {
+      "path": "scripts/upstream-readable-carveouts.patch",
+      "sha256": "8031c86792a007ee569850b516c911d5e355bda5c90f13ff450c99c267e0f9e7"
+    },
+    {
+      "path": "scripts/upstream-target-env-isolation.patch",
+      "sha256": "bf1f8a45cc22ced5fef03ccb7a4a898b859179d762e3cd6bf65a206681e6b6e6"
+    },
+    {
+      "path": "scripts/upstream-readable-carveout-fd.patch",
+      "sha256": "ea36a3079bc2529a987ff7cbae96bc68570242ae9cc90da0895b7295a2a73a5e"
+    },
+    {
+      "path": "scripts/upstream-private-bind-mounts.patch",
+      "sha256": "94f3cd424b061ea01de6a7faab98335af0991f06fbee65168ecc937e76aa4f87"
+    },
+    {
+      "path": "scripts/upstream-docker-broker-route.patch",
+      "sha256": "62918257358c4b277e03df78a5e47620e094ef6683bf7a13b454e936e450aa33"
+    },
+    {
+      "path": "scripts/upstream-docker-broker-hidden-route.patch",
+      "sha256": "dbac1de2024c01adf3c20839abe7a6277a4780d938f8841b3fbf87710755f774"
+    },
+    {
+      "path": "scripts/upstream-docker-broker-resource-limits.patch",
+      "sha256": "5fbb9b4fffef9535c04c4d2c50f3fe13898726bde5fba1f0da8acd18a60e7751"
+    },
+    {
+      "path": "scripts/upstream-docker-broker-connection-permit.patch",
+      "sha256": "01d36d678c7ea381149f16268a70b8d06fbf4bb2d4b48b7c78f23b62c4428358"
+    },
+    {
+      "path": "scripts/upstream-setup-artifact-errors.patch",
+      "sha256": "c3ed22741b53a1be3690b7e8214507fc6f5c6b85ab9fa61077a0ffe3dd5e37d8"
+    },
+    {
+      "path": "scripts/upstream-private-stream-ipc.patch",
+      "sha256": "b02fc89137b1b5c0bf5553e0c6cd71e7044e1a21b73a4c32513a0d391117c6ee"
+    },
+    {
+      "path": "scripts/upstream-local-test-network.patch",
+      "sha256": "3ee6d7458c0756b6973a9e29b626104054451d53fdb74160a82c5f1826484501"
+    },
+    {
+      "path": "scripts/upstream-host-domain-routing.patch",
+      "sha256": "c48024a8b025077af0f66701b99c477317c16ec236f29570e60ba8c9c41584e0"
+    },
+    {
+      "path": "scripts/upstream-concurrent-deny-targets.patch",
+      "sha256": "6c2ce1c39412c9f73005652537b633573a7397cfadc6de3149c7be0bc9fc8d8d"
+    },
+    {
+      "path": "scripts/upstream-private-bind-fd.patch",
+      "sha256": "34b532ea2dd1d761df92983e5265fe1aec1dae63efbc516e56b19f4ddd4192b5"
+    },
+    {
+      "path": "scripts/upstream-unix-sockets.patch",
+      "sha256": "2e908175703be5366b3bfc86741ec8193cba1cd6820c6948fd6dec743b1c6389"
+    },
+    {
+      "path": "scripts/upstream-command-cwd.patch",
+      "sha256": "22cb88ded129190e39bf84fee502c1a6e387f2898426ae85a2fd5c8c8f7f6787"
+    },
+    {
+      "path": "scripts/upstream-tcp-publications.patch",
+      "sha256": "33d6ecf472b5c4807239af686a34ca0473bc9aa425ef59ab57159f7dd3346b1d"
+    },
+    {
+      "path": "scripts/upstream-tcp-publication-revocation-race.patch",
+      "sha256": "fc35d8783351a6eabc387bf246aa956afaefa64500993cc94d9f7813e1b30b53"
     }
+  ],
+  "binaryName": "zerobox",
+  "binarySha256": "87a73d1bd2556ad629e3a675b8d39898aa693c4e0b7cc27c33078e4a3b298b7f",
+  "localBuild": {
+    "kind": "committed-worktree",
+    "baseCommit": "ebd12774aafa63fec1864e04f248150ec50136d4",
+    "sourceDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sourceDiffFormat": "git-diff-binary-head-plus-sorted-untracked-v1"
+  },
+  "omittedOptionalPatches": [
+    "scripts/upstream-no-preemptive-codex-protect.patch"
+  ]
 }

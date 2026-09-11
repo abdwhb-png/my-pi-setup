@@ -473,7 +473,23 @@ class ZeroboxBackend implements SandboxBackend {
         } finally {
             await rm(probeHome, { recursive: true, force: true });
         }
-        return SANDBOX_CAPABILITIES;
+        let help: ZeroboxCommandResult;
+        try {
+            help = this.#runCommand(this.#binaryPath, ["--help"], {
+                cwd: homedir(),
+                env: { HOME: homedir(), PATH: ZEROBOX_LAUNCHER_PATH },
+            });
+        } catch (error) {
+            throw new SandboxExecutionError("spawn-failed", { cause: error });
+        }
+        return {
+            ...SANDBOX_CAPABILITIES,
+            inboundBinding:
+                help.exitCode === 0 && help.stdout.includes("--publish-tcp"),
+            arbitraryUnixSockets:
+                help.exitCode === 0 &&
+                help.stdout.includes("--allow-unix-socket"),
+        };
     }
 
     async prepare(
@@ -481,9 +497,22 @@ class ZeroboxBackend implements SandboxBackend {
         policy: SandboxPolicy,
         lease: PrivateTempLease,
     ): Promise<SandboxSpawnSpec> {
-        await this.probe();
+        const capabilities = await this.probe();
         if (!policy.strict) {
             throw new SandboxExecutionError("strict-unavailable");
+        }
+        if (
+            policy.resources &&
+            ((policy.resources.unixSockets.length > 0 &&
+                !capabilities.arbitraryUnixSockets) ||
+                (policy.resources.tcpPublications.length > 0 &&
+                    !capabilities.inboundBinding))
+        ) {
+            throw new SandboxExecutionError("unsupported-capability", {
+                cause: new Error(
+                    "Zerobox lacks the requested resource controls",
+                ),
+            });
         }
         const materializedPolicy = await assertAndMaterializeFilesystemPolicy(
             policy,
@@ -525,9 +554,17 @@ class ZeroboxBackend implements SandboxBackend {
                     ...(policy.tmpNamespace === "lease-private"
                         ? [`--private-tmp=${lease.tmpDir}`]
                         : []),
+                    `--private-home=${lease.homeDir}`,
                     ...(policy.network.allowLocalBinding
                         ? ["--allow-local-binding"]
                         : []),
+                    ...(policy.resources?.unixSockets ?? []).map(
+                        (socket) => `--allow-unix-socket=${socket}`,
+                    ),
+                    ...(policy.resources?.tcpPublications ?? []).map(
+                        (publication) =>
+                            `--publish-tcp=${publication.scope}@${publication.listen}->${publication.target}`,
+                    ),
                     "-C",
                     command.cwd,
                     "--",

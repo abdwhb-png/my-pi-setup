@@ -10,7 +10,7 @@ import {
     symlink,
     writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
@@ -32,9 +32,11 @@ function successfulRun(
     _file: string,
     args: string[],
 ): ZeroboxCommandResult {
-    return args.includes("--version")
-        ? { exitCode: 0, stdout: "zerobox 0.3.3-fork.17\n", stderr: "" }
-        : { exitCode: 0, stdout: "", stderr: "" };
+    if (args.includes("--version"))
+        return { exitCode: 0, stdout: "zerobox 0.3.3-fork.17\n", stderr: "" };
+    if (args.includes("--help"))
+        return { exitCode: 0, stdout: "--allow-unix-socket PATH\n--publish-tcp RULE\n", stderr: "" };
+    return { exitCode: 0, stdout: "", stderr: "" };
 }
 
 describe("Zerobox backend", () => {
@@ -79,6 +81,10 @@ describe("Zerobox backend", () => {
                                 NODE_OPTIONS: "--require=/target/hook.cjs",
                             },
                         },
+                        resources: {
+                            unixSockets: [join(parent, "service.sock")],
+                            tcpPublications: [{ transport: "tcp", scope: "host", listen: "127.0.0.1:41001", target: "127.0.0.1:41002" }],
+                        },
                     },
                     {
                         mode: "targeted",
@@ -118,7 +124,10 @@ describe("Zerobox backend", () => {
                 "--strict-sandbox",
                 "--status-fd=3",
                 `--private-tmp=${lease.tmpDir}`,
+                `--private-home=${lease.homeDir}`,
                 "--allow-local-binding",
+                `--allow-unix-socket=${join(parent, "service.sock")}`,
+                "--publish-tcp=host@127.0.0.1:41001->127.0.0.1:41002",
                 "-C",
                 parent,
                 "--",
@@ -174,29 +183,35 @@ describe("Zerobox backend", () => {
                 description: "Pi private bash-general sandbox policy",
                 strict_sandbox: true,
                 allow_read: [
-                    "/",
+                    "/usr/bin",
+                    "/usr/sbin",
+                    "/usr",
+                    "/usr/lib",
+                    "/usr/lib64",
+                    "/etc/ld.so.cache",
+                    "/etc/ld.so.conf",
+                    "/etc/ld.so.conf.d",
+                    parent,
                     lease.homeDir,
                     lease.tmpDir,
                     lease.proxyRunsDir,
                 ],
                 deny_read: [
                     "/proc/1/root",
-                    "/mnt/c",
                     join(parent, "r"),
-                    join(getAgentDir(), "sandbox.global.json"),
                 ],
-                deny_read_globs: ["*.pem", join(parent, "secret"), join(getAgentDir(), "sandbox.capabilities.json")],
+                deny_read_globs: ["*.pem", join(parent, "secret"), join(getAgentDir(), "sandbox.json")],
                 allow_write: [
+                    parent,
                     lease.homeDir,
                     lease.tmpDir,
                 ],
                 deny_write: [
-                    "/proc/1/root",
                     "/mnt/c",
+                    "/proc/1/root",
                     join(parent, "r"),
-                    join(getAgentDir(), "sandbox.global.json"),
                 ],
-                deny_write_globs: ["private/**", join(parent, ".env"), join(getAgentDir(), "sandbox.capabilities.json")],
+                deny_write_globs: ["private/**", join(parent, ".env"), join(getAgentDir(), "sandbox.json")],
                 allow_net: ["example.com", "localhost:8317"],
                 allow_host_net: ["*.dev.test:443"],
                 deny_net: ["blocked.example.com"],
@@ -304,9 +319,10 @@ describe("Zerobox backend", () => {
         const binaryPath = join(parent, "zerobox");
         await writeFile(binaryPath, "fixture", { mode: 0o755 });
         await chmod(binaryPath, 0o755);
-        const lease = await createPrivateTempLease();
-        const alias = await mkdtemp(join(homedir(), ".a-"));
-        await rm(alias, { recursive: true });
+        const lease = await createPrivateTempLease({ rootDir: join(parent, "r") });
+        const cwd = join(parent, "project");
+        await mkdir(cwd);
+        const alias = join(cwd, "lease-alias");
         await symlink(lease.root, alias);
         try {
             const backend = createZeroboxBackend({
@@ -316,7 +332,7 @@ describe("Zerobox backend", () => {
                 runCommand: successfulRun,
             });
             const policy = createBashPolicy({
-                cwd: homedir(),
+                cwd,
                 lease,
                 config: validatePiSandboxConfig({
                     filesystem: { allowWrite: [alias] },
@@ -326,7 +342,7 @@ describe("Zerobox backend", () => {
 
             await expect(
                 backend.prepare(
-                    { file: "/bin/true", args: [], cwd: homedir() },
+                    { file: "/bin/true", args: [], cwd },
                     policy,
                     lease,
                 ),

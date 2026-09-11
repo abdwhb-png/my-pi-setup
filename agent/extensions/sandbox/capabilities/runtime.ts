@@ -1,16 +1,18 @@
 import { realpathSync } from "node:fs";
-import { CapabilityError, type HostCapability } from "./authority.ts";
+import { CapabilityError } from "./authority.ts";
 import type { ShellCapabilityResolution } from "./policy.ts";
 
 interface ShellRuntime {
     owner: symbol;
     resolve(): ShellCapabilityResolution;
+    prepare?(cwd: string): Promise<void>;
+    resolveForcedSandbox?(): ShellCapabilityResolution;
+    prepareForcedSandbox?(cwd: string): Promise<void>;
 }
 export interface ActiveShellOperation {
     id: number;
     projectRoot: string;
     profile: ShellCapabilityResolution["profile"];
-    capability?: HostCapability;
     command: string;
 }
 interface Registry {
@@ -26,8 +28,17 @@ function registry(): Registry {
 export function publishShellRuntime(
     owner: symbol,
     resolve: ShellRuntime["resolve"],
+    prepare?: ShellRuntime["prepare"],
+    resolveForcedSandbox?: ShellRuntime["resolveForcedSandbox"],
+    prepareForcedSandbox?: ShellRuntime["prepareForcedSandbox"],
 ): void {
-    registry().runtime = { owner, resolve };
+    registry().runtime = {
+        owner,
+        resolve,
+        prepare,
+        resolveForcedSandbox,
+        prepareForcedSandbox,
+    };
 }
 export function releaseShellRuntime(owner: symbol): void {
     if (registry().runtime?.owner === owner) delete registry().runtime;
@@ -37,7 +48,6 @@ export function currentShellPolicy(): ShellCapabilityResolution | undefined {
 }
 export function requireShellPolicy(
     cwd: string,
-    capability?: HostCapability,
 ): ShellCapabilityResolution {
     const policy = currentShellPolicy();
     if (!policy)
@@ -59,21 +69,77 @@ export function requireShellPolicy(
             policy.state,
             policy.diagnostic ?? "Shell execution is blocked",
         );
+    return policy;
+}
+/** Refresh an active runtime before admitting a new Bash operation. */
+export async function resolveShellPolicyForExecution(
+    cwd: string,
+): Promise<ShellCapabilityResolution> {
+    const runtime = registry().runtime;
+    if (!runtime) return requireShellPolicy(cwd);
+    await runtime.prepare?.(cwd);
+    const current = registry().runtime;
     if (
-        capability &&
-        (policy.profile === "isolated" ||
-            !policy.grants.integrations[capability])
+        current === undefined ||
+        current !== runtime ||
+        current.owner !== runtime.owner
     )
         throw new CapabilityError(
             "authorization-required",
-            `Use /sandbox capabilities grant ${capability}. The command was not executed.`,
+            "Shell runtime changed during policy preparation. The command was not executed.",
         );
+    return requireShellPolicy(cwd);
+}
+
+/** Resolve an explicit !s request without changing the selected session mode. */
+export async function resolveForcedSandboxPolicyForExecution(
+    cwd: string,
+): Promise<ShellCapabilityResolution> {
+    const runtime = registry().runtime;
+    if (!runtime) return requireShellPolicy(cwd);
+    await (runtime.prepareForcedSandbox ?? runtime.prepare)?.(cwd);
+    const current = registry().runtime;
+    if (!current || current !== runtime || current.owner !== runtime.owner) {
+        throw new CapabilityError(
+            "authorization-required",
+            "Shell runtime changed during policy preparation. The command was not executed.",
+        );
+    }
+    const policy = runtime.resolveForcedSandbox?.() ?? runtime.resolve();
+    if (policy.mode !== "sandbox") {
+        throw new CapabilityError(
+            "authorization-required",
+            "Sandbox execution is unavailable for this session.",
+        );
+    }
+    const actual = realpathSync(cwd);
+    if (actual !== policy.projectRoot && !actual.startsWith(`${policy.projectRoot}/`)) {
+        throw new CapabilityError("authorization-required", "This project has no local grant");
+    }
+    if (policy.state !== "ready") {
+        throw new CapabilityError(policy.state, policy.diagnostic ?? "Shell execution is blocked");
+    }
+    return policy;
+}
+
+export function requireForcedSandboxShellPolicy(
+    cwd: string,
+): ShellCapabilityResolution {
+    const runtime = registry().runtime;
+    const policy = runtime?.resolveForcedSandbox?.() ?? runtime?.resolve();
+    if (!policy || policy.mode !== "sandbox") {
+        throw new CapabilityError("authorization-required", "Sandbox execution is unavailable for this session.");
+    }
+    const actual = realpathSync(cwd);
+    if (actual !== policy.projectRoot && !actual.startsWith(`${policy.projectRoot}/`)) {
+        throw new CapabilityError("authorization-required", "This project has no local grant");
+    }
+    if (policy.state !== "ready") throw new CapabilityError(policy.state, policy.diagnostic ?? "Shell execution is blocked");
     return policy;
 }
 export async function trackShellOperation<T>(
     policy: ShellCapabilityResolution,
     command: string,
-    capability: HostCapability | undefined,
     run: () => Promise<T>,
 ): Promise<T> {
     const state = registry();
@@ -83,7 +149,6 @@ export async function trackShellOperation<T>(
         command,
         profile: policy.profile,
         projectRoot: policy.projectRoot,
-        capability,
     });
     try {
         return await run();
@@ -98,11 +163,10 @@ export function formatShellPolicy(policy: ShellCapabilityResolution): string {
     return [
         `Shell profile: ${policy.profile} (requested: ${policy.requestedProfile}; ${policy.state})`,
         "Scope: shell only. Native file tools, extensions and MCP tools run on the host outside this shell boundary.",
-        `Network: ${policy.profile === "host" ? "host network (shell sandbox restrictions do not apply)" : policy.grants.domains.concat(policy.grants.hostDomains).join(", ") || "denied"}`,
-        `Temporary files: ${policy.profile === "host" || policy.grants.hostTmp ? "host /tmp" : "private /tmp; native file tools see a different /tmp"}`,
-        `Host integrations: ${Object.keys(policy.grants.integrations).join(", ") || "none"}`,
-        "hostCapability requests an existing local grant. Failure never authorizes host execution.",
-        "Host integrations execute outside the shell sandbox with host network and /tmp. Command permissions and Safe Bash guards still apply.",
+        `Mode: ${policy.mode}`,
+        `Network: ${policy.mode === "host" ? "host network (shell sandbox restrictions do not apply)" : policy.grants.domains.concat(policy.grants.hostDomains).join(", ") || "denied"}`,
+        `Temporary files: ${policy.mode === "host" || policy.grants.hostTmp ? "host /tmp" : "private /tmp; native file tools see a different /tmp"}`,
+        "Legacy hostCapability parameters are rejected. Select Sandbox or host mode explicitly.",
         ...(policy.diagnostic ? [policy.diagnostic] : []),
     ].join("\n");
 }

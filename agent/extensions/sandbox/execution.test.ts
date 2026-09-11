@@ -2,7 +2,6 @@
 
 import { beforeEach, afterEach, describe, expect, it, mock } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
     ExtensionAPI,
@@ -15,7 +14,15 @@ import {
     getSandboxRuntime,
     isSandboxUnavailableError,
 } from "../_shared/sandbox-runtime/index.ts";
-import sandboxExtension from "./index.ts";
+import { createSandboxExtension } from "./index.ts";
+import { localMachineId } from "./capabilities/authority.ts";
+import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./runtime/private-temp.ts";
+
+const realBackendEnabled = process.platform === "linux" &&
+    !!process.env.PI_SANDBOX_ZEROBOX_BINARY && !!process.env.PI_SANDBOX_ZEROBOX_SHA256;
+let fixtureRoot: string;
+let leaseRoot: string;
+let analysisRequests: string[];
 
 type SessionHandler = (
     event: unknown,
@@ -41,7 +48,33 @@ function registerSandbox(options: { noSandbox?: boolean } = {}): {
         getFlag: () => options.noSandbox ?? true,
     } as unknown as ExtensionAPI;
 
-    sandboxExtension(pi);
+    createSandboxExtension(pi, {
+        zeroboxBackend: {
+            // The malformed-config unit test never reaches backend probing.
+            // Its explicit missing fixture path still prevents personal fallback.
+            binaryPath: process.env.PI_SANDBOX_ZEROBOX_BINARY ?? join(fixtureRoot, "missing-zerobox"),
+            expectedProvenance: {
+                version: "0.3.3-fork.17",
+                binarySha256: process.env.PI_SANDBOX_ZEROBOX_SHA256 ?? "0".repeat(64),
+            },
+            probeRoot: join(fixtureRoot, "probe"),
+        },
+        sandboxServiceOptions: {
+            createLease: () => createPrivateTempLease({ rootDir: leaseRoot }),
+            recoverStaleLeases: async () => {
+                await recoverStalePrivateTempLeases({ rootDir: leaseRoot });
+            },
+        },
+        // This file tests runtime publication and Bash. Real Analysis engines
+        // are covered separately; these preflights perform no host I/O.
+        analysisServiceOptions: { runHost: async (request) => {
+            if (!["sandbox-preflight-typescript", "sandbox-preflight-python"].includes(request.id)) {
+                throw new Error("Unexpected Analysis execution in publication test");
+            }
+            analysisRequests.push(request.id);
+            return { output: "1", stderr: "", runtime: request.worker, durationMs: 0, truncated: false };
+        } },
+    });
     if (!start) throw new Error("sandbox session_start was not registered");
     return { start, stop };
 }
@@ -58,31 +91,41 @@ describe("sandbox runtime publication", () => {
     let agentDir: string;
     beforeEach(async () => {
         previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        agentDir = await mkdtemp(join(tmpdir(), "sandbox-execution-agent-"));
+        fixtureRoot = await mkdtemp("/var/tmp/pi-exec-");
+        leaseRoot = await mkdtemp("/var/tmp/z-");
+        agentDir = join(fixtureRoot, "agent");
+        await mkdir(agentDir);
+        analysisRequests = [];
         process.env.PI_CODING_AGENT_DIR = agentDir;
     });
     afterEach(async () => {
         if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
         else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-        await rm(agentDir, { recursive: true, force: true });
+        await rm(fixtureRoot, { recursive: true, force: true });
+        await rm(leaseRoot, { recursive: true, force: true });
     });
-    it("keeps the strict engine enabled when the legacy flag requests host shell", async () => {
+    it.skipIf(!realBackendEnabled)("keeps the strict engine enabled when the legacy flag requests host shell", async () => {
+        await writeFile(join(agentDir, "sandbox.json"), JSON.stringify({
+            version: 2, machineId: localMachineId(), mode: "host",
+        }));
+        const hostContext = { ...context, cwd: fixtureRoot } as ExtensionContext;
         const registered = registerSandbox({ noSandbox: true });
         try {
-            await registered.start({}, context);
+            await registered.start({}, hostContext);
             expect(getSandboxRuntime().state).toBe("enabled");
             expect(getSandboxAnalysisPort()).toBeDefined();
-        } finally { await registered.stop?.({}, context); }
+        } finally { await registered.stop?.({}, hostContext); }
+        expect(analysisRequests.sort()).toEqual(["sandbox-preflight-python", "sandbox-preflight-typescript"]);
     });
 
     it("publishes a bounded error snapshot for malformed config", async () => {
-        const cwd = await mkdtemp(join(tmpdir(), "sandbox-malformed-"));
+        const cwd = await mkdtemp(join(fixtureRoot, "malformed-"));
         await mkdir(join(cwd, ".pi"));
         await writeFile(join(cwd, ".pi", "sandbox.json"), "{ invalid");
         const malformedContext = { ...context, cwd } as ExtensionContext;
 
+        const registered = registerSandbox({ noSandbox: false });
         try {
-            const registered = registerSandbox({ noSandbox: false });
             await registered.start({}, malformedContext);
             expect(getSandboxRuntime()).toEqual({ state: "error" });
             let captured: unknown;
@@ -102,17 +145,17 @@ describe("sandbox runtime publication", () => {
                 expect(JSON.stringify(captured)).not.toContain("sandbox.json");
             }
         } finally {
+            await registered.stop?.({}, malformedContext);
             await rm(cwd, { recursive: true, force: true });
         }
     });
 
-    it("publishes executable Zerobox operations and analysis together", async () => {
-        const cwd = await mkdtemp(join(import.meta.dir, ".sandbox-real-index-"));
+    it.skipIf(!realBackendEnabled)("publishes executable Zerobox operations and analysis together", async () => {
+        const cwd = await mkdtemp(join(fixtureRoot, "project-"));
         await mkdir(join(cwd, ".pi"));
         await writeFile(
             join(cwd, ".pi", "sandbox.json"),
             JSON.stringify({
-                enabled: true,
                 filesystem: { allowWrite: ["."], denyWrite: [".env"] },
                 network: { allowedDomains: [], deniedDomains: [] },
             }),
@@ -134,5 +177,6 @@ describe("sandbox runtime publication", () => {
             await registered.stop?.({}, realContext);
             await rm(cwd, { recursive: true, force: true });
         }
+        expect(analysisRequests.sort()).toEqual(["sandbox-preflight-python", "sandbox-preflight-typescript"]);
     }, 30_000);
 });

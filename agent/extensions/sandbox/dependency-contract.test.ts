@@ -1,9 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const QUICKJS_VERSION = "3.1.0";
@@ -13,61 +12,21 @@ const AGENT_TYPESCRIPT_VERSION = "7.0.2";
 const SANDBOX_TYPESCRIPT_API_VERSION = "6.0.3";
 const SANDBOX_TYPESCRIPT_NATIVE_VERSION = "7.0.2";
 const ZEROBOX_VERSION = "0.3.3-fork.17";
-const ZEROBOX_SHA256 =
-    "1a8202290afac9a4f8396ef7e0d8918cbcf82c4a89ebe6c303c3536e04aad53d";
-const ZEROBOX_LOCAL_DIFF_SHA256 =
-    "6795151e4d41ec8127265377480f635282fb500eb1cb18dcea65c66268414086";
-const MANAGED_ZEROBOX_PATH = join(homedir(), ".pi", "bin", "zerobox");
-const ZEROBOX_SOURCE_ROOT = join(
-    homedir(),
-    "projects",
-    "shared-services",
-    "sandboxes",
-    "zerobox",
-);
-const ZEROBOX_SOURCE_COMMIT = "fff8a45a6092f78f7c4fefd57ad3fc9ac449ff94";
-const ZEROBOX_BUILD_COMMIT = "5c530891c2883bfbfd192883002cfc9b0f50e632";
-const PREVIOUS_ZEROBOX_ROLLBACK_ROOT = join(
-    homedir(),
-    ".local",
-    "state",
-    "pi",
-    "rollback",
-    "zerobox-fork.12-ou3Geh",
-);
+const OMITTED_OPTIONAL_PATCH = "scripts/upstream-no-preemptive-codex-protect.patch";
+const candidateBinary = process.env.PI_SANDBOX_ZEROBOX_BINARY;
+const candidateSha = process.env.PI_SANDBOX_ZEROBOX_SHA256;
+const candidateSource = process.env.PI_SANDBOX_ZEROBOX_SOURCE_ROOT;
 
-const EXPECTED_PATCHES = [
-    ["scripts/upstream-secret-substitution.patch", "0af64b5861c921fc348f06c2d44f8ff0945681318bb7c478644c1e31712e7e39"],
-    ["scripts/upstream-platform-defaults.patch", "38c04da92357dc542bdf3f364e14290914c5797f3253fb60984dec68e1bd8c8a"],
-    ["scripts/upstream-deny-default-write.patch", "3c8f5177cd771ce0c580114a2552b7afa4e946dfb8dc976af69ddd4a90882e43"],
-    ["scripts/upstream-zerobox-home-env.patch", "4e1e94732070acb2a817744d5b0b6c7f02aca7742775abf7d68b1647a0412440"],
-    ["scripts/upstream-node-env-proxy.patch", "2d8760cb385fd1318b407d377bd1ff683ce07c602e03252bfe5e65dda489d268"],
-    ["scripts/upstream-proxy-zombie-cleanup.patch", "0583c46be0db369917487058c4d2c5495b82a8a62db447d5b7f32827d9a64c50"],
-    ["scripts/upstream-bwrap-fixes.patch", "f0d210a9bf3c60dbd7976033c414b8669c916b707e58871207eb272e457a27d5"],
-    ["scripts/upstream-strict-bwrap.patch", "ce1ae44f0d60f1d99ab4db8d88ffa3e11ec97a4ebb8b11a2b42a4ed06515689a"],
-    ["scripts/upstream-network-hardening.patch", "b207131c8a2727a50d37e88897ec3d2285abcf60e619d9cdd86eba36b81bd6ec"],
-    ["scripts/upstream-proxy-root-plumbing.patch", "8bd66c8be1cb1adc46d850654c6880eb2b6d6cd253666223d2da79d5dc8963ca"],
-    ["scripts/upstream-setup-status.patch", "277572af04f7153b39fe88ab0bf7c30074b7b58810211051d077cbd1926c59e0"],
-    ["scripts/upstream-setup-supervisor-hardening.patch", "f6095ae940d141113a027fd1f08de84a3a602b6af42ccd4effb1924743dd9525"],
-    ["scripts/upstream-setup-protocol-testing.patch", "06569ebf2316e3e34105475fae7b5ad9357a80687ec220633c4fd2d437062e5c"],
-    ["scripts/upstream-setup-postfork-errors.patch", "628c4cf59986e8ffed51d3337cb1d6978f64bb6d1c021c33c53d413a71c71d1b"],
-    ["scripts/upstream-setup-signal-order-test.patch", "4956ec05e970a714c37633705f9cc415c2e0f8790f4cf1d80cb9638dc19060cc"],
-    ["scripts/upstream-setup-signal-window.patch", "9a039d2259823bdfbb92c196510ebd817ff478fd8f752fd61e013d39b9c864ca"],
-    ["scripts/upstream-proxy-routed-socket-filter.patch", "efc4447ceb0ce882978641e4c4176c0f077319b5f3c5c041baebed63d770511b"],
-    ["scripts/upstream-readable-carveouts.patch", "8031c86792a007ee569850b516c911d5e355bda5c90f13ff450c99c267e0f9e7"],
-    ["scripts/upstream-target-env-isolation.patch", "bf1f8a45cc22ced5fef03ccb7a4a898b859179d762e3cd6bf65a206681e6b6e6"],
-    ["scripts/upstream-readable-carveout-fd.patch", "ea36a3079bc2529a987ff7cbae96bc68570242ae9cc90da0895b7295a2a73a5e"],
-    ["scripts/upstream-private-bind-mounts.patch", "94f3cd424b061ea01de6a7faab98335af0991f06fbee65168ecc937e76aa4f87"],
-    ["scripts/upstream-docker-broker-route.patch", "62918257358c4b277e03df78a5e47620e094ef6683bf7a13b454e936e450aa33"],
-    ["scripts/upstream-docker-broker-hidden-route.patch", "dbac1de2024c01adf3c20839abe7a6277a4780d938f8841b3fbf87710755f774"],
-    ["scripts/upstream-docker-broker-resource-limits.patch", "5fbb9b4fffef9535c04c4d2c50f3fe13898726bde5fba1f0da8acd18a60e7751"],
-    ["scripts/upstream-docker-broker-connection-permit.patch", "01d36d678c7ea381149f16268a70b8d06fbf4bb2d4b48b7c78f23b62c4428358"],
-    ["scripts/upstream-setup-artifact-errors.patch", "c3ed22741b53a1be3690b7e8214507fc6f5c6b85ab9fa61077a0ffe3dd5e37d8"],
-    ["scripts/upstream-private-stream-ipc.patch", "b02fc89137b1b5c0bf5553e0c6cd71e7044e1a21b73a4c32513a0d391117c6ee"],
-    ["scripts/upstream-local-test-network.patch", "3ee6d7458c0756b6973a9e29b626104054451d53fdb74160a82c5f1826484501"],
-    ["scripts/upstream-host-domain-routing.patch", "c48024a8b025077af0f66701b99c477317c16ec236f29570e60ba8c9c41584e0"],
-    ["scripts/upstream-concurrent-deny-targets.patch", "6c2ce1c39412c9f73005652537b633573a7397cfadc6de3149c7be0bc9fc8d8d"],
-].map(([path, sha256]) => ({ path, sha256 }));
+interface ZeroboxManifest {
+    version: string;
+    binarySha256: string;
+    patches: Array<{ path: string; sha256: string }>;
+    omittedOptionalPatches: string[];
+    localBuild: { kind: string; baseCommit: string; sourceDiffSha256: string; sourceDiffFormat: string };
+}
+async function readProvenance(): Promise<ZeroboxManifest> {
+    return Bun.file(new URL("./runtime/zerobox-provenance.json", import.meta.url)).json();
+}
 
 interface SandboxPackageJson {
     dependencies?: Record<string, string>;
@@ -153,93 +112,82 @@ describe("sandbox dependency contract", () => {
         );
     });
 
-    it("pins the accepted Zerobox provenance and managed binary", async () => {
-        const provenance: unknown = await Bun.file(
-            new URL("./runtime/zerobox-provenance.json", import.meta.url),
-        ).json();
-        expect(provenance).toEqual({
+    it("records an explicit local-build provenance without claiming an immutable release", async () => {
+        const provenance = await readProvenance();
+        expect(provenance).toMatchObject({
             version: ZEROBOX_VERSION,
-            tag: "v0.3.3-fork.17",
-            forkCommit: ZEROBOX_SOURCE_COMMIT,
             upstreamTag: "v0.3.3",
             upstreamCommit: "9a7affd6c68fb2541c7c709559c40e08ba0a1872",
             engineRef: "rust-v0.131.0-alpha.22",
             engineCommit: "9b8cf56cdefb09f54564ccc295fd42f6647f558f",
-            patches: EXPECTED_PATCHES,
             binaryName: "zerobox",
-            binarySha256: ZEROBOX_SHA256,
             localBuild: {
-                baseCommit: ZEROBOX_SOURCE_COMMIT,
-                sourceCommit: ZEROBOX_BUILD_COMMIT,
-                sourceDiffSha256: ZEROBOX_LOCAL_DIFF_SHA256,
+                kind: "committed-worktree",
+                baseCommit: "ebd12774aafa63fec1864e04f248150ec50136d4",
+                sourceDiffFormat: "git-diff-binary-head-plus-sorted-untracked-v1",
             },
         });
-
-        const binary = await readFile(MANAGED_ZEROBOX_PATH);
-        const metadata = await stat(MANAGED_ZEROBOX_PATH);
-        expect(metadata.mode & 0o777).toBe(0o755);
-        expect(createHash("sha256").update(binary).digest("hex")).toBe(
-            ZEROBOX_SHA256,
-        );
-        const sourceDiff = execFileSync(
-            "git",
-            [
-                "diff",
-                "--binary",
-                ZEROBOX_SOURCE_COMMIT,
-                ZEROBOX_BUILD_COMMIT,
-            ],
-            { cwd: ZEROBOX_SOURCE_ROOT },
-        );
-        expect(createHash("sha256").update(sourceDiff).digest("hex")).toBe(ZEROBOX_LOCAL_DIFF_SHA256);
-        expect(
-            execFileSync(MANAGED_ZEROBOX_PATH, ["--version"], {
-                encoding: "utf8",
-            }).trim(),
-        ).toBe(`zerobox ${ZEROBOX_VERSION}`);
+        expect(provenance).not.toHaveProperty("tag");
+        expect(provenance).not.toHaveProperty("forkCommit");
+        expect(provenance.binarySha256).toMatch(/^[a-f0-9]{64}$/);
+        expect(provenance.localBuild.sourceDiffSha256).toMatch(/^[a-f0-9]{64}$/);
+        expect(provenance.patches.length).toBeGreaterThan(0);
+        expect(provenance.omittedOptionalPatches).toEqual([OMITTED_OPTIONAL_PATCH]);
+        expect(provenance.patches.some(patch => patch.path === OMITTED_OPTIONAL_PATCH)).toBe(false);
+        expect(new Set(provenance.patches.map(patch => patch.path)).size).toBe(provenance.patches.length);
+        for (const patch of provenance.patches) {
+            expect(patch.path).toMatch(/^scripts\/upstream-[a-z0-9-]+\.patch$/);
+            expect(patch.sha256).toMatch(/^[a-f0-9]{64}$/);
+        }
     });
 
-    it("derives the release manifest from the immutable tagged source", async () => {
-        expect(
-            execFileSync(
-                "git",
-                ["rev-parse", "v0.3.3-fork.17^{commit}"],
-                { cwd: ZEROBOX_SOURCE_ROOT, encoding: "utf8" },
-            ).trim(),
-        ).toBe(ZEROBOX_SOURCE_COMMIT);
-        for (const patch of EXPECTED_PATCHES) {
-            const bytes = execFileSync(
-                "git",
-                ["show", `${ZEROBOX_SOURCE_COMMIT}:${patch.path}`],
-                { cwd: ZEROBOX_SOURCE_ROOT, encoding: "buffer" },
-            );
-            expect(
-                createHash("sha256").update(bytes).digest("hex"),
-                patch.path,
-            ).toBe(patch.sha256);
+    it.skipIf(!candidateBinary || !candidateSha)("qualifies only the explicitly supplied candidate binary", async () => {
+        if (!candidateBinary || !candidateSha) throw new Error("Explicit candidate binary and SHA256 required");
+        const provenance = await readProvenance();
+        const binary = await readFile(candidateBinary);
+        expect((await stat(candidateBinary)).mode & 0o111).not.toBe(0);
+        const actualSha = createHash("sha256").update(binary).digest("hex");
+        expect(actualSha).toBe(candidateSha);
+        expect(actualSha).toBe(provenance.binarySha256);
+        expect(execFileSync(candidateBinary, ["--version"], { encoding: "utf8" }).trim()).toBe(`zerobox ${ZEROBOX_VERSION}`);
+    });
+
+    it.skipIf(!candidateSource)("verifies the explicit source worktree digest and ordered patch bytes", async () => {
+        if (!candidateSource) throw new Error("Explicit candidate source root required");
+        const provenance = await readProvenance();
+        const source = resolve(candidateSource);
+        const gitOptions = { cwd: source, maxBuffer: 64 * 1024 * 1024 };
+        expect(execFileSync("git", ["rev-parse", "HEAD"], { ...gitOptions, encoding: "utf8" }).trim()).toBe(provenance.localBuild.baseCommit);
+        const digest = createHash("sha256");
+        digest.update(execFileSync("git", ["diff", "--binary", "HEAD"], gitOptions));
+        const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], { cwd: source, encoding: "utf8" }).split("\0").filter(Boolean).sort();
+        for (const path of untracked) {
+            const diff = spawnSync("git", ["diff", "--no-index", "--binary", "/dev/null", path], gitOptions);
+            expect(diff.error).toBeUndefined();
+            expect(diff.status).toBe(1);
+            digest.update(diff.stdout);
         }
-        const syncScript = execFileSync(
-            "git",
-            ["show", `${ZEROBOX_SOURCE_COMMIT}:scripts/sync.sh`],
-            { cwd: ZEROBOX_SOURCE_ROOT, encoding: "utf8" },
-        );
-        const patchPositions = EXPECTED_PATCHES.map((patch) =>
-            syncScript.indexOf(patch.path.slice(patch.path.lastIndexOf("/") + 1)),
-        );
-        expect(patchPositions.every((position) => position >= 0)).toBe(true);
-        expect(patchPositions).toEqual([...patchPositions].sort((a, b) => a - b));
-        expect(syncScript).toContain(
-            "upstream-proxy-routed-socket-filter.patch",
-        );
-        expect(syncScript).toContain("upstream-readable-carveouts.patch");
-        expect(syncScript).toContain("upstream-target-env-isolation.patch");
-        expect(syncScript).toContain("upstream-readable-carveout-fd.patch");
-        expect(syncScript).toContain("upstream-private-bind-mounts.patch");
-        expect(syncScript).toContain("upstream-docker-broker-route.patch");
-        expect(syncScript).toContain("upstream-docker-broker-hidden-route.patch");
-        expect(syncScript).toContain("upstream-docker-broker-resource-limits.patch");
-        expect(syncScript).toContain("upstream-docker-broker-connection-permit.patch");
-        expect(syncScript).toContain("upstream-setup-artifact-errors.patch");
+        expect(digest.digest("hex")).toBe(provenance.localBuild.sourceDiffSha256);
+        const syncScript = await readFile(join(source, "scripts/sync.sh"), "utf8");
+        const referencedPatches = [...new Set([...syncScript.matchAll(/\bupstream-[a-z0-9-]+\.patch\b/g)].map(match => `scripts/${match[0]}`))];
+        expect(provenance.omittedOptionalPatches).toEqual([OMITTED_OPTIONAL_PATCH]);
+        const presentPatches = provenance.patches.map(patch => patch.path);
+        expect(new Set(presentPatches).size).toBe(presentPatches.length);
+        expect(presentPatches.some(path => provenance.omittedOptionalPatches.includes(path))).toBe(false);
+        expect([...presentPatches, ...provenance.omittedOptionalPatches].sort()).toEqual([...referencedPatches].sort());
+        expect(presentPatches).toEqual(referencedPatches.filter(path => !provenance.omittedOptionalPatches.includes(path)));
+        for (const path of provenance.omittedOptionalPatches) {
+            await expect(stat(join(source, path))).rejects.toMatchObject({ code: "ENOENT" });
+        }
+        const positions: number[] = [];
+        for (const patch of provenance.patches) {
+            const path = resolve(source, patch.path);
+            expect(path.startsWith(source + sep)).toBe(true);
+            expect(createHash("sha256").update(await readFile(path)).digest("hex"), patch.path).toBe(patch.sha256);
+            positions.push(syncScript.indexOf(patch.path.slice(patch.path.lastIndexOf("/") + 1)));
+        }
+        expect(positions.every(position => position >= 0)).toBe(true);
+        expect(positions).toEqual([...positions].sort((a, b) => a - b));
     });
 
     it("keeps the legacy ASRT deny characterization reproducible", async () => {
@@ -290,39 +238,6 @@ describe("sandbox dependency contract", () => {
         ]);
         expect(script).toContain("ASRT_PACKAGE_ROOT");
         expect(script).toContain("SandboxManager.wrapWithSandbox");
-    });
-
-    it("keeps the previous managed Zerobox release recoverable as one unit", async () => {
-        const previousBinary = join(PREVIOUS_ZEROBOX_ROLLBACK_ROOT, "zerobox");
-        const previousProvenancePath = join(
-            PREVIOUS_ZEROBOX_ROLLBACK_ROOT,
-            "zerobox-provenance.json",
-        );
-        const [binary, provenanceBytes, manifest] = await Promise.all([
-            readFile(previousBinary),
-            readFile(previousProvenancePath),
-            readFile(join(PREVIOUS_ZEROBOX_ROLLBACK_ROOT, "README.md"), "utf8"),
-        ]);
-        const previousProvenance: unknown = JSON.parse(
-            provenanceBytes.toString("utf8"),
-        );
-
-        expect(createHash("sha256").update(binary).digest("hex")).toBe(
-            "c832bf03ca555a3351ff4af6da48d2a917baea1670fddb029f3bd7fbabfdee1a",
-        );
-        expect(createHash("sha256").update(provenanceBytes).digest("hex")).toBe(
-            "46a187031e7322c80a39bd31bae915b597e6ca3493c79714f232e51e9892e755",
-        );
-        expect(previousProvenance).toMatchObject({
-            version: "0.3.3-fork.12",
-            binarySha256:
-                "c832bf03ca555a3351ff4af6da48d2a917baea1670fddb029f3bd7fbabfdee1a",
-        });
-        expect(manifest).toContain("Do not restore only the old executable");
-        expect((await stat(join(PREVIOUS_ZEROBOX_ROLLBACK_ROOT, "pi-integration.tar"))).size).toBeGreaterThan(0);
-        const previousConfig = await Bun.file(join(PREVIOUS_ZEROBOX_ROLLBACK_ROOT, "sandbox.json")).json();
-        expect(previousConfig.filesystem.denyWrite).toContain("*/node_modules/*");
-        expect(previousConfig.filesystem.denyWrite).not.toContain("**/node_modules/**");
     });
 
     it("executes JavaScript and TypeScript through QuickJS", async () => {

@@ -1,358 +1,91 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import {
-    chmodSync,
-    mkdirSync,
-    mkdtempSync,
-    rmSync,
-    symlinkSync,
-    writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import {
-    SandboxExecutionError,
-    type DockerTargetGrant,
-} from "./contracts.ts";
-import {
-    dockerPolicyHasUnsafeTargets,
-    expandDockerProjectRoot,
-    resolveDockerPolicy,
-} from "./docker-policy.ts";
-
-const roots: string[] = [];
-
-afterEach(() => {
-    for (const root of roots.splice(0)) {
-        rmSync(root, { force: true, recursive: true });
+import { expect, test } from "bun:test";
+import { resolveDockerPolicy } from "./docker-policy.ts";
+test("projects choose independent Docker targets without a global target registry", () => {
+    for (const name of ["project-a", "project-b"]) {
+        expect(resolveDockerPolicy({
+            globalConfig: { allowed: true },
+            projectConfig: {
+                enabled: true,
+                targets: [{ selector: { type: "container-name", name }, operations: ["logs"] }],
+            },
+        })).toEqual({
+            mode: "targeted",
+            endpoint: "unix:///var/run/docker.sock",
+            targets: [{ selector: { type: "container-name", name }, operations: ["logs"], allowUnsafeTarget: false }],
+        });
     }
 });
-
-function fixture() {
-    const root = mkdtempSync(join(tmpdir(), "pi-docker-policy-"));
-    roots.push(root);
-    const agentDir = join(root, "agent");
-    const projectRoot = join(root, "project");
-    mkdirSync(agentDir, { mode: 0o700 });
-    mkdirSync(projectRoot);
-    const globalConfigPath = join(agentDir, "sandbox.global.json");
-    const writeGlobal = (value: unknown, mode = 0o600) => {
-        writeFileSync(globalConfigPath, `${JSON.stringify(value)}\n`, {
-            mode,
-        });
-        chmodSync(globalConfigPath, mode);
-    };
-    const resolve = (projectOverride?: unknown) =>
-        resolveDockerPolicy({
-            cwd: projectRoot,
-            globalConfigPath,
-            projectOverride,
-        });
-    return { root, agentDir, projectRoot, globalConfigPath, writeGlobal, resolve };
-}
-
-const composeTarget: DockerTargetGrant = {
-    selector: {
-        type: "compose-service",
-        project: "app",
-        service: "api",
-    },
-    operations: ["logs", "inspect"],
-    allowUnsafeTarget: true,
-};
-
-describe("global Docker authority", () => {
-    it("accepts an optional JSON Schema declaration", () => {
-        const { projectRoot, writeGlobal, resolve } = fixture();
-        writeGlobal({
-            $schema: "./extensions/sandbox/docs/sandbox.global.schema.json",
-            docker: {
-                grants: [{ projectRoot, mode: "full" }],
-            },
-        });
-
-        expect(resolve()).toEqual({
-            mode: "full",
-            endpoint: "unix:///var/run/docker.sock",
-        });
+const global = { allowed: true, mode: "targeted", operations: ["logs", "inspect"] };
+test("only exact globally declared unsafe exceptions decorate project-selected targets", () => {
+    const privileged = { type: "compose-service", project: "fixture", service: "api" };
+    const ordinary = { type: "container-name", name: "ordinary" };
+    const ceiling = { allowed: true, unsafeTargets: [privileged] };
+    const project = { enabled: true, targets: [{ selector: privileged, operations: ["inspect"] }, { selector: ordinary, operations: ["logs"] }] };
+    expect(resolveDockerPolicy({ globalConfig: ceiling, projectConfig: project })).toMatchObject({
+        targets: [{ selector: privileged, allowUnsafeTarget: true }, { selector: ordinary, allowUnsafeTarget: false }],
     });
-
-    it("explains how to add required targeted Docker targets", () => {
-        const { projectRoot, writeGlobal, resolve } = fixture();
-        writeGlobal({
-            docker: {
-                grants: [{ projectRoot, mode: "targeted" }],
-            },
-        });
-
-        expect(resolve).toThrow(
-            'docker.grants[0].targets is required for mode "targeted"; run /sandbox docker grant',
-        );
+    expect(resolveDockerPolicy({ globalConfig: ceiling, projectConfig: { enabled: true } })).toMatchObject({ mode: "targeted", targets: [] });
+    expect(resolveDockerPolicy({ globalConfig: { allowed: true }, projectConfig: project })).toMatchObject({
+        targets: [{ allowUnsafeTarget: false }, { allowUnsafeTarget: false }],
     });
-
-    it("defaults to disabled when the global grant file is absent", () => {
-        const { resolve } = fixture();
-
-        expect(resolve()).toEqual({ mode: "disabled" });
-    });
-
-    it("activates only the grant whose canonical project root matches exactly", () => {
-        const { projectRoot, root, writeGlobal, resolve } = fixture();
-        const other = join(root, "other");
-        mkdirSync(other);
-        writeGlobal({
-            docker: {
-                grants: [
-                    { projectRoot: other, mode: "full" },
-                    {
-                        projectRoot,
-                        mode: "targeted",
-                        targets: [composeTarget],
-                    },
-                ],
-            },
-        });
-
-        expect(resolve()).toEqual({
-            mode: "targeted",
-            endpoint: "unix:///var/run/docker.sock",
-            targets: [composeTarget],
-        });
-        expect(dockerPolicyHasUnsafeTargets(resolve())).toBe(true);
-    });
-
-    it("does not let a child directory inherit a parent project grant", () => {
-        const { projectRoot, writeGlobal, globalConfigPath } = fixture();
-        const child = join(projectRoot, "child");
-        mkdirSync(child);
-        writeGlobal({
-            docker: { grants: [{ projectRoot, mode: "full" }] },
-        });
-
-        expect(resolveDockerPolicy({ cwd: child, globalConfigPath })).toEqual({
-            mode: "disabled",
-        });
-    });
-
-    it("rejects project roots that are still relative after home expansion", () => {
-        const { root, projectRoot, globalConfigPath, writeGlobal } = fixture();
-        mkdirSync(join(root, "relative"));
-        writeGlobal({
-            docker: {
-                grants: [{ projectRoot: "relative", mode: "full" }],
-            },
-        });
-
-        expect(() =>
-            resolveDockerPolicy({
-                cwd: projectRoot,
-                globalConfigPath,
-                homeDir: root,
-            }),
-        ).toThrow(SandboxExecutionError);
-    });
-
-    it("rejects duplicate roots, unknown fields, symlinks, and writable authority files", () => {
-        const { projectRoot, globalConfigPath, writeGlobal, resolve, agentDir } =
-            fixture();
-        for (const value of [
-            {
-                docker: {
-                    grants: [
-                        { projectRoot, mode: "full" },
-                        { projectRoot: `${projectRoot}/.`, mode: "targeted", targets: [] },
-                    ],
-                },
-            },
-            {
-                docker: {
-                    grants: [{ projectRoot, mode: "full", surprise: true }],
-                },
-            },
-            { docker: { grants: [], surprise: true } },
-        ]) {
-            writeGlobal(value);
-            expect(resolve).toThrow(SandboxExecutionError);
-        }
-
-        writeGlobal({ docker: { grants: [] } }, 0o622);
-        expect(resolve).toThrow(SandboxExecutionError);
-
-        rmSync(globalConfigPath);
-        const target = join(agentDir, "authority-target.json");
-        writeFileSync(target, '{"docker":{"grants":[]}}\n', { mode: 0o600 });
-        symlinkSync(target, globalConfigPath);
-        expect(resolve).toThrow(SandboxExecutionError);
-    });
-
-    it("rejects the runtime-only break-glass selector in persistent authority", () => {
-        const { projectRoot, writeGlobal, resolve } = fixture();
-        writeGlobal({
-            docker: {
-                grants: [{
-                    projectRoot,
-                    mode: "targeted",
-                    targets: [{
-                        selector: {
-                            type: "ephemeral-container",
-                            id: "0123456789abcdef",
-                            unsafeExecExpiresAtMs: Date.now() + 300_000,
-                        },
-                        operations: ["exec"],
-                        allowUnsafeTarget: true,
-                    }],
-                }],
-            },
-        });
-
-        expect(resolve).toThrow("Unknown Docker target selector type");
-    });
+    expect(() => resolveDockerPolicy({ globalConfig: ceiling, projectConfig: { ...project, unsafeTargets: [ordinary] } })).toThrow("Unknown project docker field");
 });
-
-describe("project Docker narrowing", () => {
-    it("can disable or reduce a targeted grant", () => {
-        const { projectRoot, writeGlobal, resolve } = fixture();
-        writeGlobal({
-            docker: {
-                grants: [
-                    {
-                        projectRoot,
-                        mode: "targeted",
-                        endpoint: "unix:///run/user/1000/docker.sock",
-                        targets: [
-                            composeTarget,
-                            {
-                                selector: { type: "container-name", name: "worker" },
-                                operations: ["logs"],
-                                allowUnsafeTarget: false,
-                            },
-                        ],
-                    },
-                ],
-            },
-        });
-
-        expect(resolve({ mode: "disabled" })).toEqual({ mode: "disabled" });
-        expect(
-            resolve({
-                mode: "targeted",
-                targets: [
-                    {
-                        selector: composeTarget.selector,
-                        operations: ["inspect"],
-                        allowUnsafeTarget: false,
-                    },
-                ],
-            }),
-        ).toEqual({
-            mode: "targeted",
-            endpoint: "unix:///run/user/1000/docker.sock",
-            targets: [
-                {
-                    selector: composeTarget.selector,
-                    operations: ["inspect"],
-                    allowUnsafeTarget: false,
-                },
-            ],
-        });
-    });
-
-    it("can reduce full access to targeted access without granting unsafe targets", () => {
-        const { projectRoot, writeGlobal, resolve } = fixture();
-        writeGlobal({
-            docker: { grants: [{ projectRoot, mode: "full" }] },
-        });
-
-        expect(
-            resolve({
-                mode: "targeted",
-                targets: [
-                    {
-                        selector: { type: "container-name", name: "api" },
-                        operations: ["logs"],
-                        allowUnsafeTarget: false,
-                    },
-                ],
-            }),
-        ).toEqual({
-            mode: "targeted",
-            endpoint: "unix:///var/run/docker.sock",
-            targets: [
-                {
-                    selector: { type: "container-name", name: "api" },
-                    operations: ["logs"],
-                    allowUnsafeTarget: false,
-                },
-            ],
-        });
-    });
-
-    it("fails closed on every project escalation attempt", () => {
-        const { projectRoot, writeGlobal, resolve } = fixture();
-        writeGlobal({
-            docker: {
-                grants: [
-                    {
-                        projectRoot,
-                        mode: "targeted",
-                        targets: [composeTarget],
-                    },
-                ],
-            },
-        });
-
-        for (const override of [
-            { mode: "full" },
-            {
-                mode: "targeted",
-                endpoint: "unix:///var/run/docker.sock",
-                targets: [],
-            },
-            {
-                mode: "targeted",
-                targets: [
-                    { selector: composeTarget.selector, operations: ["start"] },
-                ],
-            },
-            {
-                mode: "targeted",
-                targets: [
-                    {
-                        selector: { type: "container-name", name: "new" },
-                        operations: ["logs"],
-                    },
-                ],
-            },
-        ]) {
-            expect(() => resolve(override)).toThrow(SandboxExecutionError);
-        }
-    });
-
-    it("cannot introduce an unsafe exception while narrowing a full grant", () => {
-        const { projectRoot, writeGlobal, resolve } = fixture();
-        writeGlobal({
-            docker: { grants: [{ projectRoot, mode: "full" }] },
-        });
-
-        expect(() =>
-            resolve({
-                mode: "targeted",
-                targets: [
-                    {
-                        selector: { type: "container-name", name: "api" },
-                        allowUnsafeTarget: true,
-                    },
-                ],
-            }),
-        ).toThrow(SandboxExecutionError);
-    });
+test("Docker requires both global allowance and explicit project activation", () => {
+    expect(resolveDockerPolicy({ globalConfig: {}, projectConfig: {} })).toEqual({ mode: "disabled" });
+    expect(resolveDockerPolicy({ globalConfig: global })).toEqual({ mode: "disabled" });
+    expect(resolveDockerPolicy({ globalConfig: { allowed: false }, projectConfig: { enabled: true } })).toEqual({ mode: "disabled" });
+    expect(resolveDockerPolicy({ globalConfig: global, projectConfig: { enabled: false } })).toEqual({ mode: "disabled" });
+    expect(resolveDockerPolicy({ globalConfig: global, projectConfig: { enabled: true } }).mode).toBe("targeted");
+    expect(resolveDockerPolicy({ globalConfig: { allowed: true, mode: "full" }, projectConfig: { enabled: true } }).mode).toBe("full");
+    expect(resolveDockerPolicy({ globalConfig: { allowed: false, mode: "full", endpoint: "unix:///run/docker.sock" }, projectConfig: { enabled: true } })).toEqual({ mode: "disabled" });
 });
-
-it("expands only the leading home token in global project roots", () => {
-    expect(expandDockerProjectRoot("~/projects/app", "/users/me")).toBe(
-        "/users/me/projects/app",
-    );
-    expect(expandDockerProjectRoot("~other/app", "/users/me")).toBe(
-        "~other/app",
-    );
+test("global operation limits apply to targets selected by any project", () => {
+    expect(resolveDockerPolicy({ globalConfig: global, projectConfig: { enabled: true, targets: [{ selector: { type: "container-name", name: "api" }, operations: ["logs"] }] } })).toMatchObject({ mode: "targeted", targets: [{ operations: ["logs"] }] });
+    expect(resolveDockerPolicy({ globalConfig: global, projectConfig: { enabled: true, targets: [{ selector: { type: "container-name", name: "other" } }] } })).toMatchObject({ targets: [{ selector: { name: "other" }, operations: ["logs", "inspect"] }] });
+    expect(() => resolveDockerPolicy({ globalConfig: global, projectConfig: { enabled: true, targets: [{ selector: { type: "container-name", name: "api" }, operations: ["exec"] }] } })).toThrow("added a Docker operation");
+    expect(() => resolveDockerPolicy({ globalConfig: global, projectConfig: { enabled: true, targets: [{ selector: { type: "container-name", name: "api" }, allowUnsafeTarget: true }] } })).toThrow("cannot add a Docker unsafe exception");
+});
+test("rejects wrong Docker scope and non-booleans", () => {
+    expect(() => resolveDockerPolicy({ globalConfig: { allowed: "true" }, projectConfig: { enabled: true } })).toThrow("global docker.allowed must be boolean");
+    expect(() => resolveDockerPolicy({ globalConfig: global, projectConfig: { enabled: "true" } })).toThrow("project docker.enabled must be boolean");
+});
+test("rejects duplicate project selectors even when Docker is inactive", () => {
+    const target = { selector: { type: "container-name", name: "api" } };
+    expect(() => resolveDockerPolicy({ globalConfig: { allowed: false }, projectConfig: { enabled: false, targets: [target, target] } })).toThrow("Duplicate Docker target");
+});
+test("rejects invalid global policy and sensitive fields even while disabled", () => {
+    for (const globalConfig of [null, { allowed: false, operations: ["unknown"] }, { allowed: false, unsafeTargets: "all" }, { allowed: false, unsafeTargets: [{ type: "container-name", name: "api" }, { type: "container-name", name: "api" }] }, { allowed: false, mode: "full", operations: ["logs"] }, { allowed: false, targets: [] }]) {
+        expect(() => resolveDockerPolicy({ globalConfig })).toThrow();
+    }
+    expect(resolveDockerPolicy({ globalConfig: { allowed: true, operations: [] }, projectConfig: { enabled: true, targets: [{ selector: { type: "container-name", name: "api" } }] } })).toMatchObject({ targets: [{ operations: [] }] });
+});
+test("validates disabled Docker sections and project-only exceptions before activation", () => {
+    expect(() => resolveDockerPolicy({
+        globalConfig: { mode: "invalid" },
+        projectConfig: { enabled: true },
+    })).toThrow("global docker.mode");
+    expect(() => resolveDockerPolicy({
+        globalConfig: global,
+        projectConfig: { enabled: false, targets: "invalid" },
+    })).toThrow("project docker.targets must be an array");
+    expect(() => resolveDockerPolicy({
+        globalConfig: global,
+        projectConfig: {
+            enabled: false,
+            targets: [{
+                selector: { type: "container-name", name: "fixture" },
+                allowUnsafeTarget: true,
+            }],
+        },
+    })).toThrow("Project cannot add a Docker unsafe exception");
+    expect(() => resolveDockerPolicy({
+        globalConfig: global,
+        projectConfig: {
+            enabled: false,
+            targets: [{
+                selector: { type: "container-name", name: "fixture" },
+                allowUnsafeTarget: false,
+            }],
+        },
+    })).toThrow("Project cannot add a Docker unsafe exception");
 });

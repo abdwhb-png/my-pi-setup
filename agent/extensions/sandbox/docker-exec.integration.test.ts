@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createServer } from "node:net";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Socket } from "node:net";
 import { DOCKER_ACCESS_PROFILES } from "./docker-presentation.ts";
@@ -9,11 +9,24 @@ import { createZeroboxBackend } from "./runtime/zerobox-backend.ts";
 import { validatePiSandboxConfig } from "./runtime/policies.ts";
 import { createBashProcessSupervisor } from "../_shared/command-execution/exec.ts";
 import { createSandboxedBashOps } from "./index.ts";
+import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./runtime/private-temp.ts";
 
-test("real Docker and Compose clients enforce Administration, inspection, and break-glass", async () => {
-    // Keep the project visible while Bash overlays the host /tmp namespace.
-    const root = await mkdtemp(join(import.meta.dir, ".pi-docker-exec-"));
-    const socketRoot = await mkdtemp("/tmp/pi-docker-exec-");
+test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINARY || !process.env.PI_SANDBOX_ZEROBOX_SHA256)("real Docker and Compose clients enforce Administration, inspection, and break-glass", async () => {
+    const binaryPath = process.env.PI_SANDBOX_ZEROBOX_BINARY;
+    const binarySha256 = process.env.PI_SANDBOX_ZEROBOX_SHA256;
+    if (!binaryPath || !binarySha256) throw new Error("Explicit candidate binary and SHA256 required");
+    const root = await mkdtemp("/var/tmp/pi-docker-exec-");
+    const socketRoot = await mkdtemp("/var/tmp/d-");
+    const leaseRoot = await mkdtemp("/var/tmp/z-");
+    const cliConfig = { filesystem: { allowRead: [".",
+        await realpath("/usr/bin/docker"),
+        await realpath("/usr/local/lib/docker/cli-plugins/docker-compose"),
+    ] } };
+    const serviceOptions = {
+        backend: createZeroboxBackend({ binaryPath, expectedProvenance: { version: "0.3.3-fork.17", binarySha256 }, probeRoot: join(socketRoot, "probe") }),
+        createLease: () => createPrivateTempLease({ rootDir: leaseRoot }),
+        recoverStaleLeases: async () => { await recoverStalePrivateTempLeases({ rootDir: leaseRoot }); },
+    };
     const endpoint = join(socketRoot, "engine.sock");
     const id = "a".repeat(64), execId = "b".repeat(64);
     const labels = { "com.docker.compose.project": "fixtureexec", "com.docker.compose.service": "api", "com.docker.compose.oneoff": "False" };
@@ -68,7 +81,7 @@ test("real Docker and Compose clients enforce Administration, inspection, and br
     await writeFile(join(root, "compose.yaml"), "name: fixtureexec\nservices:\n  api:\n    image: fixture\n");
     try {
         for (const profile of DOCKER_ACCESS_PROFILES) {
-            const service = createSandboxService({ backend: createZeroboxBackend(), config: validatePiSandboxConfig({}, {
+            const service = createSandboxService({ ...serviceOptions, config: validatePiSandboxConfig(cliConfig, {
                 mode: "targeted", endpoint: `unix://${endpoint}`,
                 targets: [{ selector: { type: "compose-service", project: "fixtureexec", service: "api" }, operations: profile.operations, allowUnsafeTarget: false }],
             }) });
@@ -93,7 +106,7 @@ test("real Docker and Compose clients enforce Administration, inspection, and br
         }
 
         hostAccessTarget = true;
-        const restrictedService = createSandboxService({ backend: createZeroboxBackend(), config: validatePiSandboxConfig({}, {
+        const restrictedService = createSandboxService({ ...serviceOptions, config: validatePiSandboxConfig(cliConfig, {
             mode: "targeted", endpoint: `unix://${endpoint}`,
             targets: [{ selector: { type: "compose-service", project: "fixtureexec", service: "api" }, operations: [...DOCKER_ACCESS_PROFILES.find((profile) => profile.label === "Administration")!.operations], allowUnsafeTarget: true }],
         }) });
@@ -113,7 +126,7 @@ test("real Docker and Compose clients enforce Administration, inspection, and br
         } finally { restrictedSupervisor.shutdown(); await restrictedService.shutdown(); }
 
         const breakGlassExpiresAtMs = Date.now() + 2_000;
-        const breakGlassService = createSandboxService({ backend: createZeroboxBackend(), config: validatePiSandboxConfig({}, {
+        const breakGlassService = createSandboxService({ ...serviceOptions, config: validatePiSandboxConfig(cliConfig, {
             mode: "targeted", endpoint: `unix://${endpoint}`,
             targets: [
                 { selector: { type: "compose-service", project: "fixtureexec", service: "api" }, operations: [...DOCKER_ACCESS_PROFILES.find((profile) => profile.label === "Administration")!.operations], allowUnsafeTarget: true },
@@ -144,5 +157,6 @@ test("real Docker and Compose clients enforce Administration, inspection, and br
         await new Promise<void>((resolve) => server.close(() => resolve()));
         await rm(root, { recursive: true, force: true });
         await rm(socketRoot, { recursive: true, force: true });
+        await rm(leaseRoot, { recursive: true, force: true });
     }
 }, 60_000);

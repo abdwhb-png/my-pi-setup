@@ -1,24 +1,74 @@
 {
-    "enabled": true,
-    "filesystem": {
-        "denyRead": ["~/.ssh", "~/.gnupg"],
-        "allowWrite": ["."],
-        "denyWrite": [
-            ".env",
-            ".env.*",
-            "*.pem",
-            "*.key"
-        ]
-    },
-    "network": {
-        "allowedDomains": [
-            "github.com",
-            "*.github.com",
-            "localhost:8317",
-            "localhost:8320",
-            "localhost:18740"
-        ],
-        "allowedHostDomains": ["*.dev.test:443"],
-        "deniedDomains": []
-    }
+  "version": 2,
+  "machineId": "346675da6aa23f926127a4e419becc296bb9ef369a0823fbe8d35f60444d35ea",
+  "mode": "sandbox",
+  "network": {
+    "allowedDomains": [
+      "github.com",
+      "*.github.com",
+      "localhost:8317",
+      "localhost:8320",
+      "localhost:18740"
+    ],
+    "allowedHostDomains": [
+      "*.dev.test:443"
+    ],
+    "deniedDomains": []
+  },
+  "filesystem": {
+    "denyRead": [
+      "~/.ssh",
+      "~/.gnupg"
+    ],
+    "allowWrite": [
+      "."
+    ],
+    "denyWrite": [
+      ".env",
+      ".env.*",
+      "*.pem",
+      "*.key"
+    ],
+    "allowRead": [
+      ".",
+      "~/.bun/bin",
+      "/home/linuxbrew/.linuxbrew/bin",
+      "/home/linuxbrew/.linuxbrew/sbin",
+      "/home/linuxbrew/.linuxbrew/lib",
+      "/home/linuxbrew/.linuxbrew/Cellar",
+      "/home/linuxbrew/.linuxbrew/opt",
+      "/mnt/wsl/docker-desktop/cli-tools"
+    ]
+  },
+  "environment": {
+    "path": [
+      "~/.bun/bin",
+      "/usr/local/go/bin",
+      "/home/linuxbrew/.linuxbrew/bin",
+      "/home/linuxbrew/.linuxbrew/sbin"
+    ]
+  },
+  "tmpNamespace": "host",
+  "docker": {
+    "allowed": true,
+    "mode": "targeted",
+    "endpoint": "unix:///var/run/docker.sock",
+    "operations": [
+      "ps",
+      "inspect",
+      "logs",
+      "stats",
+      "exec",
+      "start",
+      "stop",
+      "restart"
+    ],
+    "unsafeTargets": [
+      {
+        "type": "compose-service",
+        "project": "cliproxy",
+        "service": "cli-proxy-api"
+      }
+    ]
+  }
 }

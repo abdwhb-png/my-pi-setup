@@ -2,7 +2,7 @@ import { DANGER_GROUP_IDS } from "../../_shared/command-execution/guard.ts";
 import type { SafeBashConfig } from "./config.ts";
 
 export const SAFE_BASH_BASE_DESCRIPTION =
-    "Execute a shell command under the selected isolation profile and command permissions. hostCapability requests an approved host integration.";
+    "Execute a shell command under the selected isolation profile and command permissions.";
 
 export interface SafeBashDescriptionInput {
     config: Pick<

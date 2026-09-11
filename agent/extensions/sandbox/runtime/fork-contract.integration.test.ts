@@ -1,14 +1,17 @@
-import { describe, expect, it } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-const MANAGED_ZEROBOX_PATH = join(homedir(), ".pi", "bin", "zerobox");
+const candidateBinary = process.env.PI_SANDBOX_ZEROBOX_BINARY;
+const candidateSha = process.env.PI_SANDBOX_ZEROBOX_SHA256;
+const enabled = process.platform === "linux" && !!candidateBinary && !!candidateSha;
 
 function runStrict(args: string[], cwd: string, sandboxArgs: string[] = []) {
+    if (!candidateBinary || !candidateSha) throw new Error("Explicit candidate binary and SHA256 required");
     return Bun.spawnSync(
         [
-            MANAGED_ZEROBOX_PATH,
+            candidateBinary,
             "--profile=analysis-strict",
             "--strict-sandbox",
             `--allow-read=${cwd}`,
@@ -20,7 +23,8 @@ function runStrict(args: string[], cwd: string, sandboxArgs: string[] = []) {
         {
             cwd,
             env: {
-                HOME: homedir(),
+                HOME: cwd,
+                ZEROBOX_HOME: join(cwd, "z"),
                 PATH: "/usr/local/bin:/usr/bin:/bin",
             },
             stdin: "ignore",
@@ -30,14 +34,19 @@ function runStrict(args: string[], cwd: string, sandboxArgs: string[] = []) {
     );
 }
 
-describe("accepted Zerobox fork contract", () => {
-    it("requires strict Linux sandboxing", () => {
-        const result = runStrict(["/bin/true"], process.cwd());
-        expect(result.exitCode).toBe(0);
+describe.skipIf(!enabled)("accepted Zerobox fork contract", () => {
+    beforeAll(async () => {
+        if (!candidateBinary || !candidateSha) throw new Error("Explicit candidate binary and SHA256 required");
+        expect(createHash("sha256").update(await readFile(candidateBinary)).digest("hex")).toBe(candidateSha);
+    });
+    it("requires strict Linux sandboxing", async () => {
+        const root = await mkdtemp("/var/tmp/f-");
+        try { expect(runStrict(["/bin/true"], root).exitCode).toBe(0); }
+        finally { await rm(root, { recursive: true, force: true }); }
     });
 
     it("executes shebang scripts while enforcing dynamic write denies", async () => {
-        const root = await mkdtemp(join(tmpdir(), "pi-zbx-fork-contract-"));
+        const root = await mkdtemp("/var/tmp/f-");
         const denied = join(root, "package", "node_modules", "blocked.txt");
         const script = join(root, "runner.sh");
         await mkdir(join(root, "package", "node_modules"), { recursive: true });
@@ -64,7 +73,7 @@ describe("accepted Zerobox fork contract", () => {
     });
 
     it("preserves a shebang process stderr and exit code", async () => {
-        const root = await mkdtemp(join(tmpdir(), "pi-zbx-fork-contract-"));
+        const root = await mkdtemp("/var/tmp/f-");
         const script = join(root, "failure.sh");
         await mkdir(join(root, "package", "node_modules"), { recursive: true });
         await writeFile(
@@ -90,7 +99,7 @@ describe("accepted Zerobox fork contract", () => {
     });
 
     it("blocks nested user namespaces and mounts", async () => {
-        const root = await mkdtemp(join(tmpdir(), "pi-zbx-fork-contract-"));
+        const root = await mkdtemp("/var/tmp/f-");
         const mountpoint = join(root, "mountpoint");
         await mkdir(mountpoint);
         try {

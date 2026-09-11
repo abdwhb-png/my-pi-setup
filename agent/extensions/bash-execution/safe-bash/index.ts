@@ -33,13 +33,14 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { shouldEnforceNativeTools } from "../../_shared/audit-mode/audit-tool-routing";
 import { createCommandExecutionService } from "../../_shared/command-execution/core.ts";
-import { safeBashWithCapabilitiesSchema } from "../../_shared/command-execution/exec";
+import { safeBashSchema } from "../../_shared/command-execution/exec";
 import { isSafeExecutionError } from "../../_shared/command-execution/failure.ts";
 import { GuardSessionApprovals } from "../../_shared/command-execution/policy.ts";
 import { createBashPrefixRenderer } from "../../_shared/command-execution/prefix-renderer";
 import { loadBashRewrites } from "../../_shared/command-execution/rewrites";
 import { appendCompressionFooter } from "../../_shared/compression-render";
 import type { SandboxBashOperationOptions } from "../../_shared/sandbox-runtime/index.ts";
+import { CapabilityError } from "../../_shared/shell-capability-error.ts";
 import { shouldBlockBashCall } from "./apply-mode.ts";
 import { registerSafeBashAuditCommand } from "./audit-command.ts";
 import {
@@ -125,8 +126,12 @@ export function registerSafeBash(
         const input = getSafeBashDescriptionInput();
         const description = buildSafeBashDescription(input);
         const promptSnippet = buildSafeBashPromptSnippet(input);
+        const hasHostCapabilityField = (value: unknown): boolean =>
+            typeof value === "object" &&
+            value !== null &&
+            Object.prototype.hasOwnProperty.call(value, "hostCapability");
         return defineTool<
-            typeof safeBashWithCapabilitiesSchema,
+            typeof safeBashSchema,
             BashToolDetails | undefined
         >({
             name: "safe_bash",
@@ -135,9 +140,9 @@ export function registerSafeBash(
             promptSnippet,
             promptGuidelines: [
                 `safe_bash guard: ${input.config.mode} mode; blocked/ask groups per description — use native grep/find/ls when native-redirect enforced`,
-                "Omit hostCapability for ordinary shell execution. For approved integrations use literal commands: editor → editor project-file; dependencies → npm install package (SFW is added automatically); dev-services → target command such as npm test. Host integrations reject shell compositions. Native file tools remain on the host.",
+                "Select sandbox or host mode explicitly. Legacy hostCapability parameters are rejected before execution.",
             ],
-            parameters: safeBashWithCapabilitiesSchema,
+            parameters: safeBashSchema,
             renderCall: createBashPrefixRenderer("🔒"),
             renderResult: (result, renderOptions, theme, context) => {
                 const component = bashDefinition.renderResult!(
@@ -153,11 +158,16 @@ export function registerSafeBash(
             },
             async execute(toolCallId, params, signal, onUpdate, ctx) {
                 try {
+                    if (hasHostCapabilityField(params)) {
+                        throw new CapabilityError(
+                            "migration-required",
+                            "safe_bash no longer accepts hostCapability. Remove it and select sandbox or host mode explicitly.",
+                        );
+                    }
                     return await commandExecutionService.execute({
                         toolCallId,
                         operation: "safe_bash",
                         command: params.command,
-                        hostCapability: params.hostCapability,
                         timeout: params.timeout,
                         stdin: params.stdin,
                         signal,

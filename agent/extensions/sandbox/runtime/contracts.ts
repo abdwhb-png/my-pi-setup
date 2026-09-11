@@ -39,7 +39,7 @@ export type DockerTargetSelector =
     | { type: "container-name"; name: string }
     | { type: "compose-service"; project: string; service: string }
     | {
-          /** Runtime-only selector. sandbox.global.json deliberately rejects it. */
+          /** Runtime-only selector. Persisted sandbox.json configuration rejects it. */
           type: "ephemeral-container";
           id: string;
           unsafeExecExpiresAtMs: number;
@@ -83,6 +83,18 @@ export interface SandboxEnvironmentPolicy {
     deny: string[];
 }
 
+export interface SandboxTcpPublication {
+    transport: "tcp";
+    scope: "host" | "lan";
+    listen: string;
+    target: string;
+}
+
+export interface SandboxResourcesPolicy {
+    unixSockets: string[];
+    tcpPublications: SandboxTcpPublication[];
+}
+
 export interface SandboxPolicy {
     name: SandboxProfileName;
     strict: true;
@@ -91,6 +103,7 @@ export interface SandboxPolicy {
     network: SandboxNetworkPolicy;
     environment: SandboxEnvironmentPolicy;
     docker: SandboxDockerPolicy;
+    resources?: SandboxResourcesPolicy;
 }
 
 export interface SandboxCommand {
@@ -147,9 +160,9 @@ export interface SandboxCapabilities {
     environmentFiltering: true;
     processTreeTermination: true;
     dynamicDenyGlobs: true;
-    inboundBinding: false;
+    inboundBinding: boolean;
     privateNetworkListeners: true;
-    arbitraryUnixSockets: false;
+    arbitraryUnixSockets: boolean;
 }
 
 export const SANDBOX_CAPABILITIES: SandboxCapabilities = Object.freeze({

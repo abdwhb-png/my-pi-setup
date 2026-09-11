@@ -23,10 +23,9 @@ const shell = loaded.extensions.find(extension => extension.tools.has("safe_bash
 const definition = shell.tools.get("safe_bash").definition;
 const schema = definition.parameters;
 assert.deepEqual(schema.required, ["command"]);
-assert.deepEqual(Object.keys(schema.properties).sort(), ["command", "hostCapability", "stdin", "timeout"]);
-assert.deepEqual(schema.properties.hostCapability.anyOf.map(option => option.const), ["editor", "dependencies", "dev-services"]);
-assert.match(definition.promptGuidelines.join("\\n"), /editor → editor project-file/);
-assert.doesNotMatch(definition.promptGuidelines.join("\\n"), /editor → zed/);
+assert.deepEqual(Object.keys(schema.properties).sort(), ["command", "stdin", "timeout"]);
+assert.equal(Object.hasOwn(schema.properties, "hostCapability"), false);
+assert.doesNotMatch(definition.promptGuidelines.join("\\n"), /editor|dev-services|dependencies/);
 `;
     try {
         await execFileAsync("node", ["--input-type=module", "-e", script, loader, agentDir,

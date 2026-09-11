@@ -1,59 +1,41 @@
 # Sandbox
 
-Sandbox is the Linux Zerobox runtime used by Bash and Think-in-Code. It keeps
-filesystem, network, environment and Docker access explicit.
+Sandbox runs shell commands and Think-in-Code through Zerobox on Linux and WSL. Its default shell policy exposes the project and the tool baseline, closes external network access and uses private temporary storage.
 
-## Start here
+## Configuration
 
-1. Restart Pi completely after adopting this contract. A fresh installation
-   starts isolated, with closed network and private `/tmp`.
-2. Open Pi in the project and run `/sandbox capabilities` and `/sandbox doctor`.
-3. If migration is required, run `/sandbox capabilities migrate` and choose
-   isolated defaults or explicitly retain the displayed old openings.
-4. If the project needs Docker, run `/sandbox docker grant` from that project.
-   Choose a service and an access profile, review the change, then confirm it.
-   If the broker excludes that container, review the separate target exception.
+Use exactly two active configuration locations:
 
-Docker is off by default. Its authority is kept separately in
-`~/.pi/agent/sandbox.global.json`, never in project settings.
+- `~/.pi/agent/sandbox.json`: global defaults and authorization ceilings.
+- `<project>/.pi/sandbox.json`: optional project restrictions and explicit Docker activation.
 
-## Daily commands
+Choose the execution mode with `/sandbox mode sandbox` or `/sandbox mode host`. Host mode requires a global ceiling that permits it and an explicit selection in the current session. The displayed profiles `default`, `custom` and `host` describe the result. Do not store a profile selector.
+
+A change to either configuration file is checked before the next shell admission. Invalid configuration blocks new calls. Setup failures never switch automatically to host execution.
+
+## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `/sandbox` | Show configured and active permissions, including Docker operations. |
-| `/sandbox doctor` | Validate canonical configuration, compare it with the active runtime and check target eligibility. |
-| `/sandbox profile isolated\|integrated\|host [--session]` | Select a shell profile. First host activation requires approval. |
-| `/sandbox capabilities [list]` | Show authority, effective rights, installed integrations and admitted operations. |
-| `/sandbox capabilities grant\|revoke <capability> [--session]` | Change this project's local rights. |
-| `/sandbox capabilities migrate [--session]` | Review old settings in one user decision. |
-| `/sandbox on` / `/sandbox off` | Compatible aliases for isolated / authorized host shell. Add `--session` for temporary selection. |
-| `/sandbox docker` | Compare the saved grant, project restrictions and active Docker rights. |
-| `/sandbox docker grant` | Create or replace this project's global targeted Docker grant. |
-| `/sandbox docker break-glass [duration]` | Allow arbitrary `exec` for one exact current container. The default is `5m`; accepted durations are `1m` through `30m`. |
-| `/sandbox docker off\|targeted\|full\|inherit` | Set a project-local narrowing of the global authority. |
+| `/sandbox` | Show configured permissions and runtime status. |
+| `/sandbox doctor` | Inspect the resolved policy and configuration provenance. |
+| `/sandbox mode sandbox\|host` | Select the execution mode for this session. |
+| `/sandbox migrate` | Preview and confirm migration to the two-file format. |
+| `/sandbox recover` | Verify and recover an interrupted migration. |
+| `/sandbox docker` | Show Docker policy and runtime status. |
+| `/sandbox docker on\|off` | Save this project's activation choice within the global Docker ceiling. |
+| `/sandbox docker break-glass [1m-30m]` | Confirm a temporary exec exception for one eligible container. |
+
+Docker requires both global `docker.allowed: true` with an explicit policy and project `docker.enabled: true`. An absent project activation leaves Docker disabled.
+
+Use ordinary shell commands. Native file tools, extensions and MCP tools execute outside this shell boundary. Think-in-Code keeps its strict environment and private temporary storage regardless of shell mode.
 
 ## Documentation
 
-The Docker widget shows the effective profile, target count, host-access
-exception and any active break-glass grant. Observation reads container state.
-Exploitation also starts, stops and restarts containers. Administration adds
-`exec` on targets without a host-access exception. With that exception,
-arbitrary `exec` is removed and only fixed read-only probes of declared bind
-destinations are accepted. `/sandbox docker break-glass 15m` can temporarily
-add arbitrary `exec` for one exact current container after a separate
-confirmation.
-During a reload the widget shows `reconfiguring`; new calls wait up to 30 seconds.
-Sandbox sends hidden runtime feedback to the active agent when break-glass is
-activated or expires. If a configuration change interrupts an execution, the
-agent is told that the command did not finish and was not retried.
+- [Modes and profiles](docs/shell-capabilities.md)
+- [Configuration and precedence](docs/configuration.md)
+- [Docker authority](docs/docker-authority.md)
+- [Runtime and limits](docs/runtime.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
-A saved grant can be inactive or reduced by project settings. The notification
-states the actual activation outcome. Target eligibility in doctor does not
-prove every granted operation works.
-
-- [Shell profiles and capabilities](docs/shell-capabilities.md): scope, integrations, examples and migration.
-- [Configuration](docs/configuration.md): ordinary Sandbox settings and precedence.
-- [Docker authority](docs/docker-authority.md): guided and manual Docker grants.
-- [Troubleshooting](docs/troubleshooting.md): errors and corrective actions.
-- [Runtime](docs/runtime.md): isolation, temporary storage and operational limits.
+A personal installation requires a separately approved activation of the matching Pi code, Zerobox binary and migrated configuration. Start a new Pi session after activation.

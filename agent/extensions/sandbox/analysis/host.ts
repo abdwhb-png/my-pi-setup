@@ -3,8 +3,9 @@ import {
     type ChildProcess,
     type SpawnOptions,
 } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
     executionFromDetails,
@@ -140,8 +141,27 @@ function readableWorkerPaths(dependencies: AnalysisHostDependencies): string[] {
     const sharedRuntimeRoot = fileURLToPath(
         new URL("../../_shared/sandbox-runtime/", import.meta.url),
     );
+    const runtimeNodeModules = (() => {
+        try {
+            return realpathSync(join(dependencies.sandboxRoot, "node_modules"));
+        } catch (error) {
+            if (
+                error instanceof Error &&
+                "code" in error &&
+                error.code === "ENOENT"
+            ) {
+                return undefined;
+            }
+            throw new Error(
+                `Could not resolve trusted Analysis dependencies: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+            );
+        }
+    })();
     return [
         dependencies.sandboxRoot,
+        ...(runtimeNodeModules ? [runtimeNodeModules] : []),
         sharedRuntimeRoot,
         fileURLToPath(
             new URL("../../_shared/execution-provenance/", import.meta.url),

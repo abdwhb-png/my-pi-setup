@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { localMachineId } from './capabilities/authority.ts';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import {
     envSandboxStatus,
@@ -65,238 +66,33 @@ const emptySettingsManager = {
     getProjectSettings: () => ({}),
 };
 
-describe('loadSandboxConfig', () => {
-    let root: string;
-    let agentDir: string;
-    let cwd: string;
-
-    beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'sandbox-config-test-'));
-        agentDir = join(root, 'agent');
-        cwd = join(root, 'project');
-        mkdirSync(agentDir, { recursive: true });
-        mkdirSync(cwd, { recursive: true });
+describe('active sandbox files', () => {
+    let root: string; let agentDir: string; let cwd: string;
+    beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'sandbox-active-config-')); agentDir = join(root, 'agent'); cwd = join(root, 'project'); mkdirSync(agentDir); mkdirSync(join(cwd, '.pi'), { recursive: true }); });
+    afterEach(() => rmSync(root, { recursive: true, force: true }));
+    const writeGlobal = (value: Record<string, unknown>) => writeFileSync(join(agentDir, 'sandbox.json'), JSON.stringify({ version: 2, machineId: 'machine', ...value }), { mode: 0o600 });
+    const load = () => loadSandboxConfig(cwd, { agentDir, machineId: 'machine' });
+    it('keeps absent global lists, closes explicit empty project lists, and preserves exclusions', () => {
+        writeGlobal({ network: { allowedDomains: ['example.com'] } });
+        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ network: { allowedDomains: [], deniedDomains: ['example.com'] } }));
+        expect(load().config.network.allowedDomains).toEqual([]); expect(load().config.network.deniedDomains).toContain('example.com');
     });
-
-    afterEach(() => {
-        rmSync(root, { recursive: true, force: true });
+    it('rejects invalid active files and never falls back to host', () => {
+        writeGlobal({ mode: 'sandbox' }); writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ mode: 'host' }));
+        expect(() => load()).toThrow('explicit current-session');
+        writeFileSync(join(cwd, '.pi', 'sandbox.json'), '{'); expect(() => load()).toThrow('Could not parse project');
     });
-
-    it('throws for malformed global legacy config', () => {
-        writeFileSync(join(agentDir, 'sandbox.json'), '{ invalid');
-
-        expect(() =>
-            loadSandboxConfig(cwd, { agentDir, settingsManager: emptySettingsManager }),
-        ).toThrow('Could not parse sandbox config');
+    it('blocks admission while a migration marker remains', () => {
+        writeGlobal({});
+        writeFileSync(join(agentDir, 'sandbox.json.migration'), 'migration in progress\n');
+        expect(() => load()).toThrow();
     });
-
-    it('throws for malformed project legacy config', () => {
-        mkdirSync(join(cwd, '.pi'), { recursive: true });
-        writeFileSync(join(cwd, '.pi', 'sandbox.json'), '{ invalid');
-
-        expect(() =>
-            loadSandboxConfig(cwd, { agentDir, settingsManager: emptySettingsManager }),
-        ).toThrow('Could not parse sandbox config');
-    });
-
-    it('throws for malformed global and project settings values', () => {
-        expect(() =>
-            loadSandboxConfig(cwd, {
-                agentDir,
-                settingsManager: {
-                    getGlobalSettings: () => ({ sandbox: 'invalid' }),
-                    getProjectSettings: () => ({}),
-                },
-            }),
-        ).toThrow('Invalid global sandbox settings');
-
-        expect(() =>
-            loadSandboxConfig(cwd, {
-                agentDir,
-                settingsManager: {
-                    getGlobalSettings: () => ({}),
-                    getProjectSettings: () => ({ sandbox: [] }),
-                },
-            }),
-        ).toThrow('Invalid project sandbox settings');
-    });
-
-    it('throws when settings loading fails', () => {
-        expect(() =>
-            loadSandboxConfig(cwd, {
-                agentDir,
-                settingsManager: {
-                    getGlobalSettings: () => {
-                        throw new Error('settings unavailable');
-                    },
-                    getProjectSettings: () => ({}),
-                },
-            }),
-        ).toThrow('Could not load sandbox settings: settings unavailable');
-    });
-
-    it('lets an explicit empty project sandbox settings object suppress legacy fallback', () => {
-        mkdirSync(join(cwd, '.pi'), { recursive: true });
-        writeFileSync(
-            join(cwd, '.pi', 'sandbox.json'),
-            JSON.stringify({ enabled: true }),
-        );
-
-        const resolved = loadSandboxConfig(cwd, {
-            agentDir,
-            settingsManager: {
-                getGlobalSettings: () => ({}),
-                getProjectSettings: () => ({ sandbox: {} }),
-            },
-        });
-
-        expect(resolved.config.enabled).toBe(true);
-        expect(resolved.source).toBe('default');
-    });
-});
-
-describe('persistProjectDockerPreference', () => {
-    let root: string;
-    let agentDir: string;
-    let cwd: string;
-
-    beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'sandbox-docker-preference-'));
-        agentDir = join(root, 'agent');
-        cwd = join(root, 'project');
-        mkdirSync(agentDir, { recursive: true });
-        mkdirSync(join(cwd, '.pi'), { recursive: true });
-        writeFileSync(
-            join(agentDir, 'sandbox.global.json'),
-            JSON.stringify({
-                docker: {
-                    grants: [{ projectRoot: cwd, mode: 'full' }],
-                },
-            }),
-            { mode: 0o600 },
-        );
-    });
-
-    afterEach(() => {
-        rmSync(root, { recursive: true, force: true });
-    });
-
-    it('removes a legacy Docker-only override when inheriting global authority', async () => {
-        writeFileSync(
-            join(cwd, '.pi', 'sandbox.json'),
-            JSON.stringify({ docker: { mode: 'disabled' } }),
-        );
-
-        const resolved = await persistProjectDockerPreference(
-            cwd,
-            'inherit',
-            agentDir,
-        );
-        const settings = JSON.parse(
-            readFileSync(join(cwd, '.pi', 'settings.json'), 'utf8'),
-        );
-
-        expect(settings).toEqual({ sandbox: {} });
-        expect(resolved.config.docker.mode).toBe('full');
-    });
-
-    it('refuses targeted narrowing of full authority without writing settings', async () => {
-        await expect(
-            persistProjectDockerPreference(cwd, 'targeted', agentDir),
-        ).rejects.toThrow('Sandbox policy is invalid');
-        expect(existsSync(join(cwd, '.pi', 'settings.json'))).toBe(false);
-    });
-
-    it('persists full when the global authority is full', async () => {
-        const resolved = await persistProjectDockerPreference(
-            cwd,
-            'full',
-            agentDir,
-        );
-        const settings = JSON.parse(
-            readFileSync(join(cwd, '.pi', 'settings.json'), 'utf8'),
-        );
-
-        expect(settings.sandbox.docker).toEqual({ mode: 'full' });
-        expect(resolved.config.docker.mode).toBe('full');
-        expect(statSync(join(cwd, '.pi', 'settings.json')).mode & 0o777).toBe(
-            0o600,
-        );
-    });
-
-    it('persists targeted when the global authority is targeted', async () => {
-        writeFileSync(
-            join(agentDir, 'sandbox.global.json'),
-            JSON.stringify({
-                docker: {
-                    grants: [
-                        {
-                            projectRoot: cwd,
-                            mode: 'targeted',
-                            targets: [
-                                {
-                                    selector: {
-                                        type: 'container-name',
-                                        name: 'api',
-                                    },
-                                    operations: ['logs'],
-                                },
-                            ],
-                        },
-                    ],
-                },
-            }),
-            { mode: 0o600 },
-        );
-
-        const resolved = await persistProjectDockerPreference(
-            cwd,
-            'targeted',
-            agentDir,
-        );
-        const settings = JSON.parse(
-            readFileSync(join(cwd, '.pi', 'settings.json'), 'utf8'),
-        );
-
-        expect(settings.sandbox.docker).toEqual({ mode: 'targeted' });
-        expect(resolved.config.docker.mode).toBe('targeted');
-    });
-
-    it('preserves unrelated project and sandbox settings', async () => {
-        writeFileSync(
-            join(cwd, '.pi', 'settings.json'),
-            JSON.stringify({
-                theme: 'dark',
-                sandbox: {
-                    enabled: true,
-                    filesystem: { denyWrite: ['generated/**'] },
-                },
-            }),
-        );
-
+    it('toggles Docker activation without discarding project target restrictions', async () => {
+        writeFileSync(join(agentDir, 'sandbox.json'), JSON.stringify({ version: 2, machineId: localMachineId(), docker: { allowed: true, operations: ['logs'] } }), { mode: 0o600 });
+        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ docker: { enabled: true, targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['logs'] }] } }));
         await persistProjectDockerPreference(cwd, 'off', agentDir);
-        const settings = JSON.parse(
-            readFileSync(join(cwd, '.pi', 'settings.json'), 'utf8'),
-        );
-
-        expect(settings).toEqual({
-            theme: 'dark',
-            sandbox: {
-                enabled: true,
-                filesystem: { denyWrite: ['generated/**'] },
-                docker: { mode: 'disabled' },
-            },
-        });
-    });
-
-    it('preserves malformed project settings and reports the parse error', async () => {
-        const settingsPath = join(cwd, '.pi', 'settings.json');
-        writeFileSync(settingsPath, '{ invalid');
-
-        await expect(
-            persistProjectDockerPreference(cwd, 'off', agentDir),
-        ).rejects.toThrow();
-        expect(readFileSync(settingsPath, 'utf8')).toBe('{ invalid');
+        await persistProjectDockerPreference(cwd, 'on', agentDir);
+        expect(JSON.parse(readFileSync(join(cwd, '.pi', 'sandbox.json'), 'utf8')).docker).toEqual({ enabled: true, targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['logs'] }] });
     });
 });
 
@@ -361,7 +157,7 @@ describe('renderSandboxStatusDetails', () => {
     ): LoadSandboxConfigResult {
         return {
             source: 'project-config',
-            shell: { state: 'ready', requestedProfile: 'isolated', profile: 'isolated', projectRoot: '/project', authorityPath: '/authority', grants: emptyGrants(), requestedGrants: emptyGrants() },
+            shell: { state: 'ready', requestedProfile: 'default', profile: 'default', projectRoot: '/project', authorityPath: '/authority', grants: emptyGrants(), requestedGrants: emptyGrants() },
             config: {
                 enabled: true,
                 network: {
@@ -380,6 +176,7 @@ describe('renderSandboxStatusDetails', () => {
                     allowedVariables: [],
                     deniedVariables: [],
                     variables: {},
+                    path: [],
                 },
                 docker,
             },
@@ -648,185 +445,14 @@ describe('envSandboxStatus', () => {
 });
 
 describe('loadSandboxConfig resolution priority', () => {
-    let root: string;
-    let agentDir: string;
-    let cwd: string;
-    let sessionDir: string;
-
-    beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'sandbox-config-resolution-'));
-        agentDir = join(root, 'agent');
-        cwd = join(root, 'project');
-        sessionDir = join(root, 'sessions', 'abc');
-        mkdirSync(agentDir, { recursive: true });
-        mkdirSync(cwd, { recursive: true });
-        mkdirSync(sessionDir, { recursive: true });
-    });
-
-    afterEach(() => {
-        rmSync(root, { recursive: true, force: true });
-        delete process.env[ENV_OVERRIDE_KEY];
-    });
-
-    function load(opts: Parameters<typeof loadSandboxConfig>[1] = {}) {
-        return loadSandboxConfig(cwd, {
-            agentDir,
-            settingsManager: emptySettingsManager,
-            ...opts,
-        });
-    }
-
-    it('returns source "default" with isolation enabled when nothing overrides', () => {
-        const result = load();
-        expect(result.source).toBe('default');
-        expect(result.config.enabled).toBe(true);
-    });
-
-    it('global enabled=true wins over default with source "global-config"', () => {
-        writeFileSync(
-            join(agentDir, 'sandbox.json'),
-            JSON.stringify({ enabled: true }),
-        );
-        const result = load();
-        expect(result.source).toBe('global-config');
-        expect(result.config.enabled).toBe(true);
-    });
-
-    it('project enabled=false requests host access without disabling the engine', () => {
-        writeFileSync(
-            join(agentDir, 'sandbox.json'),
-            JSON.stringify({ enabled: true }),
-        );
-        mkdirSync(join(cwd, '.pi'));
-        writeFileSync(
-            join(cwd, '.pi', 'sandbox.json'),
-            JSON.stringify({ enabled: false }),
-        );
-        const result = load();
-        expect(result.source).toBe('project-config');
-        expect(result.config.enabled).toBe(true);
-    });
-
-    it('session file enabled=true wins over project enabled=false with source "session-file"', () => {
-        mkdirSync(join(cwd, '.pi'));
-        writeFileSync(
-            join(cwd, '.pi', 'sandbox.json'),
-            JSON.stringify({ enabled: false }),
-        );
-        saveSessionSandboxStatus(sessionDir, SESSION_ID, 'enabled');
-        const result = load({ sessionDir, sessionId: SESSION_ID });
-        expect(result.source).toBe('session-file');
-        expect(result.config.enabled).toBe(true);
-    });
-
-    it('env "disabled" requests host access without granting it', () => {
-        saveSessionSandboxStatus(sessionDir, SESSION_ID, 'enabled');
-        const result = load({
-            sessionDir,
-            sessionId: SESSION_ID,
-            envOverride: envSandboxStatus(),
-        });
-        withEnv(ENV_OVERRIDE_KEY, 'disabled', () => {
-            const overridden = load({
-                sessionDir,
-                sessionId: SESSION_ID,
-                envOverride: envSandboxStatus(),
-            });
-            expect(overridden.source).toBe('env');
-            expect(overridden.config.enabled).toBe(true);
-            expect(overridden.shell.state).toBe('authorization-required');
-        });
-        expect(result.source).toBe('session-file');
-    });
-
-    it('legacy session preferences preserve denials and cannot authorize network openings', () => {
-        mkdirSync(join(cwd, '.pi'));
-        writeFileSync(
-            join(cwd, '.pi', 'sandbox.json'),
-            JSON.stringify({
-                enabled: true,
-                network: { allowedDomains: ['example.com'] },
-                filesystem: { denyRead: ['.secret'] },
-            }),
-        );
-        saveSessionSandboxStatus(sessionDir, SESSION_ID, 'disabled');
-        const result = load({ sessionDir, sessionId: SESSION_ID });
-        expect(result.config.enabled).toBe(true);
-        expect(result.config.network?.allowedDomains).toEqual([]);
-        expect(result.shell.state).toBe('migration-required');
-        expect(result.config.filesystem?.denyRead).toContain('.secret');
-    });
-
-    it('loads global Docker authority and applies only project narrowing', () => {
-        writeFileSync(
-            join(agentDir, 'sandbox.global.json'),
-            JSON.stringify({
-                docker: {
-                    grants: [
-                        {
-                            projectRoot: cwd,
-                            mode: 'targeted',
-                            targets: [
-                                {
-                                    selector: {
-                                        type: 'container-name',
-                                        name: 'api',
-                                    },
-                                    operations: ['logs', 'inspect'],
-                                    allowUnsafeTarget: true,
-                                },
-                            ],
-                        },
-                    ],
-                },
-            }),
-            { mode: 0o600 },
-        );
-        mkdirSync(join(cwd, '.pi'));
-        writeFileSync(
-            join(cwd, '.pi', 'sandbox.json'),
-            JSON.stringify({
-                enabled: true,
-                docker: {
-                    mode: 'targeted',
-                    targets: [
-                        {
-                            selector: {
-                                type: 'container-name',
-                                name: 'api',
-                            },
-                            operations: ['logs'],
-                            allowUnsafeTarget: false,
-                        },
-                    ],
-                },
-            }),
-        );
-
-        expect(load().config.docker).toEqual({
-            mode: 'targeted',
-            endpoint: 'unix:///var/run/docker.sock',
-            targets: [
-                {
-                    selector: { type: 'container-name', name: 'api' },
-                    operations: ['logs'],
-                    allowUnsafeTarget: false,
-                },
-            ],
-        });
-    });
-
-    it('rejects Docker authority from ordinary global sandbox settings', () => {
-        expect(() =>
-            load({
-                settingsManager: {
-                    getGlobalSettings: () => ({
-                        sandbox: { docker: { mode: 'full' } },
-                    }),
-                    getProjectSettings: () => ({}),
-                },
-            }),
-        ).toThrow();
+    let root: string; let agentDir: string; let cwd: string;
+    beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'sandbox-config-resolution-')); agentDir = join(root, 'agent'); cwd = join(root, 'project'); mkdirSync(agentDir); mkdirSync(join(cwd, '.pi'), { recursive: true }); });
+    afterEach(() => rmSync(root, { recursive: true, force: true }));
+    it('resolves the versioned global file and project restriction without settings or a capabilities registry', () => {
+        writeFileSync(join(agentDir, 'sandbox.json'), JSON.stringify({ version: 2, machineId: 'test-machine', mode: 'sandbox', network: { allowedDomains: ['example.com', 'api.example.com'] }, filesystem: { allowRead: [cwd, join(root, 'cache')] }, docker: { allowed: false } }), { mode: 0o600 });
+        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ network: { allowedDomains: ['api.example.com'], deniedDomains: ['api.example.com'] }, filesystem: { allowRead: ['src'] }, docker: { enabled: true } }));
+        const result = loadSandboxConfig(cwd, { agentDir, machineId: 'test-machine' });
+        expect(result.config.network.allowedDomains).toEqual([]); expect(result.config.filesystem.allowRead).toEqual([join(cwd, 'src')]); expect(result.config.docker).toEqual({ mode: 'disabled' }); expect(result.shell.mode).toBe('sandbox'); expect(result.shell.profile).toBe('custom');
     });
 });
 
@@ -838,7 +464,7 @@ describe('explicitlyDisabled', () => {
         return {
             config: { enabled } as LoadSandboxConfigResult['config'],
             source,
-            shell: { state: 'ready', requestedProfile: 'isolated', profile: 'isolated', projectRoot: '/project', authorityPath: '/authority', grants: emptyGrants(), requestedGrants: emptyGrants() },
+            shell: { state: 'ready', requestedProfile: 'default', profile: 'default', projectRoot: '/project', authorityPath: '/authority', grants: emptyGrants(), requestedGrants: emptyGrants() },
         };
     }
 

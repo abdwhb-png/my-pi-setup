@@ -1,7 +1,9 @@
 /** Facts about one execution, independent of its output text. */
 export interface ExecutionProvenance {
-    shellProfile?: "isolated" | "integrated" | "host";
-    hostCapability?: "editor" | "dependencies" | "dev-services";
+    /** Effective configuration mode when the execution boundary observed it. */
+    mode?: "sandbox" | "host";
+    /** Describes the effective shell policy without changing execution proof. */
+    shellProfile?: "default" | "custom" | "host";
     status: "sandboxed" | "unsandboxed" | "unknown";
     profile:
         | "bash-general"
@@ -39,6 +41,8 @@ export function hostExecution(
     phase: "source" | "process" = "source",
 ): ExecutionProvenance {
     return {
+        mode: "host",
+        shellProfile: "host",
         status: "unsandboxed",
         profile: "none",
         backend: "host",

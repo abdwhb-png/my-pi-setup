@@ -1,11 +1,11 @@
 import { request as httpRequest } from "node:http";
 import { createBashOperations } from "../_shared/command-execution/exec.ts";
-import type {
-    DockerTargetSelector,
-    SandboxDockerPolicy,
-} from "./runtime/contracts.ts";
-import { validatePiSandboxConfig } from "./runtime/policies.ts";
-import { createSandboxService } from "./runtime/service.ts";
+import type { DockerTargetSelector } from "./runtime/contracts.ts";
+import type { PiSandboxConfig } from "./runtime/policies.ts";
+import {
+    createSandboxService,
+    type SandboxService,
+} from "./runtime/service.ts";
 import { createZeroboxBackend } from "./runtime/zerobox-backend.ts";
 
 /* oxlint-disable typescript/no-restricted-types -- Docker Engine responses are untrusted JSON. */
@@ -23,22 +23,19 @@ export interface DockerTargetAccess {
 }
 
 export interface DockerInspectionDependencies {
-    request(path: string, endpoint: string): Promise<unknown>;
-    visibleIds(
-        cwd: string,
-        policy: Exclude<SandboxDockerPolicy, { mode: "disabled" }>,
-    ): Promise<Set<string>>;
+    request?(path: string, endpoint: string): Promise<unknown>;
+    visibleIds?(cwd: string, config: PiSandboxConfig): Promise<Set<string>>;
+    createService?(config: PiSandboxConfig): SandboxService;
 }
 
 export async function inspectDockerAccess(
     cwd: string,
-    policy: Exclude<SandboxDockerPolicy, { mode: "disabled" }>,
-    dependencies: DockerInspectionDependencies = {
-        request: requestEngine,
-        visibleIds: probeVisibleIds,
-    },
+    config: PiSandboxConfig,
+    dependencies: DockerInspectionDependencies = {},
 ): Promise<DockerTargetAccess[]> {
+    const policy = config.docker;
     if (policy.mode !== "targeted") return [];
+    const request = dependencies.request?.bind(dependencies) ?? requestEngine;
     const targets: DockerTargetAccess[] = [];
     for (const target of policy.targets) {
         const { selector } = target;
@@ -54,7 +51,7 @@ export async function inspectDockerAccess(
                   ? { name: [selector.name] }
                   : { id: [selector.id] };
         // oxlint-disable-next-line no-await-in-loop -- bound concurrent Docker requests; a selector may match many replicas.
-        const response = await dependencies.request(
+        const response = await request(
             `/containers/json?all=1&filters=${encodeURIComponent(JSON.stringify(filters))}`,
             policy.endpoint,
         );
@@ -84,7 +81,7 @@ export async function inspectDockerAccess(
                 throw new Error("Docker container ID is invalid");
             const inspect = object(
                 // oxlint-disable-next-line no-await-in-loop -- inspect matching containers sequentially to avoid flooding the local Engine.
-                await dependencies.request(
+                await request(
                     `/containers/${summary.Id}/json`,
                     policy.endpoint,
                 ),
@@ -119,7 +116,13 @@ export async function inspectDockerAccess(
     }
     if (targets.some((target) => target.containers.length > 0)) {
         // Ask the real broker. The UI never duplicates its authorization rules.
-        const visible = await dependencies.visibleIds(cwd, policy);
+        const visible = dependencies.visibleIds
+            ? await dependencies.visibleIds(cwd, config)
+            : await probeVisibleIds(
+                  cwd,
+                  config,
+                  dependencies.createService?.bind(dependencies),
+              );
         for (const target of targets)
             for (const container of target.containers) {
                 container.access = visible.has(container.id)
@@ -244,10 +247,13 @@ function requestEngine(path: string, endpoint: string): Promise<unknown> {
 
 async function probeVisibleIds(
     cwd: string,
-    policy: Exclude<SandboxDockerPolicy, { mode: "disabled" }>,
+    config: PiSandboxConfig,
+    createService: (config: PiSandboxConfig) => SandboxService = (config) =>
+        createSandboxService({ backend: createZeroboxBackend(), config }),
 ): Promise<Set<string>> {
     // A temporary read-only diagnostic grant tests target eligibility, even when
     // the real grant intentionally omits ps. No authority file is changed.
+    const policy = config.docker;
     const diagnosticPolicy =
         policy.mode === "targeted"
             ? {
@@ -258,9 +264,12 @@ async function probeVisibleIds(
                   })),
               }
             : policy;
-    const service = createSandboxService({
-        backend: createZeroboxBackend(),
-        config: validatePiSandboxConfig({}, diagnosticPolicy),
+    const service = createService({
+        ...config,
+        docker: diagnosticPolicy,
+        // Docker ps uses its broker grant. It does not need general sockets or
+        // host publications from the invoking shell admission.
+        resources: { unixSockets: [], tcpPublications: [] },
     });
     try {
         await service.startBashSession(cwd);
@@ -317,7 +326,7 @@ export function formatDockerAccess(targets: DockerTargetAccess[]): string[] {
                   ),
                   ...(container.access === "excluded"
                       ? [
-                            "  Review the reported host access and confirm a target exception with /sandbox docker grant to authorize this target.",
+                            "  Review the reported host access before editing the persistent target exception in global sandbox.json; temporary unsafe exec uses the separate break-glass action.",
                         ]
                       : []),
               ]);

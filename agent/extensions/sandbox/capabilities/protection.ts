@@ -6,44 +6,8 @@ import {
     statSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { expandCapabilityPath } from "./authority.ts";
+import { canonicalPotentialPath, expandCapabilityPath } from "./authority.ts";
 
-export function canonicalPotentialPath(
-    path: string,
-    remainingLinks = 40,
-): string {
-    if (remainingLinks < 0)
-        throw new Error("Cannot resolve a symbolic-link cycle");
-    const suffix: string[] = [];
-    let parent = path;
-    while (true) {
-        let metadata;
-        try {
-            metadata = lstatSync(parent);
-        } catch (error) {
-            if (
-                !(error instanceof Error) ||
-                !("code" in error) ||
-                (error.code !== "ENOENT" && error.code !== "ENOTDIR")
-            )
-                throw error;
-            const next = dirname(parent);
-            if (next === parent) throw error;
-            suffix.unshift(basename(parent));
-            parent = next;
-            continue;
-        }
-        // lstat observes dangling links. existsSync would mistake them for a
-        // nonexistent ordinary path and authorize their eventual external target.
-        const canonical = metadata.isSymbolicLink()
-            ? canonicalPotentialPath(
-                  resolve(dirname(parent), readlinkSync(parent)),
-                  remainingLinks - 1,
-              )
-            : realpathSync(parent);
-        return join(canonical, ...suffix);
-    }
-}
 export function protectsCapabilityAuthority(
     path: string,
     cwd: string,

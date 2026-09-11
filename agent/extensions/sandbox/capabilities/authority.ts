@@ -1,24 +1,14 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
-    closeSync,
     existsSync,
-    fsyncSync,
     lstatSync,
-    mkdirSync,
-    openSync,
     readFileSync,
+    readlinkSync,
     realpathSync,
-    renameSync,
-    unlinkSync,
-    writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import {
-    CapabilityError,
-    isCapabilityError,
-} from "../../_shared/shell-capability-error.ts";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { SandboxExecutionError } from "../runtime/contracts.ts";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
 
 export {
@@ -28,33 +18,31 @@ export {
     isCapabilityError,
     type CapabilityErrorCode,
 } from "../../_shared/shell-capability-error.ts";
-
-export const HOST_CAPABILITIES = [
-    "editor",
-    "dependencies",
-    "dev-services",
-] as const;
-export type HostCapability = (typeof HOST_CAPABILITIES)[number];
-export type ShellProfile = "isolated" | "integrated" | "host";
+export type SandboxMode = "sandbox" | "host";
+/** A presentation of the resolved policy, never an authority input. */
+/** Historical literals are accepted only by legacy fixtures/readers. Active resolution emits default/custom/host. */
+export type ShellProfile = "default" | "custom" | "host";
 export interface CapabilityGrants {
     domains: string[];
     hostDomains: string[];
     readPaths: string[];
     writePaths: string[];
     hostTmp: boolean;
-    host: boolean;
-    integrations: Partial<Record<HostCapability, Record<string, string>>>;
 }
-export interface ProjectCapabilities {
-    projectRoot: string;
-    profile: ShellProfile;
-    grants: CapabilityGrants;
+export interface SandboxConfigLayer {
+    mode?: SandboxMode;
+    network?: Record<string, unknown>;
+    filesystem?: Record<string, unknown>;
+    environment?: Record<string, unknown>;
+    tmpNamespace?: "host" | "lease-private";
+    docker?: unknown;
+    resources?: unknown;
 }
-export interface CapabilityAuthority {
-    version: 1;
+export interface GlobalSandboxConfig extends SandboxConfigLayer {
+    version: 2;
     machineId: string;
-    projects: ProjectCapabilities[];
 }
+
 export function emptyGrants(): CapabilityGrants {
     return {
         domains: [],
@@ -62,8 +50,6 @@ export function emptyGrants(): CapabilityGrants {
         readPaths: [],
         writePaths: [],
         hostTmp: false,
-        host: false,
-        integrations: {},
     };
 }
 export function expandCapabilityPath(value: string): string {
@@ -81,255 +67,252 @@ export function persistedCapabilityPath(value: string): string {
           ? `~/${value.slice(home.length + 1)}`
           : value;
 }
-export function capabilityAuthorityPath(agentDir: string): string {
-    return join(agentDir, "sandbox.capabilities.json");
+export function sandboxConfigPath(agentDir: string): string {
+    return resolve(agentDir, "sandbox.json");
 }
 export function localMachineId(): string {
-    // Bind grants to this Linux/WSL installation and user, not a portable Pi directory.
     const identity = readFileSync("/etc/machine-id", "utf8").trim();
-    if (!identity)
-        throw new CapabilityError(
-            "invalid-authority",
-            "Machine identity is unavailable",
-        );
+    if (!identity) invalid("Machine identity is unavailable");
     return createHash("sha256")
         .update(`${identity}:${process.getuid?.()}`)
         .digest("hex");
 }
 function invalid(message: string): never {
-    throw new CapabilityError("invalid-authority", message);
+    throw new SandboxExecutionError("invalid-policy", {
+        cause: new Error(message),
+        diagnostic: message,
+    });
 }
-function object(value: unknown, keys: string[]): Record<string, unknown> {
+function record(value: unknown, scope: string): Record<string, unknown> {
     if (typeof value !== "object" || value === null || Array.isArray(value))
-        invalid("Expected an object");
-    const record = value as Record<string, unknown>;
-    for (const key of Object.keys(record))
-        if (!keys.includes(key)) invalid(`Unknown authority field: ${key}`);
-    return record;
+        invalid(`${scope} must be an object`);
+    return value as Record<string, unknown>;
 }
-function strings(value: unknown): string[] {
+function known(
+    value: Record<string, unknown>,
+    fields: readonly string[],
+    scope: string,
+): void {
+    for (const key of Object.keys(value))
+        if (!fields.includes(key)) invalid(`Unknown ${scope} field: ${key}`);
+}
+function safeFile(path: string, description: string): void {
+    const metadata = lstatSync(path);
+    const uid = process.getuid?.();
     if (
-        !Array.isArray(value) ||
-        value.some((v) => typeof v !== "string" || !v || v.includes("\0"))
+        !metadata.isFile() ||
+        metadata.isSymbolicLink() ||
+        (metadata.mode & 0o022) !== 0 ||
+        (uid !== undefined && metadata.uid !== uid)
     )
-        invalid("Expected nonempty strings");
-    return [...new Set(value as string[])];
+        invalid(`Untrusted ${description}`);
 }
-function boolean(value: unknown): boolean {
-    if (typeof value !== "boolean") invalid("Expected a boolean");
-    return value;
-}
-function localPaths(value: unknown): string[] {
-    return strings(value).map((path) => {
-        if (!isAbsolute(path) && path !== "~" && !path.startsWith("~/"))
-            invalid("Expected absolute or home-relative capability paths");
-        return expandCapabilityPath(path);
-    });
-}
-export function parseShellProfile(value: unknown): ShellProfile {
-    if (value !== "isolated" && value !== "integrated" && value !== "host")
-        invalid("Unknown shell profile");
-    return value;
-}
-export function parseGrants(value: unknown): CapabilityGrants {
-    const raw = object(value, [
-        "domains",
-        "hostDomains",
-        "readPaths",
-        "writePaths",
-        "hostTmp",
-        "host",
-        "integrations",
-    ]);
-    const integrations = object(raw.integrations, [...HOST_CAPABILITIES]);
-    const result: CapabilityGrants["integrations"] = {};
-    for (const name of HOST_CAPABILITIES) {
-        if (integrations[name] === undefined) continue;
-        const keys =
-            name === "editor"
-                ? ["launcher", "zed"]
-                : name === "dependencies"
-                  ? ["sfw", "npm", "pi"]
-                  : ["dev-services"];
-        const executables = object(integrations[name], keys);
-        const paths: Record<string, string> = {};
-        for (const [key, value] of Object.entries(executables)) {
-            if (
-                typeof value !== "string" ||
-                (!isAbsolute(value) && !value.startsWith("~/")) ||
-                value.includes("\0")
-            )
-                invalid(
-                    "Executables must have local absolute or home-relative paths",
-                );
-            paths[key] = expandCapabilityPath(value);
-        }
-        result[name] = paths;
-    }
-    const domains = strings(raw.domains);
-    const hostDomains = strings(raw.hostDomains);
+function readJson(path: string, description: string): unknown {
     try {
-        validatePiSandboxConfig({
-            network: {
-                allowedDomains: domains,
-                allowedHostDomains: hostDomains,
-            },
-        });
-    } catch {
-        invalid("Invalid capability network destinations");
+        safeFile(path, description);
+        return JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+        if (error instanceof SandboxExecutionError) throw error;
+        invalid(
+            `Could not parse ${description}: ${error instanceof Error ? error.message : String(error)}`,
+        );
     }
-    return {
-        domains,
-        hostDomains,
-        readPaths: localPaths(raw.readPaths),
-        writePaths: localPaths(raw.writePaths),
-        hostTmp: boolean(raw.hostTmp),
-        host: boolean(raw.host),
-        integrations: result,
-    };
 }
-function parseAuthority(raw: unknown): CapabilityAuthority {
-    const value = object(raw, ["version", "machineId", "projects"]);
+function validateLayer(
+    layer: Record<string, unknown>,
+    scope: "global" | "project",
+): SandboxConfigLayer {
+    known(
+        layer,
+        [
+            "mode",
+            "network",
+            "filesystem",
+            "environment",
+            "tmpNamespace",
+            "docker",
+            "resources",
+        ],
+        `${scope} sandbox config`,
+    );
     if (
-        value.version !== 1 ||
-        typeof value.machineId !== "string" ||
-        !value.machineId
+        layer.mode !== undefined &&
+        layer.mode !== "sandbox" &&
+        layer.mode !== "host"
     )
-        invalid("Unsupported authority version or identity");
-    if (!Array.isArray(value.projects)) invalid("Expected project grants");
-    const roots = new Set<string>();
-    const projects = value.projects.map((entry) => {
-        const project = object(entry, ["projectRoot", "profile", "grants"]);
-        if (
-            typeof project.projectRoot !== "string" ||
-            (!isAbsolute(project.projectRoot) &&
-                !project.projectRoot.startsWith("~/"))
-        )
-            invalid("Expected a project root");
-        const projectRoot = expandCapabilityPath(project.projectRoot);
-        if (roots.has(projectRoot)) invalid("Duplicate project grants");
-        roots.add(projectRoot);
-        return {
-            projectRoot,
-            profile: parseShellProfile(project.profile),
-            grants: parseGrants(project.grants),
-        };
-    });
-    return { version: 1, machineId: value.machineId, projects };
+        invalid(`${scope} mode must be sandbox or host`);
+    if (
+        layer.tmpNamespace !== undefined &&
+        layer.tmpNamespace !== "host" &&
+        layer.tmpNamespace !== "lease-private"
+    )
+        invalid(`${scope} tmpNamespace is invalid`);
+    for (const field of ["network", "filesystem", "environment"] as const)
+        if (layer[field] !== undefined)
+            record(layer[field], `${scope}.${field}`);
+    if (layer.network !== undefined) {
+        known(
+            record(layer.network, scope + ".network"),
+            [
+                "allowedDomains",
+                "allowedHostDomains",
+                "deniedDomains",
+                "allowLocalBinding",
+            ],
+            scope + ".network",
+        );
+    }
+    if (layer.filesystem !== undefined) {
+        known(
+            record(layer.filesystem, scope + ".filesystem"),
+            ["allowRead", "denyRead", "allowWrite", "denyWrite"],
+            scope + ".filesystem",
+        );
+    }
+    if (layer.environment !== undefined) {
+        known(
+            record(layer.environment, scope + ".environment"),
+            ["allowedVariables", "deniedVariables", "variables", "path"],
+            scope + ".environment",
+        );
+    }
+    if (layer.resources !== undefined) {
+        known(
+            record(layer.resources, scope + ".resources"),
+            ["unixSockets", "tcpPublications"],
+            scope + ".resources",
+        );
+    }
+    const { mode: _mode, docker: _docker, ...generic } = layer;
+    validatePiSandboxConfig(generic);
+    return layer as SandboxConfigLayer;
 }
-export function readCapabilityAuthority(
+export function readGlobalSandboxConfig(
     path: string,
-    machineId = localMachineId(),
-): CapabilityAuthority {
-    // lstat also rejects dangling links; existsSync alone would silently treat them as absent.
-    let metadata;
+    machineId: string,
+): GlobalSandboxConfig | undefined {
     try {
-        metadata = lstatSync(path);
+        lstatSync(path);
     } catch (error) {
         if (
             error instanceof Error &&
             "code" in error &&
             error.code === "ENOENT"
         )
-            return { version: 1, machineId, projects: [] };
-        throw error;
-    }
-    if (
-        !metadata.isFile() ||
-        metadata.isSymbolicLink() ||
-        (metadata.mode & 0o077) !== 0 ||
-        (process.getuid && metadata.uid !== process.getuid())
-    )
+            return undefined;
         invalid(
-            "Capability authority must be an owned regular file with mode 0600",
+            `Could not inspect global sandbox.json: ${error instanceof Error ? error.message : String(error)}`,
         );
+    }
+    const root = record(
+        readJson(path, "global sandbox.json"),
+        "global sandbox.json",
+    );
+    known(
+        root,
+        [
+            "$schema",
+            "version",
+            "machineId",
+            "mode",
+            "network",
+            "filesystem",
+            "environment",
+            "tmpNamespace",
+            "docker",
+            "resources",
+        ],
+        "global sandbox config",
+    );
+    if (root.version !== 2) invalid("global sandbox.json version must be 2");
+    if (typeof root.machineId !== "string" || !root.machineId)
+        invalid("global sandbox.json machineId is required");
+    if (root.machineId !== machineId)
+        invalid("global sandbox.json belongs to another machine");
+    if (root.$schema !== undefined && typeof root.$schema !== "string")
+        invalid("global $schema must be a string");
+    const {
+        $schema: _schema,
+        version: _version,
+        machineId: _machineId,
+        ...layer
+    } = root;
+    return { version: 2, machineId, ...validateLayer(layer, "global") };
+}
+export function readProjectSandboxConfig(
+    path: string,
+): SandboxConfigLayer | undefined {
     try {
-        return parseAuthority(JSON.parse(readFileSync(path, "utf8")));
+        lstatSync(path);
     } catch (error) {
-        if (isCapabilityError(error)) throw error;
-        throw new CapabilityError(
-            "invalid-authority",
-            "Cannot parse capability authority",
+        if (
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT"
+        )
+            return undefined;
+        invalid(
+            `Could not inspect project sandbox.json: ${error instanceof Error ? error.message : String(error)}`,
         );
+    }
+    const root = record(
+        readJson(path, "project sandbox.json"),
+        "project sandbox.json",
+    );
+    for (const field of ["version", "machineId", "$schema"])
+        if (Object.hasOwn(root, field))
+            invalid(`${field} is reserved to global sandbox.json`);
+    const layer = validateLayer(root, "project");
+    if (layer.docker !== undefined) {
+        const docker = record(layer.docker, "project docker");
+        known(docker, ["enabled", "targets"], "project docker");
+        if (docker.enabled !== undefined && typeof docker.enabled !== "boolean")
+            invalid("project docker.enabled must be boolean");
+    }
+    return layer;
+}
+export function canonicalPotentialPath(
+    path: string,
+    remainingLinks = 40,
+): string {
+    if (remainingLinks < 0) invalid("Cannot resolve a symbolic-link cycle");
+    const suffix: string[] = [];
+    let parent = path;
+    while (true) {
+        try {
+            const metadata = lstatSync(parent);
+            const canonical = metadata.isSymbolicLink()
+                ? canonicalPotentialPath(
+                      resolve(dirname(parent), readlinkSync(parent)),
+                      remainingLinks - 1,
+                  )
+                : realpathSync(parent);
+            return join(canonical, ...suffix);
+        } catch (error) {
+            if (
+                !(error instanceof Error) ||
+                !("code" in error) ||
+                (error.code !== "ENOENT" && error.code !== "ENOTDIR")
+            )
+                throw error;
+            const next = dirname(parent);
+            if (next === parent) throw error;
+            suffix.unshift(basename(parent));
+            parent = next;
+        }
     }
 }
-
-/** Call only from an explicit user command. This API never obtains approval itself. */
-export async function saveProjectCapabilities(
-    path: string,
-    project: ProjectCapabilities,
-    machineId = localMachineId(),
-    options: { replaceForeign?: boolean } = {},
-): Promise<string | undefined> {
-    return withFileMutationQueue(path, async () => {
-        let authority = readCapabilityAuthority(path, machineId);
-        let archive: string | undefined;
-        if (authority.machineId !== machineId) {
-            if (!options.replaceForeign)
-                throw new CapabilityError(
-                    "machine-mismatch",
-                    "Review migration explicitly; existing authority was preserved",
-                );
-            archive = `${path}.${randomUUID()}.foreign`;
-            writeFileSync(archive, readFileSync(path), {
-                flag: "wx",
-                mode: 0o600,
-            });
-            authority = { version: 1, machineId, projects: [] };
-        }
-        const projectRoot = realpathSync(project.projectRoot);
-        const normalized = parseAuthority({
-            version: 1,
-            machineId,
-            projects: [{ ...project, projectRoot }],
-        }).projects[0];
-        authority.projects = [
-            ...authority.projects.filter((p) => p.projectRoot !== projectRoot),
-            normalized,
-        ];
-        const serialized = {
-            ...authority,
-            projects: authority.projects.map((p) => ({
-                ...p,
-                projectRoot: persistedCapabilityPath(p.projectRoot),
-                grants: {
-                    ...p.grants,
-                    readPaths: p.grants.readPaths.map(persistedCapabilityPath),
-                    writePaths: p.grants.writePaths.map(
-                        persistedCapabilityPath,
-                    ),
-                    integrations: Object.fromEntries(
-                        Object.entries(p.grants.integrations).map(
-                            ([name, executables]) => [
-                                name,
-                                Object.fromEntries(
-                                    Object.entries(executables).map(
-                                        ([key, value]) => [
-                                            key,
-                                            persistedCapabilityPath(value),
-                                        ],
-                                    ),
-                                ),
-                            ],
-                        ),
-                    ),
-                },
-            })),
-        };
-        mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-        const temporary = `${path}.${randomUUID()}.tmp`;
-        try {
-            const fd = openSync(temporary, "wx", 0o600);
-            try {
-                writeFileSync(fd, `${JSON.stringify(serialized, null, 2)}\n`);
-                fsyncSync(fd);
-            } finally {
-                closeSync(fd);
-            }
-            renameSync(temporary, path);
-        } finally {
-            if (existsSync(temporary)) unlinkSync(temporary);
-        }
-        return archive;
-    });
+export function canonicalProjectPath(
+    value: string,
+    projectRoot: string,
+): string {
+    const expanded =
+        value === "~" || value.startsWith("~/")
+            ? expandCapabilityPath(value)
+            : value;
+    return canonicalPotentialPath(
+        isAbsolute(expanded)
+            ? resolve(expanded)
+            : resolve(projectRoot, expanded),
+    );
 }
