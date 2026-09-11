@@ -36,8 +36,10 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
     const unexpected: string[] = [];
     const requests: string[] = [];
     let hostAccessTarget = false;
+    let waitForStdinEof = false;
+    let stdinReceived = "";
     // A raw Engine fixture preserves Docker's HTTP-to-stream upgrade exactly.
-    const server = createServer((socket) => {
+    const server = createServer({ allowHalfOpen: true }, (socket) => {
         sockets.add(socket);
         socket.on("close", () => sockets.delete(socket));
         socket.on("error", () => socket.destroy());
@@ -67,6 +69,16 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
             }
             if (path === `/exec/${execId}/json`) return respond({ Id: execId, Running: false, ExitCode: 0 });
             if (path === `/exec/${execId}/start`) {
+                if (waitForStdinEof) {
+                    socket.write("HTTP/1.1 101 Switching Protocols\r\nContent-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n");
+                    socket.on("data", chunk => { stdinReceived += chunk.toString(); });
+                    socket.once("end", () => {
+                        const body = Buffer.from("stdin finished\n");
+                        const frame = Buffer.alloc(8); frame[0] = 1; frame.writeUInt32BE(body.length, 4);
+                        socket.end(Buffer.concat([frame, body]));
+                    });
+                    return;
+                }
                 const body = Buffer.from("fixture exec ok\n");
                 const frame = Buffer.alloc(8); frame[0] = 1; frame.writeUInt32BE(body.length, 4);
                 socket.end(Buffer.concat([Buffer.from("HTTP/1.1 101 Switching Protocols\r\nContent-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n"), frame, body]));
@@ -101,6 +113,16 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
                         expect(result.exitCode).not.toBe(0);
                         expect(bodies.length).toBe(executionsBefore);
                     }
+                }
+                if (profile.label === "Administration") {
+                    waitForStdinEof = true;
+                    let output = "";
+                    const stdinOperations = createSandboxedBashOps(service, supervisor, { stdin: "printf input-complete\n" });
+                    const result = await stdinOperations.exec("docker compose exec -T api sh", root, { onData: chunk => { output += chunk.toString(); }, timeout: 2 });
+                    expect(result.exitCode).toBe(0);
+                    expect(stdinReceived).toBe("printf input-complete\n");
+                    expect(output).toContain("stdin finished");
+                    waitForStdinEof = false;
                 }
             } finally { supervisor.shutdown(); await service.shutdown(); }
         }
@@ -149,7 +171,7 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
             expect(output).toContain("Docker break-glass exec expired");
         } finally { breakGlassSupervisor.shutdown(); await breakGlassService.shutdown(); }
 
-        expect(bodies).toHaveLength(4);
+        expect(bodies).toHaveLength(5);
         expect(bodies[0]).toMatchObject({ DetachKeys: "", Privileged: false });
         expect(unexpected).toEqual([]);
     } finally {

@@ -139,6 +139,9 @@ export function parseExecutionProvenance(
                 !["editor", "dependencies", "dev-services"].includes(
                     record.hostCapability,
                 ))) ||
+        (record.localProcess !== undefined &&
+            record.localProcess !== "running" &&
+            record.localProcess !== "exited") ||
         (record.exitCode !== undefined &&
             record.exitCode !== null &&
             !Number.isSafeInteger(record.exitCode))
@@ -168,6 +171,9 @@ export function parseExecutionProvenance(
         phase: record.phase,
         outcome: record.outcome,
         ...(record.exitCode !== undefined ? { exitCode: record.exitCode } : {}),
+        ...(record.localProcess !== undefined
+            ? { localProcess: record.localProcess }
+            : {}),
         ...(record.mode !== undefined ? { mode: record.mode } : {}),
         ...(record.shellProfile !== undefined &&
         record.shellProfile !== "isolated" &&
@@ -258,6 +264,13 @@ function sandboxFailureContext(isError: boolean, details: unknown): string {
         : "";
 }
 
+function interruptionContext(execution: ExecutionProvenance): string {
+    if (!["timed-out", "aborted"].includes(execution.outcome)) return "";
+    if (execution.phase !== "process" && execution.localProcess === undefined)
+        return "";
+    return `\nLocal command process exit: ${execution.localProcess === "exited" ? "confirmed" : "unconfirmed"}. External service work: not confirmed stopped. Work already delegated to a service may continue after this call ends. Verify its state before retrying an operation that could run twice. For diagnostic retries, use a unique attempt ID and separate result files; attribute results only to a completed attempt.`;
+}
+
 /** Decorate a context copy, leaving persisted output and raw archives untouched. */
 export function addExecutionContext(
     messages: AgentMessage[],
@@ -293,12 +306,15 @@ export function addExecutionContext(
     }
     return messages.map((message) => {
         if (Reflect.get(message, CONTEXT_RECEIPT) === true) return message;
-        if (message.role === "bashExecution")
+        if (message.role === "bashExecution") {
+            const execution =
+                bashExecutions.get(message.timestamp) ?? unknownExecution();
             return {
                 ...message,
                 [CONTEXT_RECEIPT]: true,
-                output: `${message.output}\nExecution provenance: ${JSON.stringify(bashExecutions.get(message.timestamp) ?? unknownExecution())}`,
+                output: `${message.output}\nExecution provenance: ${JSON.stringify(execution)}${interruptionContext(execution)}`,
             };
+        }
         if (message.role !== "toolResult") return message;
         const details: unknown = message.details;
         if (
@@ -316,8 +332,12 @@ export function addExecutionContext(
         )
             return message;
         // Think owns a JSON header with separate source and analysis executions.
-        if (thinkReceipt(message.toolName, message.content)) {
-            const context = sandboxFailureContext(message.isError, details);
+        const think = thinkReceipt(message.toolName, message.content);
+        if (think) {
+            const context =
+                sandboxFailureContext(message.isError, details) +
+                interruptionContext(think.sourceExecution) +
+                interruptionContext(think.analysisExecution);
             if (!context) return message;
             return {
                 ...message,
@@ -342,7 +362,7 @@ export function addExecutionContext(
                 ...message.content,
                 {
                     type: "text" as const,
-                    text: `Execution provenance: ${JSON.stringify(execution)}${archiveContext(details)}${sandboxFailureContext(message.isError, details)}`,
+                    text: `Execution provenance: ${JSON.stringify(execution)}${interruptionContext(execution)}${archiveContext(details)}${sandboxFailureContext(message.isError, details)}`,
                 },
             ],
         };

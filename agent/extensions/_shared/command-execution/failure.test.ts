@@ -118,6 +118,22 @@ describe("safe-execution failure normalization", () => {
         });
     });
 
+    it.each([
+        ["STDOUT_BEFORE_TIMEOUT\n\nCommand timed out after 29.99997503999993 seconds", "30"],
+        ["timeout:179.99998523199977", "180"],
+        ["timeout:0.125", "0.125"],
+        ["timeout:1e-7", "1e-7"],
+    ])("recognizes fractional execution budgets: %s", (message, seconds) => {
+        const failure = classifySafeExecutionError(new Error(message));
+        expect(failure.kind).toBe("bash_timeout");
+        expect(failure.reason).toBe(`Command timed out after ${seconds} seconds`);
+        expect(failure.reason).not.toContain("STDOUT_BEFORE_TIMEOUT");
+    });
+
+    it.each(["timeout:NaN", "timeout:Infinity", "timeout:1e999", "timeout:-1", "timeout:1.2 trailing"])("rejects invalid timeout durations: %s", message => {
+        expect(classifySafeExecutionError(new Error(message)).kind).toBe("abnormal");
+    });
+
     it("extracts the trusted aborted suffix and matches empty stdout", () => {
         const truncated = extractBashFailure("Command aborted");
         expect(truncated).toEqual({ kind: "bash_aborted", reason: "Command aborted" });

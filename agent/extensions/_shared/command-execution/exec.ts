@@ -385,7 +385,10 @@ function createTrackedBashOperations(
                         tmpNamespace: "host",
                         phase: "process",
                     });
-                if (pid !== undefined) activeProcessIds.add(pid);
+                if (pid !== undefined) {
+                    activeProcessIds.add(pid);
+                    report({ localProcess: "running" });
+                }
                 const closePromise = options.prepareSpawn
                     ? waitForClose(child)
                     : Promise.resolve();
@@ -396,6 +399,7 @@ function createTrackedBashOperations(
                 let hardKillHandle: Timer | undefined;
                 const markExited = () => {
                     exited = true;
+                    report({ localProcess: "exited" });
                 };
                 const killChild = (hard = false) => {
                     const terminationSignal =

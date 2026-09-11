@@ -130,10 +130,7 @@ export function registerSafeBash(
             typeof value === "object" &&
             value !== null &&
             Object.prototype.hasOwnProperty.call(value, "hostCapability");
-        return defineTool<
-            typeof safeBashSchema,
-            BashToolDetails | undefined
-        >({
+        return defineTool<typeof safeBashSchema, BashToolDetails | undefined>({
             name: "safe_bash",
             label: "🔒Safe Bash",
             description,
@@ -177,11 +174,7 @@ export function registerSafeBash(
                 } catch (error) {
                     if (isSafeExecutionError(error)) {
                         const kind = error.getKind();
-                        if (
-                            kind === "bash_exit" ||
-                            kind === "bash_timeout" ||
-                            kind === "bash_aborted"
-                        ) {
+                        if (kind === "bash_exit" || kind === "bash_aborted") {
                             throw new Error(error.getRaw() || error.message, {
                                 cause: error,
                             });

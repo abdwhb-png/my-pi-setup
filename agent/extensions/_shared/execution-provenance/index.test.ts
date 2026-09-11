@@ -47,6 +47,16 @@ test('context copies preserve raw text, images, historical facts and unknown his
 test('wire provenance rejects non-scalar values and does not copy arbitrary data', () => {
     expect(parseExecutionProvenance({ ...hostExecution(), status: { toString: () => 'unsandboxed' } })).toBeUndefined();
     expect(parseExecutionProvenance({ ...hostExecution(), raw: 'do not propagate' })).toEqual(hostExecution());
+    expect(parseExecutionProvenance({ ...hostExecution(), localProcess: 'terminated-all-services' })).toBeUndefined();
+});
+
+test.each([undefined, 'running'] as const)('interrupted execution without an observed exit remains unconfirmed: %s', localProcess => {
+    const messages: AgentMessage[] = [{ role: 'toolResult', toolCallId: 'interrupted', toolName: 'bash', content: [{ type: 'text', text: 'Command aborted' }], isError: true, timestamp: 1, details: { execution: { ...hostExecution('process'), outcome: 'aborted', exitCode: null, ...(localProcess ? { localProcess } : {}) } } }];
+    const decorated = addExecutionContext(messages);
+    expect(JSON.stringify(decorated)).toContain('Local command process exit: unconfirmed');
+    expect(JSON.stringify(decorated)).toContain('External service work: not confirmed stopped');
+    expect(addExecutionContext(decorated)).toEqual(decorated);
+    expect(JSON.stringify(messages)).not.toContain('External service work');
 });
 
 test('wire provenance records current mode/profile and converts historical profile labels', () => {
@@ -66,6 +76,15 @@ test('wire provenance records current mode/profile and converts historical profi
 test('Think JSON failure is its own receipt and remains parseable', () => {
     const message: AgentMessage = { role: 'toolResult', toolCallId: 'think-error', toolName: 'think_execute', content: [{ type: 'text', text: JSON.stringify({ tool: 'think_execute', status: 'error', sourceExecution: hostExecution(), analysisExecution: hostExecution() }) }], isError: true, timestamp: 1 };
     expect(addExecutionContext([message])[0]).toEqual(message);
+});
+
+test('Think source-command timeouts retain their JSON header and report external-work uncertainty', () => {
+    const header = JSON.stringify({ tool: 'think_execute', status: 'error', sourceExecution: { ...hostExecution('process'), outcome: 'timed-out', localProcess: 'exited' }, analysisExecution: unknownExecution() });
+    const message: AgentMessage = { role: 'toolResult', toolCallId: 'think-source-timeout', toolName: 'think_execute', content: [{ type: 'text', text: header }], isError: true, timestamp: 1 };
+    const decorated = addExecutionContext([message]);
+    expect(decorated[0]?.role === 'toolResult' && decorated[0].content[0]).toEqual({ type: 'text', text: header });
+    expect(JSON.stringify(decorated)).toContain('External service work: not confirmed stopped');
+    expect(addExecutionContext(decorated)).toEqual(decorated);
 });
 
 test('Think failure keeps its JSON receipt and receives the analysis dispatch context once', () => {

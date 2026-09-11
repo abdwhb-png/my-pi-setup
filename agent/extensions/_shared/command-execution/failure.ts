@@ -81,12 +81,13 @@ export interface SafeExecutionFailure {
 }
 
 const BASH_ABORTED_RE = /^(.*\n\n)?Command aborted$/s;
-const BASH_TIMED_OUT_RE = /^(.*\n\n)?Command timed out after (\d+) seconds$/s;
+const BASH_TIMED_OUT_RE =
+    /^(.*\n\n)?Command timed out after (\d+(?:\.\d+)?(?:e[+-]?\d+)?) seconds$/s;
 const BASH_EXITED_RE = /^(.*\n\n)?Command exited with code (-?\d+)$/s;
 // bash.js emits internal pre-spawn throws with bare messages that do not
 // embed raw output (the command never ran). Trust those exact shapes.
 const BASH_INTERNAL_ABORTED_RE = /^aborted$/;
-const BASH_INTERNAL_TIMEOUT_RE = /^timeout:(\d+)$/;
+const BASH_INTERNAL_TIMEOUT_RE = /^timeout:(\d+(?:\.\d+)?(?:e[+-]?\d+)?)$/;
 
 /**
  * Try to recognize a known bash.js exit/timeout/abort error shape.
@@ -99,10 +100,16 @@ export function extractBashFailure(message: string): {
 } | null {
     const trimmed = message.endsWith("\n") ? message.trimEnd() : message;
     const timedOut = BASH_TIMED_OUT_RE.exec(trimmed);
-    if (timedOut && timedOut[2] !== undefined) {
+    const duration =
+        timedOut?.[2] ?? BASH_INTERNAL_TIMEOUT_RE.exec(trimmed)?.[1];
+    if (duration !== undefined) {
+        const seconds = Number(duration);
+        if (!Number.isFinite(seconds)) return null;
+        // Round only the display. Keep sub-millisecond budgets nonzero.
+        const displayedSeconds = Number(seconds.toFixed(3)) || seconds;
         return {
             kind: "bash_timeout",
-            reason: `Command timed out after ${timedOut[2]} seconds`,
+            reason: `Command timed out after ${displayedSeconds} seconds`,
         };
     }
     const exited = BASH_EXITED_RE.exec(trimmed);
@@ -114,13 +121,6 @@ export function extractBashFailure(message: string): {
     }
     if (BASH_INTERNAL_ABORTED_RE.test(trimmed)) {
         return { kind: "bash_aborted", reason: "Command aborted" };
-    }
-    const internalTimeout = BASH_INTERNAL_TIMEOUT_RE.exec(trimmed);
-    if (internalTimeout && internalTimeout[1] !== undefined) {
-        return {
-            kind: "bash_timeout",
-            reason: `Command timed out after ${internalTimeout[1]} seconds`,
-        };
     }
     const aborted = BASH_ABORTED_RE.exec(trimmed);
     if (aborted) {

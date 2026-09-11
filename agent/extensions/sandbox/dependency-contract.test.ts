@@ -122,7 +122,7 @@ describe("sandbox dependency contract", () => {
             engineCommit: "9b8cf56cdefb09f54564ccc295fd42f6647f558f",
             binaryName: "zerobox",
             localBuild: {
-                kind: "committed-worktree",
+                kind: "modified-worktree",
                 baseCommit: "ebd12774aafa63fec1864e04f248150ec50136d4",
                 sourceDiffFormat: "git-diff-binary-head-plus-sorted-untracked-v1",
             },

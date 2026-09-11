@@ -22,6 +22,8 @@ export interface ExecutionProvenance {
         | "timed-out"
         | "blocked";
     exitCode?: number | null;
+    /** Observed launcher process state, never proof that external work stopped. */
+    localProcess?: "running" | "exited";
 }
 
 export type ExecutionObserver = (execution: ExecutionProvenance) => void;
