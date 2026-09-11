@@ -9,7 +9,7 @@ inheritProjectContext: false
 inheritSkills: false
 turnBudget: { "maxTurns": 20, "graceTurns": 6 }
 skills: pi-extensions, factual-research
-tools: "@inspect, @lens, safe_bash, @docs, @web, contact_supervisor"
+tools: "@inspect, @lens, @docs, @web, @pi-session-recall, safe_bash, contact_supervisor"
 ---
 
 # Pi Expert
