@@ -3,9 +3,10 @@
 > **Superseded activation note (2026-09-12):** This procedure records the
 > earlier architecture only. Do not use its activation claims for the approved
 > [private runtime and local environments design](../../brainstorming/2026-09-12-sandbox-private-runtime-and-local-environments-design.md),
-> which remains separately pending implementation, qualification, and explicit
-> personal activation. The newer release must atomically install and pin its
-> private runtime distribution, then validate admission-backed evidence.
+> whose implementation and installation are recorded in the
+> [runtime guide](../../../agent/extensions/sandbox/docs/runtime.md#qualification-and-activation).
+> The newer release atomically installs and pins its private runtime
+> distribution, then validates admission-backed evidence.
 
 Garde cette procédure séparée de l’implémentation. N’exécute pas l’activation, la migration personnelle ni le rollback sans choix explicite de l’utilisateur.
 

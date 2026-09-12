@@ -48,4 +48,4 @@ A declared installation adds its root read-only, including when it has no comman
 - [Troubleshooting](docs/troubleshooting.md)
 - [Shared shell context design and validation](../../../docs/brainstorming/2026-09-12-shared-shell-context-design.md)
 
-The private-runtime architecture remains separately qualified before any personal activation. A release installs the runtime bundle atomically and pins its real release path for the lifetime of the runtime. The widget shows the selected mode, derived profile, engine state and Docker access.
+A release installs the runtime bundle atomically and pins its real release path for the lifetime of the runtime. See [qualification and activation](docs/runtime.md#qualification-and-activation) for the tested release and evidence. The widget shows the selected mode, derived profile, engine state and Docker access.

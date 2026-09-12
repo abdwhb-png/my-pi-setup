@@ -2,13 +2,13 @@
 
 Date: 2026-09-12
 
-Status: approved architectural direction, with preliminary qualification completed. The private runtime and local environment model described here are not implemented or installed.
+Status: approved design, now implemented. Track release qualification and installation in the [runtime guide](../../agent/extensions/sandbox/docs/runtime.md#qualification-and-activation). The preliminary observations below describe the earlier architecture and are not evidence for the new runtime.
 
 ## Purpose and document boundary
 
 Provide an isolated shell environment by default. Make existing development installations available through explicit, bounded authorization on each machine, without requiring Pi to recognize individual tools or users to maintain duplicate filesystem and PATH lists.
 
-Use this document as the design input for the future implementation plan. Do not treat it as an implementation plan or an activation instruction. Keep existing documentation unchanged during this documentation step. Include its reconciliation as required work in the future implementation plan, alongside the corresponding implementation changes.
+Use this document as the approved design input. Read the original qualification and documentation inventory as a historical record of the design stage. Consult the runtime guide and configuration reference for the implemented contract and release evidence.
 
 Keep identifiers in this document local: `D` identifies a decision, `F` a finding, `O` an alternative and `R` a remaining qualification limit. These identifiers are not sandbox profiles and do not renumber earlier plans.
 
@@ -206,6 +206,8 @@ The current configuration fingerprint does not account for all resolved runtime 
 Do not use an assistant that merely generates today's duplicate `allowRead` and PATH lists as the architectural remedy. Keep concrete paths in the enforcement model while exposing one coherent authorization boundary to the user.
 
 ## Remaining engineering decisions and qualification limits
+
+This section records the limits identified before implementation. The runtime guide records their implementation and current qualification scope. Preserve these original findings rather than treating the preliminary probes as release tests.
 
 No additional blocking user decision was identified after approval of updates within the authorized perimeter. Resolve the following technical details through the future implementation plan without reopening the accepted defaults or introducing implicit permissions.
 

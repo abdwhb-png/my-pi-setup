@@ -68,6 +68,8 @@ and remain subject to the existing revocation rules.
 
 Version 3 execution receipts are derived from the validated engine admission report and include its digest, runtime/helper identities and mount evidence. They prove the permissions admitted for that execution, not executable availability or service reachability. Version 1 and V2 receipts remain readable as historical or planned policy; they do not prove current mounts and must not be upgraded by inference. Environment values other than HOME and PATH are omitted. Display aliases such as `~` identify host paths; sandbox shell expansion still uses the private HOME.
 
+Successful per-call contexts are available during `tool_result` and cleared from the transient registry at `agent_end`. Failed sandbox results retain their context in result details. The shared current shell context comes from the runtime's latest validated admission independently of that per-call registry. Observe successful execution evidence before turn cleanup when testing the tool boundary.
+
 Host context reports the host environment without shell isolation claims.
 Think and Analysis remain separate strict environments. Neither disabling a
 project sandbox nor selecting host mode through project configuration is
@@ -80,11 +82,33 @@ Install the matching engine and private bundle, then use `/reload` or a new Pi s
 
 The initial target is Linux x86_64, including WSL2 x86_64. Other platforms and architectures fail explicitly. Native Linux CI and WSL2 require separate qualification evidence.
 
-Private control paths must fit the Unix socket address budget. Preflight rejects a layout whose worst-case socket path is 108 bytes or longer. Long home directory paths can therefore block admission. The default Analysis IPC qualification uses a short fixture home and does not establish support for arbitrary home path lengths.
+Private control paths must fit the Unix socket address budget. Preflight rejects a layout whose worst-case socket path is 108 bytes or longer. The current default lease layout permits a host HOME path of at most 12 bytes. Longer home paths block admission. The default Analysis IPC qualification uses a short fixture home and does not establish support for arbitrary home path lengths.
 
-The runtime requires Linux user namespaces and the managed Zerobox/FUSE facilities. The private Analysis component supplies Node with JSPI support, Bun, workers and `prlimit`. Linux-native CI remains pending; WSL2 qualification is not proof of that CI coverage or of Windows interoperation.
+The runtime requires Linux user namespaces and the managed Zerobox/FUSE facilities. The private Analysis component supplies Node with JSPI support, Bun, workers and `prlimit`. Qualify the native kernel separately from WSL2. Neither platform's shell tests establish Windows interoperation or application-specific browser behavior.
+
+### Release evidence, 2026-09-12
+
+Runtime `2026.09.12.10` is installed at `~/.pi/runtimes/zerobox/2026.09.12.10` through the atomic `~/.pi/bin/zerobox` symlink. It contains the rebuilt Zerobox `0.3.3-fork.17` engine. The engine's version string is unchanged; use its digest and the runtime manifest to identify the release. Existing explicit configuration was preserved byte-for-byte. Reload open Pi sessions or start a new session to use the matching extension code and runtime.
+
+| Validation boundary | Result and scope |
+| --- | --- |
+| WSL2 Pi regression suites | 909 passed, 72 gated tests skipped across command execution, shared runtime, Bash, Sandbox and Think-in-Code. Real-runtime cases run separately below. |
+| WSL2 real shell and Analysis | 42 passed, 4 project-specific workflow replays skipped. Includes installation access, active revocation, Git protection, domain/loopback rules, stream closure and real TypeScript/Python Analysis. |
+| WSL2 native authority protection | 2 passed with the candidate, including existing and absent authority files and path aliases. Native `write` and `edit` cannot grant sandbox permissions. |
+| Distribution | 10 publication/integrity tests and 3 Python builder tests passed. Hoisted and nested dependency layouts produce the same locked Analysis package closure. |
+| Rust on WSL2 and native Linux | Complete workspace tests passed. Kernel integration suites passed 180 cases with 4 explicitly ignored on each platform. Native evidence: [engine CI](https://github.com/abdwhb-png/zerobox/actions/runs/34716118241), engine source `a2e1e2578ac61980807370bde7b82cc41ac32eaa`. |
+| Native Linux Pi | [Pi CI](https://github.com/abdwhb-png/my-pi-setup/actions/runs/34719945721) passed on source `afc4c3a2f89976158be602c1ed9eb1d730c63c4c`: 909 regression tests, 42 real shell/Analysis tests, 2 native-authority tests and the installed-runtime session test. The 72 ordinary-suite skips and 4 application workflow skips have the same scope as the WSL2 runs. |
+| Installed Pi on WSL2 | The default managed-entry test passed after actual local publication: 1 test, 14 assertions. Both real `bash` and `safe_bash` operations used the installed release with matching V3 admission, private temporary storage, blocked outside files and filtered host environment. Candidate-selection environment overrides were unset. |
+
+Pi typecheck and focused lint completed. Lint warnings remain; this is not a zero-warning qualification. The four omitted application workflow replays require an explicitly selected development project. No personal application's dependency installation, build or browser session was replayed. Pi session tests use a simulated model with real extension loading and real tool execution; they do not evaluate autonomous model behavior.
+
+The installed engine/helper SHA-256 is `d9691ca74d27e3d54af4b82c44aff7efce68689ca1b9d8ca0eed477698139544`. Its runtime manifest SHA-256 is `bf1693f12cc340c71fbb3f1b748a9eb90f92a97552424d3311f9f6e6ca2cf560`. Adjacent provenance records the modified-worktree source delta used for this build, including its patch digests. The native CI rebuild has its own output identities; do not equate separately built binaries solely from their version strings.
+
+The previous regular executable and its matching legacy provenance were retained under `~/.pi/runtimes/zerobox/recovery/1789249018425-c27bc825-4481-45fc-960f-7125317fe26a`. Its SHA-256 is `6814f2ebc1715be50b8fedc63251dd922df625b3f5c086d7637ed658cb777df3`. Publication did not add grants or migrate the personal configuration. The validation branches contain source changes only, with no merge or binary release.
 
 Managed releases store source commits, patch digests, source identity, binary/helper digests and runtime-manifest digest in adjacent `provenance.json`. The legacy `runtime/zerobox-provenance.json` remains associated with the old regular executable for explicit recovery. Start a new Pi session after installing the matching code, engine and runtime.
+
+Select recovery explicitly and restore the corresponding Pi extension code together with its engine and, where applicable, its retained private bundle. Preserve each release's matching provenance when doing so.
 
 ## Distribution build and staging
 

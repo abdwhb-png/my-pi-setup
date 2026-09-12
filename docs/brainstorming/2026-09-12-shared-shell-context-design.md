@@ -7,7 +7,7 @@ Status: implemented locally. Deterministic validation and remaining check limita
 > **Private-runtime scope note (2026-09-12):** This record verifies the shared
 > presentation work, not the later private-runtime architecture. Its V2
 > planned-policy receipt language is superseded by the approved
-> [private runtime and local environments design](2026-09-12-sandbox-private-runtime-and-local-environments-design.md): only V3 context derived from a validated engine admission report proves effective mounts. The newer architecture remains separately pending implementation, installation, and full qualification.
+> [private runtime and local environments design](2026-09-12-sandbox-private-runtime-and-local-environments-design.md): only V3 context derived from a validated engine admission report proves effective mounts. Consult the [runtime guide](../../agent/extensions/sandbox/docs/runtime.md#qualification-and-activation) for its implementation, installation and separate qualification evidence.
 
 ## Destination and scope
 
