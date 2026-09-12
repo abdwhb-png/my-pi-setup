@@ -57,6 +57,7 @@ def main():
     downloads = root / "downloads"
     downloads.mkdir()
     (root / "build-inputs").mkdir()
+    (root / "build-inputs").chmod(0o755)
     for asset in assets:
         destination = downloads / asset["file"]
         with urllib.request.urlopen(asset["url"], timeout=120) as response:
@@ -87,6 +88,7 @@ def main():
     container = f"pi-native-runtime-{uuid.uuid4().hex}"
     run("docker", "create", "--name", container,
         "-v", f"{root}:/inputs", "-v", f"{agent}:/agent:ro",
+        "-v", f"{root / 'build-inputs'}:/packages:ro",
         "-v", f"{tools}:/build:ro", lock["image"], "sleep", "infinity")
     try:
         run("docker", "start", container)
@@ -99,10 +101,11 @@ def main():
                 raise RuntimeError(f"Builder package digest mismatch: {package['file']}")
         run("docker", "network", "disconnect", "bridge", container)
         # Let apt order Pre-Depends, using only the already verified local
-        # packages. The disconnected container cannot fetch additional inputs.
+        # packages. The separate mount lets _apt read them without opening the
+        # private input root. The disconnected container cannot fetch more inputs.
         run("docker", "exec", "-e", "DEBIAN_FRONTEND=noninteractive", "-e", "TZ=Etc/UTC",
             container, "apt-get", "--no-install-recommends", "--yes", "install",
-            *[f"/inputs/build-inputs/{p['file']}" for p in packages])
+            *[f"/packages/{p['file']}" for p in packages])
         run("docker", "exec", "-e", "PYTHONDONTWRITEBYTECODE=1", "-w", "/build",
             container, "python3", "-m", "unittest", "build_test.py")
         run("docker", "exec", container, "python3", "/build/build.py", "assemble",

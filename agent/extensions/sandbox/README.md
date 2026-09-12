@@ -20,6 +20,7 @@ A change to either configuration file is checked before each model request and s
 | `/sandbox` | Show status and an action selector. |
 | `/sandbox status` | Print configured permissions and runtime status. |
 | `/sandbox mode` | Select sandbox or host, with an explanation if host is unavailable. |
+| `/sandbox installations` | Inspect, add, edit, revoke or select local installations with a preview before saving. |
 | `/sandbox doctor [executable]` | Inspect policy and optionally resolve an executable without running it. |
 | `/sandbox mode sandbox\|host` | Select the execution mode for this session. |
 | `/sandbox migrate` | Preview and confirm migration to the two-file format. |
@@ -36,7 +37,7 @@ Use ordinary shell commands. Native file tools, extensions, MCP tools, and brows
 
 Declare machine-local installations only in `~/.pi/agent/sandbox.json` under `environment.installations`. An installation maps a name to one or more canonical host roots and optional command directories relative to each root. Selecting its name in `<project>/.pi/sandbox.json` adds those roots read-only and their command directories to PATH once, in global declaration order. A project can select or narrow global names, but cannot introduce a root. An omitted project selection inherits all global installations. An empty list selects none. No separate profile activation is required.
 
-A declared installation adds its root read-only, including when it has no command directory. Legacy `environment.path` entries only change command lookup. The runtime revalidates roots and command-directory targets before admission. Filesystem isolation blocks access to undeclared external dependencies. Use `/sandbox` to preview canonical roots before saving; a redirected root must be authorized by its canonical location. See [Configuration](docs/configuration.md#local-installations).
+A declared installation adds its root read-only, including when it has no command directory. Legacy `environment.path` entries only change command lookup. The runtime revalidates roots and command-directory targets before admission. Filesystem isolation blocks access to undeclared external dependencies. Use `/sandbox installations` to preview canonical roots before saving; a redirected root must be authorized by its canonical location. See [Configuration](docs/configuration.md#local-installations).
 
 ## Documentation
 
