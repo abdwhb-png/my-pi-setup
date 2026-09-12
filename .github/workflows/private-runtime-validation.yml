@@ -31,6 +31,16 @@ jobs:
           repository: abdwhb-png/pi-test-harness
           ref: 87bd1c0ec7c84b62ed29f887bccc062b082c7fea
           path: projects/pi-integrations/pi-test-harness
+      - uses: actions/checkout@v4
+        with:
+          repository: abdwhb-png/pi-fancy-footer
+          ref: 53e304c7695b5b3e9e1d01ac456ed342432b9169
+          path: projects/pi-integrations/pi-fancy-footer
+      - uses: actions/checkout@v4
+        with:
+          repository: abdwhb-png/pi-mcp-adapter
+          ref: 53733d3d7b052618896d691fe5bfb4b917f979da
+          path: projects/pi-integrations/pi-mcp-adapter
       - uses: actions/setup-node@v4
         with:
           node-version: "24.18.0"
@@ -69,6 +79,10 @@ jobs:
           cd ../pi-integrations/pi-test-harness
           sfw npm ci
           npm run build
+          cd ../pi-fancy-footer
+          sfw npm ci --ignore-scripts --no-audit --no-fund
+          cd ../pi-mcp-adapter
+          sfw npm ci --ignore-scripts --no-audit --no-fund
           cd ../../../.pi/agent
           sfw bun install --frozen-lockfile --ignore-scripts
           cd extensions/sandbox
@@ -76,6 +90,11 @@ jobs:
           sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@24.0.0
           mkdir -p ../../node_modules/@gotgenes
           ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
+          ln -s "$GITHUB_WORKSPACE/projects/pi-integrations/pi-fancy-footer" ../../node_modules/pi-fancy-footer
+          ln -s "$GITHUB_WORKSPACE/projects/pi-integrations/pi-mcp-adapter" ../../node_modules/pi-mcp-adapter
+      - name: Verify installed integration imports before compiling
+        working-directory: .pi/agent
+        run: bun -e 'await import("./extensions/_shared/fancy-footer.ts"); await import("pi-mcp-adapter");'
       - name: Validate Analysis inputs before compiling
         working-directory: .pi/agent
         run: |

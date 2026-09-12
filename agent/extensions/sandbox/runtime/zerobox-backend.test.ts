@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import { existsSync } from "node:fs";
 import {
     chmod,
     lstat,
@@ -238,6 +239,8 @@ describe("Zerobox backend", () => {
             const profilePath = join(lease.profilesDir, `${profileName}.json`);
             expect((await lstat(profilePath)).mode & 0o777).toBe(0o600);
             const profile = JSON.parse(await readFile(profilePath, "utf8"));
+            // Native Linux keeps an absent WSL mount denied through a deferred rule.
+            const windowsMountExists = existsSync("/mnt/c");
             expect(profile).toEqual({
                 description: "Pi private bash-general sandbox policy",
                 strict_sandbox: true,
@@ -257,11 +260,11 @@ describe("Zerobox backend", () => {
                     lease.tmpDir,
                 ],
                 deny_write: [
-                    "/mnt/c",
+                    ...(windowsMountExists ? ["/mnt/c"] : []),
                     "/proc/1/root",
                     join(parent, "r"),
                 ],
-                deny_write_globs: ["private/**", join(parent, ".env"), "/__zerobox", join(getAgentDir(), "sandbox.json")],
+                deny_write_globs: ["private/**", join(parent, ".env"), ...(windowsMountExists ? [] : ["/mnt/c"]), "/__zerobox", join(getAgentDir(), "sandbox.json")],
                 allow_net: ["example.com", "localhost:8317"],
                 allow_host_net: ["*.dev.test:443"],
                 deny_net: ["blocked.example.com"],
