@@ -99,9 +99,9 @@ def main():
                 raise RuntimeError(f"Builder package digest mismatch: {package['file']}")
         run("docker", "network", "disconnect", "bridge", container)
         # Let apt order Pre-Depends, using only the already verified local
-        # packages. Network access is removed and downloads remain forbidden.
+        # packages. The disconnected container cannot fetch additional inputs.
         run("docker", "exec", "-e", "DEBIAN_FRONTEND=noninteractive", "-e", "TZ=Etc/UTC",
-            container, "apt-get", "--no-download", "--no-install-recommends", "--yes", "install",
+            container, "apt-get", "--no-install-recommends", "--yes", "install",
             *[f"/inputs/build-inputs/{p['file']}" for p in packages])
         run("docker", "exec", "-e", "PYTHONDONTWRITEBYTECODE=1", "-w", "/build",
             container, "python3", "-m", "unittest", "build_test.py")
