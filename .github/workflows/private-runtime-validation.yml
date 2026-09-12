@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           python3 .pi/agent/extensions/sandbox/runtime/distribution/native-ci.py --check-host
           sudo apt-get update
-          sudo apt-get install -y bubblewrap libcap-dev netcat-openbsd
+          sudo apt-get install -y bubblewrap libcap-dev netcat-openbsd fd-find=9.0.0-1
           sudo sysctl -w kernel.unprivileged_userns_clone=1
           if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -92,14 +92,24 @@ jobs:
           ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
           ln -s "$GITHUB_WORKSPACE/projects/pi-integrations/pi-fancy-footer" ../../node_modules/pi-fancy-footer
           ln -s "$GITHUB_WORKSPACE/projects/pi-integrations/pi-mcp-adapter" ../../node_modules/pi-mcp-adapter
+          mkdir -p ../../npm/node_modules/@gotgenes
+          ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../npm/node_modules/@gotgenes/pi-permission-system
       - name: Verify installed integration imports before compiling
         working-directory: .pi/agent
-        run: bun -e 'await import("./extensions/_shared/fancy-footer.ts"); await import("pi-mcp-adapter");'
+        run: |
+          ./bin/fd --version
+          bun -e 'await import("./extensions/_shared/fancy-footer.ts"); await import("pi-mcp-adapter");'
+          test -f npm/node_modules/@gotgenes/pi-permission-system/src/index.ts
       - name: Validate Analysis inputs before compiling
         working-directory: .pi/agent
         run: |
           python3 extensions/sandbox/runtime/distribution/build.py verify-analysis-inputs \
             --lock extensions/sandbox/runtime/distribution/input-lock.json --agent-root .
+      - name: Run Pi boundary regression suites
+        working-directory: .pi/agent
+        run: |
+          env -u PI_SANDBOX_RUNTIME_BUNDLE -u PI_SANDBOX_ZEROBOX_BINARY -u PI_SANDBOX_ZEROBOX_SHA256 \
+            bun test --isolate extensions/_shared/command-execution extensions/_shared/sandbox-runtime extensions/bash-execution extensions/sandbox extensions/think-in-code
       - name: Replay patches and build the static engine
         working-directory: projects/zerobox
         run: |
@@ -112,11 +122,6 @@ jobs:
             --engine-root projects/zerobox --agent-root .pi/agent \
             --input-root "$RUNNER_TEMP/private-runtime" \
             --version "native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-      - name: Run Pi boundary regression suites
-        working-directory: .pi/agent
-        run: |
-          env -u PI_SANDBOX_RUNTIME_BUNDLE -u PI_SANDBOX_ZEROBOX_BINARY -u PI_SANDBOX_ZEROBOX_SHA256 \
-            bun test --isolate extensions/_shared/command-execution extensions/_shared/sandbox-runtime extensions/bash-execution extensions/sandbox extensions/think-in-code
       - name: Qualify shell, installations, revocation and Analysis on the native kernel
         working-directory: .pi/agent
         env:
