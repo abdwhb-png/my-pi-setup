@@ -76,6 +76,11 @@ jobs:
           sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@24.0.0
           mkdir -p ../../node_modules/@gotgenes
           ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
+      - name: Validate Analysis inputs before compiling
+        working-directory: .pi/agent
+        run: |
+          python3 extensions/sandbox/runtime/distribution/build.py verify-analysis-inputs \
+            --lock extensions/sandbox/runtime/distribution/input-lock.json --agent-root .
       - name: Replay patches and build the static engine
         working-directory: projects/zerobox
         run: |

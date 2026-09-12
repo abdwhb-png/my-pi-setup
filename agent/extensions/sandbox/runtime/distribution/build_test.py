@@ -1,5 +1,6 @@
 """Run in the pinned builder: python3 -m unittest build_test.py."""
 import importlib.util
+import json
 from pathlib import Path
 import re
 import shutil
@@ -13,6 +14,29 @@ spec.loader.exec_module(builder)
 
 
 class RuntimeRelocationTests(unittest.TestCase):
+    def test_analysis_closure_does_not_depend_on_installer_dependency_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            results = []
+            for layout in ["hoisted", "nested"]:
+                agent = root / layout
+                modules = agent / "extensions/sandbox/node_modules"
+                for name in ["@bsull/eryx", "@jitl/quickjs-ng-wasmfile-release-sync", "@sebastianwessel/quickjs", "typescript"]:
+                    package = modules / name
+                    package.mkdir(parents=True)
+                    dependencies = {"shared-dependency": "1.0.0"} if name == "@bsull/eryx" else {}
+                    (package / "package.json").write_text(json.dumps({"name": name, "version": "1.0.0", "dependencies": dependencies}))
+                dependency = (modules if layout == "hoisted" else modules / "@bsull/eryx/node_modules") / "shared-dependency"
+                dependency.mkdir(parents=True)
+                (dependency / "package.json").write_text(json.dumps({"name": "shared-dependency", "version": "1.0.0"}))
+                (dependency / "index.js").write_text("export default 42;\n")
+                output = root / f"{layout}-output"
+                results.append(builder.copy_analysis_closure(agent, output))
+                self.assertEqual((output / "node_modules/shared-dependency/index.js").read_text(), "export default 42;\n")
+                self.assertFalse((output / "node_modules/@bsull/eryx/node_modules").exists())
+            self.assertEqual(len(results[0]), 5)
+            self.assertEqual(results[0], results[1])
+
     def test_distribution_modes_do_not_inherit_writable_package_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

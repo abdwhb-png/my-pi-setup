@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Offline runtime distribution builder. Run inside the pinned Ubuntu builder."""
-import argparse, hashlib, json, os, shutil, struct, subprocess, sys
+import argparse, hashlib, json, os, shutil, struct, subprocess, sys, tempfile
 from pathlib import Path
 
 IMAGE = "ubuntu@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61"
@@ -135,7 +135,9 @@ def copy_analysis_closure(source_root, target_root):
         key=target.relative_to(target_root).as_posix()
         if key in copied: return
         versions.setdefault(name,version); copied[key]={"name":name,"version":version,"packageJsonSha256":sha(source/"package.json")}
-        target.parent.mkdir(parents=True,exist_ok=True); shutil.copytree(source,target,symlinks=False,dirs_exist_ok=True,ignore=shutil.ignore_patterns(".git"))
+        # Resolve each declared dependency below instead of copying an installer's
+        # nested node_modules tree into the owning package's locked content.
+        target.parent.mkdir(parents=True,exist_ok=True); shutil.copytree(source,target,symlinks=False,dirs_exist_ok=True,ignore=shutil.ignore_patterns(".git", "node_modules"))
         copied[key]["treeSha256"]=hashlib.sha256(json.dumps(entries(target),sort_keys=True,separators=(",",":")).encode()).hexdigest()
         for dependency in metadata.get("dependencies",{}): package(dependency,source,target)
         for dependency in metadata.get("optionalDependencies",{}):
@@ -154,6 +156,12 @@ def entries(root):
         if path.is_symlink(): result.append({"path":relative,"symlink":os.readlink(path)})
         else: result.append({"path":relative,"sha256":sha(path)})
     return result
+def check_analysis_inputs(closure, durable):
+    expected_path=durable.get("analysis")
+    if expected_path is None: fail("missing locked Analysis package closure")
+    expected=load(expected_path)
+    different=sorted(key for key in set(expected)|set(closure) if expected.get(key)!=closure.get(key))
+    if different: fail(f"Analysis package inputs differ from the locked closure: {', '.join(different)}")
 def seal_tree(root):
     for path in [root,*root.rglob("*")]:
         if path.is_symlink(): continue
@@ -189,8 +197,7 @@ def build(args):
     for name in ["python-worker.mjs","eryx-loader.mjs"]: copy(agent/"extensions/sandbox/analysis"/name,workers/name)
     subprocess.run([str(analysis/"bin/bun"),"build",str(agent/"extensions/sandbox/analysis/quickjs-worker.ts"),"--outfile",str(workers/"quickjs-worker.js"),"--target","bun","--packages=external"],check=True)
     closure=copy_analysis_closure(agent,analysis)
-    analysis_inputs=durable.get("analysis")
-    if analysis_inputs is None or closure != load(analysis_inputs): fail("Analysis package inputs differ from the locked closure")
+    check_analysis_inputs(closure,durable)
     relocate(analysis,"/__zerobox/analysis")
     engine=Path(args.engine); helper=Path(args.helper)
     if not engine.is_file() or not helper.is_file() or helper.is_symlink(): fail("engine and static helper must be regular files")
@@ -214,11 +221,17 @@ def build(args):
 def main():
     parser=argparse.ArgumentParser(); sub=parser.add_subparsers(dest="command",required=True)
     verify_parser=sub.add_parser("verify-inputs"); verify_parser.add_argument("--lock",required=True); verify_parser.add_argument("--input-root",required=True)
+    analysis_parser=sub.add_parser("verify-analysis-inputs"); analysis_parser.add_argument("--lock",required=True); analysis_parser.add_argument("--agent-root",required=True)
     assemble=sub.add_parser("assemble");
     for name in ["lock","input-root","builder-root","agent-root","engine","helper","engine-provenance","output","version"]: assemble.add_argument("--"+name,required=True)
     args=parser.parse_args()
     try:
         if args.command=="verify-inputs": verify(Path(args.lock),Path(args.input_root))
+        elif args.command=="verify-analysis-inputs":
+            with tempfile.TemporaryDirectory(prefix="pi-analysis-inputs-") as directory:
+                closure=copy_analysis_closure(Path(args.agent_root).resolve(),Path(directory))
+                check_analysis_inputs(closure,metadata(load(args.lock)))
+                print(f"Verified {len(closure)} locked Analysis packages")
         else: build(args)
     except Exception as error: print(f"runtime distribution failed: {error}",file=sys.stderr); return 1
     return 0
