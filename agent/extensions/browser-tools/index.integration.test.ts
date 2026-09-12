@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import {
   createTestSession,
@@ -7,6 +8,10 @@ import {
 
 const AGENT_ROOT = resolve(import.meta.dir, "../..");
 const BROWSER_TOOLS_EXTENSION = resolve(import.meta.dir, "index.ts");
+const NATIVE_BROWSER_EXTENSION = resolve(
+  homedir(),
+  "projects/pi-integrations/pi-agent-browser-native/dist/extensions/agent-browser/index.js",
+);
 const TOOL_GROUPS_EXTENSION = resolve(import.meta.dir, "../tool-groups/index.ts");
 
 let session: TestSession | undefined;
@@ -21,7 +26,7 @@ test.skipIf(!process.env.PI_BROWSER_TOOLS_RUNTIME_CONTRACT)(
   async () => {
     session = await createTestSession({
       cwd: AGENT_ROOT,
-      extensions: [TOOL_GROUPS_EXTENSION, BROWSER_TOOLS_EXTENSION],
+      extensions: [TOOL_GROUPS_EXTENSION, NATIVE_BROWSER_EXTENSION, BROWSER_TOOLS_EXTENSION],
       propagateErrors: false,
     });
 
@@ -29,6 +34,11 @@ test.skipIf(!process.env.PI_BROWSER_TOOLS_RUNTIME_CONTRACT)(
 
     await session.session.prompt("/browser-tools on");
     expect(session.session.getActiveToolNames()).toContain("agent_browser");
+    expect(
+      session.session.agent.state.tools.filter(
+        (candidate) => candidate.name === "agent_browser",
+      ),
+    ).toHaveLength(1);
     const tool = session.session.agent.state.tools.find(
       (candidate) => candidate.name === "agent_browser",
     );

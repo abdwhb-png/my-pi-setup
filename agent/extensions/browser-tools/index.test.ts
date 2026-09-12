@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   TestHooks,
   mountPolicy,
@@ -6,26 +6,12 @@ import {
 } from "../__tests__/policy-fixture.ts";
 import { getToolPolicy } from "../_shared/tool-policy/index.ts";
 
-let upstreamAvailable = true;
-let upstreamCalls = 0;
-
-mock.module(
-  "pi-agent-browser-native/dist/extensions/agent-browser/index.js",
-  () => ({
-    default(pi: { registerTool(definition: { name: string }): void }) {
-      upstreamCalls += 1;
-      if (!upstreamAvailable) return;
-      pi.registerTool({ name: "agent_browser" });
-      pi.registerTool({ name: "agent_browser_web_search" });
-    },
-  }),
-);
-
 const { default: browserToolsExtension } = await import("./index.ts");
 
 function registerRuntime(options: {
   requested?: string[];
   childAllowed?: string[];
+  nativeOrder?: "absent" | "after" | "before";
 } = {}) {
   const tools = new Map<string, { name: string }>();
   const commands = new Map<string, { handler: Function }>();
@@ -60,6 +46,12 @@ function registerRuntime(options: {
       activeTools = [...names];
     },
   };
+  const registerNativeTools = () => {
+    pi.registerTool({ name: "agent_browser" });
+    pi.registerTool({ name: "agent_browser_web_search" });
+  };
+  const nativeOrder = options.nativeOrder ?? "before";
+  if (nativeOrder === "before") registerNativeTools();
   const host = {
     registered: () => ["read", ...tools.keys()],
     active: pi.getActiveTools,
@@ -82,34 +74,37 @@ function registerRuntime(options: {
     getToolPolicy().setRole(payload as any),
   );
   browserToolsExtension(pi as any);
+  if (nativeOrder === "after") registerNativeTools();
   return { commands, hooks, pi, tools };
 }
 
-beforeEach(() => {
-  upstreamAvailable = true;
-  upstreamCalls = 0;
-});
-
 describe("browser-tools", () => {
-  test("loads the native extension but hides its tools until the user grants access", async () => {
-    const runtime = registerRuntime();
-    const notices: Array<[string, string | undefined]> = [];
-    const ctx = {
-      ui: {
-        notify(message: string, level?: string) {
-          notices.push([message, level]);
-        },
-      },
-    };
-
-    runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
-    expect(upstreamCalls).toBe(1);
-    expect(runtime.pi.getActiveTools()).toEqual(["read"]);
-
-    await runtime.commands.get("browser-tools")!.handler("on", ctx);
-    expect(runtime.pi.getActiveTools()).toEqual(["read", "agent_browser"]);
-    expect(notices.at(-1)).toEqual(["Browser tools: manual", "info"]);
+  test("does not register or own the native Agent Browser tools", () => {
+    const runtime = registerRuntime({ nativeOrder: "absent" });
+    expect(runtime.tools.size).toBe(0);
   });
+
+  test.each(["before", "after"] as const)(
+    "hides a native extension loaded %s the policy wrapper until the user grants access",
+    async (nativeOrder) => {
+      const runtime = registerRuntime({ nativeOrder });
+      const notices: Array<[string, string | undefined]> = [];
+      const ctx = {
+        ui: {
+          notify(message: string, level?: string) {
+            notices.push([message, level]);
+          },
+        },
+      };
+
+      runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
+      expect(runtime.pi.getActiveTools()).toEqual(["read"]);
+
+      await runtime.commands.get("browser-tools")!.handler("on", ctx);
+      expect(runtime.pi.getActiveTools()).toEqual(["read", "agent_browser"]);
+      expect(notices.at(-1)).toEqual(["Browser tools: manual", "info"]);
+    },
+  );
 
   test("revokes access and blocks stale calls without stopping upstream ownership", async () => {
     const runtime = registerRuntime();
@@ -176,8 +171,7 @@ describe("browser-tools", () => {
     ]);
 
     restricted.hooks.get("session_shutdown")!({}, ctx);
-    upstreamAvailable = false;
-    const unavailable = registerRuntime();
+    const unavailable = registerRuntime({ nativeOrder: "absent" });
     unavailable.hooks.get("session_start")!({ reason: "startup" }, ctx);
     await unavailable.commands.get("browser-tools")!.handler("on", ctx);
 		expect(notices.at(-1)).toEqual(["Browser tools: unavailable", "warning"]);

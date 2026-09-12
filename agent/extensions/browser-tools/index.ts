@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import agentBrowserExtension from "pi-agent-browser-native/dist/extensions/agent-browser/index.js";
 import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
 
 const PRIMARY_TOOL = "agent_browser";
@@ -8,8 +7,6 @@ const MANAGED_TOOLS = [PRIMARY_TOOL, OPTIONAL_SEARCH_TOOL] as const;
 const MANAGED_TOOL_SET = new Set<string>(MANAGED_TOOLS);
 
 export default function browserToolsExtension(pi: ExtensionAPI): void {
-    agentBrowserExtension(pi);
-
     let manualGrant = false;
     const visibility = registerToolPolicyContribution(
         pi,
