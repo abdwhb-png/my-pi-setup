@@ -326,7 +326,7 @@ describe.skipIf(process.platform !== "linux" ||
                 exitCode: 37,
             },
             sandboxExecutionContext: {
-                version: 1,
+                version: 2,
                 profile: "bash-general",
                 network: {
                     loopback: {
@@ -338,12 +338,11 @@ describe.skipIf(process.platform !== "linux" ||
                 },
             },
         });
-        expect(modelInputs[0]?.systemPrompt).toContain(
-            "Sandbox execution context v1",
-        );
-        expect(modelInputs[0]?.systemPrompt).toContain('"analysis-strict"');
-        expect(modelInputs[0]?.systemPrompt).toContain(
-            '"hostBridgePorts":[]',
+        expect(modelInputs[0]?.systemPrompt).not.toContain("Sandbox execution context v1");
+        expect(modelInputs[0]?.messages).toContain("Current shell execution context");
+        expect(modelInputs[0]?.messages).toContain('analysis-strict');
+        expect(modelInputs[0]?.messages).toContain(
+            '\\"hostBridgePorts\\":[]',
         );
         expect(modelInputs.at(-1)?.messages).toContain(
             "real-safe-bash-error",

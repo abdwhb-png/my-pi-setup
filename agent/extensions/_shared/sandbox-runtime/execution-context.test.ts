@@ -8,6 +8,7 @@ import {
     createSandboxExecutionContext,
     formatSandboxSystemContext,
     injectSandboxSystemContext,
+    parseSandboxExecutionContext,
     type SandboxModelContextSnapshotV1,
 } from "./execution-context.ts";
 
@@ -52,7 +53,33 @@ const policy: SandboxPolicy = {
     docker: { mode: "disabled" },
 };
 
-describe("SandboxExecutionContextV1", () => {
+describe("Sandbox execution context", () => {
+    test("reports configured resource openings and private HOME in v2", () => {
+        const context = createSandboxExecutionContext({
+            ...policy,
+            environment: { ...policy.environment, set: { ...policy.environment.set, HOME: "/home/sandbox", PATH: "/usr/bin:/home/test/bin" } },
+            resources: {
+                unixSockets: ["/run/user/1000/service.sock"],
+                tcpPublications: [
+                    { transport: "tcp", scope: "host", listen: "127.0.0.1:8080", target: "127.0.0.1:3000" },
+                    { transport: "tcp", scope: "lan", listen: "192.168.1.10:8081", target: "127.0.0.1:3001" },
+                ],
+            },
+        }, lease, { homeDir: "/home/test" });
+        expect(context.version).toBe(2);
+        expect(context).toMatchObject({
+            home: { path: "/home/sandbox", namespace: "lease-private" },
+            environment: { path: ["/usr/bin", "~/bin"] },
+            ipc: { hostUserDbus: "not-inherited", hostUnixSockets: ["/run/user/1000/service.sock"] },
+            network: { loopback: { localListeners: "published", publications: [
+                { transport: "tcp", scope: "host", listen: "127.0.0.1:8080", target: "127.0.0.1:3000" },
+                { transport: "tcp", scope: "lan", listen: "192.168.1.10:8081", target: "127.0.0.1:3001" },
+            ] } },
+        });
+        expect(parseSandboxExecutionContext(context)).toEqual(context);
+        expect(JSON.stringify(context)).not.toContain("top-secret-value");
+        expect(parseSandboxExecutionContext({ ...context, ipc: { hostUnixSockets: "*" } })).toBeUndefined();
+    });
     test("is derived from the final policy with stable aliases and names only", () => {
         const context = createSandboxExecutionContext(policy, lease, {
             homeDir: "/home/test",
@@ -60,7 +87,8 @@ describe("SandboxExecutionContextV1", () => {
         });
 
         expect(context).toEqual({
-            version: 1,
+            version: 2,
+            home: { path: "<sandbox-home>", namespace: "lease-private" },
             profile: "bash-general",
             filesystem: {
                 allowRead: [
@@ -86,12 +114,13 @@ describe("SandboxExecutionContextV1", () => {
                     hostBridgeTransport: "managed-policy-proxy",
                     unlistedHostPorts: "blocked",
                     localListeners: "sandbox-only",
+                    publications: [],
                 },
             },
             tmp: { path: "/tmp", namespace: "host" },
             ipc: {
-                hostUserDbus: "unavailable",
-                hostUnixSockets: "unavailable",
+                hostUserDbus: "not-inherited",
+                hostUnixSockets: [],
             },
             docker: {
                 mode: "off",
@@ -100,6 +129,7 @@ describe("SandboxExecutionContextV1", () => {
                 hostAccessException: false,
             },
             environment: {
+                path: [],
                 inherit: ["LANG", "TERM"],
                 set: ["API_TOKEN", "HOME", "LANG"],
                 deny: ["SSH_AUTH_SOCK"],
@@ -110,6 +140,18 @@ describe("SandboxExecutionContextV1", () => {
         expect(serialized).not.toContain("top-secret-value");
         expect(serialized).not.toContain("pi-sandbox-random");
         expect(serialized).not.toContain("lease-random");
+        expect(parseSandboxExecutionContext(context)).toEqual(context);
+        const legacy = {
+            ...context, version: 1,
+            ipc: { hostUserDbus: "unavailable", hostUnixSockets: "unavailable" },
+            network: { ...context.network, loopback: { ...context.network.loopback } },
+            environment: { inherit: ["LANG", "TERM"], set: ["API_TOKEN", "HOME", "LANG"], deny: ["SSH_AUTH_SOCK"] },
+        };
+        Reflect.deleteProperty(legacy, "home");
+        Reflect.deleteProperty(legacy.network.loopback, "publications");
+        const original = structuredClone(legacy);
+        expect<unknown>(parseSandboxExecutionContext(legacy)).toEqual(original);
+        expect(legacy).toEqual(original);
     });
 
     test("formats compact facts and injects one idempotent section", () => {

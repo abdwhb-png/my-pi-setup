@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import {
     createSandboxExecutionContext,
-    type SandboxProfileContextsV1,
+    type SandboxProfileContexts,
 } from "../../_shared/sandbox-runtime/execution-context.ts";
 import {
     SandboxExecutionError,
@@ -30,7 +30,7 @@ export interface SandboxExecutionHandle {
 export interface SandboxService {
     probe(): Promise<SandboxCapabilities>;
     startBashSession(cwd: string): Promise<void>;
-    getProfileContexts(): SandboxProfileContextsV1;
+    getProfileContexts(): SandboxProfileContexts;
     prepareBash(command: SandboxCommand): Promise<SandboxSpawnSpec>;
     prepareThinkBash(command: SandboxCommand): Promise<SandboxSpawnSpec>;
     prepareAnalysis(
@@ -156,7 +156,7 @@ class DefaultSandboxService implements SandboxService {
         });
     }
 
-    getProfileContexts(): SandboxProfileContextsV1 {
+    getProfileContexts(): SandboxProfileContexts {
         this.#assertOpen();
         if (!this.#bashLease || !this.#bashCwd) {
             throw new SandboxExecutionError("setup-failed");

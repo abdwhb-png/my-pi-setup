@@ -91,8 +91,8 @@ describe("sandbox service", () => {
             },
             tmp: { namespace: "lease-private" },
             ipc: {
-                hostUserDbus: "unavailable",
-                hostUnixSockets: "unavailable",
+                hostUserDbus: "not-inherited",
+                hostUnixSockets: [],
             },
         });
         expect(Array.isArray(bashAllowWrite)).toBe(true);

@@ -7,7 +7,7 @@ import {
     sandboxErrorMessage,
     type SandboxErrorCode,
 } from "../../_shared/sandbox-runtime/errors.ts";
-import type { SandboxExecutionContextV1 } from "../../_shared/sandbox-runtime/execution-context.ts";
+import type { SandboxExecutionContext } from "../../_shared/sandbox-runtime/execution-context.ts";
 
 export {
     SANDBOX_ERROR_CODES,
@@ -120,7 +120,7 @@ export interface SandboxStatusSupervision {
 
 export interface SandboxSpawnSpec {
     execution?: ExecutionProvenance;
-    sandboxContext?: SandboxExecutionContextV1;
+    sandboxContext?: SandboxExecutionContext;
     file: string;
     args: string[];
     cwd: string;

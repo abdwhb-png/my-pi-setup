@@ -6,16 +6,17 @@ Sandbox runtime contract and records local, redacted attempt telemetry for
 later review. It exports installation functions and is not a Pi extension
 entrypoint.
 
-The shell profile selects Zerobox or explicitly approved host execution.
-`/sandbox off` requests the authorized host profile. `--no-sandbox` can use an
-existing host grant and never creates one. The strict Think engine stays active.
-Set `hostCapability: "editor" | "dependencies" | "dev-services"` to request an
-existing local integration grant with one literal command. Keep the `command`
-argument on the `pi-permission-system` Bash surface. Apply every Safe Bash guard
-before dispatch. See [the capability contract](../../sandbox/docs/shell-capabilities.md).
-Use `editor <project-file>` for the editor capability. The saved local grant
-selects the actual editor launcher, so the model contract does not depend on a
-product name.
+Select Zerobox with `/sandbox mode sandbox`, or select globally authorized host
+execution with `/sandbox mode host`. Use ordinary commands through the same
+route as `bash`. Legacy `hostCapability` parameters are rejected before launch.
+Keep the `command` argument on the `pi-permission-system` Bash surface and apply
+every Safe Bash guard before dispatch. Preserve the strict Think environment
+independently of shell mode. See [the mode contract](../../sandbox/docs/shell-capabilities.md).
+
+Both shell tools share stable presentation and execution guidance. Current
+sandbox facts and Safe Bash checks appear in one ephemeral model context.
+Per-tool rewrites and additional Safe Bash checks remain independent. See the
+[design and validation record](../../../../docs/brainstorming/2026-09-12-shared-shell-context-design.md).
 
 Pattern matching cannot prove a command harmless, and processes running as the same OS user can modify local telemetry.
 
@@ -55,7 +56,7 @@ Actions:
 
 Every matching group is evaluated, so allowing one group cannot bypass another matching group's `ask` or `deny` policy.
 
-The `safe_bash` tool description and `promptSnippet` always reflect live state: `Mode`, per-group `allow`/`ask`/`cwd-only`/`deny(default)`, `AllowedShell` bypass list, and `native-redirect` status. `before_agent_start` and `/safe-bash reload` refresh it, so the LLM sees what will be blocked before calling `rm` or equivalents.
+The description and `promptSnippet` stay stable. Before each model request, the shared context reports current tool availability (`replace/coexist`), per-group `allow`/`ask`/`cwd-only`/`deny(default)`, `AllowedShell` native-redirect exceptions, and `native-redirect` status. These facts appear only while `safe_bash` is active. Use `/safe-bash reload` to reload its guard configuration and `/safe-bash status` to inspect the same summary. Selecting tool availability does not change sandbox/host execution mode.
 
 `allowDangerous` is removed and ignored. `safeBash.mode` remains unchanged: `replace` removes raw `bash`, while `coexist` exposes both tools.
 

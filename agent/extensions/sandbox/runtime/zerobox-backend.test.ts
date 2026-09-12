@@ -145,7 +145,7 @@ describe("Zerobox backend", () => {
             });
             expect(JSON.stringify(spec)).not.toContain("must-not-pass");
             expect(spec.sandboxContext).toMatchObject({
-                version: 1,
+                version: 2,
                 profile: "bash-general",
                 network: {
                     allow: ["example.com", "localhost:8317"],
@@ -157,8 +157,18 @@ describe("Zerobox backend", () => {
                         hostBridgePorts: [8317],
                         hostBridgeTransport: "managed-policy-proxy",
                         unlistedHostPorts: "blocked",
-                        localListeners: "sandbox-only",
+                        localListeners: "published",
+                        publications: [{
+                            transport: "tcp",
+                            scope: "host",
+                            listen: "127.0.0.1:41001",
+                            target: "127.0.0.1:41002",
+                        }],
                     },
+                },
+                ipc: {
+                    hostUserDbus: "not-inherited",
+                    hostUnixSockets: [join(parent, "service.sock")],
                 },
                 environment: {
                     inherit: expect.arrayContaining(["USER", "CUSTOM"]),

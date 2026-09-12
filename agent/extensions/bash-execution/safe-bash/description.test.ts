@@ -1,23 +1,22 @@
 import { describe, expect, it } from "bun:test";
 
-import { buildSafeBashDescription, buildSafeBashPromptSnippet, SAFE_BASH_BASE_DESCRIPTION } from "./description";
+import { buildSafeBashContext } from "./description";
 
-describe("buildSafeBashDescription", () => {
+describe("buildSafeBashContext", () => {
     it("default config shows mode and deny-default count", () => {
-        const result = buildSafeBashDescription({
+        const result = buildSafeBashContext({
             config: { mode: "coexist", guardPolicy: {}, allowedShellCommands: [] },
             enforceNativeTools: true,
         });
-        expect(result.startsWith(SAFE_BASH_BASE_DESCRIPTION)).toBe(true);
-        expect(result).toContain("selected isolation profile");
-        expect(result).toContain("Mode=coexist");
+        expect(result).toStartWith("safe_bash:");
+        expect(result).toContain("Tool availability=coexist");
         expect(result).toContain("deny(default)=");
         expect(result).toContain("bypass=none");
         expect(result).toContain("native-redirect: grep/find/ls");
     });
 
     it("shows allow and ask groups explicitly", () => {
-        const result = buildSafeBashDescription({
+        const result = buildSafeBashContext({
             config: {
                 mode: "replace",
                 guardPolicy: { sudo: "allow", rm: "ask", chmod: "ask" },
@@ -25,13 +24,13 @@ describe("buildSafeBashDescription", () => {
             },
             enforceNativeTools: true,
         });
-        expect(result).toContain("Mode=replace");
+        expect(result).toContain("Tool availability=replace");
         expect(result).toContain("allow=[sudo]");
         expect(result).toContain("ask=[chmod,rm]");
     });
 
     it("shows allowedShellCommands bypass", () => {
-        const result = buildSafeBashDescription({
+        const result = buildSafeBashContext({
             config: {
                 mode: "coexist",
                 guardPolicy: {},
@@ -43,7 +42,7 @@ describe("buildSafeBashDescription", () => {
     });
 
     it("shows cwd-only groups", () => {
-        const result = buildSafeBashDescription({
+        const result = buildSafeBashContext({
             config: {
                 mode: "coexist",
                 guardPolicy: {
@@ -58,7 +57,7 @@ describe("buildSafeBashDescription", () => {
     });
 
     it("shows relaxed native-redirect when not enforced", () => {
-        const result = buildSafeBashDescription({
+        const result = buildSafeBashContext({
             config: { mode: "coexist", guardPolicy: {}, allowedShellCommands: [] },
             enforceNativeTools: false,
         });
@@ -70,49 +69,10 @@ describe("buildSafeBashDescription", () => {
         for (const g of ["sudo", "rm", "mkfs", "dd", "chmod", "chown"]) {
             guardPolicy[g] = "allow";
         }
-        const result = buildSafeBashDescription({
+        const result = buildSafeBashContext({
             config: { mode: "replace", guardPolicy, allowedShellCommands: ["grep"] },
             enforceNativeTools: true,
         });
         expect(result.length).toBeLessThan(600);
-    });
-});
-
-describe("buildSafeBashPromptSnippet", () => {
-    it("contains mode and bypass", () => {
-        const result = buildSafeBashPromptSnippet({
-            config: { mode: "coexist", guardPolicy: {}, allowedShellCommands: [] },
-            enforceNativeTools: true,
-        });
-        expect(result).toContain("mode=coexist");
-        expect(result).toContain("bypass:none");
-        expect(result).toContain("native=enforced");
-    });
-
-    it("lists allow and ask", () => {
-        const result = buildSafeBashPromptSnippet({
-            config: {
-                mode: "replace",
-                guardPolicy: { sudo: "allow", rm: "ask" },
-                allowedShellCommands: ["grep"],
-            },
-            enforceNativeTools: false,
-        });
-        expect(result).toContain("allow:sudo");
-        expect(result).toContain("ask:rm");
-        expect(result).toContain("native=relaxed");
-    });
-
-    it("lists cwd-only groups in the prompt snippet", () => {
-        const result = buildSafeBashPromptSnippet({
-            config: {
-                mode: "coexist",
-                guardPolicy: { rm: "cwd-only" },
-                allowedShellCommands: [],
-            },
-            enforceNativeTools: true,
-        });
-        expect(result).toContain("cwd:rm");
-        expect(result).toContain("native=enforced");
     });
 });

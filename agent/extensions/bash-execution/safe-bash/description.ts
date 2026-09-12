@@ -1,9 +1,6 @@
 import { DANGER_GROUP_IDS } from "../../_shared/command-execution/guard.ts";
 import type { SafeBashConfig } from "./config.ts";
 
-export const SAFE_BASH_BASE_DESCRIPTION =
-    "Execute a shell command under the selected isolation profile and command permissions.";
-
 export interface SafeBashDescriptionInput {
     config: Pick<
         SafeBashConfig,
@@ -13,13 +10,10 @@ export interface SafeBashDescriptionInput {
 }
 
 /**
- * Build compacted tool description that encodes current safe-bash state.
- * Pure function, no PI dependencies. Keep output compact (< ~500 chars)
- * so it fits in tool definition without bloating context.
+ * Summarize current command checks for the ephemeral shell context and status command.
+ * Keep tool availability distinct from sandbox/host execution mode.
  */
-export function buildSafeBashDescription(
-    input: SafeBashDescriptionInput,
-): string {
+export function buildSafeBashContext(input: SafeBashDescriptionInput): string {
     const { config, enforceNativeTools } = input;
 
     const allow: string[] = [];
@@ -57,7 +51,7 @@ export function buildSafeBashDescription(
 
     const guardSummary = guardParts.join(" ");
 
-    const modePart = `Mode=${config.mode}`;
+    const modePart = `Tool availability=${config.mode}`;
 
     const bypass =
         config.allowedShellCommands.length > 0
@@ -70,32 +64,7 @@ export function buildSafeBashDescription(
 
     // Guidance for agent to avoid wasted attempts
     const guidance =
-        "Denied groups stay blocked; ask groups require user confirmation.";
+        "Denied groups stay blocked; ask groups require approval unless already approved for the session.";
 
-    return `${SAFE_BASH_BASE_DESCRIPTION} ${modePart}. Guard: ${guardSummary}. AllowedShell: ${bypass}. ${nativePart}. ${guidance}`;
-}
-
-export function buildSafeBashPromptSnippet(
-    input: SafeBashDescriptionInput,
-): string {
-    // One-liner for Available tools section, even more compact
-    const allow: string[] = [];
-    const ask: string[] = [];
-    const cwdOnly: string[] = [];
-    for (const [k, v] of Object.entries(input.config.guardPolicy)) {
-        if (v === "allow") allow.push(k);
-        else if (v === "ask") ask.push(k);
-        else if (v === "cwd-only") cwdOnly.push(k);
-    }
-    allow.sort((a, b) => a.localeCompare(b));
-    ask.sort((a, b) => a.localeCompare(b));
-    cwdOnly.sort((a, b) => a.localeCompare(b));
-    const bypass = input.config.allowedShellCommands.join(",") || "none";
-    const parts: string[] = [`mode=${input.config.mode}`];
-    if (allow.length > 0) parts.push(`allow:${allow.join(",")}`);
-    if (ask.length > 0) parts.push(`ask:${ask.join(",")}`);
-    if (cwdOnly.length > 0) parts.push(`cwd:${cwdOnly.join(",")}`);
-    parts.push(`bypass:${bypass}`);
-    parts.push(input.enforceNativeTools ? "native=enforced" : "native=relaxed");
-    return `🔒guarded shell — ${parts.join(" ")}`;
+    return `safe_bash: ${modePart}. Guard: ${guardSummary}. AllowedShell (native-redirect exceptions): ${bypass}. ${nativePart}. ${guidance}`;
 }

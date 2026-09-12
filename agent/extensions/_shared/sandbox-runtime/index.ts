@@ -4,8 +4,8 @@ import type { CreateBashOperationsOptions } from "../command-execution/exec.ts";
 import type { ExecutionObserver } from "../execution-provenance/types.ts";
 import type { AnalysisRequest, AnalysisResult } from "./analysis-protocol.ts";
 import type { DockerAccessSummary } from "./docker-summary.ts";
-import type { SandboxExecutionContextV1 } from "./execution-context.ts";
-import type { SandboxProfileContextsV1 } from "./execution-context.ts";
+import type { SandboxExecutionContext } from "./execution-context.ts";
+import type { SandboxProfileContexts } from "./execution-context.ts";
 
 export {
     SANDBOX_ERROR_CODES,
@@ -37,7 +37,7 @@ export interface SandboxAnalysisRuntime {
 export interface SandboxBashOperationOptions {
     beforeDispatch?: (sandboxFingerprint: string | undefined) => void;
     onExecution?: ExecutionObserver;
-    onSandboxContext?: (context: SandboxExecutionContextV1) => void;
+    onSandboxContext?: (context: SandboxExecutionContext) => void;
     stdin?: string;
     rewriteCommand?: CreateBashOperationsOptions["rewriteCommand"];
 }
@@ -49,7 +49,7 @@ export type SandboxRuntimeSnapshot =
     | { state: "error" }
     | {
           state: "enabled";
-          contexts?: SandboxProfileContextsV1;
+          contexts?: SandboxProfileContexts;
           dockerAccess?: DockerAccessSummary;
           sandboxFingerprint?: string;
           createBashOperations(

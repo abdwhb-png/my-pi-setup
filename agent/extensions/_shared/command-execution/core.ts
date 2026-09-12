@@ -14,7 +14,7 @@ import {
     type ExecutionProvenance,
 } from "../execution-provenance/index.ts";
 import { recordSandboxExecutionContext } from "../sandbox-runtime/execution-context.ts";
-import type { SandboxExecutionContextV1 } from "../sandbox-runtime/execution-context.ts";
+import type { SandboxExecutionContext } from "../sandbox-runtime/execution-context.ts";
 import type { CreateBashOperationsOptions } from "./exec.ts";
 import { classifySafeExecutionError, SafeExecutionError } from "./failure.ts";
 import {
@@ -95,7 +95,7 @@ export interface CommandExecutionService<
 
 export interface CommandExecutionOperationsOptions {
     onExecution?: ExecutionObserver;
-    onSandboxContext?: (context: SandboxExecutionContextV1) => void;
+    onSandboxContext?: (context: SandboxExecutionContext) => void;
     stdin?: string;
     rewriteCommand?: CreateBashOperationsOptions["rewriteCommand"];
 }

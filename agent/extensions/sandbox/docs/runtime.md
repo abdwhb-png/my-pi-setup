@@ -45,6 +45,39 @@ A missing or mismatched binary, invalid policy, failed setup protocol or unavail
 
 Docker uses its policy broker and a private connection. A Docker authorization does not mount the daemon socket. Its global ceiling and project activation are checked before each new admission.
 
+## Model context
+
+Before each model request, Pi assembles one ephemeral `pi.shell-context.v2`
+message through its `context` hooks. This message replaces earlier shell facts
+for that request and is never appended to session history. Stable tool
+descriptions and common guidelines contain no changing policy values.
+
+The context resolves configuration without starting Zerobox. An unchanged
+configuration reports the admitted runtime's policy facts. A valid change
+reports `pending`; new openings are not advertised as active. The next shell
+admission prepares the replacement through the existing lifecycle. Invalid
+configuration, missing policy or an unavailable runtime reports the block and
+preserves execution gates. Already admitted calls keep their original receipts
+and remain subject to the existing revocation rules.
+
+Version 2 execution receipts derive from the materialized backend policy and
+include private HOME, PATH entries, temporary namespace, network policy, exact
+Unix socket grants and host/LAN TCP publications. Runtime snapshots use the
+same policy builders. These grants do not prove that an executable exists or a
+service is reachable. Environment values other than HOME and PATH are omitted.
+Display aliases such as `~` identify host paths; sandbox shell expansion still
+uses the private HOME. Version 1 receipts remain readable without rewriting
+session history or inferring new grants from missing fields.
+
+Host context reports the host environment without shell isolation claims.
+Think and Analysis remain separate strict environments. Neither disabling a
+project sandbox nor selecting host mode through project configuration is
+allowed. Host execution still requires global authorization and explicit
+session selection.
+
+Use `/reload` or a new Pi session to load changes to these extensions. This
+presentation update requires no configuration migration or Zerobox reinstall.
+
 ## Qualification and activation
 
 Linux and WSL are the supported targets. The current candidate's integration evidence was obtained on WSL. Native Linux, native Windows execution and a connection from a separate LAN peer require distinct evidence.

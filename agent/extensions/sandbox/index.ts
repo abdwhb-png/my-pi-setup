@@ -45,10 +45,6 @@ import {
 import { createWidget } from "../_shared/fancy-footer";
 import type { DockerAccessSummary } from "../_shared/sandbox-runtime/docker-summary.ts";
 import {
-    injectSandboxSystemContext,
-    type SandboxModelContextSnapshotV1,
-} from "../_shared/sandbox-runtime/execution-context.ts";
-import {
     claimSandboxRuntime,
     getSandboxActiveExecutionCount,
     getSandboxRuntime,
@@ -109,6 +105,7 @@ import {
     formatActiveDocker,
 } from "./docker-presentation.ts";
 import { sandboxDoctor } from "./doctor.ts";
+import { registerSandboxModelContext } from "./model-context.ts";
 import {
     DOCKER_OPERATIONS,
     SandboxExecutionError,
@@ -1325,37 +1322,7 @@ export function createSandboxExtension(
         default: false,
     });
 
-    pi.on("before_agent_start", (event) => {
-        const runtime = getSandboxRuntime();
-        const snapshot: SandboxModelContextSnapshotV1 = {
-            version: 1,
-            state:
-                runtime.state === "uninitialized"
-                    ? "reconfiguring"
-                    : runtime.state,
-            ...(runtime.state === "enabled" && runtime.contexts
-                ? { profiles: runtime.contexts }
-                : {}),
-        };
-        let shellContext: string;
-        try {
-            const policy = currentShellPolicy();
-            shellContext = policy
-                ? formatShellPolicy(policy)
-                : "Shell capabilities unavailable. Shell calls are blocked. Native file tools remain on the host.";
-        } catch (error) {
-            shellContext = `Shell capabilities unavailable: ${errorMessage(error)}`;
-        }
-        const cleanPrompt = event.systemPrompt
-            .replace(
-                /\n?<!-- pi:shell-capabilities:start -->[\s\S]*?<!-- pi:shell-capabilities:end -->/g,
-                "",
-            )
-            .trimEnd();
-        return {
-            systemPrompt: `${injectSandboxSystemContext(cleanPrompt, snapshot).trimEnd()}\n<!-- pi:shell-capabilities:start -->\n${shellContext}\n<!-- pi:shell-capabilities:end -->`,
-        };
-    });
+    registerSandboxModelContext(pi);
 
     let sandboxEnabled = false;
     let sandboxFooterState: SandboxFooterState = "off";

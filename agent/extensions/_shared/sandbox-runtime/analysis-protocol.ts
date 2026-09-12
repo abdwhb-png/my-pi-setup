@@ -5,7 +5,7 @@ import {
 } from "../execution-provenance/index.ts";
 import {
     parseSandboxExecutionContext,
-    type SandboxExecutionContextV1,
+    type SandboxExecutionContext,
 } from "./execution-context.ts";
 
 export const ANALYSIS_LIMITS = Object.freeze({
@@ -87,7 +87,7 @@ export interface NormalizedAnalysisRequest extends Omit<
 
 export interface AnalysisResult {
     execution?: ExecutionProvenance;
-    sandboxContext?: SandboxExecutionContextV1;
+    sandboxContext?: SandboxExecutionContext;
     output: string;
     stderr: string;
     runtime: AnalysisWorker;
@@ -101,7 +101,7 @@ export type AnalysisHostResponse =
           ok: false;
           error: string;
           execution?: ExecutionProvenance;
-          sandboxContext?: SandboxExecutionContextV1;
+          sandboxContext?: SandboxExecutionContext;
       };
 
 export function parseAnalysisHostResponse(

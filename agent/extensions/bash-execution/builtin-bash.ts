@@ -26,6 +26,7 @@ import {
     getSandboxRuntime,
     type SandboxBashOperationOptions,
 } from "../_shared/sandbox-runtime/index.ts";
+import { shellToolPresentation } from "../_shared/shell-presentation/index.ts";
 import { CapabilityError } from "../sandbox/capabilities/authority.ts";
 import {
     currentShellPolicy,
@@ -77,7 +78,11 @@ function resolveForcedSandboxOperations(
     return {
         exec: async (command, cwd, executionOptions) => {
             const policy = await resolveForcedSandboxPolicyForExecution(cwd);
-            const operations = createConfiguredSandboxOperations(policy, options, true);
+            const operations = createConfiguredSandboxOperations(
+                policy,
+                options,
+                true,
+            );
             return trackShellOperation(policy, command, () =>
                 operations.exec(command, cwd, executionOptions),
             );
@@ -113,8 +118,8 @@ export function resolveBashOperations(
                         ? {
                               mode:
                                   currentPolicy.mode === "host"
-                                      ? "host" as const
-                                      : "sandbox" as const,
+                                      ? ("host" as const)
+                                      : ("sandbox" as const),
                               shellProfile: currentPolicy.profile,
                           }
                         : {}),
@@ -160,6 +165,7 @@ export function registerBuiltinBash(
     pi.registerTool(
         defineTool<typeof bashWithStdinSchema, BashToolDetails | undefined>({
             ...bashDefinition,
+            ...shellToolPresentation("bash"),
             name: "bash",
             parameters: bashWithStdinSchema,
             label: "bash",

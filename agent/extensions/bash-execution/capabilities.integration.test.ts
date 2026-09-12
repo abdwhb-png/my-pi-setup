@@ -224,7 +224,8 @@ test("real Pi rejects legacy safe_bash hostCapability payload before execution",
             extensions: [resolve(import.meta.dir, "index.ts")],
             propagateErrors: false,
         });
-        await session.run(
+        const realTools = session.session.agent.state.tools;
+        const running = session.run(
             when("Send legacy safe_bash hostCapability", [
                 calls("safe_bash", {
                     command: `printf legacy > '${marker}'`,
@@ -233,6 +234,9 @@ test("real Pi rejects legacy safe_bash hostCapability payload before execution",
                 says("Observed refusal"),
             ]),
         );
+        // Preserve thrown errors through Pi: the harness wrapper converts them into returned results.
+        session.session.agent.state.tools = realTools;
+        await running;
         const result = session.events.toolResultsFor("safe_bash")[0];
         expect(result?.isError).toBe(true);
         expect(result?.text).toContain("migration-required");

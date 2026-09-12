@@ -41,6 +41,8 @@ import { loadBashRewrites } from "../../_shared/command-execution/rewrites";
 import { appendCompressionFooter } from "../../_shared/compression-render";
 import type { SandboxBashOperationOptions } from "../../_shared/sandbox-runtime/index.ts";
 import { CapabilityError } from "../../_shared/shell-capability-error.ts";
+import { updateShellContext } from "../../_shared/shell-presentation/context.ts";
+import { shellToolPresentation } from "../../_shared/shell-presentation/index.ts";
 import { shouldBlockBashCall } from "./apply-mode.ts";
 import { registerSafeBashAuditCommand } from "./audit-command.ts";
 import {
@@ -49,10 +51,7 @@ import {
     type SafeBashGuardPolicy,
     type SafeBashMode,
 } from "./config.ts";
-import {
-    buildSafeBashDescription,
-    buildSafeBashPromptSnippet,
-} from "./description.ts";
+import { buildSafeBashContext } from "./description.ts";
 import {
     createSafeBashTelemetryRecorder,
     type SafeBashTelemetryRecorder,
@@ -114,7 +113,7 @@ export function registerSafeBash(
             >);
         return {
             config: {
-                mode: cfg.mode,
+                mode: currentMode,
                 guardPolicy: cfg.guardPolicy,
                 allowedShellCommands: cfg.allowedShellCommands,
             },
@@ -123,9 +122,6 @@ export function registerSafeBash(
     }
 
     function createSafeBashTool() {
-        const input = getSafeBashDescriptionInput();
-        const description = buildSafeBashDescription(input);
-        const promptSnippet = buildSafeBashPromptSnippet(input);
         const hasHostCapabilityField = (value: unknown): boolean =>
             typeof value === "object" &&
             value !== null &&
@@ -133,12 +129,7 @@ export function registerSafeBash(
         return defineTool<typeof safeBashSchema, BashToolDetails | undefined>({
             name: "safe_bash",
             label: "🔒Safe Bash",
-            description,
-            promptSnippet,
-            promptGuidelines: [
-                `safe_bash guard: ${input.config.mode} mode; blocked/ask groups per description — use native grep/find/ls when native-redirect enforced`,
-                "Select sandbox or host mode explicitly. Legacy hostCapability parameters are rejected before execution.",
-            ],
+            ...shellToolPresentation("safe_bash"),
             parameters: safeBashSchema,
             renderCall: createBashPrefixRenderer("🔒"),
             renderResult: (result, renderOptions, theme, context) => {
@@ -262,8 +253,16 @@ export function registerSafeBash(
 
     pi.on("before_agent_start", () => {
         visibility.refresh();
-        refreshSafeBashTool();
     });
+    pi.on("context", (event) => ({
+        messages: updateShellContext(
+            event.messages,
+            "checks",
+            pi.getActiveTools().includes("safe_bash")
+                ? buildSafeBashContext(getSafeBashDescriptionInput())
+                : undefined,
+        ),
+    }));
 
     pi.on("agent_end", () => {
         auditRecommendationTurnActive = false;
@@ -320,10 +319,7 @@ export function registerSafeBash(
             }
             if (arg === "status" || arg === "") {
                 const input = getSafeBashDescriptionInput();
-                ctx.ui.notify(
-                    `safe-bash mode: ${currentMode} — ${buildSafeBashDescription(input)}`,
-                    "info",
-                );
+                ctx.ui.notify(buildSafeBashContext(input), "info");
                 return;
             }
 

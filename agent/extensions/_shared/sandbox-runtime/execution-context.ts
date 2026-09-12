@@ -5,6 +5,7 @@ import type {
     SandboxLeasePaths,
     SandboxPolicy,
     SandboxProfileName,
+    SandboxTcpPublication,
 } from "../../sandbox/runtime/contracts.ts";
 import type { ExecutionProvenance } from "../execution-provenance/types.ts";
 import type { DockerAccessSummary } from "./docker-summary.ts";
@@ -50,6 +51,33 @@ export interface SandboxExecutionContextV1 {
     };
 }
 
+export interface SandboxExecutionContextV2 extends Omit<
+    SandboxExecutionContextV1,
+    "version" | "network" | "ipc" | "environment"
+> {
+    version: 2;
+    home: { path: string; namespace: "lease-private" };
+    network: Omit<SandboxExecutionContextV1["network"], "loopback"> & {
+        loopback: Omit<
+            SandboxExecutionContextV1["network"]["loopback"],
+            "localListeners"
+        > & {
+            localListeners: "sandbox-only" | "published" | "disabled";
+            publications: SandboxTcpPublication[];
+        };
+    };
+    ipc: { hostUserDbus: "not-inherited"; hostUnixSockets: string[] };
+    environment: SandboxExecutionContextV1["environment"] & { path: string[] };
+}
+
+export type SandboxExecutionContext =
+    | SandboxExecutionContextV1
+    | SandboxExecutionContextV2;
+export type SandboxProfileContexts = Record<
+    SandboxProfileName,
+    SandboxExecutionContext
+>;
+
 export type SandboxModelContextState =
     | "enabled"
     | "disabled"
@@ -59,7 +87,7 @@ export type SandboxModelContextState =
 export interface SandboxModelContextSnapshotV1 {
     version: 1;
     state: SandboxModelContextState;
-    profiles?: SandboxProfileContextsV1;
+    profiles?: SandboxProfileContexts;
 }
 
 export type SandboxProfileContextsV1 = Record<
@@ -77,7 +105,7 @@ const CONTEXT_END = "<!-- pi:sandbox-execution-context:v1:end -->";
 const REGISTRY_KEY = Symbol.for("pi.sandbox-execution-context.v1");
 
 interface SandboxExecutionContextRegistry {
-    records: Map<string, SandboxExecutionContextV1>;
+    records: Map<string, SandboxExecutionContext>;
 }
 
 function contextRegistry(): SandboxExecutionContextRegistry {
@@ -181,7 +209,7 @@ function parseDockerSummary(value: unknown): DockerAccessSummary | undefined {
     };
 }
 
-export function parseSandboxExecutionContext(
+function parseLegacySandboxExecutionContext(
     value: unknown,
 ): SandboxExecutionContextV1 | undefined {
     const context = recordValue(value);
@@ -279,9 +307,101 @@ export function parseSandboxExecutionContext(
     };
 }
 
+export function parseSandboxExecutionContext(
+    // oxlint-disable-next-line typescript/no-restricted-types -- Persisted context records require validation at the JSON boundary.
+    value: unknown,
+): SandboxExecutionContext | undefined {
+    const context = recordValue(value);
+    if (context?.version === 1)
+        return parseLegacySandboxExecutionContext(value);
+    if (context?.version !== 2) return undefined;
+    const home = recordValue(context.home);
+    const network = recordValue(context.network);
+    const loopback = recordValue(network?.loopback);
+    const ipc = recordValue(context.ipc);
+    const environment = recordValue(context.environment);
+    if (
+        !home ||
+        home.namespace !== "lease-private" ||
+        typeof home.path !== "string" ||
+        !home.path ||
+        !network ||
+        !loopback ||
+        !["sandbox-only", "published", "disabled"].includes(
+            String(loopback.localListeners),
+        ) ||
+        !Array.isArray(loopback.publications) ||
+        !ipc ||
+        ipc.hostUserDbus !== "not-inherited" ||
+        !stringArray(ipc.hostUnixSockets) ||
+        !environment ||
+        !stringArray(environment.path)
+    )
+        return undefined;
+    const publications: SandboxTcpPublication[] = [];
+    for (const entry of loopback.publications) {
+        const publication = recordValue(entry);
+        if (
+            !publication ||
+            publication.transport !== "tcp" ||
+            (publication.scope !== "host" && publication.scope !== "lan") ||
+            typeof publication.listen !== "string" ||
+            !publication.listen ||
+            typeof publication.target !== "string" ||
+            !publication.target
+        )
+            return undefined;
+        publications.push({
+            transport: "tcp",
+            scope: publication.scope,
+            listen: publication.listen,
+            target: publication.target,
+        });
+    }
+    if ((loopback.localListeners === "published") !== publications.length > 0)
+        return undefined;
+    // Validate the unchanged fields through the legacy decoder; never infer new grants from v1 records.
+    const base = parseLegacySandboxExecutionContext({
+        ...context,
+        version: 1,
+        network: {
+            ...network,
+            loopback: {
+                ...loopback,
+                localListeners:
+                    loopback.localListeners === "published"
+                        ? "sandbox-only"
+                        : loopback.localListeners,
+            },
+        },
+        ipc: { hostUserDbus: "unavailable", hostUnixSockets: "unavailable" },
+    });
+    if (!base) return undefined;
+    return {
+        ...base,
+        version: 2,
+        home: { path: home.path, namespace: "lease-private" },
+        network: {
+            ...base.network,
+            loopback: {
+                ...base.network.loopback,
+                localListeners: publications.length
+                    ? "published"
+                    : base.network.loopback.localListeners,
+                publications,
+            },
+        },
+        ipc: {
+            hostUserDbus: "not-inherited",
+            hostUnixSockets: [...ipc.hostUnixSockets],
+        },
+        environment: { ...base.environment, path: [...environment.path] },
+    };
+}
+
 export function recordSandboxExecutionContext(
     id: string,
-    context: SandboxExecutionContextV1,
+    context: SandboxExecutionContext,
 ): void {
     contextRegistry().records.set(id, structuredClone(context));
 }
@@ -292,7 +412,7 @@ export function clearSandboxExecutionContexts(): void {
 
 export function sandboxExecutionContextFromDetails(
     details: unknown,
-): SandboxExecutionContextV1 | undefined {
+): SandboxExecutionContext | undefined {
     const record = recordValue(details);
     return parseSandboxExecutionContext(record?.sandboxExecutionContext);
 }
@@ -300,7 +420,7 @@ export function sandboxExecutionContextFromDetails(
 export function resolveSandboxExecutionContext(
     id: string,
     details?: unknown,
-): SandboxExecutionContextV1 | undefined {
+): SandboxExecutionContext | undefined {
     return (
         sandboxExecutionContextFromDetails(details) ??
         contextRegistry().records.get(id)
@@ -325,7 +445,7 @@ export function mergeSandboxContextForFailure(
 
 export function withSandboxExecutionContext(
     error: unknown,
-    context: SandboxExecutionContextV1 | undefined,
+    context: SandboxExecutionContext | undefined,
 ): Error {
     const result = error instanceof Error ? error : new Error(String(error));
     if (context) {
@@ -339,7 +459,7 @@ export function withSandboxExecutionContext(
 
 export function sandboxExecutionContextFromError(
     error: unknown,
-): SandboxExecutionContextV1 | undefined {
+): SandboxExecutionContext | undefined {
     if (typeof error !== "object" || error === null) return;
     return parseSandboxExecutionContext(
         Reflect.get(error, "sandboxExecutionContext"),
@@ -408,10 +528,18 @@ export function createSandboxExecutionContext(
     policy: SandboxPolicy,
     lease: SandboxLeasePaths,
     options: SandboxExecutionContextOptions,
-): SandboxExecutionContextV1 {
+): SandboxExecutionContextV2 {
     const hostBridgePorts = explicitLoopbackPorts(policy);
     return {
-        version: 1,
+        version: 2,
+        home: {
+            path: aliasPath(
+                policy.environment.set.HOME ?? lease.homeDir,
+                lease,
+                options.homeDir,
+            ),
+            namespace: "lease-private",
+        },
         profile: policy.name,
         filesystem: {
             allowRead: aliasPaths(
@@ -460,19 +588,32 @@ export function createSandboxExecutionContext(
                         ? "managed-policy-proxy"
                         : "disabled",
                 unlistedHostPorts: "blocked",
-                localListeners:
-                    policy.network.allowLocalBinding === true
-                        ? "sandbox-only"
-                        : "disabled",
+                localListeners: policy.resources?.tcpPublications.length
+                    ? "published"
+                    : policy.network.allowLocalBinding === true
+                      ? "sandbox-only"
+                      : "disabled",
+                publications: (policy.resources?.tcpPublications ?? []).map(
+                    (publication) => ({ ...publication }),
+                ),
             },
         },
         tmp: { path: "/tmp", namespace: policy.tmpNamespace },
         ipc: {
-            hostUserDbus: "unavailable",
-            hostUnixSockets: "unavailable",
+            hostUserDbus: "not-inherited",
+            hostUnixSockets: aliasPaths(
+                policy.resources?.unixSockets ?? [],
+                lease,
+                options.homeDir,
+            ),
         },
         docker: summarizeDockerAccess(policy.docker, options.nowMs),
         environment: {
+            path: aliasPaths(
+                (policy.environment.set.PATH ?? "").split(":").filter(Boolean),
+                lease,
+                options.homeDir,
+            ),
             inherit: [...policy.environment.inherit],
             set: Object.keys(policy.environment.set).toSorted(),
             deny: [...policy.environment.deny],

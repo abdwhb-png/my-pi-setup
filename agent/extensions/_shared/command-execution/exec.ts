@@ -16,7 +16,7 @@ import {
     type ExecutionObserver,
     type ExecutionProvenance,
 } from "../execution-provenance/types.ts";
-import type { SandboxExecutionContextV1 } from "../sandbox-runtime/execution-context.ts";
+import type { SandboxExecutionContext } from "../sandbox-runtime/execution-context.ts";
 
 export const MAX_STDIN_BYTES = 1_048_576;
 
@@ -50,7 +50,7 @@ export type BashSpawn = (
 
 export interface PreparedBashSpawn {
     execution?: ExecutionProvenance;
-    sandboxContext?: SandboxExecutionContextV1;
+    sandboxContext?: SandboxExecutionContext;
     file: string;
     args: string[];
     cwd: string;

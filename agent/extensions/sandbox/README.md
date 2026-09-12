@@ -11,7 +11,7 @@ Use exactly two active configuration locations:
 
 Choose the execution mode with `/sandbox mode sandbox` or `/sandbox mode host`. Host mode requires global `host.allowed: true` and an explicit selection in the current session. The displayed profiles `default`, `custom` and `host` describe the result. Do not store a profile selector.
 
-A change to either configuration file is checked before the next shell admission. Invalid configuration blocks new calls. Setup failures never switch automatically to host execution.
+A change to either configuration file is checked before each model request and shell admission. The model sees valid changes as pending until the next shell call prepares the replacement. Invalid configuration blocks new calls. Setup failures never switch automatically to host execution.
 
 ## Commands
 
@@ -39,5 +39,6 @@ Use ordinary shell commands. Native file tools, extensions and MCP tools execute
 - [Docker authority](docs/docker-authority.md)
 - [Runtime and limits](docs/runtime.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Shared shell context design and validation](../../../docs/brainstorming/2026-09-12-shared-shell-context-design.md)
 
 A personal installation requires a separately approved activation of the matching Pi code, Zerobox binary and migrated configuration. Use `/reload` or start a new Pi session after activation. The widget shows the selected mode, derived profile, engine state and Docker access.

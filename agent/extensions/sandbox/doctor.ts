@@ -6,7 +6,7 @@ import {
     statSync,
 } from "node:fs";
 import { delimiter, join, matchesGlob, resolve, sep } from "node:path";
-import type { SandboxExecutionContextV1 } from "../_shared/sandbox-runtime/execution-context.ts";
+import type { SandboxExecutionContext } from "../_shared/sandbox-runtime/execution-context.ts";
 import { formatShellPolicy } from "./capabilities/runtime.ts";
 import type { LoadSandboxConfigResult } from "./index.ts";
 import {
@@ -29,7 +29,7 @@ function contains(root: string, target: string): boolean {
 export function sandboxDoctor(
     resolved: LoadSandboxConfigResult,
     executable?: string,
-    context?: SandboxExecutionContextV1,
+    context?: SandboxExecutionContext,
 ): string {
     const { config, shell } = resolved;
     const path = buildShellPath(config.environment.path);
