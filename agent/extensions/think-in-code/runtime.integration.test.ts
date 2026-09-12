@@ -719,8 +719,8 @@ describe("think-in-code real Pi runtime wiring", () => {
         expect(payloadText).toBeDefined();
         const payload = JSON.parse(payloadText!);
         expect(payload).toEqual({
-            sourceExecution: { status: 'unknown', profile: 'unknown', backend: 'unknown', tmpNamespace: 'unknown', phase: 'setup', outcome: 'pending' },
-            analysisExecution: { status: 'unknown', profile: 'unknown', backend: 'unknown', tmpNamespace: 'unknown', phase: 'setup', outcome: 'pending' },
+            sourceExecution: { status: 'unknown', profile: 'unknown', backend: 'unknown', tmpNamespace: 'unknown', phase: 'setup', outcome: 'unknown' },
+            analysisExecution: { status: 'unknown', profile: 'unknown', backend: 'unknown', tmpNamespace: 'unknown', phase: 'setup', outcome: 'unknown' },
             tool: "think_execute",
             status: "error",
             action: "command",

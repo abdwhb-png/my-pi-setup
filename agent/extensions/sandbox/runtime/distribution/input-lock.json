@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "image": "ubuntu@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61",
+  "metadata": {
+    "packages": {
+      "path": "inputs/packages.json",
+      "sha256": "476664103c93b9fe1df77326febb4cbbf73cfce2f3047b77ab6b9114a8f5757b"
+    },
+    "sha256sums": {
+      "path": "inputs/SHA256SUMS",
+      "sha256": "71c87c05ca503415c7df84b6d134228cd7933be977b4cffe2c74297af1cd52bf"
+    },
+    "shellBuild": {
+      "path": "inputs/shell-build-inputs.json",
+      "sha256": "a1a5f402170f7cf89ad7642b8921584ff485f0b58fc1950e602dc0828254477e"
+    },
+    "assets": {
+      "path": "inputs/assets.json",
+      "sha256": "9690f79c9855486746682782cb76fdecc3e4856f179d425fd735a876eae4f5f0"
+    },
+    "analysis": {
+      "path": "inputs/analysis-packages.json",
+      "sha256": "8c0302cd390bfa6636ca141cff97d16a91e1dfbbc10c7413648195355e2540dd"
+    }
+  },
+  "files": [
+    {
+      "path": "downloads/node-v24.18.0-linux-x64.tar.xz",
+      "sha256": "55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742"
+    },
+    {
+      "path": "downloads/bun-linux-x64-baseline.zip",
+      "sha256": "a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7"
+    }
+  ],
+  "packageIndex": "packages",
+  "builderPackageLock": "shellBuild"
+}

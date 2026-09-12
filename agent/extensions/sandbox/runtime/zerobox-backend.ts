@@ -13,7 +13,11 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
-import { createSandboxExecutionContext } from "../../_shared/sandbox-runtime/execution-context.ts";
+import {
+    createAdmittedSandboxExecutionContext,
+    type SandboxExecutionContext,
+} from "../../_shared/sandbox-runtime/execution-context.ts";
+import { assertAdmissionMatchesPolicy } from "./admission.ts";
 import {
     SANDBOX_CAPABILITIES,
     SandboxExecutionError,
@@ -26,15 +30,22 @@ import {
     type SandboxSpawnSpec,
 } from "./contracts.ts";
 import { assertPrivateRootDirectory } from "./private-temp.ts";
-import { createZeroboxStatusChannel } from "./status-channel.ts";
+import {
+    resolvePrivateRuntime,
+    readPrivateRuntimeEntry,
+    type RuntimeProvenance,
+    type PrivateRuntimeBundle,
+} from "./runtime-bundle.ts";
+import { PRIVATE_SHELL_PATH } from "./shell-baseline.ts";
+import {
+    createZeroboxStatusChannel,
+    createZeroboxAdmissionChannel,
+} from "./status-channel.ts";
 
 const ZEROBOX_LAUNCHER_PATH =
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
-interface ZeroboxProvenance {
-    version: string;
-    binarySha256: string;
-}
+type ZeroboxProvenance = RuntimeProvenance;
 
 export interface ZeroboxCommandResult {
     exitCode: number | null;
@@ -54,6 +65,9 @@ export interface ZeroboxBackendOptions {
     ) => ZeroboxCommandResult;
     expectedProvenance?: ZeroboxProvenance;
     createStatusChannel?: typeof createZeroboxStatusChannel;
+    createAdmissionChannel?: typeof createZeroboxAdmissionChannel;
+    runtimeBundlePath?: string;
+    resolveRuntime?: typeof resolvePrivateRuntime;
 }
 
 interface ZeroboxProfile {
@@ -76,22 +90,34 @@ interface ZeroboxProfile {
 
 const PROVENANCE_URL = new URL("./zerobox-provenance.json", import.meta.url);
 
-async function loadProvenance(): Promise<ZeroboxProvenance> {
-    const value: unknown = JSON.parse(await readFile(PROVENANCE_URL, "utf8"));
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        throw new SandboxExecutionError("provenance-mismatch");
-    }
-    const record = value as Record<string, unknown>;
+function assertRuntimeProvenance(
+    runtime: PrivateRuntimeBundle,
+    expected: RuntimeProvenance,
+): void {
     if (
-        typeof record.version !== "string" ||
-        typeof record.binarySha256 !== "string"
-    ) {
+        (expected.runtimeManifestSha256 &&
+            expected.runtimeManifestSha256 !== runtime.manifestSha256) ||
+        (expected.helperSha256 &&
+            expected.helperSha256 !== runtime.helperSha256)
+    )
         throw new SandboxExecutionError("provenance-mismatch");
-    }
-    return {
-        version: record.version,
-        binarySha256: record.binarySha256,
-    };
+}
+
+/** Distribution inspection only: no engine probe or command execution. */
+export async function inspectManagedPrivateRuntime(
+    options: ZeroboxBackendOptions = {},
+): Promise<PrivateRuntimeBundle> {
+    const entry = options.binaryPath ?? join(homedir(), ".pi/bin/zerobox");
+    const pinned = options.expectedProvenance
+        ? { binaryPath: entry, provenance: options.expectedProvenance }
+        : await readPrivateRuntimeEntry(entry, PROVENANCE_URL);
+    const runtime = await (options.resolveRuntime ?? resolvePrivateRuntime)({
+        binaryPath: pinned.binaryPath,
+        expectedBinarySha256: pinned.provenance.binarySha256,
+        bundlePath: options.runtimeBundlePath,
+    });
+    assertRuntimeProvenance(runtime, pinned.provenance);
+    return runtime;
 }
 
 async function defaultHashFile(path: string): Promise<string> {
@@ -310,7 +336,12 @@ async function assertAndMaterializeFilesystemPolicy(
         ...policy,
         filesystem: {
             ...policy.filesystem,
-            allowRead: [...new Set(allowRead)],
+            // Keep explicitly requested aliases after validating their canonical
+            // targets. The engine recreates only those path aliases, without
+            // exposing the host directories that contain them.
+            allowRead: [
+                ...new Set([...allowRead, ...policy.filesystem.allowRead]),
+            ],
             allowWrite: [...new Set(allowWrite)],
             denyRead: readDenies.exact,
             denyWrite: writeDenies.exact,
@@ -362,13 +393,17 @@ async function writePrivateProfile(
 }
 
 class ZeroboxBackend implements SandboxBackend {
-    readonly #binaryPath: string;
+    #binaryPath: string;
     readonly #platform: NodeJS.Platform;
     readonly #probeRoot: string;
     readonly #hashFile: (path: string) => Promise<string>;
     readonly #runCommand: ZeroboxBackendOptions["runCommand"] & {};
     readonly #expectedProvenance?: ZeroboxProvenance;
     readonly #createStatusChannel: typeof createZeroboxStatusChannel;
+    readonly #createAdmissionChannel: typeof createZeroboxAdmissionChannel;
+    readonly #resolveRuntime: typeof resolvePrivateRuntime;
+    readonly #runtimeBundlePath?: string;
+    #runtime?: PrivateRuntimeBundle;
     #probePromise?: Promise<SandboxCapabilities>;
 
     constructor(options: ZeroboxBackendOptions) {
@@ -385,6 +420,10 @@ class ZeroboxBackend implements SandboxBackend {
         this.#expectedProvenance = options.expectedProvenance;
         this.#createStatusChannel =
             options.createStatusChannel ?? createZeroboxStatusChannel;
+        this.#createAdmissionChannel =
+            options.createAdmissionChannel ?? createZeroboxAdmissionChannel;
+        this.#resolveRuntime = options.resolveRuntime ?? resolvePrivateRuntime;
+        this.#runtimeBundlePath = options.runtimeBundlePath;
     }
 
     probe(): Promise<SandboxCapabilities> {
@@ -393,12 +432,15 @@ class ZeroboxBackend implements SandboxBackend {
     }
 
     async #probe(): Promise<SandboxCapabilities> {
-        if (this.#platform !== "linux") {
+        if (this.#platform !== "linux" || process.arch !== "x64") {
             throw new SandboxExecutionError("unsupported-platform");
         }
         try {
             const stat = await lstat(this.#binaryPath);
-            if (!stat.isFile() || (stat.mode & 0o111) === 0) {
+            if (
+                (!stat.isFile() && !stat.isSymbolicLink()) ||
+                (stat.isFile() && (stat.mode & 0o111) === 0)
+            ) {
                 throw new SandboxExecutionError("backend-unavailable");
             }
         } catch (error) {
@@ -408,7 +450,14 @@ class ZeroboxBackend implements SandboxBackend {
             });
         }
 
-        const expected = this.#expectedProvenance ?? (await loadProvenance());
+        const pinned = this.#expectedProvenance
+            ? {
+                  binaryPath: this.#binaryPath,
+                  provenance: this.#expectedProvenance,
+              }
+            : await readPrivateRuntimeEntry(this.#binaryPath, PROVENANCE_URL);
+        this.#binaryPath = pinned.binaryPath;
+        const expected = pinned.provenance;
         let hash: string;
         try {
             hash = await this.#hashFile(this.#binaryPath);
@@ -420,6 +469,13 @@ class ZeroboxBackend implements SandboxBackend {
         if (hash !== expected.binarySha256) {
             throw new SandboxExecutionError("provenance-mismatch");
         }
+        this.#runtime = await this.#resolveRuntime({
+            binaryPath: this.#binaryPath,
+            expectedBinarySha256: expected.binarySha256,
+            bundlePath: this.#runtimeBundlePath,
+        });
+        this.#binaryPath = this.#runtime.binaryPath;
+        assertRuntimeProvenance(this.#runtime, expected);
 
         let version: ZeroboxCommandResult;
         try {
@@ -442,15 +498,22 @@ class ZeroboxBackend implements SandboxBackend {
         const probeHome = await mkdtemp(join(this.#probeRoot, ".probe-"));
         try {
             await mkdir(join(probeHome, "tmp"), { mode: 0o700 });
+            await mkdir(join(probeHome, "home"), { mode: 0o700 });
             let strict: ZeroboxCommandResult;
             try {
                 strict = this.#runCommand(
                     this.#binaryPath,
                     [
-                        "--profile=analysis-strict",
                         "--strict-sandbox",
+                        `--runtime-bundle=${this.#runtime.root}`,
+                        "--runtime-component=shell",
+                        `--private-tmp=${join(probeHome, "tmp")}`,
+                        `--private-home=${join(probeHome, "home")}`,
+                        `--allow-read=${probeHome}`,
+                        "-C",
+                        probeHome,
                         "--",
-                        "/bin/true",
+                        `${PRIVATE_SHELL_PATH}/true`,
                     ],
                     {
                         cwd: homedir(),
@@ -498,6 +561,10 @@ class ZeroboxBackend implements SandboxBackend {
         lease: PrivateTempLease,
     ): Promise<SandboxSpawnSpec> {
         const capabilities = await this.probe();
+        const runtime = this.#runtime;
+        if (!runtime) throw new SandboxExecutionError("provenance-mismatch");
+        const component =
+            policy.name === "analysis-strict" ? "analysis" : "shell";
         if (!policy.strict) {
             throw new SandboxExecutionError("strict-unavailable");
         }
@@ -523,22 +590,37 @@ class ZeroboxBackend implements SandboxBackend {
                 lease,
                 materializedPolicy,
             );
-            let statusChannel: Awaited<
-                ReturnType<typeof createZeroboxStatusChannel>
+            let statusChannel:
+                | Awaited<ReturnType<typeof createZeroboxStatusChannel>>
+                | undefined;
+            let admissionChannel: Awaited<
+                ReturnType<typeof createZeroboxAdmissionChannel>
             >;
             try {
                 statusChannel = await this.#createStatusChannel(lease);
+                admissionChannel = await this.#createAdmissionChannel(lease);
             } catch (error) {
-                await rm(profile.path, { force: true }).catch(() => undefined);
+                const cleanup = await Promise.allSettled([
+                    statusChannel?.dispose(),
+                    rm(profile.path, { force: true }),
+                ]);
+                const failures: unknown[] = [];
+                for (const result of cleanup) {
+                    if (result.status === "rejected")
+                        failures.push(result.reason);
+                }
+                if (failures.length)
+                    throw new AggregateError(
+                        [error, ...failures],
+                        "Sandbox channel preparation and cleanup failed",
+                    );
                 throw error;
             }
+            const preparedStatusChannel = statusChannel;
+            let admittedContext: SandboxExecutionContext | undefined;
             return {
                 file: this.#binaryPath,
-                sandboxContext: createSandboxExecutionContext(
-                    materializedPolicy,
-                    lease,
-                    { homeDir: homedir() },
-                ),
+                getSandboxContext: () => admittedContext,
                 execution: {
                     status: "unknown",
                     profile: policy.name,
@@ -551,9 +633,14 @@ class ZeroboxBackend implements SandboxBackend {
                     `--profile=${profile.name}`,
                     "--strict-sandbox",
                     "--status-fd=3",
+                    "--status-version=2",
+                    "--admission-fd=4",
+                    "--admission-ack-fd=5",
+                    `--runtime-bundle=${runtime.root}`,
+                    `--runtime-component=${component}`,
                     ...(policy.tmpNamespace === "lease-private"
                         ? [`--private-tmp=${lease.tmpDir}`]
-                        : []),
+                        : ["--host-tmp"]),
                     `--private-home=${lease.homeDir}`,
                     ...(policy.network.allowLocalBinding
                         ? ["--allow-local-binding"]
@@ -571,17 +658,69 @@ class ZeroboxBackend implements SandboxBackend {
                     command.file,
                     ...command.args,
                 ],
-                cwd: command.cwd,
+                cwd:
+                    policy.name === "analysis-strict"
+                        ? lease.root
+                        : command.cwd,
                 env: launcherEnvironment(lease),
-                statusProtocol: { fd: 3, version: 1 },
-                extraStdio: [statusChannel.childStdio],
+                statusProtocol: { fd: 3, version: 2 },
+                extraStdio: [
+                    preparedStatusChannel.childStdio,
+                    admissionChannel.childStdio,
+                    admissionChannel.childAckStdio,
+                ],
                 supervise() {
-                    return statusChannel.supervise();
+                    const admission = admissionChannel.read();
+                    // The status stream may fail before a receipt is produced.
+                    void admission.catch(() => undefined);
+                    const status = preparedStatusChannel.supervise({
+                        version: 2,
+                        onAdmitted: async (sha256) => {
+                            const receipt = await admission;
+                            if (receipt.sha256 !== sha256)
+                                throw new SandboxExecutionError(
+                                    "protocol-error",
+                                    {
+                                        diagnostic:
+                                            "Admission digest differs from the status proof",
+                                    },
+                                );
+                            assertAdmissionMatchesPolicy(
+                                receipt,
+                                materializedPolicy,
+                                {
+                                    manifestSha256: runtime.manifestSha256,
+                                    helperSha256: runtime.helperSha256,
+                                    version: runtime.version,
+                                    target: runtime.target,
+                                    component,
+                                    shellRoot: runtime.components.shell.root,
+                                    analysisRoot:
+                                        runtime.components.analysis.root,
+                                },
+                            );
+                            await admissionChannel.acknowledge(receipt.sha256);
+                            admittedContext =
+                                createAdmittedSandboxExecutionContext(
+                                    receipt,
+                                    policy.name,
+                                    lease,
+                                    { homeDir: homedir() },
+                                );
+                        },
+                    });
+                    return {
+                        ready: status.ready,
+                        settled: Promise.all([status.settled, admission]).then(
+                            () => undefined,
+                        ),
+                    };
                 },
                 async cleanup() {
                     const failures: unknown[] = [];
                     for (const cleanup of [
-                        () => statusChannel.dispose(),
+                        () => preparedStatusChannel.dispose(),
+                        () => admissionChannel.dispose(),
                         () => rm(profile.path, { force: true }),
                     ]) {
                         try {

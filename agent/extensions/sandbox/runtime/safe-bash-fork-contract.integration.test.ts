@@ -4,6 +4,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { getPermissionsService } from "@gotgenes/pi-permission-system";
+import { candidateRuntimeFixture, hasCandidateRuntime, hostToolReadClosure } from "./integration-fixtures.ts";
+import { PRIVATE_BASH } from "./shell-baseline.ts";
 import { localMachineId } from "../capabilities/authority.ts";
 import {
     calls,
@@ -15,9 +17,6 @@ import {
 
 const AGENT_ROOT = resolve(import.meta.dir, "../../..");
 const SANDBOX_EXTENSION = resolve(import.meta.dir, "../index.ts");
-const CANDIDATE_BINARY_ENV = "PI_SANDBOX_ZEROBOX_BINARY";
-const CANDIDATE_SHA256_ENV = "PI_SANDBOX_ZEROBOX_SHA256";
-const CANDIDATE_VERSION = "0.3.3-fork.17";
 const BASH_EXECUTION_EXTENSION = resolve(
     import.meta.dir,
     "../../bash-execution/index.ts",
@@ -38,7 +37,7 @@ function observeExtensionErrors() {
 
 // Never fall back to a personal backend when a qualified candidate is absent.
 describe.skipIf(process.platform !== "linux" ||
-    (!process.env[CANDIDATE_BINARY_ENV] && !process.env[CANDIDATE_SHA256_ENV]))("accepted Zerobox safe_bash contract", () => {
+    !hasCandidateRuntime())("accepted Zerobox safe_bash contract", () => {
     let fixture: string | undefined;
     let session: TestSession | undefined;
     let inheritedSessionStatus: string | undefined;
@@ -63,16 +62,13 @@ describe.skipIf(process.platform !== "linux" ||
         analysisRequests = [];
         Object.defineProperty(globalThis, Symbol.for(analysisKey), { value: analysisRequests, configurable: true });
         sandboxExtension = resolve(testAgentDir, "sandbox-entrypoint.ts");
-        const binaryPath = process.env[CANDIDATE_BINARY_ENV];
-        const binarySha256 = process.env[CANDIDATE_SHA256_ENV];
-        if (!binaryPath || !binarySha256) {
-            throw new Error(`${CANDIDATE_BINARY_ENV} and ${CANDIDATE_SHA256_ENV} must be supplied together`);
-        }
+        const candidate = candidateRuntimeFixture();
+        if (!candidate) throw new Error("An explicit private Zerobox runtime candidate is required");
         await writeFile(sandboxExtension, [
             `import { createSandboxExtension } from ${JSON.stringify(SANDBOX_EXTENSION)};`,
             `import { createPrivateTempLease, recoverStalePrivateTempLeases } from ${JSON.stringify(resolve(import.meta.dir, "private-temp.ts"))};`,
             "export default (pi) => createSandboxExtension(pi, {",
-            `zeroboxBackend: { binaryPath: ${JSON.stringify(binaryPath)}, expectedProvenance: { version: ${JSON.stringify(CANDIDATE_VERSION)}, binarySha256: ${JSON.stringify(binarySha256)} }, probeRoot: ${JSON.stringify(resolve(fixtureRoot, "probe"))} },`,
+            `zeroboxBackend: { binaryPath: ${JSON.stringify(candidate.binaryPath)}, expectedProvenance: { version: ${JSON.stringify(candidate.version)}, binarySha256: ${JSON.stringify(candidate.binarySha256)} }, runtimeBundlePath: ${JSON.stringify(candidate.runtimeBundlePath)}, probeRoot: ${JSON.stringify(resolve(fixtureRoot, "probe"))} },`,
             `sandboxServiceOptions: { createLease: () => createPrivateTempLease({ rootDir: ${JSON.stringify(leaseRoot)} }), recoverStaleLeases: async () => { await recoverStalePrivateTempLeases({ rootDir: ${JSON.stringify(leaseRoot)} }); } },`,
             // These tests inspect Analysis context metadata but never execute an
             // Analysis program. Do not launch its independent personal host.
@@ -97,46 +93,57 @@ describe.skipIf(process.platform !== "linux" ||
             inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
             delete process.env[SESSION_STATUS_ENV];
             fixture = await mkdtemp(resolve(fixtureRoot, ".zerobox-local-net-"));
-            await writeActivePolicy(testAgentDir, fixture, { network: { allowedDomains: ["localhost:18740"], allowedHostDomains: ["shein-ecom.dev.test:443"] } });
-            await mkdir(resolve(fixture, ".pi"));
-            await writeFile(
-                resolve(fixture, ".pi/settings.json"),
-                JSON.stringify({ safeBash: { mode: "coexist" } }),
-            );
-            session = await createTestSession({
-                cwd: fixture,
-                extensions: [sandboxExtension, BASH_EXECUTION_EXTENSION],
-                propagateErrors: false,
+            const [curlRead, ncRead] = await Promise.all([
+                hostToolReadClosure("/usr/bin/curl"),
+                hostToolReadClosure("/usr/bin/nc"),
+            ]);
+            let requests = 0;
+            const server = createServer((_request, response) => {
+                requests += 1;
+                response.end("local-http-ok");
             });
-            const command = [
-                "curl --fail --silent --show-error --insecure --max-time 15 https://shein-ecom.dev.test/ >/dev/null",
-                "curl --fail --silent --show-error --max-time 15 http://localhost:18740/ >/dev/null",
-                "printf 'GET / HTTP/1.0\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' | nc -w 5 127.0.0.1 18740 | grep -Eq '^HTTP/[0-9.]+ [0-9]{3}'",
-                "! nc -z -w 2 127.0.0.1 1",
-            ].join(" && ");
-
-            await session.run(
-                when("Check local development services", [
+            await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+            const address = server.address();
+            if (!address || typeof address === "string") throw new Error("Missing listener address");
+            try {
+                await writeActivePolicy(testAgentDir, fixture, {
+                    filesystem: { allowRead: [...curlRead, ...ncRead] },
+                    network: { allowedDomains: [`localhost:${address.port}`] },
+                });
+                await writeFile(
+                    resolve(fixture, ".pi/settings.json"),
+                    JSON.stringify({ safeBash: { mode: "coexist" } }),
+                );
+                session = await createTestSession({
+                    cwd: fixture,
+                    extensions: [sandboxExtension, BASH_EXECUTION_EXTENSION],
+                    propagateErrors: false,
+                });
+                const command = [
+                    `/usr/bin/curl --fail --silent --show-error --max-time 15 http://localhost:${address.port}/ | grep -q local-http-ok`,
+                    `printf 'GET / HTTP/1.0\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' | /usr/bin/nc -w 5 127.0.0.1 ${address.port} | grep -Eq '^HTTP/[0-9.]+ [0-9]{3}'`,
+                    "! /usr/bin/nc -z -w 2 127.0.0.1 1",
+                ].join(" && ");
+                await session.run(when("Check configured local services", [
                     calls("bash", { command, timeout: 45 }),
                     calls("safe_bash", { command, timeout: 45 }),
                     says("Local services reached."),
-                ]),
-            );
-
-            for (const tool of ["bash", "safe_bash"]) {
-                const result = session.events.toolResultsFor(tool).at(-1);
-                expect(result, `${tool}: ${result?.text}`).toMatchObject({
-                    mocked: false,
-                    isError: false,
-                    details: {
-                        execution: {
-                            status: "sandboxed",
-                            profile: "bash-general",
-                            outcome: "succeeded",
-                            exitCode: 0,
-                        },
-                    },
-                });
+                ]));
+                for (const tool of ["bash", "safe_bash"]) {
+                    const result = session.events.toolResultsFor(tool).at(-1);
+                    expect(result, `${tool}: ${result?.text}`).toMatchObject({
+                        mocked: false,
+                        isError: false,
+                        details: { execution: {
+                            status: "sandboxed", profile: "bash-general",
+                            outcome: "succeeded", exitCode: 0,
+                        } },
+                    });
+                }
+                expect(requests).toBe(4);
+            } finally {
+                server.closeAllConnections();
+                if (server.listening) await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done()));
             }
         },
         90_000,
@@ -146,7 +153,11 @@ describe.skipIf(process.platform !== "linux" ||
         inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
         delete process.env[SESSION_STATUS_ENV];
         fixture = await mkdtemp(resolve(fixtureRoot, ".zerobox-d2-bash-"));
-        await writeActivePolicy(testAgentDir, fixture);
+        const curlRead = await hostToolReadClosure("/usr/bin/curl");
+        await writeActivePolicy(testAgentDir, fixture, {
+            // curl must run so a closed-network result cannot be an ENOENT.
+            filesystem: { allowRead: curlRead },
+        });
         const authorityPath = resolve(testAgentDir, "sandbox.json");
         const authority = await readFile(resolve(testAgentDir, "sandbox.json"), "utf8");
         let requests = 0;
@@ -167,7 +178,8 @@ describe.skipIf(process.platform !== "linux" ||
                 propagateErrors: false,
             });
             const command = [
-                `if curl --noproxy '*' --fail --silent --max-time 2 http://127.0.0.1:${address.port}; then exit 41; fi`,
+                "/usr/bin/curl --version >/dev/null || exit 40",
+                `if /usr/bin/curl --noproxy '*' --fail --silent --max-time 2 http://127.0.0.1:${address.port}; then exit 41; fi`,
                 `if printf compromised > ${JSON.stringify(authorityPath)}; then exit 42; fi`,
                 "test \"$TMPDIR\" = /tmp",
                 "printf d2-isolated",
@@ -190,7 +202,7 @@ describe.skipIf(process.platform !== "linux" ||
                         profile: "bash-general",
                         backend: "zerobox",
                         mode: "sandbox",
-                        shellProfile: "default",
+                        shellProfile: "custom",
                         tmpNamespace: "lease-private",
                         outcome: "succeeded",
                         exitCode: 0,
@@ -219,7 +231,13 @@ describe.skipIf(process.platform !== "linux" ||
                 inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
                 delete process.env[SESSION_STATUS_ENV];
                 const cwd = process.env.PI_SANDBOX_DEV_WORKFLOW_CWD!;
-                await writeActivePolicy(testAgentDir, cwd);
+                const bunRead = await hostToolReadClosure(process.execPath);
+                await writeActivePolicy(testAgentDir, cwd, {
+                    // The project selects this local Bun installation
+                    // explicitly; no shell PATH default supplies it.
+                    environment: { path: [dirname(process.execPath)] },
+                    filesystem: { allowRead: bunRead },
+                });
                 session = await createTestSession({
                     cwd,
                     extensions: [
@@ -281,24 +299,26 @@ describe.skipIf(process.platform !== "linux" ||
         const script = resolve(fixture, "failure.sh");
         await writeFile(
             script,
-            "#!/bin/sh\nprintf 'real-safe-bash-error\\n' >&2\nexit 37\n",
+            `#!${PRIVATE_BASH}\nprintf 'real-safe-bash-error\\n' >&2\nexit 37\n`,
         );
         await chmod(script, 0o755);
 
-        await writeActivePolicy(testAgentDir, fixture, {
-            environment: { path: [dirname(process.execPath)] },
-        });
+        await writeActivePolicy(testAgentDir, fixture);
         session = await createTestSession({
             cwd: fixture,
             extensions: [sandboxExtension, BASH_EXECUTION_EXTENSION],
             propagateErrors: false,
         });
+        const realTools = session.session.agent.state.tools;
         const running = session.run(
             when("Run the failing script", [
                 calls("safe_bash", { command: "./failure.sh" }),
                 says("Failure observed."),
             ]),
         );
+        // Keep thrown errors on Pi's real tool boundary. The harness collector
+        // converts thrown errors to returned values before Pi observes them.
+        session.session.agent.state.tools = realTools;
         const modelInputs: Array<{
             systemPrompt: string;
             messages: string;
@@ -326,7 +346,7 @@ describe.skipIf(process.platform !== "linux" ||
                 exitCode: 37,
             },
             sandboxExecutionContext: {
-                version: 2,
+                version: 3,
                 profile: "bash-general",
                 network: {
                     loopback: {
@@ -396,6 +416,12 @@ describe.skipIf(process.platform !== "linux" ||
         inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
         delete process.env[SESSION_STATUS_ENV];
         fixture = await mkdtemp(resolve(fixtureRoot, ".zerobox-safe-bash-"));
+        const gitRead = await hostToolReadClosure("/usr/bin/git");
+        await writeActivePolicy(testAgentDir, fixture, {
+            // Git is an intentionally authorized local installation for this
+            // regression; its command must run before config is asserted.
+            filesystem: { allowRead: gitRead },
+        });
         session = await createTestSession({
             cwd: fixture,
             extensions: [sandboxExtension, BASH_EXECUTION_EXTENSION],
@@ -406,9 +432,10 @@ describe.skipIf(process.platform !== "linux" ||
             when("Initialize a Git repository", [
                 calls("safe_bash", {
                     command: [
-                        "git init -b dev repo >/dev/null",
+                        "/usr/bin/git --version >/dev/null",
+                        "/usr/bin/git init -b dev repo >/dev/null",
                         "test -f repo/.git/config",
-                        'test "$(git -C repo config --get core.repositoryformatversion)" = 0',
+                        'test "$(/usr/bin/git -C repo config --get core.repositoryformatversion)" = 0',
                         "cat repo/.git/config",
                     ].join(" && "),
                 }),
@@ -436,6 +463,15 @@ describe.skipIf(process.platform !== "linux" ||
         inheritedSessionStatus = process.env[SESSION_STATUS_ENV];
         delete process.env[SESSION_STATUS_ENV];
         fixture = await mkdtemp(resolve(fixtureRoot, ".zerobox-safe-bash-"));
+        const [systemctlRead, nodeRead] = await Promise.all([
+            hostToolReadClosure("/usr/bin/systemctl"),
+            hostToolReadClosure("/usr/bin/node"),
+        ]);
+        await writeActivePolicy(testAgentDir, fixture, {
+            // Explicit host probes distinguish unavailable D-Bus from missing
+            // executables in this runtime-boundary regression.
+            filesystem: { allowRead: [...systemctlRead, ...nodeRead] },
+        });
         session = await createTestSession({
             cwd: fixture,
             extensions: [sandboxExtension, BASH_EXECUTION_EXTENSION],
@@ -453,7 +489,7 @@ describe.skipIf(process.platform !== "linux" ||
         await session.run(
             when("Check host user services", [
                 calls("safe_bash", {
-                    command: `! systemctl --user show-environment >/dev/null 2>&1 && /usr/bin/node -e ${JSON.stringify(unixProbe)}`,
+                    command: `! /usr/bin/systemctl --user show-environment >/dev/null 2>&1 && /usr/bin/node -e ${JSON.stringify(unixProbe)}`,
                 }),
                 says("Isolation observed."),
             ]),
@@ -540,7 +576,8 @@ describe.skipIf(process.platform !== "linux" ||
                 extensions: [sandboxExtension, BASH_EXECUTION_EXTENSION],
                 propagateErrors: false,
             });
-            await session.run(
+            const realTools = session.session.agent.state.tools;
+            const running = session.run(
                 when("Try to overwrite Docker authority", [
                     calls("safe_bash", {
                         command:
@@ -549,6 +586,9 @@ describe.skipIf(process.platform !== "linux" ||
                     says("Write result observed."),
                 ]),
             );
+
+            session.session.agent.state.tools = realTools;
+            await running;
 
             const [result] = session.events.toolResultsFor("safe_bash");
             expect(result).toMatchObject({ mocked: false, isError: true });
@@ -583,9 +623,10 @@ try {
     console.log(text);
 } finally { server.stop(true); }
 `);
+        const bunRead = await hostToolReadClosure(process.execPath);
         await writeActivePolicy(testAgentDir, fixture, {
             environment: { path: [dirname(process.execPath)] },
-            filesystem: { allowRead: [dirname(process.execPath)] },
+            filesystem: { allowRead: bunRead },
         });
         session = await createTestSession({
             cwd: fixture, extensions: [sandboxExtension, BASH_EXECUTION_EXTENSION], propagateErrors: false,

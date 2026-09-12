@@ -75,6 +75,8 @@ test.each(["standard", "custom"] as const)("refreshes one ephemeral context with
         await running;
         expect(contexts).toHaveLength(3);
         expect(contexts[0]).toContain('"availability":"ready"');
+        expect(contexts[0]).toContain('"admission":"pending"');
+        expect(contexts[0]).not.toContain('"effective":');
         expect(contexts[1]).toContain('"availability":"pending"');
         expect(contexts[1]).not.toContain("example.test");
         expect(contexts[2]).toContain('"availability":"ready"');

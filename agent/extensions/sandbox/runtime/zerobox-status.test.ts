@@ -100,3 +100,33 @@ describe("Zerobox status protocol v1", () => {
         }
     });
 });
+
+describe("Zerobox status protocol v2", () => {
+    it("waits for validated admission before announcing child readiness", async () => {
+        const stream = new PassThrough();
+        let release!: () => void;
+        const verified = new Promise<void>(resolve => { release = resolve; });
+        const seen: string[] = [];
+        const status = superviseZeroboxStatusStream(stream, {version: 2, onAdmitted: async hash => { seen.push(hash); await verified; }});
+        let ready = false;
+        void status.ready.then(() => { ready = true; });
+        stream.write(line({version: 2, event: "sandbox_admitted", report_sha256: "a".repeat(64)}));
+        stream.write(line({...started, version: 2}));
+        await Bun.sleep(0);
+        expect(ready).toBe(false);
+        release();
+        await status.ready;
+        expect(seen).toEqual(["a".repeat(64)]);
+        stream.end(line({...exited, version: 2}));
+        await status.settled;
+    });
+    it("refuses a child without admission and an admission with invalid proof", async () => {
+        for (const events of [ [{...started, version: 2}], [{version: 2, event: "sandbox_admitted", report_sha256: "a".repeat(64)}, {...started, version: 2}, {...exited, version: 2}] ]) {
+            const stream = new PassThrough();
+            const status = superviseZeroboxStatusStream(stream, {version: 2, onAdmitted: () => {throw new Error("receipt mismatch");}});
+            void status.ready.catch(() => undefined);
+            stream.end(events.map(line).join(""));
+            await expect(status.settled).rejects.toMatchObject({code: "protocol-error"});
+        }
+    });
+});

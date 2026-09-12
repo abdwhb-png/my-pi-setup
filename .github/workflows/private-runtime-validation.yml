@@ -1,0 +1,125 @@
+name: Pi private runtime native validation
+
+on:
+  push:
+    branches: ["codex/private-runtime-validation-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: .pi
+      - uses: actions/checkout@v4
+        with:
+          repository: abdwhb-png/zerobox
+          ref: efdc10dafc71b624a9293e50ce9ee7f6f185d4fe
+          path: projects/zerobox
+      - uses: actions/checkout@v4
+        with:
+          repository: abdwhb-png/pi
+          ref: 0bb2d904515eed3311028dadcb0edbf3637fa93e
+          path: projects/pi-core
+      - uses: actions/checkout@v4
+        with:
+          repository: abdwhb-png/pi-test-harness
+          ref: 87bd1c0ec7c84b62ed29f887bccc062b082c7fea
+          path: projects/pi-integrations/pi-test-harness
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: projects/zerobox
+      - name: Prepare the disposable native runner
+        run: |
+          set -euo pipefail
+          python3 .pi/agent/extensions/sandbox/runtime/distribution/native-ci.py --check-host
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libcap-dev netcat-openbsd
+          sudo sysctl -w kernel.unprivileged_userns_clone=1
+          if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          npm install --global --ignore-scripts --no-audit --no-fund sfw@2.0.6
+          sfw --version
+      - name: Restore the exact Pi and test harness sources
+        env:
+          npm_config_ignore_scripts: "true"
+          npm_config_allow_git: none
+        run: |
+          set -euo pipefail
+          cd projects/pi-core
+          sfw npm ci
+          npm run build:offline
+          cd ../pi-integrations/pi-test-harness
+          sfw npm ci
+          npm run build
+          cd ../../../.pi/agent
+          sfw bun install --frozen-lockfile --ignore-scripts
+          cd extensions/sandbox
+          sfw bun install --frozen-lockfile --ignore-scripts
+          sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@24.0.0
+          mkdir -p ../../node_modules/@gotgenes
+          ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
+      - name: Replay patches and build the static engine
+        working-directory: projects/zerobox
+        run: |
+          ./scripts/sync.sh
+          sfw cargo fetch --locked
+          cargo rustc --offline --locked --release -p zerobox --bin zerobox --target x86_64-unknown-linux-gnu -- -C target-feature=+crt-static
+      - name: Assemble with the pinned Ubuntu builder and verify all inputs
+        run: |
+          python3 .pi/agent/extensions/sandbox/runtime/distribution/native-ci.py \
+            --engine-root projects/zerobox --agent-root .pi/agent \
+            --input-root "$RUNNER_TEMP/private-runtime" \
+            --version "native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Run Pi boundary regression suites
+        working-directory: .pi/agent
+        run: |
+          env -u PI_SANDBOX_RUNTIME_BUNDLE -u PI_SANDBOX_ZEROBOX_BINARY -u PI_SANDBOX_ZEROBOX_SHA256 \
+            bun test --isolate extensions/_shared/command-execution extensions/_shared/sandbox-runtime extensions/bash-execution extensions/sandbox extensions/think-in-code
+      - name: Qualify shell, installations, revocation and Analysis on the native kernel
+        working-directory: .pi/agent
+        env:
+          PI_SANDBOX_LOCAL_NETWORK_CONTRACT: "1"
+          PI_SANDBOX_GENERIC_COMMAND_CONTRACT: "1"
+          PI_SANDBOX_SHELL_BASELINE_CONTRACT: "1"
+          PI_SANDBOX_INSTALLATIONS_CONTRACT: "1"
+          PI_SANDBOX_REAL_ANALYSIS_CONTRACT: "1"
+          PI_SANDBOX_REAL_ANALYSIS_IPC_CONTRACT: "1"
+        run: |
+          bun test --isolate \
+            extensions/sandbox/runtime/shell-baseline.integration.test.ts \
+            extensions/sandbox/runtime/isolation-defaults.integration.test.ts \
+            extensions/sandbox/runtime/installations.integration.test.ts \
+            extensions/sandbox/runtime/revocation.integration.test.ts \
+            extensions/sandbox/runtime/linux-contract.integration.test.ts \
+            extensions/sandbox/runtime/generic-command.integration.test.ts \
+            extensions/sandbox/runtime/profiles.integration.test.ts \
+            extensions/sandbox/runtime/safe-bash-fork-contract.integration.test.ts \
+            extensions/sandbox/runtime/websocket.integration.test.ts \
+            extensions/sandbox/analysis/real-engine.integration.test.ts \
+            extensions/sandbox/analysis/client.execPath.regression.test.ts
+      - name: Verify atomic installation through a fresh Pi session
+        working-directory: .pi/agent
+        run: |
+          bun extensions/sandbox/runtime/distribution/stage-release.ts \
+            --candidate-root "$PI_SANDBOX_RUNTIME_BUNDLE" --runtime-base "$HOME/.pi/runtimes" \
+            --managed-binary "$HOME/.pi/bin/zerobox" \
+            --provenance-source "$PI_SANDBOX_RUNTIME_BUNDLE/provenance.json" \
+            --expected-binary-sha256 "$PI_SANDBOX_ZEROBOX_SHA256"
+          unset PI_SANDBOX_RUNTIME_BUNDLE PI_SANDBOX_ZEROBOX_BINARY PI_SANDBOX_ZEROBOX_SHA256
+          PI_SANDBOX_INSTALLED_CONTRACT=1 bun test --isolate extensions/sandbox/runtime/installed-runtime.integration.test.ts

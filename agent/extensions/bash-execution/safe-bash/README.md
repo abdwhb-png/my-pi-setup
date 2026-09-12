@@ -13,6 +13,8 @@ Keep the `command` argument on the `pi-permission-system` Bash surface and apply
 every Safe Bash guard before dispatch. Preserve the strict Think environment
 independently of shell mode. See [the mode contract](../../sandbox/docs/shell-capabilities.md).
 
+In sandbox mode, Safe Bash receives the same private `/__zerobox/runtime` shell as `bash`; it does not inherit host PATH or environment values. A selected global installation can add only its authorized read-only roots and declared command directories. Safe Bash checks remain in front of this route and do not become installation permissions.
+
 Both shell tools share stable presentation and execution guidance. Current
 sandbox facts and Safe Bash checks appear in one ephemeral model context.
 Per-tool rewrites and additional Safe Bash checks remain independent. See the

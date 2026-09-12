@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { DEFAULT_DOCKER_ENDPOINT } from "../runtime/docker-policy.ts";
 import type { PiSandboxConfig } from "../runtime/policies.ts";
 import { normalizeSandboxResources } from "../runtime/policies.ts";
@@ -11,6 +12,7 @@ import {
     type SandboxMode,
     type ShellProfile,
 } from "./authority.ts";
+import { selectInstallations } from "./installations.ts";
 
 export interface ShellCapabilityResolution {
     hostAllowed?: boolean;
@@ -250,11 +252,16 @@ function narrower(
           );
 }
 
-function domainIsWithin(requested: string, ceiling: string): boolean {
+export function domainIsWithin(requested: string, ceiling: string): boolean {
     if (requested === ceiling) return true;
+    const port = (value: string) => /:(\d+)$/.exec(value)?.[1];
+    const ceilingPort = port(ceiling);
+    if (ceilingPort !== undefined && port(requested) !== ceilingPort)
+        return false;
     const host = (value: string) => value.replace(/:\d+$/, "");
     const requestedHost = host(requested);
     const ceilingHost = host(ceiling);
+    if (requestedHost === ceilingHost) return true;
     if (!ceilingHost.startsWith("*.")) return false;
     const suffix = ceilingHost.slice(1);
     return (
@@ -271,6 +278,35 @@ function narrowerPaths(
     return requested === undefined
         ? ceiling
         : requested.filter((path) => permittedPath(path, ceiling));
+}
+
+function preserveAuthorizedReadAliases(
+    grants: string[],
+    layers: (SandboxConfigLayer | undefined)[],
+    projectRoot: string,
+): string[] {
+    const result = new Set(grants);
+    for (const layer of layers) {
+        for (const field of ["allowRead", "allowWrite"] as const) {
+            for (const raw of list(
+                layer?.filesystem?.[field],
+                `filesystem.${field}`,
+            ) ?? []) {
+                const logical = resolve(projectRoot, expandShellPathEntry(raw));
+                const canonical = canonicalProjectPath(raw, projectRoot);
+                if (logical === canonical) continue;
+                for (const grant of grants) {
+                    // Translate only the selected portion. Restoring a whole
+                    // global alias root would undo a narrower project ceiling.
+                    if (permittedPath(grant, [canonical])) {
+                        const suffix = relative(canonical, grant);
+                        result.add(suffix ? join(logical, suffix) : logical);
+                    }
+                }
+            }
+        }
+    }
+    return [...result];
 }
 function mergeLayers(input: ShellPolicyInput): {
     config: PiSandboxConfig;
@@ -289,6 +325,14 @@ function mergeLayers(input: ShellPolicyInput): {
     const sessionFs = session?.filesystem ?? {};
     const baseline = input.baseline ?? input.config;
     if (!baseline) throw new Error("A baseline sandbox policy is required");
+    const installations = selectInstallations(
+        global?.environment?.installations,
+        project?.environment?.installations,
+        session?.environment?.installations,
+    );
+    const installationRoots = installations.flatMap((installation) =>
+        installation.roots.map((entry) => entry.root),
+    );
     const allowedDomains = narrower(
         narrower(
             list(
@@ -376,12 +420,15 @@ function mergeLayers(input: ShellPolicyInput): {
     );
     // An omitted ceiling keeps the project baseline. An explicit empty list is
     // the only way to close it; non-empty grants retain the project itself.
-    const globalRead =
+    const ordinaryGlobalRead =
         requestedGlobalRead === undefined
             ? baselineRead
             : requestedGlobalRead.length === 0
               ? []
               : [...new Set([projectRoot, ...requestedGlobalRead])];
+    const globalRead = [
+        ...new Set([...ordinaryGlobalRead, ...installationRoots]),
+    ];
     const globalWrite =
         requestedGlobalWrite === undefined
             ? baselineWrite
@@ -520,10 +567,22 @@ function mergeLayers(input: ShellPolicyInput): {
         list(projectEnvironment.path, "project environment.path"),
         envPath,
     );
-    const path = narrower(
+    const ordinaryPath = narrower(
         list(sessionEnvironment.path, "session environment.path"),
         projectPath,
     );
+    const path = [
+        ...new Set([
+            ...installations
+                .flatMap((installation) =>
+                    installation.roots.flatMap((entry) =>
+                        entry.path.map((part) => resolve(entry.root, part)),
+                    ),
+                )
+                .filter((entry) => permittedPath(entry, [...read, ...write])),
+            ...ordinaryPath,
+        ]),
+    ];
     const globalAllowedVariables =
         list(
             globalEnvironment.allowedVariables,
@@ -623,10 +682,17 @@ function mergeLayers(input: ShellPolicyInput): {
         },
         filesystem: {
             ...baseline.filesystem,
-            allowRead: read,
+            allowRead: preserveAuthorizedReadAliases(
+                read,
+                [input.global, input.project, input.session],
+                projectRoot,
+            ),
             allowWrite: write,
             denyRead: deny("denyRead"),
-            denyWrite: deny("denyWrite"),
+            // Installation grants are read-only, including beneath a writable project.
+            denyWrite: [
+                ...new Set([...deny("denyWrite"), ...installationRoots]),
+            ],
         },
         environment: {
             ...baseline.environment,
@@ -634,6 +700,7 @@ function mergeLayers(input: ShellPolicyInput): {
             deniedVariables,
             variables: configuredVariables,
             path,
+            ...(installations.length ? { installations } : {}),
         },
         resources: { unixSockets, tcpPublications },
     };

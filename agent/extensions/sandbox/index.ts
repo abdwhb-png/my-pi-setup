@@ -63,6 +63,7 @@ import {
     type AnalysisSandboxService,
     type AnalysisSandboxServiceOptions,
 } from "./analysis/client.ts";
+import { createAuthorityWatch } from "./capabilities/authority-watch.ts";
 import {
     localMachineId,
     readGlobalSandboxConfig,
@@ -71,6 +72,7 @@ import {
     type SandboxConfigLayer,
     type SandboxMode,
 } from "./capabilities/authority.ts";
+import { manageInstallations } from "./capabilities/installation-ui.ts";
 import {
     formatMigrationPreview,
     previewLegacyMigration,
@@ -83,6 +85,7 @@ import {
     type ShellCapabilityResolution,
 } from "./capabilities/policy.ts";
 import { protectsCapabilityAuthority } from "./capabilities/protection.ts";
+import { sandboxAccessRemoved } from "./capabilities/revocation.ts";
 import {
     activeShellOperations,
     currentShellPolicy,
@@ -127,8 +130,10 @@ import {
     type SandboxService,
     type SandboxServiceOptions,
 } from "./runtime/service.ts";
+import { PRIVATE_BASH } from "./runtime/shell-baseline.ts";
 import {
     createZeroboxBackend,
+    inspectManagedPrivateRuntime,
     type ZeroboxBackendOptions,
 } from "./runtime/zerobox-backend.ts";
 
@@ -280,10 +285,16 @@ export function renderSandboxWidget(
     state: SandboxFooterState,
     docker: SandboxDockerFooterState = { mode: "off", unsafe: false },
     shell?: Pick<ShellCapabilityResolution, "mode" | "profile">,
+    admission: "pending" | "admitted" = "pending",
 ): string | null {
     const colors: UiColorsCreation = createUiColors(theme);
     if (shell) {
-        const runtime = state === "on" ? "ready" : state;
+        const runtime =
+            state === "on"
+                ? admission === "admitted"
+                    ? "admitted"
+                    : "pending admission"
+                : state;
         const value =
             shell.mode === "host"
                 ? `host · unsandboxed${state === "error" || state === "reconfiguring" ? ` · ${state}` : ""}`
@@ -434,35 +445,6 @@ interface ActiveDockerBreakGlass {
     expiresAtMs: number;
     container: { id: string; name: string };
     supervisors: Set<BashProcessSupervisor>;
-}
-
-function resourceAccessRemoved(
-    previous: PiSandboxConfig,
-    next: PiSandboxConfig,
-): boolean {
-    const previousResources = previous.resources ?? {
-        unixSockets: [],
-        tcpPublications: [],
-    };
-    const nextResources = next.resources ?? {
-        unixSockets: [],
-        tcpPublications: [],
-    };
-    const nextSockets = new Set(nextResources.unixSockets);
-    if (
-        previousResources.unixSockets.some((socket) => !nextSockets.has(socket))
-    )
-        return true;
-    const publicationKey = (
-        publication: (typeof previousResources.tcpPublications)[number],
-    ) =>
-        `${publication.transport}\0${publication.scope}\0${publication.listen}\0${publication.target}`;
-    const nextPublications = new Set(
-        nextResources.tcpPublications.map(publicationKey),
-    );
-    return previousResources.tcpPublications.some(
-        (publication) => !nextPublications.has(publicationKey(publication)),
-    );
 }
 
 function dockerBreakGlassCandidates(
@@ -625,7 +607,7 @@ export async function persistProjectDockerPreference(
 }
 
 export function createSandboxedBashOps(
-    service: SandboxService,
+    service: Pick<SandboxService, "prepareBash" | "prepareThinkBash">,
     supervisor: BashProcessSupervisor,
     options: SandboxBashOperationOptions = {},
     profile: "bash-general" | "think-strict" = "bash-general",
@@ -645,18 +627,36 @@ export function createSandboxedBashOps(
         rewriteCommand: options.rewriteCommand,
         prepareSpawn: async ({ command, cwd }) => {
             const sandboxCommand: SandboxCommand = {
-                file: "/bin/bash",
-                args: ["-o", "pipefail", "-c", command],
+                file: PRIVATE_BASH,
+                args: [
+                    "--noprofile",
+                    "--norc",
+                    "-o",
+                    "pipefail",
+                    "-c",
+                    command,
+                ],
                 cwd,
                 stdin: options.stdin,
             };
             const spawn = await (profile === "think-strict"
                 ? service.prepareThinkBash(sandboxCommand)
                 : service.prepareBash(sandboxCommand));
-            if (spawn.sandboxContext) {
-                options.onSandboxContext?.(spawn.sandboxContext);
-            }
-            return spawn;
+            return {
+                ...spawn,
+                supervise: (child) => {
+                    const status = spawn.supervise(child);
+                    return {
+                        ...status,
+                        ready: status.ready.then(() => {
+                            const context =
+                                spawn.getSandboxContext?.() ??
+                                spawn.sandboxContext;
+                            if (context) options.onSandboxContext?.(context);
+                        }),
+                    };
+                },
+            };
         },
     });
 }
@@ -805,6 +805,7 @@ export function createSandboxExtension(
     const serviceSnapshots = new Map<SandboxService, SandboxRuntimeSnapshot>();
     const retiredSandbox = new Set<SandboxService>();
     const retiredAnalysis = new Set<AnalysisSandboxService>();
+    let authorityWatch: ReturnType<typeof createAuthorityWatch> | undefined;
 
     const createCleanupCoordinator = <T extends { shutdown(): Promise<void> }>(
         pending: Set<T>,
@@ -979,7 +980,24 @@ export function createSandboxExtension(
                 analysisService = candidate;
                 inFlightAnalysisCandidates.delete(candidate);
                 availability.state = "ready";
-                availability.service = candidate;
+                availability.service = {
+                    run: async (request, signal) => {
+                        const result = await candidate.run(request, signal);
+                        const runtime = getSandboxRuntime();
+                        if (
+                            result.sandboxContext?.version === 3 &&
+                            runtime.state === "enabled" &&
+                            runtime.analysis === availability &&
+                            runtime.contexts
+                        ) {
+                            runtime.contexts["analysis-strict"] =
+                                result.sandboxContext;
+                            notifySandboxRuntimeUpdated(runtimeOwner);
+                        }
+                        return result;
+                    },
+                    shutdown: () => candidate.shutdown(),
+                };
                 delete availability.diagnostic;
                 analysisRetryAttempt = 0;
                 notifySandboxRuntimeUpdated(runtimeOwner);
@@ -992,10 +1010,7 @@ export function createSandboxExtension(
                 delete availability.service;
                 availability.diagnostic =
                     error instanceof Error ? error.message : String(error);
-                ctx.ui.notify(
-                    "Analysis indisponible, réessai en cours",
-                    "warning",
-                );
+                ctx.ui.notify("Analysis unavailable; retrying", "warning");
                 const delay =
                     ANALYSIS_RETRY_DELAYS_MS[
                         Math.min(
@@ -1081,23 +1096,36 @@ export function createSandboxExtension(
                 state: "retrying",
                 diagnostic: "Analysis starting",
             };
+            const observe = (
+                executionOptions: SandboxBashOperationOptions,
+            ): SandboxBashOperationOptions => ({
+                ...executionOptions,
+                onSandboxContext: (context) => {
+                    executionOptions.onSandboxContext?.(context);
+                    if (context.version === 3) {
+                        notifySandboxRuntimeUpdated(runtimeOwner);
+                        w.update(ctx);
+                    }
+                },
+            });
             const published = publishSandboxRuntime(runtimeOwner, {
                 state: "enabled",
                 sandboxFingerprint: shellSandboxFingerprint(config),
+                beforeAdmission: () => prepareShellExecution(ctx, ctx.cwd),
                 contexts: candidateSandbox.getProfileContexts(),
                 dockerAccess: summarizeDockerAccess(config.docker),
                 createBashOperations: (options) =>
                     createSandboxedBashOps(
                         candidateSandbox,
                         candidateSupervisor,
-                        options,
+                        observe(options),
                     ),
                 analysis,
                 createThinkBashOperations: (options) =>
                     createSandboxedBashOps(
                         candidateSandbox,
                         candidateSupervisor,
-                        options,
+                        observe(options),
                         "think-strict",
                     ),
             });
@@ -1108,18 +1136,6 @@ export function createSandboxExtension(
             sandboxService = candidateSandbox;
             serviceSnapshots.set(candidateSandbox, getSandboxRuntime());
             inFlightSandboxCandidates.delete(candidateSandbox);
-            // A drained runtime can continue only while its resource grants are
-            // still valid. Its process tree owns any Unix socket or TCP bridge.
-            for (const [service, supervisor] of sandboxSupervisors) {
-                if (service === candidateSandbox) continue;
-                const previousConfig = sandboxConfigs.get(service);
-                if (
-                    previousConfig &&
-                    resourceAccessRemoved(previousConfig, config)
-                ) {
-                    supervisor.shutdown();
-                }
-            }
             analysisRetryAttempt = 0;
             startAnalysisAttempt(ctx, generation, analysis);
             return true;
@@ -1201,16 +1217,52 @@ export function createSandboxExtension(
     const loadShell = (ctx: ExtensionContext, session = sessionConfig) =>
         applyActiveDockerBreakGlass(loadBaseShell(ctx, session));
 
-    /**
-     * Start a candidate before retiring the admitted runtime. Commands already
-     * admitted to the old snapshot drain; a failed candidate restores that
-     * snapshot instead of silently changing the active mode.
-     */
+    /** Revoke first. A replacement failure cannot resurrect admitted authority. */
+    const revokeServices = async (
+        ctx: ExtensionContext,
+        reason: unknown,
+    ): Promise<void> => {
+        beginTransition(ctx);
+        sandboxEnabled = false;
+        publishError(reason);
+        updateSandboxStatus(ctx, "error");
+        shutdownBashProcesses();
+        // Closing Analysis terminates its workers. Shell snapshots are awaited
+        // before deleting leases, including descendants that retained descriptors.
+        const analysisTargets = new Set([
+            ...retiredAnalysis,
+            ...inFlightAnalysisCandidates,
+            ...pendingAnalysisCleanup,
+            ...(analysisService ? [analysisService] : []),
+        ]);
+        await Promise.all([
+            ...[...analysisTargets].map(cleanupAnalysisService),
+            ...[...serviceSnapshots.values()].map(whenSandboxRuntimeIdle),
+        ]);
+        await shutdownServices(undefined, undefined, true);
+        retiredSandbox.clear();
+        retiredAnalysis.clear();
+        serviceSnapshots.clear();
+    };
+
+    /** Only additive changes may retain the previous admitted generation. */
     const reconfigureServices = async (
         ctx: ExtensionContext,
         resolved: LoadSandboxConfigResult,
         presentation = resolved.shell,
     ): Promise<boolean> => {
+        if (
+            [...sandboxConfigs.values()].some((previous) =>
+                sandboxAccessRemoved(previous, resolved.config, ctx.cwd),
+            )
+        ) {
+            await revokeServices(
+                ctx,
+                new Error(
+                    "Sandbox authority was revoked; replacement admission is required",
+                ),
+            );
+        }
         const previous = getSandboxRuntime();
         const previousFooter = {
             state: sandboxFooterState,
@@ -1247,7 +1299,9 @@ export function createSandboxExtension(
         } catch (error) {
             if (isCurrentTransition(generation)) {
                 sandboxEnabled = previous.state === "enabled";
-                publishSandboxRuntime(runtimeOwner, previous);
+                if (previous.state === "enabled")
+                    publishSandboxRuntime(runtimeOwner, previous);
+                else publishError(error);
                 sandboxFooterState = previousFooter.state;
                 sandboxDockerFooterState = previousFooter.docker;
                 sandboxShellFooterState = previousFooter.shell;
@@ -1268,6 +1322,7 @@ export function createSandboxExtension(
             !executionRoot.startsWith(projectRoot + "/")
         )
             return;
+        await authorityWatch?.check();
         const resolved = loadShell(ctx);
         const fingerprint = shellSandboxFingerprint(resolved.config);
         const runtime = getSandboxRuntime();
@@ -1296,6 +1351,7 @@ export function createSandboxExtension(
         ) {
             return;
         }
+        await authorityWatch?.check();
         const forced = loadShell(ctx, {
             ...sessionConfig,
             mode: "sandbox",
@@ -1350,6 +1406,11 @@ export function createSandboxExtension(
                 sandboxFooterState,
                 sandboxDockerFooterState,
                 sandboxShellFooterState,
+                getSandboxRuntime().state === "enabled" &&
+                    sandboxService?.getProfileContexts()["bash-general"]
+                        .version === 3
+                    ? "admitted"
+                    : "pending",
             ),
     });
 
@@ -1472,6 +1533,66 @@ export function createSandboxExtension(
         claimSandboxRuntime(runtimeOwner);
         const noSandbox = pi.getFlag("no-sandbox") as boolean;
         sessionConfig = noSandbox ? { mode: "host" } : undefined;
+        authorityWatch?.close();
+        const policies = new Map<string, SandboxConfig>();
+        authorityWatch = createAuthorityWatch({
+            paths: [
+                sandboxConfigPath(getAgentDir()),
+                join(ctx.cwd, ".pi/sandbox.json"),
+            ],
+            read: async () => {
+                const resolved = loadShell(ctx);
+                const key = shellSandboxFingerprint(resolved.config);
+                policies.set(key, resolved.config);
+                return { key, grants: [] };
+            },
+            compare: (previous, next) => {
+                const before = policies.get(previous.key),
+                    after = policies.get(next.key);
+                const allowed = Boolean(
+                    before &&
+                    after &&
+                    !sandboxAccessRemoved(before, after, ctx.cwd),
+                );
+                // Keep only the current comparison pair, never environment values in logs.
+                for (const key of policies.keys())
+                    if (key !== next.key && key !== previous.key)
+                        policies.delete(key);
+                return allowed;
+            },
+            hasActiveProcesses: () =>
+                getSandboxActiveExecutionCount(runtimeOwner) > 0,
+            onRevoked: async (reason) => {
+                if (!ownsSandboxRuntime(runtimeOwner)) return;
+                try {
+                    const next = loadShell(ctx).config;
+                    if (
+                        ![...sandboxConfigs.values()].some((previous) =>
+                            sandboxAccessRemoved(previous, next, ctx.cwd),
+                        )
+                    )
+                        return;
+                } catch {
+                    // An unreadable authority invalidates every existing generation.
+                }
+                await revokeServices(
+                    ctx,
+                    reason ??
+                        new Error(
+                            "Sandbox authority was revoked; new admission is required",
+                        ),
+                );
+            },
+            onError: (error) => {
+                publishError(error);
+                updateSandboxStatus(ctx, "error");
+                ctx.ui.notify(
+                    `Sandbox authority monitoring failed: ${errorMessage(error)}`,
+                    "error",
+                );
+            },
+        });
+        await authorityWatch.check();
         publishShellRuntime(
             runtimeOwner,
             () => loadShell(ctx).shell,
@@ -1558,6 +1679,8 @@ export function createSandboxExtension(
     });
 
     pi.on("session_shutdown", async () => {
+        authorityWatch?.close();
+        authorityWatch = undefined;
         releaseShellRuntime(runtimeOwner);
         clearBreakGlassExpiry();
         activeDockerBreakGlass = undefined;
@@ -1585,6 +1708,7 @@ export function createSandboxExtension(
                 "status",
                 "mode",
                 "doctor",
+                "installations",
                 "migrate",
                 "recover",
                 "docker",
@@ -1620,6 +1744,7 @@ export function createSandboxExtension(
                             [
                                 "Change session mode",
                                 "Inspect effective permissions",
+                                "Manage local installations",
                                 "Cancel",
                             ],
                         );
@@ -1627,7 +1752,9 @@ export function createSandboxExtension(
                         arg =
                             choice === "Change session mode"
                                 ? "mode"
-                                : "doctor";
+                                : choice === "Manage local installations"
+                                  ? "installations"
+                                  : "doctor";
                     }
                     if (arg === "mode") {
                         const hostChoice = resolved.shell.hostAllowed
@@ -1704,6 +1831,16 @@ export function createSandboxExtension(
                         "error",
                     );
                 }
+                return;
+            }
+            if (arg === "installations") {
+                await manageInstallations(ctx, {
+                    agentDir: getAgentDir(),
+                    machineId,
+                    onChanged: async () => {
+                        await reconfigureServices(ctx, loadShell(ctx));
+                    },
+                });
                 return;
             }
             if (arg === "migrate") {
@@ -2041,6 +2178,15 @@ export function createSandboxExtension(
                             resolved.shell.sandboxFingerprint
                             ? runtime.contexts?.["bash-general"]
                             : undefined;
+                    let bundle;
+                    let distributionDiagnostic = "";
+                    try {
+                        bundle = await inspectManagedPrivateRuntime(
+                            options.zeroboxBackend,
+                        );
+                    } catch (error) {
+                        distributionDiagnostic = `\nRuntime verification failed: ${errorMessage(error)}`;
+                    }
                     ctx.ui.notify(
                         sandboxDoctor(
                             resolved,
@@ -2048,7 +2194,8 @@ export function createSandboxExtension(
                                 ? undefined
                                 : args.trim().slice(7).trim(),
                             context,
-                        ),
+                            bundle,
+                        ) + distributionDiagnostic,
                         "info",
                     );
                     return;
@@ -2071,7 +2218,7 @@ export function createSandboxExtension(
                     return;
                 }
                 ctx.ui.notify(
-                    "Usage: /sandbox [status | doctor [executable] | migrate | recover | mode [sandbox|host] | docker [on|off|break-glass [1m-30m]]]",
+                    "Usage: /sandbox [status | doctor [executable] | installations | migrate | recover | mode [sandbox|host] | docker [on|off|break-glass [1m-30m]]]",
                     "error",
                 );
             } catch (error) {

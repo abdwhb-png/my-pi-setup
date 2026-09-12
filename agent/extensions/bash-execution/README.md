@@ -1,7 +1,7 @@
 # Bash Execution
 
 Use `bash`, `safe_bash`, and `!` through the selected execution mode. A fresh
-installation selects `sandbox`: Zerobox, no network, private `/tmp`. Configure
+installation selects `sandbox`: Zerobox with its private shell runtime, no network, private `/tmp`, and no inherited host environment or PATH. Configure
 explicit resource openings within the authorization ceilings, or select `host`
 for a local shell when globally authorized. Treat `default`, `custom` and `host`
 as derived profiles, not configuration selectors.
@@ -32,7 +32,7 @@ ordinary commands. Legacy `hostCapability` parameters are rejected before launch
 
 Use `!s <command>` to request sandbox execution explicitly. Think-in-Code keeps
 its strict engine and private HOME and `/tmp` even when the shell profile is
-`host`. Native file tools remain on the host outside this shell boundary.
+`host`. Native file tools, extensions, MCP tools, and browser executors remain outside this shell boundary.
 See [profiles and capabilities](../sandbox/docs/shell-capabilities.md).
 
 `sandbox/` owns Zerobox and publishes `pi.sandbox-runtime.v2`; it does not
@@ -44,6 +44,8 @@ Safe Bash keeps its public tools, commands, renderers, `replace`/`coexist`
 modes, policy and private telemetry. See [safe-bash/README.md](safe-bash/README.md)
 for its configuration and audit contract.
 
+The sandbox route starts `/__zerobox/runtime/bin/bash`. Its private distribution includes Bash, coreutils, findutils, grep, sed, gawk, diffutils, tar and gzip. It deliberately does not supply Git, `rg`, `jq`, package managers, editors, or other development tools. A project can select a global local installation to expose its authorized roots read-only and add its declared command directories before the private runtime PATH. This does not change the execution mode or grant host fallback.
+
 ## Shared context and guidance
 
 Both tools use `_shared/shell-presentation/` for stable descriptions, snippets
@@ -54,7 +56,7 @@ per-tool `bashRewrites` and additional Safe Bash checks. Tool availability
 Before each model request, the `context` hooks assemble one ephemeral
 `pi.shell-context.v2` message. It contains current availability, execution facts
 and active Safe Bash checks. It is not saved in session history. Configuration
-changes appear as pending until the next shell admission prepares the runtime.
+changes appear as pending until the next shell admission proves the runtime admitted them. Execution context V3 is created from that admission receipt; V1 and V2 context describes historical or planned policy and is not proof of mounted permissions.
 Standard prompts receive `promptGuidelines`; custom prompts receive the same
 rules through the existing provider catalog, filtered to available tools.
 

@@ -2,6 +2,10 @@ import { dirname } from "node:path";
 
 import { summarizeDockerAccess } from "../../sandbox/docker-presentation.ts";
 import type {
+    SandboxAdmission,
+    SandboxAdmissionReport,
+} from "../../sandbox/runtime/admission.ts";
+import type {
     SandboxLeasePaths,
     SandboxPolicy,
     SandboxProfileName,
@@ -70,9 +74,24 @@ export interface SandboxExecutionContextV2 extends Omit<
     environment: SandboxExecutionContextV1["environment"] & { path: string[] };
 }
 
+export interface SandboxExecutionContextV3 extends Omit<
+    SandboxExecutionContextV2,
+    "version"
+> {
+    version: 3;
+    admission: "admitted";
+    admissionSha256: string;
+    runtime: SandboxAdmissionReport["runtime"];
+    helperSha256: string;
+    mounts: SandboxAdmissionReport["mounts"];
+    pathAliases?: SandboxAdmissionReport["pathAliases"];
+    kernelMounts: SandboxAdmissionReport["kernelMounts"];
+}
+
 export type SandboxExecutionContext =
     | SandboxExecutionContextV1
-    | SandboxExecutionContextV2;
+    | SandboxExecutionContextV2
+    | SandboxExecutionContextV3;
 export type SandboxProfileContexts = Record<
     SandboxProfileName,
     SandboxExecutionContext
@@ -312,6 +331,105 @@ export function parseSandboxExecutionContext(
     value: unknown,
 ): SandboxExecutionContext | undefined {
     const context = recordValue(value);
+    if (context?.version === 3) {
+        const base = parseSandboxExecutionContext({ ...context, version: 2 });
+        const runtime = recordValue(context.runtime);
+        const digest = (value: unknown): value is string =>
+            typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+        if (
+            !base ||
+            base.version !== 2 ||
+            context.admission !== "admitted" ||
+            !digest(context.admissionSha256) ||
+            !digest(context.helperSha256) ||
+            !runtime ||
+            runtime.target !== "x86_64-unknown-linux-gnu" ||
+            typeof runtime.version !== "string" ||
+            !runtime.version ||
+            !digest(runtime.manifestSha256) ||
+            (runtime.component !== "shell" &&
+                runtime.component !== "analysis") ||
+            !Array.isArray(context.mounts)
+        )
+            return;
+        const mounts: SandboxAdmissionReport["mounts"] = [];
+        for (const entry of context.mounts) {
+            const mount = recordValue(entry);
+            if (
+                !mount ||
+                typeof mount.source !== "string" ||
+                typeof mount.destination !== "string" ||
+                (mount.access !== "ro" && mount.access !== "rw") ||
+                (mount.origin !== "runtime" &&
+                    mount.origin !== "policy" &&
+                    mount.origin !== "internal")
+            )
+                return;
+            mounts.push({
+                source: mount.source,
+                destination: mount.destination,
+                access: mount.access,
+                origin: mount.origin,
+            });
+        }
+        const pathAliases: NonNullable<SandboxAdmissionReport["pathAliases"]> =
+            [];
+        if (context.pathAliases !== undefined) {
+            if (!Array.isArray(context.pathAliases)) return;
+            for (const entry of context.pathAliases) {
+                const alias = recordValue(entry);
+                if (
+                    !alias ||
+                    typeof alias.destination !== "string" ||
+                    typeof alias.target !== "string" ||
+                    typeof alias.directory !== "boolean"
+                )
+                    return;
+                pathAliases.push({
+                    destination: alias.destination,
+                    target: alias.target,
+                    directory: alias.directory,
+                });
+            }
+        }
+        if (!Array.isArray(context.kernelMounts)) return;
+        const kernelMounts: SandboxAdmissionReport["kernelMounts"] = [];
+        for (const entry of context.kernelMounts) {
+            const mount = recordValue(entry);
+            if (
+                !mount ||
+                typeof mount.destination !== "string" ||
+                typeof mount.root !== "string" ||
+                typeof mount.source !== "string" ||
+                typeof mount.filesystem !== "string" ||
+                (mount.access !== "ro" && mount.access !== "rw")
+            )
+                return;
+            kernelMounts.push({
+                destination: mount.destination,
+                root: mount.root,
+                source: mount.source,
+                filesystem: mount.filesystem,
+                access: mount.access,
+            });
+        }
+        return {
+            ...base,
+            version: 3,
+            admission: "admitted",
+            admissionSha256: context.admissionSha256,
+            helperSha256: context.helperSha256,
+            runtime: {
+                target: runtime.target,
+                version: runtime.version,
+                manifestSha256: runtime.manifestSha256,
+                component: runtime.component,
+            },
+            mounts,
+            kernelMounts,
+            ...(context.pathAliases === undefined ? {} : { pathAliases }),
+        };
+    }
     if (context?.version === 1)
         return parseLegacySandboxExecutionContext(value);
     if (context?.version !== 2) return undefined;
@@ -523,7 +641,7 @@ function explicitLoopbackPorts(policy: SandboxPolicy): number[] {
     return [...new Set(ports)].toSorted((left, right) => left - right);
 }
 
-/** Build model-visible facts from the exact policy passed to the backend. */
+/** Describe planned policy. Only v3 reports prove that the engine admitted it. */
 export function createSandboxExecutionContext(
     policy: SandboxPolicy,
     lease: SandboxLeasePaths,
@@ -621,6 +739,63 @@ export function createSandboxExecutionContext(
     };
 }
 
+export function createAdmittedSandboxExecutionContext(
+    admission: SandboxAdmission,
+    profile: SandboxProfileName,
+    lease: SandboxLeasePaths,
+    options: SandboxExecutionContextOptions,
+): SandboxExecutionContextV3 {
+    const report = admission.report;
+    const base = createSandboxExecutionContext(
+        {
+            name: profile,
+            strict: true,
+            tmpNamespace: report.tmp.namespace,
+            filesystem: report.filesystem,
+            network: report.network,
+            resources: report.resources,
+            docker: report.docker,
+            environment: {
+                inherit: report.environment.inherit,
+                deny: report.environment.deny,
+                set: {
+                    ...Object.fromEntries(
+                        report.environment.set.map((name) => [name, ""]),
+                    ),
+                    HOME: report.home.path,
+                    PATH: report.path.join(":"),
+                },
+            },
+        },
+        lease,
+        options,
+    );
+    return {
+        ...base,
+        version: 3,
+        admission: "admitted",
+        admissionSha256: admission.sha256,
+        runtime: { ...report.runtime },
+        helperSha256: report.helperSha256,
+        mounts: report.mounts.map((mount) => ({
+            ...mount,
+            source: aliasPath(mount.source, lease, options.homeDir),
+            destination: aliasPath(mount.destination, lease, options.homeDir),
+        })),
+        pathAliases: (report.pathAliases ?? []).map((alias) => ({
+            ...alias,
+            destination: aliasPath(alias.destination, lease, options.homeDir),
+            target: aliasPath(alias.target, lease, options.homeDir),
+        })),
+        kernelMounts: report.kernelMounts.map((mount) => ({
+            ...mount,
+            destination: aliasPath(mount.destination, lease, options.homeDir),
+            root: aliasPath(mount.root, lease, options.homeDir),
+            source: aliasPath(mount.source, lease, options.homeDir),
+        })),
+    };
+}
+
 export function formatSandboxSystemContext(
     snapshot: SandboxModelContextSnapshotV1,
 ): string {
@@ -631,7 +806,7 @@ export function formatSandboxSystemContext(
               ? "OS-isolated execution is temporarily unavailable while the runtime is reconfiguring."
               : snapshot.state === "error"
                 ? "OS-isolated execution is unavailable because the runtime is in an error state."
-                : "The listed profile rules are the effective OS sandbox boundaries.";
+                : "Version 3 entries describe engine-admitted permissions for their executions. Version 1/2 entries describe planned or historical policy, not proof of current mounts. A new command remains pending until engine admission succeeds.";
     return [
         CONTEXT_START,
         "Sandbox execution context v1",

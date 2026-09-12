@@ -10,6 +10,10 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { SandboxExecutionError } from "../runtime/contracts.ts";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
+import {
+    validateGlobalInstallations,
+    parseInstallationSelection,
+} from "./installations.ts";
 
 export {
     CAPABILITY_ERROR_CODES,
@@ -181,7 +185,13 @@ function validateLayer(
     if (layer.environment !== undefined) {
         known(
             record(layer.environment, scope + ".environment"),
-            ["allowedVariables", "deniedVariables", "variables", "path"],
+            [
+                "allowedVariables",
+                "deniedVariables",
+                "variables",
+                "path",
+                "installations",
+            ],
             scope + ".environment",
         );
     }
@@ -193,7 +203,16 @@ function validateLayer(
         );
     }
     const { mode: _mode, host: _host, docker: _docker, ...generic } = layer;
-    validatePiSandboxConfig(generic);
+    const environment =
+        layer.environment === undefined
+            ? undefined
+            : record(layer.environment, `${scope}.environment`);
+    if (scope === "global")
+        validateGlobalInstallations(environment?.installations);
+    else parseInstallationSelection(environment?.installations, scope);
+    const { installations: _installations, ...ordinaryEnvironment } =
+        environment ?? {};
+    validatePiSandboxConfig({ ...generic, environment: ordinaryEnvironment });
     return layer as SandboxConfigLayer;
 }
 export function readGlobalSandboxConfig(

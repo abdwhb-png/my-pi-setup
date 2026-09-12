@@ -51,6 +51,7 @@ export type BashSpawn = (
 export interface PreparedBashSpawn {
     execution?: ExecutionProvenance;
     sandboxContext?: SandboxExecutionContext;
+    getSandboxContext?: () => SandboxExecutionContext | undefined;
     file: string;
     args: string[];
     cwd: string;
@@ -488,7 +489,11 @@ function createTrackedBashOperations(
                     if (pid !== undefined) activeProcessIds.delete(pid);
                 }
             } catch (error) {
-                if (execution.outcome === "pending")
+                if (
+                    execution.outcome === "pending" ||
+                    (execution.phase === "setup" &&
+                        execution.localProcess === undefined)
+                )
                     report({ outcome: "failed" });
                 hasPrimaryFailure = true;
                 primaryFailure = error;

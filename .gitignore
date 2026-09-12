@@ -84,3 +84,9 @@ agent/tool-result-archive/
 
 # Private Zerobox leases and generated profiles
 /zbx/
+
+# Versioned private runtime distributions and local recovery copies
+/runtimes/
+
+# Runtime builder bytecode cache
+/agent/extensions/sandbox/runtime/distribution/__pycache__/

@@ -12,13 +12,28 @@ Run `/sandbox` and `/sandbox doctor` in the project to inspect the resolved poli
 | Host mode outside the global ceiling | Inspect global `host.allowed`. Host execution also needs an explicit `/sandbox mode host` selection in the current session. |
 | Shell policy changed during preparation | The pending command was not dispatched. Inspect the current mode and configuration before submitting it again. |
 | Tool not found or unreadable | Run `/sandbox doctor <executable>` and check configured PATH and the canonical executable target's read grant. A PATH entry alone grants no read permission. |
+| Selected installation is unavailable or redirected | Inspect the global installation root. It must be a directory at its declared canonical path; preview can rewrite a root to its canonical path before it is saved. |
+| Project installation name is rejected | Declare that name globally first. A project can select global names only and cannot add or reorder roots. |
+| Tool dependency is outside an authorized root | Authorize the dependency's bounded root separately or use a compatible private runtime. Do not widen a PATH entry or use host mode as a fallback. |
 | Git metadata is not writable | Inspect explicit `.git` denials and any external Git directory. A writable project includes local Git metadata. |
 | Filesystem deny targets logical private HOME | The internal HOME mount cannot enforce this deny. Correct the conflicting policy; the runtime will not silently ignore it. |
 | A temporary file is invisible | Compare the host, Bash and Think namespaces. Store a shared artifact in the project. |
 | Pipeline reports failure despite successful final stage | Bash uses `pipefail`. Inspect the earlier command's error. |
 | Zerobox setup or provenance failure | Keep the setup diagnostic separate from a command exit. Repair the matching candidate installation; do not bypass through host mode. |
+| Admission report missing, malformed, oversized, or digest-mismatched | Treat the runtime as unadmitted. FD 4 reports are capped at 1 MiB and must match the V2 `sandbox_admitted` status digest before `child_started`. |
+| Private loopback connection failed: loopback proxy refused CONNECT | The proxy denied the connection. Inspect the exact host/port grant and any matching denial. |
+| Zerobox private loopback stream interrupted (..., after CONNECT) | The tunnel was established, then a proxy-side error, timeout or other relay failure occurred. Inspect the command's output and exit code. Local client disconnects are handled as cancellation and do not generate this diagnostic. |
 | Reconfiguration wait expired | The pending command did not execute. Its original timeout includes the wait. |
 | Execution interrupted by reconfiguration | Inspect any effects already produced. The runtime did not replay the command. |
+| A removed grant stopped an existing command | This is intentional revocation. The watcher polls every second and interrupts affected descendants before a replacement runtime accepts work. |
+
+Bridge diagnostics use Zerobox's stderr, which `safe_bash` includes in tool output. A shell pipeline such as `2>&1 | tail` filters the command's output, but not the bridge's own stderr. A client may intentionally close TCP with a reset after completing its application exchange. Zerobox treats that local disconnect as cancellation, preserves the first transport failure before cleanup, and leaves the command's exit status unchanged. The relay cannot certify application-level completeness.
+
+## Execution environments
+
+Resolve executable names and check tool availability in the environment that will execute the command. A launcher may send arguments to a different runtime with its own HOME, PATH and filesystem. A command missing there does not establish that the tool is missing in the caller's environment, or that an access grant is needed.
+
+Defer variable and path expansion intended for the target environment to that environment's shell. For example, use `launcher run sh -c '"$HOME/bin/tool" "$@"' sh argument` when the target HOME is required. Double quotes around `$HOME` in the caller still expand it before the launcher receives the argument. Keep values intentionally taken from the caller explicit. Do not automatically rewrite command arguments or substitute host paths.
 
 ## Docker
 

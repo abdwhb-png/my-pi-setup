@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -142,7 +141,7 @@ describe("sandbox policies", () => {
         expect(bash.filesystem.allowWrite).toContain(cwd);
         expect(bash.filesystem.allowWrite).toContain(lease.homeDir);
         expect(bash.filesystem.allowWrite).toContain(lease.tmpDir);
-        expect(bash.filesystem.allowRead).toContain(lease.proxyRunsDir);
+        expect(bash.filesystem.allowRead).not.toContain(lease.proxyRunsDir);
         expect(bash.filesystem.allowWrite).not.toContain(lease.proxyRunsDir);
         expect(bash.filesystem.allowWrite).not.toContain(lease.zeroboxHome);
         expect(bash.filesystem.allowWrite).not.toContain(lease.root);
@@ -534,7 +533,8 @@ describe("sandbox policies", () => {
         });
 
         expect(policy.environment.set).toEqual({
-            USER: "tester",
+            USER: "sandbox",
+            SHELL: "/__zerobox/runtime/bin/bash",
             LANG: "C.UTF-8",
             EXPLICIT: "captured-host-value",
             PATH: buildBashPath(),
@@ -545,14 +545,7 @@ describe("sandbox policies", () => {
             DOCKER_CONFIG: SANDBOX_PRIVATE_HOME,
             TMPDIR: "/tmp",
         });
-        expect(policy.environment.inherit).toEqual([
-            "USER",
-            "SHELL",
-            "LANG",
-            "COLORTERM",
-            "NO_COLOR",
-            "EXPLICIT",
-        ]);
+        expect(policy.environment.inherit).toEqual(["EXPLICIT"]);
         expect(policy.environment.deny).toEqual(["TERM", "CUSTOM"]);
         expect(policy.environment.set.PATH).not.toContain("/mnt/c");
         expect(JSON.stringify(policy.environment)).not.toContain("SECRET");
@@ -629,25 +622,8 @@ describe("sandbox policies", () => {
         }
     });
 
-    it("keeps the checked-in active config inside the v1 capability gate", async () => {
-        const raw = JSON.parse(
-            await readFile(join(import.meta.dir, "../../../sandbox.json"), "utf8"),
-        );
-        const config = validatePiSandboxConfig(raw);
-        expect(config.enabled).toBe(true);
-        expect(config.filesystem.allowWrite).not.toContain("/tmp");
-        expect(config.filesystem.denyWrite).toEqual([
-            ".env", ".env.*", "*.pem", "*.key",
-        ]);
-        expect(config.network.allowedDomains).toEqual([
-            "github.com",
-            "*.github.com",
-            "localhost:8317",
-            "localhost:8320",
-            "localhost:18740",
-        ]);
-        expect(config.network.allowedHostDomains).toEqual([
-            "*.dev.test:443",
-        ]);
+    it("keeps distribution-only fields outside raw execution policy validation", () => {
+        expect(()=>validatePiSandboxConfig({runtimeBundle:"/untrusted/bundle"})).toThrow(SandboxExecutionError);
+        expect(()=>validatePiSandboxConfig({environment:{installations:{unauthorized:[{root:"/usr",path:["bin"]}]}}})).toThrow(SandboxExecutionError);
     });
 });

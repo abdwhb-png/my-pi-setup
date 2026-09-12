@@ -12,8 +12,20 @@ export function readShellModelContext() {
     const strictEnvironments =
         runtime.state === "enabled" && runtime.contexts
             ? {
-                  "think-strict": runtime.contexts["think-strict"],
-                  "analysis-strict": runtime.contexts["analysis-strict"],
+                  "think-strict": {
+                      admission:
+                          runtime.contexts["think-strict"].version === 3
+                              ? "admitted"
+                              : "pending",
+                      context: runtime.contexts["think-strict"],
+                  },
+                  "analysis-strict": {
+                      admission:
+                          runtime.contexts["analysis-strict"].version === 3
+                              ? "admitted"
+                              : "pending",
+                      context: runtime.contexts["analysis-strict"],
+                  },
               }
             : undefined;
     const base = {
@@ -93,7 +105,19 @@ export function readShellModelContext() {
         runtime.state === "enabled"
             ? runtime.contexts?.["bash-general"]
             : undefined;
-    return { ...selected, availability: "ready", effective };
+    return effective?.version === 3
+        ? {
+              ...selected,
+              availability: "ready",
+              admission: "admitted",
+              effective,
+          }
+        : {
+              ...selected,
+              availability: "ready",
+              admission: "pending",
+              planned: effective,
+          };
 }
 
 export function registerSandboxModelContext(pi: ExtensionAPI): void {

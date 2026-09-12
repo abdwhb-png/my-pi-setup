@@ -4,7 +4,7 @@ Select an execution mode independently of the descriptive profile.
 
 | Profile | Mode | Meaning |
 | --- | --- | --- |
-| P1 — Default sandbox | `sandbox` | Use Zerobox with the project and tool baseline, closed network and private temporary files. |
+| P1 — Default sandbox | `sandbox` | Use Zerobox with the private shell runtime, project permissions, closed network and private temporary files. |
 | P2 — Custom sandbox | `sandbox` | Apply the authorized resource configuration, including additional restrictions. |
 | P3 — Explicit host | `host` | Run through the local process supervisor after explicit session selection within the global authorization. |
 
@@ -14,9 +14,9 @@ P1 and P2 use the same backend. The effective configuration determines `default`
 
 Use `~/.pi/agent/sandbox.json` for global defaults and ceilings. Place project restrictions in `<project>/.pi/sandbox.json`. Do not keep a global registry of projects or configure additional capability files.
 
-An absent project field inherits the global setting. An empty list closes that resource list. Restrictions take precedence over grants. Configure PATH and filesystem reads separately: finding a program through PATH does not grant access to its executable, symlink target, configuration or cache.
+An absent project field inherits the global setting. An empty list closes that resource list. Restrictions take precedence over grants. Legacy PATH entries control lookup only and require separate read permission.
 
-For example, when a system command resolves to a Linux executable outside the tool baseline, grant that precise executable path in the global configuration. Keep the original command. Do not add a product adapter or grant an entire parent directory just to reach one executable.
+Use a named global installation to authorize an existing tool and its bounded resource roots in one declaration. It derives read-only mounts and PATH entries in global order, without another activation. Projects inherit all declared installations unless they select a narrower list. A project cannot add a root or use host PATH discovery as authorization.
 
 Docker uses a separate rule inside these same files: global `docker.allowed` authorizes its policy ceiling, while project `docker.enabled` opts in. Missing booleans mean disabled. Preserve the broker and its operation/target limits. A generic socket grant must not replace Docker authority.
 
@@ -34,11 +34,11 @@ Use `! <command>` or `!! <command>` with the selected mode. Use `!s <command>` o
 
 ## Admission and results
 
-Reload configuration before admitting a command. Invalid configuration blocks new admissions. A valid external change rebuilds the required runtime; operations already admitted drain using their original resources. A setup failure never selects a different backend.
+Reload configuration before admitting a command. Invalid configuration blocks new admissions. The watcher also polls every second. Additive valid changes rebuild the required runtime while existing operations drain; removing a right interrupts every affected runtime and descendant before replacement. A setup failure never selects a different backend or replays the command.
 
-Keep execution evidence separate from labels. Record `mode` and `shellProfile` alongside the observed `status`, `backend` and temporary namespace. Preserve an unknown result when no execution evidence exists. The model context reports the final tool result separately from process provenance: a process can exit successfully while a later validation makes the tool fail. When reading historical `integrated` results, use their observed backend to distinguish an old sandbox execution from an old specialized host execution.
+Keep execution evidence separate from labels. Record `mode` and `shellProfile` alongside the observed `status`, `backend` and temporary namespace. Preserve an unknown result when no execution evidence exists. V3 evidence is created only from the engine's validated admission report; V1/V2 evidence is planned or historical policy. The model context reports the final tool result separately from process provenance: a process can exit successfully while a later validation makes the tool fail. When reading historical `integrated` results, use their observed backend to distinguish an old sandbox execution from an old specialized host execution.
 
-This is a shell boundary. Native file tools, extensions and MCP tools execute outside it. Think-in-Code retains its strict environment and private HOME and temporary files regardless of the shell mode.
+This is a shell boundary. Native file tools, extensions, MCP tools, and browser executors execute outside it. Think-in-Code retains its strict environment and private HOME and temporary files regardless of the shell mode.
 
 ## Migration
 

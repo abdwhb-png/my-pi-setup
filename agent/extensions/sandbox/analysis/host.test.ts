@@ -150,7 +150,7 @@ describe("analysis sandbox host", () => {
         expect(input.args.join(" ")).not.toContain(secret);
         expect(input.stdin).toContain(secret);
         expect(input.outputBytes).toBe(32 * 1024 ** 2 * 6 + 64 * 1024);
-        expect(harness.readablePaths()).toContain(harness.deps.sandboxRoot);
+        expect(harness.readablePaths()).toEqual([]);
         expect(harness.dispose).toHaveBeenCalledTimes(1);
     });
 

@@ -16,19 +16,11 @@ import {
 import { createSandboxService } from "./service.ts";
 import { createZeroboxBackend } from "./zerobox-backend.ts";
 import { localMachineId } from "../capabilities/authority.ts";
-
-const CANDIDATE_BINARY_ENV = "PI_SANDBOX_ZEROBOX_BINARY";
-const CANDIDATE_SHA256_ENV = "PI_SANDBOX_ZEROBOX_SHA256";
+import { candidateBackendOptions, hasCandidateRuntime } from "./integration-fixtures.ts";
+import { PRIVATE_BASH } from "./shell-baseline.ts";
 
 function createCandidateBackend(leaseRoot: string) {
-    return createZeroboxBackend({
-        binaryPath: process.env[CANDIDATE_BINARY_ENV]!,
-        expectedProvenance: {
-            version: "0.3.3-fork.17",
-            binarySha256: process.env[CANDIDATE_SHA256_ENV]!,
-        },
-        probeRoot: leaseRoot,
-    });
+    return createZeroboxBackend(candidateBackendOptions(leaseRoot));
 }
 
 function createTemporaryLeaseOptions(rootDir: string) {
@@ -41,7 +33,7 @@ function createTemporaryLeaseOptions(rootDir: string) {
 }
 
 test.skipIf(
-    !process.env[CANDIDATE_BINARY_ENV] || !process.env[CANDIDATE_SHA256_ENV],
+    !hasCandidateRuntime(),
 ).each(["lease-private", "host"] as const)("Bash tmp %s preserves strict Think isolation and sibling leases", async namespace => {
     const cwd = await mkdtemp(join(import.meta.dir, ".tmp-profiles-"));
     const hostTmp = await mkdtemp("/tmp/pi-host-contract-");
@@ -63,10 +55,10 @@ test.skipIf(
             const operations = createBashOperations({
                 onExecution: event => events.push(event),
                 prepareSpawn: async ({ command }) => {
-                    const input = { file: "/bin/bash", args: ["-c", command], cwd };
+                    const input = { file: PRIVATE_BASH, args: ["-c", command], cwd };
                     if (profile === "bash-general") return service.prepareBash(input);
                     if (profile === "think-strict") return service.prepareThinkBash(input);
-                    const handle = await service.prepareAnalysis(input, [cwd, "/bin/bash", "/usr/bin"]);
+                    const handle = await service.prepareAnalysis(input, [cwd]);
                     dispose = () => handle.dispose();
                     return handle.spawn;
                 },
@@ -98,7 +90,7 @@ test.skipIf(
 }, 30_000);
 
 test.skipIf(
-    !process.env[CANDIDATE_BINARY_ENV] || !process.env[CANDIDATE_SHA256_ENV],
+    !hasCandidateRuntime(),
 )("global and project tmp layers control Bash while Think stays private", async () => {
     const root = await mkdtemp(join(import.meta.dir, ".tmp-layered-"));
     const agentDir = join(root, "agent");
@@ -122,7 +114,7 @@ test.skipIf(
             await service.startBashSession(cwd);
             const bash = await createSandboxedBashOps(service, supervisor).exec(command, cwd, { timeout: 10, onData: chunk => { output += chunk.toString(); } });
             const think = createBashOperations({
-                prepareSpawn: ({ command: value }) => service.prepareThinkBash({ file: "/bin/bash", args: ["-c", value], cwd }),
+                prepareSpawn: ({ command: value }) => service.prepareThinkBash({ file: PRIVATE_BASH, args: ["-c", value], cwd }),
             });
             const strictThink = await think.exec(thinkCommand, cwd, { timeout: 10, onData: () => {} });
             return { bash, strictThink, output };
@@ -170,7 +162,7 @@ test.skipIf(
 }, 60_000);
 
 test.skipIf(
-    !process.env[CANDIDATE_BINARY_ENV] || !process.env[CANDIDATE_SHA256_ENV],
+    !hasCandidateRuntime(),
 )("a project containing lease control keeps its own caches writable without exposing a sibling lease", async () => {
     const root = await mkdtemp("/var/tmp/p");
     const cwd = root;
@@ -203,7 +195,7 @@ test.skipIf(
 }, 60_000);
 
 test.skipIf(
-    !process.env[CANDIDATE_BINARY_ENV] || !process.env[CANDIDATE_SHA256_ENV],
+    !hasCandidateRuntime(),
 )("development uses a private logical HOME without granting host home writes", async () => {
     const cwd = await mkdtemp(join(import.meta.dir, ".tmp-home-"));
     const leaseRoot = await mkdtemp("/var/tmp/z-");
@@ -238,7 +230,7 @@ test.skipIf(
 }, 30_000);
 
 test.skipIf(
-    !process.env[CANDIDATE_BINARY_ENV] || !process.env[CANDIDATE_SHA256_ENV],
+    !hasCandidateRuntime(),
 )("Sandbox shell reports an upstream failure even when the final pipeline command succeeds", async () => {
     const leaseRoot = await mkdtemp("/var/tmp/z-");
     const service = createSandboxService({ backend: createCandidateBackend(leaseRoot), config: validatePiSandboxConfig({}), ...createTemporaryLeaseOptions(leaseRoot) });
@@ -256,7 +248,7 @@ test.skipIf(
         expect(events.at(-1)).toMatchObject({ outcome: "failed", exitCode: 7 });
         expect(contexts).toHaveLength(1);
         expect(contexts[0]).toMatchObject({
-            version: 1,
+            version: 3,
             profile: "bash-general",
         });
     } finally { supervisor.shutdown(); await service.shutdown(); await rm(leaseRoot, { recursive: true, force: true }); }

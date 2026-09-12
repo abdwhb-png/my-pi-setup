@@ -96,11 +96,11 @@ Shells, interpreters, other commands, paths outside those destinations and exec 
 
 Use `/sandbox docker break-glass [1m-30m]` for a temporary exec exception. Select an eligible container and confirm the exception. The runtime rechecks the current global and project policy after confirmation and binds the exception to the exact current container ID.
 
-The exception exists only in session memory. Its deadline remains attached to every runtime that used it, including runtimes retained while earlier commands finish. Expiration interrupts those commands. Activating a later exception does not cancel the earlier deadline. Global or project Docker deactivation still blocks new admissions.
+The exception exists only in session memory. Its deadline remains attached to every runtime that used it, including runtimes retained while earlier commands finish. Expiration interrupts those commands. Activating a later exception does not cancel the earlier deadline. Global or project Docker deactivation blocks new admissions and terminates runtimes retaining the removed access, including descendants, before revocation completes.
 
 ## Configuration changes and inspection
 
-Global or project deactivation takes effect before the next admission. Re-enabling one side cannot compensate for the other side being off. Valid inactive policy fields are retained for a later activation.
+Check global and project deactivation before every admission, through filesystem notifications, and once per second while processes remain active. Wait for runtimes retaining the removed access to terminate before considering revocation complete. Re-enabling one side cannot compensate for the other side being off. Retain valid inactive policy fields for a later activation.
 
 Use `/sandbox docker` and `/sandbox doctor` to inspect configured policy and runtime state. Configuration acceptance is not proof that every engine operation succeeds. File permissions, target eligibility and container process permissions remain separate checks.
 

@@ -1,25 +1,19 @@
 # Sandbox runtime
 
-Sandbox uses the provenance-pinned Zerobox binary at `~/.pi/bin/zerobox`. The Pi policy compiler, binary and provenance must describe the same contract. A version string alone does not identify a locally patched build.
+Sandbox uses a provenance-pinned Zerobox release and a private runtime bundle. The Pi policy compiler, binary, manifest and provenance must describe the same contract. A version string alone does not identify a locally patched build.
 
 ## Filesystem and tool baseline
 
-The default Bash policy grants the project and these system resources in read-only mode:
+The default Bash policy grants the project permissions and a read-only private runtime at `/__zerobox/runtime`. It does not grant host `/bin`, `/sbin`, `/usr`, `/lib`, `/lib64`, `/etc`, `/nix/store`, host executable directories, or the caller's PATH.
 
 ```text
-/bin
-/sbin
-/usr
-/lib
-/lib64
-/etc/ld.so.cache
-/etc/ld.so.conf
-/etc/ld.so.conf.d
+Bash, coreutils, findutils, grep, sed, gawk,
+diffutils, tar, gzip, and required private dependencies
 ```
 
-System PATH contains `/usr/local/bin`, `/usr/local/sbin`, `/usr/bin`, `/usr/sbin`, `/bin` and `/sbin`. A runtime installed elsewhere needs explicit read grants and a configured PATH entry. Neither PATH nor an executable's name grants access to other resources. Canonical targets of symlinks must also be authorized.
+Shell PATH contains selected installation command directories, legacy `environment.path`, then `/__zerobox/runtime/bin`. An installation grants its declared roots read-only. Host environment variables require an explicit allowlist or configured value. Git, `rg`, `jq`, package managers, editors, and development tools are not part of the private shell runtime. Neither PATH nor an executable's name grants access to other resources. Canonical targets of symlinks and dependencies must remain inside authorized roots or the private runtime.
 
-Configured denies remain enforced, including within a writable project. The policy does not grant all of HOME, all of `/etc` or the filesystem root. FUSE views enforce dynamic exclusions without reopening their parent directories.
+Configured denies remain enforced, including within a writable project. The default policy does not grant the host HOME, `/etc` or the filesystem root. FUSE views enforce dynamic exclusions without reopening their parent directories.
 
 ## Private state
 
@@ -31,15 +25,27 @@ A filesystem deny that intersects the logical private HOME is rejected explicitl
 
 Bash uses private `/tmp` by default. Explicit global `tmpNamespace: "host"` permits host temporary storage, and the project can restrict it to `lease-private`. Think and Analysis always retain separate private temporary namespaces. Native file tools remain on the host, so use a project file when an artifact must be visible on both sides.
 
+Analysis is separate from the shell: it receives `/__zerobox/analysis` only for Analysis execution, alongside the private shell runtime where required. Do not infer that a shell command can run an Analysis helper or that an Analysis helper can access a selected shell installation.
+
+## Runtime distribution and admission
+
+The bundle manifest is distribution metadata, not user configuration. It declares the managed release's target, version, helper digest, components, files, symlinks, and digests. Pi verifies the manifest and tree, installs a complete release atomically, and pins the resolved real release path for a runtime lifetime. A later symlink or current-release change cannot alter an already prepared runtime.
+
+Zerobox writes a bounded admission report to FD 4 before it reports `child_started` on status FD 3. The report is limited to 1 MiB, includes the runtime and helper digests, mounts, effective filesystem/network/resource policy, PATH, private HOME and temporary namespace, and must match the submitted policy. The V2 status stream contains `sandbox_admitted` with the report digest; Pi accepts readiness only after the FD 4 report validates and the digest matches. A missing, oversized, malformed, mismatched, or out-of-order report blocks execution.
+
+The inner helper records `kernelMounts` from `/proc/self/mountinfo` after entering the private filesystem. Each record includes the destination, filesystem root, source, filesystem type and observed read/write flag. The helper and Pi reject absent or writable private runtime mounts. Authorized host path aliases remain explicit in `pathAliases`. Policy mounts use validated descriptors so replacing an authorized path during setup cannot redirect the mounted source.
+
+Pi returns the validated report digest on a separate acknowledgement descriptor, FD 5. The supervisor keeps that descriptor outside the sandbox and does not release the target until the acknowledgement matches. It then confirms successful `exec` through the private setup channel before emitting `child_started`. A rejected report or missing executable remains a setup failure, distinct from a started program that exits with code 125.
+
 ## Execution lifecycle
 
 Bash enables `pipefail`. A failure in an earlier pipeline stage therefore affects the reported exit code. Commands that intentionally accept such a failure can explicitly change shell options.
 
 The runtime distinguishes `uninitialized`, `reconfiguring`, `enabled`, `disabled` and `error`. Callers resolve the service at dispatch and recheck the policy fingerprint after preparation. A stale or revoked admission cannot dispatch against a wider old policy.
 
-During reconfiguration, pending calls wait at most 30 seconds within their original deadline and cancellation signal. Ordinary valid configuration changes retain the old runtime while already admitted operations drain. Session replacement and Docker break-glass expiry preserve their interrupting behavior. Interrupted commands are never replayed automatically.
+During reconfiguration, pending calls wait at most 30 seconds within their original deadline and cancellation signal. Additive valid changes retain the old runtime while already admitted operations drain. A removed right revokes admission and interrupts existing affected descendants before replacement. Session replacement and Docker break-glass expiry preserve their interrupting behavior. Interrupted commands are never replayed automatically.
 
-Removing a Unix socket or TCP publication takes effect when the next admission reloads the configuration. After validating the replacement runtime, Pi interrupts older shell runtimes that held the removed resource. This closes their existing connections and stops their commands, including other commands in the same runtime. Older runtimes whose resource grants remain valid continue draining normally. Think and Analysis receive no shell resource grants.
+Removing a Unix socket or TCP publication triggers the same watcher and pre-admission revocation as filesystem access. Pi interrupts and awaits older shell runtimes that held the removed resource before preparing the replacement. This closes their existing connections and stops their commands, including other commands in the same runtime. Older runtimes whose resource grants remain valid continue draining normally. Think and Analysis receive no shell resource grants.
 
 A missing or mismatched binary, invalid policy, failed setup protocol or unavailable Linux facility blocks sandbox execution. It never selects host execution as a fallback.
 
@@ -60,14 +66,7 @@ configuration, missing policy or an unavailable runtime reports the block and
 preserves execution gates. Already admitted calls keep their original receipts
 and remain subject to the existing revocation rules.
 
-Version 2 execution receipts derive from the materialized backend policy and
-include private HOME, PATH entries, temporary namespace, network policy, exact
-Unix socket grants and host/LAN TCP publications. Runtime snapshots use the
-same policy builders. These grants do not prove that an executable exists or a
-service is reachable. Environment values other than HOME and PATH are omitted.
-Display aliases such as `~` identify host paths; sandbox shell expansion still
-uses the private HOME. Version 1 receipts remain readable without rewriting
-session history or inferring new grants from missing fields.
+Version 3 execution receipts are derived from the validated engine admission report and include its digest, runtime/helper identities and mount evidence. They prove the permissions admitted for that execution, not executable availability or service reachability. Version 1 and V2 receipts remain readable as historical or planned policy; they do not prove current mounts and must not be upgraded by inference. Environment values other than HOME and PATH are omitted. Display aliases such as `~` identify host paths; sandbox shell expansion still uses the private HOME.
 
 Host context reports the host environment without shell isolation claims.
 Think and Analysis remain separate strict environments. Neither disabling a
@@ -75,17 +74,20 @@ project sandbox nor selecting host mode through project configuration is
 allowed. Host execution still requires global authorization and explicit
 session selection.
 
-Use `/reload` or a new Pi session to load changes to these extensions. This
-presentation update requires no configuration migration or Zerobox reinstall.
+Install the matching engine and private bundle, then use `/reload` or a new Pi session to load these extension changes. Existing explicit configuration fields remain compatible.
 
 ## Qualification and activation
 
-Linux and WSL are the supported targets. The current candidate's integration evidence was obtained on WSL. Native Linux, native Windows execution and a connection from a separate LAN peer require distinct evidence.
+The initial target is Linux x86_64, including WSL2 x86_64. Other platforms and architectures fail explicitly. Native Linux CI and WSL2 require separate qualification evidence.
 
 Private control paths must fit the Unix socket address budget. Preflight rejects a layout whose worst-case socket path is 108 bytes or longer. Long home directory paths can therefore block admission. The default Analysis IPC qualification uses a short fixture home and does not establish support for arbitrary home path lengths.
 
-The runtime requires Linux user namespaces and the managed Zerobox/FUSE facilities. Think's Python analyzer also requires the configured Node runtime with JSPI support, `mkfifo` and `prlimit`.
+The runtime requires Linux user namespaces and the managed Zerobox/FUSE facilities. The private Analysis component supplies Node with JSPI support, Bun, workers and `prlimit`. Linux-native CI remains pending; WSL2 qualification is not proof of that CI coverage or of Windows interoperation.
 
-Local build provenance records source commits, patch digests, the source diff and binary SHA-256 in `runtime/zerobox-provenance.json`. Rebuild and update that record together. Prepare activation separately and start a new Pi session after installing the matching code, binary and migrated configuration.
+Managed releases store source commits, patch digests, source identity, binary/helper digests and runtime-manifest digest in adjacent `provenance.json`. The legacy `runtime/zerobox-provenance.json` remains associated with the old regular executable for explicit recovery. Start a new Pi session after installing the matching code, engine and runtime.
+
+## Distribution build and staging
+
+Use the offline [runtime distribution builder](../runtime/distribution/README.md) only with its pinned Ubuntu 24.04 amd64 builder image and locked input cache. It verifies input digests before assembly, builds the QuickJS worker with the downloaded unmodified Bun, relocates the private shell and Analysis components, and writes a manifest for every declared output. The staging operation validates the candidate through `resolvePrivateRuntime`, keeps matching binary provenance beside the release, preserves the existing executable for recovery, and atomically changes the managed entry only when explicitly called. Assembly does not activate a release. Staging to the real managed entry activates it atomically.
 
 Real shell contract tests require both `PI_SANDBOX_ZEROBOX_BINARY` and `PI_SANDBOX_ZEROBOX_SHA256`. Supply the exact candidate explicitly. Tests that require that candidate skip when it is absent instead of using a personal installation. The standalone Analysis proof exercises the real engines; shell lifecycle fixtures simulate only their unrelated Analysis preflight.

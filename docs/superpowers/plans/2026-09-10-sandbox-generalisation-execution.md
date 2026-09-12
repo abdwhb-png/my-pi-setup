@@ -1,5 +1,13 @@
 # Suivi d’implémentation du sandbox
 
+> **Superseded execution note (2026-09-12):** This historical execution plan
+> must not guide private-runtime implementation. The approved
+> [private runtime and local environments design](../../brainstorming/2026-09-12-sandbox-private-runtime-and-local-environments-design.md)
+> replaces implicit host system reads and PATH, product adapters, additional
+> authority files, and drain-only revocation with a private runtime, selected
+> bounded installations, two configuration files, and admission-backed
+> interruption. It is not an activation or qualification claim.
+
 Plan : `2026-09-10-sandbox-generalisation.md`.
 
 Autorisation : l’utilisateur demande l’implémentation avec un worker principal GPT-5.6 Terra et un quick worker si utile. Garde le contrôleur en coordination. L’implémentation remplace le statut « planification seule » du document initial. UDP reste reporté en A7.

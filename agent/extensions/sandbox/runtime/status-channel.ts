@@ -2,12 +2,19 @@ import { constants } from "node:fs";
 import { chmod, open, rm } from "node:fs/promises";
 import type { Readable } from "node:stream";
 
+import { readSandboxAdmission, type SandboxAdmission } from "./admission.ts";
 import { SandboxExecutionError, type PrivateTempLease } from "./contracts.ts";
-import { superviseZeroboxStatusStream } from "./zerobox-status.ts";
+import {
+    superviseZeroboxStatusStream,
+    type ZeroboxStatusOptions,
+} from "./zerobox-status.ts";
 
 export interface ZeroboxStatusChannel {
     childStdio: number;
-    supervise(): { ready: Promise<void>; settled: Promise<void> };
+    supervise(options?: ZeroboxStatusOptions): {
+        ready: Promise<void>;
+        settled: Promise<void>;
+    };
     dispose(): Promise<void>;
 }
 
@@ -36,9 +43,11 @@ async function createFifo(path: string, cwd: string): Promise<void> {
     await chmod(path, 0o600);
 }
 
-export async function createZeroboxStatusChannel(
-    lease: PrivateTempLease,
-): Promise<ZeroboxStatusChannel> {
+async function createZeroboxOutputChannel(lease: PrivateTempLease): Promise<{
+    childStdio: number;
+    receive<T>(reader: (stream: Readable) => T): T;
+    dispose(): Promise<void>;
+}> {
     statusChannelCounter = (statusChannelCounter + 1) % 1_000_000;
     const path = `${lease.root}/s-${process.pid.toString(36)}-${statusChannelCounter.toString(36)}.fifo`;
     await createFifo(path, lease.root);
@@ -69,20 +78,77 @@ export async function createZeroboxStatusChannel(
 
     return {
         childStdio: writeHandle.fd,
-        supervise() {
+        receive<T>(reader: (stream: Readable) => T): T {
             if (supervised) {
-                const error = new SandboxExecutionError("protocol-error");
-                return {
-                    ready: Promise.reject(error),
-                    settled: Promise.reject(error),
-                };
+                throw new SandboxExecutionError("protocol-error");
             }
             supervised = true;
-            const status = superviseZeroboxStatusStream(stream as Readable);
+            const status = reader(stream as Readable);
             void writeHandle.close().catch(() => undefined);
             return status;
         },
         dispose,
+    };
+}
+
+export async function createZeroboxStatusChannel(
+    lease: PrivateTempLease,
+): Promise<ZeroboxStatusChannel> {
+    const channel = await createZeroboxOutputChannel(lease);
+    return {
+        childStdio: channel.childStdio,
+        supervise: (options) =>
+            channel.receive((stream) =>
+                superviseZeroboxStatusStream(stream, options),
+            ),
+        dispose: () => channel.dispose(),
+    };
+}
+
+export async function createZeroboxAdmissionChannel(
+    lease: PrivateTempLease,
+): Promise<{
+    childStdio: number;
+    childAckStdio: number;
+    read(): Promise<SandboxAdmission>;
+    acknowledge(digest: string): Promise<void>;
+    dispose(): Promise<void>;
+}> {
+    const channel = await createZeroboxOutputChannel(lease);
+    let acknowledgement: ZeroboxInputChannel;
+    try {
+        acknowledgement = await createZeroboxInputChannel(lease.root);
+    } catch (error) {
+        await channel.dispose();
+        throw error;
+    }
+    return {
+        childStdio: channel.childStdio,
+        childAckStdio: acknowledgement.childStdio,
+        async read() {
+            await acknowledgement.releaseParentRead();
+            return channel.receive(readSandboxAdmission);
+        },
+        async acknowledge(digest) {
+            if (!/^[a-f0-9]{64}$/.test(digest))
+                throw new SandboxExecutionError("protocol-error");
+            await acknowledgement.write(`ACK:${digest}\n`);
+        },
+        async dispose() {
+            const results = await Promise.allSettled([
+                channel.dispose(),
+                acknowledgement.dispose(),
+            ]);
+            const errors: unknown[] = [];
+            for (const result of results) {
+                if (result.status === "rejected") errors.push(result.reason);
+            }
+            if (errors.length)
+                throw new AggregateError(
+                    errors,
+                    "Admission channel cleanup failed",
+                );
+        },
     };
 }
 

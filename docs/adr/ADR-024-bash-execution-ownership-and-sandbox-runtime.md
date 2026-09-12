@@ -4,6 +4,11 @@
 
 Accepted
 
+> **Private-runtime update (2026-09-12):** The shared ownership decision
+> remains accepted. Its former generic tool-baseline and V2 planned-policy
+> descriptions are superseded by the approved
+> [private-runtime architecture](../brainstorming/2026-09-12-sandbox-private-runtime-and-local-environments-design.md): shell execution starts from `/__zerobox/runtime`, bounded local installations are global machine authority selected by projects, and V3 context is derived only from a validated engine admission receipt. This note does not claim the new architecture is installed or fully qualified.
+
 ## Date
 
 2026-09-05

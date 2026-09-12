@@ -29,7 +29,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function superviseZeroboxStatusStream(stream: Readable): {
+export interface ZeroboxStatusOptions {
+    version?: 1 | 2;
+    onAdmitted?: (sha256: string) => void | Promise<void>;
+}
+
+export function superviseZeroboxStatusStream(
+    stream: Readable,
+    options: ZeroboxStatusOptions = {},
+): {
     ready: Promise<void>;
     settled: Promise<void>;
 } {
@@ -40,6 +48,8 @@ export function superviseZeroboxStatusStream(stream: Readable): {
     let buffer = Buffer.alloc(0);
     let eventCount = 0;
     let started = false;
+    let admitted = false;
+    let admissionValidation: Promise<void> = Promise.resolve();
     let terminal = false;
     let setupFailure: SandboxExecutionError | undefined;
     let channelFailure: SandboxExecutionError | undefined;
@@ -85,7 +95,7 @@ export function superviseZeroboxStatusStream(stream: Readable): {
         }
         if (
             !isRecord(value) ||
-            value.version !== 1 ||
+            value.version !== (options.version ?? 1) ||
             typeof value.event !== "string"
         ) {
             failProtocol(new Error("Invalid status record"));
@@ -93,6 +103,27 @@ export function superviseZeroboxStatusStream(stream: Readable): {
         }
         if (terminal) {
             failProtocol(new Error("Status event after terminal event"));
+            return;
+        }
+
+        if (value.event === "sandbox_admitted") {
+            if (
+                options.version !== 2 ||
+                admitted ||
+                started ||
+                typeof value.report_sha256 !== "string" ||
+                !/^[a-f0-9]{64}$/.test(value.report_sha256) ||
+                !options.onAdmitted
+            ) {
+                failProtocol(new Error("Invalid sandbox_admitted event"));
+                return;
+            }
+            admitted = true;
+            const hash = value.report_sha256;
+            admissionValidation = Promise.resolve().then(() =>
+                options.onAdmitted!(hash),
+            );
+            void admissionValidation.catch(failProtocol);
             return;
         }
 
@@ -116,6 +147,7 @@ export function superviseZeroboxStatusStream(stream: Readable): {
         if (value.event === "child_started") {
             if (
                 started ||
+                (options.version === 2 && !admitted) ||
                 !Number.isSafeInteger(value.pid) ||
                 (value.pid as number) <= 0 ||
                 value.pid_scope !== "supervisor"
@@ -124,7 +156,9 @@ export function superviseZeroboxStatusStream(stream: Readable): {
                 return;
             }
             started = true;
-            resolveReady();
+            if (options.version === 2)
+                void admissionValidation.then(resolveReady, failProtocol);
+            else resolveReady();
             return;
         }
         if (value.event === "child_exit") {
@@ -196,8 +230,11 @@ export function superviseZeroboxStatusStream(stream: Readable): {
             failProtocol(new Error("Terminal event without child start"));
             return;
         }
-        settledState = "resolved";
-        settled.resolve();
+        void admissionValidation.then(() => {
+            if (settledState !== "pending") return;
+            settledState = "resolved";
+            settled.resolve();
+        }, failProtocol);
     };
     const onError = (error: Error) => {
         channelFailure = protocolError(error);

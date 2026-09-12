@@ -12,27 +12,11 @@ import {
 } from "./private-temp.ts";
 import { createSandboxService, type SandboxService } from "./service.ts";
 import { createZeroboxBackend } from "./zerobox-backend.ts";
-
-const CANDIDATE_BINARY_ENV = "PI_SANDBOX_ZEROBOX_BINARY";
-const CANDIDATE_SHA256_ENV = "PI_SANDBOX_ZEROBOX_SHA256";
-const CANDIDATE_VERSION = "0.3.3-fork.17";
+import { candidateBackendOptions, hasCandidateRuntime } from "./integration-fixtures.ts";
+import { PRIVATE_BASH } from "./shell-baseline.ts";
 
 function createContractBackend(probeRoot: string) {
-    const binaryPath = process.env[CANDIDATE_BINARY_ENV];
-    const binarySha256 = process.env[CANDIDATE_SHA256_ENV];
-    if (!binaryPath || !binarySha256) {
-        throw new Error(
-            `${CANDIDATE_BINARY_ENV} and ${CANDIDATE_SHA256_ENV} are required for the shell baseline contract`,
-        );
-    }
-    return createZeroboxBackend({
-        binaryPath,
-        expectedProvenance: {
-            version: CANDIDATE_VERSION,
-            binarySha256,
-        },
-        probeRoot,
-    });
+    return createZeroboxBackend(candidateBackendOptions(probeRoot));
 }
 
 function shellOperations(service: SandboxService): BashOperations {
@@ -40,7 +24,7 @@ function shellOperations(service: SandboxService): BashOperations {
         detached: true,
         prepareSpawn: ({ command, cwd }) =>
             service.prepareBash({
-                file: "/bin/bash",
+                file: PRIVATE_BASH,
                 args: ["-c", command],
                 cwd,
             }),
@@ -62,11 +46,58 @@ async function execute(
     return { exitCode: result.exitCode, output };
 }
 
+test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_SHELL_BASELINE_CONTRACT || !hasCandidateRuntime())(
+    "keeps a project under host tmp usable with only private base commands",
+    async () => {
+        const project = await mkdtemp("/tmp/pi-private-project-");
+        const sibling = await mkdtemp("/tmp/pi-host-witness-");
+        const leaseRoot = await mkdtemp("/var/tmp/z-");
+        const previous = process.env.PI_PRIVATE_ENV_FIXTURE;
+        process.env.PI_PRIVATE_ENV_FIXTURE = "host-only-fixture";
+        const service = createSandboxService({
+            backend: createContractBackend(join(leaseRoot, "probe")),
+            config: validatePiSandboxConfig({}),
+            createLease: () => createPrivateTempLease({ rootDir: leaseRoot }),
+            recoverStaleLeases: async () => { await recoverStalePrivateTempLeases({ rootDir: leaseRoot }); },
+        });
+        try {
+            await writeFile(join(project, "input"), "one\ntwo\n");
+            await writeFile(join(sibling, "private"), "host witness");
+            await service.startBashSession(project);
+            const result = await execute(shellOperations(service), [
+                'test -z "${PI_PRIVATE_ENV_FIXTURE+present}"',
+                "test ! -e /__zerobox/analysis",
+                `test ! -e ${JSON.stringify(join(sibling, "private"))}`,
+                'for tool in bash cat find grep sed gawk diff tar gzip; do command -v "$tool" >/dev/null || exit 40; done',
+                'for tool in git rg jq node bun; do if command -v "$tool" >/dev/null; then exit 41; fi; done',
+                "cat input | grep two | sed s/two/three/ | gawk '{print $1}' > output",
+                "tar -czf result.tar.gz input output",
+                "gzip -t result.tar.gz",
+                "find . -name output | grep -q output",
+                "diff input input",
+                "cat output",
+            ].join(" && "), project);
+            expect(result).toEqual({ exitCode: 0, output: "three\n" });
+            expect(await readFile(join(project, "output"), "utf8")).toBe("three\n");
+        } finally {
+            await service.shutdown();
+            if (previous === undefined) delete process.env.PI_PRIVATE_ENV_FIXTURE;
+            else process.env.PI_PRIVATE_ENV_FIXTURE = previous;
+            await rm(project, { recursive: true, force: true });
+            await rm(sibling, { recursive: true, force: true });
+            await rm(leaseRoot, { recursive: true, force: true });
+        }
+    },
+    20_000,
+);
+
 // This invokes an explicitly identified candidate binary and remains opt-in.
 test.skipIf(
-    process.platform !== "linux" || !process.env.PI_SANDBOX_SHELL_BASELINE_CONTRACT,
+    process.platform !== "linux" ||
+        !process.env.PI_SANDBOX_SHELL_BASELINE_CONTRACT ||
+        !hasCandidateRuntime(),
 )(
-    "runs a real Zerobox shell with the system baseline and exact external cache grant",
+    "runs a real Zerobox private shell with an exact external cache grant",
     async () => {
         const fixtureRoot = await mkdtemp("/var/tmp/pi-shell-baseline-");
         const project = await mkdtemp(join(fixtureRoot, "project-"));
@@ -109,7 +140,7 @@ test.skipIf(
                 [
                     "test \"$(cat project.txt)\" = project",
                     "printf writable > project-write.txt",
-                    "/usr/bin/node -e \"process.stdout.write('dynamic')\"",
+                    "printf dynamic",
                     `test \"$(cat ${JSON.stringify(join(externalCache, "cache.txt"))})\" = cache`,
                 ].join(" && "),
                 project,

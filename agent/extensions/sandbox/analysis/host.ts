@@ -3,10 +3,7 @@ import {
     type ChildProcess,
     type SpawnOptions,
 } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
     executionFromDetails,
     withExecutionError,
@@ -37,6 +34,7 @@ import {
     createSandboxService,
     type SandboxService,
 } from "../runtime/service.ts";
+import { PRIVATE_ANALYSIS_ROOT } from "../runtime/shell-baseline.ts";
 import { createZeroboxInputChannel } from "../runtime/status-channel.ts";
 import { createZeroboxBackend } from "../runtime/zerobox-backend.ts";
 
@@ -96,17 +94,12 @@ export function fixedWorkerCommand(
     request: NormalizedAnalysisRequest,
     dependencies: AnalysisHostDependencies,
 ): SandboxCommand {
-    const analysisDirectory = fileURLToPath(new URL("./", import.meta.url));
-    if (!analysisDirectory.startsWith(`${dependencies.sandboxRoot}/`)) {
-        throw new Error("Analysis worker escaped the sandbox package root");
-    }
+    const analysisDirectory = join(dependencies.sandboxRoot, "workers");
     const workerArgs =
         request.worker === "quickjs"
             ? [
                   dependencies.bunPath,
-                  fileURLToPath(
-                      new URL("./quickjs-worker.ts", import.meta.url),
-                  ),
+                  join(analysisDirectory, "quickjs-worker.js"),
               ]
             : [
                   dependencies.nodePath,
@@ -114,10 +107,8 @@ export function fixedWorkerCommand(
                   "--no-warnings",
                   "--experimental-wasm-jspi",
                   "--experimental-loader",
-                  fileURLToPath(new URL("./eryx-loader.mjs", import.meta.url)),
-                  fileURLToPath(
-                      new URL("./python-worker.mjs", import.meta.url),
-                  ),
+                  join(analysisDirectory, "eryx-loader.mjs"),
+                  join(analysisDirectory, "python-worker.mjs"),
               ];
     const addressSpaceBytes =
         request.worker === "quickjs"
@@ -135,49 +126,6 @@ export function fixedWorkerCommand(
         cwd: dependencies.sandboxRoot,
         stdin: JSON.stringify(request),
     };
-}
-
-function readableWorkerPaths(dependencies: AnalysisHostDependencies): string[] {
-    const sharedRuntimeRoot = fileURLToPath(
-        new URL("../../_shared/sandbox-runtime/", import.meta.url),
-    );
-    const runtimeNodeModules = (() => {
-        try {
-            return realpathSync(join(dependencies.sandboxRoot, "node_modules"));
-        } catch (error) {
-            if (
-                error instanceof Error &&
-                "code" in error &&
-                error.code === "ENOENT"
-            ) {
-                return undefined;
-            }
-            throw new Error(
-                `Could not resolve trusted Analysis dependencies: ${
-                    error instanceof Error ? error.message : String(error)
-                }`,
-            );
-        }
-    })();
-    return [
-        dependencies.sandboxRoot,
-        ...(runtimeNodeModules ? [runtimeNodeModules] : []),
-        sharedRuntimeRoot,
-        fileURLToPath(
-            new URL("../../_shared/execution-provenance/", import.meta.url),
-        ),
-        dependencies.bunPath,
-        dependencies.nodePath,
-        dependencies.prlimitPath,
-        dirname(dependencies.bunPath),
-        dirname(dependencies.nodePath),
-        dirname(dependencies.prlimitPath),
-        "/bin",
-        "/lib",
-        "/lib64",
-        "/usr",
-        "/etc/ld.so.cache",
-    ];
 }
 
 function parseWorkerResponse(stdout: string): WorkerResponse {
@@ -233,15 +181,13 @@ export async function executeAnalysisHostRequest(
 ): Promise<AnalysisResult> {
     const startedAt = dependencies.now();
     const command = fixedWorkerCommand(request, dependencies);
-    const handle = await dependencies.service.prepareAnalysis(
-        command,
-        readableWorkerPaths(dependencies),
-    );
+    const handle = await dependencies.service.prepareAnalysis(command, []);
     let primaryFailure: unknown;
     let hasPrimaryFailure = false;
     let result: AnalysisResult | undefined;
     let execution = handle.spawn.execution ?? unknownExecution();
-    const sandboxContext = handle.spawn.sandboxContext;
+    const sandboxContext = () =>
+        handle.spawn.getSandboxContext?.() ?? handle.spawn.sandboxContext;
     try {
         const child = await dependencies.runChild({
             ...handle.spawn,
@@ -278,7 +224,7 @@ export async function executeAnalysisHostRequest(
         }
         result = {
             execution,
-            ...(sandboxContext ? { sandboxContext } : {}),
+            ...(sandboxContext() ? { sandboxContext: sandboxContext() } : {}),
             output: response.result.output,
             stderr: [response.result.stderr, child.stderr]
                 .filter(Boolean)
@@ -298,7 +244,7 @@ export async function executeAnalysisHostRequest(
                         ? "failed"
                         : execution.outcome,
             }),
-            sandboxContext,
+            sandboxContext(),
         );
     }
     let cleanupFailure: unknown;
@@ -321,7 +267,7 @@ export async function executeAnalysisHostRequest(
                 phase: "cleanup",
                 outcome: "failed",
             }),
-            sandboxContext,
+            sandboxContext(),
         );
     if (!result) throw new Error("Analysis host produced no result");
     return result;
@@ -644,9 +590,7 @@ async function defaultDependencies(signal: AbortSignal): Promise<{
     dependencies: AnalysisHostDependencies;
     service: SandboxService;
 }> {
-    const sandboxRoot = await realpath(
-        fileURLToPath(new URL("../", import.meta.url)),
-    );
+    const sandboxRoot = PRIVATE_ANALYSIS_ROOT;
     const service = createSandboxService({
         backend: createZeroboxBackend(),
         config: validatePiSandboxConfig({}),
@@ -657,9 +601,9 @@ async function defaultDependencies(signal: AbortSignal): Promise<{
             service,
             runChild: runAnalysisChild,
             now: () => performance.now(),
-            bunPath: await realpath(process.execPath),
-            nodePath: await realpath("/usr/bin/node"),
-            prlimitPath: await realpath("/usr/bin/prlimit"),
+            bunPath: join(sandboxRoot, "bin/bun"),
+            nodePath: join(sandboxRoot, "bin/node"),
+            prlimitPath: join(sandboxRoot, "bin/prlimit"),
             sandboxRoot,
             signal,
         },

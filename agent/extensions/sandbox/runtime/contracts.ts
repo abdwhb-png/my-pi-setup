@@ -121,11 +121,12 @@ export interface SandboxStatusSupervision {
 export interface SandboxSpawnSpec {
     execution?: ExecutionProvenance;
     sandboxContext?: SandboxExecutionContext;
+    getSandboxContext?: () => SandboxExecutionContext | undefined;
     file: string;
     args: string[];
     cwd: string;
     env: Record<string, string>;
-    statusProtocol: { fd: 3; version: 1 };
+    statusProtocol: { fd: 3; version: 1 | 2 };
     extraStdio: ("pipe" | "ignore" | number)[];
     beforeSpawn?: () => void;
     cleanup?: () => void | Promise<void>;
