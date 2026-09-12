@@ -60,6 +60,9 @@ jobs:
           python3 .pi/agent/extensions/sandbox/runtime/distribution/native-ci.py --check-host
           sudo apt-get update
           sudo apt-get install -y bubblewrap libcap-dev netcat-openbsd fd-find=9.0.0-1
+          if ! test -e /usr/bin/node; then
+            sudo ln -s "$(command -v node)" /usr/bin/node
+          fi
           sudo sysctl -w kernel.unprivileged_userns_clone=1
           if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -100,6 +103,7 @@ jobs:
           ./bin/fd --version
           bun -e 'await import("./extensions/_shared/fancy-footer.ts"); await import("pi-mcp-adapter");'
           test -f npm/node_modules/@gotgenes/pi-permission-system/src/index.ts
+          bun -e 'import { hostToolReadClosure } from "./extensions/sandbox/runtime/integration-fixtures.ts"; for (const tool of ["node", "perl", "unshare", "bwrap", "mount", "systemctl", "curl", "nc", "git", "fdfind"]) await hostToolReadClosure(`/usr/bin/${tool}`);'
       - name: Validate Analysis inputs before compiling
         working-directory: .pi/agent
         run: |
@@ -144,6 +148,8 @@ jobs:
             extensions/sandbox/runtime/websocket.integration.test.ts \
             extensions/sandbox/analysis/real-engine.integration.test.ts \
             extensions/sandbox/analysis/client.execPath.regression.test.ts
+          bun test --isolate extensions/bash-execution/capabilities.integration.test.ts \
+            -t 'real Pi blocks native write and edit of active v2 authority and aliases'
       - name: Verify atomic installation through a fresh Pi session
         working-directory: .pi/agent
         run: |
