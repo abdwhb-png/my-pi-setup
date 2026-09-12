@@ -42,6 +42,10 @@ test.skipIf(
         const priorSecret = process.env.PI_A8_HOST_MARKER;
         const priorSessionStatus = process.env.PI_SANDBOX_SESSION_STATUS;
         let session: TestSession | undefined;
+        const admittedContexts = new Map<
+            string,
+            ReturnType<typeof resolveSandboxExecutionContext>
+        >();
         const errorSpy = spyOn(ExtensionRunner.prototype, "emitError");
         try {
             const [packageRoot, sandboxEntrypoint] = await Promise.all([
@@ -112,6 +116,18 @@ test.skipIf(
                     SANDBOX_EXTENSION,
                     BASH_EXECUTION_EXTENSION,
                 ],
+                extensionFactories: [(pi) => {
+                    // Successful contexts are transient and cleared at agent_end.
+                    // Observe the real admission while the tool result is emitted.
+                    pi.on("tool_result", (event) => {
+                        if (event.toolName === "bash" || event.toolName === "safe_bash") {
+                            admittedContexts.set(
+                                event.toolCallId,
+                                resolveSandboxExecutionContext(event.toolCallId, event.details),
+                            );
+                        }
+                    });
+                }],
                 propagateErrors: false,
             });
             const command = [
@@ -150,10 +166,7 @@ test.skipIf(
                     },
                 });
                 expect(
-                    resolveSandboxExecutionContext(
-                        result!.toolCallId,
-                        result!.details,
-                    ),
+                    admittedContexts.get(result!.toolCallId),
                 ).toMatchObject({
                     version: 3,
                     admission: "admitted",
