@@ -97,9 +97,12 @@ def main():
             path = root / "build-inputs" / package["file"]
             if digest(path) != package["sha256"]:
                 raise RuntimeError(f"Builder package digest mismatch: {package['file']}")
-        run("docker", "exec", container, "dpkg", "--install",
-            *[f"/inputs/build-inputs/{p['file']}" for p in packages])
         run("docker", "network", "disconnect", "bridge", container)
+        # Let apt order Pre-Depends, using only the already verified local
+        # packages. Network access is removed and downloads remain forbidden.
+        run("docker", "exec", "-e", "DEBIAN_FRONTEND=noninteractive", "-e", "TZ=Etc/UTC",
+            container, "apt-get", "--no-download", "--no-install-recommends", "--yes", "install",
+            *[f"/inputs/build-inputs/{p['file']}" for p in packages])
         run("docker", "exec", "-e", "PYTHONDONTWRITEBYTECODE=1", "-w", "/build",
             container, "python3", "-m", "unittest", "build_test.py")
         run("docker", "exec", container, "python3", "/build/build.py", "assemble",

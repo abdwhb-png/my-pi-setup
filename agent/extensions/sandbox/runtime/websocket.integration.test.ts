@@ -120,13 +120,13 @@ for (const scenario of [
                         ? `
 const response = await fetch(process.argv[2]);
 console.log('response-status:' + response.status);
-// Close only after headers have arrived. Bun can either reject text() or
-// return the partial body on early EOF, so verify the advertised length too.
+// Close only after headers have arrived. Bun can reject text() or return an
+// empty/partial body on early EOF, so verify the advertised length too.
 await fetch(process.argv[2] + '/truncate');
 let incomplete = false;
 try {
     const body = await response.text();
-    incomplete = body === 'partial' && response.headers.get('content-length') === '100';
+    incomplete = response.headers.get('content-length') === '100' && body.length < 100;
 } catch {
     incomplete = true;
 }
