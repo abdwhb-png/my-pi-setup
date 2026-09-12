@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/zerobox
-          ref: efdc10dafc71b624a9293e50ce9ee7f6f185d4fe
+          ref: 8704382fbe64c0ab69f12707271679b388961df3
           path: projects/zerobox
       - uses: actions/checkout@v4
         with:
@@ -40,6 +40,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.96.0"
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: projects/zerobox
@@ -63,6 +64,7 @@ jobs:
           set -euo pipefail
           cd projects/pi-core
           sfw npm ci
+          npm run hydrate:model-data
           npm run build:offline
           cd ../pi-integrations/pi-test-harness
           sfw npm ci

@@ -185,7 +185,7 @@ socket.addEventListener('close', () => {
                         output += chunk.toString();
                     },
                 });
-                expect(result.exitCode).toBe(scenario.code);
+                expect(result.exitCode, output).toBe(scenario.code);
                 expect(closes).toEqual(scenario.truncated ? [] : [1000]);
                 expect(output).toBe(
                     scenario.output +
