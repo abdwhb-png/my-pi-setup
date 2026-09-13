@@ -28,6 +28,17 @@ afterEach(() => {
 });
 
 describe("sandbox runtime v2", () => {
+    test.each(["bash","think","analysis"] as const)("rechecks authority before counting or dispatching a %s operation", async(kind)=>{
+        const owner=claim("admission-authority");let checked=0,dispatched=0;
+        const exec=async()=>{dispatched++;return {exitCode:0};};
+        publishSandboxRuntime(owner,{
+            state:"enabled",beforeAdmission:async()=>{checked++;expect(getSandboxActiveExecutionCount(owner)).toBe(0);publishSandboxRuntime(owner,{state:"error"},"authority revoked");},
+            createBashOperations:()=>({exec}),createThinkBashOperations:()=>({exec}),
+            analysis:{state:"ready",service:{run:async()=>{dispatched++;throw new Error("dispatched");},shutdown:async()=>{}}},
+        });
+        const result=kind==="analysis" ? getSandboxAnalysisPort().run({id:"guard",language:"javascript",program:"1"}) : (kind==="think" ? createSandboxThinkBashOperations():createSandboxBashOperations()).exec("true","/tmp",{onData(){}});
+        await expect(result).rejects.toThrow("initialization failed");expect(checked).toBe(1);expect(dispatched).toBe(0);
+    });
     test("draining preserves the target failure of an already admitted operation", async () => {
         const owner = claim("drain");
         const failure = new Error("target failed with its original diagnostic");

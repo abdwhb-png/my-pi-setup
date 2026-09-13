@@ -52,6 +52,7 @@ export type SandboxRuntimeSnapshot =
           contexts?: SandboxProfileContexts;
           dockerAccess?: DockerAccessSummary;
           sandboxFingerprint?: string;
+          beforeAdmission?(): Promise<void>;
           createBashOperations(
               options: SandboxBashOperationOptions,
           ): BashOperations;
@@ -296,6 +297,7 @@ async function withActiveRuntime<T>(
     const started = performance.now();
     const deadline = started + Math.min(30_000, budgetMs);
     let waited = false;
+    let authorityChecked = false;
     while (true) {
         if (signal?.aborted)
             throw new Error("aborted; the request was not executed");
@@ -312,6 +314,11 @@ async function withActiveRuntime<T>(
                 throw error;
             }
             const snapshot = current.snapshot;
+            if (!authorityChecked && snapshot.beforeAdmission) {
+                authorityChecked = true;
+                await snapshot.beforeAdmission();
+                continue;
+            }
             const remaining = budgetMs - (performance.now() - started);
             if (remaining <= 0)
                 throw new SandboxUnavailableError("reconfiguration-timeout");

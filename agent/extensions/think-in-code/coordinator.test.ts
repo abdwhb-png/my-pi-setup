@@ -131,8 +131,8 @@ describe("ThinkCoordinator", () => {
 
         expect(result.content).toHaveLength(2);
         expect(JSON.parse(result.content[0]!.text)).toEqual({
-            sourceExecution: { status: "unsandboxed", profile: "none", backend: "host", tmpNamespace: "host", phase: "source", outcome: "succeeded" },
-            analysisExecution: { status: "unknown", profile: "unknown", backend: "unknown", tmpNamespace: "unknown", phase: "setup", outcome: "pending" },
+            sourceExecution: { mode: "host", shellProfile: "host", status: "unsandboxed", profile: "none", backend: "host", tmpNamespace: "host", phase: "source", outcome: "succeeded" },
+            analysisExecution: { status: "unknown", profile: "unknown", backend: "unknown", tmpNamespace: "unknown", phase: "setup", outcome: "unknown" },
             status: "success",
             action: "content",
             sourceStatus: "succeeded",
