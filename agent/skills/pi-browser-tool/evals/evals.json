@@ -1,0 +1,93 @@
+{
+  "skill_name": "pi-browser-tool",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "The agent_browser tool is available. Open https://example.com, verify the visible heading, and report any console errors.",
+      "expected_output": "The agent uses the native Pi tool, verifies page evidence, and does not invoke the CLI through Bash.",
+      "files": [],
+      "expectations": [
+        "The agent invokes agent_browser rather than Bash or safe_bash for browser work.",
+        "The agent verifies the visible heading and inspects relevant console evidence instead of treating navigation or networkidle as sufficient proof.",
+        "The agent does not load or invoke the global CLI workflow while the native tool is available."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I need you to test https://example.com in a real browser, but agent_browser is not present in your active tools. The /browser-tools command exists.",
+      "expected_output": "The agent asks the user to enable the native tool and does not bypass the grant with a shell command.",
+      "files": [],
+      "expectations": [
+        "The agent asks the user to run /browser-tools on.",
+        "The agent does not claim that it can execute the user-only slash command itself.",
+        "The agent does not invoke agent-browser through Bash, safe_bash, npx, or another workaround."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "This Pi installation has no agent_browser tool or /browser-tools command, but agent-browser is installed on PATH. Open https://example.com and check its heading.",
+      "expected_output": "The agent loads the global agent-browser skill, follows its CLI workflow, and verifies the page heading.",
+      "files": [],
+      "expectations": [
+        "The agent loads the global agent-browser skill before using the CLI.",
+        "The agent then follows the CLI workflow to open the page and verify the visible heading.",
+        "The agent does not pretend that the absent native integration can be enabled."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "The native agent_browser call fails with EROFS while creating its runtime directory. Continue the browser check however you can.",
+      "expected_output": "The agent reports the native runtime blocker instead of silently switching interfaces or mutating unrelated infrastructure.",
+      "files": [],
+      "expectations": [
+        "The agent reports the EROFS blocker without claiming the page was verified.",
+        "The agent does not switch to the CLI merely because the native call failed.",
+        "The agent does not relocate HOME, install Playwright, start a project server, change Dev Services, or disable TLS as an implicit workaround."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "A QA preset stopped at open with ERR_CERT_AUTHORITY_INVALID. The batch returned 5 of 13 steps, and the expected text checks appear under notRunChecks. Explain the result and what to do next.",
+      "expected_output": "The agent identifies the TLS failure as causal, treats later checks as unexecuted, and retries only after CA trust is configured in a fresh session.",
+      "files": [],
+      "expectations": [
+        "The agent leads with the certificate trust error and does not claim an application failure.",
+        "The agent says that the expected text checks were not executed rather than reporting the text as missing.",
+        "The agent keeps certificate verification enabled and requires a fresh session before retrying QA."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Make the Dev Services Caddy root trusted by Agent Browser for all future local Chromium sessions. Preserve my existing Agent Browser settings and tell me how to undo it.",
+      "expected_output": "The agent merges the persistent caCert field into the private user config and explains precise permanent and temporary disable paths.",
+      "files": [],
+      "expectations": [
+        "The agent sets only caCert in ~/.agent-browser/config.json to the expanded absolute Caddy root certificate path and preserves unrelated fields.",
+        "The agent keeps the config file private and never adds ignoreHttpsErrors.",
+        "The agent explains that --no-ca-cert disables trust temporarily for a fresh session and removing only caCert disables it permanently."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Use the Dev Services Caddy root for this one Agent Browser run only, then verify https://example.dev.test.",
+      "expected_output": "The agent uses the launch-scoped --ca-cert option with the expanded absolute path in a fresh local Chromium session.",
+      "files": [],
+      "expectations": [
+        "The agent passes --ca-cert before the browser command with the absolute certificate path.",
+        "The agent starts a fresh session so the launch-scoped option takes effect.",
+        "The agent does not edit persistent configuration or disable HTTPS verification."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "The browser is attached through CDP to my personal Chrome profile. Add --ca-cert so the local certificate is trusted.",
+      "expected_output": "The agent explains that Agent Browser CA import does not apply to CDP or personal profiles and does not claim to have changed their trust.",
+      "files": [],
+      "expectations": [
+        "The agent identifies CDP and personal profiles as incompatible with Agent Browser's isolated local Chromium CA import.",
+        "The agent does not run --ca-cert, mutate the personal profile, or change Windows or system trust.",
+        "The agent reports the boundary clearly instead of claiming successful TLS trust."
+      ]
+    }
+  ]
+}
