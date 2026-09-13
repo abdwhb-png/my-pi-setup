@@ -8,9 +8,9 @@ import { localMachineId } from "../capabilities/authority.ts";
 import { candidateBackendOptions, hasCandidateRuntime } from "./integration-fixtures.ts";
 import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./private-temp.ts";
 
-test.skipIf(process.platform !== "linux" || !hasCandidateRuntime())(
-    "real Pi revocation terminates retained descriptors and descendants before a failed replacement",
-    async () => {
+test.skipIf(process.platform !== "linux" || !hasCandidateRuntime()).each([false, true])(
+    "real Pi revocation terminates retained descriptors and descendants before a failed replacement (files=%s)",
+    async (files) => {
         const root = await mkdtemp("/var/tmp/pi-revocation-");
         const leaseRoot = await mkdtemp("/var/tmp/z-");
         const cwd = join(root, "project");
@@ -25,7 +25,7 @@ test.skipIf(process.platform !== "linux" || !hasCandidateRuntime())(
             await writeFile(join(tools, "resource"), "retained descriptor fixture", { mode: 0o600 });
             const global = { version: 2, machineId: localMachineId(), docker: { allowed: false } };
             const authority = join(agentDir, "sandbox.json");
-            await writeFile(authority, JSON.stringify({ ...global, environment: { installations: { local: [{ root: tools, path: [] }] } } }), { mode: 0o600 });
+            await writeFile(authority, JSON.stringify({ ...global, environment: { installations: { local: [{ root: tools, path: [], ...(files ? { files: ["resource"] } : {}) }] } } }), { mode: 0o600 });
             process.env.PI_CODING_AGENT_DIR = agentDir;
             session = await createTestSession({ cwd, extensionFactories: [pi => createSandboxExtension(pi, {
                 zeroboxBackend: candidateBackendOptions(join(root, "probe")),

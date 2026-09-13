@@ -78,7 +78,29 @@ Define machine-local sources only in the global document:
 }
 ```
 
-Each map key is an installation name. Its entries describe an absolute or `~/` root and zero or more command directories relative to that root. The root is mounted read-only once. The PATH order is selected installation command directories in global declaration order, legacy `environment.path`, then `/__zerobox/runtime/bin`. An explicit system-directory root such as `/usr` is supported, but cannot replace reserved runtime components. Use `filesystem.allowRead` for an exact file grant.
+Each map key is an installation name. Its entries describe an absolute or `~/` root and zero or more command directories relative to that root. When `files` is absent, the root is mounted read-only once. The PATH order is selected installation command directories in global declaration order, legacy `environment.path`, then `/__zerobox/runtime/bin`. An explicit system-directory root such as `/usr` is supported, but cannot replace reserved runtime components. Use `files` to group exact file grants with an installation. Legacy `filesystem.allowRead` remains compatible for independent reads.
+
+An installation can combine entire directories with selected files:
+
+```json
+{
+  "environment": {
+    "installations": {
+      "local-tool": [
+        { "root": "~/opt/local-tool", "path": ["bin"] },
+        { "root": "/usr/bin", "files": ["node"], "path": ["."] },
+        { "root": "/usr/lib/x86_64-linux-gnu", "files": ["libc.so.6", "ld-linux-x86-64.so.2"] }
+      ]
+    }
+  }
+}
+```
+
+This illustrates the format, not a complete dependency list for any particular tool. When `files` is present, authorize only the listed regular files. Do not mount the base directory or expose its other contents. File paths are relative to the canonical `root`; reject missing files, directories, empty lists and escaping paths. `path` supplies command lookup without authorizing sibling executables. A selective `root: "/"` can describe exact aliases such as `bin/sh`, but never grants `/` itself or the reserved runtime.
+
+Declare symlink targets explicitly, either as exact files or within another selected directory root. Replacing file contents at the same approved path remains allowed. Redirecting a symlink to a new unapproved target requires another explicit authorization. No dependency discovery, automatic grant expansion or host fallback runs at command launch. Installation names are selection labels, not Pi tool names.
+
+Keep shared dependencies in a separately named installation if useful. Select that name together with the tools that need it; selection does not infer dependencies. The installations menu previews individual file paths and retains them on save. Project restrictions and revocation apply to the derived file grants. Removing an installation does not remove independent overlapping legacy grants.
 
 A project selects only global names:
 

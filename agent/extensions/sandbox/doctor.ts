@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { delimiter, dirname, join, matchesGlob, resolve, sep } from "node:path";
 import type { SandboxExecutionContext } from "../_shared/sandbox-runtime/execution-context.ts";
+import { installationReadPaths } from "./capabilities/installations.ts";
 import { formatShellPolicy } from "./capabilities/runtime.ts";
 import type { LoadSandboxConfigResult } from "./index.ts";
 import type { PrivateRuntimeBundle } from "./runtime/runtime-bundle.ts";
@@ -163,7 +164,12 @@ export function sandboxDoctor(
             const installation = config.environment.installations?.find(
                 (item) =>
                     item.roots.some((root) =>
-                        contains(expandShellPathEntry(root.root), real),
+                        installationReadPaths(root).some((resource) => {
+                            const path = expandShellPathEntry(resource);
+                            return root.files === undefined
+                                ? contains(path, real)
+                                : path === real || path === found;
+                        }),
                     ),
             );
             lines.push(

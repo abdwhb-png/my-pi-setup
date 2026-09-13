@@ -6,6 +6,7 @@ import { expandShellPathEntry } from "../runtime/shell-baseline.ts";
 export interface InstallationRoot {
     root: string;
     path: string[];
+    files?: string[];
 }
 
 export type GlobalInstallations = Record<string, InstallationRoot[]>;
@@ -54,7 +55,8 @@ export function validateGlobalInstallations(
             const entry = object(raw, `Installation ${name} root`);
             if (
                 Object.keys(entry).some(
-                    (key) => key !== "root" && key !== "path",
+                    (key) =>
+                        key !== "root" && key !== "path" && key !== "files",
                 )
             )
                 invalid(`Unknown installation ${name} root field`);
@@ -70,11 +72,6 @@ export function validateGlobalInstallations(
                     `Installation ${name} root must be absolute or home-relative`,
                 );
             const root = resolve(expanded);
-            if (
-                installationContains(root, "/__zerobox") ||
-                installationContains("/__zerobox", root)
-            )
-                invalid("Installation roots cannot cover the internal runtime");
             const path = entry.path ?? [];
             if (
                 !Array.isArray(path) ||
@@ -90,10 +87,51 @@ export function validateGlobalInstallations(
                 invalid(
                     `Installation ${name} path must contain directories relative to its root`,
                 );
-            return { root, path: [...new Set(path as string[])] };
+            const files = entry.files;
+            if (
+                files !== undefined &&
+                (!Array.isArray(files) ||
+                    files.length === 0 ||
+                    files.some(
+                        (part) =>
+                            typeof part !== "string" ||
+                            !part ||
+                            isAbsolute(part) ||
+                            /[\0*?[\]{}:]/.test(part) ||
+                            !installationContains(root, resolve(root, part)),
+                    ))
+            )
+                invalid(
+                    `Installation ${name} files must be a nonempty list of file paths relative to its root`,
+                );
+            const resourceEntry = {
+                root,
+                path: [...new Set(path as string[])],
+                ...(files === undefined
+                    ? {}
+                    : { files: [...new Set(files as string[])] }),
+            };
+            for (const resource of installationReadPaths(resourceEntry))
+                assertPublicResource(resource);
+            return resourceEntry;
         });
     }
     return result;
+}
+
+function assertPublicResource(path: string): void {
+    if (
+        installationContains(path, "/__zerobox") ||
+        installationContains("/__zerobox", path)
+    )
+        invalid("Installation resources cannot cover the internal runtime");
+}
+
+/** A file selection grants only the listed files, never its containing root. */
+export function installationReadPaths(entry: InstallationRoot): string[] {
+    return entry.files === undefined
+        ? [entry.root]
+        : entry.files.map((file) => resolve(entry.root, file));
 }
 
 /** Canonical roots persist the boundary rather than following a redirected alias. */
@@ -116,14 +154,25 @@ export function parseGlobalInstallations(
                 invalid(
                     `Installation ${name} root was redirected; authorize its canonical path: ${root}`,
                 );
-            if (
-                installationContains(root, "/__zerobox") ||
-                installationContains("/__zerobox", root)
-            )
-                invalid("Installation roots cannot cover the internal runtime");
             if (!statSync(root).isDirectory())
                 invalid(`Installation ${name} root must be a directory`);
             entry.root = root;
+            for (const resource of installationReadPaths(entry)) {
+                assertPublicResource(resource);
+                if (entry.files === undefined) continue;
+                let metadata;
+                try {
+                    metadata = statSync(resource);
+                } catch {
+                    invalid(
+                        `Installation ${name} file is unavailable: ${resource}`,
+                    );
+                }
+                if (!metadata.isFile())
+                    invalid(
+                        `Installation ${name} resource must be a regular file: ${resource}`,
+                    );
+            }
         }
     }
     return declarations;
@@ -166,8 +215,31 @@ export function selectInstallations(
         name,
         roots: installations[name],
     }));
+    const resources = result.flatMap((installation) =>
+        installation.roots.flatMap((entry) =>
+            installationReadPaths(entry).map((path) => ({
+                path,
+                directory: entry.files === undefined,
+            })),
+        ),
+    );
     for (const installation of result) {
         for (const entry of installation.roots) {
+            if (entry.files !== undefined)
+                for (const file of installationReadPaths(entry)) {
+                    const target = realpathSync(file);
+                    assertPublicResource(target);
+                    if (
+                        !resources.some((resource) =>
+                            resource.directory
+                                ? installationContains(resource.path, target)
+                                : resource.path === target,
+                        )
+                    )
+                        invalid(
+                            `Installation ${installation.name} file target is outside the authorized resources: ${target}`,
+                        );
+                }
             for (const part of entry.path) {
                 const target = resolve(entry.root, part);
                 let canonical: string;

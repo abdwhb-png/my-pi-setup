@@ -46,9 +46,12 @@ test.skipIf(
     process.platform !== "linux" ||
         process.env.PI_SANDBOX_INSTALLATIONS_CONTRACT !== "1" ||
         !hasCandidateRuntime(),
-).each(["external","project"] as const)(
-    "admits one inherited %s installation without duplicate filesystem or PATH configuration",
-    async (location) => {
+).each([
+    { location: "external", files: false }, { location: "project", files: false },
+    { location: "external", files: true }, { location: "project", files: true },
+])(
+    "admits an inherited installation %j without duplicate filesystem or PATH configuration",
+    async ({ location, files }) => {
         const root = await mkdtemp("/var/tmp/pi-installation-contract-");
         const leaseRoot = await mkdtemp("/var/tmp/z-");
         const project = join(root, "project");
@@ -67,11 +70,13 @@ test.skipIf(
                 mkdir(outside, { recursive: true, mode: 0o700 }),
             ]);
             await writeFile(resource, "v1", { mode: 0o600 });
+            await writeFile(join(tools, "unapproved"), "private sibling", { mode: 0o600 });
+            const declaration = { root: tools, path: ["bin"], ...(files ? { files: ["bin/local-tool", "bin/tool-link", "bin/needs-outsider", "resource.txt"] } : {}) };
             await writeFile(
                 join(tools, "bin", "local-tool"),
                 `#!${PRIVATE_BASH}
 set -eu
-root="\${BASH_SOURCE[0]%/bin/local-tool}"
+root="\${BASH_SOURCE[0]%/*}/.."
 value=$(cat "$root/resource.txt")
 if { printf forbidden > "$root/resource.txt"; } 2>/dev/null; then exit 45; fi
 printf 'tool:%s' "$value"
@@ -90,6 +95,7 @@ exec ${JSON.stringify(outsideHelper)}
                 mode: 0o700,
             });
             await symlink(outsideHelper, join(tools, "bin", "escape"));
+            await symlink(join(tools, "bin", "local-tool"), join(tools, "bin", "tool-link"));
             await writeFile(
                 join(agentDir, "sandbox.json"),
                 `${JSON.stringify({
@@ -98,7 +104,7 @@ exec ${JSON.stringify(outsideHelper)}
                     docker: { allowed: false },
                     environment: {
                         installations: {
-                            local: [{ root: tools, path: ["bin"] }],
+                            local: [declaration],
                         },
                     },
                 })}\n`,
@@ -106,10 +112,10 @@ exec ${JSON.stringify(outsideHelper)}
             );
 
             const resolved = loadSandboxConfig(project, { agentDir, machineId });
-            expect(resolved.config.filesystem.allowRead).toContain(tools);
+            expect(resolved.config.filesystem.allowRead).toContain(files ? resource : tools);
             expect(resolved.config.environment.path).toContain(join(tools, "bin"));
             expect(resolved.config.environment.installations).toEqual([
-                { name: "local", roots: [{ root: tools, path: ["bin"] }] },
+                { name: "local", roots: [declaration] },
             ]);
             const global = JSON.parse(
                 await readFile(join(agentDir, "sandbox.json"), "utf8"),
@@ -145,7 +151,12 @@ exec ${JSON.stringify(outsideHelper)}
                 exitCode: 0,
                 output: "tool:v1",
             });
+            expect(await execute(operations, "tool-link", project)).toEqual({ exitCode: 0, output: "tool:v1" });
             expect(await readFile(resource, "utf8")).toBe("v1");
+            if (files && location === "external") {
+                expect((await execute(operations, `cat ${JSON.stringify(join(tools, "unapproved"))}`, project)).exitCode).not.toBe(0);
+                expect((await execute(operations, `test ! -r ${JSON.stringify(join(tools, "unapproved"))}`, project)).exitCode).toBe(0);
+            }
 
             // An update within the authorized root is visible at the next
             // command admission without changing either authority file.

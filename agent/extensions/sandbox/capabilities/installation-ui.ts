@@ -18,6 +18,7 @@ import {
     sandboxConfigPath,
 } from "./authority.ts";
 import {
+    installationReadPaths,
     parseGlobalInstallations,
     validateGlobalInstallations,
     parseInstallationSelection,
@@ -89,11 +90,17 @@ function formatInstallations(declarations: GlobalInstallations): string {
     return entries
         .map(([name, roots]) => {
             const details = roots
-                .map((entry) =>
-                    entry.path.length === 0
-                        ? `${entry.root} (read-only)`
-                        : `${entry.root} (read-only); PATH: ${entry.path.map((part) => join(entry.root, part)).join(", ")}`,
-                )
+                .map((entry) => {
+                    const resources =
+                        entry.files === undefined
+                            ? `${entry.root} (read-only)`
+                            : installationReadPaths(entry)
+                                  .map((file) => `${file} (read-only file)`)
+                                  .join(", ");
+                    return entry.path.length === 0
+                        ? resources
+                        : `${resources}; PATH: ${entry.path.map((part) => join(entry.root, part)).join(", ")}`;
+                })
                 .join("; ");
             return `- ${name}: ${details}`;
         })
@@ -165,6 +172,7 @@ function persistInstallations(
         persisted[name] = entries.map((entry) => ({
             root: persistedCapabilityPath(entry.root),
             path: [...new Set(entry.path)],
+            ...(entry.files === undefined ? {} : { files: [...entry.files] }),
         }));
     }
     return persisted;
@@ -341,7 +349,7 @@ export async function manageInstallations(
 
             const explanation =
                 'Use JSON array format.\nExample:\n  [{"root": "~/tools", "path": ["bin"]}]\n\n' +
-                "Each root is read-only and each path is a command subdirectory relative to the root.";
+                'Omit files to authorize the whole root read-only. Add "files": ["bin/tool", "lib/library.so"] to authorize only those relative files. Each path is a command subdirectory and grants no directory read access. Symlink targets must also be explicitly authorized.';
 
             const currentRoots =
                 action === "Global: Edit" && declarations[name]

@@ -67,12 +67,13 @@ describe("Zerobox backend", () => {
         const parent=await mkdtemp(join(tmpdir(),"z-"));const binaryPath=join(parent,"zerobox");
         const lease=await createPrivateTempLease({rootDir:join(parent,"r")});
         try{
+            const cwd = join(parent, "project"); await mkdir(cwd);
             await writeFile(binaryPath,"engine",{mode:0o700});
             await mkdir(join(parent,"real"));await writeFile(join(parent,"real","loader"),"loader");
             await symlink(join(parent,"real"),join(parent,"alias"));
             const backend=createZeroboxBackend({...await createRuntimeBundleFixture(binaryPath,expectedProvenance.version),binaryPath,runCommand:successfulRun});
-            const policy=createBashPolicy({cwd:parent,lease,config:validatePiSandboxConfig({filesystem:{allowRead:[join(parent,"alias","loader")]}})});
-            const spec=await backend.prepare({file:"/__zerobox/runtime/bin/bash",args:["-c","true"],cwd:parent},policy,lease);
+            const policy=createBashPolicy({cwd,lease,config:validatePiSandboxConfig({filesystem:{allowRead:[join(parent,"alias","loader")]}})});
+            const spec=await backend.prepare({file:"/__zerobox/runtime/bin/bash",args:["-c","true"],cwd},policy,lease);
             try{
                 const profile=JSON.parse(await readFile(join(lease.profilesDir,spec.args[0]!.slice("--profile=".length)+".json"),"utf8"));
                 expect(profile.allow_read).toContain(join(parent,"alias","loader"));
@@ -580,4 +581,31 @@ describe("Zerobox backend", () => {
             await rm(parent, { recursive: true, force: true });
         }
     });
+});
+
+it.each([false, true])("avoids a writable overlay for a read-only file alias (writable parent=%s)", async (writable) => {
+    const root = await mkdtemp(join(tmpdir(), "z-"));
+    const cwd = join(root, "project"), tools = join(root, "tools");
+    await mkdir(cwd); await mkdir(tools);
+    const target = join(tools, "target"), alias = join(tools, "alias");
+    await writeFile(target, "tool"); await symlink(target, alias);
+    const binaryPath = join(root, "zerobox"); await writeFile(binaryPath, "engine", { mode: 0o700 });
+    const lease = await createPrivateTempLease({ rootDir: join(root, "r") });
+    try {
+        const backend = createZeroboxBackend({ ...await createRuntimeBundleFixture(binaryPath, expectedProvenance.version), binaryPath, runCommand: successfulRun });
+        const policy = createBashPolicy({ cwd, lease, config: validatePiSandboxConfig({ filesystem: {
+            allowRead: [alias, target], allowWrite: writable ? [cwd, tools] : [cwd], denyWrite: [alias],
+        } }) });
+        const spec = await backend.prepare({ file: "/__zerobox/runtime/bin/bash", args: ["-c", "true"], cwd }, policy, lease);
+        try {
+            const profile = JSON.parse(await readFile(join(lease.profilesDir, spec.args[0]!.slice("--profile=".length) + ".json"), "utf8"));
+            if (writable) {
+                expect(profile.allow_write).toContain(tools);
+                expect(profile.allow_read).not.toContain(alias);
+            } else expect(profile.allow_read).toContain(alias);
+            expect(profile.allow_read).toContain(target);
+            expect(profile.deny_write).toContain(target);
+            expect((profile.deny_write_globs ?? []).includes(alias)).toBe(writable);
+        } finally { await spec.cleanup?.(); }
+    } finally { await lease.dispose(); await rm(root, { recursive: true, force: true }); }
 });

@@ -61,3 +61,14 @@ test("doctor resolves home-relative paths from admitted mount records",async()=>
   expect(output).toContain("Configured read coverage: covered");
  }finally{await lease.dispose();}
 });
+
+test("doctor attributes only selected files to their installation label", () => {
+    const f = fixture();
+    const selected = join(f.cwd, "selected");
+    const sibling = join(f.cwd, "sibling");
+    for (const file of [selected, sibling]) writeFileSync(file, "#!/__zerobox/runtime/bin/bash\nexit 0\n", { mode: 0o700 });
+    const resolved = f.configure({});
+    resolved.config.environment.installations = [{ name: "local", roots: [{ root: f.cwd, files: ["selected"], path: ["."] }] }];
+    expect(sandboxDoctor(resolved, "selected")).toContain("Command source: authorized installation local");
+    expect(sandboxDoctor(resolved, "sibling")).toContain("Command source: explicit filesystem configuration");
+});

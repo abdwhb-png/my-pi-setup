@@ -131,3 +131,83 @@ test("an unavailable installation can be inspected for revocation while shell ad
     expect(readGlobalSandboxConfig(join(f.agentDir, "sandbox.json"), "test-machine")?.environment?.installations).toEqual({ tools: [{ root: f.installation, path: ["bin"] }] });
     expect(() => f.load()).toThrow("root is unavailable");
 });
+
+test("an installation can select files without exposing their parent or siblings", () => {
+    const f = fixture();
+    const command = join(f.installation, "bin", "tool");
+    const sibling = join(f.installation, "bin", "private-data");
+    writeFileSync(command, "tool", { mode: 0o700 });
+    writeFileSync(sibling, "private");
+    f.writeGlobal({ environment: { installations: { tools: [
+        { root: f.installation, files: ["bin/tool"], path: ["bin"] },
+    ] } } });
+    const config = f.load().config;
+    expect(config.filesystem.allowRead).toEqual([f.project, command]);
+    expect(config.filesystem.denyWrite).toContain(command);
+    expect(config.filesystem.denyWrite).not.toContain(f.installation);
+    expect(config.environment.path).toEqual([join(f.installation, "bin")]);
+    f.writeProject({ environment: { installations: [] } });
+    expect(f.load().config.filesystem.allowRead).toEqual([f.project]);
+    expect(f.load().config.environment.path).toEqual([]);
+});
+
+test("selected files must exist and remain regular files", () => {
+    const f = fixture();
+    f.writeGlobal({ environment: { installations: { tools: [{ root: f.installation, files: ["tool"] }] } } });
+    expect(() => f.load()).toThrow("file is unavailable");
+    writeFileSync(join(f.installation, "tool"), "v1");
+    expect(f.load().config.filesystem.allowRead).toContain(join(f.installation, "tool"));
+    writeFileSync(join(f.installation, "tool"), "v2");
+    expect(f.load().config.filesystem.allowRead).toContain(join(f.installation, "tool"));
+    rmSync(join(f.installation, "tool"));
+    mkdirSync(join(f.installation, "tool"));
+    expect(() => f.load()).toThrow("must be a regular file");
+});
+
+test("a file symlink requires its target to be explicitly covered and cannot redirect to a sibling", () => {
+    const f = fixture();
+    const target = join(f.root, "library");
+    const sibling = join(f.root, "unapproved");
+    writeFileSync(target, "library");
+    writeFileSync(sibling, "private");
+    const alias = join(f.installation, "bin", "tool");
+    symlinkSync(target, alias);
+    const installation = [{ root: f.installation, files: ["bin/tool"], path: ["bin"] }];
+    f.writeGlobal({ environment: { installations: { tools: installation } } });
+    expect(() => f.load()).toThrow("file target is outside the authorized resources");
+    f.writeGlobal({ environment: { installations: { tools: [...installation, { root: f.root, files: ["library"] }] } } });
+    expect(f.load().config.filesystem.allowRead).toEqual([f.project, alias, target]);
+    rmSync(alias);
+    symlinkSync(sibling, alias);
+    expect(() => f.load()).toThrow("file target is outside the authorized resources");
+});
+
+test("a selective root may be an ancestor of the private runtime without granting that root", () => {
+    const f = fixture();
+    const file = join(f.installation, "bin", "tool");
+    writeFileSync(file, "tool");
+    f.writeGlobal({ environment: { installations: { tools: [{ root: "/", files: [file.slice(1)] }] } } });
+    expect(f.load().config.filesystem.allowRead).toEqual([f.project, file]);
+    f.writeGlobal({ environment: { installations: { tools: [{ root: "/", files: ["__zerobox/runtime/bin/bash"] }] } } });
+    expect(() => f.load()).toThrow("internal runtime");
+});
+
+test.each([[], ["../escape"], ["/absolute"], ["bin/*"], ["."]].map((files) => [files]))("rejects invalid or broad file selection %j", (files) => {
+    const f = fixture();
+    f.writeGlobal({ environment: { installations: { tools: [{ root: f.installation, files }] } } });
+    expect(() => f.load()).toThrow();
+});
+
+test("file selection respects project read restrictions and file revocation", async () => {
+    const { sandboxAccessRemoved } = await import("./revocation.ts");
+    const f = fixture();
+    for (const file of ["one", "two"]) writeFileSync(join(f.installation, "bin", file), file);
+    const write = (files: string[]) => f.writeGlobal({ environment: { installations: { tools: [{ root: f.installation, files, path: ["bin"] }] } } });
+    write(["bin/one", "bin/two"]);
+    const previous = f.load().config;
+    write(["bin/one"]);
+    expect(sandboxAccessRemoved(previous, f.load().config, f.project)).toBe(true);
+    f.writeProject({ filesystem: { allowRead: ["."] } });
+    expect(f.load().config.filesystem.allowRead).toEqual([f.project]);
+    expect(f.load().config.environment.path).toEqual([]);
+});

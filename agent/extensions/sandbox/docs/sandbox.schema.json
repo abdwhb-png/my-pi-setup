@@ -429,9 +429,9 @@
       "properties": {
         "root": {
           "type": "string",
-          "minLength": 2,
-          "pattern": "^(?:/|~/)[^\\u0000*?\\[\\]{}:]+$",
-          "description": "Absolute or home-relative root. Authorize the canonical directory shown by preview."
+          "minLength": 1,
+          "pattern": "^(?:/|~/)[^\\u0000*?\\[\\]{}:]*$",
+          "description": "Canonical directory used as a base for relative paths. Grants the whole directory only when files is absent."
         },
         "path": {
           "type": "array",
@@ -441,7 +441,18 @@
             "minLength": 1,
             "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000*?\\[\\]{}:]+$"
           },
-          "description": "Command directory paths relative to root. Runtime validation requires each canonical directory to remain in an authorized root."
+          "description": "Command directories relative to root. Changes command lookup only. With files, adding a command directory does not grant read access to that directory."
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000*?\\[\\]{}:]+$"
+          },
+          "description": "Optional exact regular files relative to root. When present, grants only these files, not their parent directory or siblings. Symlink targets must also be explicitly covered by a selected installation. Empty lists are rejected."
         }
       }
     },

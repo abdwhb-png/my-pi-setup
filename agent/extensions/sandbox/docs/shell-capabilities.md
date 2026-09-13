@@ -16,7 +16,7 @@ Use `~/.pi/agent/sandbox.json` for global defaults and ceilings. Place project r
 
 An absent project field inherits the global setting. An empty list closes that resource list. Restrictions take precedence over grants. Legacy PATH entries control lookup only and require separate read permission.
 
-Use a named global installation to authorize an existing tool and its bounded resource roots in one declaration. It derives read-only mounts and PATH entries in global order, without another activation. Projects inherit all declared installations unless they select a narrower list. A project cannot add a root or use host PATH discovery as authorization.
+Use a named global installation to authorize an existing tool and its bounded resource roots in one declaration. Use optional relative `files` lists for exact files beside directory roots. It derives read-only mounts and PATH entries in global order, without another activation. File selections do not expose their parent directories, discover dependencies, or create new Pi tools. Projects inherit all declared installations unless they select a narrower list. A project cannot add a root or use host PATH discovery as authorization.
 
 Docker uses a separate rule inside these same files: global `docker.allowed` authorizes its policy ceiling, while project `docker.enabled` opts in. Missing booleans mean disabled. Preserve the broker and its operation/target limits. A generic socket grant must not replace Docker authority.
 

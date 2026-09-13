@@ -281,7 +281,11 @@ async function assertAndMaterializeFilesystemPolicy(
             isPrivateWritableRoot,
         );
     }
-    const prepareDenies = async (paths: string[], inherited: string[] = []) => {
+    const prepareDenies = async (
+        paths: string[],
+        inherited: string[] = [],
+        writeOnly = false,
+    ) => {
         const exact: string[] = [];
         const dynamic: string[] = [];
         for (const path of new Set(paths)) {
@@ -303,9 +307,24 @@ async function assertAndMaterializeFilesystemPolicy(
                 if (stat.isSymbolicLink()) {
                     // Mounting a mask through a symlink can target a directory
                     // hidden by another deny (for example WSL home links).
-                    const pattern = path.replace(/[\\*?[\]{}]/g, "\\$&");
-                    dynamic.push(pattern);
                     const target = await materializePotentialPath(path);
+                    // Read-only aliases need no FUSE overlay on their parent.
+                    // Retain the canonical deny and use an alias mask whenever
+                    // either its lexical or real path overlaps writable data.
+                    const writableAlias = [
+                        ...allowWrite,
+                        ...policy.filesystem.allowWrite,
+                    ].some((root) =>
+                        [path, target].some(
+                            (candidate) =>
+                                isEqualOrDescendant(candidate, root) ||
+                                isEqualOrDescendant(root, candidate),
+                        ),
+                    );
+                    if (!writeOnly || writableAlias) {
+                        const pattern = path.replace(/[\\*?[\]{}]/g, "\\$&");
+                        dynamic.push(pattern);
+                    }
                     if (
                         ![...paths, ...inherited].some((parent) =>
                             isEqualOrDescendant(target, parent),
@@ -330,7 +349,11 @@ async function assertAndMaterializeFilesystemPolicy(
     };
     const [readDenies, writeDenies] = await Promise.all([
         prepareDenies(policy.filesystem.denyRead),
-        prepareDenies(policy.filesystem.denyWrite, policy.filesystem.denyRead),
+        prepareDenies(
+            policy.filesystem.denyWrite,
+            policy.filesystem.denyRead,
+            true,
+        ),
     ]);
     return {
         ...policy,
@@ -338,9 +361,20 @@ async function assertAndMaterializeFilesystemPolicy(
             ...policy.filesystem,
             // Keep explicitly requested aliases after validating their canonical
             // targets. The engine recreates only those path aliases, without
-            // exposing the host directories that contain them.
+            // exposing the host directories that contain them. An alias already
+            // visible through a writable parent needs no separate read mount:
+            // keep the canonical read-only target and its alias write mask.
             allowRead: [
-                ...new Set([...allowRead, ...policy.filesystem.allowRead]),
+                ...new Set([
+                    ...allowRead,
+                    ...policy.filesystem.allowRead.filter(
+                        (path, index) =>
+                            path === allowRead[index] ||
+                            !policy.filesystem.allowWrite.some((root) =>
+                                isEqualOrDescendant(path, root),
+                            ),
+                    ),
+                ]),
             ],
             allowWrite: [...new Set(allowWrite)],
             denyRead: readDenies.exact,

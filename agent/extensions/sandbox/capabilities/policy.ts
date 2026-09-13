@@ -12,7 +12,11 @@ import {
     type SandboxMode,
     type ShellProfile,
 } from "./authority.ts";
-import { selectInstallations } from "./installations.ts";
+import {
+    installationContains,
+    installationReadPaths,
+    selectInstallations,
+} from "./installations.ts";
 
 export interface ShellCapabilityResolution {
     hostAllowed?: boolean;
@@ -330,8 +334,8 @@ function mergeLayers(input: ShellPolicyInput): {
         project?.environment?.installations,
         session?.environment?.installations,
     );
-    const installationRoots = installations.flatMap((installation) =>
-        installation.roots.map((entry) => entry.root),
+    const installationReadGrants = installations.flatMap((installation) =>
+        installation.roots.flatMap(installationReadPaths),
     );
     const allowedDomains = narrower(
         narrower(
@@ -427,7 +431,7 @@ function mergeLayers(input: ShellPolicyInput): {
               ? []
               : [...new Set([projectRoot, ...requestedGlobalRead])];
     const globalRead = [
-        ...new Set([...ordinaryGlobalRead, ...installationRoots]),
+        ...new Set([...ordinaryGlobalRead, ...installationReadGrants]),
     ];
     const globalWrite =
         requestedGlobalWrite === undefined
@@ -573,13 +577,28 @@ function mergeLayers(input: ShellPolicyInput): {
     );
     const path = [
         ...new Set([
-            ...installations
-                .flatMap((installation) =>
-                    installation.roots.flatMap((entry) =>
-                        entry.path.map((part) => resolve(entry.root, part)),
-                    ),
-                )
-                .filter((entry) => permittedPath(entry, [...read, ...write])),
+            ...installations.flatMap((installation) =>
+                installation.roots.flatMap((entry) =>
+                    entry.path
+                        .map((part) => resolve(entry.root, part))
+                        .filter(
+                            (directory) =>
+                                permittedPath(directory, [...read, ...write]) ||
+                                (entry.files !== undefined &&
+                                    installationReadPaths(entry).some(
+                                        (file) =>
+                                            installationContains(
+                                                directory,
+                                                file,
+                                            ) &&
+                                            permittedPath(file, [
+                                                ...read,
+                                                ...write,
+                                            ]),
+                                    )),
+                        ),
+                ),
+            ),
             ...ordinaryPath,
         ]),
     ];
@@ -691,7 +710,7 @@ function mergeLayers(input: ShellPolicyInput): {
             denyRead: deny("denyRead"),
             // Installation grants are read-only, including beneath a writable project.
             denyWrite: [
-                ...new Set([...deny("denyWrite"), ...installationRoots]),
+                ...new Set([...deny("denyWrite"), ...installationReadGrants]),
             ],
         },
         environment: {

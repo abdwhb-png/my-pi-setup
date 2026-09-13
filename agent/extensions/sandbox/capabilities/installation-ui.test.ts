@@ -385,3 +385,18 @@ describe("manageInstallations", () => {
         expect(projectAfter.environment.installations).toEqual([]);
     });
 });
+
+test("file selections are previewed and persisted without authorizing the containing directory", async () => {
+    const f = fixture();
+    const directory = join(f.root, "commands");
+    mkdirSync(directory);
+    writeFileSync(join(directory, "tool"), "tool");
+    f.writeGlobal({ version: 2, machineId: "m1", environment: {} });
+    const ui = createContext(f.projectDir, { select: ["Global: Add"], input: ["local"],
+        editor: [JSON.stringify([{ root: directory, files: ["tool"], path: ["."] }])], confirm: [true] });
+    await manageInstallations(ui.ctx, { agentDir: f.agentDir, machineId: "m1", onChanged: async () => {} });
+    expect(ui.notifications).toEqual([]);
+    expect(ui.confirmMessages[0]).toContain(`${join(directory, "tool")} (read-only file)`);
+    expect(ui.confirmMessages[0]).not.toContain(`${directory} (read-only)`);
+    expect(JSON.parse(f.readGlobal()).environment.installations.local).toEqual([{ root: directory, path: ["."], files: ["tool"] }]);
+});
