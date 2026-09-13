@@ -1,5 +1,14 @@
 # Plan de correction architecturale du sandbox Pi
 
+> **Superseded architecture note (2026-09-12):** Preserve this as a historical
+> planning record. Its adapter-specific local capabilities, extra authority
+> files, `hostCapability` routing, host-baseline assumptions, and drain-only
+> revocation are superseded by the approved
+> [private runtime and local environments design](../../brainstorming/2026-09-12-sandbox-private-runtime-and-local-environments-design.md).
+> The replacement uses only global `sandbox.json` and project `.pi/sandbox.json`,
+> a private runtime, named global installation roots selected by projects, and
+> admission-backed revocation. It does not establish delivery or activation.
+
 Statut d’exécution : candidat A1–A6 livré et qualifié sous WSL le 2026-09-11 après l’implémentation autorisée avec un worker principal GPT-5.6 Terra et un contrôleur chargé de l’orchestration. Consulte le [rapport de livraison](./2026-09-10-sandbox-generalisation-execution.md) pour les preuves et les limites. Garde l’activation personnelle séparée. UDP reste différé en A7.
 
 Périmètre validé : deux modes d’exécution, sandbox configurable et hôte explicite. Conserve exactement deux emplacements de configuration active : `~/.pi/agent/sandbox.json` et `<projet>/.pi/sandbox.json`. Applique aussi la décision Docker validée : autorisation globale commune, activation explicite dans chaque projet, désactivation si le projet ne précise rien, sans registre global d’accords par projet. Q1 est validée : permets aussi le partage complet du `/tmp` hôte sur configuration explicite. Q3 est validée : cible Linux natif et WSL et distingue leur qualification. Retire Q2, qui demandait une liste d’outils prioritaires, et qualifie les mécanismes génériques avant de proposer des limites. Suis les preuves et les écarts restants dans `2026-09-10-sandbox-generalisation-execution.md`. Prépare l’activation personnelle séparément, sans l’exécuter.

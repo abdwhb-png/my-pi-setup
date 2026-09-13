@@ -1,5 +1,14 @@
 # Isolation par défaut et capacités locales de développement
 
+> **Superseded architecture note (2026-09-12):** This is a historical design
+> record. Its additional authority file, product-specific host integrations,
+> `hostCapability` parameter, and drain-only revocation model are superseded by
+> the approved [private sandbox runtime and local environments design](2026-09-12-sandbox-private-runtime-and-local-environments-design.md).
+> The replacement has exactly two active configuration files, a private runtime,
+> named global local-installation roots selected by projects, and effective
+> revocation that interrupts affected descendants. Do not treat this note as an
+> activation or delivery claim.
+
 Date : 2026-09-09
 
 Statut : direction et plan validés par l’utilisateur. Les décisions Q1–Q6 ci-dessous précisent le contrat implémenté. Consultez le bilan de livraison pour les preuves et les limites.

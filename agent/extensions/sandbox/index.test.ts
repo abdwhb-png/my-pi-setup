@@ -99,7 +99,8 @@ describe('active sandbox files', () => {
 describe('renderSandboxWidget', () => {
     it('shows the selected mode separately from its custom policy and engine state', () => {
         const selected = { mode: 'sandbox' as const, profile: 'custom' as const };
-        expect(renderSandboxWidget(fakeTheme(), 'on', undefined, selected)).toContain('sandbox · custom · ready');
+        expect(renderSandboxWidget(fakeTheme(), 'on', undefined, selected)).toContain('sandbox · custom · pending admission');
+        expect(renderSandboxWidget(fakeTheme(), 'on', undefined, selected, 'admitted')).toContain('sandbox · custom · admitted');
         expect(renderSandboxWidget(fakeTheme(), 'reconfiguring', undefined, selected)).toContain('sandbox · custom · reconfiguring');
         expect(renderSandboxWidget(fakeTheme(), 'off', undefined, { mode: 'host', profile: 'host' })).toContain('host · unsandboxed');
     });

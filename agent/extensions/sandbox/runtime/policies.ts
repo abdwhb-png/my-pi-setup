@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { SelectedInstallation } from "../capabilities/installations.ts";
 
 import {
     SandboxExecutionError,
@@ -15,17 +16,13 @@ import {
 import {
     buildShellPath,
     expandShellPathEntry,
-    SHELL_SYSTEM_READ_PATHS,
+    PRIVATE_RUNTIME_ROOT,
+    PRIVATE_ANALYSIS_ROOT,
+    PRIVATE_SHELL_PATH,
+    PRIVATE_BASH,
 } from "./shell-baseline.ts";
 
-export const DEFAULT_BASH_INHERITED_VARIABLES = [
-    "USER",
-    "SHELL",
-    "TERM",
-    "LANG",
-    "COLORTERM",
-    "NO_COLOR",
-] as const;
+export const DEFAULT_BASH_INHERITED_VARIABLES: readonly string[] = [];
 
 /** Logical HOME mounted from the current private lease by Zerobox. */
 export const SANDBOX_PRIVATE_HOME = "/home/sandbox";
@@ -73,6 +70,7 @@ interface PiEnvironmentConfig {
     deniedVariables: string[];
     variables: Record<string, string>;
     path: string[];
+    installations?: SelectedInstallation[];
 }
 
 export interface PiSandboxResources extends SandboxResourcesPolicy {}
@@ -708,7 +706,11 @@ function createShellPolicy(
         leaseParent,
         resolve(getAgentDir(), "sandbox.json"),
     ];
-    const fixedDeniedWriteRoots = ["/mnt/c", ...fixedDeniedReadRoots];
+    const fixedDeniedWriteRoots = [
+        "/mnt/c",
+        PRIVATE_RUNTIME_ROOT,
+        ...fixedDeniedReadRoots,
+    ];
     const configuredAllowRead = unique(
         input.config.filesystem.allowRead.map((path) =>
             normalizePath(path, input.cwd),
@@ -746,7 +748,6 @@ function createShellPolicy(
         tmpNamespace: privateTmp ? "lease-private" : "host",
         filesystem: {
             allowRead: unique([
-                ...SHELL_SYSTEM_READ_PATHS,
                 ...configuredAllowRead,
                 ...(!privateTmp &&
                 !configuredDenyRead.exact.some((path) =>
@@ -756,7 +757,6 @@ function createShellPolicy(
                     : []),
                 input.lease.homeDir,
                 input.lease.tmpDir,
-                input.lease.proxyRunsDir,
             ]),
             denyRead: unique([
                 ...configuredDenyRead.exact,
@@ -794,6 +794,14 @@ function createShellPolicy(
         environment: {
             inherit,
             set: {
+                ...Object.fromEntries(
+                    Object.entries({
+                        USER: "sandbox",
+                        SHELL: PRIVATE_BASH,
+                        TERM: "dumb",
+                        LANG: "C.UTF-8",
+                    }).filter(([key]) => !denied.has(key)),
+                ),
                 ...inheritedVariables,
                 ...configuredVariables,
                 PATH: buildBashPath(input.config.environment.path),
@@ -835,19 +843,23 @@ export function createAnalysisPolicy(
                 input.lease.homeDir,
                 input.lease.tmpDir,
             ]),
-            // The restricted analysis filesystem needs a /tmp mount point
-            // before the backend overlays its private namespace.
-            denyRead: ["/tmp", leaseParent],
+            // Host /tmp is absent from the private root. A logical /tmp deny
+            // would mask the lease's private temporary directory as well.
+            denyRead: [leaseParent],
             denyReadGlobs: [],
             allowWrite: [input.lease.homeDir, input.lease.tmpDir],
-            denyWrite: ["/tmp", leaseParent],
+            denyWrite: [leaseParent, PRIVATE_RUNTIME_ROOT],
             denyWriteGlobs: [],
         },
         network: { mode: "deny-all", allow: [], allowHost: [], deny: [] },
         environment: {
             inherit: [],
             set: {
-                PATH: "/usr/local/bin:/usr/bin:/bin",
+                PATH: `${PRIVATE_ANALYSIS_ROOT}/bin:${PRIVATE_SHELL_PATH}`,
+                USER: "sandbox",
+                SHELL: PRIVATE_BASH,
+                TERM: "dumb",
+                LANG: "C.UTF-8",
                 HOME: SANDBOX_PRIVATE_HOME,
                 TMPDIR: "/tmp",
             },

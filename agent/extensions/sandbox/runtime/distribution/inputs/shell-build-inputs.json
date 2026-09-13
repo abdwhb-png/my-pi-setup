@@ -1,0 +1,1118 @@
+{
+  "image": "ubuntu@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61",
+  "packages": [
+    "apt\t2.8.3",
+    "base-files\t13ubuntu10.4",
+    "base-passwd\t3.6.3build1",
+    "bash\t5.2.21-2ubuntu4",
+    "binutils\t2.42-4ubuntu2.10",
+    "binutils-common\t2.42-4ubuntu2.10",
+    "binutils-x86-64-linux-gnu\t2.42-4ubuntu2.10",
+    "bsdutils\t1:2.39.3-9ubuntu6.6",
+    "coreutils\t9.4-3ubuntu6.3",
+    "dash\t0.5.12-6ubuntu5",
+    "debconf\t1.5.86ubuntu1",
+    "debianutils\t5.17build1",
+    "diffutils\t1:3.10-1ubuntu0.1",
+    "dpkg\t1.22.6ubuntu6.6",
+    "e2fsprogs\t1.47.0-2.4~exp1ubuntu4.1",
+    "findutils\t4.9.0-5build1",
+    "gawk\t1:5.2.1-2ubuntu0.1",
+    "gcc-14-base\t14.2.0-4ubuntu2~24.04.1",
+    "gpgv\t2.4.4-2ubuntu17.6",
+    "grep\t3.11-4build1",
+    "gzip\t1.12-1ubuntu3.2",
+    "hostname\t3.23+nmu2ubuntu2",
+    "init-system-helpers\t1.66ubuntu1",
+    "libacl1\t2.3.2-1build1.1",
+    "libapt-pkg6.0t64\t2.8.3",
+    "libassuan0\t2.5.6-1build1",
+    "libattr1\t1:2.5.2-1ubuntu0.1",
+    "libaudit-common\t1:3.1.2-2.1build1.1",
+    "libaudit1\t1:3.1.2-2.1build1.1",
+    "libbinutils\t2.42-4ubuntu2.10",
+    "libblkid1\t2.39.3-9ubuntu6.6",
+    "libbz2-1.0\t1.0.8-5.1ubuntu0.1",
+    "libc-bin\t2.39-0ubuntu8.8",
+    "libc6\t2.39-0ubuntu8.8",
+    "libcap-ng0\t0.8.4-2build2",
+    "libcap2\t1:2.66-5ubuntu2.4",
+    "libcom-err2\t1.47.0-2.4~exp1ubuntu4.1",
+    "libcrypt1\t1:4.4.36-4build1",
+    "libctf-nobfd0\t2.42-4ubuntu2.10",
+    "libctf0\t2.42-4ubuntu2.10",
+    "libdb5.3t64\t5.3.28+dfsg2-7",
+    "libdebconfclient0\t0.271ubuntu3",
+    "libexpat1\t2.6.1-2ubuntu0.4",
+    "libext2fs2t64\t1.47.0-2.4~exp1ubuntu4.1",
+    "libffi8\t3.4.6-1build1",
+    "libgcc-s1\t14.2.0-4ubuntu2~24.04.1",
+    "libgcrypt20\t1.10.3-2ubuntu0.2",
+    "libgmp10\t2:6.3.0+dfsg-2ubuntu6.1",
+    "libgnutls30t64\t3.8.3-1.1ubuntu3.6",
+    "libgpg-error0\t1.47-3build2.1",
+    "libgprofng0\t2.42-4ubuntu2.10",
+    "libhogweed6t64\t3.9.1-2.2build1.1",
+    "libidn2-0\t2.3.7-2build1.1",
+    "libjansson4\t2.14-2build2",
+    "liblz4-1\t1.9.4-1build1.1",
+    "liblzma5\t5.6.1+really5.4.5-1ubuntu0.3",
+    "libmd0\t1.1.0-2build1.1",
+    "libmount1\t2.39.3-9ubuntu6.6",
+    "libmpfr6\t4.2.1-1build1.1",
+    "libncursesw6\t6.4+20240113-1ubuntu2.2",
+    "libnettle8t64\t3.9.1-2.2build1.1",
+    "libnpth0t64\t1.6-3.1build1",
+    "libp11-kit0\t0.25.3-4ubuntu2.2",
+    "libpam-modules\t1.5.3-5ubuntu5.7",
+    "libpam-modules-bin\t1.5.3-5ubuntu5.7",
+    "libpam-runtime\t1.5.3-5ubuntu5.7",
+    "libpam0g\t1.5.3-5ubuntu5.7",
+    "libpcre2-8-0\t10.42-4ubuntu2.1",
+    "libproc2-0\t2:4.0.4-4ubuntu3.3",
+    "libpython3.12-minimal\t3.12.3-1ubuntu0.17",
+    "libpython3.12-stdlib\t3.12.3-1ubuntu0.17",
+    "libreadline8t64\t8.2-4build1",
+    "libseccomp2\t2.5.5-1ubuntu3.1",
+    "libselinux1\t3.5-2ubuntu2.1",
+    "libsemanage-common\t3.5-1build5",
+    "libsemanage2\t3.5-1build5",
+    "libsepol2\t3.5-2build1",
+    "libsframe1\t2.42-4ubuntu2.10",
+    "libsigsegv2\t2.14-1ubuntu2",
+    "libsmartcols1\t2.39.3-9ubuntu6.6",
+    "libsqlite3-0\t3.45.1-1ubuntu2.7",
+    "libss2\t1.47.0-2.4~exp1ubuntu4.1",
+    "libssl3t64\t3.0.13-0ubuntu3.15",
+    "libstdc++6\t14.2.0-4ubuntu2~24.04.1",
+    "libsystemd0\t255.4-1ubuntu8.17",
+    "libtasn1-6\t4.19.0-3ubuntu0.24.04.2",
+    "libtinfo6\t6.4+20240113-1ubuntu2.2",
+    "libudev1\t255.4-1ubuntu8.17",
+    "libunistring5\t1.1-2build1.1",
+    "libuuid1\t2.39.3-9ubuntu6.6",
+    "libxxhash0\t0.8.2-2build1",
+    "libzstd1\t1.5.5+dfsg2-2build1.1",
+    "login\t1:4.13+dfsg1-4ubuntu3.2",
+    "logsave\t1.47.0-2.4~exp1ubuntu4.1",
+    "mawk\t1.3.4.20240123-1build1",
+    "media-types\t10.1.0",
+    "mount\t2.39.3-9ubuntu6.6",
+    "ncurses-base\t6.4+20240113-1ubuntu2.2",
+    "ncurses-bin\t6.4+20240113-1ubuntu2.2",
+    "netbase\t6.4",
+    "passwd\t1:4.13+dfsg1-4ubuntu3.2",
+    "patchelf\t0.18.0-1.1build1",
+    "perl-base\t5.38.2-3.2ubuntu0.4",
+    "procps\t2:4.0.4-4ubuntu3.3",
+    "python3-minimal\t3.12.3-0ubuntu2.1",
+    "python3.12-minimal\t3.12.3-1ubuntu0.17",
+    "readline-common\t8.2-4build1",
+    "sed\t4.9-2ubuntu0.24.04.1",
+    "sensible-utils\t0.0.22",
+    "sysvinit-utils\t3.08-6ubuntu3",
+    "tar\t1.35+dfsg-3ubuntu0.4",
+    "tzdata\t2026c-0ubuntu0.24.04.1",
+    "ubuntu-keyring\t2023.11.28.1",
+    "unminimize\t0.2.1",
+    "util-linux\t2.39.3-9ubuntu6.6",
+    "zlib1g\t1:1.3.dfsg-3.1ubuntu2.2"
+  ],
+  "files": [
+    {
+      "source": "/usr/share/doc/bash/copyright",
+      "destination": "components/shell/licenses/bash/copyright",
+      "sha256": "06319d84c3e5ed096036f6a9310a030c7e84e50dff2b8a6792285c83ec0ada73"
+    },
+    {
+      "source": "/usr/share/doc/coreutils/copyright",
+      "destination": "components/shell/licenses/coreutils/copyright",
+      "sha256": "d23a4fb17c4a2e5bc46dafe9d22192ecf3905473317e17139d210339dcf50fa9"
+    },
+    {
+      "source": "/usr/share/doc/findutils/copyright",
+      "destination": "components/shell/licenses/findutils/copyright",
+      "sha256": "601cc227b3e22ad219beeed7c86b9e146ddf9c88c25620f78169fd5451d4f966"
+    },
+    {
+      "source": "/usr/share/doc/grep/copyright",
+      "destination": "components/shell/licenses/grep/copyright",
+      "sha256": "42d9b4d610396b1e8d1303dcb9487af3f5a2d2709623cf03a04cf76acdf6c5e3"
+    },
+    {
+      "source": "/usr/share/doc/sed/copyright",
+      "destination": "components/shell/licenses/sed/copyright",
+      "sha256": "719320e425e8e6da53a55e0fcfa2f2ed9b1332cea16abd65321bd651b2a88568"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/filefuncs.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/filefuncs.so",
+      "sha256": "2e260e334b7f96d0a7ecc3876893961a45da09f22750ee515b2a5ff05508928d"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/fnmatch.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/fnmatch.so",
+      "sha256": "40609bf9af81e5568cf8ff382ee5cd49f12a40112e49c038f37c33a899b6d023"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/fork.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/fork.so",
+      "sha256": "e30a3de2bd08b19c9050c46047d10bef00bec7ec9fd47bc884038815071edf3f"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/inplace.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/inplace.so",
+      "sha256": "c2b8840ec830fa60e7439423e1e352567605e78e2ce334ead1d66723798e7133"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/intdiv.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/intdiv.so",
+      "sha256": "5888a9f5b1c97518336a011ff871abcc58d5a24e90242fc9c10b9fc0cf381123"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/ordchr.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/ordchr.so",
+      "sha256": "1088818edeb2101a1ac5d5e78e9cd298ba887800192c0ed43ac201644a626578"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/readdir.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/readdir.so",
+      "sha256": "17141141a03f468f01abe4cfe636acfbb57cd3045522ddeaeecc76a933d9506e"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/readfile.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/readfile.so",
+      "sha256": "f550113c18c8aa012193ce2a0d12cf86c8d141d4f7d47f62e5ec851ad64ae166"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/revoutput.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/revoutput.so",
+      "sha256": "c516ed1f42a5437dfd821163d29bf84df3789140a73ddb34b61b79a1c6381dc1"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/revtwoway.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/revtwoway.so",
+      "sha256": "dfa2a4644a199933c6c35b6980221f4c859c1f869d98127ed8e8dcc8139ef6a4"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/rwarray.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/rwarray.so",
+      "sha256": "1f4fb45f4f35b1af7760c4995d5c2dd0f079e8a0dfc8446fdfed81c19c276820"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/gawk/time.so",
+      "destination": "components/shell/lib/x86_64-linux-gnu/gawk/time.so",
+      "sha256": "584aa3b17beebf17bcdad6d73153b7590f19c8502f9025b7d85e7cdadfd5dd60"
+    },
+    {
+      "source": "/usr/share/awk/assert.awk",
+      "destination": "components/shell/share/awk/assert.awk",
+      "sha256": "07f9e0362956d40ea6a92bedd4f292666185d038885387cb00adb5ade1582d93"
+    },
+    {
+      "source": "/usr/share/awk/bits2str.awk",
+      "destination": "components/shell/share/awk/bits2str.awk",
+      "sha256": "d7529387edb12e4054b384e96bc4911cb3b0e544602fb1e9de8a983f5fd46c5a"
+    },
+    {
+      "source": "/usr/share/awk/cliff_rand.awk",
+      "destination": "components/shell/share/awk/cliff_rand.awk",
+      "sha256": "41b20eba1d788cdc7d64c3860315b3bb8613f80b5f7d8f04774c31caef64dd42"
+    },
+    {
+      "source": "/usr/share/awk/ctime.awk",
+      "destination": "components/shell/share/awk/ctime.awk",
+      "sha256": "cf1b816f600516ec0a4f84901e12c48f44c5309bd6bd7b32f9a17abd026f2b86"
+    },
+    {
+      "source": "/usr/share/awk/ftrans.awk",
+      "destination": "components/shell/share/awk/ftrans.awk",
+      "sha256": "9957afaddfec5f2c6bc4f9cb12c576e6c367c1b681a472e91ced9caff5292722"
+    },
+    {
+      "source": "/usr/share/awk/getopt.awk",
+      "destination": "components/shell/share/awk/getopt.awk",
+      "sha256": "0144e3be4c5abc67bdace3b41a03cfea94a778268ca4df7efe5931737306e888"
+    },
+    {
+      "source": "/usr/share/awk/gettime.awk",
+      "destination": "components/shell/share/awk/gettime.awk",
+      "sha256": "7baacb670919547d1fc2ec186d6ad937c6f7cc2d03e0b2e8f6802742dc7c6023"
+    },
+    {
+      "source": "/usr/share/awk/group.awk",
+      "destination": "components/shell/share/awk/group.awk",
+      "sha256": "46556e7f147deb42a2986cc90bbcfc2ffe54e3bdfdc4cddeea327dba74dcb422"
+    },
+    {
+      "source": "/usr/share/awk/have_mpfr.awk",
+      "destination": "components/shell/share/awk/have_mpfr.awk",
+      "sha256": "40d45f7e243e4f7faa1335852c5839fa80c60d70eccd94918cee7edbc58fd9a4"
+    },
+    {
+      "source": "/usr/share/awk/inplace.awk",
+      "destination": "components/shell/share/awk/inplace.awk",
+      "sha256": "c9420b8b4cef25e7f7982800a24d7ecdf2708e9514e8d0f48f471b6bdfec7f1e"
+    },
+    {
+      "source": "/usr/share/awk/intdiv0.awk",
+      "destination": "components/shell/share/awk/intdiv0.awk",
+      "sha256": "c184f8a175c7226e9c567a8bb91e5e67ed8e239769012ad16f93c48f8e328bfd"
+    },
+    {
+      "source": "/usr/share/awk/isnumeric.awk",
+      "destination": "components/shell/share/awk/isnumeric.awk",
+      "sha256": "cff4e7e76e676da800f88d39a866c5bc1d42be27538ca959540e3cee9bdf2159"
+    },
+    {
+      "source": "/usr/share/awk/join.awk",
+      "destination": "components/shell/share/awk/join.awk",
+      "sha256": "9af26157a40c1e1c09dfa73152e07cbff4c4f4b31b7bf8132572270da6dfc052"
+    },
+    {
+      "source": "/usr/share/awk/libintl.awk",
+      "destination": "components/shell/share/awk/libintl.awk",
+      "sha256": "2b3a65b9053d2f4f08733870ef2cf1b5ee8aeba74dc6b9b1d1610fc0d9ac0eee"
+    },
+    {
+      "source": "/usr/share/awk/noassign.awk",
+      "destination": "components/shell/share/awk/noassign.awk",
+      "sha256": "7ffc84e6d111aaf56cb0d3756bbcbd73e2510069ee6fc05bc1ea0e412884663e"
+    },
+    {
+      "source": "/usr/share/awk/ns_passwd.awk",
+      "destination": "components/shell/share/awk/ns_passwd.awk",
+      "sha256": "65670dbe643091de33dd490b71609677c875166d0aa59378a6576f979ba9886a"
+    },
+    {
+      "source": "/usr/share/awk/ord.awk",
+      "destination": "components/shell/share/awk/ord.awk",
+      "sha256": "e7d37acc67a101dd2e23c19ed3f9dfd5d01ea93af63b2ebc8679976e1ef051ce"
+    },
+    {
+      "source": "/usr/share/awk/passwd.awk",
+      "destination": "components/shell/share/awk/passwd.awk",
+      "sha256": "a1c747380f60e50f05ef088a55cb0a8e5bb49a4ca10a5406de6e159e0d125cc9"
+    },
+    {
+      "source": "/usr/share/awk/processarray.awk",
+      "destination": "components/shell/share/awk/processarray.awk",
+      "sha256": "ac1e8e8dee8105c5c1ab2a1b87fcb668885473b7e90b7b0c137275742c704166"
+    },
+    {
+      "source": "/usr/share/awk/quicksort.awk",
+      "destination": "components/shell/share/awk/quicksort.awk",
+      "sha256": "b769b7a892acedcdb98d18c3cf05544d4d85488a0378aaacba0c6e2ddb71bf35"
+    },
+    {
+      "source": "/usr/share/awk/readable.awk",
+      "destination": "components/shell/share/awk/readable.awk",
+      "sha256": "06e27abeb78eff929cb1f44256f195fe2d86ebb62814f731f420df286c8f1094"
+    },
+    {
+      "source": "/usr/share/awk/readfile.awk",
+      "destination": "components/shell/share/awk/readfile.awk",
+      "sha256": "751d619465eb57c9d6314eb2a97e783ff84ff108cd1c4efeff8f62400dd77609"
+    },
+    {
+      "source": "/usr/share/awk/rewind.awk",
+      "destination": "components/shell/share/awk/rewind.awk",
+      "sha256": "878279434b70956b26eca128a0939c1a14da97b1626fe402eb76d44485fbc268"
+    },
+    {
+      "source": "/usr/share/awk/round.awk",
+      "destination": "components/shell/share/awk/round.awk",
+      "sha256": "28b705d2e2b01cc3ed450cc42e2ff99b058b55ef5a49cbc483aded7bdfa58aff"
+    },
+    {
+      "source": "/usr/share/awk/shellquote.awk",
+      "destination": "components/shell/share/awk/shellquote.awk",
+      "sha256": "78e7df6e31f55536a4c3853f6d54644877aa892ed7fc6e1d4dc9080284d78565"
+    },
+    {
+      "source": "/usr/share/awk/strtonum.awk",
+      "destination": "components/shell/share/awk/strtonum.awk",
+      "sha256": "abd27d285278e83655617efbd8e09b5f5271dd6ede37847b0ebd6632be2dde74"
+    },
+    {
+      "source": "/usr/share/awk/walkarray.awk",
+      "destination": "components/shell/share/awk/walkarray.awk",
+      "sha256": "3a7f02f135e91bbf1c1cd498ea0e1489802d58c83bb4d112c0a407593db31dd8"
+    },
+    {
+      "source": "/usr/share/awk/zerofile.awk",
+      "destination": "components/shell/share/awk/zerofile.awk",
+      "sha256": "c20a5e00b43fbfb9ea420da93f64422ce13d4aebb3b725e2ac3ba0102f169bee"
+    },
+    {
+      "source": "/usr/share/doc/gawk/copyright",
+      "destination": "components/shell/licenses/gawk/copyright",
+      "sha256": "4d8bd683c14ce5e3f68094a56892ecd336524e9977b6cfd3eb22ef835d67f367"
+    },
+    {
+      "source": "/usr/share/doc/diffutils/copyright",
+      "destination": "components/shell/licenses/diffutils/copyright",
+      "sha256": "ac6fcf18142bab7569188ae75b204a9e1c73c050c0f9467adaf080759e516123"
+    },
+    {
+      "source": "/usr/share/doc/tar/copyright",
+      "destination": "components/shell/licenses/tar/copyright",
+      "sha256": "a0a44d41b2a045eb5946a8952487151cfa6ff0cd080bbf4b2eec220751d23024"
+    },
+    {
+      "source": "/usr/share/doc/gzip/copyright",
+      "destination": "components/shell/licenses/gzip/copyright",
+      "sha256": "1ca5dd5098fe2e1c0f0d05196f5b3da8b414a807702e6ca8b536eb5fd3059130"
+    },
+    {
+      "source": "/usr/bin/bash",
+      "destination": "components/shell/bin/bash",
+      "sha256": "bc5945feb8bd26203ebfafea5ce1878bb2e32cb8fb50ab7ae395cfb1e1aaaef1"
+    },
+    {
+      "source": "/usr/bin/bashbug",
+      "destination": "components/shell/bin/bashbug",
+      "sha256": "7f635f2983aca8538deaa2f4b08696a1ad89c628772d9e6efb13faad0daaf595"
+    },
+    {
+      "source": "/usr/bin/clear_console",
+      "destination": "components/shell/bin/clear_console",
+      "sha256": "2c38afcdb060815f175ddab8049d6472be3e863da1489fca22025120aebc69a3"
+    },
+    {
+      "source": "/usr/bin/bash",
+      "destination": "components/shell/bin/rbash",
+      "sha256": "bc5945feb8bd26203ebfafea5ce1878bb2e32cb8fb50ab7ae395cfb1e1aaaef1"
+    },
+    {
+      "source": "/usr/bin/[",
+      "destination": "components/shell/bin/[",
+      "sha256": "f62341fe6df02bd8fc8ff6bfa8784ec7a6d6101f40ac9a248485f04f92857f47"
+    },
+    {
+      "source": "/usr/bin/arch",
+      "destination": "components/shell/bin/arch",
+      "sha256": "1cb014b56ad2c53115948771876e299cd85c4e79d38323ba70fd2f10ae82882c"
+    },
+    {
+      "source": "/usr/bin/b2sum",
+      "destination": "components/shell/bin/b2sum",
+      "sha256": "c931b9dde7223cd4a456924c7ef1e47dfc0ae3a5560d386620a048acc1c93129"
+    },
+    {
+      "source": "/usr/bin/base32",
+      "destination": "components/shell/bin/base32",
+      "sha256": "4e666ee8aebb1b80152bf88c1b2c2d19ff6b7c05472d20ea40638401d2434e99"
+    },
+    {
+      "source": "/usr/bin/base64",
+      "destination": "components/shell/bin/base64",
+      "sha256": "6ea972c8cb3fe829c13a030c2b4f4a5194f792d7305b19005197d085aad5001f"
+    },
+    {
+      "source": "/usr/bin/basename",
+      "destination": "components/shell/bin/basename",
+      "sha256": "fc455c57afe3afb1772c097c6be408725ece261be9182840a490bbe1545992c8"
+    },
+    {
+      "source": "/usr/bin/basenc",
+      "destination": "components/shell/bin/basenc",
+      "sha256": "cefd4652f1ee79a6de966cfd55bd6429a013e08ed16e341f4adf15d0b5d8b566"
+    },
+    {
+      "source": "/usr/bin/cat",
+      "destination": "components/shell/bin/cat",
+      "sha256": "0d5c6788b9e87eb2f6672ae7dd1fb1fc9e4d13b930d988f28e4c040ff5b79c19"
+    },
+    {
+      "source": "/usr/bin/chcon",
+      "destination": "components/shell/bin/chcon",
+      "sha256": "c0823496199a9ab841666ca7495703c7d8a8e544618b96f79cc704494530af57"
+    },
+    {
+      "source": "/usr/bin/chgrp",
+      "destination": "components/shell/bin/chgrp",
+      "sha256": "bae78060ffb0c3f9e754f37a238f9de58c2fdcf6eb88239b9ea2ed947bfb5108"
+    },
+    {
+      "source": "/usr/bin/chmod",
+      "destination": "components/shell/bin/chmod",
+      "sha256": "636dc2e0792244a537121ec10b6e140797cb8d27d231f5c1d025148d1b0c6fc8"
+    },
+    {
+      "source": "/usr/bin/chown",
+      "destination": "components/shell/bin/chown",
+      "sha256": "8015daf73cb05bbfd746a7409407ede80f06d9cadd655b14776d437913152576"
+    },
+    {
+      "source": "/usr/bin/cksum",
+      "destination": "components/shell/bin/cksum",
+      "sha256": "9e459ded435417fdc42cdf6657aea96524580db3acc3eae8cfc522e93eb4c725"
+    },
+    {
+      "source": "/usr/bin/comm",
+      "destination": "components/shell/bin/comm",
+      "sha256": "b7d01216432beb6b35012fc884c7d5c52c85a4ad7798d5aa000fb01a80b67e7b"
+    },
+    {
+      "source": "/usr/bin/cp",
+      "destination": "components/shell/bin/cp",
+      "sha256": "95cdd604fdf0a292e349d27d1a80170ca0913bd3bbd9d2c0fcfc6c8adaebe2f0"
+    },
+    {
+      "source": "/usr/bin/csplit",
+      "destination": "components/shell/bin/csplit",
+      "sha256": "4e8e75e25ef5560bec12a18f12df4f55e9bfbbebc571e60d77f98cc79b22c937"
+    },
+    {
+      "source": "/usr/bin/cut",
+      "destination": "components/shell/bin/cut",
+      "sha256": "74e458a2da3a338c2b9e9a9180c300ed344f214d5f9de79dc39f7fa050d9c476"
+    },
+    {
+      "source": "/usr/bin/date",
+      "destination": "components/shell/bin/date",
+      "sha256": "7d870c845fe650dffb1f55f3db9233a1815213de3f4d1db5d0c2af06c2d22752"
+    },
+    {
+      "source": "/usr/bin/dd",
+      "destination": "components/shell/bin/dd",
+      "sha256": "12ad2eac319076241332f01205749b7a2ede42c07a95ea0f789cbcc31cf60512"
+    },
+    {
+      "source": "/usr/bin/df",
+      "destination": "components/shell/bin/df",
+      "sha256": "83dbe7428a5c042b6199c2ee147684fa578b71e9fd4b83e7d1bdb03b9510bba8"
+    },
+    {
+      "source": "/usr/bin/dir",
+      "destination": "components/shell/bin/dir",
+      "sha256": "79e9abafeb91dab77e908620d15f63dbb58d221b8c868bd2046a62933797b297"
+    },
+    {
+      "source": "/usr/bin/dircolors",
+      "destination": "components/shell/bin/dircolors",
+      "sha256": "c7d08b565cfdbb2f74894f614ad6c47fe12bcd5783708f6c48b2f6651761938b"
+    },
+    {
+      "source": "/usr/bin/dirname",
+      "destination": "components/shell/bin/dirname",
+      "sha256": "0c6767fd8f78935fef72524709bf57e147498a077eaf47ad29eacf8f8e8d4413"
+    },
+    {
+      "source": "/usr/bin/du",
+      "destination": "components/shell/bin/du",
+      "sha256": "872ef616defa9ecfc93c50a8da5d6144b4dfc93378882ad82198369433bd16c1"
+    },
+    {
+      "source": "/usr/bin/echo",
+      "destination": "components/shell/bin/echo",
+      "sha256": "5c63567e30e1e9c99aabecc1b87a3780b3c134e3854de88c4ed48bedab736bf7"
+    },
+    {
+      "source": "/usr/bin/env",
+      "destination": "components/shell/bin/env",
+      "sha256": "886e5fa8be716b03eeda48856e0f04493f2969fc148fb7812594ffac647fa050"
+    },
+    {
+      "source": "/usr/bin/expand",
+      "destination": "components/shell/bin/expand",
+      "sha256": "df539a6c8843440e50875019bf269a25d36be2518a4ee8da693c55028a21bb83"
+    },
+    {
+      "source": "/usr/bin/expr",
+      "destination": "components/shell/bin/expr",
+      "sha256": "4e159963030de45b4ebada281b17f819fc07e210998a7f67aeb85dc89caec356"
+    },
+    {
+      "source": "/usr/bin/factor",
+      "destination": "components/shell/bin/factor",
+      "sha256": "c87caacbd2a40fb4e16398e8cf1d7aceca214af64b09e9635ebdbb449898478b"
+    },
+    {
+      "source": "/usr/bin/false",
+      "destination": "components/shell/bin/false",
+      "sha256": "e51fc98d1215569a555c03c991835c234d6f05ded01a23ae99a33b8854270e86"
+    },
+    {
+      "source": "/usr/bin/fmt",
+      "destination": "components/shell/bin/fmt",
+      "sha256": "215c0332273edfd7c448ff049a01c4fbfe2530563f9aab6c6557834607df447d"
+    },
+    {
+      "source": "/usr/bin/fold",
+      "destination": "components/shell/bin/fold",
+      "sha256": "d196b816df8bf67282fd7095261b31882c65be4b5fa0fc62dc2dc6b4ebdfddf0"
+    },
+    {
+      "source": "/usr/bin/groups",
+      "destination": "components/shell/bin/groups",
+      "sha256": "09f588df72a6442e6d8effa8342828a74c637dd3df8dacba049282a301e73627"
+    },
+    {
+      "source": "/usr/bin/head",
+      "destination": "components/shell/bin/head",
+      "sha256": "2f990e7472d0c4dc6826c4afd827c61288d8a7f5e12debe8b116a99eeab7b83e"
+    },
+    {
+      "source": "/usr/bin/hostid",
+      "destination": "components/shell/bin/hostid",
+      "sha256": "72ee0a8faed4f09955f72c5029ed9e01e338361c8e44b6348e0e536071cbe311"
+    },
+    {
+      "source": "/usr/bin/id",
+      "destination": "components/shell/bin/id",
+      "sha256": "0e967a87e22a60b330c6dbdc7affe1dda41f342f14d20877725f0486d8777df2"
+    },
+    {
+      "source": "/usr/bin/install",
+      "destination": "components/shell/bin/install",
+      "sha256": "14e9088c53f771fea828d81866a22c7817177504d1f993a1f5ed2f70373ebe17"
+    },
+    {
+      "source": "/usr/bin/join",
+      "destination": "components/shell/bin/join",
+      "sha256": "b4b2b25ae04bcebd4a7a3b39be93abd9d2f2b2a92db7e9c8e9c6dc71db5a387d"
+    },
+    {
+      "source": "/usr/bin/link",
+      "destination": "components/shell/bin/link",
+      "sha256": "174d4bc47bb152ed8ae0f10398488ccd9293660e70bf677323061cbf93b63722"
+    },
+    {
+      "source": "/usr/bin/ln",
+      "destination": "components/shell/bin/ln",
+      "sha256": "059a363e62adcc10e14e55b5c82df6945509303eb32370b02c461311329ad261"
+    },
+    {
+      "source": "/usr/bin/logname",
+      "destination": "components/shell/bin/logname",
+      "sha256": "7d32359bb5f93b744cb69178e0adefb606c48a2204c494d8bcdd85544db96e34"
+    },
+    {
+      "source": "/usr/bin/ls",
+      "destination": "components/shell/bin/ls",
+      "sha256": "2726eb35864608ff34969fbf45ef4afcbba95eefed5ce5653c9c0124c4cd26cf"
+    },
+    {
+      "source": "/usr/bin/md5sum",
+      "destination": "components/shell/bin/md5sum",
+      "sha256": "21968db5562ce701ba4a652264118949f325eaa2beea252111543b301bda24bf"
+    },
+    {
+      "source": "/usr/bin/mkdir",
+      "destination": "components/shell/bin/mkdir",
+      "sha256": "430c3f949d7d328cd835722f5bbddeac0956fbdfbbb6a197e0abb1def3ed27e2"
+    },
+    {
+      "source": "/usr/bin/mkfifo",
+      "destination": "components/shell/bin/mkfifo",
+      "sha256": "67062cf99f0db6803e59da5758b9adc167e3828140b8ea5b1832d12118ac8e44"
+    },
+    {
+      "source": "/usr/bin/mknod",
+      "destination": "components/shell/bin/mknod",
+      "sha256": "b87e4d0c319dacd0bf1efe4937a2f75a7f4ca2332400a0d714581a46053d0782"
+    },
+    {
+      "source": "/usr/bin/mktemp",
+      "destination": "components/shell/bin/mktemp",
+      "sha256": "7e4b5260cd8eebb68c28c66dd279394aee9139ff6e3b7023d21c875821bc3110"
+    },
+    {
+      "source": "/usr/bin/mv",
+      "destination": "components/shell/bin/mv",
+      "sha256": "c5ef5f09e99844e7c49049d78ed26e23ff0e8b65a04da9ac2d62164882b9945e"
+    },
+    {
+      "source": "/usr/bin/nice",
+      "destination": "components/shell/bin/nice",
+      "sha256": "2f92f24856db2e178fd91b02d28a5dbe0b4678de62738edfde0ece66b0f57c5d"
+    },
+    {
+      "source": "/usr/bin/nl",
+      "destination": "components/shell/bin/nl",
+      "sha256": "14f7165df986194d9465a0cc042b06bc5a288a0679b24bd4dbe34738378218b3"
+    },
+    {
+      "source": "/usr/bin/nohup",
+      "destination": "components/shell/bin/nohup",
+      "sha256": "a96e842392e123ef9f19de56feb2d6ee2d64c9f8c098916a295db48f34279d76"
+    },
+    {
+      "source": "/usr/bin/nproc",
+      "destination": "components/shell/bin/nproc",
+      "sha256": "5d25a8867b414553be24f2aa1c37bb90295f7dae8c1d25e4cedd57ee1f18e1cc"
+    },
+    {
+      "source": "/usr/bin/numfmt",
+      "destination": "components/shell/bin/numfmt",
+      "sha256": "48e1b618b3609111141ff6276723c85454a1a93539bf6d8dce0532b0911c4fcf"
+    },
+    {
+      "source": "/usr/bin/od",
+      "destination": "components/shell/bin/od",
+      "sha256": "4effe765b188099f41fcb8ac6009d065b0859a97f1b2dd50c222dee0843195c6"
+    },
+    {
+      "source": "/usr/bin/paste",
+      "destination": "components/shell/bin/paste",
+      "sha256": "9d0ac518136b059c37f8e6dbad3a6a091067ab160957e83870be9302de19a683"
+    },
+    {
+      "source": "/usr/bin/pathchk",
+      "destination": "components/shell/bin/pathchk",
+      "sha256": "5f983766076aed4595f05e36cb6af296e2c40f228766beb21fbd73501382c92d"
+    },
+    {
+      "source": "/usr/bin/pinky",
+      "destination": "components/shell/bin/pinky",
+      "sha256": "ee1640218c549bb9bbd15f237927b401c77746c2cca85267d49ce43f3e81e036"
+    },
+    {
+      "source": "/usr/bin/pr",
+      "destination": "components/shell/bin/pr",
+      "sha256": "ab4236e6fff5bbbcfb32b97318f726d90cf8084430a83958fc65ad25458dc200"
+    },
+    {
+      "source": "/usr/bin/printenv",
+      "destination": "components/shell/bin/printenv",
+      "sha256": "7522ab6ff863af560dc7ffc55e534d75b828c36972a60016a85db25a66d8c2de"
+    },
+    {
+      "source": "/usr/bin/printf",
+      "destination": "components/shell/bin/printf",
+      "sha256": "e6b0e5cee964f1bbee2111700cabb1b1c9d15821b062f197dd8efa2993d202ab"
+    },
+    {
+      "source": "/usr/bin/ptx",
+      "destination": "components/shell/bin/ptx",
+      "sha256": "8aef56e62f0f15214c2a1776d626e5e3d68271fecb24e89730ea4a7ebf30208b"
+    },
+    {
+      "source": "/usr/bin/pwd",
+      "destination": "components/shell/bin/pwd",
+      "sha256": "f173f66d77b31d7e49036a3bf9b06eb12d21a067fc030e4ba8a456608f925bfa"
+    },
+    {
+      "source": "/usr/bin/readlink",
+      "destination": "components/shell/bin/readlink",
+      "sha256": "4c6117ae99adf14e90ee49c860ca6f827db657423d0d0b3e4f6eb29d39daebe0"
+    },
+    {
+      "source": "/usr/bin/realpath",
+      "destination": "components/shell/bin/realpath",
+      "sha256": "3e57a30f3d83065ac5a5feaf47b5c0fe94bac4207b9d9ce148caac7359b68a89"
+    },
+    {
+      "source": "/usr/bin/rm",
+      "destination": "components/shell/bin/rm",
+      "sha256": "78721a1709e77e74163f73067cef7049496463325adb300f4b7fd6155fca1c62"
+    },
+    {
+      "source": "/usr/bin/rmdir",
+      "destination": "components/shell/bin/rmdir",
+      "sha256": "a5f021a2a7ebbde761e035114aacc1ef071bbc81d85e6431b843d9e25a0ce85f"
+    },
+    {
+      "source": "/usr/bin/runcon",
+      "destination": "components/shell/bin/runcon",
+      "sha256": "5e288f0fea94dbe22af3925d0fd5b985872b67563a21df91aa9b6fba90792553"
+    },
+    {
+      "source": "/usr/bin/seq",
+      "destination": "components/shell/bin/seq",
+      "sha256": "1382e6983a5e69b202a5941483b5208157eda15aace592c7ee75497cb7123ee1"
+    },
+    {
+      "source": "/usr/bin/sha1sum",
+      "destination": "components/shell/bin/sha1sum",
+      "sha256": "47b1f603c9ff71d4c0c9d0d9ad13bd42fe9a237486575740b45ec4efde4f26fd"
+    },
+    {
+      "source": "/usr/bin/sha224sum",
+      "destination": "components/shell/bin/sha224sum",
+      "sha256": "d59ea80676ccd2ceccd1c9cf2b9c1830105b206ad1bf1f0bc52f97dc884f0ed8"
+    },
+    {
+      "source": "/usr/bin/sha256sum",
+      "destination": "components/shell/bin/sha256sum",
+      "sha256": "4d2db56c867e5324e0084c9e897f6360d37517de77ac96f2bd31494223d69a60"
+    },
+    {
+      "source": "/usr/bin/sha384sum",
+      "destination": "components/shell/bin/sha384sum",
+      "sha256": "b5dfceef2d136a0bf53869f02f06e575d60605587d580a42df314cbb3d4158d4"
+    },
+    {
+      "source": "/usr/bin/sha512sum",
+      "destination": "components/shell/bin/sha512sum",
+      "sha256": "c87c752c3efd76a57d69707046751c2d53882c51e928aefc9fff9b664af51f73"
+    },
+    {
+      "source": "/usr/bin/shred",
+      "destination": "components/shell/bin/shred",
+      "sha256": "53c3953742d4affbd5d25f30afc12aa7d697e36392c89a6b4b1fd4a4c5ec5ee8"
+    },
+    {
+      "source": "/usr/bin/shuf",
+      "destination": "components/shell/bin/shuf",
+      "sha256": "d3b375c27942c021dd4e8ee08b68eb2834f721bd7f1f92cb8d2df3f4363b6e2d"
+    },
+    {
+      "source": "/usr/bin/sleep",
+      "destination": "components/shell/bin/sleep",
+      "sha256": "8ac215ec4c1ce4a9c23a10cd3e5898d60419bdfab1ac7444d6bdd1690701de24"
+    },
+    {
+      "source": "/usr/bin/sort",
+      "destination": "components/shell/bin/sort",
+      "sha256": "0052ad741146f4c344e61a9606b37209df7113ae9d569c620d1640e176d982d3"
+    },
+    {
+      "source": "/usr/bin/split",
+      "destination": "components/shell/bin/split",
+      "sha256": "5f9cc578c48bce4f13a1edbc3bec537308387680b94078723049c9a2b4818bc1"
+    },
+    {
+      "source": "/usr/bin/stat",
+      "destination": "components/shell/bin/stat",
+      "sha256": "166809d4415b69e598e9ad20539e85223394cb7db38903b0b0a9104a13434739"
+    },
+    {
+      "source": "/usr/bin/stdbuf",
+      "destination": "components/shell/bin/stdbuf",
+      "sha256": "f041fa6f5669a3de64d7d8a0ddd055942aaae69a271aa4d40461aa9102a54268"
+    },
+    {
+      "source": "/usr/bin/stty",
+      "destination": "components/shell/bin/stty",
+      "sha256": "d97de2a71a1f040a5213e95ea510470e93ff88cfde3d3fc639bc5e56352cd30f"
+    },
+    {
+      "source": "/usr/bin/sum",
+      "destination": "components/shell/bin/sum",
+      "sha256": "39ccec54224de9e9bdb13b5f504f1e7ce8a598efd4cc6c105ae4f4c7e76b43fb"
+    },
+    {
+      "source": "/usr/bin/sync",
+      "destination": "components/shell/bin/sync",
+      "sha256": "e26bfa29a87f5b859bf0281e6b6e5d6aa3e2e5e68f6b72698a4a1dc6158a2974"
+    },
+    {
+      "source": "/usr/bin/tac",
+      "destination": "components/shell/bin/tac",
+      "sha256": "c881001d336258d2df953d11aa1aa5bebda797057c78c49934c3e4410e515f1e"
+    },
+    {
+      "source": "/usr/bin/tail",
+      "destination": "components/shell/bin/tail",
+      "sha256": "03806be6481b4232405b9a16cb6d2a615977f12b2fd49fc6eabcefc6c6abbbdc"
+    },
+    {
+      "source": "/usr/bin/tee",
+      "destination": "components/shell/bin/tee",
+      "sha256": "743845c7f838dfb667f5557ae4f7144fe1ca329b94bd8fc2b23029a705f67e51"
+    },
+    {
+      "source": "/usr/bin/test",
+      "destination": "components/shell/bin/test",
+      "sha256": "f789529392eab055ddbd6d4e3f44f6499ce7706ed623078c704406bc9f085b53"
+    },
+    {
+      "source": "/usr/bin/timeout",
+      "destination": "components/shell/bin/timeout",
+      "sha256": "12690a043dfd555a6c14ccc1564f5649c18f1762c0d6ff66729948130898ec52"
+    },
+    {
+      "source": "/usr/bin/touch",
+      "destination": "components/shell/bin/touch",
+      "sha256": "7b8215bcfe35218b0c084d89a2e0c42d921b94a7d92af525e72bbb460c68b9dc"
+    },
+    {
+      "source": "/usr/bin/tr",
+      "destination": "components/shell/bin/tr",
+      "sha256": "35ee22fe3bc5387017902f243d19f5d967e74d9f682b10d1c25fe0bce2b03733"
+    },
+    {
+      "source": "/usr/bin/true",
+      "destination": "components/shell/bin/true",
+      "sha256": "8a63c98320173f79e263115e10cefc170155e47d1fd4b5a70e4429d2699cae28"
+    },
+    {
+      "source": "/usr/bin/truncate",
+      "destination": "components/shell/bin/truncate",
+      "sha256": "e6ec904a5419d3cf75b44f889e710f04bc31ee542b60d0127f440cbc6b4616f0"
+    },
+    {
+      "source": "/usr/bin/tsort",
+      "destination": "components/shell/bin/tsort",
+      "sha256": "422f7669dd3553399adb338d6c98abc1ff837a632c893288ec9b5c4196a977ee"
+    },
+    {
+      "source": "/usr/bin/tty",
+      "destination": "components/shell/bin/tty",
+      "sha256": "56dcf7e6fdd82b86d9d72b9504f02a3c997557910ebba3145ae2532102297d85"
+    },
+    {
+      "source": "/usr/bin/uname",
+      "destination": "components/shell/bin/uname",
+      "sha256": "c6e023b172383fae5318c600e6f2f3a153513df62bf06ad6c9269296d2a78e89"
+    },
+    {
+      "source": "/usr/bin/unexpand",
+      "destination": "components/shell/bin/unexpand",
+      "sha256": "64e62b9c17ffe5842dcfffbdd509fde0d928574feb1244640d222768d7aa7d57"
+    },
+    {
+      "source": "/usr/bin/uniq",
+      "destination": "components/shell/bin/uniq",
+      "sha256": "d41e6d21d82a59878ce50fd5a8ec60d0ca33e107b52d6f633fa40bddb953a764"
+    },
+    {
+      "source": "/usr/bin/unlink",
+      "destination": "components/shell/bin/unlink",
+      "sha256": "82c2871463fe1f21c481814743d9fa066d8b40dbd24c2f8d3c12a6cb0363294b"
+    },
+    {
+      "source": "/usr/bin/users",
+      "destination": "components/shell/bin/users",
+      "sha256": "850b8def70b7fc881f63b600af5cafbbc6a959f7bd45502418f145e296a025ae"
+    },
+    {
+      "source": "/usr/bin/vdir",
+      "destination": "components/shell/bin/vdir",
+      "sha256": "87bb5a8f389849bd1778f3aab69ec7df945e0302d9faa02747099c281abc8a1b"
+    },
+    {
+      "source": "/usr/bin/wc",
+      "destination": "components/shell/bin/wc",
+      "sha256": "9005273a966c875547a4317288bdd92e7b2aa49ad86bc9978121242106405e6b"
+    },
+    {
+      "source": "/usr/bin/who",
+      "destination": "components/shell/bin/who",
+      "sha256": "a20bd855ecd154a0c621996c7144540b68abff50768f12c065a36a114cc9fa00"
+    },
+    {
+      "source": "/usr/bin/whoami",
+      "destination": "components/shell/bin/whoami",
+      "sha256": "5b1df9f84f9037e9c7527c0ce2cf60dde102daeeca7264dcb570a3c037b11aec"
+    },
+    {
+      "source": "/usr/bin/yes",
+      "destination": "components/shell/bin/yes",
+      "sha256": "f7bee5c97e510592cc16f088ecfb6a2af84d61ad5821abfb2628b43850e9551e"
+    },
+    {
+      "source": "/usr/bin/md5sum",
+      "destination": "components/shell/bin/md5sum.textutils",
+      "sha256": "21968db5562ce701ba4a652264118949f325eaa2beea252111543b301bda24bf"
+    },
+    {
+      "source": "/usr/bin/find",
+      "destination": "components/shell/bin/find",
+      "sha256": "ac1ea1c5391de921aca1572f1bf25d03707beb3887b27c16a5b4948fd553941b"
+    },
+    {
+      "source": "/usr/bin/xargs",
+      "destination": "components/shell/bin/xargs",
+      "sha256": "fa3818410ee7be85ca1484ce44e7c3043fb2d0b8402b42dcd9c3ffca78eb02fa"
+    },
+    {
+      "source": "/usr/bin/egrep",
+      "destination": "components/shell/bin/egrep",
+      "sha256": "10caa507f39367738ca977a5f2014406159064b072dbade0c0c23a40597f66da"
+    },
+    {
+      "source": "/usr/bin/fgrep",
+      "destination": "components/shell/bin/fgrep",
+      "sha256": "f1bdb63da98989d55e56cef651139f70448d4c8f6ea40bb02610be439e29bf0c"
+    },
+    {
+      "source": "/usr/bin/grep",
+      "destination": "components/shell/bin/grep",
+      "sha256": "20a35a4c18f2fe9e6305c1cbf866b9c0fcc3f957132ae66028c99ec353bb0a80"
+    },
+    {
+      "source": "/usr/bin/rgrep",
+      "destination": "components/shell/bin/rgrep",
+      "sha256": "0a8dd42a068115f058ae57f9f6347e1ef0ae2ffea89bf658b132974246577748"
+    },
+    {
+      "source": "/usr/bin/sed",
+      "destination": "components/shell/bin/sed",
+      "sha256": "23f70dd6496d75419823039e1cebf95a2fd0508c6dfec72ac2352f7e08391dd5"
+    },
+    {
+      "source": "/usr/bin/gawk",
+      "destination": "components/shell/bin/gawk",
+      "sha256": "9150b42e78b22231bd83131e1db2530a7a7fa0677e189ac7c5cc1520c42c9e88"
+    },
+    {
+      "source": "/usr/bin/gawkbug",
+      "destination": "components/shell/bin/gawkbug",
+      "sha256": "1899962e793d048f096d25a146eba077f201841a37288ad548e287ff14df98d0"
+    },
+    {
+      "source": "/usr/bin/cmp",
+      "destination": "components/shell/bin/cmp",
+      "sha256": "b4589abb5222ad6aa4ef63ac31006766f99d1b82cdee30316349f3ad37b80189"
+    },
+    {
+      "source": "/usr/bin/diff",
+      "destination": "components/shell/bin/diff",
+      "sha256": "0c153b6b0a4270d47b0282651202c2fe34d6d8895f478aa383c34a8867c26b04"
+    },
+    {
+      "source": "/usr/bin/diff3",
+      "destination": "components/shell/bin/diff3",
+      "sha256": "99f56a24ea75a9163240c81f4e2a4890878dd326281557078c1d462cd2c24595"
+    },
+    {
+      "source": "/usr/bin/sdiff",
+      "destination": "components/shell/bin/sdiff",
+      "sha256": "e1795adc08bd08d88c7f5dc3e9d646c76820f12d2af84a74209c19e095be2d17"
+    },
+    {
+      "source": "/usr/bin/tar",
+      "destination": "components/shell/bin/tar",
+      "sha256": "3ee2c3c0b4dd9aacebfd2f0fbae44bad36348203acff78a44888dd58c05f811c"
+    },
+    {
+      "source": "/usr/bin/gunzip",
+      "destination": "components/shell/bin/gunzip",
+      "sha256": "55c2f67ca4c3cca0ebac659f0075461dd671ec4937ecd6c71123bb49ed322ebd"
+    },
+    {
+      "source": "/usr/bin/gzexe",
+      "destination": "components/shell/bin/gzexe",
+      "sha256": "4d8caaa3103926a73baa9d009348f5553c5b3d9831b9cc34faa909887fc6cef5"
+    },
+    {
+      "source": "/usr/bin/gzip",
+      "destination": "components/shell/bin/gzip",
+      "sha256": "afea077ce127d4fa9ad410d3066ba2b54dea19c0b44f04adf56c72d5f7b7a9bb"
+    },
+    {
+      "source": "/usr/bin/uncompress",
+      "destination": "components/shell/bin/uncompress",
+      "sha256": "55c2f67ca4c3cca0ebac659f0075461dd671ec4937ecd6c71123bb49ed322ebd"
+    },
+    {
+      "source": "/usr/bin/zcat",
+      "destination": "components/shell/bin/zcat",
+      "sha256": "f0b4d86b6a10064b7f2f41a452ab5437f61d4f17d8b1ab3488f3f345519f4f8d"
+    },
+    {
+      "source": "/usr/bin/zcmp",
+      "destination": "components/shell/bin/zcmp",
+      "sha256": "6e6da15f127e06d61cbdabb59d3ec9b28b8605178dbe2acf7d275aa6d22e2d0f"
+    },
+    {
+      "source": "/usr/bin/zdiff",
+      "destination": "components/shell/bin/zdiff",
+      "sha256": "72c10eddeb81039507997eb0c7677887971161ac3390dce012301b0f6dfd8267"
+    },
+    {
+      "source": "/usr/bin/zegrep",
+      "destination": "components/shell/bin/zegrep",
+      "sha256": "67ee7fadec7ea53b4c1f8cfc3c81427b29c0b1381e80b55642617620c84d0bcc"
+    },
+    {
+      "source": "/usr/bin/zfgrep",
+      "destination": "components/shell/bin/zfgrep",
+      "sha256": "87ab5f4c7cb344e409d614d1a69cc156b3b1053d6ae0b59d8e2c2131f3e63e5a"
+    },
+    {
+      "source": "/usr/bin/zforce",
+      "destination": "components/shell/bin/zforce",
+      "sha256": "61b3a0106c72648199611b79caf2e7a8c0800a8ef5745193cc0fa16455a79901"
+    },
+    {
+      "source": "/usr/bin/zgrep",
+      "destination": "components/shell/bin/zgrep",
+      "sha256": "2f506d3547724df8e8dc9bdfa73bccb1a641b530fd5a40adc9b537f851d86b7f"
+    },
+    {
+      "source": "/usr/bin/zless",
+      "destination": "components/shell/bin/zless",
+      "sha256": "e29f317fc56ce49eb5bd1e938b7f87923b91b40e5516ec9146f678519330f6bb"
+    },
+    {
+      "source": "/usr/bin/zmore",
+      "destination": "components/shell/bin/zmore",
+      "sha256": "bb9ee270bee119238c74779fb5fa5cddc7939ec4923a22c5649bcb9aa7d70b76"
+    },
+    {
+      "source": "/usr/bin/znew",
+      "destination": "components/shell/bin/znew",
+      "sha256": "969931d9eadae06db92a01b00458aa43d86bdf3692020d6f10b0fb8d060e1f38"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "destination": "components/shell/lib/libc.so.6",
+      "sha256": "8db37cf3f2169f59a0f07ef1fea308c35656668c64c8ff294e1860f4121eb161"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "destination": "components/shell/lib/ld-linux-x86-64.so.2",
+      "sha256": "cd4df4f3c7b83673d61189bf2eaebd33ca4f2853ab9772b8a25e025ef99b1e81"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libmpfr.so.6.2.1",
+      "destination": "components/shell/lib/libmpfr.so.6",
+      "sha256": "2156351fa3dedd04a7381c6ac7a8a26efa2d6fb08b80f8a2d644ccdd653710ae"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libgmp.so.10.5.0",
+      "destination": "components/shell/lib/libgmp.so.10",
+      "sha256": "0ccdfb6d6f5c039465f6d002cf7e4c072d48ac6a2cffc8dd6c748dec31592804"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "destination": "components/shell/lib/libm.so.6",
+      "sha256": "e9c4b28d340e415b8137480ec442662f981e1399386c5931dae0e886e3639e91"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libtinfo.so.6.4",
+      "destination": "components/shell/lib/libtinfo.so.6",
+      "sha256": "e6089d7bb95eee5b545f3770dd69095b0bca47d26701cad145af429561d16306"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libselinux.so.1",
+      "destination": "components/shell/lib/libselinux.so.1",
+      "sha256": "0ec0843463f90e227b0e138e1f379774f50b5514bd7f5dbd4c8a87aca0aa6670"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.11.2",
+      "destination": "components/shell/lib/libpcre2-8.so.0",
+      "sha256": "e00576d71d81d3ba0cfa4903c835a44a8723aac96f72f79ff75200b4cff9071b"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "destination": "components/shell/lib/libcrypto.so.3",
+      "sha256": "6a66c3ba6b3749aacc9497973fff00f6ba61c703ba7015d0d7ab3fd9510974b6"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libacl.so.1.1.2302",
+      "destination": "components/shell/lib/libacl.so.1",
+      "sha256": "1f5247285409ec89990e9fe384d78dfb2ae6ec8e210a2657073babc8d6b7e54f"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libattr.so.1.1.2502",
+      "destination": "components/shell/lib/libattr.so.1",
+      "sha256": "5651ee014f2f42621f80995f44c10b478a0781fbfc54d2d120fb22df35ba3f22"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libsigsegv.so.2.0.7",
+      "destination": "components/shell/lib/libsigsegv.so.2",
+      "sha256": "deb2b527b15164aba628af4279dadc9a86d8870b7e5adb9cbcd24de44110c3b7"
+    },
+    {
+      "source": "/usr/lib/x86_64-linux-gnu/libreadline.so.8.2",
+      "destination": "components/shell/lib/libreadline.so.8",
+      "sha256": "0a079f958147699f7bb5bf228406a5d878dc2387fe9cdc5cce6f3e35e20380fc"
+    }
+  ]
+}

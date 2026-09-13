@@ -31,9 +31,10 @@ const { formatDockerAccess } = await import("./docker-access.ts");
 mock.module("./docker-access.ts", () => ({ formatDockerAccess, inspectDockerAccess }));
 const reset = mock(async (): Promise<void> => undefined);
 const createZeroboxBackend = mock(() => ({}));
-const prepareBash = mock(
+const prepareBashDefault =
     async (command: { file: string; args: string[]; cwd: string }) => ({
-        file: command.file,
+        // Replace only the external engine boundary in lifecycle tests.
+        file: command.file === "/__zerobox/runtime/bin/bash" ? "/bin/bash" : command.file,
         args: command.args,
         cwd: command.cwd,
         env: { ...process.env } as Record<string, string>,
@@ -43,8 +44,8 @@ const prepareBash = mock(
             ready: Promise.resolve(),
             settled: Promise.resolve(),
         }),
-    }),
-);
+    });
+const prepareBash = mock(prepareBashDefault);
 const profileContext = {
     version: 1 as const,
     profile: "bash-general" as const,
@@ -104,7 +105,7 @@ const capturedWidgetDef: {
     } | null;
 } = { def: null };
 
-mock.module("./runtime/zerobox-backend.ts", () => ({ createZeroboxBackend }));
+mock.module("./runtime/zerobox-backend.ts", () => ({ createZeroboxBackend, inspectManagedPrivateRuntime:async()=>undefined }));
 mock.module("./runtime/service.ts", () => ({ createSandboxService }));
 mock.module("./analysis/client.ts", () => ({
     createAnalysisSandboxService,
@@ -430,6 +431,7 @@ describe("sandbox lifecycle", () => {
         await writeActiveConfig(cwd);
         initialize.mockReset(); initialize.mockImplementation(async () => undefined);
         reset.mockReset(); reset.mockImplementation(async () => undefined);
+        prepareBash.mockReset(); prepareBash.mockImplementation(prepareBashDefault);
         analysisShutdown.mockClear(); analysisPreflight.mockReset(); analysisPreflight.mockImplementation(async () => undefined);
         createAnalysisSandboxService.mockClear(); capturedWidgetDef.def = null;
     });
@@ -843,11 +845,14 @@ describe("sandbox lifecycle", () => {
 
     it("removes a break-glass grant at expiry and rebuilds from the current authority", async () => {
         let expire: (() => void) | undefined;
-        const captureTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
+        const realSetTimeout = globalThis.setTimeout;
+        const deadlineTimer = 1000001;
+        const captureTimeout = ((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
+            if (!delay || delay < 59000 || delay > 60000) return realSetTimeout(callback, delay as number);
             expire = () => {
                 if (typeof callback === "function") callback();
             };
-            return 0 as never;
+            return deadlineTimer as never;
         }) as unknown as typeof setTimeout;
         const timeout = spyOn(globalThis, "setTimeout").mockImplementation(captureTimeout);
         const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
@@ -860,7 +865,7 @@ describe("sandbox lifecycle", () => {
             await writeGlobalConfig({ docker: { allowed: false } });
             await expect(runOrdinaryBash(cwd, "printf revoke-break-glass")).resolves.toBe("revoke-break-glass");
             const startsAfterRevocation = createSandboxService.mock.calls.length;
-            expect(clearTimeoutSpy).not.toHaveBeenCalled();
+            expect(clearTimeoutSpy).not.toHaveBeenCalledWith(deadlineTimer);
             expect(expire).toBeDefined();
             expire?.();
             for (let attempt = 0; attempt < 8; attempt += 1) await Promise.resolve();
@@ -879,9 +884,11 @@ describe("sandbox lifecycle", () => {
 
     it("keeps an expired revoked grant's deadline separate from a later break-glass grant", async () => {
         const callbacks: Array<() => void> = [];
-        let timerId = 0;
+        let timerId = 1000000;
+        const realSetTimeout = globalThis.setTimeout;
         const timeout = spyOn(globalThis, "setTimeout").mockImplementation(
-            ((callback: Parameters<typeof setTimeout>[0]) => {
+            ((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
+                if (!delay || delay < 59000 || delay > 60000) return realSetTimeout(callback, delay as number);
                 if (typeof callback === "function") callbacks.push(callback);
                 timerId += 1;
                 return timerId as never;
@@ -915,13 +922,14 @@ describe("sandbox lifecycle", () => {
 
             await writeGlobalConfig({ docker: { allowed: false } });
             await expect(runOrdinaryBash(cwd, "printf revoke-a")).resolves.toBe("revoke-a");
-            const clearedBeforeB = clearTimeoutSpy.mock.calls.length;
+            const deadlineClears = () => clearTimeoutSpy.mock.calls.filter(([timer]) => typeof timer === "number" && timer >= 1000000);
+            const clearedBeforeB = deadlineClears().length;
             await writeEnabledBreakGlassPolicy(cwd);
             await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
             const secondDeadline = callbacks.at(-1);
             expect(secondDeadline).toBeDefined();
             expect(secondDeadline).not.toBe(reconfiguredDeadline);
-            expect(clearTimeoutSpy.mock.calls).toHaveLength(clearedBeforeB);
+            expect(deadlineClears()).toHaveLength(clearedBeforeB);
 
             const startsBeforeAExpiry = createSandboxService.mock.calls.length;
             reconfiguredDeadline?.();
@@ -966,7 +974,7 @@ describe("sandbox lifecycle", () => {
         );
         try {
             prepareBash.mockImplementation(async (command) => ({
-                file: command.file,
+                file: command.file === "/__zerobox/runtime/bin/bash" ? "/bin/bash" : command.file,
                 args: command.args,
                 cwd: command.cwd,
                 env: { ...process.env } as Record<string, string>,
@@ -1013,8 +1021,8 @@ describe("sandbox lifecycle", () => {
             const aDeadline = callbacks.get(activeATimer);
             const bDeadline = callbacks.get(bTimer);
             aDeadline?.();
-            expect(await a1.operation).toMatchObject({ exitCode: null });
-            expect(await a2.operation).toMatchObject({ exitCode: null });
+            expect(await a1.operation).toMatchObject({ kind: "execution-interrupted" });
+            expect(await a2.operation).toMatchObject({ kind: "execution-interrupted" });
             const bStillRunning = await Promise.race([
                 b.operation.then(() => false),
                 new Promise<boolean>((resolve) => setImmediate(() => resolve(true))),
@@ -1038,7 +1046,7 @@ describe("sandbox lifecycle", () => {
 
     it("interrupts only resource-bearing retired operations after a resource revocation", async () => {
         prepareBash.mockImplementation(async (command) => ({
-            file: command.file,
+            file: command.file === "/__zerobox/runtime/bin/bash" ? "/bin/bash" : command.file,
             args: command.args,
             cwd: command.cwd,
             env: { ...process.env } as Record<string, string>,
@@ -1080,7 +1088,7 @@ describe("sandbox lifecycle", () => {
         await expect(runOrdinaryBash(cwd, "printf replacement-ready")).resolves.toBe(
             "replacement-ready",
         );
-        expect(await resourceBound.operation).toMatchObject({ exitCode: null });
+        expect(await resourceBound.operation).toMatchObject({ kind: "execution-interrupted" });
 
         const replacement = await start("REPLACEMENT_READY");
         const replacementStillRunning = await Promise.race([
@@ -1097,6 +1105,32 @@ describe("sandbox lifecycle", () => {
                     "exitCode" in replacementStopped &&
                     replacementStopped.exitCode === null),
         ).toBeTrue();
+    });
+
+    it("revokes a live open descriptor through the Pi lifecycle and never restores it after a failed replacement", async () => {
+        const resource=join(isolatedAgentDirectory,"authorized-data");
+        await writeFile(resource,"fixture data");
+        await writeGlobalConfig({filesystem:{allowRead:[resource]}});
+        const session=await createTestSession({cwd,extensionFactories:[sandboxExtension]});
+        const ready=deferred();
+        let finished=false;
+        const running=createSandboxBashOperations().exec(`exec 9< '${resource}'; printf ready; (sleep 3; cat <&9 > escaped-access) & wait`,cwd,{onData(chunk){if(chunk.toString().includes("ready"))ready.resolve();}}).then(value=>{finished=true;return value;},error=>{finished=true;return error;});
+        try {
+            await ready.promise;
+            initialize.mockRejectedValueOnce(new Error("replacement fixture failed"));
+            await writeGlobalConfig({});
+            const deadline=Date.now()+1500;
+            while(!finished && Date.now()<deadline)await Bun.sleep(20);
+            expect(finished).toBeTrue();
+            await session.session.prompt("/sandbox mode sandbox");
+            expect(getSandboxRuntime().state).toBe("error");
+            await expect(stat(join(cwd,"escaped-access"))).rejects.toMatchObject({code:"ENOENT"});
+            await expectUnavailable("initialization failed");
+        } finally {
+            await session.session.extensionRunner.emit({type:"session_shutdown",reason:"quit"});
+            await running;
+            session.dispose();
+        }
     });
 
     it("uses the real Pi command and UI boundary to select and cancel session modes", async () => {
@@ -1152,7 +1186,7 @@ describe("sandbox lifecycle", () => {
         expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Shell profile: custom");
         await command.handler("profile 2", ctx);
         expect(notifyCalls(ctx).at(-1)?.[0]).toContain("automatic");
-        expect(capturedWidgetDef.def?.render({ theme: fakeTheme(), ctx })).toContain("sandbox · custom · ready");
+        expect(capturedWidgetDef.def?.render({ theme: fakeTheme(), ctx })).toContain("sandbox · custom · pending admission");
         await registered.handlers.get("session_shutdown")?.({}, ctx);
     });
 

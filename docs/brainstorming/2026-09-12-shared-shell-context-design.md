@@ -4,6 +4,11 @@ Date: 2026-09-12
 
 Status: implemented locally. Deterministic validation and remaining check limitations are recorded below. Reload an open Pi session to load the changes.
 
+> **Private-runtime scope note (2026-09-12):** This record verifies the shared
+> presentation work, not the later private-runtime architecture. Its V2
+> planned-policy receipt language is superseded by the approved
+> [private runtime and local environments design](2026-09-12-sandbox-private-runtime-and-local-environments-design.md): only V3 context derived from a validated engine admission report proves effective mounts. Consult the [runtime guide](../../agent/extensions/sandbox/docs/runtime.md#qualification-and-activation) for its implementation, installation and separate qualification evidence.
+
 ## Destination and scope
 
 Give `bash` and `safe_bash` the same routing, execution environment contract and contextual guidance. Preserve per-tool command rewrites and the additional command checks in `safe_bash`. Keep all new descriptions, guidelines and diagnostics in English.

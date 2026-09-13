@@ -1,0 +1,12 @@
+[
+  {
+    "file": "node-v24.18.0-linux-x64.tar.xz",
+    "url": "https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz",
+    "sha256": "55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742"
+  },
+  {
+    "file": "bun-linux-x64-baseline.zip",
+    "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64-baseline.zip",
+    "sha256": "a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7"
+  }
+]

@@ -80,6 +80,7 @@ class DefaultSandboxService implements SandboxService {
     #lifecycle: Promise<void> = Promise.resolve();
     #recovery?: Promise<void>;
     #shutdown?: Promise<void>;
+    #contexts?: SandboxProfileContexts;
 
     constructor(options: SandboxServiceOptions) {
         this.#backend = options.backend;
@@ -153,6 +154,7 @@ class DefaultSandboxService implements SandboxService {
             }
             this.#bashLease = lease;
             this.#bashCwd = cwd;
+            this.#contexts = undefined;
         });
     }
 
@@ -161,6 +163,7 @@ class DefaultSandboxService implements SandboxService {
         if (!this.#bashLease || !this.#bashCwd) {
             throw new SandboxExecutionError("setup-failed");
         }
+        if (this.#contexts) return this.#contexts;
         const input = {
             cwd: this.#bashCwd,
             lease: this.#bashLease,
@@ -168,7 +171,7 @@ class DefaultSandboxService implements SandboxService {
             hostEnv: this.#hostEnv,
         };
         const options = { homeDir: homedir() };
-        return {
+        return (this.#contexts = {
             "bash-general": createSandboxExecutionContext(
                 createBashPolicy(input),
                 this.#bashLease,
@@ -188,6 +191,27 @@ class DefaultSandboxService implements SandboxService {
                 this.#bashLease,
                 options,
             ),
+        });
+    }
+
+    #observeAdmission(spawn: SandboxSpawnSpec): SandboxSpawnSpec {
+        return {
+            ...spawn,
+            supervise: (child) => {
+                const status = spawn.supervise(child);
+                return {
+                    ...status,
+                    ready: status.ready.then(() => {
+                        const context = spawn.getSandboxContext?.();
+                        if (
+                            context?.version === 3 &&
+                            !this.#closed &&
+                            this.#contexts
+                        )
+                            this.#contexts[context.profile] = context;
+                    }),
+                };
+            },
         };
     }
 
@@ -217,7 +241,9 @@ class DefaultSandboxService implements SandboxService {
                 config: this.#config,
                 hostEnv: this.#hostEnv,
             });
-            const spawn = await this.#backend.prepare(command, policy, lease);
+            const spawn = this.#observeAdmission(
+                await this.#backend.prepare(command, policy, lease),
+            );
             return {
                 ...spawn,
                 beforeSpawn: () => {
@@ -244,7 +270,9 @@ class DefaultSandboxService implements SandboxService {
             });
             let spawn: SandboxSpawnSpec;
             try {
-                spawn = await this.#backend.prepare(command, policy, lease);
+                spawn = this.#observeAdmission(
+                    await this.#backend.prepare(command, policy, lease),
+                );
             } catch (error) {
                 try {
                     await lease.dispose();

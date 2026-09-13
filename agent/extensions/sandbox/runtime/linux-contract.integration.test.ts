@@ -21,13 +21,15 @@ import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./private
 import { validatePiSandboxConfig } from "./policies.ts";
 import { createSandboxService as createRuntimeService, type SandboxService } from "./service.ts";
 import { createZeroboxBackend as createBackend } from "./zerobox-backend.ts";
+import { candidateBackendOptions, hasCandidateRuntime, hostToolReadClosure } from "./integration-fixtures.ts";
+import { PRIVATE_ANALYSIS_ROOT, PRIVATE_BASH, PRIVATE_SHELL_PATH } from "./shell-baseline.ts";
 
 const fixtures: string[] = [];
 const services: SandboxService[] = [];
 let leaseDirectory: string;
 let probeRoot: string;
 let createdLeases: PrivateTempLease[];
-const enabled = process.platform === "linux" && !!process.env.PI_SANDBOX_ZEROBOX_BINARY && !!process.env.PI_SANDBOX_ZEROBOX_SHA256;
+const enabled = process.platform === "linux" && hasCandidateRuntime();
 
 beforeEach(async () => {
     if (!enabled) return;
@@ -38,10 +40,7 @@ beforeEach(async () => {
 });
 
 function createZeroboxBackend() {
-    const binaryPath = process.env.PI_SANDBOX_ZEROBOX_BINARY;
-    const binarySha256 = process.env.PI_SANDBOX_ZEROBOX_SHA256;
-    if (!binaryPath || !binarySha256) throw new Error("Explicit candidate binary and SHA256 required");
-    return createBackend({ binaryPath, expectedProvenance: { version: "0.3.3-fork.17", binarySha256 }, probeRoot });
+    return createBackend(candidateBackendOptions(probeRoot));
 }
 
 function createSandboxService(options: Parameters<typeof createRuntimeService>[0]) {
@@ -91,7 +90,7 @@ function bashOperations(service: SandboxService, stdin?: string): BashOperations
         detached: true,
         prepareSpawn: ({ command, cwd }) =>
             service.prepareBash({
-                file: "/bin/bash",
+                file: PRIVATE_BASH,
                 args: ["-c", command],
                 cwd,
             }),
@@ -126,6 +125,14 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         const cwd = await workspaceFixture();
         const ptraceProbe = "$p=fork(); if(!$p){sleep 2;exit}; $r=syscall(101,16,$p,0,0); kill 9,$p; wait; exit($r==0?0:1)";
         expect(Bun.spawnSync(["/usr/bin/perl", "-e", ptraceProbe]).exitCode).toBe(0);
+        // These host tools are intentionally exposed only to prove that the
+        // nested-kernel and ptrace failures come from Zerobox enforcement.
+        const [perlRead, unshareRead, bwrapRead, nodeRead] = await Promise.all([
+            hostToolReadClosure("/usr/bin/perl"),
+            hostToolReadClosure("/usr/bin/unshare"),
+            hostToolReadClosure("/usr/bin/bwrap"),
+            hostToolReadClosure("/usr/bin/node"),
+        ]);
         const sibling = await createPrivateTempLease({ rootDir: leaseDirectory });
         const hostTmp = join("/tmp", `pi-zbx-host-${process.pid}`);
         await writeFile(hostTmp, "host temp secret");
@@ -136,6 +143,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
             backend: createZeroboxBackend(),
             config: validatePiSandboxConfig({
                 filesystem: {
+                    allowRead: [...perlRead, ...unshareRead, ...bwrapRead, ...nodeRead],
                     denyRead: [hostTmp],
                     allowWrite: ["."],
                     denyWrite: [".env"],
@@ -147,6 +155,14 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         try {
             await service.startBashSession(cwd);
             const operations = bashOperations(service, "stdin-exact");
+            for (const command of [
+                "/usr/bin/perl -e 'exit 0'",
+                "/usr/bin/unshare --version >/dev/null",
+                "/usr/bin/bwrap --version >/dev/null",
+                "/usr/bin/node -e 'process.exit(0)'",
+            ]) {
+                expect((await collectExecution(bashOperations(service), command, cwd)).exitCode, command).toBe(0);
+            }
             const allowed = await collectExecution(
                 operations,
                 "IFS= read -r value || true; printf '%s' \"$value\"; printf writable > allowed.txt",
@@ -163,8 +179,8 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
                 `ls ${JSON.stringify(probeRoot)}`,
                 `cat ${JSON.stringify(hostTmp)}`,
                 `cat /proc/1/root${hostTmp}`,
-                "unshare --user /bin/true",
-                "bwrap --ro-bind / / /bin/true",
+                `/usr/bin/unshare --user ${PRIVATE_SHELL_PATH}/true`,
+                `/usr/bin/bwrap --ro-bind / / / ${PRIVATE_SHELL_PATH}/true`,
                 `/usr/bin/perl -e '${ptraceProbe}'`,
             ]) {
                 expect(
@@ -286,7 +302,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
             "console.log(JSON.stringify(result));",
         ].join("\n");
         const command = {
-            file: "/usr/bin/node",
+            file: join(PRIVATE_ANALYSIS_ROOT, "bin/node"),
             args: [
                 "--input-type=commonjs",
                 "--eval",
@@ -298,7 +314,6 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         try {
             const handle = await service.prepareAnalysis(command, [
                 import.meta.dir,
-                "/usr/bin/node",
             ]);
             const operations = createBashOperations({
                 detached: true,
@@ -332,6 +347,9 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
 
     it("applies the port-scoped loopback class and deny-by-default network", async () => {
         const cwd = await workspaceFixture();
+        // curl is an explicit host test instrument. Its successful version
+        // probe prevents ENOENT from being mistaken for network enforcement.
+        const curlRead = await hostToolReadClosure("/usr/bin/curl");
         const allowedServer = createServer((socket) => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
         const deniedServer = createServer((socket) => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\ndenied"));
         const allowedPort = await listen(allowedServer);
@@ -345,7 +363,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         const service = createSandboxService({
             backend: createZeroboxBackend(),
             config: validatePiSandboxConfig({
-                filesystem: { allowWrite: ["."] },
+                filesystem: { allowRead: curlRead, allowWrite: ["."] },
                 network: {
                     allowedDomains: [
                         `localhost:${allowedPort}`,
@@ -358,10 +376,11 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         services.push(service);
         try {
             await service.startBashSession(cwd);
+            expect((await collectExecution(bashOperations(service), "/usr/bin/curl --version >/dev/null", cwd)).exitCode).toBe(0);
             for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
                 const result = await collectExecution(
                     bashOperations(service),
-                    `curl -fsS --max-time 5 http://${host}:${allowedPort}`,
+                    `/usr/bin/curl -fsS --max-time 5 http://${host}:${allowedPort}`,
                     cwd,
                 );
                 expect(result).toEqual({ exitCode: 0, output: "ok" });
@@ -370,7 +389,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
                 (
                     await collectExecution(
                         bashOperations(service),
-                        `curl -fsS --max-time 2 http://localhost:${deniedPort}`,
+                        `/usr/bin/curl -fsS --max-time 2 http://localhost:${deniedPort}`,
                         cwd,
                     )
                 ).exitCode,
@@ -379,7 +398,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
                 (
                     await collectExecution(
                         bashOperations(service),
-                        `curl -fsSL --max-time 2 http://localhost:${redirectPort}`,
+                        `/usr/bin/curl -fsSL --max-time 2 http://localhost:${redirectPort}`,
                         cwd,
                     )
                 ).exitCode,
@@ -395,10 +414,11 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
 
     it("removes the private lease and managed-network artifacts after shutdown", async () => {
         const cwd = await workspaceFixture();
+        const curlRead = [...await hostToolReadClosure("/usr/bin/curl"), "/etc/ssl/certs/ca-certificates.crt"];
         const service = createSandboxService({
             backend: createZeroboxBackend(),
             config: validatePiSandboxConfig({
-                filesystem: { allowWrite: ["."] },
+                filesystem: { allowRead: curlRead, allowWrite: ["."] },
                 network: {
                     allowedDomains: ["example.com:443"],
                     deniedDomains: [],
@@ -409,7 +429,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         await service.startBashSession(cwd);
         const execution = await collectExecution(
             bashOperations(service),
-            "printf '%s' \"$DOCKER_CONFIG\"; curl -fsS --max-time 5 https://example.com >/dev/null",
+            "printf '%s' \"$DOCKER_CONFIG\"; /usr/bin/curl -fsS --max-time 5 https://example.com >/dev/null",
             cwd,
         );
         expect(execution.exitCode, execution.output).toBe(0);
@@ -445,10 +465,11 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
             ]).exitCode,
         ).toBe(0);
         const cwd = await workspaceFixture();
+        const curlRead = [...await hostToolReadClosure("/usr/bin/curl"), "/etc/ssl/certs/ca-certificates.crt"];
         const allowed = createSandboxService({
             backend: createZeroboxBackend(),
             config: validatePiSandboxConfig({
-                filesystem: { allowWrite: ["."] },
+                filesystem: { allowRead: curlRead, allowWrite: ["."] },
                 network: {
                     allowedDomains: ["example.com:443"],
                     deniedDomains: [],
@@ -457,10 +478,11 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         });
         services.push(allowed);
         await allowed.startBashSession(cwd);
+        expect((await collectExecution(bashOperations(allowed), "/usr/bin/curl --version >/dev/null", cwd)).exitCode).toBe(0);
         expect(
             await collectExecution(
                 bashOperations(allowed),
-                "curl -fsS --max-time 5 https://example.com >/dev/null",
+                "/usr/bin/curl -fsS --max-time 5 https://example.com >/dev/null",
                 cwd,
             ),
         ).toEqual({ exitCode: 0, output: "" });
@@ -468,7 +490,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
             (
                 await collectExecution(
                     bashOperations(allowed),
-                    "curl -fsS --max-time 2 http://example.com >/dev/null",
+                    "/usr/bin/curl -fsS --max-time 2 http://example.com >/dev/null",
                     cwd,
                 )
             ).exitCode,
@@ -477,7 +499,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         const denied = createSandboxService({
             backend: createZeroboxBackend(),
             config: validatePiSandboxConfig({
-                filesystem: { allowWrite: ["."] },
+                filesystem: { allowRead: curlRead, allowWrite: ["."] },
                 network: {
                     allowedDomains: ["example.com:443"],
                     deniedDomains: ["example.com:443"],
@@ -490,7 +512,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
             (
                 await collectExecution(
                     bashOperations(denied),
-                    "curl -fsS --max-time 2 https://example.com >/dev/null",
+                    "/usr/bin/curl -fsS --max-time 2 https://example.com >/dev/null",
                     cwd,
                 )
             ).exitCode,
@@ -499,6 +521,12 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
 
     it("blocks DNS-to-private, direct IP, UDP, and host Unix sockets", async () => {
         const cwd = await workspaceFixture();
+        // Node and curl exercise Unix/TCP/UDP paths that the public runtime
+        // deliberately omits. Grant only their inspected executable closures.
+        const [curlRead, nodeRead] = await Promise.all([
+            hostToolReadClosure("/usr/bin/curl"),
+            hostToolReadClosure("/usr/bin/node"),
+        ]);
         const openSockets = new Set<Socket>();
         const respond = (socket: Socket): void => {
             openSockets.add(socket);
@@ -569,7 +597,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         const service = createSandboxService({
             backend: createZeroboxBackend(),
             config: validatePiSandboxConfig({
-                filesystem: { allowWrite: ["."] },
+                filesystem: { allowRead: [...curlRead, ...nodeRead], allowWrite: ["."] },
                 network: {
                     allowedDomains: [`localtest.me:${tcpPort}`],
                     deniedDomains: [],
@@ -579,9 +607,12 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         services.push(service);
         try {
             await service.startBashSession(cwd);
+            for (const command of ["/usr/bin/curl --version >/dev/null", "/usr/bin/node -e 'process.exit(0)'"]) {
+                expect((await collectExecution(bashOperations(service), command, cwd)).exitCode, command).toBe(0);
+            }
             for (const command of [
-                `curl -fsS --max-time 2 http://localtest.me:${tcpPort}`,
-                `curl -fsS --max-time 2 http://127.0.0.1:${tcpPort}`,
+                `/usr/bin/curl -fsS --max-time 2 http://localtest.me:${tcpPort}`,
+                `/usr/bin/curl -fsS --max-time 2 http://127.0.0.1:${tcpPort}`,
                 `/usr/bin/node -e \"const n=require('node:net');const s=n.createConnection(${JSON.stringify(unixPath)});s.once('connect',()=>process.exit(0));s.once('error',()=>process.exit(1))\"`,
             ]) {
                 expect(
@@ -618,7 +649,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
             await writeFile(controlSecret, "fixture control secret");
             const bridgeReadOnly = await collectExecution(
                 bashOperations(service),
-                `bridge=${JSON.stringify(createdLeases[0]!.proxyRunsDir)}; test -d "$bridge" && test -r "$bridge" && ! touch "$bridge/target-write" && ! cat ${JSON.stringify(controlSecret)}`,
+                `bridge=${JSON.stringify(createdLeases[0]!.proxyRunsDir)}; test ! -e "$bridge" && test -d /dev/.zerobox-proxy && ! touch /dev/.zerobox-proxy/target-write && ! cat ${JSON.stringify(controlSecret)}`,
                 cwd,
             );
             expect(bridgeReadOnly.exitCode, bridgeReadOnly.output).toBe(0);
@@ -673,13 +704,10 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         });
         services.push(service);
 
-        const runAnalysisCommand = async (command: SandboxCommand) => {
+        const runAnalysisCommand = async (command: SandboxCommand, readable: string[] = []) => {
             const handle = await service.prepareAnalysis(command, [
                 cwd,
-                "/bin",
-                "/lib",
-                "/lib64",
-                "/usr",
+                ...readable,
             ]);
             const operations = createBashOperations({
                 detached: true,
@@ -690,7 +718,7 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         };
 
         const target125 = await runAnalysisCommand({
-            file: "/bin/sh",
+            file: PRIVATE_BASH,
             args: ["-c", "exit 125"],
             cwd,
         });
@@ -709,12 +737,19 @@ describe.skipIf(!enabled)("Pi Zerobox Linux contract", () => {
         expect(setupFailure).toBeInstanceOf(SandboxExecutionError);
         expect((setupFailure as SandboxExecutionError).code).toBe("setup-failed");
 
+        const [unshareRead, bwrapRead, mountRead] = await Promise.all([
+            hostToolReadClosure("/usr/bin/unshare"),
+            hostToolReadClosure("/usr/bin/bwrap"),
+            hostToolReadClosure("/usr/bin/mount"),
+        ]);
         for (const command of [
-            { file: "/usr/bin/unshare", args: ["--user", "/bin/true"], cwd },
-            { file: "/usr/bin/bwrap", args: ["--ro-bind", "/", "/", "/bin/true"], cwd },
-            { file: "/usr/bin/mount", args: ["-t", "tmpfs", "tmpfs", "/tmp"], cwd },
+            { file: "/usr/bin/unshare", args: ["--user", PRIVATE_SHELL_PATH + "/true"], cwd, readable: unshareRead },
+            { file: "/usr/bin/bwrap", args: ["--ro-bind", "/", "/", PRIVATE_SHELL_PATH + "/true"], cwd, readable: bwrapRead },
+            { file: "/usr/bin/mount", args: ["-t", "tmpfs", "tmpfs", "/tmp"], cwd, readable: mountRead },
         ]) {
-            expect((await runAnalysisCommand(command)).exitCode).not.toBe(0);
+            const preflight = await runAnalysisCommand({ ...command, args: ["--version"] }, command.readable);
+            expect(preflight.exitCode, `${command.file} must execute before its sandbox denial is asserted`).toBe(0);
+            expect((await runAnalysisCommand(command, command.readable)).exitCode).not.toBe(0);
         }
     }, 30_000);
 });

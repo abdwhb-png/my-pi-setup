@@ -10,6 +10,14 @@ Accepted
 > controlled Docker access are unsupported. Historical validation counts and
 > rollback evidence below remain unchanged.
 
+> **Private-runtime update (2026-09-12):**
+> [the approved private-runtime design](../brainstorming/2026-09-12-sandbox-private-runtime-and-local-environments-design.md)
+> supersedes this ADR's host system-read baseline and PATH assumptions. The
+> current architecture supplies `/__zerobox/runtime`, admits bounded local
+> installations explicitly, and treats engine admission evidence as the source
+> of effective mount facts. Historical release and validation evidence below
+> remains a record, not proof of the new architecture's qualification.
+
 ## Date
 
 2026-09-05
@@ -65,9 +73,13 @@ without composing built-in profiles. Invoke only the public CLI with separate
 `file`/`args`, `--strict-sandbox`, `--status-fd=3`, `-C`, a named private
 profile, and `--` before the child argv.
 
-Supervise protocol-v1 JSONL on FD 3. Setup is ready only after
-`child_started`; `setup_error`, invalid or oversized JSONL, premature EOF, and
-impossible event order fail closed. A target exit 125 remains distinct because
+The historical protocol-v1 FD 3 contract below remains readable for prior
+executions. The private-runtime architecture uses status V2 on FD 3 and writes
+the admission report on FD 4 before `child_started`. Pi caps that report at 1
+MiB, validates it against the submitted policy and private-runtime manifest,
+and requires its digest to match `sandbox_admitted`. Pi acknowledges that digest
+on FD 5 before Zerobox allows execution. Zerobox then confirms successful target
+exec before emitting `child_started`. A target exit 125 remains distinct because
 it follows `child_started`.
 
 Use distinct `bash-general` and `analysis-strict` policies. They may share the

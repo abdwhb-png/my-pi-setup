@@ -1,29 +1,15 @@
 import { homedir } from "node:os";
 import { delimiter, resolve } from "node:path";
 
-/**
- * Files required to start dynamically linked, system-provided shell programs.
- * Project and user paths remain separate explicit filesystem grants.
- */
-export const SHELL_SYSTEM_READ_PATHS = [
-    "/bin",
-    "/sbin",
-    "/usr",
-    "/lib",
-    "/lib64",
-    "/etc/ld.so.cache",
-    "/etc/ld.so.conf",
-    "/etc/ld.so.conf.d",
-] as const;
+export const PRIVATE_RUNTIME_ROOT = "/__zerobox";
+export const PRIVATE_SHELL_ROOT = `${PRIVATE_RUNTIME_ROOT}/runtime`;
+export const PRIVATE_ANALYSIS_ROOT = `${PRIVATE_RUNTIME_ROOT}/analysis`;
+export const PRIVATE_SHELL_PATH = `${PRIVATE_SHELL_ROOT}/bin`;
+export const PRIVATE_BASH = `${PRIVATE_SHELL_PATH}/bash`;
 
-export const SHELL_SYSTEM_PATH_ENTRIES = [
-    "/usr/local/bin",
-    "/usr/local/sbin",
-    "/usr/bin",
-    "/usr/sbin",
-    "/bin",
-    "/sbin",
-] as const;
+/** Host system reads always require an explicit grant. */
+export const SHELL_SYSTEM_READ_PATHS: readonly string[] = [];
+export const SHELL_SYSTEM_PATH_ENTRIES = [PRIVATE_SHELL_PATH] as const;
 
 function unique(values: string[]): string[] {
     return [...new Set(values)];

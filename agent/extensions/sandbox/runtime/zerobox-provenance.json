@@ -152,14 +152,18 @@
     {
       "path": "scripts/upstream-git-write-policy.patch",
       "sha256": "75f495ced121f2dbf6217bdafc007f70453d727933e9350e79f87aa2c08ddb82"
+    },
+    {
+      "path": "scripts/upstream-loopback-stream-diagnostics.patch",
+      "sha256": "06aadfe39b99da5a684ad1cfe3e82e2812dd4c387c55feb9a0cf1c399600c60f"
     }
   ],
   "binaryName": "zerobox",
-  "binarySha256": "edf7e5ca49eca11c45d4afb332f0e71cae62639e6d5dabd178d1f4b18f63dd19",
+  "binarySha256": "6814f2ebc1715be50b8fedc63251dd922df625b3f5c086d7637ed658cb777df3",
   "localBuild": {
     "kind": "modified-worktree",
     "baseCommit": "ebd12774aafa63fec1864e04f248150ec50136d4",
-    "sourceDiffSha256": "00f53c0ecbc9bea33e9973da58d47646b53ffab43d05e07e9fd51625bffbaca7",
+    "sourceDiffSha256": "1e61dc46d7bfb749b021496157d3361c7d3c86fd50fdeb47fd07dd8c323f101b",
     "sourceDiffFormat": "git-diff-binary-head-plus-sorted-untracked-v1"
   },
   "omittedOptionalPatches": [

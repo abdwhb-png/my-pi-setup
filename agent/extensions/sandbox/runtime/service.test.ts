@@ -9,6 +9,8 @@ import type {
 import { SANDBOX_CAPABILITIES, SandboxExecutionError } from "./contracts.ts";
 import { validatePiSandboxConfig } from "./policies.ts";
 import { createSandboxService } from "./service.ts";
+import { ChildProcess } from "node:child_process";
+import { createSandboxExecutionContext, type SandboxExecutionContextV3 } from "../../_shared/sandbox-runtime/execution-context.ts";
 
 function fakeLease(id: number): PrivateTempLease {
     const root = `/lease/${id}`;
@@ -35,6 +37,21 @@ function deferred<T = void>() {
 }
 
 describe("sandbox service", () => {
+    it("updates shared contexts only when the backend admits the execution", async()=>{
+        const admission=deferred();let context:SandboxExecutionContextV3|undefined;
+        const service=createSandboxService({config:validatePiSandboxConfig({}),createLease:async()=>fakeLease(1),recoverStaleLeases:async()=>{},backend:{probe:async()=>SANDBOX_CAPABILITIES,prepare:async(command,policy,lease)=>{
+            const base=createSandboxExecutionContext(policy,lease,{homeDir:"/home/test"});
+            const ready=admission.promise.then(()=>{context={...base,version:3,admission:"admitted",admissionSha256:"a".repeat(64),helperSha256:"b".repeat(64),runtime:{target:"x86_64-unknown-linux-gnu",version:"test",manifestSha256:"c".repeat(64),component:"shell"},kernelMounts:[],mounts:[]};});
+            return {file:command.file,args:[],cwd:command.cwd,env:{},statusProtocol:{fd:3,version:2},extraStdio:[],getSandboxContext:()=>context,supervise:()=>({ready,settled:ready})};
+        }}});
+        await service.startBashSession("/workspace");const contexts=service.getProfileContexts();
+        const spawn=await service.prepareBash({file:"/__zerobox/runtime/bin/bash",args:[],cwd:"/workspace"});
+        expect(contexts["bash-general"].version).toBe(2);
+        const status=spawn.supervise(new ChildProcess());admission.resolve();await status.ready;
+        expect(contexts["bash-general"].version).toBe(3);
+        expect(service.getProfileContexts()).toBe(contexts);
+        await service.shutdown();
+    });
     it("publishes all profile contexts from the effective policy builders", async () => {
         const service = createSandboxService({
             backend: {

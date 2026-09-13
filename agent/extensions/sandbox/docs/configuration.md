@@ -12,7 +12,7 @@ Both files must be regular files owned by the current user and not writable by g
 
 | Input | Effect |
 | --- | --- |
-| Built-in baseline | Project read/write roots, generic tool resources, closed outgoing network, private temporary storage. |
+| Built-in baseline | Project read/write roots, private shell commands, closed outgoing network, private temporary storage. |
 | Global configuration | Set the allowed resources and default restrictions. |
 | Project configuration | Inherit or narrow those resources. Opt into Docker explicitly. |
 | Current session | Narrow the policy or explicitly select host mode within the global ceiling. |
@@ -57,7 +57,40 @@ Set global `tmpNamespace: "host"` only when the shell should share the complete 
 
 `network.allowLocalBinding` permits listeners inside the private network namespace. It does not publish them on the host. Outgoing network domains, local service access and incoming publication are distinct permissions.
 
-Use `environment.path` to configure tool lookup and `filesystem.allowRead` to permit the executable and required runtime files. A PATH entry alone grants no filesystem access. Values in `environment.variables` that start with `~/` expand against the host home directory, without changing the private sandbox HOME or granting read access. Shell expressions such as `$HOME` and `$(command)` stay literal. Grant required files separately. Environment values are hidden in diagnostics. The generic tool baseline is described in [Runtime](runtime.md).
+`environment.path` controls lookup only; it never grants filesystem access. Values in `environment.variables` that start with `~/` expand against the host home directory, without changing the private sandbox HOME or granting read access. Shell expressions such as `$HOME` and `$(command)` stay literal. Environment values are hidden in diagnostics. Prefer named local installations for existing tools so the roots and command paths remain one authorization. The private tool baseline is described in [Runtime](runtime.md).
+
+## Local installations
+
+Define machine-local sources only in the global document:
+
+```json
+{
+  "environment": {
+    "installations": {
+      "company-cli": [
+        { "root": "~/opt/company-cli", "path": ["bin"] }
+      ],
+      "toolchain": [
+        { "root": "/opt/toolchain", "path": ["bin", "tools/bin"] }
+      ]
+    }
+  }
+}
+```
+
+Each map key is an installation name. Its entries describe an absolute or `~/` root and zero or more command directories relative to that root. The root is mounted read-only once. The PATH order is selected installation command directories in global declaration order, legacy `environment.path`, then `/__zerobox/runtime/bin`. An explicit system-directory root such as `/usr` is supported, but cannot replace reserved runtime components. Use `filesystem.allowRead` for an exact file grant.
+
+A project selects only global names:
+
+```json
+{
+  "environment": { "installations": ["company-cli", "toolchain"] }
+}
+```
+
+An omitted project field inherits all global installations without additional activation. An empty list selects none. Project names are filtered in global declaration order, so a project cannot reorder PATH or create a root. A session may narrow the project selection further but cannot add a name outside that ceiling.
+
+The parser resolves `~/` and requires every global root to exist as a directory. It rejects a redirected root unless its canonical path is the declared authorization. The installation preview canonicalizes roots before saving so an explicit user decision can record the real boundary. Each declared command directory must be relative, exist, resolve inside one of the selected roots, and be a directory. Access to a command, symlink target, loader, or dependency outside the private runtime and authorized resources fails inside the sandbox. `/sandbox doctor <executable>` inspects common shebang and ELF dependencies without execution. A legacy PATH entry grants no read access.
 
 ## Local resources
 
@@ -95,7 +128,7 @@ The displayed profile is derived from the effective configuration: `default` for
 
 ## Applying and migrating changes
 
-The loader rereads both documents before admitting the next shell operation. A valid change rebuilds the runtime as needed. Already admitted operations normally drain with their original configuration. Removing a Unix socket or TCP publication interrupts older runtimes that held that resource, including their other commands. Docker break-glass expiry also interrupts every runtime that held the expired grant. Invalid configuration blocks new admissions with a diagnostic. A failure never authorizes host fallback.
+The loader watches both documents, polls once per second while processes are active, and rereads authority before every admission. A valid change rebuilds the runtime as needed. Existing work with unchanged rights drains using its original configuration. Removing a read, PATH-derived installation, socket, publication, Docker grant, or another right interrupts every affected runtime and its descendants before the replacement takes new work. Docker break-glass expiry also interrupts every runtime that held the expired grant. Invalid configuration blocks new admissions with a diagnostic. A failure never authorizes host fallback or replays a command.
 
 Use `/sandbox migrate` for historical `settings.json` sandbox sections, old `sandbox.json`, `sandbox.global.json` and `sandbox.capabilities.json`. Review the proposed global ceiling before publication. Migration preserves exact archives and unrelated settings. Use `/sandbox recover` for an interrupted transaction.
 
