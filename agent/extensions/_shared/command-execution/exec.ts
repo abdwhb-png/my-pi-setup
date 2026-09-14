@@ -17,6 +17,7 @@ import {
     type ExecutionProvenance,
 } from "../execution-provenance/types.ts";
 import type { SandboxExecutionContext } from "../sandbox-runtime/execution-context.ts";
+import { sandboxPathDiagnostic } from "./path-diagnostic.ts";
 
 export const MAX_STDIN_BYTES = 1_048_576;
 
@@ -99,6 +100,7 @@ export interface CreateBashOperationsOptions {
 const EXIT_STDIO_GRACE_MS = 100;
 const PREPARED_CLOSE_GRACE_MS = 1_000;
 const PREPARED_TERMINATION_GRACE_MS = 250;
+const PATH_DIAGNOSTIC_TAIL_BYTES = 65_536;
 
 function waitForClose(child: ChildProcess): Promise<void> {
     return new Promise((resolve) => child.once("close", () => resolve()));
@@ -415,10 +417,29 @@ function createTrackedBashOperations(
                     }
                 };
                 const onAbort = () => killChild();
+                const collectPathErrors =
+                    spawnSpec.execution?.backend === "zerobox" &&
+                    spawnSpec.execution.profile === "bash-general";
+                let diagnosticTail = Buffer.alloc(0);
+                let diagnosticTailTruncated = false;
+                const relayData = (chunk: Buffer) => {
+                    if (collectPathErrors) {
+                        diagnosticTailTruncated ||=
+                            diagnosticTail.length + chunk.length >
+                            PATH_DIAGNOSTIC_TAIL_BYTES;
+                        diagnosticTail = Buffer.from(
+                            Buffer.concat([
+                                diagnosticTail,
+                                chunk.subarray(-PATH_DIAGNOSTIC_TAIL_BYTES),
+                            ]).subarray(-PATH_DIAGNOSTIC_TAIL_BYTES),
+                        );
+                    }
+                    onData(chunk);
+                };
 
                 child.once("exit", markExited);
-                child.stdout?.on("data", onData);
-                child.stderr?.on("data", onData);
+                child.stdout?.on("data", relayData);
+                child.stderr?.on("data", relayData);
                 if (signal)
                     signal.addEventListener("abort", onAbort, { once: true });
                 if (timeout !== undefined && timeout > 0) {
@@ -461,6 +482,30 @@ function createTrackedBashOperations(
                     await closePromise;
                     if (signal?.aborted) throw new Error("aborted");
                     if (timedOut) throw new Error(`timeout:${timeout}`);
+                    // Readiness and settlement above prove startup and validate the protocol for this command.
+                    if (
+                        supervision &&
+                        execution.status === "sandboxed" &&
+                        execution.backend === "zerobox" &&
+                        execution.mode !== "host" &&
+                        exitCode !== null &&
+                        exitCode !== 0
+                    ) {
+                        const diagnostic = sandboxPathDiagnostic(
+                            (diagnosticTailTruncated
+                                ? diagnosticTail.subarray(
+                                      diagnosticTail.includes(10)
+                                          ? diagnosticTail.indexOf(10) + 1
+                                          : diagnosticTail.length,
+                                  )
+                                : diagnosticTail
+                            ).toString("utf8"),
+                            spawnSpec.getSandboxContext?.() ??
+                                spawnSpec.sandboxContext,
+                        );
+                        if (diagnostic)
+                            onData(Buffer.from(`\n${diagnostic}\n`));
+                    }
                     executionResult = { exitCode };
                     report({
                         outcome: exitCode === 0 ? "succeeded" : "failed",
@@ -481,8 +526,8 @@ function createTrackedBashOperations(
                     throw error;
                 } finally {
                     child.removeListener("exit", markExited);
-                    child.stdout?.removeListener("data", onData);
-                    child.stderr?.removeListener("data", onData);
+                    child.stdout?.removeListener("data", relayData);
+                    child.stderr?.removeListener("data", relayData);
                     if (timeoutHandle) clearTimeout(timeoutHandle);
                     if (hardKillHandle) clearTimeout(hardKillHandle);
                     signal?.removeEventListener("abort", onAbort);

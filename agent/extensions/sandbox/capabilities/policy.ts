@@ -278,7 +278,17 @@ function permittedPath(path: string, ceiling: string[]): boolean {
 function narrowerPaths(
     requested: string[] | undefined,
     ceiling: string[],
+    projectField?: { name: string; configPath: string; authorityPath: string },
 ): string[] {
+    if (projectField) {
+        const outside = requested?.find(
+            (path) => !permittedPath(path, ceiling),
+        );
+        if (outside !== undefined)
+            throw new Error(
+                `${projectField.configPath}: ${projectField.name} requests ${JSON.stringify(outside)} outside the global ceiling. An explicit authorization covering this path in ${projectField.authorityPath} (${projectField.name}) is required before the project can select it. The command was not executed.`,
+            );
+    }
     return requested === undefined
         ? ceiling
         : requested.filter((path) => permittedPath(path, ceiling));
@@ -442,10 +452,20 @@ function mergeLayers(input: ShellPolicyInput): {
     const projectRead = narrowerPaths(
         list(projectFs.allowRead, "project filesystem.allowRead"),
         globalRead,
+        {
+            name: "filesystem.allowRead",
+            configPath: join(projectRoot, ".pi", "sandbox.json"),
+            authorityPath: input.authorityPath,
+        },
     );
     const projectWrite = narrowerPaths(
         list(projectFs.allowWrite, "project filesystem.allowWrite"),
         globalWrite,
+        {
+            name: "filesystem.allowWrite",
+            configPath: join(projectRoot, ".pi", "sandbox.json"),
+            authorityPath: input.authorityPath,
+        },
     );
     const read = narrowerPaths(
         list(sessionFs.allowRead, "session filesystem.allowRead"),

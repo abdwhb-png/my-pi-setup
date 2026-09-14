@@ -19,6 +19,10 @@ Both files must be regular files owned by the current user and not writable by g
 
 An absent ordinary field inherits its parent value. An empty allowlist closes that selection. Denies accumulate and take precedence. An empty effective project read selection blocks shell execution. Project configuration cannot grant resources outside the global ceiling.
 
+Project `filesystem.allowRead` and `filesystem.allowWrite` entries outside the global ceiling are configuration errors, not silently discarded selections. The error identifies the requested path, the project configuration, and the global authority requiring explicit authorization. Denials still take precedence over accepted selections.
+
+Read and write allowlists use paths, not glob patterns. Use `~/projects`, without `/*`, to cover that directory and its descendants, including future projects. This global grant is inherited unless restricted by project configuration. A read grant does not grant writes.
+
 Resolve relative paths from the canonical project root, including `.`. Use `~/…` for paths relative to the user's HOME. Filesystem allowlists take literal paths. Deny lists also accept globs: a pattern without a slash matches at any project depth, while a pattern containing a slash is project-relative.
 
 ## Editing ordinary resources

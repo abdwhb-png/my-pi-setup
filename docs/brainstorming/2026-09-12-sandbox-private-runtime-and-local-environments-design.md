@@ -43,6 +43,8 @@ Construct the necessary private process and device resources explicitly. Do not 
 
 Let the user authorize an existing installation or a bounded set of resource roots. Run its tools inside the sandbox under the same execution policy. Do not require a product-specific adapter, a mandatory supported-tool catalogue, or an additional host execution route.
 
+Support an optional nonempty `files` list on each installation entry. When present, use the canonical `root` only as a base for relative paths and expose only the listed regular files. Keep explicitly covered symlink targets, installation selection and revocation within the same authorization. Do not infer dependencies or grant the containing directory.
+
 Derive filesystem exposure and executable search paths from that authorization. Keep the resulting paths inspectable, but do not require the user to duplicate each tool installation in both `allowRead` and `environment.path` to make it usable.
 
 Treat discovery as optional assistance for preparing an authorization. Do not grant access because a tool appears on PATH, a package manager reports it, a command failed, or an agent asks for it. Support explicit authorization of an arbitrary installation that Pi has never discovered.
