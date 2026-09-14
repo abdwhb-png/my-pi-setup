@@ -39,12 +39,13 @@
 
 ## Subagent wait guard
 
-The `extensions/subagent-wait-guard` extension programmatically enforces the delegation rule "do not finalize an answer while delegated subagent runs are in flight":
+`extensions/pi-subagents-addons/subagent-wait-guard` enforces "do not finalize an answer while delegated subagent runs are in flight". It is not auto-discovered at this nested path; `pi-subagents-addons/index.ts` registers it explicitly when `subagentWaitGuard.enabled` is true.
 
-- `message_end`: a final assistant prose answer produced while async subagent runs are active is replaced with a `[subagent-wait-guard]` blocked notice.
-- `turn_end`: a follow-up user message forces the agent to call `subagent_wait({ all: true })` and incorporate final reports before answering.
+- Interactive TUI: preserve parent output and thinking, then send one hidden reminder to parent per active-run snapshot; pi-subagents' native completion notification wakes session.
+- RPC/headless: replace premature final prose and send one hidden `subagent_wait({ all: true })` follow-up per snapshot.
+- Paused run: send hidden attention guidance without blind waiting.
 
-If its interventions look like bugs (withheld answers, repeated "[subagent-wait-guard]" prompts), that is intentional enforcement, not malfunction. Disable with `PI_SUBAGENT_WAIT_GUARD=off` then `/reload`. Consecutive interventions cap at 10 (5 turns); design record: `docs/brainstorms/2026-08-23-programmatic-enforcement-of-subagent-wait/design.md`.
+Disable with `PI_SUBAGENT_WAIT_GUARD=off` then `/reload`, or set `subagentWaitGuard.enabled` to false in addon config. Design record: `docs/brainstorms/2026-08-23-programmatic-enforcement-of-subagent-wait/design.md`.
 
 ## Règles de configuration des modèles
 
