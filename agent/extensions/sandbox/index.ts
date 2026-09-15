@@ -1151,6 +1151,17 @@ export function createSandboxExtension(
     };
 
     let sessionConfig: SandboxConfigLayer | undefined;
+    let modeSessionEpoch = 0;
+    let pendingModeChange: Promise<void> | undefined;
+    const waitForModeChange = async (): Promise<void> => {
+        let pending = pendingModeChange;
+        while (pending) {
+            // oxlint-disable-next-line no-await-in-loop -- Observe queued mode requests in order before dispatching.
+            await pending;
+            if (pendingModeChange === pending) return;
+            pending = pendingModeChange;
+        }
+    };
     const machineId =
         process.platform === "linux"
             ? localMachineId()
@@ -1311,6 +1322,92 @@ export function createSandboxExtension(
         }
     };
 
+    const selectSessionMode = async (
+        ctx: ExtensionContext,
+        mode: SandboxMode,
+    ): Promise<void> => {
+        const epoch = modeSessionEpoch;
+        const previous = pendingModeChange;
+        // A later explicit request may recover from an earlier failed request.
+        const change = Promise.resolve(previous)
+            .catch(() => undefined)
+            .then(async () => {
+                const assertCurrentSession = () => {
+                    if (
+                        epoch !== modeSessionEpoch ||
+                        !ownsSandboxRuntime(runtimeOwner)
+                    )
+                        throw new Error(
+                            "The session changed before the requested mode could be applied",
+                        );
+                };
+                assertCurrentSession();
+                const nextSession = { ...sessionConfig, mode };
+                const resolved = loadShell(ctx, nextSession);
+                const fingerprint = shellSandboxFingerprint(resolved.config);
+                const runtime = getSandboxRuntime();
+                if (
+                    runtime.state !== "enabled" ||
+                    runtime.sandboxFingerprint !== fingerprint
+                ) {
+                    if (!(await reconfigureServices(ctx, resolved)))
+                        throw new Error(
+                            "The requested mode transition was superseded before it completed. Select the mode again after the current transition finishes",
+                        );
+                }
+                assertCurrentSession();
+                const latest = loadShell(ctx, nextSession);
+                if (shellSandboxFingerprint(latest.config) !== fingerprint)
+                    throw new Error(
+                        "Sandbox configuration changed during mode selection. The requested mode was not applied",
+                    );
+                sessionConfig = nextSession;
+                // Existing resolver closures read sessionConfig. Keep their identity stable for waiting calls.
+                updateSandboxStatus(
+                    ctx,
+                    mode === "host" ? "off" : "on",
+                    latest.config.docker,
+                    latest.shell,
+                );
+                ctx.ui.notify(
+                    `Session mode: ${latest.shell.mode} (${latest.shell.profile})`,
+                    "info",
+                );
+            });
+        pendingModeChange = change;
+        try {
+            await change;
+        } catch (error) {
+            if (
+                epoch === modeSessionEpoch &&
+                ownsSandboxRuntime(runtimeOwner)
+            ) {
+                try {
+                    const applied = loadShell(ctx);
+                    const runtime = getSandboxRuntime();
+                    updateSandboxStatus(
+                        ctx,
+                        runtime.state === "enabled"
+                            ? applied.shell.mode === "host"
+                                ? "off"
+                                : "on"
+                            : "error",
+                        applied.config.docker,
+                        applied.shell,
+                    );
+                } catch {
+                    updateSandboxStatus(ctx, "error");
+                }
+            }
+            ctx.ui.notify(
+                `Sandbox mode was not applied: ${configurationErrorMessage(error)}`,
+                "error",
+            );
+        } finally {
+            if (pendingModeChange === change) pendingModeChange = undefined;
+        }
+    };
+
     const prepareShellExecution = async (
         ctx: ExtensionContext,
         cwd: string,
@@ -1322,7 +1419,9 @@ export function createSandboxExtension(
             !executionRoot.startsWith(projectRoot + "/")
         )
             return;
+        await waitForModeChange();
         await authorityWatch?.check();
+        await waitForModeChange();
         const resolved = loadShell(ctx);
         const fingerprint = shellSandboxFingerprint(resolved.config);
         const runtime = getSandboxRuntime();
@@ -1351,7 +1450,9 @@ export function createSandboxExtension(
         ) {
             return;
         }
+        await waitForModeChange();
         await authorityWatch?.check();
+        await waitForModeChange();
         const forced = loadShell(ctx, {
             ...sessionConfig,
             mode: "sandbox",
@@ -1530,6 +1631,8 @@ export function createSandboxExtension(
     // Resolve local shell authority independently from strict engine startup.
     pi.on("session_start", async (_event, ctx) => {
         if (!ownsSandboxRuntime(runtimeOwner)) return;
+        modeSessionEpoch += 1;
+        pendingModeChange = undefined;
         claimSandboxRuntime(runtimeOwner);
         const noSandbox = pi.getFlag("no-sandbox") as boolean;
         sessionConfig = noSandbox ? { mode: "host" } : undefined;
@@ -1679,6 +1782,8 @@ export function createSandboxExtension(
     });
 
     pi.on("session_shutdown", async () => {
+        modeSessionEpoch += 1;
+        pendingModeChange = undefined;
         authorityWatch?.close();
         authorityWatch = undefined;
         releaseShellRuntime(runtimeOwner);
@@ -1802,35 +1907,10 @@ export function createSandboxExtension(
                 return;
             }
             if (arg === "mode sandbox" || arg === "mode host") {
-                const nextSession = {
-                    ...sessionConfig,
-                    mode: arg === "mode host" ? "host" : "sandbox",
-                } satisfies SandboxConfigLayer;
-                try {
-                    const resolved = loadShell(ctx, nextSession);
-                    if (!(await reconfigureServices(ctx, resolved))) return;
-                    sessionConfig = nextSession;
-                    publishShellRuntime(
-                        runtimeOwner,
-                        () => loadShell(ctx).shell,
-                        (cwd) => prepareShellExecution(ctx, cwd),
-                        () =>
-                            loadShell(ctx, {
-                                ...sessionConfig,
-                                mode: "sandbox",
-                            }).shell,
-                        (cwd) => prepareForcedSandboxExecution(ctx, cwd),
-                    );
-                    ctx.ui.notify(
-                        `Session mode: ${resolved.shell.mode} (${resolved.shell.profile})`,
-                        "info",
-                    );
-                } catch (error) {
-                    ctx.ui.notify(
-                        `Sandbox mode was not admitted: ${configurationErrorMessage(error)}`,
-                        "error",
-                    );
-                }
+                await selectSessionMode(
+                    ctx,
+                    arg === "mode host" ? "host" : "sandbox",
+                );
                 return;
             }
             if (arg === "installations") {

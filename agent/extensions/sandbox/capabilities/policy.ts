@@ -78,7 +78,13 @@ function canonicalLayer(
     if (!layer) return undefined;
     const paths = (
         section: "filesystem",
-        field: "allowRead" | "denyRead" | "allowWrite" | "denyWrite",
+        field:
+            | "allowRead"
+            | "denyRead"
+            | "allowWrite"
+            | "denyWrite"
+            | "denyReadWhenExternal"
+            | "denyWriteWhenExternal",
     ) => {
         const raw = layer[section]?.[field];
         if (raw === undefined) return undefined;
@@ -97,6 +103,8 @@ function canonicalLayer(
                           "denyRead",
                           "allowWrite",
                           "denyWrite",
+                          "denyReadWhenExternal",
+                          "denyWriteWhenExternal",
                       ].flatMap((field) => {
                           const value = paths(
                               "filesystem",
@@ -689,6 +697,12 @@ function mergeLayers(input: ShellPolicyInput): {
             ...(list(sessionFs[field], `session filesystem.${field}`) ?? []),
         ]),
     ];
+    const denyWhenExternal = (
+        field: "denyReadWhenExternal" | "denyWriteWhenExternal",
+    ) =>
+        (list(globalFs[field], `global filesystem.${field}`) ?? []).filter(
+            (protectedRoot) => !permittedPath(projectRoot, [protectedRoot]),
+        );
     const deniedDomains = [
         ...new Set([
             ...baseline.network.deniedDomains,
@@ -727,10 +741,19 @@ function mergeLayers(input: ShellPolicyInput): {
                 projectRoot,
             ),
             allowWrite: write,
-            denyRead: deny("denyRead"),
+            denyRead: [
+                ...new Set([
+                    ...deny("denyRead"),
+                    ...denyWhenExternal("denyReadWhenExternal"),
+                ]),
+            ],
             // Installation grants are read-only, including beneath a writable project.
             denyWrite: [
-                ...new Set([...deny("denyWrite"), ...installationReadGrants]),
+                ...new Set([
+                    ...deny("denyWrite"),
+                    ...denyWhenExternal("denyWriteWhenExternal"),
+                    ...installationReadGrants,
+                ]),
             ],
         },
         environment: {

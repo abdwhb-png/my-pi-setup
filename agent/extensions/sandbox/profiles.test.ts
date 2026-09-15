@@ -229,3 +229,92 @@ test("a project cannot reopen globally disabled local binding", () => {
         loadSandboxConfig(cwd, { agentDir, machineId: "machine" }),
     ).toThrow("outside its ceiling");
 });
+
+test("external filesystem denials protect another project without blocking it as the current project", () => {
+    const { root, agentDir, cwd } = fixture();
+    const projects = join(root, "projects");
+    const protectedProject = join(projects, "Foundry-AI");
+    const siblingProject = join(projects, "sibling");
+    mkdirSync(protectedProject, { recursive: true });
+    mkdirSync(siblingProject, { recursive: true });
+    global(agentDir, "machine", {
+        filesystem: {
+            allowRead: [projects],
+            allowWrite: [projects],
+            denyReadWhenExternal: [protectedProject],
+            denyWriteWhenExternal: [protectedProject],
+        },
+    });
+
+    const external = loadSandboxConfig(siblingProject, {
+        agentDir,
+        machineId: "machine",
+    }).config.filesystem;
+    expect(external.denyRead).toContain(protectedProject);
+    expect(external.denyWrite).toContain(protectedProject);
+
+    const parent = loadSandboxConfig(projects, {
+        agentDir,
+        machineId: "machine",
+    }).config.filesystem;
+    expect(parent.denyRead).toContain(protectedProject);
+    expect(parent.denyWrite).toContain(protectedProject);
+
+    const current = loadSandboxConfig(protectedProject, {
+        agentDir,
+        machineId: "machine",
+    }).config.filesystem;
+    expect(current.allowRead).toContain(protectedProject);
+    expect(current.allowWrite).toContain(protectedProject);
+    expect(current.denyRead).not.toContain(protectedProject);
+    expect(current.denyWrite).not.toContain(protectedProject);
+});
+
+test("external filesystem denials require stable literal global paths", () => {
+    for (const configuredPath of ["Foundry-AI", "/projects/Foundry-*"]) {
+        const { agentDir, cwd } = fixture();
+        global(agentDir, "machine", {
+            filesystem: {
+                denyReadWhenExternal: [configuredPath],
+            },
+        });
+        expect(() =>
+            loadSandboxConfig(cwd, {
+                agentDir,
+                machineId: "machine",
+            }),
+        ).toThrow("absolute or home-relative literal paths");
+    }
+});
+
+test.each([
+    "denyReadWhenExternal",
+    "denyWriteWhenExternal",
+] as const)("reserves filesystem.%s to the global authority", (field) => {
+    const { agentDir, cwd } = fixture();
+    global(agentDir, "machine", {
+        filesystem: { allowRead: [cwd], allowWrite: [cwd] },
+    });
+    writeFileSync(
+        join(cwd, ".pi", "sandbox.json"),
+        JSON.stringify({ filesystem: { [field]: [cwd] } }),
+    );
+    expect(() =>
+        loadSandboxConfig(cwd, { agentDir, machineId: "machine" }),
+    ).toThrow(`Unknown project.filesystem field: ${field}`);
+});
+
+test("canonicalizes home-relative external denials before applying them", () => {
+    const { agentDir, cwd } = fixture();
+    const protectedRoot = join(homedir(), ".pi-protected-project-fixture");
+    global(agentDir, "machine", {
+        filesystem: {
+            denyReadWhenExternal: ["~/.pi-protected-project-fixture"],
+        },
+    });
+    const filesystem = loadSandboxConfig(cwd, {
+        agentDir,
+        machineId: "machine",
+    }).config.filesystem;
+    expect(filesystem.denyRead).toContain(protectedRoot);
+});

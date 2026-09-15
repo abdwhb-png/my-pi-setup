@@ -91,6 +91,85 @@ test.skipIf(
 
 test.skipIf(
     !hasCandidateRuntime(),
+)("external filesystem denials are enforced by Zerobox and lifted only inside the protected project", async () => {
+    const root = await mkdtemp("/var/tmp/pi-external-project-");
+    const agentDir = join(root, "agent");
+    const projects = join(root, "projects");
+    const protectedProject = join(projects, "Foundry-AI");
+    const siblingProject = join(projects, "sibling");
+    const protectedFile = join(protectedProject, "protected.txt");
+    const externalWrite = join(protectedProject, "external.txt");
+    const currentWrite = join(protectedProject, "current.txt");
+    const leaseRoot = await mkdtemp("/var/tmp/z-");
+    const machineId = localMachineId();
+    const run = async (cwd: string, command: string) => {
+        const service = createSandboxService({
+            backend: createCandidateBackend(leaseRoot),
+            config: loadSandboxConfig(cwd, { agentDir, machineId }).config,
+            ...createTemporaryLeaseOptions(leaseRoot),
+        });
+        const supervisor = createBashProcessSupervisor();
+        let output = "";
+        try {
+            await service.startBashSession(cwd);
+            const result = await createSandboxedBashOps(
+                service,
+                supervisor,
+            ).exec(command, cwd, {
+                timeout: 10,
+                onData: (chunk) => {
+                    output += chunk.toString();
+                },
+            });
+            return { result, output };
+        } finally {
+            supervisor.shutdown();
+            await service.shutdown();
+        }
+    };
+    try {
+        await mkdir(agentDir, { recursive: true });
+        await mkdir(protectedProject, { recursive: true });
+        await mkdir(siblingProject, { recursive: true });
+        await writeFile(protectedFile, "protected");
+        await writeFile(
+            join(agentDir, "sandbox.json"),
+            JSON.stringify({
+                version: 2,
+                machineId,
+                filesystem: {
+                    allowRead: [projects],
+                    allowWrite: [projects],
+                    denyReadWhenExternal: [protectedProject],
+                    denyWriteWhenExternal: [protectedProject],
+                },
+            }),
+            { mode: 0o600 },
+        );
+
+        const external = await run(
+            siblingProject,
+            `test ! -e ${JSON.stringify(protectedFile)} && if { printf blocked > ${JSON.stringify(externalWrite)}; } 2>/dev/null; then exit 41; fi`,
+        );
+        expect(external.result.exitCode, external.output).toBe(0);
+        await expect(readFile(externalWrite, "utf8")).rejects.toMatchObject({
+            code: "ENOENT",
+        });
+
+        const current = await run(
+            protectedProject,
+            `test "$(cat ${JSON.stringify(protectedFile)})" = protected && printf allowed > ${JSON.stringify(currentWrite)}`,
+        );
+        expect(current.result.exitCode, current.output).toBe(0);
+        expect(await readFile(currentWrite, "utf8")).toBe("allowed");
+    } finally {
+        await rm(root, { recursive: true, force: true });
+        await rm(leaseRoot, { recursive: true, force: true });
+    }
+}, 60_000);
+
+test.skipIf(
+    !hasCandidateRuntime(),
 )("global and project tmp layers control Bash while Think stays private", async () => {
     const root = await mkdtemp(join(import.meta.dir, ".tmp-layered-"));
     const agentDir = join(root, "agent");

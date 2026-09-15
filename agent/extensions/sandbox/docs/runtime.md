@@ -86,6 +86,12 @@ Private control paths must fit the Unix socket address budget. Preflight rejects
 
 The runtime requires Linux user namespaces and the managed Zerobox/FUSE facilities. The private Analysis component supplies Node with JSPI support, Bun, workers and `prlimit`. Qualify the native kernel separately from WSL2. Neither platform's shell tests establish Windows interoperation or application-specific browser behavior.
 
+### Local corrective release, 2026-09-15
+
+Runtime `2026.09.15.1` is installed at `~/.pi/runtimes/zerobox/2026.09.15.1` through the atomic `~/.pi/bin/zerobox` symlink. It keeps engine version `0.3.3-fork.17` and prevents write-deny globs from creating guarded FUSE views over roots that are already read-only. The engine/helper SHA-256 is `e1544627b8b448c7f1a818e052be432ccf3fc1d003101be0f93d4ed98737bfc7`; the runtime manifest SHA-256 is `c3b55157c30095ad9b09b829a7fcb9779dc657ce53fca75d672edb523017c61e`.
+
+The focused `dynamic_fs` suite passed 33 tests, the real FUSE integration suite passed 10 tests with one benchmark ignored, Clippy completed with warnings denied, and the Pi read-only-cwd admission regression passed through the managed entry. The same Pi regression reproduced `internal mount exceeds the submitted filesystem grants` with runtime `2026.09.12.10`. This corrective build is qualified locally on WSL2 and is explicitly not native-CI evidence. Reload open Pi sessions or start a new session to pin the corrected engine.
+
 ### Release evidence, 2026-09-12
 
 Runtime `2026.09.12.10` is installed at `~/.pi/runtimes/zerobox/2026.09.12.10` through the atomic `~/.pi/bin/zerobox` symlink. It contains the rebuilt Zerobox `0.3.3-fork.17` engine. The engine's version string is unchanged; use its digest and the runtime manifest to identify the release. Existing explicit configuration was preserved byte-for-byte. Reload open Pi sessions or start a new session to use the matching extension code and runtime.

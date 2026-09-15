@@ -1311,6 +1311,137 @@ describe("sandbox lifecycle", () => {
         expect(getSandboxRuntime().state).toBe("uninitialized");
     });
 
+    it("changes session mode without rebuilding unchanged sandbox or Analysis runtimes", async () => {
+        await writeGlobalConfig({ host: { allowed: true } });
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const runtime = getSandboxRuntime();
+        const starts = initialize.mock.calls.length;
+        const analysisStarts = createAnalysisSandboxService.mock.calls.length;
+        await sandboxCommand(registered).handler("mode host", ctx);
+        expect(currentShellPolicy()?.mode).toBe("host");
+        expect(getSandboxRuntime()).toBe(runtime);
+        await sandboxCommand(registered).handler("mode sandbox", ctx);
+        expect(currentShellPolicy()?.mode).toBe("sandbox");
+        expect(getSandboxRuntime()).toBe(runtime);
+        expect(initialize.mock.calls.length).toBe(starts);
+        expect(createAnalysisSandboxService.mock.calls.length).toBe(analysisStarts);
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("waits for a requested host mode before dispatching a concurrent shell command", async () => {
+        await writeGlobalConfig({ host: { allowed: true } });
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await writeGlobalConfig({ host: { allowed: true }, network: { allowedDomains: ["added.example"] } });
+        const starting = deferred();
+        const entered = deferred();
+        initialize.mockImplementationOnce(() => { entered.resolve(); return starting.promise; });
+        const host = sandboxCommand(registered).handler("mode host", ctx);
+        await Promise.race([entered.promise, host.then(() => { throw new Error(`Mode completed before replacement startup: ${JSON.stringify(notifyCalls(ctx))}`); })]);
+        const starts = initialize.mock.calls.length;
+        const launches = prepareBash.mock.calls.length;
+        const supervisor = createBashProcessSupervisor();
+        let output = "";
+        let finished = false;
+        const running = resolveBashOperations(supervisor).exec("printf after-mode", cwd, { onData: chunk => { output += chunk.toString(); } }).then(value => { finished = true; return value; });
+        try {
+            await Bun.sleep(20);
+            expect(finished).toBe(false);
+            expect(initialize.mock.calls.length).toBe(starts);
+            expect(prepareBash.mock.calls.length).toBe(launches);
+            starting.resolve();
+            await host;
+            expect(await running).toEqual({ exitCode: 0 });
+            expect(output).toBe("after-mode");
+            expect(currentShellPolicy()?.mode).toBe("host");
+            expect(prepareBash.mock.calls.length).toBe(launches);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Session mode: host");
+            expect(capturedWidgetDef.def?.render({ theme: fakeTheme(), ctx })).toContain("host · unsandboxed");
+        } finally {
+            starting.resolve(); await host; await running.catch(() => undefined);
+            supervisor.shutdown();
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        }
+    });
+
+    it("blocks waiting launches when the requested mode transition fails", async () => {
+        await writeGlobalConfig({ host: { allowed: true } });
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await writeGlobalConfig({ host: { allowed: true }, network: { allowedDomains: ["added.example"] } });
+        const starting = deferred(); const entered = deferred();
+        initialize.mockImplementationOnce(() => { entered.resolve(); return starting.promise; });
+        const host = sandboxCommand(registered).handler("mode host", ctx);
+        await entered.promise;
+        const supervisor = createBashProcessSupervisor();
+        let output = "";
+        const running = resolveBashOperations(supervisor).exec("printf forbidden-fallback", cwd, { onData: chunk => { output += chunk.toString(); } }).catch(error => error);
+        try {
+            await Bun.sleep(10);
+            starting.reject(new Error("replacement startup failed"));
+            await host;
+            expect(await running).toBeInstanceOf(Error);
+            expect(output).toBe("");
+            expect(currentShellPolicy()?.mode).toBe("sandbox");
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Sandbox mode was not applied: replacement startup failed");
+        } finally {
+            starting.resolve(); await host; await running;
+            supervisor.shutdown();
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        }
+    });
+
+    it("applies queued mode selections before releasing new shell launches", async () => {
+        await writeGlobalConfig({ host: { allowed: true } });
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await writeGlobalConfig({ host: { allowed: true }, network: { allowedDomains: ["added.example"] } });
+        const starting = deferred(); const entered = deferred();
+        initialize.mockImplementationOnce(() => { entered.resolve(); return starting.promise; });
+        const host = sandboxCommand(registered).handler("mode host", ctx);
+        await entered.promise;
+        const sandbox = sandboxCommand(registered).handler("mode sandbox", ctx);
+        const supervisor = createBashProcessSupervisor();
+        const launches = prepareBash.mock.calls.length;
+        const running = resolveBashOperations(supervisor).exec("printf final-mode", cwd, { onData() {} });
+        try {
+            await Bun.sleep(10);
+            expect(prepareBash.mock.calls.length).toBe(launches);
+            starting.resolve();
+            await Promise.all([host, sandbox]);
+            expect(await running).toEqual({ exitCode: 0 });
+            expect(currentShellPolicy()?.mode).toBe("sandbox");
+            expect(prepareBash.mock.calls.length).toBe(launches + 1);
+            expect(notifyCalls(ctx).filter(([value]) => String(value).startsWith("Session mode:")).map(([value]) => value)).toEqual(["Session mode: host (host)", "Session mode: sandbox (custom)"]);
+        } finally {
+            starting.resolve(); await Promise.all([host, sandbox]); await running.catch(() => undefined);
+            supervisor.shutdown();
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        }
+    });
+
+    it("does not commit an in-flight mode request after session shutdown", async () => {
+        await writeGlobalConfig({ host: { allowed: true } });
+        const registered = registerSandbox(); const ctx = context(cwd);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        await writeGlobalConfig({ host: { allowed: true }, network: { allowedDomains: ["added.example"] } });
+        const starting = deferred(); const entered = deferred();
+        initialize.mockImplementationOnce(() => { entered.resolve(); return starting.promise; });
+        const host = sandboxCommand(registered).handler("mode host", ctx);
+        await entered.promise;
+        try {
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+            starting.resolve(); await host;
+            expect(currentShellPolicy()).toBeUndefined();
+            expect(getSandboxRuntime().state).toBe("uninitialized");
+            expect(notifyCalls(ctx).some(([value]) => String(value).startsWith("Session mode: host"))).toBe(false);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Sandbox mode was not applied:");
+        } finally {
+            starting.resolve(); await host;
+        }
+    });
+
     it("lets an admitted operation drain after mode revocation", async () => {
         await writeHostCeiling(cwd, {}, false);
         const registered = registerSandbox();

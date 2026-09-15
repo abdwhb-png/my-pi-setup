@@ -157,6 +157,14 @@ test.skipIf(
                 status: "unsandboxed", backend: "local", mode: "host",
                 shellProfile: "host", exitCode: 0, outcome: "succeeded",
             } } });
+            await session.session.prompt("/sandbox mode sandbox");
+            expect(currentShellPolicy()).toMatchObject({ mode: "sandbox", profile });
+            const restoredEvent = await session.session.extensionRunner.emitUserBash({
+                type: "user_bash", command, cwd, excludeFromContext: false,
+            });
+            const restored = await session.session.executeBash(command, undefined, { operations: restoredEvent?.operations });
+            expect(restored.exitCode).toBe(0);
+            expect(restored.output).toBe(sandboxResult.output);
             expect(await readFile(leaseCreated, "utf8")).toBe("created");
             expect(await readFile(leaseRecovered, "utf8")).toBe("recovered");
             const typescriptPreflights = analysisRequests.filter(

@@ -19,6 +19,7 @@ For a project path outside its global ceiling, fix the configuration error expli
 | Unknown or reserved field | Use the v2 schema. Remove project fields reserved for global authority. False or inactive values do not exempt a field from validation. |
 | Host mode outside the global ceiling | Inspect global `host.allowed`. Host execution also needs an explicit `/sandbox mode host` selection in the current session. |
 | Shell policy changed during preparation | The pending command was not dispatched. Inspect the current mode and configuration before submitting it again. |
+| Sandbox mode was not applied | The requested transition failed, was superseded, or belonged to a session that ended. Read the accompanying cause. Waiting shell commands did not fall back to the old mode. |
 | Tool not found or unreadable | Run `/sandbox doctor <executable>` and check configured PATH and the canonical executable target's read grant. A PATH entry alone grants no read permission. |
 | Selected installation is unavailable or redirected | Inspect the global installation root. It must be a directory at its declared canonical path; preview can rewrite a root to its canonical path before it is saved. |
 | Project installation name is rejected | Declare that name globally first. A project can select global names only and cannot add or reorder roots. |

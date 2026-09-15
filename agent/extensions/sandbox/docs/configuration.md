@@ -25,6 +25,21 @@ Read and write allowlists use paths, not glob patterns. Use `~/projects`, withou
 
 Resolve relative paths from the canonical project root, including `.`. Use `~/…` for paths relative to the user's HOME. Filesystem allowlists take literal paths. Deny lists also accept globs: a pattern without a slash matches at any project depth, while a pattern containing a slash is project-relative.
 
+Global `denyReadWhenExternal` and `denyWriteWhenExternal` protect literal absolute or `~/…` roots only while the current project is outside the protected root. A project opened at that root or within one of its descendants keeps its ordinary current-project access. Opening Pi from a parent directory does not remove the protection. These fields are reserved to the global authority; project configuration cannot remove or define them. The resolved policy converts applicable entries into ordinary effective denials, so admission reports, diagnostics and the widget describe the restrictions actually applied.
+
+For example, expose a shared projects directory while keeping one project private from every other project:
+
+```json
+{
+  "filesystem": {
+    "allowRead": ["~/projects"],
+    "denyReadWhenExternal": ["~/projects/Foundry-AI"]
+  }
+}
+```
+
+Add `denyWriteWhenExternal` for the same root only when external writes are otherwise allowed and must also be blocked. Ordinary `denyRead` and `denyWrite` remain unconditional, including when Pi is opened inside the denied root.
+
 ## Editing ordinary resources
 
 For example, add these fields to the existing global document, preserving `version` and `machineId`:
@@ -151,6 +166,8 @@ The server remains inside Zerobox. Publication activates only after its private 
 Set global `host: { "allowed": true }` to permit host execution, then select it explicitly with `/sandbox mode host` in the current session. The global value alone does not switch a session to the host. Project `host` and `mode: "host"` are refused. Missing `host.allowed` denies access. Legacy global `mode` is accepted with a deprecation diagnostic, and explicit `host.allowed` takes precedence. `/sandbox migrate` rewrites the legacy alias; an already-current configuration produces no changes or archives. Return with `/sandbox mode sandbox`.
 
 The displayed profile is derived from the effective configuration: `default` for the baseline, `custom` when it differs, and `host` for host execution. Restrictions can also produce `custom`. Restoring the baseline restores `default`. Do not configure a profile or use decision labels such as D1 as selectors.
+
+Changing the session mode reuses an enabled runtime when its configuration is unchanged. Mode requests are applied in order; new ordinary shell and `!s` launches wait for pending mode changes instead of starting competing reconfigurations. Existing admitted commands retain their original execution context. If preparation fails or the session changes, the requested mode is not applied and waiting launches fail explicitly. The widget shows the applied mode after completion. `!s` continues to request sandbox execution without changing that mode.
 
 ## Applying and migrating changes
 

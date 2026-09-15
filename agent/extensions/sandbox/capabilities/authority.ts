@@ -49,6 +49,8 @@ export interface GlobalSandboxConfig extends SandboxConfigLayer {
     machineId: string;
 }
 
+const PATH_GLOB_META = /[*?[\]{}]/;
+
 export function emptyGrants(): CapabilityGrants {
     return {
         domains: [],
@@ -101,6 +103,36 @@ function known(
 ): void {
     for (const key of Object.keys(value))
         if (!fields.includes(key)) invalid(`Unknown ${scope} field: ${key}`);
+}
+function stableLiteralPaths(
+    filesystem: NonNullable<SandboxConfigLayer["filesystem"]>,
+    key: "denyReadWhenExternal" | "denyWriteWhenExternal",
+): void {
+    const value = filesystem[key];
+    const field = `global filesystem.${key}`;
+    if (value === undefined) return;
+    if (!Array.isArray(value)) invalid(`${field} must be a string array`);
+    for (const path of value) {
+        if (typeof path !== "string")
+            invalid(`${field} must be a string array`);
+        if (
+            PATH_GLOB_META.test(path) ||
+            (path !== "~" && !path.startsWith("~/") && !isAbsolute(path))
+        )
+            invalid(
+                `${field} entries must be absolute or home-relative literal paths`,
+            );
+    }
+}
+function ordinaryFilesystemFields(
+    filesystem: NonNullable<SandboxConfigLayer["filesystem"]>,
+): NonNullable<SandboxConfigLayer["filesystem"]> {
+    const {
+        denyReadWhenExternal: _denyReadWhenExternal,
+        denyWriteWhenExternal: _denyWriteWhenExternal,
+        ...ordinary
+    } = filesystem;
+    return ordinary;
 }
 function safeFile(path: string, description: string): void {
     const metadata = lstatSync(path);
@@ -175,12 +207,28 @@ function validateLayer(
             scope + ".network",
         );
     }
-    if (layer.filesystem !== undefined) {
+    const configuredFilesystem =
+        layer.filesystem === undefined
+            ? undefined
+            : record(layer.filesystem, scope + ".filesystem");
+    if (configuredFilesystem !== undefined) {
         known(
-            record(layer.filesystem, scope + ".filesystem"),
-            ["allowRead", "denyRead", "allowWrite", "denyWrite"],
+            configuredFilesystem,
+            [
+                "allowRead",
+                "denyRead",
+                "allowWrite",
+                "denyWrite",
+                ...(scope === "global"
+                    ? ["denyReadWhenExternal", "denyWriteWhenExternal"]
+                    : []),
+            ],
             scope + ".filesystem",
         );
+        if (scope === "global") {
+            stableLiteralPaths(configuredFilesystem, "denyReadWhenExternal");
+            stableLiteralPaths(configuredFilesystem, "denyWriteWhenExternal");
+        }
     }
     if (layer.environment !== undefined) {
         known(
@@ -202,7 +250,17 @@ function validateLayer(
             scope + ".resources",
         );
     }
-    const { mode: _mode, host: _host, docker: _docker, ...generic } = layer;
+    const {
+        mode: _mode,
+        host: _host,
+        docker: _docker,
+        filesystem: _filesystem,
+        ...generic
+    } = layer;
+    const ordinaryFilesystem =
+        configuredFilesystem === undefined
+            ? undefined
+            : ordinaryFilesystemFields(configuredFilesystem);
     const environment =
         layer.environment === undefined
             ? undefined
@@ -212,7 +270,13 @@ function validateLayer(
     else parseInstallationSelection(environment?.installations, scope);
     const { installations: _installations, ...ordinaryEnvironment } =
         environment ?? {};
-    validatePiSandboxConfig({ ...generic, environment: ordinaryEnvironment });
+    validatePiSandboxConfig({
+        ...generic,
+        ...(ordinaryFilesystem === undefined
+            ? {}
+            : { filesystem: ordinaryFilesystem }),
+        environment: ordinaryEnvironment,
+    });
     return layer as SandboxConfigLayer;
 }
 export function readGlobalSandboxConfig(

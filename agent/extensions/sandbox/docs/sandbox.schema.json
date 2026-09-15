@@ -93,7 +93,19 @@
                 "type": "string"
               }
             },
+            "denyReadWhenExternal": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "denyWrite": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "denyWriteWhenExternal": {
               "type": "array",
               "items": {
                 "type": "string"
