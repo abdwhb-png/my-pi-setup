@@ -32,11 +32,12 @@ test.each([
         await running;
         expect(session.session.getActiveToolNames()).toContain(active);
         expect(session.session.getActiveToolNames()).not.toContain(active === "bash" ? "safe_bash" : "bash");
-        expect(modelContext.includes("safe_bash: Tool availability=")).toBe(active === "safe_bash");
-        expect(modelContext).toContain("Shell policy context is unavailable");
+        expect(modelContext).not.toContain("Current shell execution context");
         const tool = session.session.getToolDefinition(active)!;
         const payload = await session.session.extensionRunner!.emitBeforeProviderRequest({ instructions: modelSystem, input: [], tool_choice: "auto", tools: [{ type: "function", name: active, description: tool.description, parameters: tool.parameters }] });
         const wire = JSON.stringify(payload);
+        expect(wire.includes("safe_bash: Tool availability=")).toBe(active === "safe_bash");
+        expect(wire).toContain("Shell policy context is unavailable");
         expect(wire).toContain("When a command targets another execution environment");
         expect(wire.includes("Follow the current safe_bash command checks")).toBe(active === "safe_bash");
         const disabled = await session.session.extensionRunner!.emitBeforeProviderRequest({ instructions: "Use the available tools.", input: [], tool_choice: "none", tools: [{ type: "function", name: active, description: tool.description, parameters: tool.parameters }] });

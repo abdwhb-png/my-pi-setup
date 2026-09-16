@@ -1,4 +1,5 @@
 import type { BeforeProviderRequestEvent } from "@earendil-works/pi-coding-agent";
+import { rewriteProviderSystemPrompt } from "../provider-system-prompt.ts";
 import { toolPresentation, type PresentedTool } from "./presentation.ts";
 type ProviderPayload = BeforeProviderRequestEvent["payload"];
 
@@ -208,61 +209,6 @@ function deferredDefinitions(messages: ProviderPayload): PresentedTool[] {
     });
 }
 
-/** Modify only text blocks. Cache-control fields and non-text content stay intact. */
-function textField(
-    value: ProviderPayload,
-    transform: (text: string) => string,
-    append: boolean,
-    plainBlock = false,
-): ProviderPayload {
-    if (typeof value === "string") return transform(value);
-    if (value === undefined) return transform("");
-    if (!isArray(value)) throw new Error("Unrecognized system content");
-    let found = false;
-    const result = value.map((block) => {
-        if (!record(block) || typeof block.text !== "string") return block;
-        const text =
-            !found && append
-                ? transform(block.text)
-                : stripToolsCatalog(block.text);
-        found = true;
-        return { ...block, text };
-    });
-    if (!found && append)
-        result.push(
-            plainBlock
-                ? { text: transform("") }
-                : { type: "text", text: transform("") },
-        );
-    return result;
-}
-
-function messagePrompt(
-    messages: ProviderPayload,
-    transform: (text: string) => string,
-): ProviderPayload[] {
-    if (!isArray(messages)) throw new Error("Missing request messages");
-    let inserted = false;
-    const result = messages.map((message) => {
-        if (
-            !record(message) ||
-            message.type === "additional_tools" ||
-            (message.content === undefined && isArray(message.tools)) ||
-            (message.role !== "system" && message.role !== "developer")
-        )
-            return message;
-        const content = textField(
-            message.content,
-            inserted ? stripToolsCatalog : transform,
-            !inserted,
-        );
-        inserted = true;
-        return { ...message, content };
-    });
-    if (!inserted) result.unshift({ role: "system", content: transform("") });
-    return result;
-}
-
 function namedSelection(names: ProviderPayload): ToolSelection {
     if (!isArray(names) || !names.every((name) => typeof name === "string"))
         throw new Error("Invalid named tool selection");
@@ -380,7 +326,6 @@ export function injectProviderToolsCatalog(
     try {
         let tools: PresentedTool[];
         const selection = providerSelection(api, value);
-        let rewrite: (transform: (text: string) => string) => ProviderPayload;
         switch (api) {
             case "openai-completions":
             case "mistral-conversations":
@@ -388,87 +333,25 @@ export function injectProviderToolsCatalog(
                     ...definitions(value.tools),
                     ...deferredDefinitions(value.messages),
                 ];
-                rewrite = (transform) => ({
-                    ...value,
-                    messages: messagePrompt(value.messages, transform),
-                });
                 break;
             case "openai-responses":
             case "azure-openai-responses":
-            case "openai-codex-responses": {
-                if (!isArray(value.input))
-                    throw new Error("Missing Responses input");
-                const input = value.input;
+            case "openai-codex-responses":
                 tools = [
                     ...definitions(value.tools),
-                    ...deferredDefinitions(input),
+                    ...deferredDefinitions(value.input),
                 ];
-                rewrite = (transform) =>
-                    typeof value.instructions === "string"
-                        ? {
-                              ...value,
-                              instructions: transform(value.instructions),
-                              input: input.map((m) =>
-                                  record(m) &&
-                                  (m.role === "system" ||
-                                      m.role === "developer") &&
-                                  m.content !== undefined
-                                      ? {
-                                            ...m,
-                                            content: textField(
-                                                m.content,
-                                                stripToolsCatalog,
-                                                false,
-                                            ),
-                                        }
-                                      : m,
-                              ),
-                          }
-                        : { ...value, input: messagePrompt(input, transform) };
                 break;
-            }
             case "anthropic-messages":
-                if (!isArray(value.messages))
-                    throw new Error("Missing Anthropic messages");
                 tools = definitions(value.tools);
-                rewrite = (transform) => ({
-                    ...value,
-                    system: textField(value.system, transform, true),
-                });
                 break;
             case "google-generative-ai":
-            case "google-vertex": {
-                if (!record(value.config) || !isArray(value.contents))
+            case "google-vertex":
+                if (!record(value.config))
                     throw new Error("Missing Google config or contents");
-                const config = value.config;
-                tools = definitions(config.tools);
-                rewrite = (transform) => {
-                    const system = config.systemInstruction;
-                    return {
-                        ...value,
-                        config: {
-                            ...config,
-                            systemInstruction: record(system)
-                                ? {
-                                      ...system,
-                                      parts: textField(
-                                          system.parts === undefined
-                                              ? []
-                                              : system.parts,
-                                          transform,
-                                          true,
-                                          true,
-                                      ),
-                                  }
-                                : textField(system, transform, true),
-                        },
-                    };
-                };
+                tools = definitions(value.config.tools);
                 break;
-            }
             case "bedrock-converse-stream":
-                if (!isArray(value.messages))
-                    throw new Error("Missing Bedrock messages");
                 if (value.toolConfig !== undefined && !record(value.toolConfig))
                     throw new Error("Invalid Bedrock tool config");
                 tools = definitions(
@@ -476,32 +359,12 @@ export function injectProviderToolsCatalog(
                         ? value.toolConfig.tools
                         : undefined,
                 );
-                rewrite = (transform) => ({
-                    ...value,
-                    system:
-                        value.system === undefined
-                            ? [{ text: transform("") }]
-                            : textField(value.system, transform, true, true),
-                });
                 break;
-            case "pi-messages": {
-                if (!record(value.context) || !isArray(value.context.messages))
+            case "pi-messages":
+                if (!record(value.context))
                     throw new Error("Missing Pi context");
-                const context = value.context;
-                tools = definitions(context.tools);
-                rewrite = (transform) => ({
-                    ...value,
-                    context: {
-                        ...context,
-                        systemPrompt: textField(
-                            context.systemPrompt,
-                            transform,
-                            true,
-                        ),
-                    },
-                });
+                tools = definitions(value.context.tools);
                 break;
-            }
             default:
                 return {
                     supported: false,
@@ -516,8 +379,11 @@ export function injectProviderToolsCatalog(
         }
         tools = [...unique.values()];
         const selected = callableTools(tools, selection);
-        const payload = rewrite((prompt) =>
-            appendToolsListPrompt(prompt, tools, selection),
+        const payload = rewriteProviderSystemPrompt(
+            api,
+            value,
+            (prompt) => appendToolsListPrompt(prompt, tools, selection),
+            stripToolsCatalog,
         );
         return {
             supported: true,
