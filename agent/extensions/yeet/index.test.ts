@@ -8,6 +8,7 @@ mock.module('../_shared/file-search/fd-utils', () => ({
 
 import yeetExtension, {
     executeCommit,
+    getRejectionReason,
     validateCommitCwd,
     validateCommitFiles,
 } from './index';
@@ -1248,5 +1249,85 @@ describe('propose_commit_plan commit feedback', () => {
         const rendered = component.render(100).join('\n');
         expect(rendered).toContain('error');
         expect(rendered).toContain('fatal: bad');
+    });
+
+    it('renders a cancelled summary from details', () => {
+        const { tool } = registerFeedbackTool();
+        if (!tool.renderResult) throw new Error('renderResult missing');
+
+        const component = tool.renderResult(
+            { content: [], details: { accepted: false, cancelled: true, cwd: '/repo', files: [], plan_summary: '', commit_message: '' } },
+            { expanded: true, isPartial: false },
+            { fg: (color: string, t: string) => `[${color}]${t}` },
+            { toolCallId: 't3' },
+        );
+
+        const rendered = component.render(100).join('\n');
+        expect(rendered.trim()).toBe('[dim]⊘ commit flow cancelled');
+    });
+
+    it('renders a rejection summary without reason from details', () => {
+        const { tool } = registerFeedbackTool();
+        if (!tool.renderResult) throw new Error('renderResult missing');
+
+        const component = tool.renderResult(
+            { content: [], details: { accepted: false, cancelled: false, rejection_reason: '   ', cwd: '/repo', files: [], plan_summary: '', commit_message: '' } },
+            { expanded: true, isPartial: false },
+            { fg: (color: string, t: string) => `[${color}]${t}` },
+            { toolCallId: 't4' },
+        );
+
+        const rendered = component.render(100).join('\n');
+        expect(rendered.trim()).toBe('[dim]⊘ plan rejected');
+    });
+
+    it('renders a rejection summary with reason from details', () => {
+        const { tool } = registerFeedbackTool();
+        if (!tool.renderResult) throw new Error('renderResult missing');
+
+        const component = tool.renderResult(
+            { content: [], details: { accepted: false, cancelled: false, rejection_reason: 'Split the refactor from the fix.', cwd: '/repo', files: [], plan_summary: '', commit_message: '' } },
+            { expanded: true, isPartial: false },
+            { fg: (color: string, t: string) => `[${color}]${t}` },
+            { toolCallId: 't5' },
+        );
+
+        const rendered = component.render(100).join('\n');
+        expect(rendered.trim()).toBe('[dim]⊘ plan rejected: Split the refactor from the fix.');
+    });
+});
+
+describe('getRejectionReason', () => {
+    it('returns undefined for undefined or null result', () => {
+        expect(getRejectionReason(undefined)).toBeUndefined();
+        expect(getRejectionReason(null)).toBeUndefined();
+    });
+
+    it('returns undefined when cancelled is true even if rejection_reason is provided', () => {
+        expect(
+            getRejectionReason({
+                cancelled: true,
+                rejection_reason: 'user decided to abort',
+            }),
+        ).toBeUndefined();
+    });
+
+    it('returns undefined when rejection_reason is missing or whitespace only', () => {
+        expect(getRejectionReason({ cancelled: false })).toBeUndefined();
+        expect(
+            getRejectionReason({ cancelled: false, rejection_reason: '' }),
+        ).toBeUndefined();
+        expect(
+            getRejectionReason({ cancelled: false, rejection_reason: '   \n  ' }),
+        ).toBeUndefined();
+    });
+
+    it('returns trimmed reason when cancelled is false and reason is provided', () => {
+        expect(
+            getRejectionReason({
+                cancelled: false,
+                rejection_reason: '  Split refactor from fix  ',
+            }),
+        ).toBe('Split refactor from fix');
     });
 });

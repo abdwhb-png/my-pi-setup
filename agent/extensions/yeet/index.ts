@@ -186,6 +186,19 @@ export async function executeCommit(
     }
 }
 
+/**
+ * Extract the non-empty trimmed rejection reason if the plan was rejected (not cancelled).
+ */
+export function getRejectionReason(
+    result?: { cancelled?: boolean; rejection_reason?: string } | null,
+): string | undefined {
+    if (!result || result.cancelled) {
+        return undefined;
+    }
+    const reason = result.rejection_reason?.trim();
+    return reason || undefined;
+}
+
 export default function (pi: ExtensionAPI) {
     let activeYeet: ActiveYeetTransition | null = null;
     let queuedYeet: YeetRequest | null = null;
@@ -602,7 +615,7 @@ export default function (pi: ExtensionAPI) {
 
             // Reject (Ctrl+R) → repropose
             if (!result.cancelled) {
-                const rejectionReason = result.rejection_reason?.trim();
+                const rejectionReason = getRejectionReason(result);
                 return {
                     content: [
                         {
@@ -654,12 +667,15 @@ export default function (pi: ExtensionAPI) {
                 typeof theme?.fg === "function" ? theme.fg(color, text) : text;
 
             if (!details || !details.accepted) {
+                const rejectionReason = getRejectionReason(details);
                 return new Text(
                     fg(
                         "dim",
                         details?.cancelled
                             ? "⊘ commit flow cancelled"
-                            : "⊘ plan rejected",
+                            : rejectionReason
+                              ? `⊘ plan rejected: ${rejectionReason}`
+                              : "⊘ plan rejected",
                     ),
                     0,
                     0,
