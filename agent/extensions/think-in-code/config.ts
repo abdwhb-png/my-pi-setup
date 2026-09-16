@@ -13,7 +13,11 @@
 
 import { homedir } from "node:os";
 import type { SettingsManager } from "@earendil-works/pi-coding-agent";
-import { DANGER_GROUP_IDS } from "../_shared/command-execution/guard.ts";
+import {
+    DANGER_GROUP_IDS,
+    isAllowedShellCommand,
+    type AllowedShellCommand,
+} from "../_shared/command-execution/guard.ts";
 import type { CommandGuardPolicy } from "../_shared/command-execution/policy.ts";
 import {
     normalizeCommandRewriteRules,
@@ -52,7 +56,7 @@ export const DEFAULT_THINK_IN_CODE_CONFIG: ThinkInCodeConfig = Object.freeze({
 });
 
 export interface ThinkCommandPolicyConfig {
-    allowedShellCommands: string[];
+    allowedShellCommands: AllowedShellCommand[];
     guardPolicy: Record<string, CommandGuardPolicy>;
     rewrites: BashRewriteRule[];
 }
@@ -188,9 +192,7 @@ function normalizeCommandPolicy(raw: unknown): ThinkCommandPolicyConfig {
     const record = raw as Record<string, unknown>;
     return {
         allowedShellCommands: Array.isArray(record.allowedShellCommands)
-            ? record.allowedShellCommands.filter(
-                  (entry): entry is string => typeof entry === "string",
-              )
+            ? record.allowedShellCommands.filter(isAllowedShellCommand)
             : [...defaults.allowedShellCommands],
         guardPolicy: Object.hasOwn(record, "guardPolicy")
             ? normalizeGuardPolicy(record.guardPolicy)

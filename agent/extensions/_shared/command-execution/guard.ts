@@ -439,11 +439,43 @@ function toScope(
 }
 
 /**
+ * Canonical list of shell commands (by first word) that have a native Pi tool
+ * equivalent and can therefore be allow-listed to bypass native-tool
+ * redirection. Single source of truth for `AllowedShellCommand` and for
+ * validating `allowedShellCommands` in settings.json.
+ */
+export const ALLOWED_SHELL_COMMANDS = [
+    "grep",
+    "rg",
+    "find",
+    "fd",
+    "ls",
+    "ack",
+    "ag",
+] as const;
+
+/** Shell command name accepted in `allowedShellCommands`. */
+export type AllowedShellCommand = (typeof ALLOWED_SHELL_COMMANDS)[number];
+
+/** Membership check for `allowedShellCommands` values. */
+export function isAllowedShellCommand(
+    value: unknown,
+): value is AllowedShellCommand {
+    return (
+        typeof value === "string" &&
+        ALLOWED_SHELL_COMMANDS.some((command) => command === value)
+    );
+}
+
+/**
  * Shell commands that have native Pi tool equivalents, mapped to their
  * native tool names. When the LLM tries to use these via safe_bash, we
  * redirect it to the better native implementation.
+ *
+ * Keyed by `AllowedShellCommand`, so the compiler rejects an allow-listed
+ * command that has no native target.
  */
-const SHELL_TO_NATIVE_MAP: Record<string, string> = {
+const SHELL_TO_NATIVE_MAP: Record<AllowedShellCommand, string> = {
     grep: "grep",
     rg: "grep",
     find: "find",
@@ -476,7 +508,9 @@ export function redirectShellCommand(
 ): string | null {
     const first = firstWord(command);
     if (!first) return null;
-    const native = SHELL_TO_NATIVE_MAP[first];
+    const native = isAllowedShellCommand(first)
+        ? SHELL_TO_NATIVE_MAP[first]
+        : undefined;
     if (!native) return null;
 
     const toolName =
@@ -502,10 +536,11 @@ export function redirectShellCommand(
  * When `enforceNative` is false (audit / advanced profiles), redirection is
  * relaxed: returns null so the command is allowed through.
  *
- * `allowList` (optional) bypasses redirection for specific commands by first
- * word, regardless of profile. Useful when the user explicitly wants a shell
- * command (e.g. `grep`, `find`) to run through safe_bash instead of the native
- * tool. `isDangerous()` still runs upstream — only the redirect is bypassed.
+ * `allowList` (optional) bypasses redirection for commands listed by first
+ * word, from the closed `AllowedShellCommand` set, regardless of profile.
+ * Useful when the user explicitly wants a shell command (e.g. `grep`, `find`)
+ * to run through safe_bash instead of the native tool. `isDangerous()` still
+ * runs upstream — only the redirect is bypassed.
  *
  * The caller (safe-bash/index.ts) is responsible for reading the active
  * policy flag via shouldEnforceNativeTools() before calling this function.

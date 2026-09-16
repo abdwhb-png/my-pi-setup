@@ -20,6 +20,7 @@ import { classifySafeExecutionError, SafeExecutionError } from "./failure.ts";
 import {
     inspectDangerousMatches,
     redirectShellCommandWithPolicy,
+    type AllowedShellCommand,
     type DangerMatch,
 } from "./guard.ts";
 import {
@@ -104,7 +105,7 @@ export interface CommandExecutionServiceOptions<
     Operation extends CommandRewriteProfile,
 > {
     approvals: GuardSessionApprovals;
-    getAllowedShellCommands(): readonly string[];
+    getAllowedShellCommands(): readonly AllowedShellCommand[];
     getGuardPolicy(): Readonly<Record<string, CommandGuardPolicy>>;
     getRewriteRules(): readonly BashRewriteRule[];
     getTelemetryRecorder(): CommandExecutionTelemetryRecorder<Operation> | null;

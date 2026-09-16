@@ -425,6 +425,12 @@ The installed `settings.json` preserves the previous effective Think behavior
 with `sudo: "allow"`, an empty shell allowlist and no rewrites. The example
 configuration stays conservative with no allowed guard group.
 
+`allowedShellCommands` is the native-redirect exception list and accepts only
+the shell commands with a native Pi tool equivalent — `grep`, `rg`, `find`,
+`fd`, `ls`, `ack`, `ag` (`AllowedShellCommand` from
+`_shared/command-execution/guard.ts`). Any other entry is dropped during
+normalization.
+
 ## Think audit
 
 `/think-audit` reads only the current project's Think telemetry. The audit

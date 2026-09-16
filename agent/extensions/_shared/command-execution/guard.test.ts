@@ -23,6 +23,23 @@ describe('bash guard', () => {
             redirectShellCommandWithPolicy('grep needle file', true, ['grep']),
         ).toBeNull();
     });
+
+    it('prevents an unrecognized allow-list entry from bypassing redirect', () => {
+        expect(
+            redirectShellCommandWithPolicy('grep needle file', true, [
+                'rgp',
+            ]),
+        ).toContain("Use native 'grep' tool");
+    });
+
+    it('only recognizes exact, unmasked first words as redirectable', () => {
+        // `Grep` and a `sudo` prefix are not recognized redirect targets, so
+        // they pass through regardless of the allow-list.
+        expect(redirectShellCommandWithPolicy('Grep needle', true, ['grep'])).toBeNull();
+        expect(
+            redirectShellCommandWithPolicy('sudo grep needle', true, ['grep']),
+        ).toBeNull();
+    });
 });
 
 describe('inspectDeleteScope rm', () => {

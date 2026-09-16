@@ -8,7 +8,11 @@
  * fall back to defaults while valid global/project fields merge per layer.
  */
 import type { SettingsManager } from "@earendil-works/pi-coding-agent";
-import { DANGER_GROUP_IDS } from "../../_shared/command-execution/guard.ts";
+import {
+    DANGER_GROUP_IDS,
+    isAllowedShellCommand,
+    type AllowedShellCommand,
+} from "../../_shared/command-execution/guard.ts";
 import type { CommandGuardPolicy } from "../../_shared/command-execution/policy.ts";
 import { loadExtensionConfig } from "../../_shared/config-loader.ts";
 import { SAFE_BASH_AUDIT_BOUNDS } from "./telemetry/types.ts";
@@ -32,8 +36,9 @@ export interface SafeBashConfig {
      * Shell commands (by first word) allowed to bypass native-tool redirection
      * in standard profile. Empty = redirection enforced as usual.
      * `isDangerous()` still runs on these commands — only the redirect is bypassed.
+     * Only `AllowedShellCommand` values are accepted; unknown entries are dropped.
      */
-    allowedShellCommands: string[];
+    allowedShellCommands: AllowedShellCommand[];
     /** Per-danger-group action. Missing groups default to `deny`. */
     guardPolicy: Record<string, SafeBashGuardPolicy>;
     /** Local, redacted command-attempt telemetry used by `/safe-bash-audit`. */
@@ -114,9 +119,7 @@ export function normalizeSafeBashConfig(raw: unknown): Partial<SafeBashConfig> {
 
     const allowed = obj.allowedShellCommands;
     if (Array.isArray(allowed)) {
-        const filtered = allowed.filter(
-            (entry): entry is string => typeof entry === "string",
-        );
+        const filtered = allowed.filter(isAllowedShellCommand);
         if (filtered.length > 0) {
             result.allowedShellCommands = filtered;
         }

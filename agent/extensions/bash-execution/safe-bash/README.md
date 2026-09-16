@@ -16,7 +16,8 @@ independently of shell mode. See [the mode contract](../../sandbox/docs/shell-ca
 In sandbox mode, Safe Bash receives the same private `/__zerobox/runtime` shell as `bash`; it does not inherit host PATH or environment values. A selected global installation can add only its authorized read-only roots and declared command directories. Safe Bash checks remain in front of this route and do not become installation permissions.
 
 Both shell tools share stable presentation and execution guidance. Current
-sandbox facts and Safe Bash checks appear in one ephemeral model context.
+sandbox facts and Safe Bash checks appear in a temporary system-prompt block
+for each provider request, without adding a conversation message.
 Per-tool rewrites and additional Safe Bash checks remain independent. See the
 [design and validation record](../../../../docs/brainstorming/2026-09-12-shared-shell-context-design.md).
 
@@ -77,6 +78,28 @@ Setting `cwd-only` in the global `settings.json` makes in-cwd deletes the defaul
     }
 }
 ```
+
+## Allowed shell commands
+
+Configure under `safeBash.allowedShellCommands`:
+
+```json
+{
+    "safeBash": {
+        "allowedShellCommands": ["grep", "find"]
+    }
+}
+```
+
+Purpose: bypass **native-tool redirection only**. `isDangerous()` and every guard group still run on these commands, so this is not a guard allow.
+
+Accepted values are a closed set — the shell commands that have a native Pi tool equivalent: `grep`, `rg`, `find`, `fd`, `ls`, `ack`, `ag`. They map to the native tools `grep`, `find`, and `ls`. The type is `AllowedShellCommand[]`, defined once in [`_shared/command-execution/guard.ts`](../_shared/command-execution/guard.ts) next to the redirect map.
+
+Matching is by first word of the normalized command, exact match: no prefixes, no arguments, no case folding, and no leading `sudo`. `"grep -r"`, `"Grep"`, and `"sudo grep"` never match this list. Only the listed commands are redirected in the first place, so a command such as `sudo grep …` passes through whether or not it appears here. Entries outside the set are dropped during config normalization, so a typo silently removes the bypass rather than widening it.
+
+The list applies only while native-tool redirection is enforced (standard profile). In relaxed profiles redirection is already off and the list has no effect.
+
+Verify with `/safe-bash status`, or read the `AllowedShell (native-redirect exceptions): bypass=[…]` line in the temporary system-prompt block.
 
 ## Telemetry configuration
 

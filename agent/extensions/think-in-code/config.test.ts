@@ -112,6 +112,26 @@ describe("think-in-code config", () => {
         });
     });
 
+    it("drops allowed shell commands without a native redirect", () => {
+        const normalized = normalizeThinkInCodeConfig({
+            commandPolicy: {
+                allowedShellCommands: ["grep", "rgp", 42],
+            },
+        });
+
+        expect(normalized.commandPolicy.allowedShellCommands).toEqual([
+            "grep",
+        ]);
+    });
+
+    it("falls back to an empty allowlist when no entry has a native redirect", () => {
+        const normalized = normalizeThinkInCodeConfig({
+            commandPolicy: { allowedShellCommands: ["rgp"] },
+        });
+
+        expect(normalized.commandPolicy.allowedShellCommands).toEqual([]);
+    });
+
     it("never widens the fixed Think audit bounds", () => {
         const normalized = normalizeThinkInCodeConfig({
             telemetry: {

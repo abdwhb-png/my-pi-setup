@@ -69,6 +69,40 @@ describe('normalizeSafeBashConfig', () => {
         });
     });
 
+    it('drops allowedShellCommands entries without a native redirect', () => {
+        expect(
+            normalizeSafeBashConfig({
+                allowedShellCommands: [
+                    'grep',
+                    'rgp',
+                    'Grep',
+                    'grep -r',
+                    'sudo',
+                ],
+            } as any),
+        ).toEqual({
+            allowedShellCommands: ['grep'],
+        });
+    });
+
+    it('preserves the order of valid allowedShellCommands entries', () => {
+        expect(
+            normalizeSafeBashConfig({
+                allowedShellCommands: ['find', 'nonsense', 'grep'],
+            } as any),
+        ).toEqual({
+            allowedShellCommands: ['find', 'grep'],
+        });
+    });
+
+    it('drops allowedShellCommands when no entry has a native redirect', () => {
+        expect(
+            normalizeSafeBashConfig({
+                allowedShellCommands: ['rgp'],
+            } as any),
+        ).toEqual({});
+    });
+
     it('rejects allowedShellCommands that is not an array', () => {
         expect(
             normalizeSafeBashConfig({ allowedShellCommands: 'grep' } as any),

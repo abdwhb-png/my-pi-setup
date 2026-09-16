@@ -35,13 +35,14 @@ import { shouldEnforceNativeTools } from "../../_shared/audit-mode/audit-tool-ro
 import { createCommandExecutionService } from "../../_shared/command-execution/core.ts";
 import { safeBashSchema } from "../../_shared/command-execution/exec";
 import { isSafeExecutionError } from "../../_shared/command-execution/failure.ts";
+import type { AllowedShellCommand } from "../../_shared/command-execution/guard.ts";
 import { GuardSessionApprovals } from "../../_shared/command-execution/policy.ts";
 import { createBashPrefixRenderer } from "../../_shared/command-execution/prefix-renderer";
 import { loadBashRewrites } from "../../_shared/command-execution/rewrites";
 import { appendCompressionFooter } from "../../_shared/compression-render";
 import type { SandboxBashOperationOptions } from "../../_shared/sandbox-runtime/index.ts";
 import { CapabilityError } from "../../_shared/shell-capability-error.ts";
-import { updateShellContext } from "../../_shared/shell-presentation/context.ts";
+import { registerShellContext } from "../../_shared/shell-presentation/context.ts";
 import { shellToolPresentation } from "../../_shared/shell-presentation/index.ts";
 import { shouldBlockBashCall } from "./apply-mode.ts";
 import { registerSafeBashAuditCommand } from "./audit-command.ts";
@@ -72,7 +73,7 @@ export function registerSafeBash(
     const bashDefinition = createBashToolDefinition(process.cwd());
 
     let currentMode: SafeBashMode = "coexist";
-    let currentAllowedShellCommands: string[] = [];
+    let currentAllowedShellCommands: AllowedShellCommand[] = [];
     let currentGuardPolicy: Record<string, SafeBashGuardPolicy> = {};
     const guardSessionApprovals = new GuardSessionApprovals();
     let currentRewriteRules = loadBashRewrites(process.cwd()).rules;
@@ -254,15 +255,11 @@ export function registerSafeBash(
     pi.on("before_agent_start", () => {
         visibility.refresh();
     });
-    pi.on("context", (event) => ({
-        messages: updateShellContext(
-            event.messages,
-            "checks",
-            pi.getActiveTools().includes("safe_bash")
-                ? buildSafeBashContext(getSafeBashDescriptionInput())
-                : undefined,
-        ),
-    }));
+    registerShellContext(pi, "checks", () =>
+        pi.getActiveTools().includes("safe_bash")
+            ? buildSafeBashContext(getSafeBashDescriptionInput())
+            : undefined,
+    );
 
     pi.on("agent_end", () => {
         auditRecommendationTurnActive = false;
