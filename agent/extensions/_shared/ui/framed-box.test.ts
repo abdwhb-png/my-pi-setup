@@ -580,4 +580,14 @@ describe("BoxRenderer", () => {
     expect(() => getInner()).not.toThrow();
     expect(getInner()).toBe(96);
   });
+
+  it("reports the max visual-row scroll offset", () => {
+    const box = new BoxRenderer(theme, 40, { viewportHeight: 2 });
+    box.setContent(["one", "two", "three"]);
+
+    expect(box.getMaxScroll()).toBe(1);
+
+    box.setContent(["one", "two"]);
+    expect(box.getMaxScroll()).toBe(0);
+  });
 });

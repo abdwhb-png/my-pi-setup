@@ -26,15 +26,14 @@ import type {
     ExtensionContext,
     ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
     Key,
-    Text,
     matchesKey,
     type Component,
     type TUI,
 } from "@earendil-works/pi-tui";
 import { requestMarkdownLinkTransform } from "./_shared/markdown-links.ts";
+import { BoxRenderer } from "./_shared/ui/framed-box.ts";
 import { createUiColors } from "./_shared/ui/ui-colors.ts";
 
 function formatUsd(cost: number): string {
@@ -385,17 +384,10 @@ type ContextViewData = {
 };
 
 export class ContextView implements Component {
-    private theme: any;
     private readonly tui: TUI;
+    private readonly theme: any;
     private readonly onDone: () => void;
     private readonly data: ContextViewData;
-    private readonly topBorder: DynamicBorder;
-    private readonly heading: Text;
-    private readonly spacer: Text;
-    private readonly body: Text;
-    private readonly footer: Text;
-    private readonly bottomBorder: DynamicBorder;
-    private cachedWidth?: number;
     private scrollOffset = 0;
     private maxScroll = 0;
     private viewportRows = 1;
@@ -406,116 +398,99 @@ export class ContextView implements Component {
         data: ContextViewData,
         onDone: () => void,
     ) {
-        this.theme = theme;
         this.tui = tui;
+        this.theme = theme;
         this.data = data;
         this.onDone = onDone;
-
-        const colors = createUiColors(theme);
-        this.topBorder = new DynamicBorder((s) => colors.primary(s));
-        this.heading = new Text(colors.primary(theme.bold("Context")), 1, 0);
-        this.spacer = new Text("", 1, 0);
-        this.body = new Text("", 1, 0);
-        this.footer = new Text("", 1, 0);
-        this.bottomBorder = new DynamicBorder((s) => colors.primary(s));
     }
 
-    private rebuild(width: number): void {
+    private buildContentLines(contentWidth: number): string[] {
         const colors = createUiColors(this.theme);
         const muted = (s: string) => colors.meta(s);
         const dim = (s: string) => colors.subtle(s);
         const text = (s: string) => colors.text(s);
+        const heading = (s: string) => colors.primary(this.theme.bold(s));
+        const lines: string[] = [heading("CONTEXT WINDOW")];
 
-        const lines: string[] = [];
-
-        // Window + bar
         if (!this.data.usage) {
             lines.push(muted("Window: ") + dim("(unknown)"));
         } else {
-            const u = this.data.usage;
+            const usage = this.data.usage;
             lines.push(
                 muted("Window: ") +
                     text(
-                        `~${u.effectiveTokens.toLocaleString()} / ${u.contextWindow.toLocaleString()}`,
+                        `~${usage.effectiveTokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()}`,
                     ) +
                     muted(
-                        `  (${u.percent.toFixed(1)}% used, ~${u.remainingTokens.toLocaleString()} left)`,
+                        `  (${usage.percent.toFixed(1)}% used, ~${usage.remainingTokens.toLocaleString()} left)`,
                     ),
             );
 
-            // bar width tries to fit within the viewport
-            const barWidth = Math.max(10, Math.min(36, width - 10));
-
-            // Prorate system prompt into current message context estimate, then add tools estimate.
+            const barWidth = Math.max(10, Math.min(36, contentWidth - 30));
             const sysInMessages = Math.min(
-                u.systemPromptTokens,
-                u.messageTokens,
+                usage.systemPromptTokens,
+                usage.messageTokens,
             );
             const convoInMessages = Math.max(
                 0,
-                u.messageTokens - sysInMessages,
+                usage.messageTokens - sysInMessages,
             );
-            const bar =
+            lines.push(
                 renderUsageBar(
                     this.theme,
                     {
                         system: sysInMessages,
-                        tools: u.toolsTokens,
+                        tools: usage.toolsTokens,
                         convo: convoInMessages,
-                        remaining: u.remainingTokens,
+                        remaining: usage.remainingTokens,
                     },
-                    u.contextWindow,
+                    usage.contextWindow,
                     barWidth,
                 ) +
-                " " +
-                dim("sys") +
-                colors.primary("█") +
-                " " +
-                dim("tools") +
-                colors.warning("█") +
-                " " +
-                dim("convo") +
-                colors.success("█") +
-                " " +
-                dim("free") +
-                colors.subtle("█");
-            lines.push(bar);
+                    " " +
+                    dim("sys") +
+                    colors.primary("█") +
+                    " " +
+                    dim("tools") +
+                    colors.warning("█") +
+                    " " +
+                    dim("convo") +
+                    colors.success("█") +
+                    " " +
+                    dim("free") +
+                    colors.subtle("█"),
+            );
         }
 
-        lines.push("");
-
-        lines.push("");
-
-        // Model info
         if (this.data.model) {
-            const m = this.data.model;
+            const model = this.data.model;
             lines.push(
                 muted("Model: ") +
-                    text(m.id) +
+                    text(model.id) +
                     muted(" · ") +
-                    text(m.provider) +
+                    text(model.provider) +
                     muted(" · thinking: ") +
-                    text(m.thinkingLevel),
+                    text(model.thinkingLevel),
             );
         } else {
             lines.push(muted("Model: ") + dim("(unknown)"));
         }
 
-        // System prompt + tools totals (approx)
         if (this.data.usage) {
-            const u = this.data.usage;
+            const usage = this.data.usage;
             lines.push(
                 muted("System: ") +
-                    text(`~${u.systemPromptTokens.toLocaleString()} tok`) +
-                    muted(` (AGENTS ~${u.agentTokens.toLocaleString()})`),
+                    text(`~${usage.systemPromptTokens.toLocaleString()} tok`) +
+                    muted(` (AGENTS ~${usage.agentTokens.toLocaleString()})`),
             );
             lines.push(
-                muted("Tools: ") +
-                    text(`~${u.toolsTokens.toLocaleString()} tok`) +
-                    muted(` (${u.activeTools} active)`),
+                muted("Tool schemas: ") +
+                    text(`~${usage.toolsTokens.toLocaleString()} tok`) +
+                    muted(` (${usage.activeTools} active)`),
             );
         }
 
+        lines.push("", heading("SOURCES"));
         lines.push(
             muted(`AGENTS (${this.data.agentFiles.length}): `) +
                 text(
@@ -524,24 +499,11 @@ export class ContextView implements Component {
                         : "(none)",
                 ),
         );
-        lines.push("");
         lines.push(
             muted(`Extensions (${this.data.extensions.length}): `) +
                 text(
                     this.data.extensions.length
                         ? joinComma(this.data.extensions)
-                        : "(none)",
-                ),
-        );
-
-        for (const status of this.data.toolCatalogStatus ?? [])
-            lines.push(text(status));
-        // Tools section
-        lines.push(
-            muted(`Tools (${this.data.tools.length}): `) +
-                text(
-                    this.data.tools.length
-                        ? joinComma(this.data.tools)
                         : "(none)",
                 ),
         );
@@ -560,18 +522,35 @@ export class ContextView implements Component {
         lines.push(
             muted(`Skills (${this.data.skills.length}): `) + skillsRendered,
         );
-        lines.push("");
+
         lines.push(
-            muted("Session: ") +
+            "",
+            colors.warning(
+                this.theme.bold(`ACTIVE TOOLS · ${this.data.tools.length}`),
+            ),
+        );
+        for (const status of this.data.toolCatalogStatus ?? []) {
+            lines.push(text(status));
+        }
+        lines.push(
+            muted("Active: ") +
+                text(
+                    this.data.tools.length
+                        ? joinComma(this.data.tools)
+                        : "(none)",
+                ),
+        );
+
+        lines.push("", heading("SESSION"));
+        lines.push(
+            muted("Total: ") +
                 text(
                     `${this.data.session.totalTokens.toLocaleString()} tokens`,
                 ) +
                 muted(" · ") +
                 text(formatUsd(this.data.session.totalCost)),
         );
-
-        this.body.setText(lines.join("\n"));
-        this.cachedWidth = width;
+        return lines;
     }
 
     private setScrollOffset(offset: number): void {
@@ -608,66 +587,25 @@ export class ContextView implements Component {
     }
 
     invalidate(): void {
-        this.topBorder.invalidate();
-        this.heading.invalidate();
-        this.spacer.invalidate();
-        this.body.invalidate();
-        this.footer.invalidate();
-        this.bottomBorder.invalidate();
-        this.cachedWidth = undefined;
+        // Render derives frame and content from current data and terminal size.
     }
 
     render(width: number): string[] {
-        if (this.cachedWidth !== width) this.rebuild(width);
-
-        const top = [
-            ...this.topBorder.render(width),
-            ...this.heading.render(width),
-            ...this.spacer.render(width),
-        ];
-        const body = this.body.render(width);
-        const bottomBorder = this.bottomBorder.render(width);
-
-        this.footer.setText(
+        this.viewportRows = Math.max(1, this.tui.terminal.rows - 2);
+        const box = new BoxRenderer(this.theme, width, {
+            viewportHeight: this.viewportRows,
+        });
+        box.setTitle("Context");
+        box.setContent(this.buildContentLines(box.getContentWidth()));
+        this.maxScroll = box.getMaxScroll();
+        this.scrollOffset = Math.min(this.scrollOffset, this.maxScroll);
+        box.scrollTo(this.scrollOffset);
+        box.setFooter(
             createUiColors(this.theme).subtle(
                 "↑↓/PgUp/PgDn/Home/End scroll · Esc/q/Enter close",
             ),
         );
-        let bottom = [...this.footer.render(width), ...bottomBorder];
-        this.viewportRows = Math.max(
-            1,
-            this.tui.terminal.rows - top.length - bottom.length,
-        );
-        this.maxScroll = Math.max(0, body.length - this.viewportRows);
-        this.scrollOffset = Math.min(this.scrollOffset, this.maxScroll);
-
-        if (this.maxScroll > 0) {
-            const end = Math.min(
-                body.length,
-                this.scrollOffset + this.viewportRows,
-            );
-            this.footer.setText(
-                createUiColors(this.theme).subtle(
-                    `lines ${this.scrollOffset + 1}–${end} of ${body.length} · ↑↓/PgUp/PgDn/Home/End · Esc close`,
-                ),
-            );
-            bottom = [...this.footer.render(width), ...bottomBorder];
-            this.viewportRows = Math.max(
-                1,
-                this.tui.terminal.rows - top.length - bottom.length,
-            );
-            this.maxScroll = Math.max(0, body.length - this.viewportRows);
-            this.scrollOffset = Math.min(this.scrollOffset, this.maxScroll);
-        }
-
-        return [
-            ...top,
-            ...body.slice(
-                this.scrollOffset,
-                this.scrollOffset + this.viewportRows,
-            ),
-            ...bottom,
-        ];
+        return box.render();
     }
 }
 

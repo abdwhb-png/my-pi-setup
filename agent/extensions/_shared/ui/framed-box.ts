@@ -570,9 +570,13 @@ export class BoxRenderer {
     return borders[this.opts.borderStyle][key];
   };
 
+  /** Returns maximum visual-row scroll offset for current content. */
+  getMaxScroll = (): number =>
+    Math.max(0, this.wrapLines(this.contentLines).length - this.opts.viewportHeight);
+
   /** Returns scroll indicator string, e.g. " [3/10↑↓] ", or "" if no scrolling */
   getScrollInfo = (): string => {
-    const maxScroll = Math.max(0, this.wrapLines(this.contentLines).length - this.opts.viewportHeight);
+    const maxScroll = this.getMaxScroll();
     if (maxScroll === 0) return "";
     const effective = Math.max(0, Math.min(this.scrollOffset, maxScroll));
     return ` [${effective}/${maxScroll}↑↓] `;
@@ -613,7 +617,7 @@ export class BoxRenderer {
 
     // ── Scrollable content viewport ──
     const wrappedContentLines = this.wrapLines(this.contentLines);
-    const maxScroll = Math.max(0, wrappedContentLines.length - viewportH);
+    const maxScroll = this.getMaxScroll();
     const effectiveScroll = Math.max(0, Math.min(this.scrollOffset, maxScroll));
     // Clamp to avoid stale state
     if (this.scrollOffset !== effectiveScroll) {
