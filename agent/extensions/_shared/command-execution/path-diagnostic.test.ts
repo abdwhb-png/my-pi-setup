@@ -5,6 +5,11 @@ import { createAdmittedSandboxExecutionContext, type SandboxExecutionContext } f
 
 const missing = "/__pi_unexposed_project__/frontend";
 const errorLine = `bash: line 1: cd: ${missing}: No such file or directory\n`;
+const libraryError = "Error: librt.so.1: cannot open shared object file: No such file or directory\n";
+
+function printOutput(output: string, exitCode = 1) {
+    return `printf '%s' '${output.replaceAll("'", "'\\''")}' >&2; exit ${exitCode}`;
+}
 
 function admitted() {
     return createAdmittedSandboxExecutionContext({ sha256: "c".repeat(64), report: {
@@ -64,11 +69,72 @@ test("appends a read-scope diagnostic after an admitted shell fails, preserving 
     expect(result.output).toContain("Its existence on the host cannot be determined from this error.");
 });
 
+test("explains a native binding's missing library without treating loader fallbacks as a missing package", async () => {
+    const original = [
+        "Error: Cannot find native binding. Please try reinstalling dependencies.",
+        "  cause: Error: librt.so.1: cannot open shared object file: No such file or directory",
+        "    code: 'ERR_DLOPEN_FAILED',",
+        "    cause: Error: Cannot find module './tool.linux-x64-gnu.node'",
+        "",
+    ].join("\n");
+    const result = await execute({ command: printOutput(original) });
+    expect(result.failure).toBeUndefined();
+    expect(result.result).toEqual({ exitCode: 1 });
+    expect(result.output).toStartWith(original);
+    expect(result.output).toContain("Sandbox: the dynamic loader could not find librt.so.1.");
+    expect(result.output).toContain("The library may be absent or outside this execution's read permissions.");
+    expect(result.output).toContain("The accompanying module/binding errors do not establish that the package is missing.");
+    expect(result.output).not.toContain("is outside the admitted read scope");
+});
+
+test.each([
+    "tool: error while loading shared libraries: libexample.so.2: cannot open shared object file: No such file or directory\n",
+    "error: libexample.so.2: cannot open shared object file: No such file or directory\n",
+])("explains a generic shared-library loader failure: %s", async (original) => {
+    const result = await execute({ command: printOutput(original, 127) });
+    expect(result.result).toEqual({ exitCode: 127 });
+    expect(result.output).toStartWith(original);
+    expect(result.output).toContain("Sandbox: the dynamic loader could not find libexample.so.2.");
+    expect(result.output).not.toContain("module/binding errors");
+});
+
+test.each([
+    "Error: Cannot find module './tool.node'\n",
+    "Error: Cannot find native binding.\n",
+    "unrelated: " + libraryError,
+    "Error: libexample.so.2: cannot open shared object file: Permission denied\n",
+    "Error: /ambiguous path/libexample.so.2: cannot open shared object file: No such file or directory\n",
+])("preserves errors without an unambiguous missing-library diagnosis: %s", async (original) => {
+    const result = await execute({ command: printOutput(original) });
+    expect(result.result).toEqual({ exitCode: 1 });
+    expect(result.output).toBe(original);
+});
+
+test("does not annotate shared-library text after a successful command", async () => {
+    const result = await execute({ command: printOutput(libraryError, 0) });
+    expect(result.result).toEqual({ exitCode: 0 });
+    expect(result.output).toBe(libraryError);
+});
+
+test("bounds shared-library diagnostics and reports repeated libraries only once", async () => {
+    const original = ["libone.so.1", "libtwo.so.1", "libone.so.1", "libthree.so.1", "libfour.so.1"]
+        .map((library) => `Error: ${library}: cannot open shared object file: No such file or directory\n`)
+        .join("");
+    const result = await execute({ command: printOutput(original) });
+    expect(result.result).toEqual({ exitCode: 1 });
+    expect(result.output).toStartWith(original);
+    expect(result.output.match(/Sandbox: the dynamic loader could not find [^\n]+/g)).toEqual([
+        "Sandbox: the dynamic loader could not find libone.so.1.",
+        "Sandbox: the dynamic loader could not find libtwo.so.1.",
+        "Sandbox: the dynamic loader could not find libthree.so.1.",
+    ]);
+});
+
 test.each(["local", "host", "host-mode", "missing-admission", "invalid-admission", "planned", "ready-failed", "status-failed", "think"])("does not annotate %s executions", async (state) => {
     const context = admitted();
     if (state === "invalid-admission") context.admissionSha256 = "invalid";
     if (state === "think") context.profile = "think-strict";
-    const result = await execute({ context: state === "missing-admission" ? null : state === "planned" ? { ...context, version: 2 } : context, backend: state === "host" ? "host" : "zerobox", mode: state === "host-mode" ? "host" : "sandbox", local: state === "local", readyFailure: state === "ready-failed", settledFailure: state === "status-failed" });
+    const result = await execute({ context: state === "missing-admission" ? null : state === "planned" ? { ...context, version: 2 } : context, backend: state === "host" ? "host" : "zerobox", mode: state === "host-mode" ? "host" : "sandbox", local: state === "local", readyFailure: state === "ready-failed", settledFailure: state === "status-failed", command: printOutput(errorLine + libraryError) });
     expect(result.output).not.toContain("Sandbox:");
     if (state === "ready-failed" || state === "status-failed") expect(result.failure).toBeInstanceOf(Error);
 });
@@ -81,8 +147,8 @@ test("recognizes an absolute Node module error on stderr", async () => {
     expect(result.output).toContain(`Sandbox: ${missing}/package.json is outside the admitted read scope.`);
 });
 
-test("does not interpret a truncated partial line as an error and preserves large output", async () => {
-    const output = "unrelated: " + errorLine + "x".repeat(65_536 - Buffer.byteLength(errorLine));
+test.each([errorLine, libraryError])("does not interpret a truncated partial line as an error and preserves large output: %s", async (line) => {
+    const output = "unrelated: " + line + "x".repeat(65_536 - Buffer.byteLength(line));
     const result = await execute({ command: `printf '%s' '${output}'; exit 1` });
     expect(result.result).toEqual({ exitCode: 1 });
     expect(result.output).toBe(output);

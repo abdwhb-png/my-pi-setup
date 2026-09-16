@@ -10,6 +10,14 @@ The diagnostic requires a validated admission report and confirmed process start
 
 For a project path outside its global ceiling, fix the configuration error explicitly: remove the requested grant or authorize a covering path in the global configuration before selecting it in the project. Global grants are inherited by projects that do not restrict them.
 
+### Missing shared libraries and misleading binding errors
+
+Under the same admission, startup and nonzero-exit conditions, the shared shell execution layer recognizes complete Linux loader errors such as `Error: librt.so.1: cannot open shared object file: No such file or directory` and `tool: error while loading shared libraries: librt.so.1: cannot open shared object file: No such file or directory`. It appends `Sandbox: the dynamic loader could not find librt.so.1.` and explains that the library may be absent or outside the execution's read permissions. A library name alone does not identify its host path or prove a permission denial.
+
+When the output also contains `Cannot find module` or `Cannot find native binding`, the diagnostic explains that these accompanying errors do not establish that the package is missing. Native loaders can accumulate failures from alternative locations and print generic reinstall advice even when the installed module cannot load a required library. Review the authorized installation's dependencies before changing permissions or reinstalling packages.
+
+This handling is generic to recognized loader errors, preserves the original output and exit code, and reports at most three distinct library names. It uses the same bounded output tail as path diagnostics. It does not inspect host files, execute diagnostic probes, grant permissions, retry commands, or modify third-party packages. Unsupported and ambiguous error formats remain unchanged.
+
 | Diagnostic or symptom | Action |
 | --- | --- |
 | Migration required | Run `/sandbox migrate` interactively and review the proposed global ceiling and both destination files. |

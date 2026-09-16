@@ -17,7 +17,7 @@ import {
     type ExecutionProvenance,
 } from "../execution-provenance/types.ts";
 import type { SandboxExecutionContext } from "../sandbox-runtime/execution-context.ts";
-import { sandboxPathDiagnostic } from "./path-diagnostic.ts";
+import { sandboxShellDiagnostic } from "./diagnostics.ts";
 
 export const MAX_STDIN_BYTES = 1_048_576;
 
@@ -491,7 +491,7 @@ function createTrackedBashOperations(
                         exitCode !== null &&
                         exitCode !== 0
                     ) {
-                        const diagnostic = sandboxPathDiagnostic(
+                        const diagnostic = sandboxShellDiagnostic(
                             (diagnosticTailTruncated
                                 ? diagnosticTail.subarray(
                                       diagnosticTail.includes(10)
