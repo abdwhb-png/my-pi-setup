@@ -1,11 +1,4 @@
-import { getToolPolicy } from "./_shared/tool-policy/index.ts";
-import { getProviderCatalogSnapshot } from "./_shared/tool-policy/provider-catalog-state.ts";
-export {
-    TOOLS_LIST_HEADING,
-    TOOL_GUIDELINES_HEADING,
-    buildToolsListSnippet,
-    appendToolsListPrompt,
-} from "./_shared/tool-policy/provider-catalog.ts";
+
 /**
  * /context
  *
@@ -16,6 +9,14 @@ export {
  * - current context window usage + session totals (tokens/cost)
  */
 
+import { getToolPolicy } from "../_shared/tool-policy/index.ts";
+import { getProviderCatalogSnapshot } from "../_shared/tool-policy/provider-catalog-state.ts";
+export {
+    TOOLS_LIST_HEADING,
+    TOOL_GUIDELINES_HEADING,
+    buildToolsListSnippet,
+    appendToolsListPrompt,
+} from "../_shared/tool-policy/provider-catalog.ts";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -32,9 +33,9 @@ import {
     type Component,
     type TUI,
 } from "@earendil-works/pi-tui";
-import { requestMarkdownLinkTransform } from "./_shared/markdown-links.ts";
-import { BoxRenderer } from "./_shared/ui/framed-box.ts";
-import { createUiColors } from "./_shared/ui/ui-colors.ts";
+import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
+import { BoxRenderer } from "../_shared/ui/framed-box.ts";
+import { createUiColors } from "../_shared/ui/ui-colors.ts";
 
 function formatUsd(cost: number): string {
     if (!Number.isFinite(cost) || cost <= 0) return "$0.00";
@@ -300,14 +301,6 @@ function joinComma(items: string[]): string {
     return items.join(", ");
 }
 
-function joinCommaStyled(
-    items: string[],
-    renderItem: (item: string) => string,
-    sep: string,
-): string {
-    return items.map(renderItem).join(sep);
-}
-
 export function calculateExtensionFiles(commands: any[]): string[] {
     const extensionCmds = commands.filter((c) => c.source === "extension");
 
@@ -359,6 +352,11 @@ export function buildContextSendMessage(
     return `Read and follow these project instruction files. They take precedence for this repository.\n\n${blocks.join("\n\n")}\n`;
 }
 
+type ContextToolDiagnostic = {
+    label: string;
+    value: string;
+};
+
 type ContextViewData = {
     usage: {
         // message-based context usage estimate from ctx.getContextUsage()
@@ -377,7 +375,8 @@ type ContextViewData = {
     agentFiles: string[];
     extensions: string[];
     tools: string[];
-    toolCatalogStatus?: string[];
+    runtimeTools?: string[];
+    toolCatalogStatus?: ContextToolDiagnostic[];
     skills: string[];
     loadedSkills: string[];
     session: { totalTokens: number; totalCost: number };
@@ -391,6 +390,7 @@ export class ContextView implements Component {
     private scrollOffset = 0;
     private maxScroll = 0;
     private viewportRows = 1;
+    private toolOrder: "alphabetical" | "runtime" = "alphabetical";
 
     constructor(
         tui: TUI,
@@ -490,6 +490,16 @@ export class ContextView implements Component {
             );
         }
 
+        lines.push("", heading("SESSION"));
+        lines.push(
+            muted("Total: ") +
+                text(
+                    `${this.data.session.totalTokens.toLocaleString()} tokens`,
+                ) +
+                muted(" · ") +
+                text(formatUsd(this.data.session.totalCost)),
+        );
+
         lines.push("", heading("SOURCES"));
         lines.push(
             muted(`AGENTS (${this.data.agentFiles.length}): `) +
@@ -508,48 +518,31 @@ export class ContextView implements Component {
                 ),
         );
 
-        const loaded = new Set(this.data.loadedSkills);
-        const skillsRendered = this.data.skills.length
-            ? joinCommaStyled(
-                  this.data.skills,
-                  (name) =>
-                      loaded.has(name)
-                          ? colors.text(name)
-                          : colors.subtle(name),
-                  colors.subtle(", "),
-              )
-            : "(none)";
         lines.push(
-            muted(`Skills (${this.data.skills.length}): `) + skillsRendered,
-        );
-
-        lines.push(
-            "",
-            colors.warning(
-                this.theme.bold(`ACTIVE TOOLS · ${this.data.tools.length}`),
-            ),
-        );
-        for (const status of this.data.toolCatalogStatus ?? []) {
-            lines.push(text(status));
-        }
-        lines.push(
-            muted("Active: ") +
+            muted(`Skills (${this.data.skills.length}): `) +
                 text(
-                    this.data.tools.length
-                        ? joinComma(this.data.tools)
+                    this.data.skills.length
+                        ? joinComma(this.data.skills)
                         : "(none)",
                 ),
         );
 
-        lines.push("", heading("SESSION"));
+        const displayedTools =
+            this.toolOrder === "runtime"
+                ? (this.data.runtimeTools ?? this.data.tools)
+                : this.data.tools;
+        lines.push("", heading("TOOLS"));
         lines.push(
-            muted("Total: ") +
+            muted(`Active (${displayedTools.length}, ${this.toolOrder}): `) +
                 text(
-                    `${this.data.session.totalTokens.toLocaleString()} tokens`,
-                ) +
-                muted(" · ") +
-                text(formatUsd(this.data.session.totalCost)),
+                    displayedTools.length
+                        ? joinComma(displayedTools)
+                        : "(none)",
+                ),
         );
+        for (const diagnostic of this.data.toolCatalogStatus ?? []) {
+            lines.push(muted(`${diagnostic.label}: `) + text(diagnostic.value));
+        }
         return lines;
     }
 
@@ -571,7 +564,11 @@ export class ContextView implements Component {
             return;
         }
 
-        if (matchesKey(data, Key.up)) {
+        if (matchesKey(data, "o")) {
+            this.toolOrder =
+                this.toolOrder === "alphabetical" ? "runtime" : "alphabetical";
+            this.tui.requestRender();
+        } else if (matchesKey(data, Key.up)) {
             this.setScrollOffset(this.scrollOffset - 1);
         } else if (matchesKey(data, Key.down)) {
             this.setScrollOffset(this.scrollOffset + 1);
@@ -600,9 +597,11 @@ export class ContextView implements Component {
         this.maxScroll = box.getMaxScroll();
         this.scrollOffset = Math.min(this.scrollOffset, this.maxScroll);
         box.scrollTo(this.scrollOffset);
+        const nextToolOrder =
+            this.toolOrder === "alphabetical" ? "runtime" : "alphabetical";
         box.setFooter(
             createUiColors(this.theme).subtle(
-                "↑↓/PgUp/PgDn/Home/End scroll · Esc/q/Enter close",
+                `↑↓/PgUp/PgDn/Home/End scroll · o: ${nextToolOrder} order · Esc/q/Enter close`,
             ),
         );
         return box.render();
@@ -664,52 +663,73 @@ export default function contextExtension(pi: ExtensionAPI) {
         }
     });
 
-    const catalogStatus = (active: string[]) => {
+    const catalogStatus = (active: string[]): ContextToolDiagnostic[] => {
         const policy = getToolPolicy().inspect();
         const snapshot = getProviderCatalogSnapshot();
-        const lines = [`Active now: ${active.join(", ") || "(none)"}`];
+        const diagnostics: ContextToolDiagnostic[] = [];
         if (snapshot?.observation.supported) {
             const lastCatalog = snapshot.observation;
-            const sent = lastCatalog.tools.map((t) => t.name);
-            lines.push(
-                `Last request #${snapshot.requestNumber} (${snapshot.api}): ${sent.join(", ") || "(none)"}`,
-            );
+            const sent = lastCatalog.tools.map((tool) => tool.name);
+            diagnostics.push({
+                label: "Last request",
+                value: `#${snapshot.requestNumber} (${snapshot.api}): ${sent.join(", ") || "(none)"}`,
+            });
             const callable = lastCatalog.callableTools?.map(
                 (tool) => tool.name,
             );
-            lines.push(
-                `Callable in last request: ${callable ? callable.join(", ") || "(none)" : "(unspecified)"}`,
-            );
-            lines.push(
-                `Tool selection: ${lastCatalog.selection.mode === "named" ? `named (${lastCatalog.selection.names.join(", ")})` : lastCatalog.selection.mode}`,
-            );
-            lines.push(
-                snapshot.injected
-                    ? `Injected catalog: ~${estimateTokens(lastCatalog.block)} tokens (outside Pi's base system-prompt estimate).`
+            diagnostics.push({
+                label: "Callable in last request",
+                value: callable
+                    ? callable.join(", ") || "(none)"
+                    : "(unspecified)",
+            });
+            diagnostics.push({
+                label: "Tool selection",
+                value:
+                    lastCatalog.selection.mode === "named"
+                        ? `named (${lastCatalog.selection.names.join(", ")})`
+                        : lastCatalog.selection.mode,
+            });
+            diagnostics.push({
+                label: "Injected catalog",
+                value: snapshot.injected
+                    ? `~${estimateTokens(lastCatalog.block)} tokens (outside Pi's base system-prompt estimate).`
                     : "Catalog observed only; Pi default prompt unchanged.",
-            );
-            const added = active.filter((n) => !sent.includes(n));
-            const removed = sent.filter((n) => !active.includes(n));
-            if (added.length || removed.length)
-                lines.push(
-                    `Current vs last request: +[${added.join(", ")}] -[${removed.join(", ")}]. Current changes may apply to a later agent run.`,
-                );
+            });
+            const added = active.filter((name) => !sent.includes(name));
+            const removed = sent.filter((name) => !active.includes(name));
+            if (added.length || removed.length) {
+                diagnostics.push({
+                    label: "Current vs last request",
+                    value: `+[${added.join(", ")}] -[${removed.join(", ")}]. Current changes may apply to a later agent run.`,
+                });
+            }
         } else {
-            lines.push(
-                snapshot && !snapshot.observation.supported
-                    ? "Catalog unsupported: " + snapshot.observation.reason
-                    : "No provider catalog observed yet.",
-            );
+            diagnostics.push({
+                label: "Provider catalog",
+                value:
+                    snapshot && !snapshot.observation.supported
+                        ? `Unsupported: ${snapshot.observation.reason}`
+                        : "No provider catalog observed yet.",
+            });
         }
-        if (policy?.externalDrift)
-            lines.push(
-                "Outside coordinator: +" +
+        if (policy?.externalDrift) {
+            diagnostics.push({
+                label: "Outside coordinator",
+                value:
+                    "+" +
                     policy.externalDrift.added.join(", ") +
                     " -" +
                     policy.externalDrift.removed.join(", "),
-            );
-        if (policy) lines.push("Policy sources: " + policy.sources.join(", "));
-        return lines;
+            });
+        }
+        if (policy) {
+            diagnostics.push({
+                label: "Policy sources",
+                value: policy.sources.join(", "),
+            });
+        }
+        return diagnostics;
     };
 
     pi.registerCommand("context", {
@@ -764,9 +784,7 @@ export default function contextExtension(pi: ExtensionAPI) {
             const sessionUsage = sumSessionUsage(ctx);
 
             const makePlainText = () => {
-                const lines: string[] = [];
-                lines.push("Context");
-                lines.push(...catalogStatus(activeToolNames));
+                const lines: string[] = ["CONTEXT WINDOW"];
                 if (usage) {
                     lines.push(
                         `Window: ~${effectiveTokens.toLocaleString()} / ${ctxWindow.toLocaleString()} (${percent.toFixed(1)}% used, ~${remainingTokens.toLocaleString()} left)`,
@@ -778,10 +796,11 @@ export default function contextExtension(pi: ExtensionAPI) {
                     `System: ~${systemPromptTokens.toLocaleString()} tok (AGENTS ~${agentTokens.toLocaleString()})`,
                 );
                 lines.push(
-                    `Tools: ~${toolsTokens.toLocaleString()} tok (${activeToolNames.length} active)`,
+                    `Tool schemas: ~${toolsTokens.toLocaleString()} tok (${activeToolNames.length} active)`,
                 );
+                lines.push("", "SOURCES");
                 lines.push(
-                    `AGENTS: ${agentFilePaths.length ? joinComma(agentFilePaths) : "(none)"}`,
+                    `AGENTS (${agentFilePaths.length}): ${agentFilePaths.length ? joinComma(agentFilePaths) : "(none)"}`,
                 );
                 lines.push(
                     `Extensions (${extensionFiles.length}): ${extensionFiles.length ? joinComma(extensionFiles) : "(none)"}`,
@@ -789,9 +808,20 @@ export default function contextExtension(pi: ExtensionAPI) {
                 lines.push(
                     `Skills (${skills.length}): ${skills.length ? joinComma(skills) : "(none)"}`,
                 );
+                lines.push("", "SESSION");
                 lines.push(
-                    `Session: ${sessionUsage.totalTokens.toLocaleString()} tokens · ${formatUsd(sessionUsage.totalCost)}`,
+                    `Total: ${sessionUsage.totalTokens.toLocaleString()} tokens · ${formatUsd(sessionUsage.totalCost)}`,
                 );
+                lines.push("", "TOOLS");
+                const alphabeticalTools = activeToolNames.toSorted((a, b) =>
+                    a.localeCompare(b),
+                );
+                lines.push(
+                    `Active (${alphabeticalTools.length}, alphabetical): ${alphabeticalTools.length ? joinComma(alphabeticalTools) : "(none)"}`,
+                );
+                for (const diagnostic of catalogStatus(activeToolNames)) {
+                    lines.push(`${diagnostic.label}: ${diagnostic.value}`);
+                }
                 return lines.join("\n");
             };
 
@@ -835,6 +865,7 @@ export default function contextExtension(pi: ExtensionAPI) {
                 agentFiles: agentFilePaths,
                 extensions: extensionFiles,
                 tools: activeToolNames.toSorted((a, b) => a.localeCompare(b)),
+                runtimeTools: activeToolNames,
                 skills,
                 loadedSkills,
                 toolCatalogStatus: catalogStatus(activeToolNames),
