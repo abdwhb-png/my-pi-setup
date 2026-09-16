@@ -8,6 +8,9 @@ import {
     type SandboxDockerPolicy,
 } from "./contracts.ts";
 
+export const DEFAULT_DOCKER_BREAK_GLASS_MINUTES = 30;
+export const MIN_DOCKER_BREAK_GLASS_MINUTES = 1;
+export const MAX_DOCKER_BREAK_GLASS_MINUTES = 1440;
 export const DEFAULT_DOCKER_ENDPOINT = "unix:///var/run/docker.sock";
 export interface ResolveDockerPolicyOptions {
     globalConfig?: unknown;
@@ -101,12 +104,20 @@ interface DockerCeiling {
     endpoint: string;
     operations?: DockerOperation[];
     unsafeTargets: DockerTargetSelector[];
+    breakGlassMaxMinutes: number;
 }
 function parseCeiling(value: unknown): DockerCeiling {
     const docker = record(value === undefined ? {} : value, "global docker");
     known(
         docker,
-        ["allowed", "mode", "endpoint", "operations", "unsafeTargets"],
+        [
+            "allowed",
+            "mode",
+            "endpoint",
+            "operations",
+            "unsafeTargets",
+            "breakGlassMaxMinutes",
+        ],
         "global docker",
     );
     if (docker.allowed !== undefined && typeof docker.allowed !== "boolean")
@@ -114,6 +125,19 @@ function parseCeiling(value: unknown): DockerCeiling {
     const mode = docker.mode ?? "targeted";
     if (mode !== "full" && mode !== "targeted")
         invalid("global docker.mode must be targeted or full");
+    const breakGlassMaxMinutes =
+        docker.breakGlassMaxMinutes === undefined
+            ? DEFAULT_DOCKER_BREAK_GLASS_MINUTES
+            : docker.breakGlassMaxMinutes;
+    if (
+        typeof breakGlassMaxMinutes !== "number" ||
+        !Number.isSafeInteger(breakGlassMaxMinutes) ||
+        breakGlassMaxMinutes < MIN_DOCKER_BREAK_GLASS_MINUTES ||
+        breakGlassMaxMinutes > MAX_DOCKER_BREAK_GLASS_MINUTES
+    )
+        invalid(
+            `global docker.breakGlassMaxMinutes must be an integer between ${MIN_DOCKER_BREAK_GLASS_MINUTES} and ${MAX_DOCKER_BREAK_GLASS_MINUTES}`,
+        );
     const endpoint =
         docker.endpoint === undefined
             ? DEFAULT_DOCKER_ENDPOINT
@@ -142,6 +166,7 @@ function parseCeiling(value: unknown): DockerCeiling {
         endpoint,
         operations: limits,
         unsafeTargets,
+        breakGlassMaxMinutes,
     };
 }
 function parseProject(value: unknown): {
@@ -197,6 +222,16 @@ export function dockerSelectorKey(selector: DockerTargetSelector): string {
         selector.id,
         selector.unsafeExecExpiresAtMs,
     ]);
+}
+/**
+ * Resolve the global break-glass duration ceiling.
+ * The ceiling bounds how long an ephemeral exec exception may last. It is a
+ * global-only authority limit, so it is deliberately kept out of
+ * `SandboxDockerPolicy`: that policy is sent to the sandbox backend and
+ * compared against the runtime admission receipt.
+ */
+export function dockerBreakGlassCeiling(globalConfig: unknown): number {
+    return parseCeiling(globalConfig).breakGlassMaxMinutes;
 }
 export function resolveDockerPolicy(
     options: ResolveDockerPolicyOptions,

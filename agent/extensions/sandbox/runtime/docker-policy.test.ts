@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { resolveDockerPolicy } from "./docker-policy.ts";
+import { dockerBreakGlassCeiling, resolveDockerPolicy } from "./docker-policy.ts";
 test("projects choose independent Docker targets without a global target registry", () => {
     for (const name of ["project-a", "project-b"]) {
         expect(resolveDockerPolicy({
@@ -59,6 +59,36 @@ test("rejects invalid global policy and sensitive fields even while disabled", (
     }
     expect(resolveDockerPolicy({ globalConfig: { allowed: true, operations: [] }, projectConfig: { enabled: true, targets: [{ selector: { type: "container-name", name: "api" } }] } })).toMatchObject({ targets: [{ operations: [] }] });
 });
+test("break-glass duration ceiling defaults to 30 minutes and stays global", () => {
+    expect(dockerBreakGlassCeiling(undefined)).toBe(30);
+    expect(dockerBreakGlassCeiling({ allowed: false })).toBe(30);
+    expect(dockerBreakGlassCeiling({ allowed: true, breakGlassMaxMinutes: 1 })).toBe(1);
+    expect(dockerBreakGlassCeiling({ allowed: true, breakGlassMaxMinutes: 60 })).toBe(60);
+    expect(dockerBreakGlassCeiling({ allowed: true, breakGlassMaxMinutes: 1440 })).toBe(1440);
+});
+
+test("rejects an invalid break-glass ceiling even while Docker is disabled", () => {
+    for (const breakGlassMaxMinutes of [0, -1, 1.5, "60", true, null, Number.NaN, 1441]) {
+        expect(() => dockerBreakGlassCeiling({ allowed: false, breakGlassMaxMinutes })).toThrow();
+    }
+    expect(() => dockerBreakGlassCeiling({ allowed: true, breakGlassMaxMinutes: 60, ceiling: 120 })).toThrow("Unknown global docker field");
+});
+
+test("a project document cannot set the break-glass ceiling and the resolved policy never carries it", () => {
+    expect(() => resolveDockerPolicy({
+        globalConfig: { allowed: true },
+        projectConfig: { enabled: true, breakGlassMaxMinutes: 60 },
+    })).toThrow("Unknown project docker field");
+    expect(resolveDockerPolicy({
+        globalConfig: { allowed: true, breakGlassMaxMinutes: 60 },
+        projectConfig: { enabled: true, targets: [{ selector: { type: "container-name", name: "api" }, operations: ["exec"] }] },
+    })).toEqual({
+        mode: "targeted",
+        endpoint: "unix:///var/run/docker.sock",
+        targets: [{ selector: { type: "container-name", name: "api" }, operations: ["exec"], allowUnsafeTarget: false }],
+    });
+});
+
 test("validates disabled Docker sections and project-only exceptions before activation", () => {
     expect(() => resolveDockerPolicy({
         globalConfig: { mode: "invalid" },

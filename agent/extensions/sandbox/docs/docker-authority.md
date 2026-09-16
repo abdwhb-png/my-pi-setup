@@ -94,7 +94,7 @@ ls -la -- PATH
 
 Shells, interpreters, other commands, paths outside those destinations and exec option overrides remain rejected. On ordinary targets, authorized exec retains Docker's usual user selection. Targeted mode still refuses privileged or detached exec and non-empty detach keys.
 
-Use `/sandbox docker break-glass [1m-30m]` for a temporary exec exception. Select an eligible container and confirm the exception. The runtime rechecks the current global and project policy after confirmation and binds the exception to the exact current container ID.
+Use `/sandbox docker break-glass [1m-<ceiling>m]` for a temporary exec exception. Select an eligible container and confirm the exception. The runtime rechecks the current global and project policy after confirmation and binds the exception to the exact current container ID. The accepted duration is bounded by the global `docker.breakGlassMaxMinutes` ceiling, which defaults to 30 minutes and cannot be raised from a project document. During the final 30 seconds before expiry the footer widget counts the remaining time down once per second.
 
 The exception exists only in session memory. Its deadline remains attached to every runtime that used it, including runtimes retained while earlier commands finish. Expiration interrupts those commands. Activating a later exception does not cancel the earlier deadline. Global or project Docker deactivation blocks new admissions and terminates runtimes retaining the removed access, including descendants, before revocation completes.
 

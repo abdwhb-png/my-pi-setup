@@ -27,7 +27,7 @@ A change to either configuration file is checked before each model request and s
 | `/sandbox recover` | Verify and recover an interrupted migration. |
 | `/sandbox docker` | Show Docker policy and runtime status. |
 | `/sandbox docker on\|off` | Save this project's activation choice within the global Docker ceiling. |
-| `/sandbox docker break-glass [1m-30m]` | Confirm a temporary exec exception for one eligible container. |
+| `/sandbox docker break-glass [1m-<ceiling>m]` | Confirm a temporary exec exception for one eligible container. The duration ceiling defaults to 30 minutes and is configurable per machine. |
 
 Docker requires both global `docker.allowed: true` with an explicit policy and project `docker.enabled: true`. An absent project activation leaves Docker disabled.
 

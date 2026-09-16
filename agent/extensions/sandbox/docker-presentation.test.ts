@@ -1,9 +1,22 @@
 import { expect, test } from "bun:test";
-import { summarizeDockerAccess, formatActiveDocker, formatDockerGrantResult, formatDockerSummary } from "./docker-presentation.ts";
+import { summarizeDockerAccess, formatActiveDocker, formatDockerGrantResult, formatDockerSummary, formatBreakGlassRemaining, BREAK_GLASS_COUNTDOWN_WINDOW_MS } from "./docker-presentation.ts";
 
 const authority = summarizeDockerAccess({ mode: "targeted", endpoint: "unix:///hidden.sock", targets: [
     { selector: { type: "container-name", name: "api" }, allowUnsafeTarget: true },
 ] });
+
+test("formats break-glass time remaining in minutes above 30s and in seconds below", () => {
+    const now = 1_000_000;
+    expect(BREAK_GLASS_COUNTDOWN_WINDOW_MS).toBe(30_000);
+    expect(formatBreakGlassRemaining(now + 47 * 60_000, now)).toBe("47m");
+    expect(formatBreakGlassRemaining(now + 3_600_000, now)).toBe("60m");
+    expect(formatBreakGlassRemaining(now + 30_001, now)).toBe("1m");
+    expect(formatBreakGlassRemaining(now + 30_000, now)).toBe("30s");
+    expect(formatBreakGlassRemaining(now + 28_400, now)).toBe("29s");
+    expect(formatBreakGlassRemaining(now + 1, now)).toBe("1s");
+    expect(formatBreakGlassRemaining(now, now)).toBeUndefined();
+    expect(formatBreakGlassRemaining(now - 1, now)).toBeUndefined();
+});
 
 test("reports saved and effective profiles separately when a project narrows the grant", () => {
     const effective = summarizeDockerAccess({ mode: "targeted", endpoint: "unix:///hidden.sock", targets: [

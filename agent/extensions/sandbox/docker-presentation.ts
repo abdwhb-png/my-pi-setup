@@ -26,6 +26,25 @@ export const DOCKER_ACCESS_PROFILES: ReadonlyArray<{
     { label: "Administration", operations: [...DOCKER_OPERATIONS] },
 ];
 
+/** Window before expiry during which the widget counts down per second. */
+export const BREAK_GLASS_COUNTDOWN_WINDOW_MS = 30_000;
+
+/**
+ * Format the time left on a break-glass grant, or undefined when it is over.
+ * Above the countdown window the remaining time is expressed in minutes;
+ * inside it the value updates every second.
+ */
+export function formatBreakGlassRemaining(
+    expiresAtMs: number,
+    nowMs = Date.now(),
+): string | undefined {
+    const remaining = expiresAtMs - nowMs;
+    if (!Number.isFinite(remaining) || remaining <= 0) return undefined;
+    if (remaining > BREAK_GLASS_COUNTDOWN_WINDOW_MS)
+        return `${Math.ceil(remaining / 60_000)}m`;
+    return `${Math.ceil(remaining / 1_000)}s`;
+}
+
 export function dockerSelectorLabel(selector: DockerTargetSelector): string {
     if (selector.type === "compose-service")
         return `compose-service: ${selector.project} / ${selector.service}`;
@@ -107,14 +126,12 @@ export function summarizeDockerAccess(
         })
         .toSorted((a, b) => a.selector.localeCompare(b.selector));
     const profiles = new Set(targets.map((target) => target.profile));
+    let profile = "None";
+    if (profiles.size === 1) profile = targets[0].profile;
+    else if (targets.length > 0) profile = "Mixed";
     return {
         mode: "targeted",
-        profile:
-            profiles.size === 1
-                ? targets[0].profile
-                : targets.length
-                  ? "Mixed"
-                  : "None",
+        profile,
         targets,
         hostAccessException: targets.some(
             (target) => target.hostAccessException,
@@ -162,14 +179,17 @@ export function formatDockerGrantResult(
     active?: DockerAccessSummary,
     failure?: string,
 ): string {
+    let savedLine = "Docker grant saved, not active: Sandbox is disabled.";
+    if (failure) {
+        savedLine = `Docker grant saved; activation failed: ${failure}`;
+    } else if (active?.mode === "off") {
+        savedLine =
+            "Docker grant saved; Docker access is off in the active configuration.";
+    } else if (active) {
+        savedLine = "Docker grant saved and active for this project.";
+    }
     return [
-        failure
-            ? `Docker grant saved; activation failed: ${failure}`
-            : active?.mode === "off"
-              ? "Docker grant saved; Docker access is off in the active configuration."
-              : active
-                ? "Docker grant saved and active for this project."
-                : "Docker grant saved, not active: Sandbox is disabled.",
+        savedLine,
         ...formatDockerSummary("Saved Docker grant", saved),
         ...(active ? formatDockerSummary("Active Docker", active) : []),
         ...(active && JSON.stringify(saved) !== JSON.stringify(active)
@@ -194,6 +214,16 @@ export function formatActiveDocker(
     delete persistentActive.breakGlass;
     const persistentDifference =
         JSON.stringify(configured) !== JSON.stringify(persistentActive);
+    let differenceNote: string[] = [];
+    if (persistentDifference) {
+        differenceNote = [
+            "Active Docker differs from the current configuration. Run /sandbox on to apply it.",
+        ];
+    } else if (breakGlassActive) {
+        differenceNote = [
+            "The active runtime differs from the saved grant only while this temporary authorization remains active.",
+        ];
+    }
     return [
         ...formatDockerSummary("Active Docker", active),
         ...(breakGlassActive
@@ -201,14 +231,6 @@ export function formatActiveDocker(
                   "Active Docker includes a temporary session-only break-glass authorization.",
               ]
             : []),
-        ...(persistentDifference
-            ? [
-                  "Active Docker differs from the current configuration. Run /sandbox on to apply it.",
-              ]
-            : breakGlassActive
-              ? [
-                    "The active runtime differs from the saved grant only while this temporary authorization remains active.",
-                ]
-              : []),
+        ...differenceNote,
     ];
 }

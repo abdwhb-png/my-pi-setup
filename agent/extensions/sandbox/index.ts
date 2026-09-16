@@ -17,7 +17,6 @@
  * prlimit, and Node with JSPI support for the Python analyzer.
  */
 
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
     existsSync,
@@ -87,8 +86,6 @@ import {
 import { protectsCapabilityAuthority } from "./capabilities/protection.ts";
 import { sandboxAccessRemoved } from "./capabilities/revocation.ts";
 import {
-    activeShellOperations,
-    currentShellPolicy,
     formatShellPolicy,
     publishShellRuntime,
     releaseShellRuntime,
@@ -99,13 +96,13 @@ import {
     type DockerTargetAccess,
 } from "./docker-access.ts";
 import {
-    DOCKER_ACCESS_PROFILES,
     dockerSelectorLabel,
     summarizeDockerAccess,
     dockerSummaryLabel,
     formatDockerSummary,
-    formatDockerGrantResult,
     formatActiveDocker,
+    formatBreakGlassRemaining,
+    BREAK_GLASS_COUNTDOWN_WINDOW_MS,
 } from "./docker-presentation.ts";
 import { sandboxDoctor } from "./doctor.ts";
 import { registerSandboxModelContext } from "./model-context.ts";
@@ -115,13 +112,12 @@ import {
     type SandboxCommand,
     type SandboxDockerPolicy,
     type DockerTargetGrant,
-    type DockerTargetSelector,
 } from "./runtime/contracts.ts";
 import { createDefaultSandboxBaseline } from "./runtime/default-config.ts";
 import {
     dockerSelectorKey,
     dockerPolicyHasUnsafeTargets,
-    DEFAULT_DOCKER_ENDPOINT,
+    dockerBreakGlassCeiling,
     resolveDockerPolicy,
 } from "./runtime/docker-policy.ts";
 import { type PiSandboxConfig } from "./runtime/policies.ts";
@@ -149,6 +145,8 @@ export interface SandboxDockerFooterState {
     mode: "off" | "targeted" | "full";
     unsafe: boolean;
     summary?: DockerAccessSummary;
+    /** Deadline of the live break-glass grant, when this session holds one. */
+    breakGlassExpiresAtMs?: number;
 }
 
 /** Shield glyph shown in the footer widget (same metaphor as the bash 🛡️ prefix). */
@@ -159,11 +157,27 @@ const OFF_ICON = "⚠️";
 const WIDGET_ID = "pi-sandbox";
 const DOCKER_BREAK_GLASS_DEFAULT_MINUTES = 5;
 const DOCKER_BREAK_GLASS_MIN_MINUTES = 1;
-const DOCKER_BREAK_GLASS_MAX_MINUTES = 30;
-const DOCKER_BREAK_GLASS_DURATION_USAGE =
-    "Docker break-glass duration must be between 1m and 30m. Usage: /sandbox docker break-glass [5m|15m|30m]";
-const ANALYSIS_RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 300_000] as const;
+/** Cadence of the per-second countdown during the final break-glass window. */
+const BREAK_GLASS_COUNTDOWN_TICK_MS = 1_000;
+/** Sample durations offered in the usage text, filtered by the effective ceiling. */
+const DOCKER_BREAK_GLASS_SAMPLE_MINUTES = [5, 15, 30, 60] as const;
 
+/**
+ * Build the duration usage message from the effective global ceiling.
+ * The ceiling is configuration, so the message cannot be a module constant.
+ */
+function dockerBreakGlassDurationUsage(maxMinutes: number): string {
+    const samples = DOCKER_BREAK_GLASS_SAMPLE_MINUTES.filter(
+        (minutes) => minutes <= maxMinutes,
+    );
+    const list =
+        samples.length > 0
+            ? samples.map((minutes) => `${minutes}m`).join("|")
+            : `${DOCKER_BREAK_GLASS_DEFAULT_MINUTES}m`;
+    return `Docker break-glass duration must be between ${DOCKER_BREAK_GLASS_MIN_MINUTES}m and ${maxMinutes}m. Usage: /sandbox docker break-glass [${list}]`;
+}
+
+/** Parse the `<N>m` duration syntax only; the ceiling is validated against configuration. */
 function parseDockerBreakGlassDurationMinutes(
     value: string | undefined,
 ): number | undefined {
@@ -171,12 +185,9 @@ function parseDockerBreakGlassDurationMinutes(
     const match = /^(\d+)m$/.exec(value);
     if (!match) return undefined;
     const minutes = Number(match[1]);
-    return Number.isSafeInteger(minutes) &&
-        minutes >= DOCKER_BREAK_GLASS_MIN_MINUTES &&
-        minutes <= DOCKER_BREAK_GLASS_MAX_MINUTES
-        ? minutes
-        : undefined;
+    return Number.isSafeInteger(minutes) ? minutes : undefined;
 }
+const ANALYSIS_RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 300_000] as const;
 
 /** Return a bounded, path-safe state filename scoped to one public Pi session identity. */
 export function sessionStateFilename(sessionId: string): string {
@@ -201,6 +212,12 @@ export interface LoadSandboxConfigResult {
     config: SandboxConfig;
     source: SandboxConfigSource;
     shell: ShellCapabilityResolution;
+    /**
+     * Effective global ceiling for `/sandbox docker break-glass`. Kept out of
+     * `config.docker`: that policy reaches the sandbox backend and the runtime
+     * admission receipt, which must not carry display-only authority limits.
+     */
+    breakGlassMaxMinutes: number;
 }
 
 /** True when the resolved status came from any explicit source and disabled. */
@@ -286,23 +303,33 @@ export function renderSandboxWidget(
     docker: SandboxDockerFooterState = { mode: "off", unsafe: false },
     shell?: Pick<ShellCapabilityResolution, "mode" | "profile">,
     admission: "pending" | "admitted" = "pending",
+    nowMs = Date.now(),
 ): string | null {
     const colors: UiColorsCreation = createUiColors(theme);
     if (shell) {
-        const runtime =
-            state === "on"
-                ? admission === "admitted"
-                    ? "admitted"
-                    : "pending admission"
-                : state;
-        const value =
-            shell.mode === "host"
-                ? `host · unsandboxed${state === "error" || state === "reconfiguring" ? ` · ${state}` : ""}`
-                : `sandbox · ${shell.profile} · ${runtime}`;
-        return `${colors.subtle("Shell:")} ${shell.mode === "host" ? colors.warning(value) : state === "error" ? colors.danger(value) : state === "on" ? colors.primary(value) : colors.warning(value)} | ${colors.subtle("Docker:")} ${colorForDockerState(colors, docker)}`;
+        let runtime: string = state;
+        if (state === "on")
+            runtime =
+                admission === "admitted" ? "admitted" : "pending admission";
+        let value: string;
+        let shellColor: string;
+        if (shell.mode === "host") {
+            const suffix =
+                state === "error" || state === "reconfiguring"
+                    ? ` · ${state}`
+                    : "";
+            value = `host · unsandboxed${suffix}`;
+            shellColor = colors.warning(value);
+        } else {
+            value = `sandbox · ${shell.profile} · ${runtime}`;
+            if (state === "error") shellColor = colors.danger(value);
+            else if (state === "on") shellColor = colors.primary(value);
+            else shellColor = colors.warning(value);
+        }
+        return `${colors.subtle("Shell:")} ${shellColor} | ${colors.subtle("Docker:")} ${colorForDockerState(colors, docker, nowMs)}`;
     }
     const dockerLabel = colors.subtle(`${DOCKER_ICON}docker:`);
-    const dockerValue = colorForDockerState(colors, docker);
+    const dockerValue = colorForDockerState(colors, docker, nowMs);
     if (state === "off") {
         return `${colors.subtle(`${OFF_ICON}sandbox:`)} ${colors.warning(state)} ${dockerLabel} ${dockerValue}`;
     }
@@ -311,16 +338,42 @@ export function renderSandboxWidget(
     return `${label} ${value} ${dockerLabel} ${dockerValue}`;
 }
 
+/**
+ * Docker value for the footer. A live break-glass grant owns the only
+ * break-glass token, so the summary token is dropped while a deadline is
+ * rendered.
+ */
+function dockerFooterValue(
+    state: SandboxDockerFooterState,
+    nowMs = Date.now(),
+): string {
+    const breakGlass =
+        state.mode === "off" || state.breakGlassExpiresAtMs === undefined
+            ? undefined
+            : formatBreakGlassRemaining(state.breakGlassExpiresAtMs, nowMs);
+    let value: string;
+    if (state.mode === "full") {
+        value = "full · host control";
+    } else if (state.summary) {
+        value = dockerSummaryLabel(
+            breakGlass
+                ? { ...state.summary, breakGlass: undefined }
+                : state.summary,
+        );
+    } else {
+        value = `${state.mode}${state.unsafe ? " · host-access exception" : ""}`;
+    }
+    return breakGlass === undefined
+        ? value
+        : `${value} · break-glass ${breakGlass}`;
+}
+
 function colorForDockerState(
     colors: UiColorsCreation,
     state: SandboxDockerFooterState,
+    nowMs = Date.now(),
 ): string {
-    const value =
-        state.mode === "full"
-            ? "full · host control"
-            : state.summary
-              ? dockerSummaryLabel(state.summary)
-              : `${state.mode}${state.unsafe ? " · host-access exception" : ""}`;
+    const value = dockerFooterValue(state, nowMs);
     if (state.mode === "full") return colors.danger(value);
     if (state.mode === "targeted") {
         return state.unsafe ? colors.warning(value) : colors.primary(value);
@@ -331,16 +384,21 @@ function colorForDockerState(
 export function dockerFooterState(
     policy: SandboxDockerPolicy,
     sandboxActive = true,
+    breakGlassExpiresAtMs?: number,
 ): SandboxDockerFooterState {
     if (!sandboxActive || policy.mode === "disabled") {
         return { mode: "off", unsafe: false };
     }
     if (policy.mode === "full") return { mode: "full", unsafe: true };
-    return {
+    const state: SandboxDockerFooterState = {
         mode: "targeted",
         unsafe: dockerPolicyHasUnsafeTargets(policy),
         summary: summarizeDockerAccess(policy),
     };
+    if (breakGlassExpiresAtMs !== undefined) {
+        state.breakGlassExpiresAtMs = breakGlassExpiresAtMs;
+    }
+    return state;
 }
 
 /** Show configured and active rights without exposing Engine credentials. */
@@ -351,21 +409,17 @@ export function renderSandboxStatusDetails(
     runtimeState?: string,
 ): string {
     const { config, source } = resolved;
-    const status =
-        resolved.shell.mode === "host"
-            ? "HOST (unsandboxed)"
-            : sandboxActive
-              ? "ENABLED"
-              : "DISABLED";
+    let status = "DISABLED";
+    if (resolved.shell.mode === "host") status = "HOST (unsandboxed)";
+    else if (sandboxActive) status = "ENABLED";
     const securityLabel = explicitlyDisabled(resolved) ? `${status} ⚠` : status;
-    const dockerStatus =
-        resolved.shell.mode === "host"
-            ? "off (shell mode is host)"
-            : sandboxActive
-              ? config.docker.mode === "disabled"
-                  ? "off"
-                  : config.docker.mode
-              : "off (sandbox disabled)";
+    let dockerStatus = "off (sandbox disabled)";
+    if (resolved.shell.mode === "host") {
+        dockerStatus = "off (shell mode is host)";
+    } else if (sandboxActive) {
+        dockerStatus =
+            config.docker.mode === "disabled" ? "off" : config.docker.mode;
+    }
     const lines = [
         `Sandbox: ${securityLabel}`,
         `Source: ${source}`,
@@ -422,15 +476,6 @@ function colorForState(
 function getActiveDockerSummary(): DockerAccessSummary | undefined {
     const runtime = getSandboxRuntime();
     return runtime.state === "enabled" ? runtime.dockerAccess : undefined;
-}
-
-function activeDockerLines(configured: SandboxDockerPolicy): string[] {
-    const runtime = getSandboxRuntime();
-    return formatActiveDocker(
-        summarizeDockerAccess(configured),
-        runtime.state === "enabled" ? runtime.dockerAccess : undefined,
-        runtime.state,
-    );
 }
 
 interface DockerBreakGlassCandidate {
@@ -546,12 +591,15 @@ export function loadSandboxConfig(
         session: options.session,
         authorityPath: globalPath,
     });
-    const source: SandboxConfigSource = project
-        ? "project-config"
-        : global
-          ? "global-config"
-          : "default";
-    return { ...policy, config: { ...policy.config, docker }, source };
+    let source: SandboxConfigSource = "default";
+    if (project) source = "project-config";
+    else if (global) source = "global-config";
+    return {
+        ...policy,
+        config: { ...policy.config, docker },
+        source,
+        breakGlassMaxMinutes: dockerBreakGlassCeiling(global?.docker),
+    };
 }
 
 /** Persist only the project opt-in. The global Docker ceiling remains untouched. */
@@ -710,11 +758,26 @@ export function createSandboxExtension(
     >();
     let activeDockerBreakGlass: ActiveDockerBreakGlass | undefined;
     let breakGlassSequence = 0;
+    /** Countdown timers for the current grant: one arm timer and one ticker. */
+    let breakGlassCountdownArm: ReturnType<typeof setTimeout> | undefined;
+    let breakGlassCountdownTick: ReturnType<typeof setInterval> | undefined;
 
-    const clearBreakGlassExpiry = (): void => {
+    const stopBreakGlassCountdown = (): void => {
+        if (breakGlassCountdownArm !== undefined) {
+            clearTimeout(breakGlassCountdownArm);
+            breakGlassCountdownArm = undefined;
+        }
+        if (breakGlassCountdownTick !== undefined) {
+            clearInterval(breakGlassCountdownTick);
+            breakGlassCountdownTick = undefined;
+        }
+    };
+
+    const clearBreakGlassTimers = (): void => {
         for (const timer of breakGlassExpiryTimers.values())
             clearTimeout(timer);
         breakGlassExpiryTimers.clear();
+        stopBreakGlassCountdown();
     };
 
     let transitionGeneration = 0;
@@ -903,20 +966,20 @@ export function createSandboxExtension(
             Promise.allSettled(sandboxTargets.map(cleanupSandboxService)),
         ]);
         let failure: unknown;
-        analysisResults.forEach((result) => {
+        for (const result of analysisResults) {
             if (result.status === "rejected" && failure === undefined) {
                 failure = result.reason;
             } else if (result.status === "rejected") {
                 attachCleanupFailure(failure, result.reason);
             }
-        });
-        sandboxResults.forEach((result) => {
+        }
+        for (const result of sandboxResults) {
             if (result.status === "rejected" && failure === undefined) {
                 failure = result.reason;
             } else if (result.status === "rejected") {
                 attachCleanupFailure(failure, result.reason);
             }
-        });
+        }
         if (
             currentAnalysis &&
             !pendingAnalysisCleanup.has(currentAnalysis) &&
@@ -1180,10 +1243,12 @@ export function createSandboxExtension(
         if (!active) return resolved;
         if (active.expiresAtMs <= Date.now()) {
             activeDockerBreakGlass = undefined;
+            stopBreakGlassCountdown();
             return resolved;
         }
         if (resolved.config.docker.mode !== "targeted") {
             activeDockerBreakGlass = undefined;
+            stopBreakGlassCountdown();
             return resolved;
         }
         const baseTarget = resolved.config.docker.targets.find(
@@ -1195,6 +1260,7 @@ export function createSandboxExtension(
         // global policy; project files cannot set allowUnsafeTarget.
         if (!baseTarget?.allowUnsafeTarget) {
             activeDockerBreakGlass = undefined;
+            stopBreakGlassCountdown();
             return resolved;
         }
         const config: SandboxConfig = {
@@ -1305,6 +1371,7 @@ export function createSandboxExtension(
             );
             if (activeDockerBreakGlass) {
                 scheduleBreakGlassExpiry(ctx, activeDockerBreakGlass);
+                scheduleBreakGlassCountdown(ctx, activeDockerBreakGlass);
             }
             return true;
         } catch (error) {
@@ -1385,13 +1452,14 @@ export function createSandboxExtension(
                 try {
                     const applied = loadShell(ctx);
                     const runtime = getSandboxRuntime();
+                    let modeState: SandboxFooterState = "error";
+                    if (runtime.state === "enabled") {
+                        modeState =
+                            applied.shell.mode === "host" ? "off" : "on";
+                    }
                     updateSandboxStatus(
                         ctx,
-                        runtime.state === "enabled"
-                            ? applied.shell.mode === "host"
-                                ? "off"
-                                : "on"
-                            : "error",
+                        modeState,
                         applied.config.docker,
                         applied.shell,
                     );
@@ -1416,7 +1484,7 @@ export function createSandboxExtension(
         const executionRoot = realpathSync(cwd);
         if (
             executionRoot !== projectRoot &&
-            !executionRoot.startsWith(projectRoot + "/")
+            !executionRoot.startsWith(`${projectRoot}/`)
         )
             return;
         await waitForModeChange();
@@ -1446,7 +1514,7 @@ export function createSandboxExtension(
         const executionRoot = realpathSync(cwd);
         if (
             executionRoot !== projectRoot &&
-            !executionRoot.startsWith(projectRoot + "/")
+            !executionRoot.startsWith(`${projectRoot}/`)
         ) {
             return;
         }
@@ -1501,19 +1569,33 @@ export function createSandboxExtension(
         align: "right",
         grow: false,
         styled: true,
-        render: (ctx) =>
-            renderSandboxWidget(
-                ctx.theme,
-                sandboxFooterState,
-                sandboxDockerFooterState,
-                sandboxShellFooterState,
-                getSandboxRuntime().state === "enabled" &&
-                    sandboxService?.getProfileContexts()["bash-general"]
-                        .version === 3
-                    ? "admitted"
-                    : "pending",
-            ),
+        render: (rctx) => renderSandboxFooter(rctx.theme),
     });
+
+    function renderSandboxFooter(
+        theme: import("@earendil-works/pi-coding-agent").Theme,
+    ): string | null {
+        return renderSandboxWidget(
+            theme,
+            sandboxFooterState,
+            sandboxDockerFooterState,
+            sandboxShellFooterState,
+            getSandboxRuntime().state === "enabled" &&
+                sandboxService?.getProfileContexts()["bash-general"].version ===
+                    3
+                ? "admitted"
+                : "pending",
+        );
+    }
+
+    /**
+     * Refresh the widget with a freshly rendered countdown. Only the countdown
+     * ticker passes fallback text, so a fallback footer stays hidden unless a
+     * break-glass deadline is being counted down.
+     */
+    function refreshSandboxCountdown(ctx: ExtensionContext): void {
+        w.update(ctx, renderSandboxFooter(ctx.ui.theme));
+    }
 
     function updateSandboxStatus(
         ctx: ExtensionContext,
@@ -1534,6 +1616,7 @@ export function createSandboxExtension(
         sandboxDockerFooterState = dockerFooterState(
             docker ?? { mode: "disabled" },
             status === "on" && sandboxShellFooterState.mode === "sandbox",
+            activeDockerBreakGlass?.expiresAtMs,
         );
         w.update(ctx);
     }
@@ -1571,6 +1654,7 @@ export function createSandboxExtension(
         const delay = Math.max(1, grant.expiresAtMs - Date.now());
         const timer = setTimeout(() => {
             breakGlassExpiryTimers.delete(grant.id);
+            stopBreakGlassCountdown();
             if (!ownsSandboxRuntime(runtimeOwner)) return;
             const currentGrant = activeDockerBreakGlass;
             if (currentGrant?.id !== grant.id) {
@@ -1626,6 +1710,51 @@ export function createSandboxExtension(
         }, delay);
         timer.unref?.();
         breakGlassExpiryTimers.set(grant.id, timer);
+    }
+
+    /**
+     * Drive the widget countdown for the final window before expiry. Outside
+     * that window no timer runs; inside it the widget refreshes once per second
+     * so the remaining time stays visible, including in fallback mode.
+     */
+    function scheduleBreakGlassCountdown(
+        ctx: ExtensionContext,
+        grant: ActiveDockerBreakGlass,
+    ): void {
+        stopBreakGlassCountdown();
+        const remaining = grant.expiresAtMs - Date.now();
+        if (remaining <= 0) return;
+        const arm = (): void => {
+            if (!ownsSandboxRuntime(runtimeOwner)) {
+                stopBreakGlassCountdown();
+                return;
+            }
+            if (activeDockerBreakGlass?.id !== grant.id) {
+                stopBreakGlassCountdown();
+                return;
+            }
+            // Render the boundary value immediately so the first visible second
+            // is exact rather than one tick late.
+            refreshSandboxCountdown(ctx);
+            breakGlassCountdownTick = setInterval(() => {
+                const current = activeDockerBreakGlass;
+                if (
+                    !ownsSandboxRuntime(runtimeOwner) ||
+                    current?.id !== grant.id ||
+                    current.expiresAtMs <= Date.now()
+                ) {
+                    stopBreakGlassCountdown();
+                    return;
+                }
+                refreshSandboxCountdown(ctx);
+            }, BREAK_GLASS_COUNTDOWN_TICK_MS);
+            breakGlassCountdownTick.unref?.();
+        };
+        breakGlassCountdownArm = setTimeout(
+            arm,
+            Math.max(0, remaining - BREAK_GLASS_COUNTDOWN_WINDOW_MS),
+        );
+        breakGlassCountdownArm.unref?.();
     }
 
     // Resolve local shell authority independently from strict engine startup.
@@ -1759,15 +1888,11 @@ export function createSandboxExtension(
             );
             if (!isCurrentTransition(generation) || !enabled) return;
             sandboxEnabled = true;
-            updateSandboxStatus(
-                ctx,
-                resolved.shell.state !== "ready"
-                    ? "restricted"
-                    : resolved.shell.mode === "host"
-                      ? "off"
-                      : "on",
-                config.docker,
-            );
+            let initializedState: SandboxFooterState = "on";
+            if (resolved.shell.state !== "ready")
+                initializedState = "restricted";
+            else if (resolved.shell.mode === "host") initializedState = "off";
+            updateSandboxStatus(ctx, initializedState, config.docker);
             notifySandboxEnabled(ctx, "Sandbox initialized", config.docker);
         } catch (err) {
             if (!isCurrentTransition(generation)) return;
@@ -1787,7 +1912,7 @@ export function createSandboxExtension(
         authorityWatch?.close();
         authorityWatch = undefined;
         releaseShellRuntime(runtimeOwner);
-        clearBreakGlassExpiry();
+        clearBreakGlassTimers();
         activeDockerBreakGlass = undefined;
         const generation = beginTransition();
         shutdownBashProcesses();
@@ -1823,6 +1948,7 @@ export function createSandboxExtension(
                 "docker break-glass 5m",
                 "docker break-glass 15m",
                 "docker break-glass 30m",
+                "docker break-glass 60m",
                 "mode sandbox",
                 "mode host",
             ];
@@ -1854,12 +1980,10 @@ export function createSandboxExtension(
                             ],
                         );
                         if (!choice || choice === "Cancel") return;
-                        arg =
-                            choice === "Change session mode"
-                                ? "mode"
-                                : choice === "Manage local installations"
-                                  ? "installations"
-                                  : "doctor";
+                        if (choice === "Change session mode") arg = "mode";
+                        else if (choice === "Manage local installations")
+                            arg = "installations";
+                        else arg = "doctor";
                     }
                     if (arg === "mode") {
                         const hostChoice = resolved.shell.hostAllowed
@@ -2056,13 +2180,6 @@ export function createSandboxExtension(
                 arg.startsWith("docker break-glass ")
             ) {
                 const match = /^docker break-glass(?:\s+(\S+))?$/.exec(arg);
-                const durationMinutes = parseDockerBreakGlassDurationMinutes(
-                    match?.[1],
-                );
-                if (!match || durationMinutes === undefined) {
-                    ctx.ui.notify(DOCKER_BREAK_GLASS_DURATION_USAGE, "error");
-                    return;
-                }
                 if (!ctx.isProjectTrusted()) {
                     ctx.ui.notify(
                         "Docker break-glass requires a trusted project",
@@ -2082,9 +2199,30 @@ export function createSandboxExtension(
                 }
                 let baseConfig: SandboxConfig;
                 let candidate: DockerBreakGlassCandidate;
+                let durationMinutes: number;
                 try {
                     const resolved = loadShell(ctx);
                     baseConfig = resolved.config;
+                    // The ceiling is global configuration, so the range is
+                    // validated only after the authority files are read.
+                    const requested = parseDockerBreakGlassDurationMinutes(
+                        match?.[1],
+                    );
+                    if (
+                        !match ||
+                        requested === undefined ||
+                        requested < DOCKER_BREAK_GLASS_MIN_MINUTES ||
+                        requested > resolved.breakGlassMaxMinutes
+                    ) {
+                        ctx.ui.notify(
+                            dockerBreakGlassDurationUsage(
+                                resolved.breakGlassMaxMinutes,
+                            ),
+                            "error",
+                        );
+                        return;
+                    }
+                    durationMinutes = requested;
                     if (baseConfig.docker.mode !== "targeted") {
                         ctx.ui.notify(
                             "Docker break-glass is available only for targeted host-access grants",
@@ -2231,6 +2369,7 @@ export function createSandboxExtension(
                     }
                     updateSandboxStatus(ctx, "on", runtimeDocker);
                     scheduleBreakGlassExpiry(ctx, activeDockerBreakGlass);
+                    scheduleBreakGlassCountdown(ctx, activeDockerBreakGlass);
                     ctx.ui.notify(
                         `Break-glass exec active for container ${candidate.container.name}.`,
                         "warning",
@@ -2258,7 +2397,11 @@ export function createSandboxExtension(
                             resolved.shell.sandboxFingerprint
                             ? runtime.contexts?.["bash-general"]
                             : undefined;
-                    let bundle;
+                    let bundle:
+                        | Awaited<
+                              ReturnType<typeof inspectManagedPrivateRuntime>
+                          >
+                        | undefined;
                     let distributionDiagnostic = "";
                     try {
                         bundle = await inspectManagedPrivateRuntime(
@@ -2298,7 +2441,7 @@ export function createSandboxExtension(
                     return;
                 }
                 ctx.ui.notify(
-                    "Usage: /sandbox [status | doctor [executable] | installations | migrate | recover | mode [sandbox|host] | docker [on|off|break-glass [1m-30m]]]",
+                    `Usage: /sandbox [status | doctor [executable] | installations | migrate | recover | mode [sandbox|host] | docker [on|off|break-glass [1m-${resolved.breakGlassMaxMinutes}m]]]`,
                     "error",
                 );
             } catch (error) {

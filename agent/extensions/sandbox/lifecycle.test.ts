@@ -103,7 +103,8 @@ const capturedWidgetDef: {
     def: {
         render: (ctx: { theme: Theme; ctx: ExtensionContext }) => unknown;
     } | null;
-} = { def: null };
+    updates: Array<string | null | undefined>;
+} = { def: null, updates: [] };
 
 mock.module("./runtime/zerobox-backend.ts", () => ({ createZeroboxBackend, inspectManagedPrivateRuntime:async()=>undefined }));
 mock.module("./runtime/service.ts", () => ({ createSandboxService }));
@@ -120,7 +121,9 @@ mock.module("../_shared/fancy-footer.ts", () => ({
         capturedWidgetDef.def = def;
         return {
             active: false,
-            update: () => undefined,
+            update: (_ctx: ExtensionContext, text?: string | null) => {
+                capturedWidgetDef.updates.push(text);
+            },
             remove: () => undefined,
         };
     },
@@ -223,7 +226,7 @@ function context(
         cwd,
         hasUI: true,
         isProjectTrusted: () => projectTrusted,
-        ui: { notify, select, input, confirm },
+        ui: { notify, select, input, confirm, theme: fakeTheme() },
         sessionManager: sessionDir
             ? ({
                   getSessionDir: () => sessionDir,
@@ -350,7 +353,7 @@ async function writeGlobalConfig(config: Record<string, unknown>): Promise<void>
     );
 }
 
-async function writeEnabledBreakGlassPolicy(cwd: string): Promise<void> {
+async function writeEnabledBreakGlassPolicy(cwd: string, breakGlassMaxMinutes?: number): Promise<void> {
     await writeGlobalConfig({
         docker: {
             allowed: true,
@@ -358,6 +361,9 @@ async function writeEnabledBreakGlassPolicy(cwd: string): Promise<void> {
             endpoint: "unix:///tmp/docker-fixture.sock",
             operations: ["exec"],
             unsafeTargets: [{ type: "container-name", name: "api" }],
+            ...(breakGlassMaxMinutes === undefined
+                ? {}
+                : { breakGlassMaxMinutes }),
         },
     });
     await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({
@@ -433,7 +439,7 @@ describe("sandbox lifecycle", () => {
         reset.mockReset(); reset.mockImplementation(async () => undefined);
         prepareBash.mockReset(); prepareBash.mockImplementation(prepareBashDefault);
         analysisShutdown.mockClear(); analysisPreflight.mockReset(); analysisPreflight.mockImplementation(async () => undefined);
-        createAnalysisSandboxService.mockClear(); capturedWidgetDef.def = null;
+        createAnalysisSandboxService.mockClear(); capturedWidgetDef.def = null; capturedWidgetDef.updates = [];
     });
     afterEach(async () => { await rm(cwd, { recursive: true, force: true }); });
 
@@ -812,6 +818,157 @@ describe("sandbox lifecycle", () => {
         await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
         expect(createSandboxService.mock.calls).toHaveLength(callsAfterActivation);
         expect(notifyCalls(ctx).at(-1)?.[0]).toContain("targeted host-access grants");
+        await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("accepts a break-glass duration up to the configured global ceiling", async () => {
+        await writeEnabledBreakGlassPolicy(cwd, 60);
+        const armed: number[] = [];
+        const realSetTimeout = globalThis.setTimeout;
+        const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
+            if (typeof delay === "number" && delay >= 3_599_000 && delay <= 3_600_000) {
+                armed.push(delay);
+                return 4_000_001 as never;
+            }
+            return realSetTimeout(callback, delay as number);
+        }) as unknown as typeof setTimeout);
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, "session-a", true, { confirm: [true] });
+            await registered.handlers.get("session_start")?.({}, ctx);
+            armed.length = 0;
+            await sandboxCommand(registered).handler("docker break-glass 60m", ctx);
+            expect(armed).toHaveLength(1);
+            expect(armed[0]).toBeGreaterThan(3_598_000);
+            expect(armed[0]).toBeLessThanOrEqual(3_600_000);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Break-glass exec active");
+            const candidate = createSandboxService.mock.calls.at(-1)?.[0] as {
+                config: { docker: { targets: Array<{ selector: { type: string } }> } };
+            };
+            expect(candidate.config.docker.targets).toContainEqual(expect.objectContaining({
+                selector: expect.objectContaining({ type: "ephemeral-container", id: "0123456789abcdef" }),
+            }));
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        } finally {
+            timeout.mockRestore();
+        }
+    });
+
+    it("counts down the last 30 seconds of a break-glass grant in the widget", async () => {
+        await writeEnabledBreakGlassPolicy(cwd);
+        const realSetTimeout = globalThis.setTimeout;
+        let arm: (() => void) | undefined;
+        let clock = Date.now();
+        const intervals: Array<{ ms: number | undefined; handle: number; run: () => void }> = [];
+        const nowSpy = spyOn(Date, "now").mockImplementation(() => clock);
+        const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
+            if (typeof delay === "number" && delay >= 29_000 && delay <= 30_000) {
+                arm = () => { if (typeof callback === "function") callback(); };
+                return 5_000_001 as never;
+            }
+            if (typeof delay === "number" && delay >= 59_000 && delay <= 60_000) {
+                return 5_000_002 as never;
+            }
+            return realSetTimeout(callback, delay as number);
+        }) as unknown as typeof setTimeout);
+        const interval = spyOn(globalThis, "setInterval").mockImplementation(((callback: Parameters<typeof setInterval>[0], delay?: number) => {
+            const handle = 6_000_000 + intervals.length;
+            intervals.push({
+                ms: delay,
+                handle,
+                run: () => { if (typeof callback === "function") callback(); },
+            });
+            return handle as never;
+        }) as unknown as typeof setInterval);
+        const clearIntervalSpy = spyOn(globalThis, "clearInterval");
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, "session-a", true, { confirm: [true] });
+            await registered.handlers.get("session_start")?.({}, ctx);
+            await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+            expect(arm).toBeDefined();
+            const intervalsBeforeCountdown = intervals.length;
+
+            clock += 31_000;
+            capturedWidgetDef.updates = [];
+            arm?.();
+            expect(intervals).toHaveLength(intervalsBeforeCountdown + 1);
+            const countdown = intervals.at(-1)!;
+            expect(countdown.ms).toBe(1000);
+            expect(capturedWidgetDef.updates.at(-1)).toContain("break-glass 29s");
+
+            capturedWidgetDef.updates = [];
+            clock += 1_000;
+            countdown.run();
+            expect(capturedWidgetDef.updates.at(-1)).toContain("break-glass 28s");
+
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+            expect(clearIntervalSpy).toHaveBeenCalledWith(countdown.handle);
+
+            capturedWidgetDef.updates = [];
+            countdown.run();
+            expect(capturedWidgetDef.updates).toHaveLength(0);
+        } finally {
+            interval.mockRestore(); timeout.mockRestore(); nowSpy.mockRestore();
+        }
+    });
+
+    it("clears the break-glass countdown interval when the grant expires", async () => {
+        await writeEnabledBreakGlassPolicy(cwd);
+        const realSetTimeout = globalThis.setTimeout;
+        let expire: (() => void) | undefined;
+        let arm: (() => void) | undefined;
+        let clock = Date.now();
+        const intervals: Array<{ handle: number; run: () => void }> = [];
+        const nowSpy = spyOn(Date, "now").mockImplementation(() => clock);
+        const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((callback: Parameters<typeof setTimeout>[0], delay?: number) => {
+            if (typeof delay === "number" && delay >= 59_000 && delay <= 60_000) {
+                expire = () => { if (typeof callback === "function") callback(); };
+                return 5_000_003 as never;
+            }
+            if (typeof delay === "number" && delay >= 29_000 && delay <= 30_000) {
+                arm = () => { if (typeof callback === "function") callback(); };
+                return 5_000_004 as never;
+            }
+            return realSetTimeout(callback, delay as number);
+        }) as unknown as typeof setTimeout);
+        const interval = spyOn(globalThis, "setInterval").mockImplementation(((callback: Parameters<typeof setInterval>[0]) => {
+            const handle = 7_000_000 + intervals.length;
+            intervals.push({ handle, run: () => { if (typeof callback === "function") callback(); } });
+            return handle as never;
+        }) as unknown as typeof setInterval);
+        const clearIntervalSpy = spyOn(globalThis, "clearInterval");
+        try {
+            const registered = registerSandbox();
+            const ctx = context(cwd, undefined, "session-a", true, { confirm: [true] });
+            await registered.handlers.get("session_start")?.({}, ctx);
+            await sandboxCommand(registered).handler("docker break-glass 1m", ctx);
+            clock += 31_000;
+            arm?.();
+            const countdown = intervals.at(-1)!;
+            expect(clearIntervalSpy).not.toHaveBeenCalledWith(countdown.handle);
+            clock += 29_000;
+            expire?.();
+            await Bun.sleep(0);
+            expect(clearIntervalSpy).toHaveBeenCalledWith(countdown.handle);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("Docker break-glass expired");
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        } finally {
+            interval.mockRestore(); timeout.mockRestore(); nowSpy.mockRestore();
+        }
+    });
+
+    it("rejects a break-glass duration above the effective ceiling before inspection", async () => {
+        await writeEnabledBreakGlassPolicy(cwd);
+        const registered = registerSandbox();
+        const ctx = context(cwd, undefined, "session-a", true, { confirm: [true] });
+        await registered.handlers.get("session_start")?.({}, ctx);
+        const startsBefore = createSandboxService.mock.calls.length;
+        for (const arg of ["docker break-glass 31m", "docker break-glass 60m", "docker break-glass 61m", "docker break-glass 0m", "docker break-glass 1h"]) {
+            await sandboxCommand(registered).handler(arg, ctx);
+            expect(notifyCalls(ctx).at(-1)?.[0]).toContain("must be between 1m and 30m");
+        }
+        expect(createSandboxService.mock.calls).toHaveLength(startsBefore);
         await registered.handlers.get("session_shutdown")?.({}, ctx);
     });
 

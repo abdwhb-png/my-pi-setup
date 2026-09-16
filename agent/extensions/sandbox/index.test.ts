@@ -6,7 +6,6 @@ import {
     mkdtempSync,
     readFileSync,
     rmSync,
-    statSync,
     writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,11 +59,6 @@ function withEnv<T>(key: string, value: string | undefined, fn: () => T): T {
 function fakeTheme(): Theme {
     return { fg: (color: string, text: string) => `fg:${color}:${text}` } as unknown as Theme;
 }
-
-const emptySettingsManager = {
-    getGlobalSettings: () => ({}),
-    getProjectSettings: () => ({}),
-};
 
 describe('active sandbox files', () => {
     let root: string; let agentDir: string; let cwd: string;
@@ -135,6 +129,38 @@ describe('renderSandboxWidget', () => {
         );
     });
 
+    it('counts down a live break-glass grant without duplicating the break-glass token', () => {
+        const now = Date.now();
+        const policy = {
+            mode: 'targeted' as const,
+            endpoint: 'unix:///var/run/docker.sock',
+            targets: [
+                { selector: { type: 'container-name' as const, name: 'api' }, operations: ['exec' as const], allowUnsafeTarget: true },
+                { selector: { type: 'ephemeral-container' as const, id: 'abc123', unsafeExecExpiresAtMs: now + 47 * 60_000 }, operations: ['exec' as const], allowUnsafeTarget: true },
+            ],
+        };
+        const live = renderSandboxWidget(fakeTheme(), 'on', dockerFooterState(policy, true, now + 47 * 60_000), undefined, 'admitted', now);
+        expect(live).toContain('break-glass 47m');
+        expect(live?.match(/break-glass/g)).toHaveLength(1);
+
+        const seconds = renderSandboxWidget(fakeTheme(), 'on', dockerFooterState(policy, true, now + 28_000), undefined, 'admitted', now);
+        expect(seconds).toContain('break-glass 28s');
+        expect(seconds?.match(/break-glass/g)).toHaveLength(1);
+
+        const expiredPolicy = {
+            ...policy,
+            targets: [
+                { selector: { type: 'container-name' as const, name: 'api' }, operations: ['exec' as const], allowUnsafeTarget: true },
+                { selector: { type: 'ephemeral-container' as const, id: 'abc123', unsafeExecExpiresAtMs: now - 1_000 }, operations: ['exec' as const], allowUnsafeTarget: true },
+            ],
+        };
+        const past = renderSandboxWidget(fakeTheme(), 'on', dockerFooterState(expiredPolicy, true), undefined, 'admitted', now);
+        expect(past).not.toContain('break-glass');
+
+        const inactive = renderSandboxWidget(fakeTheme(), 'on', dockerFooterState(policy, false, now + 47 * 60_000), undefined, 'admitted', now);
+        expect(inactive).not.toContain('break-glass');
+    });
+
     it('shows Docker off, targeted, full, and unsafe states without target details', () => {
         expect(renderSandboxWidget(fakeTheme(), 'on')).toContain(
             'fg:dim:off',
@@ -164,6 +190,7 @@ describe('renderSandboxStatusDetails', () => {
     ): LoadSandboxConfigResult {
         return {
             source: 'project-config',
+            breakGlassMaxMinutes: 30,
             shell: { state: 'ready', requestedProfile: 'default', profile: 'default', projectRoot: '/project', authorityPath: '/authority', grants: emptyGrants(), requestedGrants: emptyGrants() },
             config: {
                 enabled: true,
@@ -472,6 +499,33 @@ describe('loadSandboxConfig resolution priority', () => {
     });
 });
 
+describe('loadSandboxConfig break-glass ceiling', () => {
+    let root: string; let agentDir: string; let cwd: string;
+    beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'sandbox-break-glass-ceiling-')); agentDir = join(root, 'agent'); cwd = join(root, 'project'); mkdirSync(agentDir); mkdirSync(join(cwd, '.pi'), { recursive: true }); });
+    afterEach(() => rmSync(root, { recursive: true, force: true }));
+    const writeGlobal = (docker: Record<string, unknown>) => writeFileSync(join(agentDir, 'sandbox.json'), JSON.stringify({ version: 2, machineId: 'machine', docker }), { mode: 0o600 });
+    const load = () => loadSandboxConfig(cwd, { agentDir, machineId: 'machine' });
+
+    it('defaults the break-glass duration ceiling to 30 minutes', () => {
+        writeGlobal({ allowed: true });
+        expect(load().breakGlassMaxMinutes).toBe(30);
+    });
+
+    it('reports the globally configured ceiling without leaking it into the Docker policy', () => {
+        writeGlobal({ allowed: true, breakGlassMaxMinutes: 60 });
+        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ docker: { enabled: true, targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['exec'] }] } }));
+        const result = load();
+        expect(result.breakGlassMaxMinutes).toBe(60);
+        expect(result.config.docker).toEqual({ mode: 'targeted', endpoint: 'unix:///var/run/docker.sock', targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['exec'], allowUnsafeTarget: false }] });
+    });
+
+    it('rejects a project document that tries to set the ceiling', () => {
+        writeGlobal({ allowed: true });
+        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ docker: { enabled: true, breakGlassMaxMinutes: 60 } }));
+        expect(() => load()).toThrow();
+    });
+});
+
 describe('explicitlyDisabled', () => {
     function result(
         source: LoadSandboxConfigResult['source'],
@@ -480,6 +534,7 @@ describe('explicitlyDisabled', () => {
         return {
             config: { enabled } as LoadSandboxConfigResult['config'],
             source,
+            breakGlassMaxMinutes: 30,
             shell: { state: 'ready', requestedProfile: 'default', profile: 'default', projectRoot: '/project', authorityPath: '/authority', grants: emptyGrants(), requestedGrants: emptyGrants() },
         };
     }

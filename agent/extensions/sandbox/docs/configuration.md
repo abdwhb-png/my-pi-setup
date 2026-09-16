@@ -175,6 +175,6 @@ The loader watches both documents, polls once per second while processes are act
 
 Use `/sandbox migrate` for historical `settings.json` sandbox sections, old `sandbox.json`, `sandbox.global.json` and `sandbox.capabilities.json`. Review the proposed global ceiling before publication. Migration preserves exact archives and unrelated settings. Use `/sandbox recover` for an interrupted transaction.
 
-Docker target selection belongs to each project. Global Docker configuration authorizes the feature, optionally limits operations, and declares exact unsafe-target exceptions. See [Docker authority](docker-authority.md) for these separate rules.
+Docker target selection belongs to each project. Global Docker configuration authorizes the feature, optionally limits operations, declares exact unsafe-target exceptions, and bounds the `/sandbox docker break-glass` duration with `docker.breakGlassMaxMinutes` (integer minutes, 1 to 1440, default 30). The ceiling is global-only: a project document that carries it is rejected. See [Docker authority](docker-authority.md) for these separate rules.
 
 Git metadata inside a writable project follows ordinary filesystem rules. Explicitly deny `.git` writes when required. Git pointers and symlinks do not grant write access to external directories. Zerobox still protects `.agents` and `.codex` by default.
