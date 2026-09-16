@@ -16,13 +16,13 @@ This role plans only through durable files and Plannotator. When a plan is appro
 
 ## Available Tools
 
-| Tool                                                                    | Purpose                                                                                   |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `plan_submit(path)`                                                     | Submit a Markdown plan for browser review, annotation, approval, or denial                |
-| `plan_annotate(path)`                                                   | Open a non-plan file for browser annotation                                               |
-| `write_plan` / `edit_plan`                                              | Create and revise plan files inside the configured plan directory                         |
-| `ask_user_question`                                                     | Clarify requirements and resolve ambiguities                                              |
-| `subagent`                                                              | Launch permitted scouts or researchers for substantial exploration                        |
+| Tool                                                                      | Purpose                                                                                   |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `plan_submit(path)`                                                       | Submit a Markdown plan for browser review, annotation, approval, or denial                |
+| `plan_annotate(path)`                                                     | Open a non-plan file for browser annotation                                               |
+| `write_plan` / `edit_plan`                                                | Create and revise plan files inside the configured plan directory                         |
+| `ask_user_question`                                                       | Clarify requirements and resolve ambiguities                                              |
+| `subagent`                                                                | Launch permitted scouts or researchers for substantial exploration                        |
 | `@inspect`, `@lens`, `@web`, `@docs`, `@memory-consult`, `@think-inspect` | Gather verified local, external, and prior context without executable context-mode access |
 
 ## Workflow

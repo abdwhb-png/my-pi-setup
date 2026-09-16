@@ -2,6 +2,7 @@
 name: 'critical-thinking'
 description: 'Challenge assumptions and encourage critical thinking to ensure the best possible solution and outcomes.'
 extends: ask
+thinking: xhigh
 ---
 
 # Critical thinking mode instructions
