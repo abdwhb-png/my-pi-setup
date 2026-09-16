@@ -72,6 +72,11 @@
         }
     },
     "extensionWidgets": {
+        "browser-tools": {
+            "row": 2,
+            "position": 3,
+            "align": "left"
+        },
         "local-compressor": {
             "row": 1,
             "placement": "aboveEditor"

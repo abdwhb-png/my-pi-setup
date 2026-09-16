@@ -18,10 +18,10 @@ Do not use this skill for ordinary HTTP requests that do not require a browser. 
 
 ## Choose the interface
 
-Choose the interface before attempting browser work because the native Pi integration is explicitly granted per session:
+Choose the interface before attempting browser work because the native Pi integration is granted per session by the user:
 
 1. When `agent_browser` is visible, use it directly. Treat its schema and injected runtime guidance as the source of truth.
-2. When it is hidden, ask the user to run `/browser-tools on`. Do not execute or simulate this user-only slash command, and do not bypass the grant through Bash.
+2. When it is hidden, ask the user to run `/browser-tools on`. Do not execute or simulate this user-only slash command, and do not bypass the grant through Bash. Do not re-ask inside a session that already granted access: the grant survives `/reload` and resuming the same session, and only a new or forked session starts hidden again.
 3. When `/browser-tools status` reports `unavailable`, the command itself is absent, or the user explicitly requests the CLI, load the global `agent-browser` skill and follow its CLI workflow.
 
 Do not switch from the native tool to the CLI after an ordinary navigation, page, TLS, or process error. Report the exact failure and keep the original interface unless the native integration itself is unavailable.
