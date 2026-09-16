@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { icon, offText } from './state.ts';
+import { TRANSLATE_EMOJI, offText } from './state.ts';
 import { defaultRuntimeState } from './types.ts';
 
 const { createState, buildStatusText, toggleSend } = await import('./state.ts');
@@ -39,11 +39,11 @@ describe('state', () => {
         const s = createState(CFG);
         s.enabled = true;
         expect(buildStatusText(s, CFG)).toBe(
-            `${icon}translate → English | send`,
+            `${TRANSLATE_EMOJI} translate → English | send`,
         );
         s.sendEnabled = false;
         expect(buildStatusText(s, CFG)).toBe(
-            `${icon}translate → English | display`,
+            `${TRANSLATE_EMOJI} translate → English | display`,
         );
     });
 
@@ -51,6 +51,13 @@ describe('state', () => {
         const s = createState(CFG);
         s.enabled = true;
         s.target = 'zz';
-        expect(buildStatusText(s, CFG)).toBe(`${icon}translate → zz | send`);
+        expect(buildStatusText(s, CFG)).toBe(
+            `${TRANSLATE_EMOJI} translate → zz | send`,
+        );
+    });
+
+    it('uses a glyph distinct from the browser-tools globe', () => {
+        expect(TRANSLATE_EMOJI).toBe('🔤');
+        expect(TRANSLATE_EMOJI).not.toBe('🌐');
     });
 });

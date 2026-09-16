@@ -2,8 +2,11 @@ import { describe, expect, it, mock } from 'bun:test';
 
 // Stub heavy deps so the factory loads cleanly outside the pi runtime.
 // pi-ai is mocked globally via __tests__/setup.ts preload.
+const contributions: unknown[] = [];
 mock.module('pi-fancy-footer/api', () => ({
-    contributeFancyFooterWidgets: mock(),
+    contributeFancyFooterWidgets: mock((_pi: unknown, def: unknown) => {
+        contributions.push(def);
+    }),
     requestFancyFooterWidgetDiscovery: mock(),
     requestFancyFooterRefresh: mock(),
     publishExtensionStatusesSnapshot: mock(),
@@ -91,6 +94,28 @@ describe('auto-translate factory', () => {
             mockCtx(),
         );
         expect(out).toEqual({ action: 'continue' });
+    });
+
+    it('hides the footer widget until translation is enabled', async () => {
+        const { pi, commands } = mockPi();
+        contributions.length = 0;
+        factory(pi);
+        const def = contributions.at(-1) as {
+            visible: () => boolean;
+            render: () => string;
+        };
+
+        expect(def.visible()).toBe(false);
+        expect(def.render()).toBe('');
+
+        await commands.get('translate-on')!.handler('', mockCtx());
+        expect(def.visible()).toBe(true);
+        expect(def.render()).toContain('translate →');
+        expect(def.render()).toContain(' | send');
+
+        await commands.get('translate-off')!.handler('', mockCtx());
+        expect(def.visible()).toBe(false);
+        expect(def.render()).toBe('');
     });
 
     it('input handler shows translating status then clears it', async () => {

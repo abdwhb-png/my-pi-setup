@@ -26,6 +26,11 @@ function mockPi() {
     >[0];
 }
 
+/** Every existing case shows the widget, so visibility defaults to true. */
+function alwaysVisible(): boolean {
+    return true;
+}
+
 function mockCtx(hasUI = true) {
     return {
         hasUI: hasUI,
@@ -37,14 +42,14 @@ function mockCtx(hasUI = true) {
 
 describe('createTranslateWidget', () => {
     it('contributes a widget and requests discovery', () => {
-        createTranslateWidget(mockPi(), () => offText);
+        createTranslateWidget(mockPi(), () => offText, alwaysVisible);
         expect(contributeMock).toHaveBeenCalledTimes(1);
         expect(discoverMock).toHaveBeenCalled();
     });
 
     it('registers with the correct widget id + label', () => {
         widgetContributions.length = 0;
-        createTranslateWidget(mockPi(), () => offText);
+        createTranslateWidget(mockPi(), () => offText, alwaysVisible);
         const def = widgetContributions[widgetContributions.length - 1] as {
             id: string;
             label: string;
@@ -56,7 +61,7 @@ describe('createTranslateWidget', () => {
     it('render closure reflects live status text', () => {
         widgetContributions.length = 0;
         let status = offText;
-        createTranslateWidget(mockPi(), () => status);
+        createTranslateWidget(mockPi(), () => status, alwaysVisible);
         const def = widgetContributions[widgetContributions.length - 1] as {
             render: () => string;
         };
@@ -65,8 +70,29 @@ describe('createTranslateWidget', () => {
         expect(def.render()).toBe(buildStatusRenderText('French', 'send'));
     });
 
+    it('exposes a visible predicate that follows the translate state', () => {
+        widgetContributions.length = 0;
+        let enabled = false;
+        createTranslateWidget(mockPi(), () => offText, () => enabled);
+        const def = widgetContributions[widgetContributions.length - 1] as {
+            visible: () => boolean;
+            render: () => string;
+        };
+
+        expect(def.visible()).toBe(false);
+        expect(def.render()).toBe('');
+
+        enabled = true;
+        expect(def.visible()).toBe(true);
+        expect(def.render()).toBe(offText);
+    });
+
     it('update triggers fancy-footer refresh', () => {
-        const handle = createTranslateWidget(mockPi(), () => offText);
+        const handle = createTranslateWidget(
+            mockPi(),
+            () => offText,
+            alwaysVisible,
+        );
         refreshMock.mockClear();
         handle.update(mockCtx(), offText);
         expect(refreshMock).toHaveBeenCalledTimes(1);
@@ -77,7 +103,11 @@ describe('createTranslateWidget', () => {
         contributeMock.mockImplementationOnce(() => {
             throw new Error('fancy-footer not installed');
         });
-        const handle = createTranslateWidget(mockPi(), () => offText);
+        const handle = createTranslateWidget(
+            mockPi(),
+            () => offText,
+            alwaysVisible,
+        );
         const ctx = mockCtx();
         handle.update(ctx, buildStatusRenderText('English', 'send'));
         expect(
@@ -86,5 +116,22 @@ describe('createTranslateWidget', () => {
         ).toHaveBeenCalledWith(WIDGET_ID, [
             buildStatusRenderText('English', 'send'),
         ]);
+    });
+
+    it('update with empty text hides the fallback widget', () => {
+        contributeMock.mockImplementationOnce(() => {
+            throw new Error('fancy-footer not installed');
+        });
+        const handle = createTranslateWidget(
+            mockPi(),
+            () => offText,
+            () => false,
+        );
+        const ctx = mockCtx();
+        handle.update(ctx, '');
+        expect(
+            (ctx as { ui: { setWidget: (id: unknown, v: unknown) => void } }).ui
+                .setWidget,
+        ).toHaveBeenCalledWith(WIDGET_ID, undefined);
     });
 });

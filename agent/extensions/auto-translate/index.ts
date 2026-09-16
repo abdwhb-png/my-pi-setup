@@ -15,7 +15,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { registerCommands } from "./commands.ts";
 import { loadTranslateConfig } from "./config.ts";
-import { createState, buildStatusText, icon } from "./state.ts";
+import { createState, buildStatusText, TRANSLATE_EMOJI } from "./state.ts";
 import { translate } from "./translator.ts";
 import type { TranslateConfig } from "./types.ts";
 import { createTranslateWidget } from "./widget.ts";
@@ -37,12 +37,13 @@ export default function (pi: ExtensionAPI): void {
     const config = loadTranslateConfig(cwd, agentDir);
     const state = createState(config);
 
-    const widget = createTranslateWidget(pi, () =>
-        buildStatusText(state, config),
-    );
+    const widgetText = (): string =>
+        state.enabled ? buildStatusText(state, config) : "";
+
+    const widget = createTranslateWidget(pi, widgetText, () => state.enabled);
 
     const refresh = (ctx: Parameters<typeof widget.update>[0]): void => {
-        widget.update(ctx, buildStatusText(state, config));
+        widget.update(ctx, widgetText());
     };
 
     registerCommands(pi, { state, config, refresh });
@@ -74,7 +75,7 @@ export default function (pi: ExtensionAPI): void {
 
         ctx.ui.setStatus(
             "auto-translate",
-            ctx.ui.theme.fg("accent", `${icon} translating…`),
+            ctx.ui.theme.fg("accent", `${TRANSLATE_EMOJI} translating…`),
         );
         let translated: string | null;
         try {

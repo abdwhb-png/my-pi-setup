@@ -13,8 +13,11 @@ import type {
 /** Fallback target code when the configured default is missing from `languages`. */
 const FALLBACK_TARGET = "en";
 
-export const icon = "🌐";
-export const offIcon = "🚫";
+/**
+ * Glyph for the footer widget and the transient status line. Kept distinct from
+ * the browser-tools globe so two widgets never read as the same feature.
+ */
+export const TRANSLATE_EMOJI = "🔤";
 
 /** Create a fresh runtime state object from config defaults. */
 export function createState(config: TranslateConfig): RuntimeState {
@@ -38,10 +41,10 @@ export function buildStatusRenderText(
     name: string,
     mode: StatusRenderMode,
 ): string {
-    return `${icon}translate → ${name} | ${mode}`;
+    return `${TRANSLATE_EMOJI} translate → ${name} | ${mode}`;
 }
 
-export const offText = `${icon}translate: off`;
+export const offText = `${TRANSLATE_EMOJI} translate: off`;
 
 /** Render the fancy-footer status text for the current state. */
 export function buildStatusText(
