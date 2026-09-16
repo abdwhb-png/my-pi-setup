@@ -53,9 +53,10 @@ and common guidelines. Their routing and environment remain shared, with
 per-tool `bashRewrites` and additional Safe Bash checks. Tool availability
 (`replace/coexist`) is separate from execution mode (`sandbox/host`).
 
-Before each model request, the `context` hooks assemble one ephemeral
-`pi.shell-context.v2` message. It contains current availability, execution facts
-and active Safe Bash checks. It is not saved in session history. Configuration
+Before each provider request, the `before_provider_request` hooks assemble one
+`<pi-shell-context>` block in a temporary copy of the system instructions.
+It contains current availability, execution facts and active Safe Bash checks.
+It adds no user message and changes neither session history nor the base prompt. Configuration
 changes appear as pending until the next shell admission proves the runtime admitted them. Execution context V3 is created from that admission receipt; V1 and V2 context describes historical or planned policy and is not proof of mounted permissions.
 Standard prompts receive `promptGuidelines`; custom prompts receive the same
 rules through the existing provider catalog, filtered to available tools.

@@ -3,7 +3,7 @@ import type { SandboxExecutionContext } from "../_shared/sandbox-runtime/executi
 import { getSandboxRuntime } from "../_shared/sandbox-runtime/index.ts";
 import {
     stripLegacyShellContext,
-    updateShellContext,
+    registerShellContext,
 } from "../_shared/shell-presentation/context.ts";
 import { currentShellPolicy } from "./capabilities/runtime.ts";
 
@@ -124,11 +124,7 @@ export function registerSandboxModelContext(pi: ExtensionAPI): void {
     pi.on("before_agent_start", (event) => ({
         systemPrompt: stripLegacyShellContext(event.systemPrompt),
     }));
-    pi.on("context", (event) => ({
-        messages: updateShellContext(
-            event.messages,
-            "execution",
-            JSON.stringify(readShellModelContext()),
-        ),
-    }));
+    registerShellContext(pi, "execution", () =>
+        JSON.stringify(readShellModelContext()),
+    );
 }

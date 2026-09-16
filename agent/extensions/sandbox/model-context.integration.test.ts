@@ -1,3 +1,4 @@
+import type { Context } from "@earendil-works/pi-ai";
 import { expect, test } from "bun:test";
 import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -53,6 +54,51 @@ function fixture() {
     };
 }
 
+async function requestSystem(session: Awaited<ReturnType<typeof createTestSession>>, context: Context): Promise<string> {
+    const input = structuredClone(context.messages);
+    const payload = await session.session.extensionRunner!.emitBeforeProviderRequest({ instructions: context.systemPrompt, input });
+    expect(payload).toMatchObject({ input });
+    if (!payload || typeof payload !== "object" || !("instructions" in payload) || typeof payload.instructions !== "string")
+        throw new Error("Missing system instructions in fixture provider request");
+    return payload.instructions;
+}
+
+test.each(["openai-responses", "openai-completions"] as const)("%s sends sandbox facts only in the temporary system prompt, never as a user message", async api => {
+    const f = fixture();
+    const session = await createTestSession({ cwd: f.cwd, extensionFactories: [bashExecution, registerSandboxModelContext] });
+    try {
+        const model = session.session.model;
+        if (!model) throw new Error("Missing fixture model");
+        await session.session.setModel({ ...model, api });
+        const requests: Array<{ payload: unknown; input: Context["messages"]; messages: string; system: string }> = [];
+        const running = session.run(when("Continue the requested work", [says("done")]));
+        const original = session.session.agent.streamFunction;
+        session.session.agent.streamFunction = async (model, context, options) => {
+            const input = structuredClone(context.messages);
+            const payload = await session.session.extensionRunner!.emitBeforeProviderRequest(api === "openai-responses"
+                ? { instructions: context.systemPrompt, input }
+                : { messages: [{ role: "system", content: context.systemPrompt }, ...input] });
+            requests.push({ payload, input, messages: JSON.stringify(context.messages), system: context.systemPrompt ?? "" });
+            return original(model, context, options);
+        };
+        await running;
+        expect(requests).toHaveLength(1);
+        expect(requests[0]!.messages).not.toContain("Current shell execution context");
+        if (api === "openai-responses") {
+            expect(requests[0]!.payload).toMatchObject({ input: requests[0]!.input });
+            expect(requests[0]!.payload).toHaveProperty("instructions", expect.stringContaining("Current shell execution context"));
+        } else {
+            expect(requests[0]!.payload).toHaveProperty("messages", [
+                { role: "system", content: expect.stringContaining("Current shell execution context") },
+                ...requests[0]!.input,
+            ]);
+        }
+        expect(requests[0]!.system).not.toContain("Current shell execution context");
+        expect(JSON.stringify(session.session.sessionManager.getBranch())).not.toContain("Current shell execution context");
+        expect(f.preparations()).toBe(0);
+    } finally { session.dispose(); f.dispose(); }
+});
+
 test.each(["standard", "custom"] as const)("refreshes one ephemeral context within a %s-prompt turn without preparing early", async prompt => {
     const f = fixture();
     const session = await createTestSession({ cwd: f.cwd,
@@ -66,8 +112,8 @@ test.each(["standard", "custom"] as const)("refreshes one ephemeral context with
         const preparations: number[] = [];
         const running = session.run(when("Inspect and run", [calls("read", { path: "fixture" }), calls("bash", { command: "printf test" }), says("done")]));
         const original = session.session.agent.streamFunction;
-        session.session.agent.streamFunction = (model, context, options) => {
-            contexts.push(context.messages.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.filter(block => block.type === "text").map(block => block.text)).join("\n"));
+        session.session.agent.streamFunction = async (model, context, options) => {
+            contexts.push(await requestSystem(session, context));
             systems.push(context.systemPrompt ?? "");
             preparations.push(f.preparations());
             return original(model, context, options);
@@ -110,12 +156,12 @@ test("refreshes an explicit mode selection between model calls in the same reque
         const inputs: string[] = [];
         const running = session.run(when("Observe a user mode selection", [calls("read", { path: "fixture" }), says("done")]));
         const original = session.session.agent.streamFunction;
-        session.session.agent.streamFunction = (model, context, options) => { inputs.push(JSON.stringify(context.messages)); return original(model, context, options); };
+        session.session.agent.streamFunction = async (model, context, options) => { inputs.push(await requestSystem(session, context)); return original(model, context, options); };
         await running;
         expect(inputs).toHaveLength(2);
-        expect(inputs[0]).toContain('\\"mode\\":\\"sandbox\\"');
-        expect(inputs[1]).toContain('\\"mode\\":\\"host\\"');
-        expect(inputs[1]).not.toContain('\\"effective\\"');
+        expect(inputs[0]).toContain('"mode":"sandbox"');
+        expect(inputs[1]).toContain('"mode":"host"');
+        expect(inputs[1]).not.toContain('"effective"');
         expect(inputs[1]).toContain("think-strict");
         expect(inputs[1].match(/Current shell execution context/g)).toHaveLength(1);
         expect(f.preparations()).toBe(0);
@@ -130,22 +176,22 @@ test("reports host, invalid config and runtime transitions without activating an
         const observe = async (prompt: string) => {
             const running = session.run(when(prompt, [says("done")]));
             const original = session.session.agent.streamFunction;
-            session.session.agent.streamFunction = (model, context, options) => { contexts.push(JSON.stringify(context.messages)); return original(model, context, options); };
+            session.session.agent.streamFunction = async (model, context, options) => { contexts.push(await requestSystem(session, context)); return original(model, context, options); };
             await running;
         };
         await observe("Observe");
         f.sessionPolicy.mode = "host";
         await observe("Observe host");
         expect(contexts.at(-1)).toContain("without shell OS isolation");
-        expect(contexts.at(-1)).not.toContain('\\"effective\\"');
+        expect(contexts.at(-1)).not.toContain('"effective"');
         expect(contexts.at(-1)).toContain("think-strict");
         f.sessionPolicy.mode = "sandbox";
         publishSandboxRuntime(f.owner, { state: "reconfiguring" });
         await observe("Observe replacement");
-        expect(contexts.at(-1)).toContain('\\"availability\\":\\"reconfiguring\\"');
+        expect(contexts.at(-1)).toContain('"availability":"reconfiguring"');
         publishSandboxRuntime(f.owner, { state: "error" });
         await observe("Observe failure");
-        expect(contexts.at(-1)).toContain('\\"availability\\":\\"unavailable\\"');
+        expect(contexts.at(-1)).toContain('"availability":"unavailable"');
         writeFileSync(f.globalPath, "{");
         await observe("Observe invalid config");
         expect(contexts.at(-1)).toContain("Invalid shell configuration");
@@ -154,7 +200,7 @@ test("reports host, invalid config and runtime transitions without activating an
         f.admit();
         await session.session.reload();
         await observe("Observe after reload");
-        expect(contexts.at(-1)).toContain('\\"availability\\":\\"ready\\"');
+        expect(contexts.at(-1)).toContain('"availability":"ready"');
         expect(contexts.at(-1)?.match(/Current shell execution context/g)).toHaveLength(1);
         expect(contexts.at(-1)).not.toContain("Invalid shell configuration");
         expect(f.preparations()).toBe(0);

@@ -323,10 +323,14 @@ describe.skipIf(process.platform !== "linux" ||
             systemPrompt: string;
             messages: string;
         }> = [];
-        const originalStream = session.session.agent.streamFunction;
-        session.session.agent.streamFunction = (model, context, options) => {
+        const activeSession = session.session;
+        const originalStream = activeSession.agent.streamFunction;
+        session.session.agent.streamFunction = async (model, context, options) => {
+            const request = await activeSession.extensionRunner!.emitBeforeProviderRequest({ instructions: context.systemPrompt, input: context.messages });
+            if (!request || typeof request !== "object" || !("instructions" in request) || typeof request.instructions !== "string")
+                throw new Error("Missing system instructions in fixture request");
             modelInputs.push({
-                systemPrompt: context.systemPrompt ?? "",
+                systemPrompt: request.instructions,
                 messages: JSON.stringify(context.messages),
             });
             return originalStream(model, context, options);
@@ -359,11 +363,10 @@ describe.skipIf(process.platform !== "linux" ||
             },
         });
         expect(modelInputs[0]?.systemPrompt).not.toContain("Sandbox execution context v1");
-        expect(modelInputs[0]?.messages).toContain("Current shell execution context");
-        expect(modelInputs[0]?.messages).toContain('analysis-strict');
-        expect(modelInputs[0]?.messages).toContain(
-            '\\"hostBridgePorts\\":[]',
-        );
+        expect(modelInputs[0]?.messages).not.toContain("Current shell execution context");
+        expect(modelInputs[0]?.systemPrompt).toContain("Current shell execution context");
+        expect(modelInputs[0]?.systemPrompt).toContain('analysis-strict');
+        expect(modelInputs[0]?.systemPrompt).toContain('"hostBridgePorts":[]');
         expect(modelInputs.at(-1)?.messages).toContain(
             "real-safe-bash-error",
         );

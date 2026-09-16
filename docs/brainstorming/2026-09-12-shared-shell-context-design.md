@@ -4,6 +4,27 @@ Date: 2026-09-12
 
 Status: implemented locally. Deterministic validation and remaining check limitations are recorded below. Reload an open Pi session to load the changes.
 
+> **Transport correction under user evaluation (2026-09-15):** The original
+> `context` hook implementation below is superseded. Pi converted its hidden
+> custom message into a user message after the latest task/tool result. Session
+> `01a0a600-212a-745a-b2c3-c35fb9823bd4` contained 50 context acknowledgements
+> across 96 text-bearing assistant messages. The replacement uses
+> `before_provider_request` to place one block in a request-local copy of the
+> system instructions. It preserves the base prompt, conversation and saved
+> history. Provider adapters are shared with the existing tools catalog.
+> Protocol/transition tests establish placement and freshness. The user will
+> evaluate autonomous behavior in live sessions before retaining this approach.
+>
+> Validation for this correction: 273 tests passed, 3 existing tests skipped,
+> with no failures across the focused shell, provider catalog and transition
+> suites. Node/Jiti loading and the focused TypeScript check passed. The protocol
+> matrix covers all ten supported API names, including OpenAI Completions used
+> by the reported GLM session. Source formatting and `git diff --check` passed.
+> Repository lint still reports 73 errors in untouched files, with no errors in
+> this correction's files. No live LLM or real-engine qualification was run for
+> this transport-only change. Reload Pi before testing; use a fresh session to
+> avoid carrying earlier context acknowledgements into the behavioral trial.
+
 > **Private-runtime scope note (2026-09-12):** This record verifies the shared
 > presentation work, not the later private-runtime architecture. Its V2
 > planned-policy receipt language is superseded by the approved

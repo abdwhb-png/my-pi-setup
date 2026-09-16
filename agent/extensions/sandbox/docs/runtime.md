@@ -53,10 +53,18 @@ Docker uses its policy broker and a private connection. A Docker authorization d
 
 ## Model context
 
-Before each model request, Pi assembles one ephemeral `pi.shell-context.v2`
-message through its `context` hooks. This message replaces earlier shell facts
-for that request and is never appended to session history. Stable tool
-descriptions and common guidelines contain no changing policy values.
+Before each provider request, Pi adds one `<pi-shell-context>` block to a copy
+of that request's system instructions. The block combines current execution
+facts, tool availability and active Safe Bash checks. It never becomes a user
+message, changes the saved base prompt or appends to session history. Unchanged
+facts produce the same block; changed facts replace their section. Historical
+assistant acknowledgements remain part of the conversation.
+
+The provider adapters preserve conversation messages, tool results, unrelated
+system instructions and cache metadata. An unsupported payload produces a UI
+warning instead of falling back to a user message. The `context` hooks only
+remove legacy ephemeral `pi.shell-context.v2` messages from outgoing context.
+Stable tool descriptions and common guidelines contain no changing policy values.
 
 The context resolves configuration without starting Zerobox. An unchanged
 configuration reports the admitted runtime's policy facts. A valid change
