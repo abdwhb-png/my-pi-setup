@@ -3,6 +3,7 @@ import {
     getPermissionsService,
     PERMISSIONS_READY_CHANNEL,
 } from "@gotgenes/pi-permission-system";
+import type { PermissionsReadyEvent } from "@gotgenes/pi-permission-system";
 import { loadConfig, type AddonConfig } from "./config.ts";
 import { checkAndBlock, InMemorySessionCache } from "./handler.ts";
 
@@ -16,22 +17,33 @@ export default function (pi: ExtensionAPI) {
     const sessionCache = new InMemorySessionCache();
     let config: AddonConfig = { inherit: {} };
     let sessionYolo = false;
+    let sessionId: string | null = null;
     const authorizerDisposers: Array<() => void> = [];
 
-    pi.events.on(PERMISSIONS_READY_CHANNEL, () => {
-        const service = getPermissionsService();
-        if (!service) return;
+    pi.events.on(
+        PERMISSIONS_READY_CHANNEL,
+        (payload: unknown) => {
+            const ready = payload as PermissionsReadyEvent;
+            if (!ready?.sessionId) return;
+            sessionId = ready.sessionId;
 
-        const dispose = service.registerAuthorizer(
-            YOLO_AUTHORIZER_NAME,
-            async (_details, _query, log) => {
-                if (!sessionYolo) return { kind: "defer" };
-                log.review("session_yolo.auto_allow", {});
-                return { kind: "allow" };
-            },
-        );
-        authorizerDisposers.push(dispose);
-    });
+            const service = getPermissionsService(ready.sessionId);
+            if (!service) return;
+
+            // permissions:ready fires at least once per session and may repeat
+            // (v27+); registering again without disposing would throw.
+            for (const dispose of authorizerDisposers.splice(0)) dispose();
+            const dispose = service.registerAuthorizer(
+                YOLO_AUTHORIZER_NAME,
+                async (_details, _query, log) => {
+                    if (!sessionYolo) return { kind: "defer" };
+                    log.review("session_yolo.auto_allow", {});
+                    return { kind: "allow" };
+                },
+            );
+            authorizerDisposers.push(dispose);
+        },
+    );
 
     pi.registerCommand("yolo-permission", {
         description:
@@ -90,11 +102,13 @@ export default function (pi: ExtensionAPI) {
         reloadConfig(ctx.cwd);
         sessionCache.clear();
         sessionYolo = false;
+        sessionId = null;
     });
 
     pi.on("session_shutdown", () => {
         sessionCache.clear();
         sessionYolo = false;
+        sessionId = null;
         for (const dispose of authorizerDisposers.splice(0)) dispose();
     });
 
@@ -109,6 +123,7 @@ export default function (pi: ExtensionAPI) {
             pi.events,
             sessionCache,
             sessionYolo,
+            sessionId,
         );
 
         if (result?.block) {

@@ -1,6 +1,13 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 
-const { extractValue, InMemorySessionCache } = await import('./handler.ts');
+mock.module('@gotgenes/pi-permission-system', () => ({
+    getPermissionsService: () => mockService,
+}));
+
+let mockService: any;
+
+const { extractValue, InMemorySessionCache, InMemorySessionCache: Cache, checkAndBlock } =
+    await import('./handler.ts');
 
 describe('extractValue', () => {
     it('extracts command for bash target', () => {
@@ -50,16 +57,6 @@ describe('InMemorySessionCache', () => {
 });
 
 // ── checkAndBlock + handleAsk tests ──────────────────────────
-import { mock } from 'bun:test';
-
-mock.module('@gotgenes/pi-permission-system', () => ({
-    getPermissionsService: () => mockService,
-}));
-
-let mockService: any;
-
-const { checkAndBlock, InMemorySessionCache: Cache } =
-    await import('./handler.ts');
 
 function fakeCtx(hasUI = true, selectResult?: string): any {
     return {

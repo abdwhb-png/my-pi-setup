@@ -48,11 +48,14 @@ export async function checkAndBlock(
     _events: EventBus,
     sessionCache: InMemorySessionCache,
     sessionYolo = false,
+    sessionId: string | null = null,
 ): Promise<{ block?: boolean; reason?: string } | undefined> {
     const targetSurface = config.inherit[toolName];
     if (!targetSurface) return undefined;
 
-    const svc = getPermissionsService();
+    // v27+ service accessor is session-keyed; null sessionId resolves to no
+    // service (node published none) and the call is a safe no-op.
+    const svc = getPermissionsService(sessionId ?? "");
     if (!svc) return undefined;
 
     const value = extractValue(targetSurface, input);

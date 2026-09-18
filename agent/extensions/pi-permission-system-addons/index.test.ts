@@ -143,7 +143,7 @@ describe('extension entry point', () => {
         const onPermissionsReady = eventListeners.get('permissions:ready');
 
         expect(onPermissionsReady).toBeDefined();
-        onPermissionsReady!();
+        onPermissionsReady!({ sessionId: 'test-session', adjudicatesLocally: true });
         expect(registerAuthorizer).toHaveBeenCalledTimes(1);
 
         const [, authorize] = registerAuthorizer.mock.calls[0] as unknown as [
@@ -156,6 +156,8 @@ describe('extension entry point', () => {
             async waitForIdle() {},
             async reload() {},
         };
+        // Fixture predates the v33 PromptPayload contract; the authorizer
+        // under test ignores `details`, so a full payload is ceremony.
         const details = {
             requestId: 'request-id',
             source: 'tool_call',
@@ -168,7 +170,7 @@ describe('extension entry point', () => {
                 matchValues: ['git worktree add /tmp/example'],
                 boundaryValue: null,
             },
-        } as PromptPermissionDetails;
+        } as unknown as PromptPermissionDetails;
         const query = {} as PermissionQuery;
         const log = { review() {}, debug() {} };
 
