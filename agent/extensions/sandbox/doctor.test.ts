@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { loadSandboxConfig } from "./index.ts";
 import { sandboxDoctor } from "./doctor.ts";
 import type { PrivateRuntimeBundle } from "./runtime/runtime-bundle.ts";
@@ -28,6 +28,62 @@ test("doctor reports uncovered symlink targets and precise grants", () => {
     expect(sandboxDoctor(f.configure({ allowRead: [".", f.real] }), "Tool")).toContain("Configured read coverage: covered");
     expect(sandboxDoctor(f.configure({ allowRead: ["."], denyRead: ["Tool"] }), "Tool")).toContain("Configured read coverage: denied");
     expect(sandboxDoctor(f.configure({}), "missing-probe-tool")).toContain("Executable unavailable on sandbox PATH");
+});
+
+test("doctor distinguishes Docker authorization from an unexposed client link without executing it", () => {
+    const f = fixture();
+    const bin = join(dirname(f.cwd), "host-bin");
+    mkdirSync(bin);
+    symlinkSync(f.real, join(bin, "docker"));
+    const resolved = f.configure({ allowRead: [f.real] });
+    resolved.config.environment.path = [bin];
+    resolved.config.docker = { mode: "targeted", endpoint: "unix:///hidden.sock", targets: [] };
+    const output = sandboxDoctor(resolved);
+    expect(output).toContain("Docker: targeted");
+    expect(output).toContain("Docker CLI: inaccessible (planned inspection)");
+    expect(output).toContain(`Read grant missing for executable: ${join(bin, "docker")}`);
+    expect(output).toContain("Docker permission does not expose the client executable or Compose plugin.");
+    expect(output).not.toContain("hidden.sock");
+});
+
+test("doctor reports an exposed Docker client separately from an inaccessible Compose plugin without executing either", () => {
+    const f = fixture();
+    const marker = join(f.cwd, "executed");
+    writeFileSync(join(f.cwd, "docker"), `#!/bin/bash\nprintf executed > '${marker}'\n`, { mode: 0o700 });
+    const resolved = f.configure({ allowRead: ["/bin/bash", "/usr/bin/bash"] });
+    resolved.config.docker = { mode: "targeted", endpoint: "unix:///hidden.sock", targets: [] };
+    const output = sandboxDoctor(resolved);
+    expect(output).toContain("Docker CLI: exposed (planned inspection)");
+    expect(output).toMatch(/Docker Compose: (unavailable|inaccessible) \(planned inspection/);
+    expect(output).toContain("Static inspection does not prove client execution");
+    expect(existsSync(marker)).toBeFalse();
+});
+
+test("doctor selects an exposed PATH candidate after an unexposed host candidate", () => {
+    const f = fixture();
+    const bin = join(dirname(f.cwd), "host-bin");
+    mkdirSync(bin);
+    symlinkSync(f.real, join(bin, "docker"));
+    writeFileSync(join(f.cwd, "docker"), "#!/usr/bin/true\n", { mode: 0o700 });
+    const resolved = f.configure({ allowRead: [f.real, "/usr/bin/true"] });
+    resolved.config.environment.path = [bin, f.cwd];
+    const output = sandboxDoctor(resolved, "docker");
+    expect(output).toContain(`Resolved executable: ${join(f.cwd, "docker")}`);
+    expect(output).toContain("Configured read coverage: covered");
+});
+
+test("doctor retains denial priority for Docker clients and does not disclose custom plugin configuration values", () => {
+    const f = fixture();
+    const tool = join(f.cwd, "docker");
+    symlinkSync(f.real, tool);
+    const resolved = f.configure({ allowRead: [f.real], denyRead: [f.real] });
+    resolved.config.docker = { mode: "targeted", endpoint: "unix:///hidden.sock", targets: [] };
+    resolved.config.environment.variables.DOCKER_CONFIG = "never-display-this-config-value";
+    const output = sandboxDoctor(resolved);
+    expect(output).toContain("Docker CLI: inaccessible");
+    expect(output).toContain(`Read denied for executable: ${tool}`);
+    expect(output).toContain("Docker Compose: unknown");
+    expect(output).not.toContain("never-display-this-config-value");
 });
 test("doctor distinguishes private commands and inaccessible interpreters without executing either",()=>{
  const f=fixture();const shell=join(f.cwd,"runtime");mkdirSync(join(shell,"bin"),{recursive:true});

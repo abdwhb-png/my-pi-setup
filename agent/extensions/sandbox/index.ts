@@ -96,6 +96,12 @@ import {
     type DockerTargetAccess,
 } from "./docker-access.ts";
 import {
+    inspectDockerClients,
+    dockerClientWidgetLabel,
+    formatDockerClientInspection,
+    type DockerClientInspection,
+} from "./docker-client-inspection.ts";
+import {
     dockerSelectorLabel,
     summarizeDockerAccess,
     dockerSummaryLabel,
@@ -147,6 +153,7 @@ export interface SandboxDockerFooterState {
     summary?: DockerAccessSummary;
     /** Deadline of the live break-glass grant, when this session holds one. */
     breakGlassExpiresAtMs?: number;
+    clients?: DockerClientInspection;
 }
 
 /** Shield glyph shown in the footer widget (same metaphor as the bash 🛡️ prefix). */
@@ -306,6 +313,8 @@ export function renderSandboxWidget(
     nowMs = Date.now(),
 ): string | null {
     const colors: UiColorsCreation = createUiColors(theme);
+    const displayedDocker =
+        admission === "admitted" ? docker : { ...docker, clients: undefined };
     if (shell) {
         let runtime: string = state;
         if (state === "on")
@@ -326,10 +335,10 @@ export function renderSandboxWidget(
             else if (state === "on") shellColor = colors.primary(value);
             else shellColor = colors.warning(value);
         }
-        return `${colors.subtle("Shell:")} ${shellColor} | ${colors.subtle("Docker:")} ${colorForDockerState(colors, docker, nowMs)}`;
+        return `${colors.subtle("Shell:")} ${shellColor} | ${colors.subtle("Docker:")} ${colorForDockerState(colors, displayedDocker, nowMs)}`;
     }
     const dockerLabel = colors.subtle(`${DOCKER_ICON}docker:`);
-    const dockerValue = colorForDockerState(colors, docker, nowMs);
+    const dockerValue = colorForDockerState(colors, displayedDocker, nowMs);
     if (state === "off") {
         return `${colors.subtle(`${OFF_ICON}sandbox:`)} ${colors.warning(state)} ${dockerLabel} ${dockerValue}`;
     }
@@ -374,11 +383,21 @@ function colorForDockerState(
     nowMs = Date.now(),
 ): string {
     const value = dockerFooterValue(state, nowMs);
-    if (state.mode === "full") return colors.danger(value);
-    if (state.mode === "targeted") {
-        return state.unsafe ? colors.warning(value) : colors.primary(value);
-    }
-    return colors.subtle(value);
+    const rights =
+        state.mode === "full"
+            ? colors.danger(value)
+            : state.mode === "targeted"
+              ? state.unsafe
+                  ? colors.warning(value)
+                  : colors.primary(value)
+              : colors.subtle(value);
+    if (state.mode === "off") return rights;
+    const label = dockerClientWidgetLabel(state.clients);
+    const exposed =
+        state.clients?.admission === "admitted" &&
+        state.clients.cli.state === "exposed" &&
+        state.clients.compose.state === "exposed";
+    return `${rights} · ${exposed ? colors.primary(label) : colors.warning(label)}`;
 }
 
 export function dockerFooterState(
@@ -407,6 +426,7 @@ export function renderSandboxStatusDetails(
     sandboxActive: boolean,
     activeDocker?: DockerAccessSummary,
     runtimeState?: string,
+    clients?: DockerClientInspection,
 ): string {
     const { config, source } = resolved;
     let status = "DISABLED";
@@ -431,6 +451,11 @@ export function renderSandboxStatusDetails(
         `  Denied: ${config.network?.deniedDomains?.join(", ") || "(none)"}`,
         "",
         `Docker: ${dockerStatus}`,
+        ...(sandboxActive &&
+        resolved.shell.mode === "sandbox" &&
+        config.docker.mode !== "disabled"
+            ? formatDockerClientInspection(clients)
+            : []),
         ...formatDockerSummary(
             "Configured Docker",
             summarizeDockerAccess(config.docker),
@@ -1166,6 +1191,13 @@ export function createSandboxExtension(
                 onSandboxContext: (context) => {
                     executionOptions.onSandboxContext?.(context);
                     if (context.version === 3) {
+                        if (
+                            sandboxService === candidateSandbox &&
+                            context.profile === "bash-general"
+                        ) {
+                            sandboxDockerFooterState.clients =
+                                inspectDockerClients({ config, cwd, context });
+                        }
                         notifySandboxRuntimeUpdated(runtimeOwner);
                         w.update(ctx);
                     }
@@ -1618,6 +1650,16 @@ export function createSandboxExtension(
             status === "on" && sandboxShellFooterState.mode === "sandbox",
             activeDockerBreakGlass?.expiresAtMs,
         );
+        if (sandboxDockerFooterState.mode !== "off" && sandboxService) {
+            const context = sandboxService.getProfileContexts()["bash-general"];
+            const config = sandboxConfigs.get(sandboxService);
+            if (config && context.version === 3)
+                sandboxDockerFooterState.clients = inspectDockerClients({
+                    config,
+                    cwd: ctx.cwd,
+                    context,
+                });
+        }
         w.update(ctx);
     }
 
@@ -2435,6 +2477,7 @@ export function createSandboxExtension(
                             sandboxEnabled,
                             getActiveDockerSummary(),
                             getSandboxRuntime().state,
+                            sandboxDockerFooterState.clients,
                         ),
                         "info",
                     );

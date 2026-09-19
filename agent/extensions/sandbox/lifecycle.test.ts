@@ -16,7 +16,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DockerTargetAccess } from "./docker-access.ts";
-import type { SandboxProfileContextsV1 } from "../_shared/sandbox-runtime/execution-context.ts";
+import type { SandboxProfileContextsV1, SandboxProfileContexts, SandboxExecutionContextV3 } from "../_shared/sandbox-runtime/execution-context.ts";
 import type {
     BashOperations,
     ExtensionAPI,
@@ -74,10 +74,11 @@ const profileContexts: SandboxProfileContextsV1 = {
     "think-strict": { ...profileContext, profile: "think-strict", tmp: { path: "/tmp", namespace: "lease-private" } },
     "analysis-strict": { ...profileContext, profile: "analysis-strict", tmp: { path: "/tmp", namespace: "lease-private" } },
 };
+let activeProfileContexts: SandboxProfileContexts = { ...profileContexts };
 const createSandboxService = mock((_options: unknown) => ({
     probe: initialize,
     startBashSession: initialize,
-    getProfileContexts: () => profileContexts,
+    getProfileContexts: () => activeProfileContexts,
     prepareBash,
     prepareThinkBash: prepareBash,
     prepareAnalysis: mock(async () => {
@@ -440,6 +441,7 @@ describe("sandbox lifecycle", () => {
         prepareBash.mockReset(); prepareBash.mockImplementation(prepareBashDefault);
         analysisShutdown.mockClear(); analysisPreflight.mockReset(); analysisPreflight.mockImplementation(async () => undefined);
         createAnalysisSandboxService.mockClear(); capturedWidgetDef.def = null; capturedWidgetDef.updates = [];
+        activeProfileContexts = { ...profileContexts };
     });
     afterEach(async () => { await rm(cwd, { recursive: true, force: true }); });
 
@@ -1304,6 +1306,50 @@ describe("sandbox lifecycle", () => {
             expect(currentShellPolicy()?.mode).toBe("sandbox");
             await session.session.prompt("/sandbox status");
             expect(session.events.uiCallsFor("notify").at(-1)?.args[0]).toContain("Mode: sandbox");
+        } finally {
+            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+            session.dispose();
+        }
+    });
+
+    it("updates Docker client availability only after admission through the Pi lifecycle", async () => {
+        await writeGlobalConfig({ host: { allowed: true }, docker: { allowed: true } });
+        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ docker: { enabled: true } }), { mode: 0o600 });
+        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
+        try {
+            expect(renderWidget()).toContain("client check pending");
+            const admitted: SandboxExecutionContextV3 = {
+                ...profileContext, version: 3, admission: "admitted", admissionSha256: "a".repeat(64), helperSha256: "b".repeat(64),
+                runtime: { target: "x86_64-unknown-linux-gnu", version: "fixture", manifestSha256: "c".repeat(64), component: "shell" },
+                filesystem: { ...profileContext.filesystem, allowRead: [cwd], allowWrite: [cwd] },
+                mounts: [{ source: cwd, destination: cwd, access: "rw", origin: "policy" }], kernelMounts: [],
+                home: { path: "/home/sandbox", namespace: "lease-private" }, tmp: { path: "/tmp", namespace: "lease-private" },
+                network: { ...profileContext.network, loopback: { ...profileContext.network.loopback, publications: [] } },
+                ipc: { hostUserDbus: "not-inherited", hostUnixSockets: [] },
+                environment: { ...profileContext.environment, path: ["/__zerobox/runtime/bin"] },
+                docker: { mode: "targeted", profile: "None", targets: [], hostAccessException: false },
+            };
+            // Replace only the external engine's admission event; run real shell routing and UI wiring.
+            prepareBash.mockImplementation(async command => {
+                const spawn = await prepareBashDefault(command);
+                return {
+                    ...spawn,
+                    getSandboxContext: () => admitted,
+                    supervise: (child: ChildProcess) => {
+                        const status = spawn.supervise(child);
+                        return { ...status, ready: status.ready.then(() => { activeProfileContexts["bash-general"] = admitted; }) };
+                    },
+                };
+            });
+            await createSandboxBashOperations().exec("true", cwd, { onData: () => {} });
+            expect(renderWidget()).toContain("targeted");
+            expect(renderWidget()).toContain("CLI unavailable");
+            expect(renderWidget()).not.toContain("client check pending");
+            await session.session.prompt("/sandbox status");
+            expect(session.events.uiCallsFor("notify").at(-1)?.args[0]).toContain("Docker CLI: unavailable (admitted scope)");
+            await session.session.prompt("/sandbox mode host");
+            expect(renderWidget()).toContain("host · unsandboxed");
+            expect(renderWidget()).not.toContain("CLI unavailable");
         } finally {
             await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
             session.dispose();

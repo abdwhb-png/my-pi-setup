@@ -91,6 +91,31 @@ describe('active sandbox files', () => {
 });
 
 describe('renderSandboxWidget', () => {
+    it('keeps Docker rights visible while identifying an unavailable CLI separately', () => {
+        const state = {
+            ...dockerFooterState({ mode: 'targeted', endpoint: 'unix:///hidden.sock', targets: [] }),
+            clients: { admission: 'admitted' as const, cli: { state: 'unavailable' as const, issues: [] }, compose: { state: 'unavailable' as const, issues: [] } },
+        };
+        const rendered = renderSandboxWidget(fakeTheme(), 'on', state, { mode: 'sandbox', profile: 'custom' }, 'admitted');
+        expect(rendered).toContain('targeted');
+        expect(rendered).toContain('CLI unavailable');
+        expect(rendered).not.toContain('hidden.sock');
+    });
+    it('does not present cached Docker client inspection as applied before admission', () => {
+        const clients = { admission: 'admitted' as const, cli: { state: 'exposed' as const, issues: [] }, compose: { state: 'exposed' as const, issues: [] } };
+        const state = { ...dockerFooterState({ mode: 'full', endpoint: 'unix:///hidden.sock' }), clients };
+        const rendered = renderSandboxWidget(fakeTheme(), 'on', state, { mode: 'sandbox', profile: 'custom' }, 'pending');
+        expect(rendered).toContain('client check pending');
+        expect(rendered).not.toContain('CLI exposed');
+    });
+    it.each(['unavailable', 'unknown', 'exposed'] as const)('distinguishes the exposed CLI from Compose being %s', (state) => {
+        const clients = { admission: 'admitted' as const, cli: { state: 'exposed' as const, issues: [] }, compose: { state, issues: [] } };
+        const docker = { ...dockerFooterState({ mode: 'targeted', endpoint: 'unix:///hidden.sock', targets: [] }), clients };
+        const rendered = renderSandboxWidget(fakeTheme(), 'on', docker, { mode: 'sandbox', profile: 'custom' }, 'admitted');
+        expect(rendered).toContain('CLI exposed');
+        expect(rendered).toContain(state === 'unknown' ? 'Compose not verified' : `Compose ${state}`);
+        expect(rendered).not.toContain('client check pending');
+    });
     it('shows the selected mode separately from its custom policy and engine state', () => {
         const selected = { mode: 'sandbox' as const, profile: 'custom' as const };
         expect(renderSandboxWidget(fakeTheme(), 'on', undefined, selected)).toContain('sandbox · custom · pending admission');
