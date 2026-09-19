@@ -94,6 +94,12 @@ Private control paths must fit the Unix socket address budget. Preflight rejects
 
 The runtime requires Linux user namespaces and the managed Zerobox/FUSE facilities. The private Analysis component supplies Node with JSPI support, Bun, workers and `prlimit`. Qualify the native kernel separately from WSL2. Neither platform's shell tests establish Windows interoperation or application-specific browser behavior.
 
+### Local network diagnostic release, 2026-09-19
+
+Runtime `2026.09.19.1` is installed at `~/.pi/runtimes/zerobox/2026.09.19.1` through the atomic `~/.pi/bin/zerobox` symlink. It keeps engine version `0.3.3-fork.17`. A managed-proxy denial now writes the denied host and port with its policy reason to stderr and returns the same detail in the HTTP body. Request paths and queries are not included. The engine/helper SHA-256 is `c0a4c892db43eaf26ace36e80f390c1c5aacfd2e635834a724b8a5eaf235c1c0`; the runtime manifest SHA-256 is `a34ad844a94067a734c7d85cf022eb689bf8f5843828eaff7fdc3ff18f8fb287`.
+
+The network-proxy suite passed 149 tests, the allowlist integration module passed 7 tests, the configured warnings-denied Clippy gate passed, and the managed Pi runtime exercised real Bash and Safe Bash admissions. A live Pi service command reported `blocked.invalid:443` beside the original curl `403`, and a non-mutating `sfw npm view` completed successfully through the same installed runtime. This release is qualified locally on WSL2 and is explicitly not native-CI evidence. Reload open Pi sessions or start a new session to pin the corrected engine.
+
 ### Local corrective release, 2026-09-15
 
 Runtime `2026.09.15.1` is installed at `~/.pi/runtimes/zerobox/2026.09.15.1` through the atomic `~/.pi/bin/zerobox` symlink. It keeps engine version `0.3.3-fork.17` and prevents write-deny globs from creating guarded FUSE views over roots that are already read-only. The engine/helper SHA-256 is `e1544627b8b448c7f1a818e052be432ccf3fc1d003101be0f93d4ed98737bfc7`; the runtime manifest SHA-256 is `c3b55157c30095ad9b09b829a7fcb9779dc657ce53fca75d672edb523017c61e`.

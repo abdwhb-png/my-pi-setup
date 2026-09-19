@@ -5,20 +5,17 @@
         "allowedDomains": [
             "github.com",
             "*.github.com",
+            "registry.npmjs.org",
+            "*.socket.dev",
             "localhost:8317",
             "localhost:8320",
             "localhost:18740"
         ],
-        "allowedHostDomains": [
-            "*.dev.test:443"
-        ],
+        "allowedHostDomains": ["*.dev.test:443"],
         "deniedDomains": []
     },
     "filesystem": {
-        "denyRead": [
-            "~/.ssh",
-            "~/.gnupg"
-        ],
+        "denyRead": ["~/.ssh", "~/.gnupg"],
         "allowWrite": [
             ".",
             "~/projects/pi-integrations",
@@ -26,13 +23,7 @@
             "~/projects/shared-services/compression",
             "~/projects/shared-services/pi-lens"
         ],
-        "denyWrite": [
-            ".env",
-            ".env.*",
-            "*.pem",
-            "*.key",
-            "node_modules/*"
-        ],
+        "denyWrite": [".env", ".env.*", "*.pem", "*.key", "node_modules/*"],
         "allowRead": [
             ".",
             "~/.local/share/dev-services/secrets/dashboard-token",
@@ -41,6 +32,11 @@
         "denyReadWhenExternal": [
             "~/projects/Foundry-AI",
             "~/projects/dikoli-platform"
+        ],
+        "denyWriteWhenExternal": [
+            "~/projects/Foundry-AI",
+            "~/projects/dikoli-platform",
+            "~/projects/pi-core"
         ]
     },
     "environment": {
@@ -53,27 +49,19 @@
             "local-development": [
                 {
                     "root": "/usr/local/go",
-                    "path": [
-                        "bin"
-                    ]
+                    "path": ["bin"]
                 },
                 {
                     "root": "~/.bun/bin",
-                    "path": [
-                        "."
-                    ]
+                    "path": ["."]
                 },
                 {
                     "root": "/home/linuxbrew/.linuxbrew/bin",
-                    "path": [
-                        "."
-                    ]
+                    "path": ["."]
                 },
                 {
                     "root": "/home/linuxbrew/.linuxbrew/sbin",
-                    "path": [
-                        "."
-                    ]
+                    "path": ["."]
                 },
                 {
                     "root": "~/",
@@ -83,9 +71,12 @@
                         ".local/lib/node_modules/sfw/dist/sfw.mjs",
                         ".local/bin/sfw"
                     ],
-                    "path": [
-                        ".local/bin"
-                    ]
+                    "path": [".local/bin"]
+                },
+                {
+                    "root": "~/.config/herd-lite/bin",
+                    "files": ["php", "php.ini", "cacert.pem"],
+                    "path": ["."]
                 },
                 {
                     "root": "/",
@@ -191,9 +182,7 @@
                         "usr/lib/x86_64-linux-gnu/librt.so.1",
                         "lib/x86_64-linux-gnu/librt.so.1"
                     ],
-                    "path": [
-                        "usr/bin"
-                    ]
+                    "path": ["usr/bin"]
                 },
                 {
                     "root": "/home/linuxbrew/.linuxbrew/lib",
