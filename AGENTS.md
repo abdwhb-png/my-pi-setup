@@ -1,10 +1,11 @@
 # .pi/AGENTS.md
 
-Apply these instructions only when working in the local Pi harness repository. Use [ABOUT-PI.md](./docs/ABOUT-PI.md) when a task requires a general Pi architecture overview.
+Apply these instructions only when working in the local Pi harness repository. Use [docs/ABOUT-PI.md](./docs/ABOUT-PI.md) when a task requires a general Pi architecture overview.
 
 ## Context
 
-This is the local installation of my [pi](https://pi.dev/) agent harness. Interpret `pi` as the Pi agent harness, not Raspberry Pi.
+This is the local installation of my pi harness.
+Interpret `pi` as the [https://pi.dev/](https://pi.dev/) agent harness, not Raspberry Pi.
 I'm working on it to customize it for my needs. This file contains instructions for how to use and modify the harness, as well as guidelines for code style, testing, and inter-agent communication.
 
 While using pi myself, I installed some packages but noticed that they are not as good as I want. So I will be forking them, modifying them, and adding new features. This file will contain instructions for how to do that.
@@ -121,7 +122,7 @@ Harness limitations and release boundaries:
 
 ## Model configuration verification
 
-Before adding or changing an ai provider model, verify  `contextWindow`, `maxTokens`, cost, input modalities, and reasoning support against the provider's current official documentation or API, or a trusted aggregator such as the OpenRouter API.
+Before adding or changing an ai provider model, verify `contextWindow`, `maxTokens`, cost, input modalities, and reasoning support against the provider's current official documentation or API, or a trusted aggregator such as the OpenRouter API.
 
 1. Identify the underlying provider model rather than inferring from a local alias.
 2. Verify context length, maximum output, and modalities from the source.
