@@ -12,7 +12,10 @@ let service: {
 } | undefined;
 
 mock.module("@gotgenes/pi-permission-system", () => ({
-    getPermissionsService: () => service,
+    PERMISSIONS_READY_CHANNEL: "permissions:ready",
+    // v29+ accessor is session-keyed: zero-arg/empty resolves to no service.
+    getPermissionsService: (sessionId?: string) =>
+        sessionId ? service : undefined,
 }));
 
 const { default: extension } = await import("./index.ts");
@@ -30,13 +33,14 @@ type AuthorizeFn = (
 function permissionDetails(
     overrides: Partial<PromptPermissionDetails> = {},
 ): PromptPermissionDetails {
+    // Fixture predates the v33 PromptPayload contract; the authorizer under
+    // test ignores `details`, so a full payload is ceremony.
     return {
         requestId: "request-id",
         source: "tool_call",
         agentName: null,
-        message: "Allow tool?",
         ...overrides,
-    };
+    } as unknown as PromptPermissionDetails;
 }
 
 const query = {
@@ -109,7 +113,11 @@ function activate(flagValue: boolean | undefined): Fixture {
     }
     return {
         flagValue,
-        emitReady: () => readyHandler?.(),
+        emitReady: () =>
+            readyHandler?.({
+                sessionId: "test-session",
+                adjudicatesLocally: true,
+            }),
         runSessionShutdown: () => {
             for (const handler of shutdownHandlers) handler();
         },
