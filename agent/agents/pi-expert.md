@@ -1,7 +1,7 @@
 ---
 name: pi-expert
 description: Authoritative expert on the `pi` agent harness, its architecture, extensions, and skills.
-model: cpa/gemini-3.7-flash
+model: cpa/gemini-3.8-flash
 fallbackModels: cpa/claude-opus-4-6-thinking, cpa/ocg/mimo-v2.5, cpa/ocg/go-deepseek-v4-flash
 thinking: high
 defaultContext: fresh
