@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import registerSubagentsAddons from "./index";
 
-it("registers wait guard while overview remains disabled", () => {
+it("keeps wait guard and overview disabled", () => {
     const calls: string[] = [];
     const pi = new Proxy(
         {},
@@ -15,5 +15,5 @@ it("registers wait guard while overview remains disabled", () => {
 
     registerSubagentsAddons(pi);
 
-    expect(calls).toEqual(["on", "on", "on", "on", "on"]);
+    expect(calls).toEqual([]);
 });

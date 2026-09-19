@@ -3,6 +3,6 @@
         "enabled": false
     },
     "subagentWaitGuard": {
-        "enabled": true
+        "enabled": false
     }
 }

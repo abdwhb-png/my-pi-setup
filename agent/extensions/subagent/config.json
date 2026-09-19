@@ -1,4 +1,8 @@
 {
-    "fleetView": true,
-    "asyncWidget": true
+  "fleetView": true,
+  "asyncWidget": true,
+  "artifactDir": "session",
+  "control": {
+    "needsAttentionAfterMs": 300000
+  }
 }
