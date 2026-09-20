@@ -1,4 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
+import { buildSessionTokenContent } from "../_shared/status-segments.ts";
+import { createUiColors } from "../_shared/ui/ui-colors.ts";
 
 /**
  * Mock the _shared/fancy-footer wrapper (what the extension actually imports)
@@ -102,11 +104,15 @@ describe("session-status-bar extension wiring", () => {
 
     const tokensWidget = widgetDefs.find((w) => w.id === "session-status-bar.tokens");
     const renderCtx = { theme: { fg: (_c: string, t: string) => t }, width: 120 };
-    const rendered = tokensWidget.render(renderCtx, 80);
-    expect(rendered).toContain("in↓1.0k");
-    expect(rendered).toContain("out↑200");
-    expect(rendered).toContain("R30");
-    expect(rendered).toContain("W10");
+    expect(tokensWidget.render(renderCtx, 80)).toBe(
+      buildSessionTokenContent(
+        1000,
+        200,
+        30,
+        10,
+        createUiColors(renderCtx.theme),
+      ),
+    );
   });
 
   it("render closure produces segment content after state refresh", () => {

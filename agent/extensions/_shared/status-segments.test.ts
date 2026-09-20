@@ -12,7 +12,7 @@ import {
   buildSessionTokenContent,
   buildTokenContent,
   renderTokenCounts,
-    shortenMiddle,
+  shortenMiddle,
   sessionNamePrefix,
   type StatusBarState,
 } from "./status-segments";
@@ -52,6 +52,15 @@ function makeState(over: Partial<StatusBarState> = {}): StatusBarState {
     tokens: { input: 1234, output: 340, cacheRead: 20, cacheWrite: 8 },
     ...over,
   };
+}
+
+function expectFragmentsInOrder(text: string, fragments: string[]): void {
+  let previousIndex = -1;
+  for (const fragment of fragments) {
+    const index = text.indexOf(fragment, previousIndex + 1);
+    expect(index).toBeGreaterThan(previousIndex);
+    previousIndex = index;
+  }
 }
 
 describe("shortenMiddle", () => {
@@ -140,19 +149,24 @@ describe("segment renderers", () => {
     expect(renderModel(state, 40, colors)).toBe("(no-provider) x");
   });
 
-  it("buildTokenContent labels input and output with their directions", () => {
-    expect(buildTokenContent(1234, 340, colors)).toBe("in↓1.2k/out↑340");
+  it("buildTokenContent keeps the formatted input before the output", () => {
+    expectFragmentsInOrder(buildTokenContent(1234, 340, colors), [
+      formatTokenCount(1234),
+      formatTokenCount(340),
+    ]);
   });
 
-  it("renderTokenCounts renders session totals with cache read and write", () => {
+  it("renderTokenCounts keeps every session total in metric order", () => {
     const state = makeState({
       tokens: { input: 1234, output: 340, cacheRead: 20, cacheWrite: 8 },
     });
-    expect(renderTokenCounts(state, 40, colors)).toBe(
-      buildSessionTokenContent(1234, 340, 20, 8, colors),
-    );
-    expect(renderTokenCounts(state, 40, colors)).toBe(
-      "Σ in↓1.2k/out↑340 · cache R20/W8",
-    );
+    const rendered = renderTokenCounts(state, 40, colors);
+    expect(rendered).toBe(buildSessionTokenContent(1234, 340, 20, 8, colors));
+    expectFragmentsInOrder(rendered, [
+      formatTokenCount(1234),
+      formatTokenCount(340),
+      formatTokenCount(20),
+      formatTokenCount(8),
+    ]);
   });
 });
