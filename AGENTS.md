@@ -36,6 +36,13 @@ While using pi myself, I installed some packages but noticed that they are not a
 
 **Important** Remember to avoid duplication, that's the most common source of silent errors and maintenance issues. Always prefer importing real modules over copying code.
 
+### Extension ownership boundaries
+
+- Treat each file or directory directly under `agent/extensions/` as an independent extension owner. From an extension, import only its own modules, `agent/extensions/_shared/`, and external packages. Never import a sibling extension's `core/`, `features/`, `runtime/`, `capabilities/`, test helpers, or other private modules.
+- Keep `agent/extensions/_shared/` independent from concrete extensions. Never import an extension implementation from shared code. Move genuinely shared contracts or behavior into the narrowest appropriate `_shared` module instead of making one extension depend on another.
+- Keep a central mono-extension test under `agent/extensions/__tests__/` limited to one public extension entrypoint. Put every multi-extension composition scenario under `agent/extensions/__tests__/integration/`, and load participants through `<extension>.ts` or `<extension>/index.ts` with the Pi test harness instead of statically importing sibling internals.
+- Run `bun run lint:boundaries` from `agent/` after changing extension imports, ownership, or test placement. Treat the graph scan as the authoritative boundary check. Do not add debt allowlists, suppress the rule, or weaken the classifier or Oxlint plugin to make a violation pass. `bun run lint` executes this guard before the general lint.
+
 ### Paths and TUI input
 
 - Persist and document home-relative paths as `~/…`; expand them with `homedir()` before filesystem or child-process I/O. Never hardcode `/home/<user>` in tracked files or tests.
