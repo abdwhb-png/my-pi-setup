@@ -9,18 +9,7 @@ afterEach(() => {
     for (const dispose of cleanup.splice(0).toReversed()) dispose();
 });
 
-interface TestSessionManager {
-    getSessionId?(): string;
-    getEntries?(): unknown[];
-    [key: string]: unknown;
-}
-
-interface TestEventContext {
-    sessionManager?: TestSessionManager;
-    [key: string]: unknown;
-}
-
-type TestHook = (value?: unknown, context?: TestEventContext) => unknown;
+type TestHook = (value: object, context?: object) => unknown;
 
 /** Minimal synchronous/async event runner. Unlike Map.set, Pi retains every hook. */
 export class TestHooks extends Map<string, TestHook> {
@@ -31,13 +20,19 @@ export class TestHooks extends Map<string, TestHook> {
         const handlers = this.callbacks.get(event) ?? [];
         handlers.push(handler);
         this.callbacks.set(event, handlers);
-        return super.set(event, (value = {}, context = {}) => {
+        return super.set(event, (value, context = {}) => {
+            const providedSessionManager =
+                "sessionManager" in context &&
+                typeof context.sessionManager === "object" &&
+                context.sessionManager !== null
+                    ? context.sessionManager
+                    : {};
             const ctx = {
                 ...context,
                 sessionManager: {
                     getSessionId: () => this.sessionId,
                     getEntries: () => [],
-                    ...context.sessionManager,
+                    ...providedSessionManager,
                 },
             };
             let result: unknown;

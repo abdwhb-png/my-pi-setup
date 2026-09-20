@@ -55,8 +55,9 @@ test.skipIf(!hasCandidateRuntime())(
                 backend: createZeroboxBackend(candidateBackendOptions(leaseRoot)),
                 config,
                 createLease: () => createPrivateTempLease({ rootDir: leaseRoot }),
-                recoverStaleLeases: () =>
-                    recoverStalePrivateTempLeases({ rootDir: leaseRoot }),
+                recoverStaleLeases: async () => {
+                    await recoverStalePrivateTempLeases({ rootDir: leaseRoot });
+                },
             });
             await service.startBashSession(cwd);
             let output = "";

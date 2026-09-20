@@ -93,7 +93,7 @@ describe('tool-groups runtime owner', () => {
         f.registry.set('late', { name: 'late' }); f.pi.setActiveTools(['read', 'late']);
         expect(f.hooks.get('input')!({}, f.ctx)).toEqual({ action: 'continue' });
         expect(f.active()).toEqual(['read']);
-        expect(f.hooks.get('tool_call')!({ toolName: 'late' }, f.ctx)?.block).toBe(true);
+        expect(f.hooks.get('tool_call')!({ toolName: 'late' }, f.ctx)).toMatchObject({ block: true });
         f.role(); expect(f.active()).toContain('late');
     });
     test('observes external O3 writes without adopting them or overwriting each request', () => {
@@ -111,7 +111,7 @@ describe('tool-groups runtime owner', () => {
         const grant = registerToolPolicyContribution(f.pi, 'manual-entry', () => ({ grants: enabled ? ['herdr', 'write'] : [] }));
         f.start(); f.role(['read']); enabled = true; grant.refresh();
         expect(f.active()).toEqual(['read', 'herdr']);
-        expect(f.hooks.get('tool_call')!({ toolName: 'write' }, f.ctx)?.block).toBe(true);
+        expect(f.hooks.get('tool_call')!({ toolName: 'write' }, f.ctx)).toMatchObject({ block: true });
         enabled = false; grant.refresh(); expect(f.active()).toEqual(['read']);
     });
     test('availability restoration uses role intent, not a filtered saved list', () => {
@@ -146,7 +146,7 @@ describe('tool-groups runtime owner', () => {
         expect(broker.activateWorkflow(f.pi, 'fixture-b').ok).toBe(false);
         f.role(['read']); expect(f.active()).toEqual(['read', 'workflow_a']);
         broker.deactivateWorkflow(f.pi, 'fixture-a'); expect(f.active()).toEqual(['read']);
-        expect(f.hooks.get('tool_call')!({ toolName: 'workflow_a' }, f.ctx)?.block).toBe(true);
+        expect(f.hooks.get('tool_call')!({ toolName: 'workflow_a' }, f.ctx)).toMatchObject({ block: true });
     });
     test('workflow activation reports the actual capped result, not an attempted merge', () => {
         const broker = getSharedVisibilityBroker();

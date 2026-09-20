@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     calls,
     createTestSession,
@@ -116,7 +117,7 @@ test.skipIf(
                     SANDBOX_EXTENSION,
                     BASH_EXECUTION_EXTENSION,
                 ],
-                extensionFactories: [(pi) => {
+                extensionFactories: [(pi: ExtensionAPI) => {
                     // Successful contexts are transient and cleared at agent_end.
                     // Observe the real admission while the tool result is emitted.
                     pi.on("tool_result", (event) => {

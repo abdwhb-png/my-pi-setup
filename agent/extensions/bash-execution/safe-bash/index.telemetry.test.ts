@@ -82,7 +82,9 @@ function setup(options: {
             commands.set(name, definition.handler);
         },
         on: (event: string, handler: Handler) => {
-            handlers.set(event, handler);
+            handlers.set(event, (value, context) =>
+                handler(value, context as unknown as ExtensionContext),
+            );
         },
         getActiveTools: () => activeTools,
         setActiveTools: (names: string[]) => { activeTools = names; },

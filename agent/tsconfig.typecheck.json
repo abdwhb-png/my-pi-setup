@@ -17,6 +17,9 @@
             "@earendil-works/pi-tui": [
                 "./node_modules/@earendil-works/pi-tui/dist/index.d.ts"
             ],
+            "#src/*": [
+                "./npm/node_modules/@gotgenes/pi-permission-system/src/*.ts"
+            ],
             "pi-fancy-footer": [
                 "../../projects/pi-integrations/pi-fancy-footer/src/index.ts"
             ],

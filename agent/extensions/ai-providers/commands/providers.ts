@@ -1,12 +1,11 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import { Container, type Component, matchesKey } from "@earendil-works/pi-tui";
 import {
-    Container,
-    Text,
-    type Component,
-    matchesKey,
-} from "@earendil-works/pi-tui";
-import { createUiColors } from "../../_shared/ui/ui-colors.ts";
+    createUiColors,
+    type UiColorsCreation,
+} from "../../_shared/ui/ui-colors.ts";
 import { loadAiProvidersConfig } from "../config.ts";
 
 export function registerProvidersCommand(pi: ExtensionAPI): void {
@@ -45,16 +44,7 @@ export function registerProvidersCommand(pi: ExtensionAPI): void {
             }
 
             // Gather provider status data
-            const providerStatusMap = new Map<
-                string,
-                {
-                    displayName: string;
-                    authStatus: string;
-                    modelCount: number;
-                    isEnabledInConfig: boolean | undefined;
-                    isExtensionManaged: boolean;
-                }
-            >();
+            const providerStatusMap = new Map<string, ProviderStatus>();
 
             const extensionManagedProviders: string[] = [];
             const builtInProviders: string[] = [];
@@ -129,17 +119,15 @@ export function registerProvidersCommand(pi: ExtensionAPI): void {
             }
 
             await ctx.ui.custom<void>(
-                (tui, theme, kb, done) => {
+                (tui, theme, _keybindings, done) => {
                     const uiColors = createUiColors(theme);
                     const dashboard = new ProviderDashboard(
                         leftPaneRows,
                         providerStatusMap,
                         allModels,
                         uiColors,
-                        kb,
                         done,
                         config.maxVisibleRows ?? 20,
-                        ctx,
                     );
 
                     // Wrap in a container with a border
@@ -178,41 +166,43 @@ type LeftPaneRow =
     | { type: "header"; title: string }
     | { type: "provider"; id: string };
 
+interface ProviderStatus {
+    displayName: string;
+    authStatus: string;
+    modelCount: number;
+    isEnabledInConfig: boolean | undefined;
+    isExtensionManaged: boolean;
+}
+
 class ProviderDashboard implements Component {
     private leftPaneRows: LeftPaneRow[];
-    private providerStatusMap: Map<string, any>;
-    private allModels: any[];
-    private uiColors: any;
-    private kb: any;
+    private providerStatusMap: Map<string, ProviderStatus>;
+    private allModels: Model<Api>[];
+    private uiColors: UiColorsCreation;
     private done: () => void;
     private maxVisible: number;
-    private ctx: any;
 
     private focusedPane: "left" | "right" = "left";
     private leftIndex = 0;
     private rightIndex = 0;
     private viewingModelDetails = false;
 
-    private currentProviderModels: any[] = [];
+    private currentProviderModels: Model<Api>[] = [];
 
     constructor(
         leftPaneRows: LeftPaneRow[],
-        providerStatusMap: Map<string, any>,
-        allModels: any[],
-        uiColors: any,
-        kb: any,
+        providerStatusMap: Map<string, ProviderStatus>,
+        allModels: Model<Api>[],
+        uiColors: UiColorsCreation,
         done: () => void,
         maxVisible: number,
-        ctx: any,
     ) {
         this.leftPaneRows = leftPaneRows;
         this.providerStatusMap = providerStatusMap;
         this.allModels = allModels;
         this.uiColors = uiColors;
-        this.kb = kb;
         this.done = done;
         this.maxVisible = maxVisible;
-        this.ctx = ctx;
 
         // Initialize leftIndex to the first actual provider
         this.leftIndex = this.leftPaneRows.findIndex(
@@ -250,18 +240,24 @@ class ProviderDashboard implements Component {
         }
 
         // Find the nearest provider in the direction
-        let found = false;
         for (let i = 0; i < this.leftPaneRows.length; i++) {
             if (this.leftPaneRows[newIndex].type === "provider") {
                 this.leftIndex = newIndex;
                 this.updateModelsList();
-                found = true;
                 break;
             }
             newIndex = newIndex + direction;
             if (newIndex < 0) newIndex = this.leftPaneRows.length - 1;
             if (newIndex >= this.leftPaneRows.length) newIndex = 0;
         }
+    }
+
+    private requireProviderStatus(providerId: string): ProviderStatus {
+        const status = this.providerStatusMap.get(providerId);
+        if (!status) {
+            throw new Error(`Missing provider status for ${providerId}`);
+        }
+        return status;
     }
 
     handleInput(data: string): void {
@@ -404,8 +400,11 @@ class ProviderDashboard implements Component {
                 `  ${this.uiColors.primary("Supports Reasoning:")} ${m.reasoning ? "Yes" : "No"}`,
             );
             if (m.compat) {
+                const supportsDeveloperRole =
+                    "supportsDeveloperRole" in m.compat &&
+                    m.compat.supportsDeveloperRole === true;
                 detailsLines.push(
-                    `  ${this.uiColors.primary("Developer Role:")} ${m.compat.supportsDeveloperRole ? "Yes" : "No"}`,
+                    `  ${this.uiColors.primary("Developer Role:")} ${supportsDeveloperRole ? "Yes" : "No"}`,
                 );
             }
         }
@@ -425,7 +424,7 @@ class ProviderDashboard implements Component {
                     leftContent = this.padToWidth(titleStr, leftWidth);
                 } else {
                     const providerId = row.id;
-                    const s = this.providerStatusMap.get(providerId);
+                    const s = this.requireProviderStatus(providerId);
                     const isSelected = iLeft === this.leftIndex;
 
                     let enableStr = "";

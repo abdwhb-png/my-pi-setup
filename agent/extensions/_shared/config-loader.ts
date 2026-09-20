@@ -78,7 +78,7 @@ function readJsonFile<T>(
 ): Partial<T> {
     if (!existsSync(path)) return {};
     try {
-        const raw = JSON.parse(readFileSync(path, "utf-8"));
+        const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
         return normalize(raw);
     } catch {
         return {};

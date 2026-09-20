@@ -520,7 +520,9 @@ describe.skipIf(process.platform !== "linux" ||
             propagateErrors: false,
         });
 
-        const permissions = getPermissionsService();
+        const permissions = getPermissionsService(
+            session.session.sessionManager.getSessionId(),
+        );
         expect(permissions).toBeDefined();
         for (const surface of ["write", "edit"]) {
             expect(
@@ -543,7 +545,9 @@ describe.skipIf(process.platform !== "linux" ||
             propagateErrors: false,
         });
 
-        const permissions = getPermissionsService();
+        const permissions = getPermissionsService(
+            session.session.sessionManager.getSessionId(),
+        );
         expect(permissions).toBeDefined();
         for (const surface of ["write", "edit"]) {
             for (const path of [
