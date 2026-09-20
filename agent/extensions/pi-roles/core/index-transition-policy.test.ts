@@ -16,6 +16,9 @@ mock.module("./apply.ts", () => ({
 
 mock.module("./roles.ts", () => ({
   discoverRoles: () => ({ roles: [], shadowed: [] }),
+  loadRoleFile: () => {
+    throw new Error("loadRoleFile is outside this transition-policy fixture");
+  },
   resolveRole: (name: string) => {
     const role = mocks.roles.get(name);
     if (!role) throw new Error(`missing role: ${name}`);

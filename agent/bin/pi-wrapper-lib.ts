@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { getDefaultAgentDir, repairConfiguredPiPackages } from "../extensions/_shared/package-install/finalizer.ts";
 import {
@@ -19,6 +20,34 @@ export function resolveRealPiPath(realPi = process.env.PI_REAL_BIN, homeDir = ho
   return resolve(
     realPi?.trim() || join(homeDir, "projects", "pi-core", "packages", "coding-agent", "dist", "pi"),
   );
+}
+
+const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
+const PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT =
+  "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT";
+
+/**
+ * Locate the Pi package that owns a launcher, including the compiled
+ * `dist/pi` binary used by the local wrapper. Child sessions must load this
+ * host package rather than a package-local development fixture.
+ */
+export function findPiPackageRootFromExecutable(executable: string): string | undefined {
+  let directory = dirname(resolve(executable));
+  while (directory !== dirname(directory)) {
+    const manifestPath = join(directory, "package.json");
+    try {
+      if (existsSync(manifestPath)) {
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+          name?: unknown;
+        };
+        if (manifest.name === PI_CODING_AGENT_PACKAGE) return directory;
+      }
+    } catch {
+      // A malformed adjacent manifest is not a Pi package. Keep walking.
+    }
+    directory = dirname(directory);
+  }
+  return undefined;
 }
 
 function parseToolList(value: string): string[] {
@@ -104,6 +133,10 @@ export async function runPackageFinalizer(cwd: string, options?: { force?: boole
 
 export function runRealPi(realPiPath: string, args: string[], cwd: string, requestedTools?: string[]): number {
   const env: NodeJS.ProcessEnv = { ...process.env, PI_PACKAGE_FINALIZER_ACTIVE: "1" };
+  const hostPackageRoot = findPiPackageRootFromExecutable(realPiPath);
+  if (hostPackageRoot) {
+    env[PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT] = hostPackageRoot;
+  }
   delete env[TOOL_GROUPS_REQUESTED_TOOLS_ENV];
   if (requestedTools !== undefined) {
     env[TOOL_GROUPS_REQUESTED_TOOLS_ENV] = JSON.stringify(requestedTools);

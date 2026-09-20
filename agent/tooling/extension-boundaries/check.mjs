@@ -6,6 +6,7 @@ import {
     collectLiteralModuleSpecifiers,
     isVendoredExtension,
 } from './classifier.mjs';
+import { findUnreachableExtensionModules } from './reachability.mjs';
 
 const SOURCE_FILE = /\.(?:[cm]?[jt]sx?)$/i;
 
@@ -59,7 +60,8 @@ export function findExtensionBoundaryViolations(extensionsRoot) {
 if (import.meta.main) {
     const root = resolve(process.argv[2] ?? 'extensions');
     const violations = findExtensionBoundaryViolations(root);
-    if (violations.length === 0) {
+    const unreachable = findUnreachableExtensionModules(root);
+    if (violations.length === 0 && unreachable.length === 0) {
         console.log('Extension boundaries: OK');
         process.exit(0);
     }
@@ -68,6 +70,13 @@ if (import.meta.main) {
             `${violation.file}: ${violation.specifier} (${violation.reason})`,
         );
     }
-    console.error(`Extension boundaries: ${violations.length} violation(s)`);
+    for (const file of unreachable) {
+        console.error(
+            `${file}: production module is unreachable from an extension or standalone entrypoint`,
+        );
+    }
+    console.error(
+        `Extension boundaries: ${violations.length} import violation(s), ${unreachable.length} unreachable module(s)`,
+    );
     process.exit(1);
 }

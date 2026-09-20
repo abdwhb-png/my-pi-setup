@@ -1,7 +1,7 @@
 {
     "schemaVersion": 1,
     "recordedAt": "2026-09-05",
-    "replayCommand": "ASRT_PACKAGE_ROOT=/absolute/path/to/@anthropic-ai/sandbox-runtime-0.0.74 bun extensions/sandbox/runtime/legacy-asrt-deny-characterization.ts",
+    "replayCommand": "ASRT_PACKAGE_ROOT=/absolute/path/to/@anthropic-ai/sandbox-runtime-0.0.74 bun extensions/sandbox/runtime/scripts/legacy-asrt-deny-characterization.ts",
     "host": {
         "platform": "linux",
         "arch": "x64",

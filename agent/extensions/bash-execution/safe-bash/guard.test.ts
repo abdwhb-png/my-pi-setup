@@ -5,7 +5,7 @@ import {
     isDangerous,
     redirectShellCommand,
     redirectShellCommandWithPolicy,
-} from './guard';
+} from '../../_shared/command-execution/guard.ts';
 
 // --- Positive cases: safe commands that must NOT be blocked ---
 

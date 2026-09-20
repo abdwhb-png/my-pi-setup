@@ -53,8 +53,8 @@ describe('tps-tracker summary contribution', () => {
         expect(emit.mock.calls[0][0]).toBe(TPS_SUMMARY_EVENT);
         expect(emit.mock.calls[0][1].prefix).toBe('TPS');
         const text = emit.mock.calls[0][1].text;
-        // Output of single message is 100, formatted through shared explicit labels.
-        expect(text).toContain('in↓ 0 · out↑ 100');
+        // Output of one message is 100, in the compact shared status segment.
+        expect(text).toContain('in↓0/out↑100');
         expect(notify).not.toHaveBeenCalled();
         expect(setStatus).toHaveBeenCalledWith(
             'tps',
@@ -117,6 +117,6 @@ describe('tps-tracker summary contribution', () => {
         );
 
         const text = emit.mock.calls[0][1].text;
-        expect(text).toContain('in↓ 700 · out↑ 150');
+        expect(text).toContain('in↓700/out↑150');
     });
 });

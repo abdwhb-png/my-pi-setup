@@ -334,6 +334,9 @@ function createFakePi() {
     >();
     return {
         api: {
+            getActiveTools(): string[] {
+                return [];
+            },
             registerTool(tool: { name: string }): void {
                 tools.set(tool.name, tool as never);
             },

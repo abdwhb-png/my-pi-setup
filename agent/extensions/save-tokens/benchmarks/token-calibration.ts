@@ -151,7 +151,7 @@ const FIXTURES: Fixture[] = [
         text: Array.from(
             { length: 400 },
             (_, i) =>
-                `/home/abdwhb/projects/pi-integrations/package-${i}/src/components/Button/index.ts`,
+                `/workspace/pi-integrations/package-${i}/src/components/Button/index.ts`,
         ).join("\n"),
     },
 ];

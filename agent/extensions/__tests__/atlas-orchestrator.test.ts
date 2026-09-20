@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const rolePath = join(import.meta.dir, 'atlas-orchestrator.md');
+const rolePath = join(import.meta.dir, '..', '..', 'roles', 'atlas-orchestrator.md');
 
 describe('atlas-orchestrator role contract', () => {
     it('uses portable delegation, bounded recovery, and safe concurrency rules', () => {

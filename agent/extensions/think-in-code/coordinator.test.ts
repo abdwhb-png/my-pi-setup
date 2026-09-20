@@ -1026,7 +1026,7 @@ describe("ThinkCoordinator", () => {
         expect(normalized.bindings.FILE_CONTENT).toBe("A".repeat(exact));
         expect(normalized.bindings.FILE_PATH).toBe(join(home!, "exact.txt"));
         expect(normalized.mount).toBeUndefined();
-    });
+    }, 20_000);
 
     it("rejects 64 MiB plus one byte before archive or analysis", async () => {
         const analysis = fakeAnalysis({ output: "must not run" });

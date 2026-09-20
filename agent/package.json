@@ -7,6 +7,7 @@
         "test": "bun test --isolate",
         "test:watch": "bun test --watch",
         "test:coverage": "bun test --isolate --coverage",
+        "test:sandbox:zerobox-candidate": "bash scripts/run-zerobox-candidate-contracts.sh",
         "fmt": "oxfmt extensions/**/*.ts",
         "fmt:check": "oxfmt --check extensions/**/*.ts",
         "fmt:files": "oxfmt",

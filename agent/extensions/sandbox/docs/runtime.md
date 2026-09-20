@@ -135,3 +135,15 @@ Select recovery explicitly and restore the corresponding Pi extension code toget
 Use the offline [runtime distribution builder](../runtime/distribution/README.md) only with its pinned Ubuntu 24.04 amd64 builder image and locked input cache. It verifies input digests before assembly, builds the QuickJS worker with the downloaded unmodified Bun, relocates the private shell and Analysis components, and writes a manifest for every declared output. The staging operation validates the candidate through `resolvePrivateRuntime`, keeps matching binary provenance beside the release, preserves the existing executable for recovery, and atomically changes the managed entry only when explicitly called. Assembly does not activate a release. Staging to the real managed entry activates it atomically.
 
 Real shell contract tests require both `PI_SANDBOX_ZEROBOX_BINARY` and `PI_SANDBOX_ZEROBOX_SHA256`. Supply the exact candidate explicitly. Tests that require that candidate skip when it is absent instead of using a personal installation. The standalone Analysis proof exercises the real engines; shell lifecycle fixtures simulate only their unrelated Analysis preflight.
+
+### Candidate contract runner
+
+Run `bun run test:sandbox:zerobox-candidate` from `agent/` only after providing one private runtime candidate through `PI_SANDBOX_RUNTIME_BUNDLE`, `PI_SANDBOX_ZEROBOX_BINARY`, and `PI_SANDBOX_ZEROBOX_SHA256`. The command verifies that the executable is the bundle's `bin/zerobox`, validates its SHA-256, then enables only the explicit candidate flags required by the retained Shell, Docker, local-resource, Analysis, authority, profile, fork, and read-only-CWD contracts. It never selects `~/.pi/bin/zerobox` or another host executable. Set `PI_SANDBOX_ZEROBOX_SOURCE_ROOT` when the matching Zerobox Git worktree is available so the source and ordered-patch provenance contract runs too. Use `--validate` to check this configuration without executing native contracts.
+
+The runner deliberately excludes installed-runtime verification. Publish the candidate atomically first, unset all candidate variables, then run `PI_SANDBOX_INSTALLED_CONTRACT=1 bun test --isolate extensions/sandbox/runtime/installed-runtime.integration.test.ts` against the managed entry.
+
+Keep these contracts manual and opt-in:
+
+- `PI_SANDBOX_DEV_WORKFLOW_CWD` replays a developer's real workflow from a supplied checkout. It must not run in generic CI because it intentionally executes that checkout's commands.
+- `PI_BROWSER_TOOLS_RUNTIME_CONTRACT` needs a live native Agent Browser installation and a user-visible browser grant.
+- `PI_HERDR_RUNTIME_CONTRACT` needs a live Herdr pane and its current pane identity.

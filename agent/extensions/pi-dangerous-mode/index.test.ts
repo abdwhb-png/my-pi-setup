@@ -1,10 +1,16 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import dangerousModeExtension from "./index.ts";
 import {
     setUiPromptGuardCompatibility,
     setUnattendedOverride,
 } from "./runtime-state.ts";
+
+mock.module("@gotgenes/pi-permission-system", () => ({
+    PERMISSIONS_READY_CHANNEL: "permissions:ready",
+    getPermissionsService: () => undefined,
+}));
+
+const { default: dangerousModeExtension } = await import("./index.ts");
 
 type Command = {
     handler: (args: string, ctx: CommandContext) => Promise<void>;

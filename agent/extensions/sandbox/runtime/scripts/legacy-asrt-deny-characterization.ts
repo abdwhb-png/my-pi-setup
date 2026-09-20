@@ -1,3 +1,4 @@
+/** Standalone characterization utility for the retired ASRT backend. */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";

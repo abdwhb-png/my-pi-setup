@@ -124,15 +124,16 @@ describe("Zerobox backend", () => {
     it("writes a private profile and returns exact public CLI argv", async () => {
         const parent = await mkdtemp(join(tmpdir(), "z-"));
         const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        process.env.PI_CODING_AGENT_DIR = join(parent, "agent");
-        await mkdir(getAgentDir());
-        await writeFile(join(getAgentDir(), "sandbox.global.json"), "{}", { mode: 0o600 });
-        const binaryPath = join(parent, "zerobox");
-        await writeFile(binaryPath, "fixture", { mode: 0o755 });
-        await chmod(binaryPath, 0o755);
-        const lease = await createPrivateTempLease({ rootDir: join(parent, "r") });
-        const runCommand = mock(successfulRun);
+        let lease: Awaited<ReturnType<typeof createPrivateTempLease>> | undefined;
         try {
+            process.env.PI_CODING_AGENT_DIR = join(parent, "agent");
+            await mkdir(getAgentDir());
+            await writeFile(join(getAgentDir(), "sandbox.global.json"), "{}", { mode: 0o600 });
+            const binaryPath = join(parent, "zerobox");
+            await writeFile(binaryPath, "fixture", { mode: 0o755 });
+            await chmod(binaryPath, 0o755);
+            lease = await createPrivateTempLease({ rootDir: join(parent, "r") });
+            const runCommand = mock(successfulRun);
             const backend = createZeroboxBackend({
                 binaryPath,
                 ...await createRuntimeBundleFixture(binaryPath,expectedProvenance.version),
@@ -309,7 +310,7 @@ describe("Zerobox backend", () => {
         } finally {
             if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
             else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            await lease.dispose();
+            await lease?.dispose();
             await rm(parent, { recursive: true, force: true });
         }
     });

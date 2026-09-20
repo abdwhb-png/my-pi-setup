@@ -3,115 +3,46 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const EXTENSIONS_DIR = path.join(import.meta.dir, "..", "..", "extensions");
+const PORTABLE_TEXT_FILE = /\.(?:[cm]?[jt]sx?|json|py|sh|toml|ya?ml)$/i;
+const TEST_FILE = /(?:^|\.)((?:integration\.)?test|spec)\.[cm]?[jt]sx?$/i;
+const LOGICAL_HOME_USERS = new Set(["linuxbrew", "sandbox"]);
 
-function findSourceFiles(dir: string): string[] {
-  const results: string[] = [];
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const e of entries) {
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      if (e.name === "node_modules") continue;
-      results.push(...findSourceFiles(full));
-    } else if (e.name.endsWith(".ts") && !e.name.endsWith(".test.ts") && !e.name.endsWith(".d.ts")) {
-      results.push(full);
-    }
-  }
-  return results;
+function isPortableExecutable(file: string): boolean {
+  if (file.startsWith("docs/audits/")) return false;
+  if (TEST_FILE.test(path.basename(file))) return false;
+  if (!PORTABLE_TEXT_FILE.test(file)) return false;
+  return (
+    file.startsWith(".github/") ||
+    file.startsWith("agent/extensions/") ||
+    file.startsWith("agent/scripts/") ||
+    /^agent\/[^/]+$/.test(file)
+  );
 }
 
-function moduleBasename(filePath: string): string {
-  return path.basename(filePath, ".ts");
-}
-
-function isImportedByTest(moduleName: string, testFiles: string[]): boolean {
-  const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const patterns = [
-    new RegExp(`from\\s+['"][^'"]*\\/${escaped}(\\.ts)?['"]`),
-    new RegExp(`import\\(\\s*['"][^'"]*\\/${escaped}(\\.ts)?['"]\\s*\\)`),
-  ];
-  for (const tf of testFiles) {
-    const content = fs.readFileSync(tf, "utf-8");
-    if (patterns.some((pattern) => pattern.test(content))) return true;
+function containsPersonalHome(text: string): boolean {
+  for (const match of text.matchAll(/\/home\/([a-z_][a-z0-9_-]*)/g)) {
+    if (!LOGICAL_HOME_USERS.has(match[1].toLowerCase())) return true;
   }
   return false;
 }
 
-function findTestFiles(dir: string): string[] {
-  const results: string[] = [];
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const e of entries) {
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      if (e.name === "node_modules") continue;
-      results.push(...findTestFiles(full));
-    } else if (e.name.endsWith(".test.ts")) {
-      results.push(full);
-    }
-  }
-  return results;
-}
-
-/** Modules that are pi extension entry points — not unit-testable outside pi runtime */
-function isEntryPoint(content: string): boolean {
-  return /export default function\s*\(/.test(content);
-}
-
-/** Modules that import pi packages (only testable through bun/jiti) */
-function hasPiImport(content: string): boolean {
-  return /from\s+['"]@earendil-works\//.test(content);
-}
-
-describe("Meta: every non-entry-point module is imported by a test", () => {
-  const sourceFiles = findSourceFiles(EXTENSIONS_DIR);
-  const testFiles = findTestFiles(EXTENSIONS_DIR);
-  const entryPoints = new Set<string>();
-
-  // Pre-compute entry point basenames so we can skip them
-  for (const sf of sourceFiles) {
-    const content = fs.readFileSync(sf, "utf-8");
-    if (isEntryPoint(content)) {
-      entryPoints.add(moduleBasename(sf));
-    }
-  }
-
-  for (const mod of sourceFiles) {
-    const basename = moduleBasename(mod);
-    const content = fs.readFileSync(mod, "utf-8");
-    const relPath = path.relative(EXTENSIONS_DIR, mod);
-
-    // Skip pi extension entry points (only testable in integration)
-    if (isEntryPoint(content) || hasPiImport(content)) continue;
-
-    it(`${basename} (${relPath}) is imported by at least one test`, () => {
-      const imported = isImportedByTest(basename, testFiles);
-      if (!imported) {
-        throw new Error(
-          `Module "${basename}" (${relPath}) has exports but is NOT imported by any test.\n` +
-          `Add an import guard in the nearest .test.ts or create a new test.`,
-        );
-      }
-    });
-  }
-});
-
-describe("Meta: tracked files do not hardcode the previous home directory", () => {
-  it("contains no legacy home path", () => {
+describe("Meta: portable executable files do not hardcode a personal home", () => {
+  it("contains no /home/<user> path outside fixtures and historical audits", () => {
     const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
-    const legacyHomePath = ["/home", "abdwhb"].join("/");
     const trackedFiles = execFileSync("git", ["ls-files", "-z"], {
       cwd: repoRoot,
       encoding: "buffer",
     })
       .toString("utf8")
       .split("\0")
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter(isPortableExecutable);
     const offenders = trackedFiles.filter((file) => {
       const fullPath = path.join(repoRoot, file);
       if (!fs.existsSync(fullPath)) return false;
       if (!fs.statSync(fullPath).isFile()) return false;
       const content = fs.readFileSync(fullPath);
-      return !content.includes(0) && content.toString("utf8").includes(legacyHomePath);
+      return !content.includes(0) && containsPersonalHome(content.toString("utf8"));
     });
 
     expect(offenders).toEqual([]);

@@ -1,3 +1,4 @@
+/* @extension-reachability-root -- launched by the Analysis host as a Node ESM loader. */
 /* oxlint-disable typescript/no-unsafe-assignment, typescript/no-unsafe-member-access, typescript/no-unsafe-return -- Node's experimental ESM loader hook is an MJS package boundary. */
 const PREVIEW2_FILESYSTEM = '@bytecodealliance/preview2-shim/filesystem';
 const ERYX_PACKAGE_PATH = '/@bsull/eryx/';

@@ -6,7 +6,6 @@ import type {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import {
-  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -24,6 +23,13 @@ import {
   SUBAGENT_RPC_REQUEST_EVENT,
 } from "../_shared/subagents/rpc-client";
 const HARNESS_RUNTIME_ENV = "BRAINSTORM_FORCER_HARNESS_RUNTIME";
+const PI_CODING_AGENT_PACKAGE_ROOT_ENV =
+  "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT";
+const HOST_PI_CODING_AGENT_PACKAGE_ROOT = dirname(
+  dirname(
+    fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")),
+  ),
+);
 
 async function createBoundRuntime(
   codingAgent: typeof import("@earendil-works/pi-coding-agent"),
@@ -180,113 +186,88 @@ async function launchRuntimeVerification(session: any, cwd: string) {
   );
 }
 
-async function installStructuredMockPi(
-  harness: typeof import("@abdwhb-png/pi-test-harness"),
-  root: string,
+async function installStructuredProviderFixture(
+  agentDir: string,
   structuredOutput: unknown,
-  delay = 0,
 ) {
-  const mockPi = harness.createMockPi();
-  mockPi.install();
-  mockPi.onCall({
-    delay,
-    jsonl: [
-      {
-        type: "tool_execution_start",
-        toolCallId: "structured-output-1",
-        toolName: "structured_output",
-        args: structuredOutput,
-      },
-      {
-        type: "tool_execution_end",
-        toolCallId: "structured-output-1",
-        toolName: "structured_output",
-        result: { content: [{ type: "text", text: "captured" }] },
-        isError: false,
-      },
-      {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "structured-output-1",
-              name: "structured_output",
-              arguments: structuredOutput,
-            },
-          ],
-          stopReason: "toolUse",
-          model: "mock/test-model",
-          usage: {
-            input: 100,
-            output: 50,
-            cacheRead: 0,
-            cacheWrite: 0,
-            cost: { total: 0.001 },
-          },
-        },
-      },
-    ],
-  });
-  const scriptPath = join(root, "structured-mock-pi.mjs");
-  const launcherPath = join(
-    root,
-    process.platform === "win32" ? "structured-mock-pi.cmd" : "structured-mock-pi",
+  const extensionsDir = join(agentDir, "extensions");
+  const providerPath = join(extensionsDir, "brainstorm-test-provider.mjs");
+  await mkdir(extensionsDir, { recursive: true });
+  const fauxModule = import.meta.resolve(
+    "@earendil-works/pi-ai/providers/faux",
   );
   await writeFile(
-    scriptPath,
+    providerPath,
     [
-      'import { spawn } from "node:child_process";',
-      'import { writeFileSync } from "node:fs";',
-      'const capture = process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;',
-      'const value = process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT;',
-      'if (capture && value) writeFileSync(capture, value);',
-      'const child = spawn(process.env.BRAINSTORM_MOCK_PI_BINARY, process.argv.slice(2), { env: process.env, stdio: "inherit" });',
-      'child.on("exit", (code) => process.exit(code ?? 1));',
+      `import { fauxAssistantMessage, fauxProvider, fauxToolCall } from ${JSON.stringify(fauxModule)};`,
+      "",
+      "function waitForDelay(delay, signal) {",
+      "  if (!(delay > 0)) return Promise.resolve();",
+      "  return new Promise((resolve) => {",
+      "    const finish = () => {",
+      "      clearTimeout(timer);",
+      '      signal?.removeEventListener("abort", finish);',
+      "      resolve();",
+      "    };",
+      "    const timer = setTimeout(finish, delay);",
+      '    signal?.addEventListener("abort", finish, { once: true });',
+      "    if (signal?.aborted) finish();",
+      "  });",
+      "}",
+      "",
+      "export default function register(pi) {",
+      "  const faux = fauxProvider({",
+      '    provider: "brainstorm-test",',
+      '    models: [{ id: "mock", reasoning: false }],',
+      "    tokensPerSecond: 100000,",
+      "  });",
+      "  faux.setResponses([",
+      "    async (_context, options) => {",
+      "      const delay = Number(process.env.BRAINSTORM_TEST_PROVIDER_DELAY_MS ?? 0);",
+      "      await waitForDelay(delay, options?.signal);",
+      "      if (options?.signal?.aborted) {",
+      '        return fauxAssistantMessage("", { stopReason: "aborted" });',
+      "      }",
+      "      const value = JSON.parse(process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT ?? \"null\");",
+      '      return fauxAssistantMessage(fauxToolCall("structured_output", { value }), { stopReason: "toolUse" });',
+      "    },",
+      "  ]);",
+      "  pi.registerProvider(faux.provider);",
+      "}",
     ].join("\n"),
   );
-  if (process.platform === "win32") {
-    await writeFile(
-      launcherPath,
-      `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`,
-    );
-  } else {
-    await writeFile(
-      launcherPath,
-      `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}" "$@"\n`,
-    );
-    await chmod(launcherPath, 0o755);
-  }
 
   const previous = {
-    binary: process.env.PI_SUBAGENT_PI_BINARY,
-    mockBinary: process.env.BRAINSTORM_MOCK_PI_BINARY,
+    hostPiPackageRoot: process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV],
+    providerDelay: process.env.BRAINSTORM_TEST_PROVIDER_DELAY_MS,
     structuredOutput: process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT,
   };
-  process.env.PI_SUBAGENT_PI_BINARY = launcherPath;
-  process.env.BRAINSTORM_MOCK_PI_BINARY = join(
-    mockPi.dir,
-    process.platform === "win32" ? "pi.cmd" : "pi",
-  );
+  process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] =
+    HOST_PI_CODING_AGENT_PACKAGE_ROOT;
   process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT =
     JSON.stringify(structuredOutput);
 
   return {
-    mockPi,
+    providerPath,
+    setDelay(delayMs: number) {
+      process.env.BRAINSTORM_TEST_PROVIDER_DELAY_MS = String(delayMs);
+    },
     cleanup() {
-      if (previous.binary === undefined)
-        delete process.env.PI_SUBAGENT_PI_BINARY;
-      else process.env.PI_SUBAGENT_PI_BINARY = previous.binary;
-      if (previous.mockBinary === undefined)
-        delete process.env.BRAINSTORM_MOCK_PI_BINARY;
-      else process.env.BRAINSTORM_MOCK_PI_BINARY = previous.mockBinary;
+      if (previous.hostPiPackageRoot === undefined)
+        delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+      else
+        process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] =
+          previous.hostPiPackageRoot;
+      if (previous.providerDelay === undefined)
+        delete process.env.BRAINSTORM_TEST_PROVIDER_DELAY_MS;
+      else
+        process.env.BRAINSTORM_TEST_PROVIDER_DELAY_MS =
+          previous.providerDelay;
       if (previous.structuredOutput === undefined)
         delete process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT;
       else
         process.env.BRAINSTORM_TEST_STRUCTURED_OUTPUT =
           previous.structuredOutput;
-      mockPi.uninstall();
     },
   };
 }
@@ -686,7 +667,6 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
     }, 15_000);
 
     it("uses the real structured delegation boundary and exact cancellation", async () => {
-      const harnessPackage = ["@abdwhb-png", "pi-test-harness"].join("/");
       const root = await mkdtemp(
         join(await realpath(tmpdir()), "brainstorm-structured-runtime-"),
       );
@@ -700,10 +680,9 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
       ]);
       const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
-      const [codingAgent, { getModel }, harness] = await Promise.all([
+      const [codingAgent, { getModel }] = await Promise.all([
         import("@earendil-works/pi-coding-agent"),
         import("@earendil-works/pi-ai/compat"),
-        import(harnessPackage),
       ]);
       const subagentsExtensionPath = join(
         dirname(fileURLToPath(import.meta.resolve("pi-subagents"))),
@@ -712,14 +691,6 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         "index.ts",
       );
       const { default: brainstormForcer } = await import("./index");
-      await writeFile(
-        join(isolatedAgentDir, "settings.json"),
-        JSON.stringify({
-          subagents: {
-            agentOverrides: { "brainstorm-scout": { model: "brainstorm-test/mock" } },
-          },
-        }),
-      );
       await mkdir(join(isolatedAgentDir, "agents"), { recursive: true });
       await mkdir(join(cwd, ".pi", "agents"), { recursive: true });
       await writeFile(
@@ -729,12 +700,26 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
       const model = getModel("openai", "gpt-4o");
       const sessionManager = codingAgent.SessionManager.create(cwd, sessionDir);
       persistRuntimeSession(sessionManager, model);
-      const child = await installStructuredMockPi(harness, root, {
+      const child = await installStructuredProviderFixture(isolatedAgentDir, {
         outcome: "supported",
         claimIds: ["CL-001"],
         evidenceIds: ["EV-001"],
         summary: "The exact package contract supports the claim.",
       });
+      await writeFile(
+        join(isolatedAgentDir, "settings.json"),
+        JSON.stringify({
+          subagents: {
+            agentOverrides: {
+              "brainstorm-scout": {
+                model: "brainstorm-test/mock",
+                tools: ["read", "grep", "find", "ls"],
+                subagentOnlyExtensions: [child.providerPath],
+              },
+            },
+          },
+        }),
+      );
       const rpcRequests: Array<Record<string, unknown>> = [];
       const asyncCompletions: Array<Record<string, unknown>> = [];
       const runtime = await createBoundRuntime(
@@ -823,8 +808,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
           ],
         });
 
-        child.mockPi.reset();
-        child.mockPi.onCall({ output: "Stopped before completion.", delay: 10_000 });
+        child.setDelay(10_000);
         await executeRuntimeTool(
           runtime.session,
           "brainstorm_record_claim",

@@ -3,7 +3,6 @@ import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
-import { getPermissionsService } from "@gotgenes/pi-permission-system";
 import { candidateRuntimeFixture, hasCandidateRuntime, hostToolReadClosure } from "./integration-fixtures.ts";
 import { PRIVATE_BASH } from "./shell-baseline.ts";
 import { localMachineId } from "../capabilities/authority.ts";
@@ -31,9 +30,75 @@ async function writeActivePolicy(agentDir: string, cwd: string, policy: Record<s
     await writeFile(resolve(agentDir, "sandbox.json"), JSON.stringify({ version: 2, machineId: localMachineId(), docker: { allowed: false }, ...policy }), { mode: 0o600 });
 }
 
+async function writePermissionConfig(agentDir: string): Promise<void> {
+    const directory = resolve(agentDir, "extensions/pi-permission-system");
+    await mkdir(directory, { recursive: true });
+    await writeFile(resolve(directory, "config.json"), JSON.stringify({
+        authorizerChain: [], shellTools: { safe_bash: { commandArgument: "command" } },
+        permission: { "*": "allow", write: { "node_modules/*": "deny", "*sandbox.json": "deny" }, edit: { "node_modules/*": "deny", "*sandbox.json": "deny" } },
+    }));
+}
+
 function observeExtensionErrors() {
     return spyOn(ExtensionRunner.prototype, "emitError");
 }
+
+describe("Pi Permission System policy contract", () => {
+    let root: string;
+    let cwd: string;
+    let session: TestSession | undefined;
+    let previousAgentDir: string | undefined;
+
+    beforeEach(async () => {
+        root = await mkdtemp("/var/tmp/pi-permission-contract-");
+        cwd = resolve(root, "project");
+        const agentDir = resolve(root, "agent");
+        await mkdir(cwd);
+        await writePermissionConfig(agentDir);
+        previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+    });
+
+    afterEach(async () => {
+        session?.dispose();
+        session = undefined;
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        await rm(root, { recursive: true, force: true });
+    });
+
+    it("denies dependency and Sandbox authority edits through Pi's tool boundary", async () => {
+        session = await createTestSession({
+            cwd,
+            extensions: [PERMISSION_EXTENSION],
+            propagateErrors: false,
+        });
+        const deniedPaths = [
+            "node_modules/dependency/index.js",
+            "sandbox.json",
+            "agent/sandbox.json",
+            ".pi/agent/sandbox.json",
+            resolve(AGENT_ROOT, "sandbox.json"),
+        ];
+        const actions = deniedPaths.flatMap((path) => [
+            calls("write", { path, content: "blocked" }),
+            calls("edit", { path, oldText: "before", newText: "after" }),
+        ]);
+        await session.run(when("Attempt protected writes", [
+            ...actions,
+            says("Protected writes were denied."),
+        ]));
+
+        for (const toolName of ["write", "edit"]) {
+            const results = session.events.toolResultsFor(toolName);
+            expect(results).toHaveLength(deniedPaths.length);
+            for (const result of results) {
+                expect(result).toMatchObject({ mocked: false, isError: true });
+                expect(result.text).toContain("Denied by policy");
+            }
+        }
+    });
+});
 
 // Never fall back to a personal backend when a qualified candidate is absent.
 describe.skipIf(process.platform !== "linux" ||
@@ -79,12 +144,7 @@ describe.skipIf(process.platform !== "linux" ||
             "} },",
             "});",
         ].join("\n"));
-        const directory = resolve(testAgentDir, "extensions/pi-permission-system");
-        await mkdir(directory, { recursive: true });
-        await writeFile(resolve(directory, "config.json"), JSON.stringify({
-            authorizerChain: [], shellTools: { safe_bash: { commandArgument: "command" } },
-            permission: { "*": "allow", write: { "node_modules/*": "deny", "*sandbox.json": "deny" }, edit: { "node_modules/*": "deny", "*sandbox.json": "deny" } },
-        }));
+        await writePermissionConfig(testAgentDir);
     });
 
     it.skipIf(!process.env.PI_SANDBOX_LOCAL_NETWORK_CONTRACT)(
@@ -511,57 +571,6 @@ describe.skipIf(process.platform !== "linux" ||
             },
         });
     }, 30_000);
-
-    it("keeps direct node_modules edits denied by Pi Permission System", async () => {
-        fixture = await mkdtemp(resolve(fixtureRoot, ".zerobox-safe-bash-"));
-        session = await createTestSession({
-            cwd: fixture,
-            extensions: [PERMISSION_EXTENSION],
-            propagateErrors: false,
-        });
-
-        const permissions = getPermissionsService(
-            session.session.sessionManager.getSessionId(),
-        );
-        expect(permissions).toBeDefined();
-        for (const surface of ["write", "edit"]) {
-            expect(
-                permissions?.checkPermission(
-                    surface,
-                    "node_modules/dependency/index.js",
-                ),
-            ).toMatchObject({
-                state: "deny",
-                matchedPattern: "node_modules/*",
-            });
-        }
-    });
-
-    it("keeps the global Docker authority denied by Pi Permission System", async () => {
-        fixture = await mkdtemp(resolve(fixtureRoot, ".zerobox-safe-bash-"));
-        session = await createTestSession({
-            cwd: fixture,
-            extensions: [PERMISSION_EXTENSION],
-            propagateErrors: false,
-        });
-
-        const permissions = getPermissionsService(
-            session.session.sessionManager.getSessionId(),
-        );
-        expect(permissions).toBeDefined();
-        for (const surface of ["write", "edit"]) {
-            for (const path of [
-                "sandbox.json",
-                "agent/sandbox.json",
-                ".pi/agent/sandbox.json",
-                resolve(AGENT_ROOT, "sandbox.json"),
-            ]) {
-                expect(permissions?.checkPermission(surface, path)).toMatchObject({
-                    state: "deny",
-                });
-            }
-        }
-    });
 
     it("blocks a real safe_bash write to Docker authority from its parent root", async () => {
         inheritedSessionStatus = process.env[SESSION_STATUS_ENV];

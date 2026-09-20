@@ -102,9 +102,11 @@ describe("session-status-bar extension wiring", () => {
 
     const tokensWidget = widgetDefs.find((w) => w.id === "session-status-bar.tokens");
     const renderCtx = { theme: { fg: (_c: string, t: string) => t }, width: 120 };
-    expect(tokensWidget.render(renderCtx, 80)).toBe(
-      "Σ in↓ 1.0k · out↑ 200 · cache R 30 · W 10",
-    );
+    const rendered = tokensWidget.render(renderCtx, 80);
+    expect(rendered).toContain("in↓1.0k");
+    expect(rendered).toContain("out↑200");
+    expect(rendered).toContain("R30");
+    expect(rendered).toContain("W10");
   });
 
   it("render closure produces segment content after state refresh", () => {

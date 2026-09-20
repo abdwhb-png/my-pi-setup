@@ -51,10 +51,10 @@ describe('pi-subagents-addons discovery contract', () => {
         );
 
         expect(settings.packages).toContain(
-            'git:github.com/abdwhb-png/pi-subagents@compat/pi-084',
+            'git:github.com/abdwhb-png/pi-subagents@dev',
         );
         expect(installed.version).toBeDefined();
-        expect(installed.version).toBe('0.53.0');
+        expect(installed.version).toBe('0.69.0');
         expect(extensionApi).toContain('ping.capabilities.fleetStatus');
     });
 });

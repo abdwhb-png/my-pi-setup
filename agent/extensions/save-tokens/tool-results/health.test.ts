@@ -1,20 +1,46 @@
-import { describe, expect, it } from "bun:test";
-import { createHealthPoller, type HealthState } from "./health";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import {
+    createHealthPoller,
+    type HealthPoller,
+    type HealthPollerOptions,
+    type HealthState,
+} from "./health";
 
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+const activePollers: HealthPoller[] = [];
+
+function startPoller(options: HealthPollerOptions): HealthPoller {
+    const poller = createHealthPoller(options);
+    activePollers.push(poller);
+    return poller;
+}
+
+async function settleChecks(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+}
+
+async function advance(ms: number): Promise<void> {
+    vi.advanceTimersByTime(ms);
+    await settleChecks();
 }
 
 describe("createHealthPoller", () => {
+    beforeEach(() => vi.useFakeTimers());
+
+    afterEach(() => {
+        for (const poller of activePollers.splice(0)) poller.stop();
+        vi.useRealTimers();
+    });
+
     it("runs an immediate ping and reports up", async () => {
         const changes: HealthState[] = [];
-        const poller = createHealthPoller({
+        const poller = startPoller({
             ping: async () => true,
             intervalMs: 1000,
             onHealthChange: (health) => changes.push(health),
         });
 
-        await sleep(5);
+        await settleChecks();
 
         expect(poller.health).toBe("up");
         expect(changes).toEqual(["up"]);
@@ -24,27 +50,27 @@ describe("createHealthPoller", () => {
     it("reports down after the configured consecutive failures", async () => {
         let up = true;
         const changes: HealthState[] = [];
-        const poller = createHealthPoller({
+        const poller = startPoller({
             ping: async () => up,
             intervalMs: 15,
             consecutiveFailuresBeforeDown: 3,
             onHealthChange: (health) => changes.push(health),
         });
 
-        await sleep(5);
+        await settleChecks();
         expect(poller.health).toBe("up");
 
         up = false;
-        await sleep(15);
+        await advance(15);
         // One failed probe is not enough to declare the backend down.
         expect(poller.health).toBe("up");
         expect(changes).toEqual(["up"]);
 
-        await sleep(15);
+        await advance(15);
         // Second failure still under the threshold.
         expect(poller.health).toBe("up");
 
-        await sleep(15);
+        await advance(15);
         // Third consecutive failure flips to down.
         expect(poller.health).toBe("down");
         expect(changes).toEqual(["up", "down"]);
@@ -54,7 +80,7 @@ describe("createHealthPoller", () => {
     it("recovers to up on the first successful probe after failures", async () => {
         let up = true;
         const changes: HealthState[] = [];
-        const poller = createHealthPoller({
+        const poller = startPoller({
             ping: async () => up,
             intervalMs: 15,
             consecutiveFailuresBeforeDown: 2,
@@ -63,12 +89,13 @@ describe("createHealthPoller", () => {
 
         // Down after two consecutive failures.
         up = false;
-        await sleep(40);
+        await settleChecks();
+        await advance(30);
         expect(poller.health).toBe("down");
 
         // Single success resets the streak and restores up immediately.
         up = true;
-        await sleep(15);
+        await advance(15);
         expect(poller.health).toBe("up");
         expect(changes).toEqual(["up", "down", "up"]);
         poller.stop();
@@ -77,20 +104,20 @@ describe("createHealthPoller", () => {
     it("defaults to two consecutive failures before down", async () => {
         let up = true;
         const changes: HealthState[] = [];
-        const poller = createHealthPoller({
+        const poller = startPoller({
             ping: async () => up,
             intervalMs: 15,
             onHealthChange: (health) => changes.push(health),
         });
 
-        await sleep(5);
+        await settleChecks();
         expect(poller.health).toBe("up");
 
         up = false;
-        await sleep(15);
+        await advance(15);
         expect(poller.health).toBe("up");
 
-        await sleep(15);
+        await advance(15);
         expect(poller.health).toBe("down");
         expect(changes).toEqual(["up", "down"]);
         poller.stop();
@@ -98,7 +125,7 @@ describe("createHealthPoller", () => {
 
     it("treats a throwing ping as a failure counted toward the threshold", async () => {
         let shouldThrow = true;
-        const poller = createHealthPoller({
+        const poller = startPoller({
             ping: async () => {
                 if (shouldThrow) throw new Error("connection refused");
                 return true;
@@ -108,11 +135,12 @@ describe("createHealthPoller", () => {
             onHealthChange: () => {},
         });
 
-        await sleep(40);
+        await settleChecks();
+        await advance(15);
         expect(poller.health).toBe("down");
 
         shouldThrow = false;
-        await sleep(15);
+        await advance(15);
         expect(poller.health).toBe("up");
         poller.stop();
     });
@@ -121,7 +149,7 @@ describe("createHealthPoller", () => {
         let up = true;
         let pingCount = 0;
         const changes: HealthState[] = [];
-        const poller = createHealthPoller({
+        const poller = startPoller({
             ping: async () => {
                 pingCount += 1;
                 return up;
@@ -130,27 +158,27 @@ describe("createHealthPoller", () => {
             onHealthChange: (health) => changes.push(health),
         });
 
-        await sleep(5);
+        await settleChecks();
         expect(poller.health).toBe("up");
         expect(changes).toEqual(["up"]);
 
         // Same state again: no duplicate change.
-        await sleep(40);
+        await advance(45);
         expect(changes).toEqual(["up"]);
 
         // State flip up → down: one transition after two consecutive failures.
         up = false;
-        await sleep(40);
+        await advance(30);
         expect(changes).toEqual(["up", "down"]);
 
         // Repeated down: no duplicate change.
-        await sleep(40);
+        await advance(45);
         expect(poller.health).toBe("down");
         expect(changes).toEqual(["up", "down"]);
 
         // Flip back up. One success suffices.
         up = true;
-        await sleep(15);
+        await advance(15);
         expect(changes).toEqual(["up", "down", "up"]);
 
         expect(pingCount).toBeGreaterThanOrEqual(5);
@@ -159,7 +187,7 @@ describe("createHealthPoller", () => {
 
     it("stops polling after stop()", async () => {
         let pingCount = 0;
-        const poller = createHealthPoller({
+        const poller = startPoller({
             ping: async () => {
                 pingCount += 1;
                 return true;
@@ -168,11 +196,11 @@ describe("createHealthPoller", () => {
             onHealthChange: () => {},
         });
 
-        await sleep(5);
+        await settleChecks();
         poller.stop();
         const afterStop = pingCount;
 
-        await sleep(60);
+        await advance(60);
 
         expect(pingCount).toBe(afterStop);
     });

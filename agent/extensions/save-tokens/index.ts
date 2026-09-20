@@ -16,6 +16,8 @@ import ponytail from "./ponytail.ts";
 import { registerTelemetryCommands } from "./telemetry/commands.ts";
 import { createSaveTokensTelemetry } from "./telemetry/controller.ts";
 
+export { formatCompressionFooter } from "./tool-renderers.ts";
+
 export default function saveTokens(pi: ExtensionAPI) {
     const telemetry = createSaveTokensTelemetry(pi);
 

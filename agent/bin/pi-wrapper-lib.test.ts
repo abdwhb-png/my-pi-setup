@@ -14,6 +14,20 @@ describe("pi-wrapper-lib", () => {
     expect(mod.resolveRealPiPath("/opt/custom/pi", "/tmp/pi-home")).toBe("/opt/custom/pi");
   });
 
+  it("finds the owning Pi package for a compiled launcher", async () => {
+    const mod = await import("./pi-wrapper-lib.ts");
+    const root = mkdtempSync(join(tmpdir(), "pi-fw-package-root-"));
+    const binary = join(root, "dist", "pi");
+    mkdirSync(join(root, "dist"), { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "@earendil-works/pi-coding-agent" }),
+    );
+    writeFileSync(binary, "#!/usr/bin/env bun\n");
+
+    expect(mod.findPiPackageRootFromExecutable(binary)).toBe(root);
+  });
+
   it("detects package mutation commands", async () => {
     const mod = await import("./pi-wrapper-lib.ts");
     expect(mod.isPackageMutationCommand(["install", "x"])).toBe(true);

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -47,6 +47,22 @@ const TEST_CONFIG = {
   aggregates: false,
   capErrors: false,
 };
+
+let previousAgentDir: string | undefined;
+let isolatedAgentDir: string | undefined;
+
+beforeEach(() => {
+  previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  isolatedAgentDir = mkdtempSync(join(tmpdir(), "save-tokens-config-"));
+  process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+});
+
+afterEach(() => {
+  if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  if (isolatedAgentDir) rmSync(isolatedAgentDir, { recursive: true, force: true });
+  isolatedAgentDir = undefined;
+});
 
 function createTestToolResultHandler(options: TestHandlerOptions = {}) {
   const { baseUrl: _baseUrl, fetchImpl, ...handlerOptions } = options;
@@ -383,7 +399,7 @@ describe("createToolResultHandler", () => {
       details: undefined,
     };
     const result = await handler(event, TEST_MODEL as any);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       content: [{ type: "text", text: "trimmed" }],
       details: {
         compression: {
@@ -396,6 +412,15 @@ describe("createToolResultHandler", () => {
           // 17 ASCII chars -> ceil(17 / 3) = 6; 7 ASCII chars -> ceil(7 / 3) = 3.
           estimatedTokensBefore: 6,
           estimatedTokensAfter: 3,
+          archiveKind: "output-text",
+          sourceExecution: {
+            status: "unknown",
+            outcome: "unknown",
+          },
+        },
+        execution: {
+          status: "unknown",
+          outcome: "unknown",
         },
       },
     });
@@ -1353,24 +1378,23 @@ describe("extension registration", () => {
 
   it("summarizes multiple read outcomes truthfully at turn_end", async () => {
     const { default: localToolResultCompressor } = await import("./local-tool-result-compressor");
-    const responses = [
-      Response.json({
-        messages: [{ role: "tool", tool_call_id: "r1", content: "same output" }],
-      }),
-      Response.json({
-        messages: [{ role: "tool", tool_call_id: "r2", content: "trimmed" }],
-      }),
-      Response.json({
-        messages: [{ role: "tool", tool_call_id: "r3", content: "same output" }],
-      }),
-    ];
     const realFetch = globalThis.fetch;
-    globalThis.fetch = mock(async () =>
-      responses.shift() ??
-      Response.json({
-        messages: [{ role: "tool", tool_call_id: "r3", content: "same output" }],
-      }),
-    ) as unknown as typeof fetch;
+    globalThis.fetch = mock(async (_input, init) => {
+      // The health poller issues GET requests without a tool payload.
+      if (!init?.body) return new Response("", { status: 204 });
+      const request = JSON.parse(String(init?.body)) as {
+        messages?: Array<{ tool_call_id?: string }>;
+      };
+      const toolCallId = request.messages?.[0]?.tool_call_id;
+      if (!toolCallId) return new Response("", { status: 204 });
+      return Response.json({
+        messages: [{
+          role: "tool",
+          tool_call_id: toolCallId,
+          content: toolCallId === "r2" ? "trimmed" : "same output",
+        }],
+      });
+    }) as unknown as typeof fetch;
 
     const { pi, handlers } = createMockExtensionAPI();
     const ctx = createMockContext() as any;

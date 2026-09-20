@@ -126,30 +126,12 @@ jobs:
             --engine-root projects/zerobox --agent-root .pi/agent \
             --input-root "$RUNNER_TEMP/private-runtime" \
             --version "native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-      - name: Qualify shell, installations, revocation and Analysis on the native kernel
+      - name: Run every explicit Zerobox candidate contract on the native kernel
         working-directory: .pi/agent
         env:
-          PI_SANDBOX_LOCAL_NETWORK_CONTRACT: "1"
-          PI_SANDBOX_GENERIC_COMMAND_CONTRACT: "1"
-          PI_SANDBOX_SHELL_BASELINE_CONTRACT: "1"
-          PI_SANDBOX_INSTALLATIONS_CONTRACT: "1"
-          PI_SANDBOX_REAL_ANALYSIS_CONTRACT: "1"
-          PI_SANDBOX_REAL_ANALYSIS_IPC_CONTRACT: "1"
+          PI_SANDBOX_ZEROBOX_SOURCE_ROOT: ${{ github.workspace }}/projects/zerobox
         run: |
-          bun test --isolate \
-            extensions/sandbox/runtime/shell-baseline.integration.test.ts \
-            extensions/sandbox/runtime/isolation-defaults.integration.test.ts \
-            extensions/sandbox/runtime/installations.integration.test.ts \
-            extensions/sandbox/runtime/revocation.integration.test.ts \
-            extensions/sandbox/runtime/linux-contract.integration.test.ts \
-            extensions/sandbox/runtime/generic-command.integration.test.ts \
-            extensions/sandbox/runtime/profiles.integration.test.ts \
-            extensions/sandbox/runtime/safe-bash-fork-contract.integration.test.ts \
-            extensions/sandbox/runtime/websocket.integration.test.ts \
-            extensions/sandbox/analysis/real-engine.integration.test.ts \
-            extensions/sandbox/analysis/client.execPath.regression.test.ts
-          bun test --isolate extensions/bash-execution/capabilities.integration.test.ts \
-            -t 'real Pi blocks native write and edit of active v2 authority and aliases'
+          bun run test:sandbox:zerobox-candidate
       - name: Verify atomic installation through a fresh Pi session
         working-directory: .pi/agent
         run: |

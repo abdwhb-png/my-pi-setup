@@ -2,6 +2,10 @@ import {
     getToolPolicy,
     registerToolPolicyContribution,
 } from "../../_shared/tool-policy/index.ts";
+export {
+    builtInRoleAssistantPath,
+    loadBuiltInRoleAssistant,
+} from "./role-assistant.ts";
 /**
  * pi-roles extension entry point.
  *

@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
     loadSaveTokensConfig,
     loadCompressorConfig,
@@ -10,11 +13,24 @@ import {
     resolveDefaultTelemetryDirectory,
 } from './config';
 
+let previousAgentDir: string | undefined;
+let isolatedAgentDir: string | undefined;
+
+beforeEach(() => {
+    previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    isolatedAgentDir = mkdtempSync(join(tmpdir(), 'save-tokens-config-'));
+    process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+});
+
+afterEach(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    if (isolatedAgentDir) rmSync(isolatedAgentDir, { recursive: true, force: true });
+    isolatedAgentDir = undefined;
+});
+
 describe('config loader', () => {
-    it('returns fallback shape when SettingsManager unavailable', () => {
-        // In test env, SettingsManager.create() throws, so we get fallback
-        // from mergeConfig({}, {}).  The caveman config may have a defaultLevel
-        // set in the user's real settings.json, so we only check compressor.
+    it('returns the fallback shape from an empty agent configuration', () => {
         const cfg = loadSaveTokensConfig();
         expect(cfg).toHaveProperty('compressor');
         expect(typeof cfg.compressor).toBe('object');
@@ -224,7 +240,7 @@ describe('compressor enabled/excludeTools/minTokensByGroup', () => {
         expect(cfg.enabled).toBe(true);
     });
 
-    it('defaults excludeTools to empty array', () => {
+    it('defaults excludeTools to an empty array from an empty agent configuration', () => {
         const cfg = loadCompressorConfig();
         expect(cfg.excludeTools).toEqual([]);
     });

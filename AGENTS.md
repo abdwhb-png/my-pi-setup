@@ -102,6 +102,15 @@ const { validatePlanPath } = await import("./index.ts");
 
 `mock.module()` is not hoisted. A static import does not reliably observe a mock registered earlier in source order; use `await import(...)` after mock setup.
 
+### Configuration and fixture isolation
+
+- Treat files under `~/.pi/agent/`, including `sandbox.json`, `settings.json`, `plannotator.json`, and `slow-mode.json`, as user state. Never use or mutate them as ordinary test fixtures.
+- Create a unique temporary agent directory for tests that load configuration. Prefer passing `agentDir` explicitly; otherwise set `PI_CODING_AGENT_DIR` before dynamically importing the module.
+- Capture process-global state before mutation and register its restoration before any fallible setup. Restore it in `finally` or `afterEach`, then remove temporary files.
+- Write the smallest fixture that expresses the tested scenario. Use fixed values only when they encode a deliberate behavior, edge case, or security invariant; never copy mutable personal configuration into expectations.
+- Assert observable behavior and stable contracts, not formatting details, incidental defaults, or the user's current tool lists.
+- Put tests requiring the installed runtime, personal configuration, browser, Docker, or real project commands behind an explicit integration flag. Keep standard test runs isolated and leave user files byte-identical.
+
 ### Test placement
 
 - For a single-file extension directly under `agent/extensions/`, place tests in `agent/extensions/__tests__/`; otherwise Pi may auto-discover the test as an extension.

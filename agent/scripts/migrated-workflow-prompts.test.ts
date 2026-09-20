@@ -6,15 +6,13 @@ const promptsDir = join(import.meta.dir, '..', 'prompts');
 
 describe('migrated workflow prompt names', () => {
     it('uses task-oriented names that do not compete with /implement', () => {
-        const expectedNames = [
-            'plan-review',
-            'build-review-fix',
-            'review-change',
-        ];
+        const expectedNames = ['review-change'];
         const retiredNames = [
             'context-plan-review',
             'implement-and-review',
             'implementation-review',
+            'plan-review',
+            'build-review-fix',
         ];
 
         for (const name of expectedNames) {

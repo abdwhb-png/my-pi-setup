@@ -200,7 +200,7 @@ describe("sandbox dependency contract", () => {
             ).json(),
             Bun.file(
                 new URL(
-                    "./runtime/legacy-asrt-deny-characterization.ts",
+                    "./runtime/scripts/legacy-asrt-deny-characterization.ts",
                     import.meta.url,
                 ),
             ).text(),

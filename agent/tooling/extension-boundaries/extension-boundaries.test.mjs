@@ -1,11 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { findExtensionBoundaryViolations } from './check.mjs';
 import {
     classifyExtensionImport,
     collectLiteralModuleSpecifiers,
 } from './classifier.mjs';
+import {
+    extensionSourceRole,
+    findUnreachableExtensionModules,
+} from './reachability.mjs';
 
 const root = resolve(import.meta.dir, '../../extensions');
 const classify = (importer, specifier, centralTestOwners = new Set()) =>
@@ -75,6 +81,9 @@ describe('Pi extension boundary classifier', () => {
             'const required = require("../four");',
             'import legacy = require("../five");',
             'mock.module("../six", () => ({}));',
+            'import type { Seven } from "../seven";',
+            'export { type Eight } from "../eight";',
+            'const worker = new URL("../nine", import.meta.url);',
         ].join('\n');
         expect(
             collectLiteralModuleSpecifiers(source).map(
@@ -87,10 +96,65 @@ describe('Pi extension boundary classifier', () => {
             '../four',
             '../five',
             '../six',
+            '../seven',
+            '../eight',
+            '../nine',
         ]);
     });
 });
 
+test('production reachability follows runtime and type-only imports without requiring test imports', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'pi-extension-graph-'));
+    const fixtureRoot = join(fixture, 'extensions');
+    try {
+        mkdirSync(join(fixtureRoot, 'demo'), { recursive: true });
+        mkdirSync(join(fixtureRoot, 'demo', 'scripts'), { recursive: true });
+        mkdirSync(join(fixtureRoot, '_shared', 'testing'), {
+            recursive: true,
+        });
+        writeFileSync(
+            join(fixtureRoot, 'demo', 'index.ts'),
+            'import "./runtime.js"; export default function demo() {}',
+        );
+        writeFileSync(
+            join(fixtureRoot, 'demo', 'runtime.ts'),
+            'import type { Contract } from "./contract.ts"; export const value = 1;',
+        );
+        writeFileSync(
+            join(fixtureRoot, 'demo', 'contract.ts'),
+            'export interface Contract { value: number }',
+        );
+        writeFileSync(
+            join(fixtureRoot, 'demo', 'orphan.ts'),
+            'export const orphan = true;',
+        );
+        writeFileSync(
+            join(fixtureRoot, 'demo', 'scripts', 'inspect.ts'),
+            'process.stdout.write("ok");',
+        );
+        writeFileSync(
+            join(fixtureRoot, '_shared', 'testing', 'fixture.ts'),
+            'export const fixture = true;',
+        );
+
+        expect(
+            extensionSourceRole(
+                join(fixtureRoot, 'demo', 'scripts', 'inspect.ts'),
+                fixtureRoot,
+            ),
+        ).toBe('standalone');
+        expect(findUnreachableExtensionModules(fixtureRoot)).toEqual([
+            'demo/orphan.ts',
+        ]);
+    } finally {
+        rmSync(fixture, { recursive: true, force: true });
+    }
+});
+
 test('repository extension graph respects ownership boundaries', () => {
     expect(findExtensionBoundaryViolations(root)).toEqual([]);
+});
+
+test('repository production modules are reachable from declared entrypoints', () => {
+    expect(findUnreachableExtensionModules(root)).toEqual([]);
 });

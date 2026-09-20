@@ -128,5 +128,32 @@ export function collectLiteralModuleSpecifiers(source) {
     for (const match of parseableSource.matchAll(pattern)) {
         mockModules.push({ specifier: match[2], kind: 'mock-module' });
     }
-    return [...imports, ...mockModules];
+    const erasedImports = [];
+    const erasedPatterns = [
+        /\bimport\s+(?:type\s+)?(?:[^"'`;]*?\s+from\s+)?(["'])([^"']+)\1/g,
+        /\bexport\s+(?:type\s+)?(?:\*|\{[^}]*\})\s+from\s+(["'])([^"']+)\1/g,
+    ];
+    for (const erasedPattern of erasedPatterns) {
+        for (const match of parseableSource.matchAll(erasedPattern)) {
+            erasedImports.push({
+                specifier: match[2],
+                kind: 'type-only-import',
+            });
+        }
+    }
+    const moduleUrls = [];
+    const moduleUrlPattern =
+        /\bnew\s+URL\s*\(\s*(["'])([^"']+)\1\s*,\s*import\.meta\.url\s*\)/g;
+    for (const match of parseableSource.matchAll(moduleUrlPattern)) {
+        moduleUrls.push({ specifier: match[2], kind: 'module-url' });
+    }
+
+    const seen = new Set();
+    return [...imports, ...mockModules, ...erasedImports, ...moduleUrls].filter(
+        (entry) => {
+            if (seen.has(entry.specifier)) return false;
+            seen.add(entry.specifier);
+            return true;
+        },
+    );
 }

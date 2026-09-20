@@ -317,7 +317,7 @@ describe("brainstorm-forcer redesign", () => {
     ).rejects.toThrow(/not allowed/i);
   });
 
-  it("uses the dedicated local-code verifier when another discovered agent shares scout's local name", async () => {
+  it("preflights the dedicated verifier while exact agent names take precedence over a shadowed local alias", async () => {
     const sessionId = "brainstorm-scout-preflight";
     const root = await mkdtemp(join(tmpdir(), "brainstorm-agent-collision-"));
     const agentsDir = join(root, ".pi", "agents");
@@ -341,9 +341,19 @@ describe("brainstorm-forcer redesign", () => {
           context: "fresh",
         }),
       ).resolves.toMatchObject({
-        ok: false,
-        code: "ambiguous_agent",
-        message: expect.stringContaining("Ambiguous agent name 'scout'"),
+        ok: true,
+        contract: {
+          agent: {
+            name: "scout",
+            source: "builtin",
+            shadowedCandidates: [
+              expect.objectContaining({
+                name: "code-analysis.scout",
+                selected: false,
+              }),
+            ],
+          },
+        },
       });
       await expect(
         preflightVerifierAgents(sessionId, root, ["brainstorm-scout"]),
