@@ -1,11 +1,18 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createUiColors } from "../../_shared/ui/ui-colors";
 import { createCompressionMetrics } from "./metrics";
 import type { CompressionSnapshot } from "./types";
-import { STATUS_ID, updateUi } from "./ui";
+import {
+    renderCompressionStatusText,
+    renderCompressionWidgetText,
+    STATUS_ID,
+    updateUi,
+} from "./ui";
 import type { WidgetHandle } from "../../_shared/fancy-footer";
 
 const themeFg = (color: string, text: string) => `${color}:${text}`;
+const colors = createUiColors({ fg: themeFg });
 
 function fakeCtx(): {
     ctx: ExtensionContext;
@@ -57,9 +64,12 @@ describe("updateUi health state", () => {
         );
 
         expect(setWidgetText).toHaveBeenCalledWith(
-            "accent:🗜 • compressor headroom" +
-                "dim: │ " +
-                "muted:no calls yet",
+            renderCompressionWidgetText(
+                emptySnapshot(),
+                "headroom",
+                "up",
+                colors,
+            ),
         );
     });
 
@@ -80,9 +90,14 @@ describe("updateUi health state", () => {
         );
 
         const text = setWidgetText.mock.calls[0][0] as string;
-        expect(text).toContain("accent:🗜 • compressor headroom");
-        expect(text).toContain("error:offline");
-        expect(text).not.toContain("no calls yet");
+        expect(text).toBe(
+            renderCompressionWidgetText(
+                emptySnapshot(),
+                "headroom",
+                "down",
+                colors,
+            ),
+        );
         expect(widget.update).toHaveBeenCalledTimes(1);
     });
 
@@ -110,8 +125,14 @@ describe("updateUi health state", () => {
         );
 
         const text = setWidgetText.mock.calls[0][0] as string;
-        expect(text).toContain("error:offline");
-        expect(text).not.toContain("warning:fail");
+        expect(text).toBe(
+            renderCompressionWidgetText(
+                metrics.snapshot(),
+                "headroom",
+                "down",
+                colors,
+            ),
+        );
     });
 
     it("preserves warning color for failed calls when health is up", () => {
@@ -138,8 +159,14 @@ describe("updateUi health state", () => {
         );
 
         const text = setWidgetText.mock.calls[0][0] as string;
-        expect(text).toContain("warning:last 1: ok 0");
-        expect(text).not.toContain("error:offline");
+        expect(text).toBe(
+            renderCompressionWidgetText(
+                metrics.snapshot(),
+                "headroom",
+                "up",
+                colors,
+            ),
+        );
     });
 
     it("sets the status bar to warning offline when down", () => {
@@ -160,7 +187,7 @@ describe("updateUi health state", () => {
 
         expect(statusCalls).toContainEqual([
             STATUS_ID,
-            "warning:cmp 0/0 ok • saved 0B • fail 0 • offline",
+            renderCompressionStatusText(emptySnapshot(), "down", colors),
         ]);
     });
 });

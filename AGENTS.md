@@ -109,6 +109,8 @@ const { validatePlanPath } = await import("./index.ts");
 - Capture process-global state before mutation and register its restoration before any fallible setup. Restore it in `finally` or `afterEach`, then remove temporary files.
 - Write the smallest fixture that expresses the tested scenario. Use fixed values only when they encode a deliberate behavior, edge case, or security invariant; never copy mutable personal configuration into expectations.
 - Assert observable behavior and stable contracts, not formatting details, incidental defaults, or the user's current tool lists.
+- In wiring and integration tests, derive expected widget and status text from the formatter, builder, or constant owned by production code. Never restate user-facing copy in the fixture.
+- In formatter unit tests, assert semantic values, ordering, visibility, and styling roles. Assert exact copy only when the wording itself is an intentional contract, such as a security warning or actionable error.
 - Put tests requiring the installed runtime, personal configuration, browser, Docker, or real project commands behind an explicit integration flag. Keep standard test runs isolated and leave user files byte-identical.
 
 ### Test placement

@@ -13,6 +13,7 @@ import {
 } from "../_shared/fancy-footer.ts";
 
 export const WIDGET_ID = "auto-translate";
+export const WIDGET_LABEL = "Auto-Translate";
 
 /**
  * Register the translate status widget.
@@ -29,7 +30,7 @@ export function createTranslateWidget(
 ): WidgetHandle {
     return createFancyWidget(pi, {
         id: WIDGET_ID,
-        label: "Auto-Translate",
+        label: WIDGET_LABEL,
         description:
             "Shows the active translation target and send/display mode; hidden while translation is off.",
         row: 0,

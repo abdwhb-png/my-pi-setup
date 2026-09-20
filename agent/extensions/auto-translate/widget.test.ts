@@ -18,7 +18,9 @@ mock.module('pi-fancy-footer/api', () => ({
     FANCY_FOOTER_EXTENSION_STATUSES_SNAPSHOT_EVENT: 'fancy-footer:statuses',
 }));
 
-const { createTranslateWidget, WIDGET_ID } = await import('./widget.ts');
+const { createTranslateWidget, WIDGET_ID, WIDGET_LABEL } = await import(
+    './widget.ts'
+);
 
 function mockPi() {
     return { on: mock(), registerCommand: mock() } as unknown as Parameters<
@@ -55,7 +57,7 @@ describe('createTranslateWidget', () => {
             label: string;
         };
         expect(def.id).toBe(WIDGET_ID);
-        expect(def.label).toBe('Auto-Translate');
+        expect(def.label).toBe(WIDGET_LABEL);
     });
 
     it('render closure reflects live status text', () => {

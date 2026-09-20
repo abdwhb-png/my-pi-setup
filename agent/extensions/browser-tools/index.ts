@@ -6,6 +6,7 @@ import { createWidget } from "../_shared/fancy-footer.ts";
 import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
 import {
     BROWSER_TOOLS_WIDGET_ID,
+    BROWSER_TOOLS_WIDGET_LABEL,
     renderBrowserToolsWidget,
     type BrowserToolsStatus,
 } from "./widget.ts";
@@ -109,7 +110,7 @@ export default function browserToolsExtension(pi: ExtensionAPI): void {
 
     const widget = createWidget(pi, {
         id: BROWSER_TOOLS_WIDGET_ID,
-        label: "Browser Tools",
+        label: BROWSER_TOOLS_WIDGET_LABEL,
         description:
             "Shows whether Agent Browser is available to the model in this session.",
         row: 2,

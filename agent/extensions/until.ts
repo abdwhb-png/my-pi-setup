@@ -24,9 +24,9 @@ import { Type } from "@sinclair/typebox";
 import { createWidget } from "./_shared/fancy-footer.js";
 import { createUiColors } from "./_shared/ui/ui-colors.js";
 
-type LoopMode = "tests" | "custom" | "self";
+export type LoopMode = "tests" | "custom" | "self";
 
-type LoopStateData = {
+export type LoopStateData = {
     active: boolean;
     mode?: LoopMode;
     condition?: string;
@@ -42,6 +42,7 @@ const LOOP_PRESETS = [
 ] as const;
 
 const icon = "∞";
+export const LOOP_WIDGET_ID = "loop";
 
 const LOOP_STATE_ENTRY = "loop-state";
 
@@ -162,7 +163,7 @@ function getCompactionInstructions(mode: LoopMode, condition?: string): string {
     return `Loop active. Breakout condition: ${conditionText}. Preserve this loop state and breakout condition in the summary.`;
 }
 
-function buildStatusText(state: LoopStateData): string {
+export function buildStatusText(state: LoopStateData): string {
     const loopCount = state.loopCount ?? 0;
     const turnText = `(turn ${loopCount})`;
     const summary = state.summary?.trim();
@@ -194,7 +195,7 @@ export default function loopExtension(pi: ExtensionAPI): void {
     let loopState: LoopStateData = { active: false };
 
     const widget = createWidget(pi, {
-        id: "loop",
+        id: LOOP_WIDGET_ID,
         label: "Loop",
         description: "Shows the active /until loop breakout condition.",
         order: 20,

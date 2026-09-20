@@ -5,6 +5,15 @@ import type { RuntimeStatus } from "./runtime-state.ts";
 export const DANGEROUS_ICON = "‼️";
 export const WIDGET_ID = "dangerous-mode";
 
+export function buildDangerousWidgetText(status: RuntimeStatus): string {
+    return [
+        status.dangerous.effective ? "dangerous: ON" : undefined,
+        status.unattended.effective ? "unattended: ON" : undefined,
+    ]
+        .filter((state): state is string => state !== undefined)
+        .join(" ");
+}
+
 /** Renders independent Dangerous and Unattended state for the footer. */
 export function renderDangerousWidget(
     theme: Theme | undefined | null,
@@ -13,16 +22,9 @@ export function renderDangerousWidget(
     if (!status.dangerous.effective && !status.unattended.effective) {
         return null;
     }
-    const colors = theme?.fg
-        ? createUiColors(theme)
-        : ({
-              subtle: (text: string) => text,
-              danger: (text: string) => text,
-          } as ReturnType<typeof createUiColors>);
+    const colors = createUiColors(
+        theme?.fg ? theme : { fg: (_color, text: string) => text },
+    );
     const label = colors.subtle(DANGEROUS_ICON);
-    const states = [
-        status.dangerous.effective ? "dangerous: ON" : undefined,
-        status.unattended.effective ? "unattended: ON" : undefined,
-    ].filter((state): state is string => state !== undefined);
-    return `${label} ${colors.danger(states.join(" "))}`;
+    return `${label} ${colors.danger(buildDangerousWidgetText(status))}`;
 }

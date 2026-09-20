@@ -1,5 +1,10 @@
 import { expect, mock, test } from "bun:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import {
+    BROWSER_TOOLS_WIDGET_ID,
+    BROWSER_TOOLS_WIDGET_LABEL,
+    renderBrowserToolsWidget,
+} from "./widget.ts";
 
 // This file exercises the real `_shared/fancy-footer.ts` helper, so the
 // contribution below is what browser-tools actually hands to pi-fancy-footer.
@@ -54,15 +59,16 @@ test("the real shared helper forwards the browser-tools contribution unchanged",
     expect(discover).toHaveBeenCalled();
 
     const widget = contributions.at(-1) as CapturedWidget;
-    expect(widget.id).toBe("browser-tools");
-    expect(widget.label).toBe("Browser Tools");
+    expect(widget.id).toBe(BROWSER_TOOLS_WIDGET_ID);
+    expect(widget.label).toBe(BROWSER_TOOLS_WIDGET_LABEL);
     expect(widget.row).toBe(2);
     expect(widget.order).toBe(3);
     expect(widget.align).toBe("left");
     // The globe is in the rendered label; a footer icon would duplicate it.
     expect(widget.icon).toBeUndefined();
     expect(widget.styled).toBe(true);
-    expect(String(widget.render({ theme: fakeTheme() }))).toBe(
-        "fg:dim:🌐 browser: fg:error:unavailable",
+    const theme = fakeTheme();
+    expect(String(widget.render({ theme }))).toBe(
+        renderBrowserToolsWidget(theme, "unavailable"),
     );
 });

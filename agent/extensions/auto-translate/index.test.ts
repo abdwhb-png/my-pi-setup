@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
+import { buildStatusRenderText, translatingText } from './state.ts';
 
 // Stub heavy deps so the factory loads cleanly outside the pi runtime.
 // pi-ai is mocked globally via __tests__/setup.ts preload.
@@ -110,8 +111,7 @@ describe('auto-translate factory', () => {
 
         await commands.get('translate-on')!.handler('', mockCtx());
         expect(def.visible()).toBe(true);
-        expect(def.render()).toContain('translate →');
-        expect(def.render()).toContain(' | send');
+        expect(def.render()).toBe(buildStatusRenderText('English', 'send'));
 
         await commands.get('translate-off')!.handler('', mockCtx());
         expect(def.visible()).toBe(false);
@@ -138,7 +138,7 @@ describe('auto-translate factory', () => {
         expect(out).toEqual({ action: 'continue' });
         expect(ctx.ui.setStatus).toHaveBeenCalledWith(
             'auto-translate',
-            expect.stringContaining('translating'),
+            translatingText,
         );
         expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
             'auto-translate',

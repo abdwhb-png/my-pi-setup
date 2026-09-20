@@ -2,6 +2,7 @@ import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { createUiColors } from "../_shared/ui/ui-colors.ts";
 
 export const BROWSER_TOOLS_WIDGET_ID = "browser-tools";
+export const BROWSER_TOOLS_WIDGET_LABEL = "Browser Tools";
 export const BROWSER_TOOLS_LABEL = "browser";
 
 /**

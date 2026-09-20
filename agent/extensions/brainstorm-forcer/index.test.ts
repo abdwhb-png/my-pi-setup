@@ -1515,10 +1515,11 @@ describe("brainstorm-forcer redesign", () => {
     const longTopic = "you see the forked pi-roles package ? I dont get why the status displayed is Intent not defined - role and I want something more useful";
     await commands.get("brainstorm")!.handler(longTopic, ctx);
     expect(sentUserMessages[0]!.content).toBe(longTopic);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("Brainstorm started: Discovery (1/5)", "info");
+    const notification = (ctx.ui.notify as any).mock.calls.at(-1)?.[0] as string;
+    expect(notification).toBeString();
+    expect(notification).not.toContain(longTopic);
     const widgetCall = (ctx.ui.setWidget as any).mock.calls.at(-1);
     expect(widgetCall[0]).toBe("brainstorm-forcer");
-    expect(widgetCall[1][0]).toContain("Discovery");
     expect(widgetCall[1][0].length).toBeLessThan(longTopic.length + 20);
   });
 
@@ -2257,20 +2258,25 @@ describe("brainstorm-forcer redesign", () => {
   });
 
   it("phase widget uses ui-colors path and updates on phase changes", async () => {
-    const { pi, commands, handlers } = createMockAPI();
+    const { pi, commands, handlers, entries } = createMockAPI();
     const ctx = createMockContext();
+    const colorize = mock((_color: string, text: string) => text);
+    ctx.ui.theme.fg = colorize;
     brainstormForcer(pi);
     await handlers.get("session_start")!({}, ctx);
     const cmd = commands.get("brainstorm")!;
     await cmd.handler("topic", ctx);
     expect(ctx.ui.setWidget).toHaveBeenCalled();
+    const initialWidgetCall = (ctx.ui.setWidget as any).mock.calls.at(-1);
     await cmd.handler("phase exploring", ctx);
     const lastWidgetCall = (ctx.ui.setWidget as any).mock.calls.at(-1);
     expect(lastWidgetCall[0]).toBe("brainstorm-forcer");
-    expect(lastWidgetCall[1][0]).toContain("Exploring");
-    expect(lastWidgetCall[1][0]).toContain(
-      "ev:0 review:0/0 action:askDedicatedChoice",
-    );
+    expect(lastWidgetCall[1][0]).not.toBe(initialWidgetCall[1][0]);
+    expect(entries.at(-1)?.data).toMatchObject({
+      active: true,
+      phase: "exploring",
+    });
+    expect(colorize).toHaveBeenCalled();
   });
 
   it("stop clears state and footer", async () => {

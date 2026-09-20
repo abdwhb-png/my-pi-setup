@@ -15,7 +15,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { registerCommands } from "./commands.ts";
 import { loadTranslateConfig } from "./config.ts";
-import { createState, buildStatusText, TRANSLATE_EMOJI } from "./state.ts";
+import { createState, buildStatusText, translatingText } from "./state.ts";
 import { translate } from "./translator.ts";
 import type { TranslateConfig } from "./types.ts";
 import { createTranslateWidget } from "./widget.ts";
@@ -75,7 +75,7 @@ export default function (pi: ExtensionAPI): void {
 
         ctx.ui.setStatus(
             "auto-translate",
-            ctx.ui.theme.fg("accent", `${TRANSLATE_EMOJI} translating…`),
+            ctx.ui.theme.fg("accent", translatingText),
         );
         let translated: string | null;
         try {

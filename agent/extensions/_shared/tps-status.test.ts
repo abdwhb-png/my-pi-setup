@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { buildTpsStatus, buildTpsSummary } from "./tps-status.ts";
+import { buildTokenContent } from "./status-segments.ts";
 
 /** Colour stub: returns the text unchanged so assertions read the composed string. */
 const colors = {
@@ -21,21 +22,31 @@ const colors = {
 describe("tps-status renderers", () => {
   describe("buildTpsStatus", () => {
     it("renders in/out tokens, tps and elapsed", () => {
-      const out = buildTpsStatus({ input: 1500, output: 3200, tps: 42, elapsedMs: 76_000 }, colors);
-      expect(out).toContain("in↓1.5k/out↑3.2k");
-      expect(out).toContain("1.5k");
-      expect(out).toContain("3.2k");
-      expect(out).toContain("42 tok/s");
-      expect(out).toContain("76.0s");
+      const state = {
+        input: 1500,
+        output: 3200,
+        tps: 42,
+        elapsedMs: 76_000,
+      };
+      const out = buildTpsStatus(state, colors);
+      expect(out).toContain(buildTokenContent(state.input, state.output, colors));
+      expect(out).toContain(String(state.tps));
+      expect(out).toContain((state.elapsedMs / 1000).toFixed(1));
     });
   });
 
   describe("buildTpsSummary", () => {
     it("renders the final summary with in, out, tps and duration", () => {
-      const out = buildTpsSummary({ input: 900, output: 512, tps: 12, elapsedMs: 42_000 }, colors);
-      expect(out).toContain("in↓900/out↑512");
-      expect(out).toContain("12 tok/s");
-      expect(out).toContain("42.0s");
+      const state = {
+        input: 900,
+        output: 512,
+        tps: 12,
+        elapsedMs: 42_000,
+      };
+      const out = buildTpsSummary(state, colors);
+      expect(out).toContain(buildTokenContent(state.input, state.output, colors));
+      expect(out).toContain(String(state.tps));
+      expect(out).toContain((state.elapsedMs / 1000).toFixed(1));
     });
   });
 });

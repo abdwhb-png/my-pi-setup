@@ -18,6 +18,7 @@ const FALLBACK_TARGET = "en";
  * the browser-tools globe so two widgets never read as the same feature.
  */
 export const TRANSLATE_EMOJI = "🔤";
+export const translatingText = `${TRANSLATE_EMOJI} translating…`;
 
 /** Create a fresh runtime state object from config defaults. */
 export function createState(config: TranslateConfig): RuntimeState {

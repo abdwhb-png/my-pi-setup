@@ -137,16 +137,24 @@ describe("segment renderers", () => {
   });
 
   it("renderCost formats usd compact", () => {
-    expect(renderCost(makeState(), 20, colors)).toBe("$ 0.42");
+    expect(renderCost(makeState(), 20, colors)).toBe(
+      formatUsdCompact(0.42, colors),
+    );
   });
 
   it("renderModel combines provider and model id", () => {
-    expect(renderModel(makeState(), 40, colors)).toBe("(anthropic) claude-sonnet-4");
+    expectFragmentsInOrder(renderModel(makeState(), 40, colors), [
+      "anthropic",
+      "claude-sonnet-4",
+    ]);
   });
 
   it("renderModel handles missing provider", () => {
     const state = makeState({ model: { id: "x", provider: undefined } });
-    expect(renderModel(state, 40, colors)).toBe("(no-provider) x");
+    expectFragmentsInOrder(renderModel(state, 40, colors), [
+      "no-provider",
+      "x",
+    ]);
   });
 
   it("buildTokenContent keeps the formatted input before the output", () => {

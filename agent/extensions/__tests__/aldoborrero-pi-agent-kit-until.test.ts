@@ -57,8 +57,13 @@ mock.module("@sinclair/typebox", () => ({
 }));
 
 let untilFactory: any;
+let buildStatusText: typeof import("../until.ts")["buildStatusText"];
+let loopWidgetId: typeof import("../until.ts")["LOOP_WIDGET_ID"];
 beforeAll(async () => {
-  untilFactory = (await import("../until.ts")).default;
+  const untilModule = await import("../until.ts");
+  untilFactory = untilModule.default;
+  buildStatusText = untilModule.buildStatusText;
+  loopWidgetId = untilModule.LOOP_WIDGET_ID;
 });
 
 function createMockApi() {
@@ -98,7 +103,7 @@ describe("aldoborrero-pi-agent-kit until extension", () => {
     const { pi } = createMockApi();
     untilFactory(pi);
 
-    const widget = widgetDefs.find((w) => w.id === "loop");
+    const widget = widgetDefs.find((w) => w.id === loopWidgetId);
     expect(widget).toBeDefined();
     expect(typeof widget.render).toBe("function");
     expect(typeof widget.visible).toBe("function");
@@ -113,7 +118,7 @@ describe("aldoborrero-pi-agent-kit until extension", () => {
     const ctx = createCtx();
     untilFactory(pi);
 
-    const widget = widgetDefs.find((w) => w.id === "loop");
+    const widget = widgetDefs.find((w) => w.id === loopWidgetId);
     const until = commands.get("until");
     expect(until).toBeDefined();
 
@@ -122,7 +127,8 @@ describe("aldoborrero-pi-agent-kit until extension", () => {
     await Promise.resolve();
 
     expect(widget.visible({})).toBe(true);
-    expect(widget.render(renderCtx)).toContain("Loop active");
+    const persistedState = pi.appendEntry.mock.calls.at(-1)?.[1];
+    expect(widget.render(renderCtx)).toBe(buildStatusText(persistedState));
     expect(pi.sendMessage).toHaveBeenCalled();
     expect(fakeHandle.update).toHaveBeenCalled();
 

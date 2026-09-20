@@ -6,6 +6,11 @@ import {
   trackPolicyCleanup,
 } from "../_shared/testing/tool-policy-fixture.ts";
 import { getToolPolicy } from "../_shared/tool-policy/index.ts";
+import {
+  BROWSER_TOOLS_WIDGET_ID,
+  BROWSER_TOOLS_WIDGET_LABEL,
+  renderBrowserToolsWidget,
+} from "./widget.ts";
 
 type CapturedWidget = {
   id: string;
@@ -441,15 +446,17 @@ describe("browser-tools", () => {
     const ctx = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
     runtime.hooks.get("session_start")!({ reason: "startup" }, ctx);
 
-    expect(widgetState.def?.id).toBe("browser-tools");
-    expect(widgetState.def?.label).toBe("Browser Tools");
+    expect(widgetState.def?.id).toBe(BROWSER_TOOLS_WIDGET_ID);
+    expect(widgetState.def?.label).toBe(BROWSER_TOOLS_WIDGET_LABEL);
     expect(widgetState.def?.row).toBe(2);
     expect(widgetState.def?.order).toBe(3);
     expect(widgetState.def?.align).toBe("left");
     expect(widgetState.def?.styled).toBe(true);
     // The emoji lives in the rendered label; a second footer icon would double it.
     expect(widgetState.def?.icon).toBeUndefined();
-    expect(renderWidget()).toBe("fg:dim:🌐 browser: fg:dim:hidden");
+    expect(renderWidget()).toBe(
+      renderBrowserToolsWidget(fakeTheme(), "hidden"),
+    );
   });
 
   test("shows the manual grant in the widget and pushes fallback text", async () => {
@@ -463,18 +470,24 @@ describe("browser-tools", () => {
     widgetState.updates = [];
 
     await runtime.commands.get("browser-tools")!.handler("on", themed);
-    expect(renderWidget()).toBe("fg:dim:🌐 browser: fg:success:manual");
+    expect(renderWidget()).toBe(
+      renderBrowserToolsWidget(fakeTheme(), "manual"),
+    );
     expect(widgetState.updates.at(-1)).toBe(
-      "fg:dim:🌐 browser: fg:success:manual",
+      renderBrowserToolsWidget(themed.ui.theme, "manual"),
     );
 
     await runtime.commands.get("browser-tools")!.handler("off", themed);
-    expect(renderWidget()).toBe("fg:dim:🌐 browser: fg:dim:hidden");
+    expect(renderWidget()).toBe(
+      renderBrowserToolsWidget(fakeTheme(), "hidden"),
+    );
 
     // A ctx without a theme still receives plain fallback text.
     const plain = { ui: { notify() {} }, sessionManager: runtime.sessionManager };
     await runtime.commands.get("browser-tools")!.handler("on", plain);
-    expect(widgetState.updates.at(-1)).toBe("🌐 browser: manual");
+    expect(widgetState.updates.at(-1)).toBe(
+      renderBrowserToolsWidget(undefined, "manual"),
+    );
   });
 
   test("renders the restricted and unavailable states and removes the widget on shutdown", async () => {
@@ -483,7 +496,7 @@ describe("browser-tools", () => {
     restricted.hooks.get("session_start")!({ reason: "startup" }, ctx);
     await restricted.commands.get("browser-tools")!.handler("on", ctx);
     expect(renderWidget()).toBe(
-      "fg:dim:🌐 browser: fg:warning:manual (restricted)",
+      renderBrowserToolsWidget(fakeTheme(), "manual (restricted)"),
     );
 
     const removedBefore = widgetState.removed;
@@ -495,6 +508,8 @@ describe("browser-tools", () => {
       { reason: "startup" },
       { ui: { notify() {} }, sessionManager: unavailable.sessionManager },
     );
-    expect(renderWidget()).toBe("fg:dim:🌐 browser: fg:error:unavailable");
+    expect(renderWidget()).toBe(
+      renderBrowserToolsWidget(fakeTheme(), "unavailable"),
+    );
   });
 });

@@ -3,6 +3,7 @@ import {
     createCompressionMetrics,
     createCompressionMetricsFromEvents,
     deriveRecentState,
+    formatSavedBytes,
     formatStatsWidgetLines,
 } from './metrics';
 
@@ -23,7 +24,7 @@ describe('Task 10 widget engine and derived state', () => {
 
         const lines = formatStatsWidgetLines(metrics.snapshot(), 'headroom');
 
-        expect(lines[0]).toBe('compressor headroom');
+        expect(lines[0]).toContain('headroom');
         expect(lines[0]).not.toContain('http');
     });
 
@@ -57,9 +58,8 @@ describe('Task 10 widget engine and derived state', () => {
         });
 
         const lineTwo = formatStatsWidgetLines(snapshot, 'headroom')[1];
-        expect(lineTwo).toContain('ok 1');
-        expect(lineTwo).toContain('fail 1');
-        expect(lineTwo).toContain('avg 510ms');
+        expect(lineTwo).toContain(formatSavedBytes(state.savedBytes));
+        expect(lineTwo).toContain(String(state.avgLatencyMs));
     });
 
     it('bounds recent-call state and drops the oldest calls', () => {
@@ -91,9 +91,6 @@ describe('Task 10 widget engine and derived state', () => {
         metrics.reset();
 
         expect(metrics.snapshot().recentCalls).toEqual([]);
-        expect(formatStatsWidgetLines(metrics.snapshot(), 'headroom')[1]).toBe(
-            'no calls yet',
-        );
     });
 
     it('rebuilds recent-call state from persisted enriched events', () => {

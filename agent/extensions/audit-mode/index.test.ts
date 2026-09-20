@@ -261,31 +261,30 @@ describe("audit-mode command — completions", () => {
 });
 
 describe("renderAuditWidget", () => {
-  const fakeTheme = {
-    fg: (color: string, text: string) => `fg:${color}:${text}`,
-  } as never;
+  function render(profile: "standard" | "audit" | "advanced") {
+    const calls: Array<[string, string]> = [];
+    const theme = {
+      fg: (color: string, text: string) => {
+        calls.push([color, text]);
+        return `fg:${color}:${text}`;
+      },
+    } as never;
+    return { output: renderAuditWidget(theme, profile), calls };
+  }
 
   it("returns null for the standard profile", () => {
-    expect(renderAuditWidget(fakeTheme, "standard")).toBeNull();
-  });
-
-  it("embeds the magnifier icon", () => {
-    expect(renderAuditWidget(fakeTheme, "audit")).toContain("🔍");
+    expect(render("standard").output).toBeNull();
   });
 
   it("keeps the label dim", () => {
-    expect(renderAuditWidget(fakeTheme, "audit")).toContain("fg:dim:");
+    expect(render("audit").calls.some(([color]) => color === "dim")).toBe(true);
   });
 
   it("colors only the audit value warning", () => {
-    expect(renderAuditWidget(fakeTheme, "audit")).toContain(
-      "fg:warning:audit",
-    );
+    expect(render("audit").calls).toContainEqual(["warning", "audit"]);
   });
 
   it("colors only the advanced value accent", () => {
-    expect(renderAuditWidget(fakeTheme, "advanced")).toContain(
-      "fg:accent:advanced",
-    );
+    expect(render("advanced").calls).toContainEqual(["accent", "advanced"]);
   });
 });

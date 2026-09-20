@@ -4,6 +4,8 @@ import {
     type AgentRunSummaryPayload,
     TPS_SUMMARY_EVENT,
 } from '../_shared/agent-run-summary.ts';
+import { buildTokenContent } from '../_shared/status-segments.ts';
+import { createUiColors } from '../_shared/ui/ui-colors.ts';
 import tpsTracker from '../tps-tracker.ts';
 
 describe('tps-tracker summary contribution', () => {
@@ -13,7 +15,7 @@ describe('tps-tracker summary contribution', () => {
             (_channel: string, _payload: AgentRunSummaryPayload) => undefined,
         );
         const notify = mock(() => undefined);
-        const setStatus = mock(() => undefined);
+        const setStatus = mock((_id: string, _text?: string) => undefined);
         const pi = {
             events: { on: () => () => undefined, emit },
             on: (event: string, handler: (...args: any[]) => any) => {
@@ -53,13 +55,11 @@ describe('tps-tracker summary contribution', () => {
         expect(emit.mock.calls[0][0]).toBe(TPS_SUMMARY_EVENT);
         expect(emit.mock.calls[0][1].prefix).toBe('TPS');
         const text = emit.mock.calls[0][1].text;
-        // Output of one message is 100, in the compact shared status segment.
-        expect(text).toContain('in↓0/out↑100');
-        expect(notify).not.toHaveBeenCalled();
-        expect(setStatus).toHaveBeenCalledWith(
-            'tps',
-            expect.stringContaining('done'),
+        expect(text).toContain(
+            buildTokenContent(0, 100, createUiColors(ctx.ui.theme)),
         );
+        expect(notify).not.toHaveBeenCalled();
+        expect(setStatus.mock.calls.at(-1)?.[0]).toBe('tps');
     });
 
     it('sums input tokens across assistant messages in the run', async () => {
@@ -117,6 +117,8 @@ describe('tps-tracker summary contribution', () => {
         );
 
         const text = emit.mock.calls[0][1].text;
-        expect(text).toContain('in↓700/out↑150');
+        expect(text).toContain(
+            buildTokenContent(700, 150, createUiColors(ctx.ui.theme)),
+        );
     });
 });
