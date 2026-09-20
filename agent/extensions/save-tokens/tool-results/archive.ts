@@ -6,22 +6,28 @@ import {
     mkdir,
     open,
     readdir,
-    readFile,
-    realpath,
     unlink,
     writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import {
     hostExecution,
-    parseExecutionProvenance,
     unknownExecution,
 } from "../../_shared/execution-provenance/index.ts";
+import {
+    managedOutputArchiveFileName,
+    managedOutputArchiveTimestamp,
+    resolveToolResultArchiveRoot,
+    type ManagedOutputArchiveMetadataV1,
+} from "../../_shared/tool-output-archive.ts";
 import type { ArchiveOriginalInput } from "./types";
 
-const MANAGED_ARCHIVE_NAME = /^(\d+)-[a-zA-Z0-9_.-]+-[a-f0-9]{12}\.txt$/;
 const DAY_MS = 86_400_000;
+
+export {
+    managedOutputArchive,
+    resolveToolResultArchiveRoot,
+} from "../../_shared/tool-output-archive.ts";
 
 export interface ArchivePruneOptions {
     archiveRoot: string;
@@ -37,13 +43,6 @@ export interface ArchivePruneSummary {
     limitExceeded: boolean;
 }
 
-export function resolveToolResultArchiveRoot(): string {
-    return (
-        process.env.PI_TOOL_RESULT_ARCHIVE_DIR?.trim() ||
-        join(homedir(), ".pi", "agent", "tool-result-archive")
-    );
-}
-
 export async function archiveOriginalToolResult(
     input: ArchiveOriginalInput,
 ): Promise<string> {
@@ -52,11 +51,14 @@ export async function archiveOriginalToolResult(
         .update(input.sourcePath ?? input.text)
         .digest("hex")
         .slice(0, 12);
-    const safeToolCallId = input.toolCallId.replace(/[^a-zA-Z0-9_.-]/g, "_");
-    const safeToolName = input.toolName.replace(/[^a-zA-Z0-9_.-]/g, "_");
     const filePath = join(
         archiveRoot,
-        `${Date.now()}-${safeToolName}-${safeToolCallId}-${digest}.txt`,
+        managedOutputArchiveFileName({
+            timestamp: Date.now(),
+            toolName: input.toolName,
+            toolCallId: input.toolCallId,
+            digest,
+        }),
     );
 
     await mkdir(archiveRoot, { recursive: true, mode: 0o700 });
@@ -88,7 +90,7 @@ export async function archiveOriginalToolResult(
                     sourceExecution:
                         input.sourceExecution ?? unknownExecution(),
                     storage: hostExecution(),
-                }),
+                } satisfies ManagedOutputArchiveMetadataV1),
                 "utf8",
             );
         } finally {
@@ -101,69 +103,6 @@ export async function archiveOriginalToolResult(
         throw error;
     }
     return filePath;
-}
-
-/** Recognize only existing regular files in the configured archive directory. */
-export async function managedOutputArchive(path: string) {
-    const candidate = resolve(path);
-    if (!MANAGED_ARCHIVE_NAME.test(basename(candidate))) return;
-    try {
-        const root = await realpath(resolveToolResultArchiveRoot());
-        if (
-            dirname(await realpath(candidate)) !== root ||
-            !(await lstat(candidate)).isFile()
-        )
-            return;
-        let sourceExecution = unknownExecution();
-        let sourceMetadata: "valid" | "missing" | "invalid" | "unavailable" =
-            "invalid";
-        try {
-            const stat = await lstat(`${candidate}.meta.json`);
-            if (!stat.isFile() || stat.size > 65536)
-                throw new Error("Invalid archive metadata file");
-            const metadata: unknown = JSON.parse(
-                await readFile(`${candidate}.meta.json`, "utf8"),
-            );
-            const parsed =
-                metadata &&
-                typeof metadata === "object" &&
-                "version" in metadata &&
-                metadata.version === 1 &&
-                "kind" in metadata &&
-                metadata.kind === "output-text" &&
-                "sourceExecution" in metadata
-                    ? parseExecutionProvenance(metadata.sourceExecution)
-                    : undefined;
-            if (parsed) {
-                sourceExecution = parsed;
-                sourceMetadata = "valid";
-            }
-        } catch (error) {
-            sourceMetadata =
-                error instanceof SyntaxError
-                    ? "invalid"
-                    : error instanceof Error &&
-                        "code" in error &&
-                        error.code === "ENOENT"
-                      ? "missing"
-                      : "unavailable";
-        }
-        return {
-            kind: "output-text" as const,
-            path: candidate,
-            sourceExecution,
-            sourceMetadata,
-            storage: hostExecution(),
-        };
-    } catch (error) {
-        if (
-            error instanceof Error &&
-            "code" in error &&
-            error.code === "ENOENT"
-        )
-            return;
-        throw error;
-    }
 }
 
 async function removeArchivePair(path: string): Promise<void> {
@@ -211,8 +150,8 @@ export async function pruneToolResultArchive(
         size: number;
     }> = [];
     for (const name of names) {
-        const match = MANAGED_ARCHIVE_NAME.exec(name);
-        if (!match) continue;
+        const timestamp = managedOutputArchiveTimestamp(name);
+        if (timestamp === undefined) continue;
         const path = join(options.archiveRoot, name);
         try {
             // oxlint-disable-next-line eslint/no-await-in-loop -- sequential lstat avoids unbounded file descriptor fan-out
@@ -221,7 +160,7 @@ export async function pruneToolResultArchive(
             managed.push({
                 name,
                 path,
-                timestamp: Number(match[1]),
+                timestamp,
                 size:
                     stat.size +
                     (await lstat(`${path}.meta.json`).then(

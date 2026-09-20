@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
-import { parseRoleSource } from '../pi-roles/core/roles.ts';
+import {
+    getAgentDir,
+    parseFrontmatter,
+} from '@earendil-works/pi-coding-agent';
 import {
     isToolGroupsPackageLast,
     TOOL_GROUPS_PACKAGE_SOURCE,
@@ -13,39 +15,8 @@ function agentDir(): string {
     return getAgentDir();
 }
 
-function parseFrontmatter(content: string): Record<string, unknown> {
-    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-    if (!match) return {};
-
-    const result: Record<string, unknown> = {};
-    let currentKey: string | null = null;
-    let currentArray: string[] | null = null;
-
-    for (const line of match[1].split('\n')) {
-        const keyMatch = line.match(/^(\w[\w_-]*):\s*(.*)$/);
-        if (keyMatch) {
-            if (currentKey && currentArray) result[currentKey] = currentArray;
-            currentKey = keyMatch[1];
-            let value = keyMatch[2].trim();
-            if (
-                (value.startsWith('"') && value.endsWith('"')) ||
-                (value.startsWith("'") && value.endsWith("'"))
-            ) {
-                value = value.slice(1, -1);
-            }
-            if (value === '' || value === '|' || value === '>') {
-                currentArray = [];
-            } else {
-                result[currentKey] = value;
-                currentArray = null;
-            }
-        } else if (currentKey && currentArray) {
-            const value = line.trim();
-            if (value.startsWith('- ')) currentArray.push(value.slice(2).trim());
-        }
-    }
-    if (currentKey && currentArray) result[currentKey] = currentArray;
-    return result;
+function readFrontmatter(content: string): Record<string, unknown> {
+    return parseFrontmatter<Record<string, unknown>>(content).frontmatter;
 }
 
 function getFrontmatterTools(frontmatter: Record<string, unknown>): string[] {
@@ -101,7 +72,7 @@ function readConfiguredGroups(): Record<string, string[]> {
 
 function configuredMarkdownTools(
     directory: 'roles' | 'agents',
-): Array<{ name: string; path: string; content: string; tools: string[] }> {
+): Array<{ name: string; tools: string[] }> {
     const root = join(agentDir(), directory);
     if (!existsSync(root)) return [];
     return readdirSync(root)
@@ -111,9 +82,7 @@ function configuredMarkdownTools(
             const content = readFileSync(path, 'utf8');
             return {
                 name,
-                path,
-                content,
-                tools: getFrontmatterTools(parseFrontmatter(content)),
+                tools: getFrontmatterTools(readFrontmatter(content)),
             };
         })
         .filter((entry) => entry.tools.length > 0);
@@ -329,6 +298,24 @@ describe('tool-groups configuration invariants', () => {
         );
     });
 
+    it('reads tool lists through the public Pi frontmatter parser', () => {
+        expect(
+            getFrontmatterTools(
+                readFrontmatter("---\ntools: '@inspect, safe_bash'\n---\n"),
+            ),
+        ).toEqual(['@inspect', 'safe_bash']);
+        expect(
+            getFrontmatterTools(
+                readFrontmatter('---\ntools: "@review, read"\n---\n'),
+            ),
+        ).toEqual(['@review', 'read']);
+        expect(
+            getFrontmatterTools(
+                readFrontmatter('---\ntools:\n  - read\n  - safe_bash\n---\n'),
+            ),
+        ).toEqual(['read', 'safe_bash']);
+    });
+
     it('rejects missing aliases, cycles, and empty groups', () => {
         expect(
             validateGroupGraph({ broken: ['@missing'], empty: [], ok: ['read'] }),
@@ -358,15 +345,6 @@ describe('tool-groups configuration invariants', () => {
     for (const directory of ['roles', 'agents'] as const) {
         for (const entry of configuredMarkdownTools(directory)) {
             it(`${directory}/${entry.name} has valid configurable tools`, () => {
-                if (directory === 'roles') {
-                    expect(() =>
-                        parseRoleSource(
-                            entry.content,
-                            entry.path,
-                            'user',
-                        ),
-                    ).not.toThrow();
-                }
                 expect(
                     validateToolList(
                         `${directory}/${entry.name}`,

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { redactValue } from './redaction';
+import { redactValue as sharedRedactValue } from '../../_shared/redaction';
+
+it('preserves the legacy redaction re-export', () => {
+    expect(redactValue).toBe(sharedRedactValue);
+});
 
 describe('redaction — sensitive keys', () => {
     it('masks values under sensitive key names (case-insensitive)', () => {

@@ -9,8 +9,6 @@ import {
 import {
     lstatSync,
     mkdtempSync,
-    mkdirSync,
-    unlinkSync,
     readFileSync,
     rmSync,
     symlinkSync,
@@ -22,7 +20,6 @@ import { join } from 'node:path';
 import {
     archiveOriginalToolResult,
     pruneToolResultArchive,
-    managedOutputArchive,
 } from './archive';
 
 const ARCHIVE_NAME = (timestamp: number, suffix: string) =>
@@ -56,18 +53,6 @@ describe('archiveOriginalToolResult', () => {
             expect(readFileSync(path, 'utf8')).toBe(input.text);
             expect(JSON.parse(readFileSync(`${path}.meta.json`, 'utf8')).kind).toBe('output-text');
         } finally { clock.mockRestore(); }
-    });
-    it('identifies legacy archives without inventing source provenance', async () => {
-        const path = join(archiveRoot, ARCHIVE_NAME(Date.now(), '1'));
-        writeFileSync(path, 'legacy bytes');
-        expect(await managedOutputArchive(path)).toMatchObject({ sourceMetadata: 'missing', sourceExecution: { status: 'unknown' }, storage: { status: 'unsandboxed' } });
-    });
-    it('keeps archive bytes readable when its sidecar cannot be read', async () => {
-        const path = await archiveOriginalToolResult({ toolCallId: 'sidecar-failure', toolName: 'bash', text: 'exact bytes' });
-        unlinkSync(`${path}.meta.json`);
-        mkdirSync(`${path}.meta.json`);
-        expect(await managedOutputArchive(path)).toMatchObject({ kind: 'output-text', sourceExecution: { status: 'unknown' }, sourceMetadata: 'unavailable' });
-        expect(readFileSync(path, 'utf8')).toBe('exact bytes');
     });
     it('stores text exactly without a metadata header', async () => {
         const path = await archiveOriginalToolResult({

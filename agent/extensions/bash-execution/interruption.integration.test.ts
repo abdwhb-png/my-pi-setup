@@ -3,8 +3,11 @@ import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harnes
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { resolve } from "node:path";
-import { emptyGrants } from "../sandbox/capabilities/authority.ts";
-import { publishShellRuntime, releaseShellRuntime } from "../sandbox/capabilities/runtime.ts";
+import {
+    emptyGrants,
+    publishShellRuntime,
+    releaseShellRuntime,
+} from "../_shared/shell-runtime/index.ts";
 import { claimSandboxRuntime, publishSandboxRuntime, releaseSandboxRuntime } from "../_shared/sandbox-runtime/index.ts";
 import bashExecution from "./index.ts";
 

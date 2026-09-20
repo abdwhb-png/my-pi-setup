@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 
-import { mountWorkflowPolicy } from "../__tests__/policy-fixture.ts";
+import { mountWorkflowPolicy } from "../_shared/testing/tool-policy-fixture.ts";
 import { beforeEach, afterEach, describe, expect, it, mock } from "bun:test";
 import {
   SessionManager,

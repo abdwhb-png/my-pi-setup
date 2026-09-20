@@ -19,12 +19,12 @@ import { join } from "node:path";
 import type { ExecutionProvenance } from "../_shared/execution-provenance/types.ts";
 import {
     activeShellOperations,
+    emptyGrants,
     publishShellRuntime,
     releaseShellRuntime,
-} from "../sandbox/capabilities/runtime.ts";
-import { emptyGrants } from "../sandbox/capabilities/authority.ts";
+    type ShellCapabilityResolution,
+} from "../_shared/shell-runtime/index.ts";
 import { createBashProcessSupervisor } from "../_shared/command-execution/exec.ts";
-import type { ShellCapabilityResolution } from "../sandbox/capabilities/policy.ts";
 
 const owner = Symbol("capability-routing");
 afterEach(() => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { TestHooks, mountPolicy } from '../__tests__/policy-fixture.ts';
+import { TestHooks, mountPolicy } from '../_shared/testing/tool-policy-fixture.ts';
 
 function createExtensionApi() {
     const tools: string[] = [];

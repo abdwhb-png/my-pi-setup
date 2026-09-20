@@ -645,7 +645,7 @@ test('a terminal response clears its hard deadline', async () => {
 
 test('uses only the public pi-subagents delegation boundary', () => {
     const source = readFileSync(
-        new URL('../_shared/subagents/delegation-client.ts', import.meta.url),
+        new URL('./delegation-client.ts', import.meta.url),
         'utf8',
     );
 

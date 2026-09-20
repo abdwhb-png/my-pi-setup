@@ -1,18 +1,20 @@
 import { dirname } from "node:path";
 
-import { summarizeDockerAccess } from "../../sandbox/docker-presentation.ts";
+import type { ExecutionProvenance } from "../execution-provenance/types.ts";
 import type {
     SandboxAdmission,
     SandboxAdmissionReport,
-} from "../../sandbox/runtime/admission.ts";
+} from "./admission-protocol.ts";
+import {
+    summarizeDockerAccess,
+    type DockerAccessSummary,
+} from "./docker-summary.ts";
 import type {
     SandboxLeasePaths,
     SandboxPolicy,
     SandboxProfileName,
     SandboxTcpPublication,
-} from "../../sandbox/runtime/contracts.ts";
-import type { ExecutionProvenance } from "../execution-provenance/types.ts";
-import type { DockerAccessSummary } from "./docker-summary.ts";
+} from "./policy-contracts.ts";
 
 export interface SandboxExecutionContextV1 {
     version: 1;

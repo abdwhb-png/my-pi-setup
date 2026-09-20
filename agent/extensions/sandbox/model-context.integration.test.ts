@@ -1,19 +1,54 @@
 import type { Context } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expect, test } from "bun:test";
 import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { toolPresentation } from "../_shared/tool-policy/presentation.ts";
-import bashExecution from "../bash-execution/index.ts";
-import { registerProviderCatalogFinalizer } from "../pi-overrides/provider-catalog-finalizer.ts";
+import { registerProviderCatalogFinalizer } from "../_shared/tool-policy/provider-catalog-finalizer.ts";
 import { claimSandboxRuntime, publishSandboxRuntime, releaseSandboxRuntime } from "../_shared/sandbox-runtime/index.ts";
 import { createSandboxExecutionContext } from "../_shared/sandbox-runtime/execution-context.ts";
 import { SHELL_CONTEXT_TYPE } from "../_shared/shell-presentation/context.ts";
-import { publishShellRuntime, releaseShellRuntime } from "./capabilities/runtime.ts";
+import { shellToolPresentation } from "../_shared/shell-presentation/index.ts";
+import {
+    publishShellRuntime,
+    releaseShellRuntime,
+    resolveShellPolicyForExecution,
+} from "../_shared/shell-runtime/index.ts";
+import { Type } from "typebox";
 import { loadSandboxConfig } from "./index.ts";
 import { registerSandboxModelContext } from "./model-context.ts";
 import { createBashPolicy, createThinkPolicy, createAnalysisPolicy } from "./runtime/policies.ts";
+
+function registerBashFixture(pi: ExtensionAPI): void {
+    pi.registerTool({
+        ...shellToolPresentation("bash"),
+        name: "bash",
+        label: "bash fixture",
+        description: "Execute a shell fixture.",
+        parameters: Type.Object({ command: Type.String() }),
+        async execute(_id, params, _signal, _onUpdate, ctx) {
+            await resolveShellPolicyForExecution(ctx.cwd);
+            return {
+                content: [{ type: "text" as const, text: params.command }],
+                details: {},
+            };
+        },
+    });
+    pi.registerTool({
+        ...shellToolPresentation("safe_bash"),
+        name: "safe_bash",
+        label: "safe_bash fixture",
+        description: "safe_bash: Tool availability=coexist",
+        parameters: Type.Object({ command: Type.String() }),
+        async execute() {
+            return {
+                content: [{ type: "text" as const, text: "ok" }],
+                details: {},
+            };
+        },
+    });
+}
 
 function fixture() {
     const root = mkdtempSync(join(tmpdir(), "pi-model-context-"));
@@ -65,7 +100,7 @@ async function requestSystem(session: Awaited<ReturnType<typeof createTestSessio
 
 test.each(["openai-responses", "openai-completions"] as const)("%s sends sandbox facts only in the temporary system prompt, never as a user message", async api => {
     const f = fixture();
-    const session = await createTestSession({ cwd: f.cwd, extensionFactories: [bashExecution, registerSandboxModelContext] });
+    const session = await createTestSession({ cwd: f.cwd, extensionFactories: [registerBashFixture, registerSandboxModelContext] });
     try {
         const model = session.session.model;
         if (!model) throw new Error("Missing fixture model");
@@ -103,7 +138,7 @@ test.each(["standard", "custom"] as const)("refreshes one ephemeral context with
     const f = fixture();
     const session = await createTestSession({ cwd: f.cwd,
         ...(prompt === "custom" ? { systemPrompt: "Fixture custom prompt." } : {}),
-        extensionFactories: [bashExecution, registerSandboxModelContext, registerProviderCatalogFinalizer],
+        extensionFactories: [registerBashFixture, registerSandboxModelContext, registerProviderCatalogFinalizer],
         mockTools: { read: () => { f.writeGlobal(["example.test"]); return "configuration changed"; } },
     });
     try {
@@ -130,18 +165,9 @@ test.each(["standard", "custom"] as const)("refreshes one ephemeral context with
         expect(preparations).toEqual([0, 0, 1]);
         for (const context of contexts) expect(context.match(/Current shell execution context/g)).toHaveLength(1);
         for (const system of systems) expect(system).not.toContain("Sandbox execution context v1");
-        expect(contexts[0]).toContain("Tool availability=coexist");
         expect(session.session.sessionManager.getBranch().some(entry => entry.type === "message" && entry.message.role === "custom" && entry.message.customType === SHELL_CONTEXT_TYPE)).toBe(false);
         expect(session.session.sessionManager.getBranch().some(entry => entry.type === "custom_message" && entry.customType === SHELL_CONTEXT_TYPE)).toBe(false);
 
-        // Exercise the real provider hook; the playbook itself never sends an HTTP request.
-        const tools = session.session.getAllTools().filter(tool => tool.name === "bash" || tool.name === "safe_bash").map(tool => ({ type: "function", name: tool.name, description: tool.description, parameters: tool.parameters }));
-        expect(toolPresentation([{ name: "bash" }])).toContain("When a command targets another execution environment, resolve its executable paths and variables in that environment.");
-        const payload = await session.session.extensionRunner!.emitBeforeProviderRequest({ instructions: systems.at(-1), input: [], tools, tool_choice: "auto" });
-        const wire = JSON.stringify(payload);
-        expect(wire).toContain("When a command targets another execution environment");
-        expect(wire.match(/When a command targets another execution environment/g)).toHaveLength(1);
-        expect(wire).not.toContain("PI_*");
     } finally { session.dispose(); f.dispose(); }
 });
 
@@ -149,7 +175,7 @@ test("refreshes an explicit mode selection between model calls in the same reque
     const f = fixture();
     const session = await createTestSession({
         cwd: f.cwd,
-        extensionFactories: [bashExecution, registerSandboxModelContext],
+        extensionFactories: [registerBashFixture, registerSandboxModelContext],
         mockTools: { read: () => { f.sessionPolicy.mode = "host"; return "fixture user selected host"; } },
     });
     try {
@@ -170,7 +196,7 @@ test("refreshes an explicit mode selection between model calls in the same reque
 
 test("reports host, invalid config and runtime transitions without activating anything", async () => {
     const f = fixture();
-    const session = await createTestSession({ cwd: f.cwd, extensionFactories: [registerSandboxModelContext, bashExecution] });
+    const session = await createTestSession({ cwd: f.cwd, extensionFactories: [registerSandboxModelContext, registerBashFixture] });
     try {
         const contexts: string[] = [];
         const observe = async (prompt: string) => {

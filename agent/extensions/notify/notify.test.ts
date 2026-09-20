@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, mock } from "bun:test";
 
 const sendNotification = mock((_event: unknown) => undefined);
 
-mock.module("../notify/transport.ts", () => ({
+mock.module("./transport.ts", () => ({
     createNotificationTransport: () => ({ send: sendNotification }),
 }));
 

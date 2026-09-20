@@ -9,11 +9,12 @@ import {
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import piRoles from "../index.ts";
-import plansExtension from "../../plans/index.ts";
-import {
-    buildPlanPersistenceFollowUp,
-} from "./session-plan-persistence-guard.ts";
+import { publicExtensionEntrypoints } from "./public-extension-session.ts";
+
+const PLAN_PERSISTENCE_FOLLOW_UP =
+    "[session-plan-persistence-guard] Do not finalize yet. " +
+    'Call session_plan now with action="save", a stable topic, and the complete Markdown plan. ' +
+    "After the save succeeds, present that plan to the user.";
 
 const sessions: TestSession[] = [];
 const directories: string[] = [];
@@ -63,10 +64,7 @@ describe("session plan persistence guard real Pi lifecycle", () => {
         try {
             session = await createTestSession({
                 cwd,
-                extensionFactories: [
-                    piRoles,
-                    plansExtension,
-                ],
+                extensions: publicExtensionEntrypoints("pi-roles", "plans"),
             });
         } finally {
             if (previousRole === undefined) delete process.env.PI_ROLE;
@@ -76,7 +74,7 @@ describe("session plan persistence guard real Pi lifecycle", () => {
 
         await session!.run(
             when("Create a quick plan.", [says("unpersisted runtime plan")]),
-            when(buildPlanPersistenceFollowUp(), [
+            when(PLAN_PERSISTENCE_FOLLOW_UP, [
                 calls("session_plan", {
                     action: "save",
                     topic: "runtime-quick-plan",

@@ -24,9 +24,9 @@ import { getActivePolicy } from "../_shared/audit-mode/audit-state";
 import { appendCompressionFooter } from "../_shared/compression-render";
 import { executeOnHost } from "../_shared/execution-provenance/index.ts";
 import { expandHomePath } from "../_shared/home-path.ts";
+import { managedOutputArchive } from "../_shared/tool-output-archive.ts";
 import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
 import { registerToolPresentation } from "../_shared/tool-policy/presentation.ts";
-import { managedOutputArchive } from "../save-tokens/tool-results/archive.ts";
 import {
     loadFileResolverConfig,
     setFileResolverConfig,

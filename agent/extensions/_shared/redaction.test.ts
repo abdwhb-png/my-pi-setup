@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
 import { redactValue, redactTextPreservingContext, sanitizeDisplayText } from "./redaction";
-import { redactValue as legacyRedactValue } from "../save-tokens/telemetry/redaction";
 
 describe("shared display sanitization", () => {
   it("redacts sensitive values in JSON text", () => {
@@ -32,13 +31,6 @@ describe("shared display sanitization", () => {
   it("limits sanitized output to 240 visible columns by default", () => {
     const sanitized = sanitizeDisplayText("x".repeat(400));
     expect(visibleWidth(sanitized)).toBeLessThanOrEqual(240);
-  });
-
-  it("keeps the legacy redaction import compatible", () => {
-    expect(legacyRedactValue).toBe(redactValue);
-    expect(legacyRedactValue({ password: "secret" }).value).toEqual({
-      password: "[REDACTED]",
-    });
   });
 
   it("preserves bounded context around a Bearer token", () => {

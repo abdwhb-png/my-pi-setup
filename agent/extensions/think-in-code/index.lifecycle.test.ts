@@ -1,4 +1,4 @@
-import { mountPolicy } from "../__tests__/policy-fixture.ts";
+import { mountPolicy } from "../_shared/testing/tool-policy-fixture.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

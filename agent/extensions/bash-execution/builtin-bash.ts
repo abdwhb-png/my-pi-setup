@@ -1,7 +1,6 @@
 import {
     createBashToolDefinition,
     defineTool,
-    type BashOperations,
     type BashToolDetails,
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
@@ -21,135 +20,15 @@ import {
     unknownExecution,
 } from "../_shared/execution-provenance/index.ts";
 import { recordSandboxExecutionContext } from "../_shared/sandbox-runtime/execution-context.ts";
-import {
-    createSandboxBashOperations,
-    getSandboxRuntime,
-    type SandboxBashOperationOptions,
-} from "../_shared/sandbox-runtime/index.ts";
+import { getSandboxRuntime } from "../_shared/sandbox-runtime/index.ts";
+import { CapabilityError } from "../_shared/shell-capability-error.ts";
 import { shellToolPresentation } from "../_shared/shell-presentation/index.ts";
-import { CapabilityError } from "../sandbox/capabilities/authority.ts";
 import {
-    currentShellPolicy,
-    requireForcedSandboxShellPolicy,
-    requireShellPolicy,
-    resolveForcedSandboxPolicyForExecution,
-    resolveShellPolicyForExecution,
-    trackShellOperation,
-} from "../sandbox/capabilities/runtime.ts";
+    resolveBashOperations,
+    resolveForcedSandboxOperations,
+} from "../_shared/shell-runtime/operations.ts";
 
-function createConfiguredSandboxOperations(
-    policy: Awaited<ReturnType<typeof resolveShellPolicyForExecution>>,
-    options: SandboxBashOperationOptions,
-    forced = false,
-): BashOperations {
-    const observer: typeof options.onExecution = (value) =>
-        options.onExecution?.({
-            ...value,
-            mode: "sandbox",
-            shellProfile: policy.profile,
-        });
-    return createSandboxBashOperations({
-        ...options,
-        onExecution: observer,
-        beforeDispatch: (fingerprint) => {
-            const latest = forced
-                ? requireForcedSandboxShellPolicy(policy.projectRoot)
-                : requireShellPolicy(policy.projectRoot);
-            if (
-                latest.profile !== policy.profile ||
-                (latest.sandboxFingerprint &&
-                    latest.sandboxFingerprint !== fingerprint)
-            ) {
-                throw new CapabilityError(
-                    "authorization-required",
-                    "Shell policy changed. Refresh with /sandbox mode " +
-                        (latest.requestedMode ?? latest.mode ?? "sandbox") +
-                        ". The command was not executed.",
-                );
-            }
-            options.beforeDispatch?.(fingerprint);
-        },
-    });
-}
-
-function resolveForcedSandboxOperations(
-    options: SandboxBashOperationOptions = {},
-): BashOperations {
-    return {
-        exec: async (command, cwd, executionOptions) => {
-            const policy = await resolveForcedSandboxPolicyForExecution(cwd);
-            const operations = createConfiguredSandboxOperations(
-                policy,
-                options,
-                true,
-            );
-            return trackShellOperation(policy, command, () =>
-                operations.exec(command, cwd, executionOptions),
-            );
-        },
-    };
-}
-
-export function resolveBashOperations(
-    localSupervisor: BashProcessSupervisor,
-    options: SandboxBashOperationOptions = {},
-): BashOperations {
-    return {
-        exec: async (command, cwd, executionOptions) => {
-            if ("hostCapability" in options) {
-                throw new CapabilityError(
-                    "migration-required",
-                    "Legacy hostCapability was removed. Use a standard bash command and choose the execution mode explicitly.",
-                );
-            }
-            let policy;
-            try {
-                policy = await resolveShellPolicyForExecution(cwd);
-            } catch (error) {
-                let currentPolicy;
-                try {
-                    currentPolicy = currentShellPolicy();
-                } catch {
-                    // Preserve the original policy refusal when resolution itself failed.
-                }
-                options.onExecution?.({
-                    ...unknownExecution(),
-                    ...(currentPolicy
-                        ? {
-                              mode:
-                                  currentPolicy.mode === "host"
-                                      ? ("host" as const)
-                                      : ("sandbox" as const),
-                              shellProfile: currentPolicy.profile,
-                          }
-                        : {}),
-                    phase: "policy",
-                    outcome: "blocked",
-                });
-                throw error;
-            }
-            const observer: typeof options.onExecution = (value) =>
-                options.onExecution?.({
-                    ...value,
-                    mode: policy.mode === "host" ? "host" : "sandbox",
-                    shellProfile: policy.profile,
-                });
-            const sandbox = createConfiguredSandboxOperations(policy, options);
-            const operations =
-                policy.mode === "host"
-                    ? localSupervisor.createOperations({
-                          // Do not rewrite a permission-checked command using project-controlled host code.
-                          detached: true,
-                          onExecution: observer,
-                          stdin: options.stdin,
-                      })
-                    : sandbox;
-            return trackShellOperation(policy, command, () =>
-                operations.exec(command, cwd, executionOptions),
-            );
-        },
-    };
-}
+export { resolveBashOperations } from "../_shared/shell-runtime/operations.ts";
 
 export interface BuiltinBashRegistrationOptions {
     localSupervisor: BashProcessSupervisor;

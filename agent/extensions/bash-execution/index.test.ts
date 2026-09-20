@@ -13,8 +13,12 @@ import {
     type AnalysisSandboxPort,
 } from "../_shared/sandbox-runtime/index.ts";
 import bashExecutionExtension from "./index.ts";
-import { emptyGrants, type ShellProfile } from "../sandbox/capabilities/authority.ts";
-import { publishShellRuntime, releaseShellRuntime } from "../sandbox/capabilities/runtime.ts";
+import {
+    emptyGrants,
+    publishShellRuntime,
+    releaseShellRuntime,
+    type ShellProfile,
+} from "../_shared/shell-runtime/index.ts";
 
 type RegisteredTool = Parameters<ExtensionAPI["registerTool"]>[0];
 type Hook = (event: unknown, ctx: ExtensionContext) => unknown;

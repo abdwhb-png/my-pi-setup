@@ -43,7 +43,6 @@ import {
 import { registerThinkInCode } from "./index.ts";
 import { hashProjectPath } from "./config.ts";
 import { readRecentThinkTelemetry } from "./telemetry/storage.ts";
-import { createToolGroupsExtension } from "../tool-groups/index.ts";
 import {
     claimSandboxRuntime,
     publishSandboxRuntime,
@@ -56,12 +55,46 @@ import type {
     AnalysisRequest,
     AnalysisResult,
 } from "../_shared/sandbox-runtime/analysis-protocol.ts";
+import {
+    ROLE_TOOL_POLICY_EVENT,
+    type RoleToolPolicyPayload,
+} from "../_shared/pi-roles/index.ts";
+import { getToolPolicy } from "../_shared/tool-policy/index.ts";
+
+function registerTestToolPolicyOwner(pi: ExtensionAPI): void {
+    const policy = getToolPolicy();
+    const detach = policy.bind(
+        {
+            registered: () => pi.getAllTools().map((tool) => tool.name),
+            active: () => pi.getActiveTools(),
+            apply: (names) => pi.setActiveTools(names),
+        },
+        { groups: {}, resolveMcp: () => [] },
+    );
+    const unsubscribe = pi.events.on(ROLE_TOOL_POLICY_EVENT, (payload) => {
+        policy.setRole(payload as RoleToolPolicyPayload);
+    });
+    pi.on("session_start", (_event, ctx) => {
+        policy.beginSession(ctx.sessionManager.getSessionId());
+        policy.start();
+    });
+    pi.on("before_agent_start", () => {
+        policy.refresh();
+    });
+    pi.on("session_shutdown", () => {
+        unsubscribe();
+        detach();
+    });
+}
 
 async function createTestSession(options: NonNullable<Parameters<typeof createBaseTestSession>[0]>) {
-    return createBaseTestSession({ ...options, extensionFactories: [
-        ...(options.extensionFactories ?? []),
-        createToolGroupsExtension(() => ({ groups: { "think-inspect": ["think_artifact_search"], "think-exec": ["think_execute"] } }), () => undefined, () => undefined),
-    ] });
+    return createBaseTestSession({
+        ...options,
+        extensionFactories: [
+            ...(options.extensionFactories ?? []),
+            registerTestToolPolicyOwner,
+        ],
+    });
 }
 
 const THINK_TOOL_NAMES = [
@@ -1128,53 +1161,4 @@ describe("think-in-code real Pi runtime wiring", () => {
         const projects = readdirSync(projectsRoot);
         expect(projects.length).toBeGreaterThan(0);
     });
-});
-
-describe("think-in-code save-tokens boundary", () => {
-    for (const toolName of THINK_TOOL_NAMES) {
-        it(`routes ${toolName} through the real save-tokens backend without compression`, async () => {
-            const { createToolResultHandler } = await import(
-                "../save-tokens/tool-results/core.ts"
-            );
-            type Obs = { kind: string; toolName: string };
-            const observations: Obs[] = [];
-            let backendCalls = 0;
-            const handler = createToolResultHandler({
-                backend: {
-                    id: "headroom" as const,
-                    compress: async () => {
-                        backendCalls += 1;
-                        return { output: "should-never-run" };
-                    },
-                },
-                minTokensByGroup: { shell: 0, read: 0, search: 0 },
-                enabled: true,
-                excludeTools: [],
-                archiveOriginal: undefined,
-                aggregates: true,
-                capErrors: true,
-                onObservation: (event) =>
-                    observations.push(event as unknown as Obs),
-            });
-            const model = {
-                provider: "anthropic",
-                id: "claude-sonnet-4-6",
-                contextWindow: 200_000,
-            };
-            const toolNameValue: string = toolName;
-            const event = {
-                type: "tool_result" as const,
-                toolCallId: `tc-${toolNameValue}`,
-                toolName: toolNameValue,
-                content: [{ type: "text" as const, text: "A".repeat(200_000) }],
-                isError: false,
-                input: {},
-                details: undefined,
-            };
-            const result = await handler(event, model, undefined);
-            expect(result).toBeUndefined();
-            expect(observations).toEqual([]);
-            expect(backendCalls).toBe(0);
-        });
-    }
 });

@@ -21,7 +21,7 @@ import {
     getToolPolicy,
     registerToolPolicyContribution,
 } from "../_shared/tool-policy/index.ts";
-import { registerProviderCatalogFinalizer } from "../pi-overrides/provider-catalog-finalizer.ts";
+import { registerProviderCatalogFinalizer } from "../_shared/tool-policy/provider-catalog-finalizer.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);

@@ -4,7 +4,7 @@ import {
   TestHooks,
   mountPolicy,
   trackPolicyCleanup,
-} from "../__tests__/policy-fixture.ts";
+} from "../_shared/testing/tool-policy-fixture.ts";
 import { getToolPolicy } from "../_shared/tool-policy/index.ts";
 
 type CapturedWidget = {

@@ -1,26 +1,33 @@
 import { afterEach } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
-import {
-    getToolPolicy,
-    type PolicyHost,
-} from "../_shared/tool-policy/index.ts";
+import { getSharedVisibilityBroker } from "../tool-groups/broker.ts";
+import { getToolPolicy, type PolicyHost } from "../tool-policy/index.ts";
 
 const cleanup: Array<() => void> = [];
 let previousOwner: (() => void) | undefined;
 afterEach(() => {
-    for (const dispose of cleanup.splice(0).reverse()) dispose();
+    for (const dispose of cleanup.splice(0).toReversed()) dispose();
 });
 
+interface TestSessionManager {
+    getSessionId?(): string;
+    getEntries?(): unknown[];
+    [key: string]: unknown;
+}
+
+interface TestEventContext {
+    sessionManager?: TestSessionManager;
+    [key: string]: unknown;
+}
+
+type TestHook = (value?: unknown, context?: TestEventContext) => unknown;
+
 /** Minimal synchronous/async event runner. Unlike Map.set, Pi retains every hook. */
-export class TestHooks extends Map<string, (...args: any[]) => any> {
-    private readonly callbacks = new Map<
-        string,
-        Array<(...args: any[]) => any>
-    >();
+export class TestHooks extends Map<string, TestHook> {
+    private readonly callbacks = new Map<string, TestHook[]>();
     readonly sessionId = crypto.randomUUID();
     afterStart?: () => void;
-    override set(event: string, handler: (...args: any[]) => any): this {
+    override set(event: string, handler: TestHook): this {
         const handlers = this.callbacks.get(event) ?? [];
         handlers.push(handler);
         this.callbacks.set(event, handlers);
@@ -33,7 +40,7 @@ export class TestHooks extends Map<string, (...args: any[]) => any> {
                     ...context.sessionManager,
                 },
             };
-            let result: any;
+            let result: unknown;
             for (const callback of handlers) {
                 result =
                     result instanceof Promise
@@ -42,9 +49,9 @@ export class TestHooks extends Map<string, (...args: any[]) => any> {
             }
             if (event === "session_start" && this.afterStart) {
                 if (result instanceof Promise)
-                    return result.then((value) => {
+                    return result.then((resolvedValue: unknown) => {
                         this.afterStart!();
-                        return value;
+                        return resolvedValue;
                     });
                 this.afterStart();
             }
@@ -73,7 +80,7 @@ export function mountWorkflowPolicy(pi: ExtensionAPI) {
     const broker = getSharedVisibilityBroker();
     broker.resetSession();
     const policy = mountPolicy({
-        registered: () => pi.getAllTools().map((t) => t.name),
+        registered: () => pi.getAllTools().map((tool) => tool.name),
         active: () => pi.getActiveTools(),
         apply: (names) => pi.setActiveTools(names),
     });

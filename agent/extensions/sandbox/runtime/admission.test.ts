@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { PassThrough } from "node:stream";
-import { assertAdmissionMatchesPolicy, readSandboxAdmission, MAX_ADMISSION_BYTES, type SandboxAdmissionReport } from "./admission.ts";
+import type { SandboxAdmissionReport } from "../../_shared/sandbox-runtime/admission-protocol.ts";
+import {
+    assertAdmissionMatchesPolicy,
+    MAX_ADMISSION_BYTES,
+    readSandboxAdmission,
+} from "./admission.ts";
 import type { SandboxPolicy } from "./contracts.ts";
 
 const digest = "a".repeat(64);

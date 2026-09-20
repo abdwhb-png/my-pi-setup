@@ -1,37 +1,31 @@
-import { describe, it, expect, mock } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterAll, beforeAll, describe, it, expect } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Mock settings/cfg loading — path-resolver imports from pi-overrides/config.ts
-mock.module('../../pi-overrides/config.ts', () => {
-    // Return a config with additionalDirectories set
-    let loadedConfig: any = null;
-    return {
-        loadFileResolverConfig: () => {
-            if (loadedConfig) return loadedConfig;
-            return {
-                fd: {
-                    respectGitignore: true,
-                    followSymlinks: true,
-                    includeHidden: true,
-                    excludePatterns: ['.git', 'node_modules'],
-                    types: ['f'],
-                },
-                rg: { respectGitignore: true },
-                ls: { respectGitignore: true },
-                additionalDirectories: ['/extra/root'],
-                enableRealtimeFallback: true,
-            };
-        },
-        // Allow tests to override config
-        setTestConfig: (c: any) => {
-            loadedConfig = c;
-        },
-    };
+import {
+    clearPathResolverCache,
+    getSearchDirectories,
+} from './path-resolver.ts';
+
+let configuredProject: string;
+
+beforeAll(() => {
+    configuredProject = mkdtempSync(join(tmpdir(), 'pi-path-config-'));
+    mkdirSync(join(configuredProject, '.pi'));
+    writeFileSync(
+        join(configuredProject, '.pi', 'settings.json'),
+        JSON.stringify({
+            fileResolver: { additionalDirectories: ['/extra/root'] },
+        }),
+    );
+    clearPathResolverCache();
 });
 
-const { getSearchDirectories } = await import('./path-resolver.ts');
+afterAll(() => {
+    clearPathResolverCache();
+    rmSync(configuredProject, { recursive: true, force: true });
+});
 
 describe('getSearchDirectories', () => {
     // Helper: create a real temp directory for stat tests
@@ -103,22 +97,24 @@ describe('getSearchDirectories', () => {
     });
 
     it('returns CWD + additionalDirectories for relative prefix', () => {
-        const result = getSearchDirectories('my-dir', { cwd: '/current/cwd' });
-        expect(result.dirs).toContain('/current/cwd');
+        const result = getSearchDirectories('my-dir', {
+            cwd: configuredProject,
+        });
+        expect(result.dirs).toContain(configuredProject);
         expect(result.dirs).toContain('/extra/root');
         expect(result.query).toBe('my-dir');
     });
 
-    it('returns CWD only when additionals are empty', () => {
+    it('always includes CWD for relative prefixes', () => {
         const result = getSearchDirectories('bare', { cwd: '/cwd' });
-        // Config has additionalDirectories from mock, so both appear
         expect(result.dirs).toContain('/cwd');
         expect(result.query).toBe('bare');
     });
 
     it('returns matchingRoots when query matches search root basename', () => {
-        const result = getSearchDirectories('root', { cwd: '/projects' });
-        // '/extra/root' basename is 'root' which matches query 'root'
+        const result = getSearchDirectories('root', {
+            cwd: configuredProject,
+        });
         expect(result.matchingRoots).toContain('/extra/root');
     });
 

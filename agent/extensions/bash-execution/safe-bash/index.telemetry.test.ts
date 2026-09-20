@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 
-import { TestHooks, mountPolicy } from "../../__tests__/policy-fixture.ts";
+import { TestHooks, mountPolicy } from "../../_shared/testing/tool-policy-fixture.ts";
 import { describe, expect, it, mock } from "bun:test";
 import type {
     ExtensionAPI,

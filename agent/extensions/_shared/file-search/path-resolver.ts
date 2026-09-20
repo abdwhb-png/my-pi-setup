@@ -8,8 +8,8 @@
 
 import { statSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { loadFileResolverConfig } from "../../pi-overrides/config";
 import { expandHomePath } from "../home-path.ts";
+import { loadFileResolverConfig } from "./config.ts";
 
 /** Config cache per CWD to avoid re-loading on every keystroke. */
 const configCache = new Map<

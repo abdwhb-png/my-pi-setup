@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { summarizeDockerAccess, formatActiveDocker, formatDockerGrantResult, formatDockerSummary, formatBreakGlassRemaining, BREAK_GLASS_COUNTDOWN_WINDOW_MS } from "./docker-presentation.ts";
+import { summarizeDockerAccess } from "../_shared/sandbox-runtime/docker-summary.ts";
+import {
+    BREAK_GLASS_COUNTDOWN_WINDOW_MS,
+    formatActiveDocker,
+    formatBreakGlassRemaining,
+    formatDockerGrantResult,
+    formatDockerSummary,
+} from "./docker-presentation.ts";
 
 const authority = summarizeDockerAccess({ mode: "targeted", endpoint: "unix:///hidden.sock", targets: [
     { selector: { type: "container-name", name: "api" }, allowUnsafeTarget: true },

@@ -1,19 +1,14 @@
-import { createHash } from "node:crypto";
-import {
-    existsSync,
-    lstatSync,
-    readFileSync,
-    readlinkSync,
-    realpathSync,
-} from "node:fs";
+import { lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import type { SandboxMode } from "../../_shared/shell-runtime/contracts.ts";
 import { SandboxExecutionError } from "../runtime/contracts.ts";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
 import {
     validateGlobalInstallations,
     parseInstallationSelection,
 } from "./installations.ts";
+export { localMachineId } from "../../_shared/sandbox-runtime/machine-identity.ts";
 
 export {
     CAPABILITY_ERROR_CODES,
@@ -22,17 +17,12 @@ export {
     isCapabilityError,
     type CapabilityErrorCode,
 } from "../../_shared/shell-capability-error.ts";
-export type SandboxMode = "sandbox" | "host";
-/** A presentation of the resolved policy, never an authority input. */
-/** Historical literals are accepted only by legacy fixtures/readers. Active resolution emits default/custom/host. */
-export type ShellProfile = "default" | "custom" | "host";
-export interface CapabilityGrants {
-    domains: string[];
-    hostDomains: string[];
-    readPaths: string[];
-    writePaths: string[];
-    hostTmp: boolean;
-}
+export {
+    emptyGrants,
+    type CapabilityGrants,
+    type SandboxMode,
+    type ShellProfile,
+} from "../../_shared/shell-runtime/contracts.ts";
 export interface SandboxConfigLayer {
     /** Global authorization only; never a session mode selection. */
     host?: { allowed: boolean };
@@ -51,15 +41,6 @@ export interface GlobalSandboxConfig extends SandboxConfigLayer {
 
 const PATH_GLOB_META = /[*?[\]{}]/;
 
-export function emptyGrants(): CapabilityGrants {
-    return {
-        domains: [],
-        hostDomains: [],
-        readPaths: [],
-        writePaths: [],
-        hostTmp: false,
-    };
-}
 export function expandCapabilityPath(value: string): string {
     return value === "~"
         ? homedir()
@@ -77,13 +58,6 @@ export function persistedCapabilityPath(value: string): string {
 }
 export function sandboxConfigPath(agentDir: string): string {
     return resolve(agentDir, "sandbox.json");
-}
-export function localMachineId(): string {
-    const identity = readFileSync("/etc/machine-id", "utf8").trim();
-    if (!identity) invalid("Machine identity is unavailable");
-    return createHash("sha256")
-        .update(`${identity}:${process.getuid?.()}`)
-        .digest("hex");
 }
 function invalid(message: string): never {
     throw new SandboxExecutionError("invalid-policy", {

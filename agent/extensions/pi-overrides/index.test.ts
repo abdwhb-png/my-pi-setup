@@ -1,4 +1,4 @@
-import { TestHooks, mountPolicy } from '../__tests__/policy-fixture.ts';
+import { TestHooks, mountPolicy } from '../_shared/testing/tool-policy-fixture.ts';
 import { toolPresentation } from '../_shared/tool-policy/presentation.ts';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';

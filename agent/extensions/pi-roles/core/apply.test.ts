@@ -9,7 +9,7 @@
  * fail loudly if apply.ts starts touching unexpected pi.* methods.
  */
 
-import { mountPolicy } from "../../__tests__/policy-fixture.ts";
+import { mountPolicy } from "../../_shared/testing/tool-policy-fixture.ts";
 import { describe, expect, it, mock } from "bun:test";
 import {
   applyRole,

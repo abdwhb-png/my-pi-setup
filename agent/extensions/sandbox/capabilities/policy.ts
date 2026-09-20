@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import type { ShellCapabilityResolution } from "../../_shared/shell-runtime/contracts.ts";
 import { DEFAULT_DOCKER_ENDPOINT } from "../runtime/docker-policy.ts";
 import type { PiSandboxConfig } from "../runtime/policies.ts";
 import { normalizeSandboxResources } from "../runtime/policies.ts";
@@ -18,37 +19,8 @@ import {
     selectInstallations,
 } from "./installations.ts";
 
-export interface ShellCapabilityResolution {
-    hostAllowed?: boolean;
-    state:
-        | "ready"
-        | "authorization-required"
-        | "migration-required"
-        | "machine-mismatch";
-    projectRoot: string;
-    mode?: SandboxMode;
-    requestedMode?: SandboxMode;
-    /** Derived from the effective policy. It is never persisted as authority. */
-    profile: ShellProfile;
-    requestedProfile: ShellProfile;
-    grants: {
-        domains: string[];
-        hostDomains: string[];
-        readPaths: string[];
-        writePaths: string[];
-        hostTmp: boolean;
-    };
-    requestedGrants: {
-        domains: string[];
-        hostDomains: string[];
-        readPaths: string[];
-        writePaths: string[];
-        hostTmp: boolean;
-    };
-    authorityPath: string;
-    diagnostic?: string;
-    sandboxFingerprint?: string;
-}
+export type { ShellCapabilityResolution } from "../../_shared/shell-runtime/contracts.ts";
+
 export interface ShellPolicyInput {
     cwd: string;
     baseline?: PiSandboxConfig;
@@ -67,10 +39,6 @@ export interface ShellPolicyInput {
     writePathsRequested?: boolean;
 }
 
-type LayerConfig = Pick<
-    PiSandboxConfig,
-    "network" | "filesystem" | "environment" | "tmpNamespace"
->;
 function canonicalLayer(
     layer: SandboxConfigLayer | undefined,
     root: string,

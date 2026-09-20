@@ -1,65 +1,17 @@
 import { expect, test } from 'bun:test';
 import { createTestSession } from '@abdwhb-png/pi-test-harness';
-import context from '../context.ts';
-import codex from '../openai-codex-fast-mode.ts';
-import glm from '../pi-glm-tweaks/index.ts';
-import { createToolGroupsExtension } from '../tool-groups/index.ts';
 
-test('last provider catalog follows a later tool-schema mutation', async () => {
-    const replaceEditWithSafeBash = (pi: Parameters<typeof context>[0]) => {
-        pi.on('before_provider_request', (event) => ({
-            ...(event.payload as Record<string, unknown>),
-            tools: [{ type: 'function', function: { name: 'safe_bash', parameters: {} } }],
-        }));
-    };
-    const owner = createToolGroupsExtension(
-        () => ({ groups: {} }),
-        () => undefined,
-        () => undefined,
-    );
-    const session = await createTestSession({
-        systemPrompt: 'Custom SYSTEM',
-        extensionFactories: [context, replaceEditWithSafeBash, owner],
-    });
-    try {
-        const runner = session.session.extensionRunner;
-        if (!runner) throw new Error('Missing real Pi runner');
-        session.session.agent.state.model = {
-            ...session.session.agent.state.model,
-            api: 'openai-completions',
-        };
-        await runner.emitBeforeAgentStart('fixture', undefined, 'Custom SYSTEM', {
-            cwd: session.cwd,
-            customPrompt: 'Custom SYSTEM',
-        });
-        const result = await runner.emitBeforeProviderRequest({
-            messages: [{ role: 'system', content: 'Custom SYSTEM' }],
-            tools: [{ type: 'function', function: { name: 'edit', parameters: {} } }],
-            tool_choice: 'auto',
-        });
-        expect(result).toMatchObject({
-            tools: [{ function: { name: 'safe_bash' } }],
-        });
-        expect(JSON.stringify(result)).toContain('- safe_bash');
-        expect(JSON.stringify(result)).not.toContain('- edit');
-    } finally {
-        await session.session.extensionRunner?.emit({
-            type: 'session_shutdown',
-            reason: 'quit',
-        });
-        session.dispose();
-    }
-});
+import { publicExtensionEntrypoint } from './public-extension-session.ts';
 
 for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi hooks preserve GLM/Codex options across requests and model changes`, async () => {
-    const sidecars = [codex, glm];
-    const owner = createToolGroupsExtension(
-        () => ({ groups: {} }),
-        () => undefined,
-        () => undefined,
-    );
+    const context = publicExtensionEntrypoint('context');
+    const sidecars = [
+        publicExtensionEntrypoint('openai-codex-fast-mode'),
+        publicExtensionEntrypoint('pi-glm-tweaks'),
+    ];
+    const owner = publicExtensionEntrypoint('tool-groups');
     const session = await createTestSession({ systemPrompt: 'Custom SYSTEM',
-        extensionFactories: order === 'first' ? [context, ...sidecars, owner] : [...sidecars, context, owner] });
+        extensions: order === 'first' ? [context, ...sidecars, owner] : [...sidecars, context, owner] });
     try {
         const runner = session.session.extensionRunner;
         if (!runner) throw new Error('Missing real Pi runner');

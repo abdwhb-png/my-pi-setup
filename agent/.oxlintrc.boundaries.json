@@ -1,0 +1,11 @@
+{
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "jsPlugins": ["./tooling/extension-boundaries/oxlint-plugin.mjs"],
+    "rules": {
+        "pi-boundaries/no-cross-extension-import": "error"
+    },
+    "ignorePatterns": [
+        "extensions/aldoborrero-pi-agent-kit/",
+        "extensions/ogulcancelik-pi-extensions/"
+    ]
+}

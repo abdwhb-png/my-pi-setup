@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { claimProviderCatalogRecorder } from "../_shared/tool-policy/provider-catalog-state.ts";
-import { injectProviderToolsCatalog } from "../_shared/tool-policy/provider-catalog.ts";
+import { claimProviderCatalogRecorder } from "./provider-catalog-state.ts";
+import { injectProviderToolsCatalog } from "./provider-catalog.ts";
 
 /**
  * Register the provider-payload presentation hook. The tool-groups runtime

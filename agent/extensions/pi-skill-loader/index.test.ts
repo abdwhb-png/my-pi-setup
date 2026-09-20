@@ -14,7 +14,7 @@ import {
   isMarkdownLinkTransformRequest,
   MARKDOWN_LINKS_TRANSFORM_EVENT,
 } from "../_shared/markdown-links.ts";
-import { TestHooks, mountPolicy } from "../__tests__/policy-fixture.ts";
+import { TestHooks, mountPolicy } from "../_shared/testing/tool-policy-fixture.ts";
 import piSkillLoader from "./index";
 
 function makeSourceInfo(overrides: Partial<SourceInfo> = {}): SourceInfo {

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type {
     SandboxLeasePaths,
     SandboxPolicy,
-} from "../../sandbox/runtime/contracts.ts";
+} from "./policy-contracts.ts";
 import {
     createSandboxExecutionContext,
     createAdmittedSandboxExecutionContext,

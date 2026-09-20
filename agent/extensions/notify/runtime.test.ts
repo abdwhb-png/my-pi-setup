@@ -16,7 +16,7 @@ import { requestPermissionDecisionFromUi } from "../../npm/node_modules/@gotgene
 const notificationEvents: unknown[] = [];
 const interactionOrder: string[] = [];
 
-mock.module("../notify/transport.ts", () => ({
+mock.module("./transport.ts", () => ({
     createNotificationTransport: () => ({
         send(event: { type: string }) {
             notificationEvents.push(event);
@@ -26,9 +26,6 @@ mock.module("../notify/transport.ts", () => ({
 }));
 
 const { default: notifyExtension } = await import("../notify.ts");
-const { default: dangerousModeExtension } = await import(
-    "../pi-dangerous-mode/index.ts"
-);
 
 function registerPromptFixture(pi: ExtensionAPI): void {
     pi.registerTool({
@@ -89,15 +86,6 @@ function installCustomUiFixture(session: TestSession): void {
         return undefined as never;
     };
     runner.setUIContext({ ...runner.getUIContext(), custom }, "tui");
-}
-
-async function enableUnattended(session: TestSession): Promise<void> {
-    const command = session.session.extensionRunner.getCommand("unattended");
-    if (!command) throw new Error("Missing /unattended command");
-    await command.handler(
-        "on",
-        session.session.extensionRunner.createCommandContext(),
-    );
 }
 
 function actionNotifications(): unknown[] {
@@ -210,54 +198,4 @@ describe("notify extension real Pi UI boundary", () => {
         expect(interactionOrder).toEqual(["ui:select"]);
     });
 
-    it("lets Unattended suppress a prompt before notification observation", async () => {
-        session = await createTestSession({
-            extensionFactories: [
-                registerPromptFixture,
-                notifyExtension,
-                dangerousModeExtension,
-            ],
-            mockUI: {
-                select: () => {
-                    interactionOrder.push("ui:select");
-                    return "choice";
-                },
-            },
-            propagateErrors: false,
-        });
-        await enableUnattended(session);
-
-        await session.run(
-            when("Open blocked selection", [
-                calls("prompt_select"),
-                says("Used a non-interactive path."),
-            ]),
-        );
-
-        expect(actionNotifications()).toHaveLength(0);
-        expect(session.events.uiCallsFor("select")).toHaveLength(0);
-    });
-
-    it("lets Unattended suppress third-party custom UI", async () => {
-        session = await createTestSession({
-            extensionFactories: [
-                registerCustomPromptFixture,
-                notifyExtension,
-                dangerousModeExtension,
-            ],
-            propagateErrors: false,
-        });
-        installCustomUiFixture(session);
-        await enableUnattended(session);
-
-        await session.run(
-            when("Open blocked custom UI", [
-                calls("prompt_custom"),
-                says("Used a non-interactive path."),
-            ]),
-        );
-
-        expect(actionNotifications()).toHaveLength(0);
-        expect(interactionOrder).not.toContain("ui:custom");
-    });
 });

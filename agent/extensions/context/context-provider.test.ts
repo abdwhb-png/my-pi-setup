@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import contextExtension from './index.ts';
-import { registerProviderCatalogFinalizer } from '../pi-overrides/provider-catalog-finalizer.ts';
+import { registerProviderCatalogFinalizer } from '../_shared/tool-policy/provider-catalog-finalizer.ts';
 import { tmpdir } from 'node:os';
 
 test('custom prompt catalog follows outgoing schemas rather than the earlier active tools', async () => {

@@ -97,7 +97,7 @@ export function levenshteinDistance(a: string, b: string): number {
 
     // Use two rows for O(min(m,n)) space
     let prev = Array.from({ length: t.length + 1 }, (_, i) => i);
-    let curr = new Array<number>(t.length + 1);
+    let curr = Array.from<number>({ length: t.length + 1 });
 
     for (let i = 0; i < s.length; i++) {
         curr[0] = i + 1;

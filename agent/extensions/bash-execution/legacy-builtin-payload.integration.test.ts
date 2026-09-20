@@ -10,12 +10,12 @@ import {
     publishSandboxRuntime,
     releaseSandboxRuntime,
 } from "../_shared/sandbox-runtime/index.ts";
-import { emptyGrants } from "../sandbox/capabilities/authority.ts";
-import type { ShellCapabilityResolution } from "../sandbox/capabilities/policy.ts";
 import {
+    emptyGrants,
     publishShellRuntime,
     releaseShellRuntime,
-} from "../sandbox/capabilities/runtime.ts";
+    type ShellCapabilityResolution,
+} from "../_shared/shell-runtime/index.ts";
 import { registerBuiltinBash } from "./builtin-bash.ts";
 
 test(

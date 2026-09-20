@@ -12,7 +12,7 @@ import {
 import { renameSync } from "node:fs";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import type { ChildProcess } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DockerTargetAccess } from "./docker-access.ts";
@@ -130,18 +130,15 @@ mock.module("../_shared/fancy-footer.ts", () => ({
     },
 }));
 
-const { default: sandboxExtension, sessionStateFilename } = await import(
-    "./index.ts"
-);
+const { default: sandboxExtension } = await import("./index.ts");
 const {
     createSandboxBashOperations,
     getSandboxAnalysisPort,
     getSandboxRuntime,
-    isSandboxUnavailableError,
     createSandboxThinkBashOperations,
 } = await import("../_shared/sandbox-runtime/index.ts");
 const { resolveBashOperations } = await import(
-    "../bash-execution/builtin-bash.ts"
+    "../_shared/shell-runtime/operations.ts"
 );
 const { createBashProcessSupervisor } = await import(
     "../_shared/command-execution/exec.ts"
@@ -244,47 +241,6 @@ function notifyCalls(ctx: ExtensionContext): Array<[string, string | undefined]>
     return notify.mock.calls as Array<[string, string | undefined]>;
 }
 
-async function configureBreakGlassTarget(
-    cwd: string,
-    agentDir: string,
-): Promise<string> {
-    await mkdir(agentDir);
-    const authorityPath = join(agentDir, "sandbox.global.json");
-    await writeFile(
-        authorityPath,
-        JSON.stringify({
-            docker: {
-                grants: [{
-                    projectRoot: cwd,
-                    mode: "targeted",
-                    targets: [{
-                        selector: { type: "container-name", name: "api" },
-                        operations: ["ps", "inspect", "logs", "stats", "exec", "start", "stop", "restart"],
-                        allowUnsafeTarget: true,
-                    }],
-                }],
-            },
-        }),
-        { mode: 0o600 },
-    );
-    inspectDockerAccess.mockResolvedValue([{
-        selector: { type: "container-name", name: "api" },
-        containers: [{
-            id: "0123456789abcdef",
-            name: "api-current",
-            state: "running",
-            access: "accessible",
-            facts: [],
-            mounts: [{
-                source: "/host/auths",
-                destination: "/auths",
-                writable: true,
-            }],
-        }],
-    }]);
-    return authorityPath;
-}
-
 const execArgs = [
     "printf blocked",
     "/tmp",
@@ -312,20 +268,11 @@ function renderWidget(): string | null {
     return result === null || result === undefined ? null : String(result);
 }
 
-const { emptyGrants, readCapabilityAuthority, capabilityAuthorityPath } = await import("./capabilities/legacy-authority.ts");
 const { currentShellPolicy } = await import("./capabilities/runtime.ts");
 
 const ENV_KEY = "PI_SANDBOX_SESSION_STATUS";
-const SESSION_ID = "session-a";
 const originalAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 let isolatedAgentDirectory: string;
-async function writeLegacyAuthority(
-    path: string,
-    project: { projectRoot: string; profile: "isolated" | "integrated" | "host"; grants: ReturnType<typeof emptyGrants> },
-    machineId = "346675da6aa23f926127a4e419becc296bb9ef369a0823fbe8d35f60444d35ea",
-): Promise<void> {
-    await writeFile(path, JSON.stringify({ version: 1, machineId, projects: [project] }), { mode: 0o600 });
-}
 beforeEach(async () => {
     isolatedAgentDirectory = await mkdtemp(join(tmpdir(), "sandbox-authority-fixture-"));
     process.env.PI_CODING_AGENT_DIR = isolatedAgentDirectory;

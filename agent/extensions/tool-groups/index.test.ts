@@ -2,7 +2,7 @@ import { describe, expect, test, mock } from 'bun:test';
 import { createToolGroupsExtension } from './index.ts';
 import { getToolPolicy, registerToolPolicyContribution } from '../_shared/tool-policy/index.ts';
 import { getSharedVisibilityBroker } from '../_shared/tool-groups/broker.ts';
-import { TestHooks, trackPolicyCleanup } from '../__tests__/policy-fixture.ts';
+import { TestHooks, trackPolicyCleanup } from '../_shared/testing/tool-policy-fixture.ts';
 import { SUBAGENT_EXTENSION_BINDINGS_ENV, TOOL_GROUPS_REQUESTED_TOOLS_ENV } from '../_shared/tool-groups/types.ts';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 

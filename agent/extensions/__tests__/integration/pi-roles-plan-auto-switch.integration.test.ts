@@ -11,9 +11,6 @@ import {
     when,
     type TestSession,
 } from '@abdwhb-png/pi-test-harness';
-import piRoles from '../index.ts';
-import contextExtension from '../../context.ts';
-import toolGroups from '../../tool-groups/index.ts';
 import {
     ACTIVE_ROLE_ENTRY_TYPE,
     ROLE_SWITCH_PROCESSED_TYPE,
@@ -22,13 +19,11 @@ import {
     getDefaultRole,
     type RoleToolPolicyPayload,
 } from '../../_shared/pi-roles/index.ts';
-import yeet from '../../yeet/index.ts';
-import {
-    PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED,
-} from './plan-auto-switch';
+import { publicExtensionEntrypoints } from './public-extension-session.ts';
 
 // Pin Plannotator's external contract independently of the consumer under test.
 const PLAN_APPROVED_ENTRY_TYPE = 'plannotator:plan-approved';
+const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED = 'plannotator-autoexecute-processed';
 const APPROVED_PLAN_CONTINUATION = 'Continue with the approved plan.';
 const APPROVE_PLAN_FIXTURE_TOOL = 'approve_plan_fixture';
 const COMPETING_MESSAGE_TYPE = 'plan-auto-switch:test-competing-message';
@@ -114,27 +109,17 @@ function competingTriggerTurnFixture(pi: ExtensionAPI): void {
         hiddenRequest = undefined;
     });
 
-    pi.on('agent_end', (_event, ctx) => {
+    pi.on('turn_end', () => {
         if (sent) return;
         sent = true;
-
-        const sendWhenIdle = (): void => {
-            if (!ctx.isIdle()) {
-                setTimeout(sendWhenIdle, 1);
-                return;
-            }
-
-            pi.sendMessage(
-                {
-                    customType: COMPETING_MESSAGE_TYPE,
-                    content: 'Competing intercom-style turn.',
-                    display: true,
-                },
-                { triggerTurn: true },
-            );
-        };
-
-        setTimeout(sendWhenIdle, 0);
+        pi.sendMessage(
+            {
+                customType: COMPETING_MESSAGE_TYPE,
+                content: 'Competing intercom-style turn.',
+                display: true,
+            },
+            { triggerTurn: true },
+        );
     });
 }
 
@@ -222,14 +207,13 @@ describe('plan-auto-switch real Pi lifecycle', () => {
             session = await createTestSession({
                 cwd,
                 systemPrompt: 'custom system prompt',
-                extensionFactories: [
-                    approvalFixture,
-                    yeet,
-                    contextExtension,
-                    piRoles,
-                    rolePolicyProbe,
-                    toolGroups,
-                ],
+                extensions: publicExtensionEntrypoints(
+                    'yeet',
+                    'context',
+                    'pi-roles',
+                    'tool-groups',
+                ),
+                extensionFactories: [approvalFixture, rolePolicyProbe],
             });
         } finally {
             if (previousInitialRole === undefined) delete process.env.PI_ROLE;
@@ -352,11 +336,13 @@ describe('plan-auto-switch real Pi lifecycle', () => {
         try {
             session = await createTestSession({
                 cwd,
+                extensions: publicExtensionEntrypoints(
+                    'pi-roles',
+                    'tool-groups',
+                ),
                 extensionFactories: [
                     competingTriggerTurnFixture,
-                    piRoles,
                     approvalFixture,
-                    toolGroups,
                 ],
             });
         } finally {
@@ -433,7 +419,8 @@ it.each(['manual', 'switch_role', 'apply-patches'] as const)('%s sends the final
     mkdirSync(prompts, { recursive: true });
     writeFileSync(join(prompts, 'apply-patches.md'), '---\nrole: pi-agent\ndescription: Apply fixture patches\n---\nApply fixture patches.');
     const session = await createTestSession({ cwd, systemPrompt: 'custom system prompt',
-        extensionFactories: [approvalFixture, contextExtension, piRoles, toolGroups] });
+        extensions: publicExtensionEntrypoints('context', 'pi-roles', 'tool-groups'),
+        extensionFactories: [approvalFixture] });
     sessions.push(session);
     await session.session.prompt('/role debug');
     expect(session.session.getActiveToolNames()).not.toContain('edit');
