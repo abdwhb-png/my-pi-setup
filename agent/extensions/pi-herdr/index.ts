@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
@@ -97,6 +98,7 @@ interface RoleToolPolicy {
 const HERDR_ROLE = "herdr-orchestrator";
 const HERDR_TOOL_NAMES = ["herdr_layout", "herdr_pane", "herdr_agent"] as const;
 const HERDR_TOOL_NAME_SET = new Set<string>(HERDR_TOOL_NAMES);
+const DEFAULT_EXECUTE_TIMEOUT_MS = 600_000;
 
 const StatusEnum = StringEnum(
     ["idle", "working", "blocked", "done", "unknown"] as const,
@@ -306,6 +308,18 @@ function renderToolResult(
                 .join("\n")}`;
         return new Text(text, 0, 0);
     }
+    if (details.action === "wait_output")
+        return new Text(
+            theme.fg("accent", "◇ output matched (exit unknown)"),
+            0,
+            0,
+        );
+    if (details.action === "run")
+        return new Text(
+            theme.fg("accent", "↗ command submitted (exit unknown)"),
+            0,
+            0,
+        );
     return new Text(theme.fg("success", `✓ ${details.action || "done"}`), 0, 0);
 }
 
@@ -799,12 +813,13 @@ export default function (pi: ExtensionAPI) {
         name: "herdr_pane",
         label: "Herdr Pane",
         description:
-            "Control a raw Herdr terminal pane. Use for shells, tests, servers, builds, logs, and other ordinary processes: run a command, read output, wait for matching output, send literal text or terminal keys, inspect, or close. Pane actions target opaque pane IDs and do not validate agent identity or interpret agent lifecycle. Use herdr_agent instead when controlling a recognized coding agent. Read output is truncated to 2000 lines or 50KB.",
+            "Control a raw Herdr terminal pane for ordinary processes. Use execute for finite foreground commands with a verified exit code; run only submits a command, and wait_output only matches terminal text. Read output, send literal text or terminal keys, inspect, or close. Pane actions target opaque pane IDs and do not validate agent identity or interpret agent lifecycle. Use herdr_agent instead when controlling a recognized coding agent. Read output is truncated to 2000 lines or 50KB.",
         promptSnippet:
             "Run and inspect ordinary commands in Herdr terminal panes",
         promptGuidelines: [
             "Use herdr_pane for ordinary commands and raw terminal control; use herdr_agent for coding-agent prompts, lifecycle waits, reads, and interactive keys.",
-            "Use herdr_pane wait_output for tests, servers, builds, and watchers. It searches existing output immediately; use recent-unwrapped for logs and transcripts.",
+            "Use herdr_pane execute for finite foreground tests and builds. It runs in a subshell, waits for a unique completion marker, and reports the shell exit code. Use run for long-lived servers and watchers.",
+            "Use wait_output only for a text condition such as server readiness. It searches existing output immediately and cannot prove command completion or success; use recent-unwrapped for logs and transcripts.",
             "Do not close a Herdr pane you did not create unless the user explicitly asks. herdr_pane always refuses to close the pane running the current pi process.",
         ],
         parameters: Type.Object({
@@ -812,6 +827,7 @@ export default function (pi: ExtensionAPI) {
                 [
                     "get",
                     "run",
+                    "execute",
                     "read",
                     "wait_output",
                     "send_text",
@@ -828,7 +844,7 @@ export default function (pi: ExtensionAPI) {
             command: Type.Optional(
                 Type.String({
                     description:
-                        "Shell command to submit atomically with Enter for run",
+                        "Shell command: execute waits for its exit code, run only submits it",
                 }),
             ),
             text: Type.Optional(
@@ -871,7 +887,7 @@ export default function (pi: ExtensionAPI) {
                 Type.Integer({
                     minimum: 1,
                     description:
-                        "Wait timeout in milliseconds; omitted means indefinite",
+                        "Wait timeout in milliseconds; execute defaults to 10 minutes, wait_output remains indefinite when omitted",
                 }),
             ),
         }),
@@ -895,13 +911,126 @@ export default function (pi: ExtensionAPI) {
                         content: [
                             {
                                 type: "text",
-                                text: `Submitted command to pane ${params.pane}`,
+                                text: `Submitted command to pane ${params.pane}. Command exit status: unknown.`,
                             },
                         ],
                         details: {
                             action: "run",
                             pane: params.pane,
                             command: params.command,
+                            commandExitStatus: "unknown",
+                        },
+                    };
+                }
+                case "execute": {
+                    if (!params.command)
+                        throw new Error("'command' is required for execute");
+                    const nonce = randomBytes(12).toString("hex");
+                    const marker = `__PI_HERDR_${nonce}`;
+                    const startMarker = `${marker}_START`;
+                    const exitMarker = `${marker}_EXIT:`;
+                    // Split the marker in the submitted text so terminal echo cannot satisfy the wait.
+                    const shellCommand =
+                        `printf '%s%s\\n' '__PI_HERDR_' '${nonce}_START'\n` +
+                        `(\n${params.command}\n)\n` +
+                        `__pi_herdr_exit=$?\n` +
+                        `printf '%s%s:%d\\n' '__PI_HERDR_' '${nonce}_EXIT' "$__pi_herdr_exit"`;
+                    const timeout =
+                        params.timeout ?? DEFAULT_EXECUTE_TIMEOUT_MS;
+                    const startedAt = Date.now();
+                    onUpdate?.({
+                        content: [
+                            {
+                                type: "text",
+                                text: `Executing command in ${params.pane}...`,
+                            },
+                        ],
+                        details: {
+                            action: "execute",
+                            pane: params.pane,
+                            waiting: true,
+                        },
+                    });
+                    await execHerdrOk(
+                        ["pane", "run", params.pane, shellCommand],
+                        signal,
+                    );
+                    let response: {
+                        result: {
+                            matched_line: string;
+                            read?: { text?: string };
+                        };
+                    };
+                    try {
+                        response = await execHerdrJson(
+                            [
+                                "pane",
+                                "wait-output",
+                                params.pane,
+                                "--match",
+                                exitMarker,
+                                "--timeout",
+                                String(timeout),
+                                "--source",
+                                "recent-unwrapped",
+                            ],
+                            signal,
+                        );
+                    } catch (error) {
+                        if (
+                            signal?.aborted ||
+                            (error instanceof Error &&
+                                error.message === "Aborted")
+                        )
+                            throw new Error(
+                                `Stopped waiting in pane ${params.pane}; the command may still be running.`,
+                                { cause: error },
+                            );
+                        if (
+                            error instanceof Error &&
+                            /timed out|timeout/i.test(error.message)
+                        )
+                            throw new Error(
+                                `Command did not finish within ${timeout} ms in pane ${params.pane}; it may still be running.`,
+                                { cause: error },
+                            );
+                        throw error;
+                    }
+                    const suffix = response.result.matched_line
+                        .split(exitMarker)
+                        .at(-1)
+                        ?.trim();
+                    if (!suffix || !/^\d+$/.test(suffix))
+                        throw new Error(
+                            `Could not read the command exit code in pane ${params.pane}.`,
+                        );
+                    const exitCode = Number(suffix);
+                    const snapshot = response.result.read?.text ?? "";
+                    const start = snapshot.lastIndexOf(startMarker);
+                    const end = snapshot.lastIndexOf(exitMarker);
+                    const output =
+                        start >= 0 && end > start
+                            ? snapshot
+                                  .slice(start + startMarker.length, end)
+                                  .trim()
+                            : "[Command output unavailable in Herdr snapshot]";
+                    if (exitCode !== 0)
+                        throw new Error(
+                            `Command failed with exit code ${exitCode} in pane ${params.pane}.\n${formatOutput(output)}`,
+                        );
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `Exit code: 0\n${formatOutput(output)}`,
+                            },
+                        ],
+                        details: {
+                            action: "execute",
+                            pane: params.pane,
+                            command: params.command,
+                            exitCode,
+                            elapsedMs: Date.now() - startedAt,
                         },
                     };
                 }
@@ -978,13 +1107,15 @@ export default function (pi: ExtensionAPI) {
                         content: [
                             {
                                 type: "text",
-                                text: `Matched: ${matched.matched_line}\n\n${formatOutput(output)}`,
+                                text: `Output matched (existing output was searched). Command exit status: unknown.\nMatched: ${matched.matched_line}\n\n${formatOutput(output)}`,
                             },
                         ],
                         details: {
                             action: "wait_output",
                             pane: params.pane,
                             matchedLine: matched.matched_line,
+                            commandExitStatus: "unknown",
+                            searchIncludesExistingOutput: true,
                             elapsedMs: Date.now() - startedAt,
                         },
                     };

@@ -271,6 +271,114 @@ describe("pi-herdr", () => {
 
 		expect(calls).toEqual([["pane", "wait-output", "w1:p2", "--match", "ready", "--timeout", "30000"]]);
 		expect(result.content[0].text).toContain("server ready");
+		expect(result.content[0].text).toContain("Command exit status: unknown");
+		expect(result.details).toMatchObject({
+			commandExitStatus: "unknown",
+			searchIncludesExistingOutput: true,
+		});
+		const rendered = tools.get("herdr_pane").renderResult(
+			result,
+			{ expanded: false, isPartial: false },
+			{ fg: (_role: string, text: string) => text },
+		).render(80).join("\n");
+		expect(rendered).toContain("exit unknown");
+		expect(rendered).not.toContain("✓");
+	});
+
+	test("execute reports the foreground command exit code instead of a text match", async () => {
+		let submittedCommand = "";
+		let awaitedMarker = "";
+		const tools = registerTools((args) => {
+			if (args[1] === "run") {
+				submittedCommand = args[3];
+				return "";
+			}
+			if (args[1] === "wait-output") {
+				awaitedMarker = args[4];
+				return {
+					pane_id: "w1:p2",
+					matched_line: `${awaitedMarker}7`,
+					read: { text: `\n${awaitedMarker}7\n` },
+				};
+			}
+			throw new Error(`unexpected command: ${args.join(" ")}`);
+		});
+
+		await expect(
+			tools.get("herdr_pane").execute(
+				"exit-7",
+				{ action: "execute", pane: "w1:p2", command: "sh -c 'exit 7'" },
+				undefined,
+				undefined,
+				{},
+			),
+		).rejects.toThrow("exit code 7");
+		expect(submittedCommand).toContain("sh -c 'exit 7'");
+		expect(awaitedMarker).toBeTruthy();
+		expect(submittedCommand).not.toContain(awaitedMarker);
+	});
+
+	test("execute returns only the current command output on exit zero", async () => {
+		const tools = registerTools((args) => {
+			if (args[1] === "run") return "";
+			if (args[1] === "wait-output") {
+				const marker = args[4];
+				const start = marker.replace("_EXIT:", "_START");
+				return {
+					pane_id: "w1:p2",
+					matched_line: `${marker}0`,
+					read: { text: `old output\n${start}\nhello\n${marker}0\n` },
+				};
+			}
+			throw new Error(`unexpected command: ${args.join(" ")}`);
+		});
+		const result = await tools.get("herdr_pane").execute(
+			"exit-zero",
+			{ action: "execute", pane: "w1:p2", command: "printf hello" },
+			undefined,
+			undefined,
+			{},
+		);
+		expect(result.details.exitCode).toBe(0);
+		expect(result.content[0].text).toContain("hello");
+		expect(result.content[0].text).not.toContain("old output");
+	});
+
+	test("execute timeout says the pane command may still be running", async () => {
+		const tools = registerTools((args) => {
+			if (args[1] === "run") return "";
+			return {
+				stdout: "",
+				stderr: JSON.stringify({ error: { code: "timeout", message: "timed out waiting for output match" } }),
+				code: 1,
+				killed: false,
+			};
+		});
+		await expect(
+			tools.get("herdr_pane").execute(
+				"timeout",
+				{ action: "execute", pane: "w1:p2", command: "sleep 30", timeout: 200 },
+				undefined,
+				undefined,
+				{},
+			),
+		).rejects.toThrow("it may still be running");
+	});
+
+	test("execute cancellation does not imply that the pane command stopped", async () => {
+		const tools = registerTools((args) => {
+			if (args[1] === "run") return "";
+			return { stdout: "", stderr: "", code: 0, killed: true };
+		});
+		await expect(
+			tools.get("herdr_pane").execute(
+				"cancel",
+				{ action: "execute", pane: "w1:p2", command: "sleep 30" },
+				undefined,
+				undefined,
+				{},
+			),
+		).rejects.toThrow("command may still be running");
 	});
 
 	test("accepts empty successful output for pane mutations", async () => {
@@ -284,7 +392,7 @@ describe("pi-herdr", () => {
 		});
 		const pane = tools.get("herdr_pane");
 
-		await pane.execute("run", { action: "run", pane: "w1:p2", command: "bun dev" });
+		const submitted = await pane.execute("run", { action: "run", pane: "w1:p2", command: "bun dev" });
 		await pane.execute("text", { action: "send_text", pane: "w1:p2", text: "hello" });
 		await pane.execute("keys", { action: "send_keys", pane: "w1:p2", keys: ["enter"] });
 		await pane.execute("close", { action: "close", pane: "w1:p2" });
@@ -296,6 +404,14 @@ describe("pi-herdr", () => {
 			["pane", "current", "--current"],
 			["pane", "close", "w1:p2"],
 		]);
+		expect(submitted.details.commandExitStatus).toBe("unknown");
+		const rendered = pane.renderResult(
+			submitted,
+			{ expanded: false, isPartial: false },
+			{ fg: (_role: string, text: string) => text },
+		).render(80).join("\n");
+		expect(rendered).toContain("exit unknown");
+		expect(rendered).not.toContain("✓");
 	});
 
 	test("reports non-zero, cancelled, and invalid JSON commands without retrying", async () => {
