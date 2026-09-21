@@ -22,6 +22,7 @@
     "include": [
         "extensions/**/*.ts",
         "bin/**/*.ts",
+        "scripts/check-pi-runtime-coherence.ts",
         "../.pi/extensions/**/*.ts"
     ],
     "exclude": [

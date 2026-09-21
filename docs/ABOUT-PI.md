@@ -10,6 +10,10 @@ Placement for /reload: Put extensions in ~/.pi/agent/extensions/ (global) or .pi
 
 **Pi Sessions**: Sessions auto-save to `~/.pi/agent/sessions/`, organized by working directory. Each session is a JSONL file with a tree structure. Refer to the [pi sessions documentation](https://pi.dev/docs/latest/sessions) for how to work with sessions.
 
+## Local fork runtime
+
+The daily `pi` command uses `~/.pi/bin/pi`, which launches the promoted, read-only fork release under `~/.pi/runtime/pi-core/releases/`. Source builds in `~/projects/pi-core` do not change the active runtime until `pi-fork deploy` succeeds. Use `pi-fork status` and `pi-fork verify` to inspect it, or `pi-fork rollback` to activate the previous release. After cloning this repository, run `pi-fork deploy` before `bun install` in `agent/`: the committed Pi pins refer to local release tarballs excluded from Git. Bare/self `pi update` is blocked; set `PI_REAL_BIN` only when intentionally testing another Pi executable. See [ADR-026](./adr/ADR-026-immutable-local-pi-fork-releases.md).
+
 ## Context engineering
 
 Pi - Load project skills and instructions

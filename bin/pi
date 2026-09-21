@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { fileURLToPath } from "node:url";
 import {
+  classifyUpdateCommand,
   isPackageMutationCommand,
   isToolGroupsPackageConfigured,
   prepareToolGroupArgs,
@@ -11,7 +12,21 @@ import {
 
 const args = process.argv.slice(2);
 const cwd = process.cwd();
-const realPi = resolveRealPiPath();
+const updatePolicy = classifyUpdateCommand(args);
+if (!updatePolicy.allowed) {
+  console.error(updatePolicy.reason);
+  process.exit(2);
+}
+
+let realPi: string;
+try {
+  realPi = resolveRealPiPath();
+} catch (cause) {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  console.error(`${message}\nRun: pi-fork deploy`);
+  process.exit(1);
+}
+
 if (!process.env.PI_SUBAGENT_PI_BINARY?.trim()) {
   process.env.PI_SUBAGENT_PI_BINARY = fileURLToPath(import.meta.url);
 }

@@ -88,5 +88,8 @@ agent/tool-result-archive/
 # Versioned private runtime distributions and local recovery copies
 /runtimes/
 
+# Generated Pi release store, active pointers, and failed staging snapshots
+/runtime/
+
 # Runtime builder bytecode cache
 /agent/extensions/sandbox/runtime/distribution/__pycache__/

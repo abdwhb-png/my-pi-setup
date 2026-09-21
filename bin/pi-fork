@@ -1,0 +1,4 @@
+#!/usr/bin/env bun
+import { runPiForkCli } from "../agent/bin/pi-fork-cli.ts";
+
+process.exit(await runPiForkCli(process.argv.slice(2)));

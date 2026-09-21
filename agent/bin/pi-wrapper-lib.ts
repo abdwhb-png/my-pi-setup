@@ -10,6 +10,7 @@ import {
   TOOL_GROUPS_PACKAGE_SOURCE,
 } from "../extensions/_shared/tool-groups/package-order.ts";
 import { TOOL_GROUPS_REQUESTED_TOOLS_ENV } from "../extensions/_shared/tool-groups/types.ts";
+import { loadActivePiRuntime, resolvePiLaunchCommand } from "./pi-runtime-store.ts";
 
 export interface PreparedToolGroupArgs {
   args: string[];
@@ -17,9 +18,9 @@ export interface PreparedToolGroupArgs {
 }
 
 export function resolveRealPiPath(realPi = process.env.PI_REAL_BIN, homeDir = homedir()): string {
-  return resolve(
-    realPi?.trim() || join(homeDir, "projects", "pi-core", "packages", "coding-agent", "dist", "pi"),
-  );
+  const override = realPi?.trim();
+  if (override) return resolve(override);
+  return loadActivePiRuntime(homeDir).executable;
 }
 
 const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
@@ -33,6 +34,7 @@ const PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT =
  */
 export function findPiPackageRootFromExecutable(executable: string): string | undefined {
   let directory = dirname(resolve(executable));
+  let packageRoot: string | undefined;
   while (directory !== dirname(directory)) {
     const manifestPath = join(directory, "package.json");
     try {
@@ -40,14 +42,52 @@ export function findPiPackageRootFromExecutable(executable: string): string | un
         const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
           name?: unknown;
         };
-        if (manifest.name === PI_CODING_AGENT_PACKAGE) return directory;
+        if (manifest.name === PI_CODING_AGENT_PACKAGE) packageRoot = directory;
       }
     } catch {
       // A malformed adjacent manifest is not a Pi package. Keep walking.
     }
     directory = dirname(directory);
   }
-  return undefined;
+  return packageRoot;
+}
+
+export type UpdateCommandPolicy =
+  | { allowed: true }
+  | { allowed: false; reason: string };
+
+export function classifyUpdateCommand(args: string[]): UpdateCommandPolicy {
+  if (args[0] !== "update") return { allowed: true };
+  const updateArgs = args.slice(1);
+  if (requestsUpdateHelp(updateArgs)) return { allowed: true };
+  if (!requestsCoreUpdate(updateArgs) && requestsExplicitNonCoreUpdate(updateArgs)) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    reason: "Pi self-update is disabled for the managed fork runtime. Run: pi-fork deploy",
+  };
+}
+
+function requestsUpdateHelp(args: string[]): boolean {
+  return args.includes("--help") || args.includes("-h");
+}
+
+function requestsCoreUpdate(args: string[]): boolean {
+  const positionalTarget = args.find((arg) => !arg.startsWith("-"));
+  return (
+    args.includes("--self") ||
+    args.includes("--all") ||
+    positionalTarget === "self" ||
+    positionalTarget === "pi"
+  );
+}
+
+function requestsExplicitNonCoreUpdate(args: string[]): boolean {
+  if (args.includes("--extensions") || args.includes("--models")) return true;
+  const extensionFlag = args.indexOf("--extension");
+  if (extensionFlag >= 0 && args[extensionFlag + 1] !== undefined) return true;
+  return args.some((arg) => !arg.startsWith("-") && arg !== "self" && arg !== "pi");
 }
 
 function parseToolList(value: string): string[] {
@@ -106,6 +146,14 @@ export function isPackageMutationCommand(args: string[]): boolean {
   return command === "install" || command === "remove" || command === "uninstall" || command === "update";
 }
 
+function writeOutput(message: string): void {
+  process.stdout.write(`${message}\n`);
+}
+
+function writeWarning(message: string): void {
+  process.stderr.write(`${message}\n`);
+}
+
 export async function runPackageFinalizer(cwd: string, options?: { force?: boolean; quiet?: boolean; agentDir?: string }) {
   const agentDir = options?.agentDir ?? getDefaultAgentDir();
   const quiet = options?.quiet ?? false;
@@ -113,7 +161,7 @@ export async function runPackageFinalizer(cwd: string, options?: { force?: boole
   // Pin tool-groups package to last position before repairing packages.
   const pinResult = await pinToolGroupsPackageLast(cwd, agentDir);
   if (pinResult.changed && !quiet) {
-    console.log(`[package-finalizer] Pinned ${TOOL_GROUPS_PACKAGE_SOURCE} to last position.`);
+    writeOutput(`[package-finalizer] Pinned ${TOOL_GROUPS_PACKAGE_SOURCE} to last position.`);
   }
 
   await repairConfiguredPiPackages({
@@ -122,10 +170,10 @@ export async function runPackageFinalizer(cwd: string, options?: { force?: boole
     force: options?.force ?? false,
     logger: {
       info(message: string) {
-        if (!quiet) console.log(message);
+        if (!quiet) writeOutput(message);
       },
       warn(message: string) {
-        console.warn(message);
+        writeWarning(message);
       },
     },
   });
@@ -142,11 +190,13 @@ export function runRealPi(realPiPath: string, args: string[], cwd: string, reque
     env[TOOL_GROUPS_REQUESTED_TOOLS_ENV] = JSON.stringify(requestedTools);
   }
 
-  const result = spawnSync(realPiPath, args, {
+  const launch = hostPackageRoot
+    ? resolvePiLaunchCommand(realPiPath, hostPackageRoot)
+    : { command: realPiPath, prefixArgs: [] };
+  const result = spawnSync(launch.command, [...launch.prefixArgs, ...args], {
     cwd,
     stdio: "inherit",
     env,
   });
-  if (typeof result.status === "number") return result.status;
-  return 1;
+  return result.status ?? 1;
 }
