@@ -1,5 +1,5 @@
 {
-    "refreshMs": 1500,
+    "refreshMs": 1200,
     "responsive": {
         "enabled": false,
         "compactBelowRows": 37,
@@ -72,11 +72,6 @@
         }
     },
     "extensionWidgets": {
-        "browser-tools": {
-            "row": 2,
-            "position": 3,
-            "align": "left"
-        },
         "local-compressor": {
             "row": 1,
             "placement": "aboveEditor"
@@ -100,7 +95,8 @@
             "align": "right"
         },
         "pi-glm-tweaks.status": {
-            "row": 1
+            "row": 2,
+            "align": "right"
         },
         "git-status-widget": {
             "enabled": true,
@@ -111,6 +107,14 @@
         "dangerous-mode": {
             "row": 2,
             "position": 0,
+            "align": "left"
+        },
+        "yolo-permission": {
+            "position": 1
+        },
+        "browser-tools": {
+            "row": 2,
+            "position": 3,
             "align": "left"
         },
         "audit-mode": {

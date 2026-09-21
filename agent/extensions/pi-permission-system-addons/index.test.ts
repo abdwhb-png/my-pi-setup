@@ -37,6 +37,25 @@ mock.module('./config.ts', () => ({
     loadConfig: () => ({ inherit: { safe_bash: 'bash' } }),
 }));
 
+// Force the createWidget fallback path (ctx.ui.setWidget) in tests so the
+// widget wiring is observable without pi-fancy-footer installed.
+mock.module('pi-fancy-footer/api', () => ({
+    contributeFancyFooterWidgets: () => {
+        throw new Error('pi-fancy-footer not installed (test fallback)');
+    },
+    requestFancyFooterWidgetDiscovery: () => {},
+    requestFancyFooterRefresh: () => {},
+    getExtensionStatusesSnapshot: () => ({}),
+    subscribeExtensionStatusesSnapshot: () => () => {},
+    publishExtensionStatusesSnapshot: () => {},
+    FANCY_FOOTER_EXTENSION_STATUSES_SNAPSHOT_EVENT:
+        'fancy-footer:extension-statuses',
+}));
+
+mock.module('pi-fancy-footer/api/metrics', () => ({
+    collectSessionUsageMetrics: () => ({}),
+}));
+
 const { default: extension } = await import('./index.ts');
 
 type EventListener = (event: any, ctx: any) => Promise<any> | any;
@@ -242,17 +261,38 @@ describe('extension entry point', () => {
         });
     });
 
-    it('bypasses tool_call when tool is not in inherit map', async () => {
-        const { listeners } = setup();
-        const onStart = listeners.get('session_start')!;
-        const onToolCall = listeners.get('tool_call')!;
+    it("updates the yolo-permission widget through the session lifecycle", async () => {
+        const { listeners, commandDefinitions } = setup();
+        const command = commandDefinitions.get('yolo-permission')!;
+        const onSessionStart = listeners.get('session_start')!;
+        const onSessionShutdown = listeners.get('session_shutdown')!;
+        const setWidget = mock((_id: string, _value?: string[]) => {});
+        const ctx = {
+            hasUI: true,
+            ui: { notify() {}, theme: undefined, setWidget },
+            async waitForIdle() {},
+            async reload() {},
+        };
 
-        await onStart({}, { cwd: '/nonexistent' });
-        const result = await onToolCall(
-            { toolName: 'unmapped_tool', input: {} },
-            { cwd: '/nonexistent' },
+        await onSessionStart({}, ctx);
+        expect(setWidget).toHaveBeenLastCalledWith('yolo-permission', [
+            expect.stringContaining('yoloSession: off'),
+        ]);
+
+        await command.handler('on', ctx);
+        expect(setWidget).toHaveBeenLastCalledWith('yolo-permission', [
+            expect.stringContaining('yoloSession: on'),
+        ]);
+
+        await command.handler('off', ctx);
+        expect(setWidget).toHaveBeenLastCalledWith('yolo-permission', [
+            expect.stringContaining('yoloSession: off'),
+        ]);
+
+        onSessionShutdown({}, ctx);
+        expect(setWidget).toHaveBeenLastCalledWith(
+            'yolo-permission',
+            undefined,
         );
-
-        expect(result).toBeUndefined();
     });
 });

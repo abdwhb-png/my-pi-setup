@@ -1,11 +1,17 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import {
     getPermissionsService,
     PERMISSIONS_READY_CHANNEL,
 } from "@gotgenes/pi-permission-system";
 import type { PermissionsReadyEvent } from "@gotgenes/pi-permission-system";
+import { createWidget } from "../_shared/fancy-footer.ts";
 import { loadConfig, type AddonConfig } from "./config.ts";
 import { checkAndBlock, InMemorySessionCache } from "./handler.ts";
+import {
+    HIDE_YOLO_WIDGET_WHEN_OFF,
+    renderYoloWidget,
+    YOLO_WIDGET_ID,
+} from "./widget.ts";
 
 const YOLO_AUTHORIZER_NAME = "pi-yolo-permission";
 
@@ -19,6 +25,28 @@ export default function (pi: ExtensionAPI) {
     let sessionYolo = false;
     let sessionId: string | null = null;
     const authorizerDisposers: Array<() => void> = [];
+
+    const widgetOptions = { hideWhenOff: HIDE_YOLO_WIDGET_WHEN_OFF };
+    const widget = createWidget(pi, {
+        id: YOLO_WIDGET_ID,
+        label: "YOLO Permission",
+        description: "State du mode yolo-permission de session",
+        row: 2,
+        order: 13,
+        align: "left",
+        styled: true,
+        render: (ctx) => renderYoloWidget(ctx.theme, sessionYolo, widgetOptions),
+    });
+
+    function refreshYoloWidget(ctx: {
+        hasUI?: boolean;
+        ui?: { theme?: Theme | null };
+    }): void {
+        widget.update(
+            ctx as never,
+            renderYoloWidget(ctx.ui?.theme, sessionYolo, widgetOptions),
+        );
+    }
 
     pi.events.on(
         PERMISSIONS_READY_CHANNEL,
@@ -83,6 +111,7 @@ export default function (pi: ExtensionAPI) {
                 `Session YOLO permission mode: ${sessionYolo ? "ON" : "OFF"}`,
                 "info",
             );
+            refreshYoloWidget(ctx);
         },
     });
 
@@ -103,13 +132,15 @@ export default function (pi: ExtensionAPI) {
         sessionCache.clear();
         sessionYolo = false;
         sessionId = null;
+        refreshYoloWidget(ctx);
     });
 
-    pi.on("session_shutdown", () => {
+    pi.on("session_shutdown", (_event, ctx) => {
         sessionCache.clear();
         sessionYolo = false;
         sessionId = null;
         for (const dispose of authorizerDisposers.splice(0)) dispose();
+        widget.remove(ctx as never);
     });
 
     pi.on("tool_call", async (event, ctx) => {
