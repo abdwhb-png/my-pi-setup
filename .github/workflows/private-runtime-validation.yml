@@ -84,6 +84,12 @@ jobs:
           tar -xzf "$model_data_root/earendil-works-pi-ai-0.85.0.tgz" \
             -C packages/ai/src/providers --strip-components=3 package/dist/providers/data
           npm run build:offline
+          pi_tarball_root=$(node -e 'const path = require("node:path"); const manifest = require("../../.pi/agent/package.json"); const spec = manifest.dependencies["@earendil-works/pi-coding-agent"]; process.stdout.write(path.dirname(path.resolve("../../.pi/agent", spec.slice("file:".length))))')
+          mkdir -p "$pi_tarball_root"
+          node -e 'const manifest = require("../../.pi/agent/package.json"); console.log(Object.keys(manifest.dependencies).filter((name) => name.startsWith("@earendil-works/")).sort().join("\n"))' > "$RUNNER_TEMP/pi-package-names"
+          while IFS= read -r pi_package; do
+            sfw npm pack --workspace "$pi_package" --pack-destination "$pi_tarball_root" --ignore-scripts
+          done < "$RUNNER_TEMP/pi-package-names"
           cd ../pi-integrations/pi-test-harness
           sfw npm ci
           npm run build
