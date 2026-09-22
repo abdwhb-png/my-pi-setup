@@ -8,7 +8,6 @@
         "skipLibCheck": true,
         "strict": true,
         "noImplicitAny": true,
-        // "ignoreDeprecations": "6.0",
         "paths": {
             "bun:test": ["./node_modules/bun-types/test.d.ts"],
             "pi-fancy-footer": [

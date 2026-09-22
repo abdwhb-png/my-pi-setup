@@ -24,7 +24,7 @@
         "yaml": "2.9.0",
       },
       "devDependencies": {
-        "@abdwhb-png/pi-test-harness": "file:../../projects/pi-integrations/pi-test-harness/dist/package.tgz",
+        "@abdwhb-png/pi-test-harness": "0.8.0",
         "@types/bun": "^1.3.14",
         "@types/node": "^25.9.3",
         "@types/node-notifier": "8.0.5",
@@ -47,7 +47,7 @@
     "@earendil-works/pi-tui": "file:../runtime/pi-core/releases/0.85.0-0bb2d904515e-dirty-fcb029d4e11b/packed/tarballs/earendil-works-pi-tui-0.85.0.tgz",
   },
   "packages": {
-    "@abdwhb-png/pi-test-harness": ["@abdwhb-png/pi-test-harness@../../projects/pi-integrations/pi-test-harness/dist/package.tgz", { "peerDependencies": { "@earendil-works/pi-agent-core": "^0.85.0", "@earendil-works/pi-ai": "^0.85.0", "@earendil-works/pi-coding-agent": "^0.85.0" } }, "sha512-eLGOQZCZ3K0zNZ3bRyRpvkHowYy9sEkxXLcWTT31V+JR1rIEB1hu7jB7rlOewIxN7yzAISbJlHTtTMrZrtXo0w=="],
+    "@abdwhb-png/pi-test-harness": ["@abdwhb-png/pi-test-harness@0.8.0", "", { "peerDependencies": { "@earendil-works/pi-agent-core": "^0.85.0", "@earendil-works/pi-ai": "^0.85.0", "@earendil-works/pi-coding-agent": "^0.85.0" } }, "sha512-hNBwv/jNLiPlVPCVqnaPDS8nf+gt/Z8JOVgHgXg8YR+v+OVQ4+ygpmKhSyqrMk3zvK9BkP2dojbdAtO9LsZlWQ=="],
 
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.123.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-Y9oX9mPNGZClHQOFqrWRk43Srcu/UHuPq3rfxxOq7JgW0gi+lJA2MAOK4Ul3k/+AUrwRWFJvd0tK3oC0Pw25dw=="],
 
