@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import urllib.request
@@ -32,6 +33,14 @@ def require_native_linux():
         raise RuntimeError("Native Linux x86_64 qualification cannot run on WSL or another platform")
 
 
+def package_download_command(lock, packages):
+    snapshot = lock.get("snapshot")
+    if not isinstance(snapshot, str) or re.fullmatch(r"\d{8}T\d{6}Z", snapshot) is None:
+        raise RuntimeError("Native qualification requires a locked Ubuntu snapshot")
+    return ["apt-get", "--snapshot", snapshot, "download",
+            *[f"{package['package']}={package['version']}" for package in packages]]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-host", action="store_true")
@@ -53,6 +62,8 @@ def main():
     tools = Path(__file__).resolve().parent
     lock = json.loads((tools / "input-lock.json").read_text())
     packages = json.loads((tools / "inputs/packages.json").read_text())
+    package_download = package_download_command(lock, packages)
+    snapshot = lock["snapshot"]
     assets = json.loads((tools / "inputs/assets.json").read_text())
     downloads = root / "downloads"
     downloads.mkdir()
@@ -93,8 +104,11 @@ def main():
     try:
         run("docker", "start", container)
         run("docker", "exec", container, "apt-get", "update")
+        run("docker", "exec", "-e", "DEBIAN_FRONTEND=noninteractive", container,
+            "apt-get", "--no-install-recommends", "--yes", "install", "ca-certificates")
+        run("docker", "exec", container, "apt-get", "--snapshot", snapshot, "update")
         run("docker", "exec", "-w", "/inputs/build-inputs", container,
-            "apt-get", "download", *[f"{p['package']}={p['version']}" for p in packages])
+            *package_download)
         for package in packages:
             path = root / "build-inputs" / package["file"]
             if digest(path) != package["sha256"]:

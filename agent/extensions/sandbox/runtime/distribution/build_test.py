@@ -12,8 +12,28 @@ spec = importlib.util.spec_from_file_location("runtime_build", Path(__file__).wi
 builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
 
+native_spec = importlib.util.spec_from_file_location("native_ci", Path(__file__).with_name("native-ci.py"))
+native_ci = importlib.util.module_from_spec(native_spec)
+native_spec.loader.exec_module(native_ci)
+
 
 class RuntimeRelocationTests(unittest.TestCase):
+    def test_native_package_download_uses_the_locked_archive_snapshot(self):
+        command = native_ci.package_download_command(
+            {"snapshot": "20260912T120000Z"},
+            [{"package": "libexpat1", "version": "2.6.1-2ubuntu0.4"}],
+        )
+        self.assertEqual(
+            command,
+            [
+                "apt-get",
+                "--snapshot",
+                "20260912T120000Z",
+                "download",
+                "libexpat1=2.6.1-2ubuntu0.4",
+            ],
+        )
+
     def test_analysis_closure_does_not_depend_on_installer_dependency_layout(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "image": "ubuntu@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61",
+  "snapshot": "20260912T120000Z",
   "metadata": {
     "packages": {
       "path": "inputs/packages.json",
