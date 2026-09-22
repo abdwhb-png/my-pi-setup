@@ -94,7 +94,7 @@ describe("plan review hint", () => {
         expect(result.isError).toBe(false);
         expect(result.content[0]?.text).toContain("to pi-plans/feature.md");
         expect(result.content[0]?.text).toContain(
-            "Plan revision pending review: submit it with plan_submit for approval.",
+            "Plan revision pending review: submit it with submit_plan for approval.",
         );
     });
 
@@ -123,7 +123,7 @@ describe("plan review hint", () => {
 
         expect(result.isError).toBe(false);
         expect(result.content[0]?.text).toContain(
-            "Plan revision pending review: submit it with plan_submit for approval.",
+            "Plan revision pending review: submit it with submit_plan for approval.",
         );
     });
 
@@ -138,7 +138,7 @@ describe("plan review hint", () => {
         );
 
         expect(result.isError).toBe(false);
-        expect(result.content[0]?.text).not.toContain("plan_submit");
+        expect(result.content[0]?.text).not.toContain("submit_plan");
     });
 
     it("adds no hint to a failed write even under a guarded role", async () => {
@@ -155,6 +155,6 @@ describe("plan review hint", () => {
         );
 
         expect(result.isError).toBe(true);
-        expect(result.content[0]?.text).not.toContain("plan_submit");
+        expect(result.content[0]?.text).not.toContain("submit_plan");
     });
 });

@@ -4,10 +4,6 @@ import {
     withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { registerPlanTools } from "./scoped-plan-tools.ts";
-import { registerReviews } from "./review.ts";
-import { registerShowSavedPlansCommand } from "./show-saved-plans-command.ts";
-import { recordSavedPlan } from "./tracker.ts";
 import {
     extractFirstHeading,
     listVersions,
@@ -15,6 +11,11 @@ import {
     savePlan as storeSavePlan,
     clearPlan as storeClearPlan,
 } from "./plan-store";
+import registerPlanSubmissionGuard from "./plan-submission-guard.ts";
+import { registerReviews } from "./plannotator-review.ts";
+import { registerPlanTools } from "./scoped-plan-tools.ts";
+import { registerShowSavedPlansCommand } from "./show-saved-plans-command.ts";
+import { recordSavedPlan } from "./tracker.ts";
 
 type PlanAction = "save" | "read" | "clear" | "history";
 
@@ -78,8 +79,9 @@ function formatHistory(
     return `Version history (${versions.length} version${versions.length === 1 ? "" : "s"}):\n${lines.join("\n")}`;
 }
 
-export default function plansExtension(pi: ExtensionAPI): void {
+export default function planWorkflowExtension(pi: ExtensionAPI): void {
     registerPlanTools(pi);
+    registerPlanSubmissionGuard(pi);
     registerReviews(pi);
     registerShowSavedPlansCommand(pi);
 

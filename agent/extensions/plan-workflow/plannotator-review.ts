@@ -7,11 +7,11 @@ import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { requiresPlanSubmission } from "../_shared/pi-roles/index.ts";
 import {
     loadPlansConfig,
     resolvePlanFileDir,
 } from "../_shared/plans-config.ts";
-import { requiresPlanSubmission } from "../_shared/pi-roles/index.ts";
 import {
     getToolPolicy,
     registerToolPolicyContribution,
@@ -23,7 +23,7 @@ import {
 } from "./plannotator-cli.ts";
 
 const GATE_ERROR =
-    "plan_submit requires an active role with handoffGuard: plan-submission.";
+    "submit_plan requires an active role with handoffGuard: plan-submission.";
 function within(root: string, target: string) {
     const path = relative(root, target);
     return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
@@ -51,8 +51,8 @@ export function registerReviews(pi: ExtensionAPI): void {
         "plans.review",
         ({ role }) =>
             requiresPlanSubmission(role)
-                ? { grants: ["plan_submit"] }
-                : { deny: ["plan_submit"] },
+                ? { grants: ["submit_plan"] }
+                : { deny: ["submit_plan"] },
     );
     let generation = 0;
     let active: AbortController | undefined;
@@ -63,7 +63,7 @@ export function registerReviews(pi: ExtensionAPI): void {
     });
     pi.on("tool_call", (event) => {
         if (
-            event.toolName === "plan_submit" &&
+            event.toolName === "submit_plan" &&
             !requiresPlanSubmission(getToolPolicy().getRole())
         )
             return { block: true, reason: GATE_ERROR };
@@ -147,7 +147,7 @@ export function registerReviews(pi: ExtensionAPI): void {
     }
 
     pi.registerTool({
-        name: "plan_submit",
+        name: "submit_plan",
         label: "Review Plan",
         description:
             "Open a saved Markdown plan in Plannotator for human review and explicit approval. filePath is relative to the project, not the plan directory. Only available to guarded planning roles.",

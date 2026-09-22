@@ -64,7 +64,7 @@ describe("session plan persistence guard real Pi lifecycle", () => {
         try {
             session = await createTestSession({
                 cwd,
-                extensions: publicExtensionEntrypoints("pi-roles", "plans"),
+                extensions: publicExtensionEntrypoints("pi-roles", "plan-workflow"),
             });
         } finally {
             if (previousRole === undefined) delete process.env.PI_ROLE;

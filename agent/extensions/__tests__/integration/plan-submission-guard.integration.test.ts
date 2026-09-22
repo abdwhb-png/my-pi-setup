@@ -2,8 +2,6 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     calls,
     createTestSession,
@@ -11,15 +9,16 @@ import {
     when,
     type TestSession,
 } from "@abdwhb-png/pi-test-harness";
-import piRoles from "../index.ts";
 import {
     ACTIVE_ROLE_ENTRY_TYPE,
     ROLE_SWITCH_PROCESSED_TYPE,
 } from "../../_shared/pi-roles/index.ts";
+import { publicExtensionEntrypoints } from "./public-extension-session.ts";
 
 const sessions: TestSession[] = [];
 const directories: string[] = [];
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalPath = process.env.PATH;
 
 function writeRole(directory: string, name: string, handoffGuard?: string): void {
     writeFileSync(
@@ -28,6 +27,7 @@ function writeRole(directory: string, name: string, handoffGuard?: string): void
             "---",
             `name: ${name}`,
             `description: ${name} fixture`,
+            "tools: read, write_plan, submit_plan, switch_role",
             ...(handoffGuard ? [`handoffGuard: ${handoffGuard}`] : []),
             "---",
             `# ${name}`,
@@ -40,6 +40,14 @@ function createProject(): string {
     directories.push(cwd);
     process.env.PI_CODING_AGENT_DIR = cwd;
     writeFileSync(join(cwd, "settings.json"), JSON.stringify({ plans: { planFileDir: "pi-plans" } }));
+    mkdirSync(join(cwd, "pi-plans"));
+    mkdirSync(join(cwd, "bin"));
+    writeFileSync(
+        join(cwd, "bin", "plannotator"),
+        `#!${process.execPath}\nconsole.log(JSON.stringify({decision:'approved'}));`,
+        { mode: 0o700 },
+    );
+    process.env.PATH = `${join(cwd, "bin")}:${originalPath}`;
     const roles = join(cwd, ".pi", "roles");
     mkdirSync(roles, { recursive: true });
     writeRole(roles, "plan", "plan-submission");
@@ -55,35 +63,6 @@ function createProject(): string {
         }),
     );
     return cwd;
-}
-
-function planToolFixtures(pi: ExtensionAPI): void {
-    pi.registerTool({
-        name: "write_plan",
-        label: "Write plan fixture",
-        description: "Fixture",
-        parameters: Type.Object({ path: Type.String() }),
-        async execute() {
-            return { content: [{ type: "text", text: "Plan written." }], details: {} };
-        },
-    });
-    pi.registerTool({
-        name: "plan_submit",
-        label: "Submit plan fixture",
-        description: "Fixture",
-        parameters: Type.Object({ filePath: Type.String() }),
-        async execute(_id, params) {
-            pi.appendEntry("plannotator:plan-approved", {
-                planPath: params.filePath,
-                approved: true,
-                timestamp: Date.now(),
-            });
-            return {
-                content: [{ type: "text", text: "Plan approved." }],
-                details: { approved: true },
-            };
-        },
-    });
 }
 
 function entries(session: TestSession): Array<{ type: string; customType?: string; data?: unknown }> {
@@ -114,6 +93,8 @@ afterEach(async () => {
     }
     if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
     for (const directory of directories.splice(0)) {
         rmSync(directory, { recursive: true, force: true });
     }
@@ -128,10 +109,7 @@ describe("plan submission guard real Pi lifecycle", () => {
         try {
             session = await createTestSession({
                 cwd,
-                extensionFactories: [
-                    piRoles,
-                    planToolFixtures,
-                ],
+                extensions: publicExtensionEntrypoints("plan-workflow", "pi-roles", "tool-groups"),
             });
         } finally {
             if (previousRole === undefined) delete process.env.PI_ROLE;
@@ -141,7 +119,7 @@ describe("plan submission guard real Pi lifecycle", () => {
 
         await session!.run(
             when("Write then try to leave planning.", [
-                calls("write_plan", { path: "feature.md" }),
+                calls("write_plan", { path: "feature.md", content: "# Draft" }),
                 calls("switch_role", { roleName: "pi-agent" }),
                 says("I must submit or abandon the plan first."),
             ]),
@@ -163,10 +141,7 @@ describe("plan submission guard real Pi lifecycle", () => {
         try {
             session = await createTestSession({
                 cwd,
-                extensionFactories: [
-                    piRoles,
-                    planToolFixtures,
-                ],
+                extensions: publicExtensionEntrypoints("plan-workflow", "pi-roles", "tool-groups"),
             });
         } finally {
             if (previousRole === undefined) delete process.env.PI_ROLE;
@@ -176,9 +151,8 @@ describe("plan submission guard real Pi lifecycle", () => {
 
         await session!.run(
             when("Write and approve the plan.", [
-                calls("write_plan", { path: "feature.md" }),
-                calls("plan_submit", { filePath: "pi-plans/feature.md" }),
-                says("Plan approved."),
+                calls("write_plan", { path: "feature.md", content: "# Approved" }),
+                calls("submit_plan", { filePath: "pi-plans/feature.md" }),
             ]),
         );
         await waitForEntry(

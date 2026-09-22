@@ -4,18 +4,18 @@ const registerRoleTransitionPolicy = mock();
 const getActiveRole = mock();
 const readFrontmatter = mock();
 
-mock.module("../../_shared/plans-config.ts", () => ({
+mock.module("../_shared/plans-config.ts", () => ({
     loadPlansConfig: () => ({ planFileDir: "pi-plans" }),
     resolvePlanFileDir: () => "pi-plans",
 }));
-const realRoles = await import("../../_shared/pi-roles/index.ts");
-mock.module("../../_shared/pi-roles/index.ts", () => ({
+const realRoles = await import("../_shared/pi-roles/index.ts");
+mock.module("../_shared/pi-roles/index.ts", () => ({
     ...realRoles,
     getActiveRole,
     readFrontmatter,
     registerRoleTransitionPolicy,
 }));
-mock.module("../../_shared/tool-policy/index.ts", () => ({ getToolPolicy: () => ({ getRole: readFrontmatter }) }));
+mock.module("../_shared/tool-policy/index.ts", () => ({ getToolPolicy: () => ({ getRole: readFrontmatter }) }));
 
 const {
     default: registerPlanSubmissionGuard,
@@ -79,7 +79,7 @@ describe("plan submission guard", () => {
         );
         await onToolResult(
             {
-                toolName: "plan_submit",
+                toolName: "submit_plan",
                 isError: false,
                 input: { filePath: "pi-plans/feature.md" },
                 details: { approved: true },
@@ -101,6 +101,33 @@ describe("plan submission guard", () => {
                 }),
             }),
         ]);
+    });
+
+    it("recognizes a submission recorded under the former tool name", async () => {
+        const { handlers, entries, ctx } = setup();
+        const onToolResult = handlers.get("tool_result")!;
+        await onToolResult(
+            {
+                toolName: "write_plan",
+                isError: false,
+                input: { path: "feature.md" },
+                details: {},
+            },
+            ctx,
+        );
+        await onToolResult(
+            {
+                toolName: "plan_submit",
+                isError: false,
+                input: { filePath: "pi-plans/feature.md" },
+                details: { approved: true },
+            },
+            ctx,
+        );
+        expect(entries.at(-1)).toMatchObject({
+            customType: PLAN_REVIEW_SUBMITTED_ENTRY,
+            data: { approved: true, path: "pi-plans/feature.md" },
+        });
     });
 
     it("blocks exit from a guarded role until a plan revision is approved", () => {
@@ -134,7 +161,7 @@ describe("plan submission guard", () => {
         );
         await handlers.get("tool_result")!(
             {
-                toolName: "plan_submit",
+                toolName: "submit_plan",
                 isError: false,
                 input: { filePath: "pi-plans/approved.md" },
                 details: { approved: true },
@@ -178,7 +205,7 @@ describe("plan submission guard", () => {
         );
         await handlers.get("tool_result")!(
             {
-                toolName: "plan_submit",
+                toolName: "submit_plan",
                 isError: false,
                 input: { filePath: "pi-plans/feature.md" },
                 details: { approved: true },

@@ -6,14 +6,14 @@ import type {
     ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import {
-    loadPlansConfig,
-    resolvePlanFileDir,
-} from "../../_shared/plans-config.ts";
-import { getToolPolicy } from "../../_shared/tool-policy/index.ts";
-import {
     requiresPlanSubmission as roleRequiresPlanSubmission,
     registerRoleTransitionPolicy,
-} from "../../_shared/pi-roles/index.ts";
+} from "../_shared/pi-roles/index.ts";
+import {
+    loadPlansConfig,
+    resolvePlanFileDir,
+} from "../_shared/plans-config.ts";
+import { getToolPolicy } from "../_shared/tool-policy/index.ts";
 import {
     getPlanReviewState,
     listPlanReviewStates,
@@ -26,6 +26,7 @@ import {
 } from "./plan-submission-lifecycle.ts";
 
 const HANDOFF_GUARD = "plan-submission";
+// Keep the registration key across relocation so a Pi reload replaces the old handler.
 const POLICY_KEY = "pi-roles.plan-submission-guard";
 
 type LifecycleEntry = {
@@ -191,7 +192,11 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
         if (event.toolName === "write_plan" || event.toolName === "edit_plan") {
             appendRevision(pi, event, ctx);
         }
-        if (event.toolName === "plan_submit") {
+        // Old tool results can still appear when an existing session resumes.
+        if (
+            event.toolName === "submit_plan" ||
+            event.toolName === "plan_submit"
+        ) {
             appendSubmission(pi, event, ctx);
         }
     });

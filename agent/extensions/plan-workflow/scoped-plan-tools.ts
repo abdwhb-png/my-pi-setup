@@ -13,12 +13,18 @@ import type {
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
+    getActiveRole,
+    requiresPlanSubmission,
+} from "../_shared/pi-roles/index.ts";
+import {
     loadPlansConfig,
     resolvePlanFileDir,
 } from "../_shared/plans-config.ts";
-import { getActiveRole, requiresPlanSubmission } from "../_shared/pi-roles/index.ts";
+import {
+    createScopedWriter,
+    type ScopedWriteActor,
+} from "../_shared/scoped-write.ts";
 import { getToolPolicy } from "../_shared/tool-policy/index.ts";
-import { createScopedWriter, type ScopedWriteActor } from "../_shared/scoped-write.ts";
 import { recordSavedPlan } from "./tracker.ts";
 
 // ── Types ──
@@ -66,7 +72,7 @@ function planWriteActor(ctx: ExtensionContext): PlanWriteActor {
  */
 function planReviewHint(): string {
     if (!requiresPlanSubmission(getToolPolicy().getRole())) return "";
-    return "\nPlan revision pending review: submit it with plan_submit for approval.";
+    return "\nPlan revision pending review: submit it with submit_plan for approval.";
 }
 
 function scopedPlanWriter(cwd: string, planDir: string, actor: PlanWriteActor) {

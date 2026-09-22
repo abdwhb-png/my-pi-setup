@@ -28,7 +28,7 @@ const AVAILABLE: string[] = [
         "signal_loop_success",
         "write_plan",
         "edit_plan",
-        "plan_submit",
+        "submit_plan",
         "plan_annotate",
         "write_debug_probe",
         "edit_debug_probe",
@@ -59,7 +59,7 @@ describe("Task 7 think_* group resolution", () => {
     });
 
     it("resolves planning role @think-inspect without leaking @think-exec", () => {
-        const planTools = "@inspect, @lens, @web, @docs, @memory-consult, @think-inspect, @subagents, ask_user_question, write_plan, edit_plan, todo, plan_submit, plan_annotate"
+        const planTools = "@inspect, @lens, @web, @docs, @memory-consult, @think-inspect, @subagents, ask_user_question, write_plan, edit_plan, todo, submit_plan, plan_annotate"
             .split(",")
             .map((s) => s.trim());
         const result = resolveToolAliases(planTools, AVAILABLE, GROUPS);

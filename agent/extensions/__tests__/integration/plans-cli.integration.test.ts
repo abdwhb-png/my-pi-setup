@@ -59,7 +59,7 @@ async function fixture(
     for (const name of ["plan", "implement", "other"])
         writeFileSync(
             join(cwd, ".pi/roles", `${name}.md`),
-            `---\nname: ${name}\ndescription: Fixture\ntools: read, write_plan, edit_plan, plan_submit\n${name === "plan" ? "handoffGuard: plan-submission\n" : ""}---\nFixture ${name}`,
+            `---\nname: ${name}\ndescription: Fixture\ntools: read, write_plan, edit_plan, submit_plan\n${name === "plan" ? "handoffGuard: plan-submission\n" : ""}---\nFixture ${name}`,
         );
     writeFileSync(
         join(cwd, "settings.json"),
@@ -79,7 +79,7 @@ async function fixture(
     const session = await createTestSession({
         cwd,
         extensions: publicExtensionEntrypoints(
-            "plans",
+            "plan-workflow",
             "pi-roles",
             "tool-groups",
         ),
@@ -99,7 +99,7 @@ async function waitFor(session: TestSession, type: string) {
     }
     throw new Error(`Missing ${type}`);
 }
-test("approval terminates planning and switches once to the explicit role, not defaultRole", async () => {
+test("submit_plan approval terminates planning and switches once to the explicit role, not defaultRole", async () => {
     const { session } = await fixture(
         "plan",
         "console.log(JSON.stringify({decision:'approved'}));",
@@ -110,7 +110,7 @@ test("approval terminates planning and switches once to the explicit role, not d
                 path: "test.md",
                 content: "# Approved plan",
             }),
-            calls("plan_submit", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: "pi-plans/test.md" }),
         ]),
     );
     await waitFor(session, "pi-roles:switch-processed");
@@ -121,7 +121,8 @@ test("approval terminates planning and switches once to the explicit role, not d
     expect(entries(session, "pi-roles:active-role").at(-1)).toMatchObject({
         data: { name: "implement" },
     });
-    expect(session.session.getActiveToolNames()).not.toContain("plan_submit");
+    expect(session.session.getActiveToolNames()).not.toContain("submit_plan");
+    expect(session.session.getAllTools().map((tool) => tool.name)).not.toContain("plan_submit");
     await session.session.extensionRunner!.emit({
         type: "agent_end",
         messages: [],
@@ -137,7 +138,7 @@ test("missing implementation target leaves the planning role and records termina
     await session.run(
         when("Approve", [
             calls("write_plan", { path: "test.md", content: "# Plan" }),
-            calls("plan_submit", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: "pi-plans/test.md" }),
         ]),
     );
     await waitFor(session, "pi-roles:switch-failed");
@@ -167,7 +168,7 @@ test("a second pending plan prevents approval from bypassing the revision guard"
                 path: "pending.md",
                 content: "# Still a draft",
             }),
-            calls("plan_submit", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: "pi-plans/test.md" }),
         ]),
     );
     await waitFor(session, "pi-roles:switch-failed");
@@ -185,7 +186,7 @@ test("a target deleted during review is re-resolved before handoff", async () =>
     await session.run(
         when("Approve", [
             calls("write_plan", { path: "test.md", content: "# Plan" }),
-            calls("plan_submit", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: "pi-plans/test.md" }),
         ]),
     );
     await waitFor(session, "pi-roles:switch-failed");
@@ -193,32 +194,32 @@ test("a target deleted during review is re-resolved before handoff", async () =>
         data: { name: "plan" },
     });
 });
-test("guarded role exposes plan_submit; annotation does not approve or switch", async () => {
+test("guarded role exposes submit_plan; annotation does not approve or switch", async () => {
     const { session } = await fixture();
-    expect(session.session.getActiveToolNames()).toContain("plan_submit");
+    expect(session.session.getActiveToolNames()).toContain("submit_plan");
     await session.run(
         when("Review", [
             calls("write_plan", {
                 path: "test.md",
                 content: "# Plan\nRevision",
             }),
-            calls("plan_submit", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: "pi-plans/test.md" }),
             says("Awaiting revision"),
         ]),
     );
-    expect(session.events.toolResultsFor("plan_submit")[0]).toMatchObject({
+    expect(session.events.toolResultsFor("submit_plan")[0]).toMatchObject({
         isError: false,
         details: { approved: false, decision: "annotated" },
     });
     expect(entries(session, "plans:approved")).toHaveLength(0);
     expect(entries(session, "pi-roles:switch-request")).toHaveLength(0);
 });
-test("unguarded role hides plan_submit and blocks forced calls", async () => {
+test("unguarded role hides submit_plan and blocks forced calls", async () => {
     const { session } = await fixture("other");
-    expect(session.session.getActiveToolNames()).not.toContain("plan_submit");
+    expect(session.session.getActiveToolNames()).not.toContain("submit_plan");
     const blocked = await session.session.extensionRunner!.emitToolCall({
         type: "tool_call",
-        toolName: "plan_submit",
+        toolName: "submit_plan",
         toolCallId: "forced",
         input: { filePath: "pi-plans/test.md" },
     });
@@ -281,14 +282,14 @@ test("changed file cannot be approved", async () => {
     );
     await session.run(
         when("Review", [
-            calls("plan_submit", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: "pi-plans/test.md" }),
             says("Needs fresh review"),
         ]),
     );
-    expect(session.events.toolResultsFor("plan_submit")[0]).toMatchObject({
+    expect(session.events.toolResultsFor("submit_plan")[0]).toMatchObject({
         isError: true,
     });
-    expect(session.events.toolResultsFor("plan_submit")[0].text).toContain(
+    expect(session.events.toolResultsFor("submit_plan")[0].text).toContain(
         "changed during review",
     );
     expect(entries(session, "plans:approved")).toHaveLength(0);
@@ -299,14 +300,14 @@ test("a symlink escaping the plan directory cannot be submitted", async () => {
     symlinkSync(join(cwd, "outside.md"), join(cwd, "pi-plans/escape.md"));
     await session.run(
         when("Review", [
-            calls("plan_submit", { filePath: "pi-plans/escape.md" }),
+            calls("submit_plan", { filePath: "pi-plans/escape.md" }),
             says("Rejected"),
         ]),
     );
-    expect(session.events.toolResultsFor("plan_submit")[0]).toMatchObject({
+    expect(session.events.toolResultsFor("submit_plan")[0]).toMatchObject({
         isError: true,
     });
-    expect(session.events.toolResultsFor("plan_submit")[0].text).toContain(
+    expect(session.events.toolResultsFor("submit_plan")[0].text).toContain(
         "symlink",
     );
     expect(entries(session, "plans:approved")).toHaveLength(0);

@@ -67,12 +67,11 @@ test('planning base and plan role keep Plannotator planning separate from SDD an
         'write_plan',
         'edit_plan',
         'todo',
-        'plan_submit',
-        'plan_annotate',
+        'submit_plan',
     ]);
     expect(plan).toContain('extends: planning-base');
     expect(plan).toContain('Plannotator');
-    expect(plan).toContain('`plan_submit`');
+    expect(plan).toContain('`submit_plan`');
     expect(plan).toContain('plan-auto-switch');
     expect(plan).not.toMatch(/\b(?:SDD|sdd-plan|quick-planner)\b/);
     expect(plan).not.toMatch(/\bwriting-plans?\b/);
@@ -138,7 +137,7 @@ test('sdd-plan owns the parser-exact deterministic workflow and manual Direct ha
     expect(plan).toContain(
         'Do not mix Direct and delegated profiles in one approved manifest.',
     );
-    expect(plan).not.toMatch(/\b(?:Plannotator|quick-planner|plan_submit)\b/);
+    expect(plan).not.toMatch(/\b(?:Plannotator|quick-planner|submit_plan)\b/);
 });
 
 test('plan role preserves the Plannotator review loop and automatic implementation handoff', () => {
@@ -150,13 +149,14 @@ test('plan role preserves the Plannotator review loop and automatic implementati
         '### 2. Resolve Ambiguities',
         '### 3. Write the Plan',
         '### 4. Submit for Browser Review',
-        '### 5. Annotate Non-Plan Files',
+        '### 5. Manual Document or Code Review',
     ]);
     expect(workflow).toContain('RED, GREEN, refactor');
-    expect(workflow).toContain('Call `plan_submit` with the saved plan path');
-    expect(workflow).toContain(
-        'let `plan-auto-switch` perform the configured implementation-role handoff',
-    );
+    expect(workflow).toContain('Call `submit_plan` with the saved plan path');
+    expect(workflow).toContain('Approval ends the planning turn');
+    expect(workflow).toContain('pi-roles.planApprovedRole');
+    expect(workflow).toContain('/review-file <path>');
+    expect(workflow).toContain('/review-code');
     expect(workflow).toContain('Update the same file');
     expect(workflow).toContain('submit the same path again');
 });

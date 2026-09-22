@@ -65,12 +65,11 @@ Role state is persisted as `pi-roles:active-role`, so a new Jiti extension insta
 
 - `atlas-pi-subagents.ts`
 - `plan-auto-switch.ts`
-- `plan-submission-guard.ts`
 - `prompt-role-switch.ts`
 - `role-subagents.ts`
 - `session-plan-persistence-guard.ts`
 
-`plan-submission-lifecycle.ts` is shared feature logic, not another factory.
+`extensions/plan-workflow/` owns the plan revision lifecycle and plan-submission transition guard. It registers that guard through the public `_shared/pi-roles/transition-policy.ts` interface; pi-roles core evaluates the policy without importing plan workflow modules.
 
 Feature-owned transition policies use stable `pi-roles.*` keys. Re-registering a named policy replaces its stale handler after reload.
 
