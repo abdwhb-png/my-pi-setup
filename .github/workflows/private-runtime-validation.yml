@@ -77,7 +77,6 @@ jobs:
           set -euo pipefail
           cd projects/pi-core
           sfw npm ci
-          npm run hydrate:model-data
           npm run build:offline
           cd ../pi-integrations/pi-test-harness
           sfw npm ci
