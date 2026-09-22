@@ -90,6 +90,34 @@ jobs:
           while IFS= read -r pi_package; do
             sfw npm pack --workspace "$pi_package" --pack-destination "$pi_tarball_root" --ignore-scripts
           done < "$RUNNER_TEMP/pi-package-names"
+          python3 - <<'PY'
+          from base64 import b64encode
+          from hashlib import sha512
+          import json
+          from pathlib import Path
+          import re
+
+          agent_root = Path("../../.pi/agent").resolve()
+          manifest = json.loads((agent_root / "package.json").read_text())
+          lock_path = agent_root / "bun.lock"
+          lines = lock_path.read_text().splitlines()
+          for name, spec in manifest["dependencies"].items():
+              if not name.startswith("@earendil-works/") or not isinstance(spec, str) or not spec.startswith("file:"):
+                  continue
+              resolution = name + "@" + spec.removeprefix("file:")
+              prefix = f"    {json.dumps(name)}: [{json.dumps(resolution)},"
+              indexes = [index for index, line in enumerate(lines) if line.startswith(prefix)]
+              if len(indexes) != 1:
+                  raise RuntimeError(f"Expected one lock entry for {name}, found {len(indexes)}")
+              tarball = (agent_root / spec.removeprefix("file:")).resolve()
+              integrity = "sha512-" + b64encode(sha512(tarball.read_bytes()).digest()).decode()
+              index = indexes[0]
+              updated, count = re.subn(r'"sha512-[A-Za-z0-9+/=]+"\],$', json.dumps(integrity) + "],", lines[index])
+              if count != 1:
+                  raise RuntimeError(f"Lock entry has no terminal integrity for {name}")
+              lines[index] = updated
+          lock_path.write_text("\n".join(lines) + "\n")
+          PY
           cd ../pi-integrations/pi-test-harness
           sfw npm ci
           npm run build
