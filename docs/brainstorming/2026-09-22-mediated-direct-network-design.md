@@ -1,7 +1,7 @@
 # Mediated direct TCP for the Zerobox sandbox
 
 Date: 2026-09-22
-Status: architecture and error contract approved in conversation; TCP port scope provisional; implementation gated by the security and runtime proofs below.
+Status: architecture and error contract approved; bounded configured ports selected; O1 helper boundary implemented; promotion pending the WSL2 and native release gates below.
 
 ## Destination
 
@@ -32,7 +32,7 @@ The installed release is the runtime selected through `~/.pi/bin/zerobox` on thi
 - **O4 — Existing explicit `host` mode:** no engine work, but the whole shell executes outside Zerobox until the user changes mode.
 - **DNS-to-IP grants alone:** rejected. Shared IPs, raw-IP reuse, and rebinding would silently turn a domain rule into a broader IP rule.
 
-The selected path is conditional because the disposable probes do not yet prove a hardened, arbitrary-port Zerobox implementation.
+The selected feature path remained conditional until the later O1 helper implementation proved the required boundary in Zerobox.
 
 ## Configuration and admission contract
 
@@ -53,7 +53,7 @@ Use the two existing configuration files. Proposed field name and shape:
 }
 ```
 
-These fragments illustrate fields inside the existing JSON files; comments are explanatory and are not valid JSON file content. The global entry is a machine ceiling, and the project must opt in. Both default to off. The effective direct ports are the intersection of the global and project lists; session policy can narrow but cannot enable the capability. An explicit configured port list is the provisional choice, pending confirmation. Existing domain allows/denies still govern every destination. The direct TCP listener port must also be granted, even when an existing domain rule has no port. `allowedHostDomains` and local-service routing remain on their existing managed-proxy path. An attempted project enablement outside the global ceiling is a configuration error.
+These fragments illustrate fields inside the existing JSON files; comments are explanatory and are not valid JSON file content. The global entry is a machine ceiling, and the project must opt in. Both default to off. The effective direct ports are the intersection of the global and project lists; session policy can narrow but cannot enable the capability. The configured port list is bounded to 64 canonical entries. Existing domain allows/denies still govern every destination. The direct TCP listener port must also be granted, even when an existing domain rule has no port. `allowedHostDomains` and local-service routing remain on their existing managed-proxy path. An attempted project enablement outside the global ceiling is a configuration error.
 
 The exact field spelling is an interface proposal, not a promise about current parsers. Unknown fields remain errors until implementation. Pi's admission and widget must display domain authority and direct transport separately. A versioned engine admission report must carry the effective direct transport and port set; Pi must reject a missing, broader, or unsupported report. An older installed engine must fail admission if the new capability is requested.
 

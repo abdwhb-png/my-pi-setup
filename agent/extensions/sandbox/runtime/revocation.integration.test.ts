@@ -5,7 +5,11 @@ import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import { createSandboxBashOperations, getSandboxRuntime } from "../../_shared/sandbox-runtime/index.ts";
 import { createSandboxExtension } from "../index.ts";
 import { localMachineId } from "../capabilities/authority.ts";
-import { candidateBackendOptions, hasCandidateRuntime } from "./integration-fixtures.ts";
+import {
+    candidateBackendOptions,
+    hasCandidateRuntime,
+    hostToolReadClosure,
+} from "./integration-fixtures.ts";
 import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./private-temp.ts";
 
 test.skipIf(process.platform !== "linux" || !hasCandidateRuntime()).each([false, true])(
@@ -70,6 +74,179 @@ test.skipIf(process.platform !== "linux" || !hasCandidateRuntime()).each([false,
             await running;
             session?.dispose();
             if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+            else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
+            await rm(root, { recursive: true, force: true });
+            await rm(leaseRoot, { recursive: true, force: true });
+        }
+    },
+    45_000,
+);
+
+test.skipIf(
+    process.platform !== "linux" ||
+        process.env.PI_SANDBOX_MEDIATED_DIRECT_CONTRACT !== "1" ||
+        !hasCandidateRuntime(),
+)(
+    "removing the direct TCP grant terminates a live brokered connection",
+    async () => {
+        const root = await mkdtemp("/var/tmp/pi-direct-revocation-");
+        const leaseRoot = await mkdtemp("/var/tmp/z-");
+        const cwd = join(root, "project");
+        const agentDir = join(root, "agent");
+        const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
+        let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
+        let running: Promise<unknown> | undefined;
+        try {
+            await Promise.all(
+                [cwd, agentDir, join(cwd, ".pi")].map((path) =>
+                    mkdir(path, { recursive: true, mode: 0o700 }),
+                ),
+            );
+            const authority = join(agentDir, "sandbox.json");
+            const project = join(cwd, ".pi", "sandbox.json");
+            await writeFile(
+                authority,
+                JSON.stringify({
+                    version: 2,
+                    machineId: localMachineId(),
+                    filesystem: {
+                        allowRead: await hostToolReadClosure("/usr/bin/node"),
+                    },
+                    network: {
+                        allowedDomains: ["example.com"],
+                        mediatedDirectTcp: {
+                            allowed: true,
+                            ports: [443],
+                        },
+                    },
+                }),
+                { mode: 0o600 },
+            );
+            await writeFile(
+                project,
+                JSON.stringify({
+                    network: {
+                        allowedDomains: ["example.com"],
+                        mediatedDirectTcp: {
+                            enabled: true,
+                            ports: [443],
+                        },
+                    },
+                }),
+                { mode: 0o600 },
+            );
+            await writeFile(
+                join(cwd, "hold.cjs"),
+                [
+                    'const tls = require("node:tls");',
+                    "let ready = false;",
+                    'const socket = tls.connect({ host: "example.com", port: 443, servername: "example.com", rejectUnauthorized: false }, () => { ready = true; process.stdout.write("READY\\n"); });',
+                    "socket.on(\"error\", () => { if (!ready) process.exitCode = 41; });",
+                    "setInterval(() => {}, 1_000);",
+                ].join("\n"),
+                { mode: 0o600 },
+            );
+            process.env.PI_CODING_AGENT_DIR = agentDir;
+            session = await createTestSession({
+                cwd,
+                extensionFactories: [
+                    (pi) =>
+                        createSandboxExtension(pi, {
+                            zeroboxBackend: candidateBackendOptions(
+                                join(root, "probe"),
+                            ),
+                            sandboxServiceOptions: {
+                                createLease: () =>
+                                    createPrivateTempLease({
+                                        rootDir: leaseRoot,
+                                    }),
+                                recoverStaleLeases: async () => {
+                                    await recoverStalePrivateTempLeases({
+                                        rootDir: leaseRoot,
+                                    });
+                                },
+                            },
+                            analysisServiceOptions: {
+                                runHost: async (request) => {
+                                    if (
+                                        !request.id.startsWith(
+                                            "sandbox-preflight-",
+                                        )
+                                    )
+                                        throw new Error(
+                                            "unexpected Analysis request",
+                                        );
+                                    return {
+                                        output: "1",
+                                        stderr: "",
+                                        runtime: request.worker,
+                                        durationMs: 0,
+                                        truncated: false,
+                                    };
+                                },
+                            },
+                        }),
+                ],
+            });
+            let ready!: () => void;
+            const connected = new Promise<void>((resolve) => {
+                ready = resolve;
+            });
+            let finished = false;
+            const operations = createSandboxBashOperations();
+            running = operations
+                .exec("/usr/bin/node hold.cjs", cwd, {
+                    timeout: 20,
+                    onData: (chunk) => {
+                        if (chunk.toString().includes("READY")) ready();
+                    },
+                })
+                .then(
+                    (value) => {
+                        finished = true;
+                        return value;
+                    },
+                    (error) => {
+                        finished = true;
+                        return error;
+                    },
+                );
+            await Promise.race([
+                connected,
+                Bun.sleep(15_000).then(() => {
+                    throw new Error("direct TLS connection was not admitted");
+                }),
+            ]);
+            const revokedAt = Date.now();
+            await writeFile(
+                project,
+                JSON.stringify({
+                    network: {
+                        allowedDomains: ["example.com"],
+                        mediatedDirectTcp: { enabled: false, ports: [] },
+                    },
+                }),
+                { mode: 0o600 },
+            );
+            await Promise.race([
+                running,
+                Bun.sleep(3_000).then(() => {
+                    throw new Error(
+                        "direct TCP revocation did not terminate the brokered command",
+                    );
+                }),
+            ]);
+            expect(finished).toBe(true);
+            expect(Date.now() - revokedAt).toBeLessThan(3_000);
+        } finally {
+            await session?.session.extensionRunner.emit({
+                type: "session_shutdown",
+                reason: "quit",
+            });
+            await running;
+            session?.dispose();
+            if (priorAgentDir === undefined)
+                delete process.env.PI_CODING_AGENT_DIR;
             else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
             await rm(root, { recursive: true, force: true });
             await rm(leaseRoot, { recursive: true, force: true });

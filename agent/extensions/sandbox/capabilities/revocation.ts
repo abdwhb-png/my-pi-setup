@@ -105,6 +105,15 @@ export function sandboxAccessRemoved(
         return true;
     if (previous.network.allowLocalBinding && !next.network.allowLocalBinding)
         return true;
+    if (
+        previous.network.mediatedDirectTcp.enabled &&
+        (!next.network.mediatedDirectTcp.enabled ||
+            removed(
+                previous.network.mediatedDirectTcp.ports.map(String),
+                next.network.mediatedDirectTcp.ports.map(String),
+            ))
+    )
+        return true;
     const oldVariables = [
         ...previous.environment.allowedVariables,
         ...Object.keys(previous.environment.variables),

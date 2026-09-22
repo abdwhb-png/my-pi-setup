@@ -4,7 +4,10 @@ import { join, relative, resolve } from "node:path";
 import type { ShellCapabilityResolution } from "../../_shared/shell-runtime/contracts.ts";
 import { DEFAULT_DOCKER_ENDPOINT } from "../runtime/docker-policy.ts";
 import type { PiSandboxConfig } from "../runtime/policies.ts";
-import { normalizeSandboxResources } from "../runtime/policies.ts";
+import {
+    normalizeMediatedDirectTcpPorts,
+    normalizeSandboxResources,
+} from "../runtime/policies.ts";
 import { expandShellPathEntry } from "../runtime/shell-baseline.ts";
 import {
     canonicalProjectPath,
@@ -158,6 +161,36 @@ function boolean(value: unknown, field: string): boolean | undefined {
     if (typeof value !== "boolean") throw new Error(field + " must be boolean");
     return value;
 }
+function mediatedDirectLayer(
+    value: unknown,
+    scope: "global" | "project" | "session",
+): { selected?: boolean; ports?: number[] } | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+        throw new Error(`${scope} network.mediatedDirectTcp must be an object`);
+    const direct = value as Record<string, unknown>;
+    const switchName = scope === "global" ? "allowed" : "enabled";
+    for (const key of Object.keys(direct))
+        if (key !== switchName && key !== "ports")
+            throw new Error(
+                `Unknown ${scope}.network.mediatedDirectTcp field: ${key}`,
+            );
+    const selected = boolean(
+        direct[switchName],
+        `${scope} network.mediatedDirectTcp.${switchName}`,
+    );
+    const ports = Object.hasOwn(direct, "ports")
+        ? normalizeMediatedDirectTcpPorts(
+              direct.ports,
+              `${scope} network.mediatedDirectTcp.ports`,
+          )
+        : undefined;
+    if (selected === false && ports !== undefined && ports.length > 0)
+        throw new Error(
+            `${scope} network.mediatedDirectTcp cannot retain ports while disabled`,
+        );
+    return { selected, ports };
+}
 function variables(
     value: unknown,
     field: string,
@@ -310,6 +343,18 @@ function mergeLayers(input: ShellPolicyInput): {
     const globalNetwork = global?.network ?? {};
     const projectNetwork = project?.network ?? {};
     const sessionNetwork = session?.network ?? {};
+    const globalDirect = mediatedDirectLayer(
+        globalNetwork.mediatedDirectTcp,
+        "global",
+    );
+    const projectDirect = mediatedDirectLayer(
+        projectNetwork.mediatedDirectTcp,
+        "project",
+    );
+    const sessionDirect = mediatedDirectLayer(
+        sessionNetwork.mediatedDirectTcp,
+        "session",
+    );
     const globalFs = global?.filesystem ?? {};
     const projectFs = project?.filesystem ?? {};
     const sessionFs = session?.filesystem ?? {};
@@ -391,6 +436,41 @@ function mergeLayers(input: ShellPolicyInput): {
         projectLocalBinding,
         "session network.allowLocalBinding",
     );
+    const globalDirectAllowed = globalDirect?.selected === true;
+    const globalDirectPorts = globalDirectAllowed
+        ? (globalDirect.ports ?? [])
+        : [];
+    const projectDirectEnabled = projectDirect?.selected === true;
+    if (projectDirectEnabled && !globalDirectAllowed)
+        throw new Error(
+            "project network.mediatedDirectTcp is outside its ceiling",
+        );
+    if (projectDirectEnabled && projectDirect?.ports === undefined)
+        throw new Error(
+            "project network.mediatedDirectTcp requires explicit ports",
+        );
+    const projectDirectPorts = projectDirectEnabled
+        ? restrictedExact(
+              projectDirect.ports,
+              globalDirectPorts,
+              (port) => String(port),
+              "project network.mediatedDirectTcp.ports",
+          )
+        : [];
+    if (sessionDirect?.selected === true && !projectDirectEnabled)
+        throw new Error(
+            "session network.mediatedDirectTcp is outside its ceiling",
+        );
+    const sessionDirectEnabled =
+        projectDirectEnabled && sessionDirect?.selected !== false;
+    const mediatedDirectTcpPorts = sessionDirectEnabled
+        ? restrictedExact(
+              sessionDirect?.ports,
+              projectDirectPorts,
+              (port) => String(port),
+              "session network.mediatedDirectTcp.ports",
+          )
+        : [];
     const baselineRead = [
         projectRoot,
         ...baseline.filesystem.allowRead.map((path) =>
@@ -700,6 +780,10 @@ function mergeLayers(input: ShellPolicyInput): {
             ),
             allowedHostDomains,
             deniedDomains,
+            mediatedDirectTcp: {
+                enabled: mediatedDirectTcpPorts.length > 0,
+                ports: mediatedDirectTcpPorts,
+            },
         },
         filesystem: {
             ...baseline.filesystem,

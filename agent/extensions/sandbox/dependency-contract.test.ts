@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
@@ -22,7 +22,12 @@ interface ZeroboxManifest {
     binarySha256: string;
     patches: Array<{ path: string; sha256: string }>;
     omittedOptionalPatches: string[];
-    localBuild: { kind: string; baseCommit: string; sourceDiffSha256: string; sourceDiffFormat: string };
+    forkCommit: string;
+    baselineSnapshot: {
+        commit: string;
+        sourceDiffSha256: string;
+        sourceDiffFormat: string;
+    };
 }
 async function readProvenance(): Promise<ZeroboxManifest> {
     return Bun.file(new URL("./runtime/zerobox-provenance.json", import.meta.url)).json();
@@ -112,7 +117,7 @@ describe("sandbox dependency contract", () => {
         );
     });
 
-    it("records an explicit local-build provenance without claiming an immutable release", async () => {
+    it("records the immutable fork commit and its installed-source baseline", async () => {
         const provenance = await readProvenance();
         expect(provenance).toMatchObject({
             version: ZEROBOX_VERSION,
@@ -121,16 +126,17 @@ describe("sandbox dependency contract", () => {
             engineRef: "rust-v0.131.0-alpha.22",
             engineCommit: "9b8cf56cdefb09f54564ccc295fd42f6647f558f",
             binaryName: "zerobox",
-            localBuild: {
-                kind: "modified-worktree",
-                baseCommit: "ebd12774aafa63fec1864e04f248150ec50136d4",
+            forkCommit: "ed2e0a1ceb3ac1b1552ef89aebed796ea1f59013",
+            baselineSnapshot: {
+                commit: "6bc49bb",
+                sourceDiffSha256: "e3847ff7e72eef9aa8c092f5843b07647c48ecc1e56c2e0c53d0acd1e2a6686c",
                 sourceDiffFormat: "git-diff-binary-head-plus-sorted-untracked-v1",
             },
         });
         expect(provenance).not.toHaveProperty("tag");
-        expect(provenance).not.toHaveProperty("forkCommit");
+        expect(provenance).not.toHaveProperty("localBuild");
         expect(provenance.binarySha256).toMatch(/^[a-f0-9]{64}$/);
-        expect(provenance.localBuild.sourceDiffSha256).toMatch(/^[a-f0-9]{64}$/);
+        expect(provenance.baselineSnapshot.sourceDiffSha256).toMatch(/^[a-f0-9]{64}$/);
         expect(provenance.patches.length).toBeGreaterThan(0);
         expect(provenance.omittedOptionalPatches).toEqual([OMITTED_OPTIONAL_PATCH]);
         expect(provenance.patches.some(patch => patch.path === OMITTED_OPTIONAL_PATCH)).toBe(false);
@@ -157,17 +163,8 @@ describe("sandbox dependency contract", () => {
         const provenance = await readProvenance();
         const source = resolve(candidateSource);
         const gitOptions = { cwd: source, maxBuffer: 64 * 1024 * 1024 };
-        expect(execFileSync("git", ["rev-parse", "HEAD"], { ...gitOptions, encoding: "utf8" }).trim()).toBe(provenance.localBuild.baseCommit);
-        const digest = createHash("sha256");
-        digest.update(execFileSync("git", ["diff", "--binary", "HEAD"], gitOptions));
-        const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], { cwd: source, encoding: "utf8" }).split("\0").filter(Boolean).sort();
-        for (const path of untracked) {
-            const diff = spawnSync("git", ["diff", "--no-index", "--binary", "/dev/null", path], gitOptions);
-            expect(diff.error).toBeUndefined();
-            expect(diff.status).toBe(1);
-            digest.update(diff.stdout);
-        }
-        expect(digest.digest("hex")).toBe(provenance.localBuild.sourceDiffSha256);
+        expect(execFileSync("git", ["rev-parse", "HEAD"], { ...gitOptions, encoding: "utf8" }).trim()).toBe(provenance.forkCommit);
+        expect(execFileSync("git", ["status", "--porcelain"], { ...gitOptions, encoding: "utf8" })).toBe("");
         const syncScript = await readFile(join(source, "scripts/sync.sh"), "utf8");
         const referencedPatches = [...new Set([...syncScript.matchAll(/\bupstream-[a-z0-9-]+\.patch\b/g)].map(match => `scripts/${match[0]}`))];
         expect(provenance.omittedOptionalPatches).toEqual([OMITTED_OPTIONAL_PATCH]);

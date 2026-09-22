@@ -122,6 +122,10 @@
       "sha256": "c48024a8b025077af0f66701b99c477317c16ec236f29570e60ba8c9c41584e0"
     },
     {
+      "path": "scripts/upstream-network-denial-diagnostics.patch",
+      "sha256": "bf0e13fce6ab81e88f71b0dc56fe9ea96d48332463a773be10c052727d69489b"
+    },
+    {
       "path": "scripts/upstream-concurrent-deny-targets.patch",
       "sha256": "6c2ce1c39412c9f73005652537b633573a7397cfadc6de3149c7be0bc9fc8d8d"
     },
@@ -156,17 +160,25 @@
     {
       "path": "scripts/upstream-loopback-stream-diagnostics.patch",
       "sha256": "06aadfe39b99da5a684ad1cfe3e82e2812dd4c387c55feb9a0cf1c399600c60f"
+    },
+    {
+      "path": "scripts/upstream-runtime-bundle.patch",
+      "sha256": "2e09aae3e43c96dae52e4a591f88ea816bfeb8ddd311e6ab6eb0c8dd86c47b01"
+    },
+    {
+      "path": "scripts/upstream-mediated-direct-tcp.patch",
+      "sha256": "291ea8b3b978fcf551ad91687504f12b05c8b284ea1b6704ed72d54573853f98"
     }
   ],
   "binaryName": "zerobox",
-  "binarySha256": "6814f2ebc1715be50b8fedc63251dd922df625b3f5c086d7637ed658cb777df3",
-  "localBuild": {
-    "kind": "modified-worktree",
-    "baseCommit": "ebd12774aafa63fec1864e04f248150ec50136d4",
-    "sourceDiffSha256": "1e61dc46d7bfb749b021496157d3361c7d3c86fd50fdeb47fd07dd8c323f101b",
-    "sourceDiffFormat": "git-diff-binary-head-plus-sorted-untracked-v1"
-  },
+  "binarySha256": "47876c7a3c20be196892d348adafff37a2f36362b2a6e8a764ed061d9905bb97",
   "omittedOptionalPatches": [
     "scripts/upstream-no-preemptive-codex-protect.patch"
-  ]
+  ],
+  "forkCommit": "ed2e0a1ceb3ac1b1552ef89aebed796ea1f59013",
+  "baselineSnapshot": {
+    "commit": "6bc49bb",
+    "sourceDiffSha256": "e3847ff7e72eef9aa8c092f5843b07647c48ecc1e56c2e0c53d0acd1e2a6686c",
+    "sourceDiffFormat": "git-diff-binary-head-plus-sorted-untracked-v1"
+  }
 }

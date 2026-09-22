@@ -76,6 +76,28 @@ Set global `tmpNamespace: "host"` only when the shell should share the complete 
 
 `network.allowLocalBinding` permits listeners inside the private network namespace. It does not publish them on the host. Outgoing network domains, local service access and incoming publication are distinct permissions.
 
+`network.mediatedDirectTcp` permits proxy-independent IPv4 TCP while retaining the same domain policy. The global document defines the ceiling:
+
+```json
+{
+  "network": {
+    "mediatedDirectTcp": { "allowed": true, "ports": [80, 443] }
+  }
+}
+```
+
+Each project must opt in and select an explicit subset:
+
+```json
+{
+  "network": {
+    "mediatedDirectTcp": { "enabled": true, "ports": [443] }
+  }
+}
+```
+
+The current session can only narrow or disable that selection. Zerobox requires an allowed HTTP/1.1 `Host` or allowed TLS SNI on every configured port, and verifies the original destination against trusted public DNS answers. Raw IP requests, ECH, opaque protocols, private destinations, IPv6 direct egress and unconfigured ports fail closed. The port list is canonicalized, deduplicated and limited to 64 entries.
+
 `environment.path` controls lookup only; it never grants filesystem access. Values in `environment.variables` that start with `~/` expand against the host home directory, without changing the private sandbox HOME or granting read access. Shell expressions such as `$HOME` and `$(command)` stay literal. Environment values are hidden in diagnostics. Prefer named local installations for existing tools so the roots and command paths remain one authorization. The private tool baseline is described in [Runtime](runtime.md).
 
 ## Local installations

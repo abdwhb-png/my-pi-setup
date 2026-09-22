@@ -8,6 +8,7 @@ const DEFAULT_CONFIG: Omit<PiSandboxConfig, "docker"> = {
         allowedHostDomains: [],
         allowedDomains: [],
         deniedDomains: [],
+        mediatedDirectTcp: { enabled: false, ports: [] },
     },
     filesystem: {
         allowRead: ["."],

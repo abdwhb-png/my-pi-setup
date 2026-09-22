@@ -42,7 +42,114 @@ function successfulRun(
     return { exitCode: 0, stdout: "", stderr: "" };
 }
 
+function mediatedDirectRun(
+    file: string,
+    args: string[],
+): ZeroboxCommandResult {
+    const result = successfulRun(file, args);
+    return args.includes("--help")
+        ? {
+              ...result,
+              stdout:
+                  result.stdout + "--mediated-direct-tcp-port PORT\n",
+          }
+        : result;
+}
+
 describe("Zerobox backend", () => {
+    it("rejects an old runtime before preparing a mediated direct command", async () => {
+        const parent = await mkdtemp(join(tmpdir(), "z-"));
+        const binaryPath = join(parent, "zerobox");
+        const lease = await createPrivateTempLease({
+            rootDir: join(parent, "r"),
+        });
+        try {
+            await writeFile(binaryPath, "engine", { mode: 0o700 });
+            const backend = createZeroboxBackend({
+                ...(await createRuntimeBundleFixture(
+                    binaryPath,
+                    expectedProvenance.version,
+                )),
+                binaryPath,
+                runCommand: successfulRun,
+            });
+            const policy = createBashPolicy({
+                cwd: parent,
+                lease,
+                config: validatePiSandboxConfig({
+                    network: {
+                        mediatedDirectTcp: {
+                            enabled: true,
+                            ports: [443],
+                        },
+                    },
+                }),
+            });
+            await expect(
+                backend.prepare(
+                    { file: "/bin/true", args: [], cwd: parent },
+                    policy,
+                    lease,
+                ),
+            ).rejects.toMatchObject({ code: "unsupported-capability" });
+        } finally {
+            await lease.dispose();
+            await rm(parent, { recursive: true, force: true });
+        }
+    });
+
+    it("passes only the effective mediated direct ports to Zerobox", async () => {
+        const parent = await mkdtemp(join(tmpdir(), "z-"));
+        const binaryPath = join(parent, "zerobox");
+        const lease = await createPrivateTempLease({
+            rootDir: join(parent, "r"),
+        });
+        try {
+            await writeFile(binaryPath, "engine", { mode: 0o700 });
+            const backend = createZeroboxBackend({
+                ...(await createRuntimeBundleFixture(
+                    binaryPath,
+                    expectedProvenance.version,
+                )),
+                binaryPath,
+                runCommand: mediatedDirectRun,
+            });
+            const policy = createBashPolicy({
+                cwd: parent,
+                lease,
+                config: validatePiSandboxConfig({
+                    network: {
+                        allowedDomains: ["example.com"],
+                        mediatedDirectTcp: {
+                            enabled: true,
+                            ports: [443, 80, 443],
+                        },
+                    },
+                }),
+            });
+            const spec = await backend.prepare(
+                { file: "/bin/true", args: [], cwd: parent },
+                policy,
+                lease,
+            );
+            try {
+                expect(
+                    spec.args.filter((argument) =>
+                        argument.startsWith("--mediated-direct-tcp-port="),
+                    ),
+                ).toEqual([
+                    "--mediated-direct-tcp-port=80",
+                    "--mediated-direct-tcp-port=443",
+                ]);
+            } finally {
+                await spec.cleanup?.();
+            }
+        } finally {
+            await lease.dispose();
+            await rm(parent, { recursive: true, force: true });
+        }
+    });
+
     it("probes the private runtime without importing a legacy host profile", async () => {
         const root = await mkdtemp(join(tmpdir(), "z-"));
         const binaryPath = join(root, "zerobox");

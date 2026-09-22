@@ -63,6 +63,7 @@ interface PiNetworkConfig {
     allowedHostDomains: string[];
     deniedDomains: string[];
     allowLocalBinding: boolean;
+    mediatedDirectTcp: { enabled: boolean; ports: number[] };
 }
 
 interface PiEnvironmentConfig {
@@ -140,6 +141,24 @@ function stringArray(value: unknown, field: string): string[] {
             value.filter((entry): entry is string => typeof entry === "string"),
         ),
     ];
+}
+
+export function normalizeMediatedDirectTcpPorts(
+    value: unknown,
+    field: string,
+): number[] {
+    if (value === undefined) return [];
+    if (
+        !Array.isArray(value) ||
+        value.some(
+            (port) => !Number.isInteger(port) || port < 1 || port > 65_535,
+        )
+    )
+        throw new Error(`${field} must contain ports from 1 to 65535`);
+    const ports = [...new Set(value as number[])].toSorted((a, b) => a - b);
+    if (ports.length > 64)
+        throw new Error(`${field} cannot contain more than 64 ports`);
+    return ports;
 }
 
 function envVariables(value: unknown): Record<string, string> {
@@ -492,6 +511,7 @@ export function validatePiSandboxConfig(
         "deniedDomains",
         "allowLocalBinding",
         "allowAllUnixSockets",
+        "mediatedDirectTcp",
     ]);
     if (network.allowAllUnixSockets === true) {
         unsupported(new Error("Host Unix socket access requested"));
@@ -508,6 +528,38 @@ export function validatePiSandboxConfig(
     ) {
         invalid(new Error("allowAllUnixSockets must be boolean"));
     }
+    const mediatedDirectTcp = network.mediatedDirectTcp;
+    if (mediatedDirectTcp !== undefined && !isRecord(mediatedDirectTcp))
+        invalid(new Error("network.mediatedDirectTcp must be an object"));
+    if (isRecord(mediatedDirectTcp)) {
+        assertKnownFields(mediatedDirectTcp, ["enabled", "ports"]);
+        if (
+            mediatedDirectTcp.enabled !== undefined &&
+            typeof mediatedDirectTcp.enabled !== "boolean"
+        )
+            invalid(
+                new Error("network.mediatedDirectTcp.enabled must be boolean"),
+            );
+    }
+    let mediatedDirectTcpPorts: number[] = [];
+    if (isRecord(mediatedDirectTcp)) {
+        try {
+            mediatedDirectTcpPorts = normalizeMediatedDirectTcpPorts(
+                mediatedDirectTcp.ports,
+                "network.mediatedDirectTcp.ports",
+            );
+        } catch (error) {
+            invalid(error);
+        }
+    }
+    const mediatedDirectTcpEnabled =
+        isRecord(mediatedDirectTcp) && mediatedDirectTcp.enabled === true;
+    if (mediatedDirectTcpEnabled && mediatedDirectTcpPorts.length === 0)
+        invalid(
+            new Error(
+                "network.mediatedDirectTcp requires at least one port when enabled",
+            ),
+        );
     const normalizedNetwork: PiNetworkConfig = {
         allowLocalBinding: network.allowLocalBinding !== false,
         allowedDomains: normalizeNetworkRules(
@@ -522,6 +574,10 @@ export function validatePiSandboxConfig(
         deniedDomains: normalizeNetworkRules(
             stringArray(network.deniedDomains, "network.deniedDomains"),
         ),
+        mediatedDirectTcp: {
+            enabled: mediatedDirectTcpEnabled,
+            ports: mediatedDirectTcpEnabled ? mediatedDirectTcpPorts : [],
+        },
     };
 
     const environment = raw.environment ?? {};
@@ -790,6 +846,15 @@ function createShellPolicy(
             allowHost,
             deny: input.config.network.deniedDomains,
             allowLocalBinding: input.config.network.allowLocalBinding,
+            ...(input.config.network.mediatedDirectTcp.enabled
+                ? {
+                      mediatedDirectTcp: {
+                          ports: [
+                              ...input.config.network.mediatedDirectTcp.ports,
+                          ],
+                      },
+                  }
+                : {}),
         },
         environment: {
             inherit,

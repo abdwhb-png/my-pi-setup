@@ -82,6 +82,8 @@ export PI_SANDBOX_REAL_SHELL_MODES_CONTRACT=1
 export PI_SANDBOX_SHELL_BASELINE_CONTRACT=1
 export PI_SANDBOX_INSTALLATIONS_CONTRACT=1
 export PI_SANDBOX_GENERIC_COMMAND_CONTRACT=1
+export PI_SANDBOX_MEDIATED_DIRECT_CONTRACT=1
+export PI_SANDBOX_SFW_MEDIATED_DIRECT_CONTRACT=1
 export PI_SANDBOX_REAL_ANALYSIS_CONTRACT=1
 export PI_SANDBOX_REAL_ANALYSIS_IPC_CONTRACT=1
 
@@ -103,6 +105,8 @@ exec bun test --isolate \
     extensions/sandbox/runtime/revocation.integration.test.ts \
     extensions/sandbox/runtime/linux-contract.integration.test.ts \
     extensions/sandbox/runtime/generic-command.integration.test.ts \
+    extensions/sandbox/runtime/mediated-direct.integration.test.ts \
+    extensions/sandbox/runtime/sfw-mediated-direct.integration.test.ts \
     extensions/sandbox/runtime/profiles.integration.test.ts \
     extensions/sandbox/runtime/read-only-cwd.integration.test.ts \
     extensions/sandbox/runtime/websocket.integration.test.ts \

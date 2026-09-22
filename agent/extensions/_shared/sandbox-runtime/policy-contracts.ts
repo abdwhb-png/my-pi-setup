@@ -56,6 +56,7 @@ export interface SandboxNetworkPolicy {
     allowHost: string[];
     deny: string[];
     allowLocalBinding?: boolean;
+    mediatedDirectTcp?: { ports: number[] };
 }
 
 export interface SandboxEnvironmentPolicy {

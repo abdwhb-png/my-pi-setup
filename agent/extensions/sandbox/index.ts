@@ -449,6 +449,7 @@ export function renderSandboxStatusDetails(
         `  Allowed: ${config.network?.allowedDomains?.join(", ") || "(none)"}`,
         `  Host-local: ${config.network?.allowedHostDomains?.join(", ") || "(none)"}`,
         `  Denied: ${config.network?.deniedDomains?.join(", ") || "(none)"}`,
+        `  Direct TCP: ${config.network.mediatedDirectTcp.enabled ? config.network.mediatedDirectTcp.ports.join(", ") : "(off)"}`,
         "",
         `Docker: ${dockerStatus}`,
         ...(sandboxActive &&

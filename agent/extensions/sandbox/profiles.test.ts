@@ -230,6 +230,139 @@ test("a project cannot reopen globally disabled local binding", () => {
     ).toThrow("outside its ceiling");
 });
 
+test("mediated direct TCP requires a project opt-in beneath the global port ceiling", () => {
+    const { agentDir, cwd } = fixture();
+    global(agentDir, "machine", {
+        network: {
+            mediatedDirectTcp: { allowed: true, ports: [443, 80, 443] },
+        },
+    });
+    expect(
+        loadSandboxConfig(cwd, { agentDir, machineId: "machine" }).config
+            .network.mediatedDirectTcp,
+    ).toEqual({ enabled: false, ports: [] });
+
+    writeFileSync(
+        join(cwd, ".pi", "sandbox.json"),
+        JSON.stringify({
+            network: {
+                mediatedDirectTcp: { enabled: true, ports: [443, 80, 443] },
+            },
+        }),
+    );
+    expect(
+        loadSandboxConfig(cwd, { agentDir, machineId: "machine" }).config
+            .network.mediatedDirectTcp,
+    ).toEqual({ enabled: true, ports: [80, 443] });
+});
+
+test("mediated direct TCP rejects project expansion and lets a session only narrow", () => {
+    const { agentDir, cwd } = fixture();
+    global(agentDir, "machine", {
+        network: {
+            mediatedDirectTcp: { allowed: true, ports: [80, 443] },
+        },
+    });
+    writeFileSync(
+        join(cwd, ".pi", "sandbox.json"),
+        JSON.stringify({
+            network: {
+                mediatedDirectTcp: { enabled: true, ports: [80, 443] },
+            },
+        }),
+    );
+    expect(
+        loadSandboxConfig(cwd, {
+            agentDir,
+            machineId: "machine",
+            session: { network: { mediatedDirectTcp: { ports: [443] } } },
+        }).config.network.mediatedDirectTcp,
+    ).toEqual({ enabled: true, ports: [443] });
+    expect(
+        loadSandboxConfig(cwd, {
+            agentDir,
+            machineId: "machine",
+            session: { network: { mediatedDirectTcp: { enabled: false } } },
+        }).config.network.mediatedDirectTcp,
+    ).toEqual({ enabled: false, ports: [] });
+
+    writeFileSync(
+        join(cwd, ".pi", "sandbox.json"),
+        JSON.stringify({
+            network: {
+                mediatedDirectTcp: { enabled: true, ports: [22] },
+            },
+        }),
+    );
+    expect(() =>
+        loadSandboxConfig(cwd, { agentDir, machineId: "machine" }),
+    ).toThrow("outside its ceiling");
+});
+
+test("a disabled session cannot retain mediated direct TCP ports", () => {
+    const { agentDir, cwd } = fixture();
+    global(agentDir, "machine", {
+        network: { mediatedDirectTcp: { allowed: true, ports: [443] } },
+    });
+    writeFileSync(
+        join(cwd, ".pi", "sandbox.json"),
+        JSON.stringify({
+            network: {
+                mediatedDirectTcp: { enabled: true, ports: [443] },
+            },
+        }),
+    );
+    expect(() =>
+        loadSandboxConfig(cwd, {
+            agentDir,
+            machineId: "machine",
+            session: {
+                network: {
+                    mediatedDirectTcp: { enabled: false, ports: [443] },
+                },
+            },
+        }),
+    ).toThrow(/disabled|ports/i);
+});
+
+test("the sandbox fingerprint includes the effective mediated direct TCP grant", () => {
+    const { agentDir, cwd } = fixture();
+    global(agentDir, "machine", {
+        network: { mediatedDirectTcp: { allowed: true, ports: [80, 443] } },
+    });
+    const disabled = loadSandboxConfig(cwd, {
+        agentDir,
+        machineId: "machine",
+    });
+    writeFileSync(
+        join(cwd, ".pi", "sandbox.json"),
+        JSON.stringify({
+            network: {
+                mediatedDirectTcp: { enabled: true, ports: [443] },
+            },
+        }),
+    );
+    const enabled = loadSandboxConfig(cwd, {
+        agentDir,
+        machineId: "machine",
+    });
+    expect(enabled.shell.sandboxFingerprint).not.toBe(
+        disabled.shell.sandboxFingerprint,
+    );
+});
+
+test("mediated direct TCP validates nonzero ports and caps the ceiling at 64", () => {
+    const { agentDir, cwd } = fixture();
+    for (const ports of [[0], Array.from({ length: 65 }, (_, index) => index + 1)]) {
+        global(agentDir, "machine", {
+            network: { mediatedDirectTcp: { allowed: true, ports } },
+        });
+        expect(() =>
+            loadSandboxConfig(cwd, { agentDir, machineId: "machine" }),
+        ).toThrow(/port|64/i);
+    }
+});
+
 test("external filesystem denials protect another project without blocking it as the current project", () => {
     const { root, agentDir, cwd } = fixture();
     const projects = join(root, "projects");

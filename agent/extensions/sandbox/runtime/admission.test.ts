@@ -5,6 +5,7 @@ import type { SandboxAdmissionReport } from "../../_shared/sandbox-runtime/admis
 import {
     assertAdmissionMatchesPolicy,
     MAX_ADMISSION_BYTES,
+    parseSandboxAdmissionReport,
     readSandboxAdmission,
 } from "./admission.ts";
 import type { SandboxPolicy } from "./contracts.ts";
@@ -116,6 +117,63 @@ test("an exact authorized Unix socket may be mounted without granting its parent
     expect(()=>assertAdmissionMatchesPolicy({report,sha256:digest},policy,pinned)).toThrow("mount");
 });
 
+test("an exact Unix socket may use an empty internal parent view", () => {
+    const original = receipt();
+    const policy = policyFor(original);
+    policy.resources = {
+        unixSockets: ["/run/selected.sock"],
+        tcpPublications: [],
+    };
+    const control = {
+        source: "/internal/control/root",
+        destination: "/__zerobox",
+        access: "ro" as const,
+        origin: "internal" as const,
+    };
+    const view = {
+        source: "/internal/view-1",
+        destination: "/run",
+        access: "rw" as const,
+        origin: "internal" as const,
+    };
+    const socket = {
+        source: "/run/selected.sock",
+        destination: "/run/selected.sock",
+        access: "rw" as const,
+        origin: "policy" as const,
+    };
+    const report = {
+        ...original,
+        resources: policy.resources,
+        mounts: [...original.mounts, control, view, socket],
+    };
+    expect(() =>
+        assertAdmissionMatchesPolicy(
+            { report, sha256: digest },
+            policy,
+            pinned,
+        ),
+    ).not.toThrow();
+    expect(() =>
+        assertAdmissionMatchesPolicy(
+            {
+                report: {
+                    ...report,
+                    mounts: [
+                        ...original.mounts,
+                        control,
+                        { ...view, destination: "/outside" },
+                        socket,
+                    ],
+                },
+                sha256: digest,
+            },
+            policy,
+            pinned,
+        ),
+    ).toThrow("mount");
+});
+
 test("engine internal denials may strengthen but never remove submitted denials",()=>{
     const original=receipt();const policy=policyFor(original);
     const strengthened={...original,filesystem:{...original.filesystem,denyWrite:[...original.filesystem.denyWrite,"/bundle"],denyRead:["/internal-work"]}};
@@ -138,4 +196,58 @@ test("engine environment additions are restricted to the admitted network and Do
     }
     const denied={...policy,environment:{...policy.environment,deny:["CODEX_SANDBOX_NETWORK_DISABLED"]}};
     expect(()=>assertAdmissionMatchesPolicy({report:{...closed,environment:{...closed.environment,deny:denied.environment.deny}},sha256:digest},denied,pinned)).toThrow("environment");
+});
+
+test("mediated direct admission requires schema two and exact effective ports", () => {
+    const original = receipt();
+    const network = {
+        ...original.network,
+        mode: "domain-allowlist" as const,
+        allow: ["example.com"],
+        mediatedDirectTcp: { ports: [80, 443] },
+    };
+    const policy = { ...policyFor(original), network };
+    const admitted: SandboxAdmissionReport = {
+        ...original,
+        schema: 2,
+        network,
+    };
+
+    expect(parseSandboxAdmissionReport(admitted)).toEqual(admitted);
+    expect(() =>
+        parseSandboxAdmissionReport({ ...admitted, schema: 1 }),
+    ).toThrow(/mediated/i);
+    expect(() =>
+        assertAdmissionMatchesPolicy(
+            { report: admitted, sha256: digest },
+            policy,
+            pinned,
+        ),
+    ).not.toThrow();
+    for (const report of [
+        { ...admitted, schema: 1 as const },
+        { ...admitted, network: { ...network, mediatedDirectTcp: undefined } },
+        {
+            ...admitted,
+            network: { ...network, mediatedDirectTcp: { ports: [80, 443, 8443] } },
+        },
+    ])
+        expect(() =>
+            assertAdmissionMatchesPolicy(
+                { report: report as SandboxAdmissionReport, sha256: digest },
+                policy,
+                pinned,
+            ),
+        ).toThrow(/schema|mediated|port/i);
+
+    expect(() =>
+        assertAdmissionMatchesPolicy(
+            { report: admitted, sha256: digest },
+            {
+                ...policy,
+                network: { ...network, mediatedDirectTcp: undefined },
+            },
+            pinned,
+        ),
+    ).toThrow(/schema|mediated|port/i);
 });

@@ -581,6 +581,9 @@ class ZeroboxBackend implements SandboxBackend {
         }
         return {
             ...SANDBOX_CAPABILITIES,
+            mediatedDirectTcp:
+                help.exitCode === 0 &&
+                help.stdout.includes("--mediated-direct-tcp-port"),
             inboundBinding:
                 help.exitCode === 0 && help.stdout.includes("--publish-tcp"),
             arbitraryUnixSockets:
@@ -601,6 +604,14 @@ class ZeroboxBackend implements SandboxBackend {
             policy.name === "analysis-strict" ? "analysis" : "shell";
         if (!policy.strict) {
             throw new SandboxExecutionError("strict-unavailable");
+        }
+        if (
+            policy.network.mediatedDirectTcp &&
+            !capabilities.mediatedDirectTcp
+        ) {
+            throw new SandboxExecutionError("unsupported-capability", {
+                cause: new Error("Zerobox lacks mediated direct TCP support"),
+            });
         }
         if (
             policy.resources &&
@@ -679,6 +690,9 @@ class ZeroboxBackend implements SandboxBackend {
                     ...(policy.network.allowLocalBinding
                         ? ["--allow-local-binding"]
                         : []),
+                    ...(policy.network.mediatedDirectTcp?.ports ?? []).map(
+                        (port) => `--mediated-direct-tcp-port=${port}`,
+                    ),
                     ...(policy.resources?.unixSockets ?? []).map(
                         (socket) => `--allow-unix-socket=${socket}`,
                     ),

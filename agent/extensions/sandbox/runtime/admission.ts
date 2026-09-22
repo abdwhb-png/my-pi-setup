@@ -95,7 +95,7 @@ function kernelMount(
 export function parseSandboxAdmissionReport(
     value: unknown,
 ): SandboxAdmissionReport {
-    if (!record(value) || value.schema !== 1)
+    if (!record(value) || (value.schema !== 1 && value.schema !== 2))
         throw failure("unsupported schema");
     const {
         runtime,
@@ -136,6 +136,25 @@ export function parseSandboxAdmissionReport(
         typeof network.allowLocalBinding !== "boolean"
     )
         throw failure("invalid network rules");
+    const mediatedDirectTcp = network.mediatedDirectTcp;
+    const validDirectPorts =
+        record(mediatedDirectTcp) &&
+        Object.keys(mediatedDirectTcp).every((key) => key === "ports") &&
+        Array.isArray(mediatedDirectTcp.ports) &&
+        mediatedDirectTcp.ports.length > 0 &&
+        mediatedDirectTcp.ports.length <= 64 &&
+        mediatedDirectTcp.ports.every(
+            (port, index, ports) =>
+                Number.isInteger(port) &&
+                port >= 1 &&
+                port <= 65_535 &&
+                (index === 0 || ports[index - 1]! < port),
+        );
+    if (
+        (value.schema === 1 && mediatedDirectTcp !== undefined) ||
+        (value.schema === 2 && !validDirectPorts)
+    )
+        throw failure("invalid mediated direct TCP grant");
     if (
         !record(resources) ||
         !strings(resources.unixSockets) ||
@@ -274,6 +293,9 @@ export function assertAdmissionMatchesPolicy(
     const equal = (left: readonly string[], right: readonly string[]) =>
         JSON.stringify([...new Set(left)].sort()) ===
         JSON.stringify([...new Set(right)].sort());
+    const equalPorts = (left: readonly number[], right: readonly number[]) =>
+        JSON.stringify([...new Set(left)].toSorted((a, b) => a - b)) ===
+        JSON.stringify([...new Set(right)].toSorted((a, b) => a - b));
     if (
         report.runtime.manifestSha256 !== runtime.manifestSha256 ||
         report.runtime.component !== runtime.component ||
@@ -381,6 +403,14 @@ export function assertAdmissionMatchesPolicy(
                 policy.filesystem.allowWrite.some((root) =>
                     within(mount.destination, root),
                 );
+            const resourceView =
+                internalRoot &&
+                mount.access === "rw" &&
+                within(mount.source, internalRoot) &&
+                policy.resources?.unixSockets.some(
+                    (socket) =>
+                        dirname(resolve(socket)) === resolve(mount.destination),
+                );
             const targetEnvironment =
                 control &&
                 mount.access === "ro" &&
@@ -398,6 +428,7 @@ export function assertAdmissionMatchesPolicy(
                 mount !== control &&
                 !namespace &&
                 !view &&
+                !resourceView &&
                 !targetEnvironment &&
                 !shellAlias
             )
@@ -433,6 +464,18 @@ export function assertAdmissionMatchesPolicy(
             throw failure(`network.${key} differs from the submitted policy`);
     if (report.network.mode !== policy.network.mode)
         throw failure("network mode differs from the submitted policy");
+    const submittedDirect = policy.network.mediatedDirectTcp;
+    const reportedDirect = report.network.mediatedDirectTcp;
+    if (
+        submittedDirect === undefined
+            ? report.schema !== 1 || reportedDirect !== undefined
+            : report.schema !== 2 ||
+              reportedDirect === undefined ||
+              !equalPorts(reportedDirect.ports, submittedDirect.ports)
+    )
+        throw failure(
+            "mediated direct TCP ports differ from the submitted policy schema",
+        );
     if (
         report.network.allowLocalBinding !==
         (policy.network.allowLocalBinding ?? false)

@@ -48,6 +48,7 @@ export function sandboxDoctor(
         `Configured write: ${list(config.filesystem.allowWrite)}`,
         `Configured read denials: ${list(config.filesystem.denyRead)}`,
         `Configured write denials: ${list(config.filesystem.denyWrite)}`,
+        `Configured direct TCP: ${config.network.mediatedDirectTcp.enabled ? list(config.network.mediatedDirectTcp.ports.map(String)) : "(off)"}`,
         "Zerobox metadata defaults: .git: follows explicit filesystem rules; .agents and .codex: protected unless explicitly writable.",
         "Fixed restrictions: private HOME, protected global sandbox.json and lease storage, /mnt/c writes blocked. Host mode bypasses shell restrictions.",
         `Unix socket grants: ${list(config.resources?.unixSockets ?? [])}`,
@@ -67,6 +68,9 @@ export function sandboxDoctor(
             : []),
     ];
     if (admitted) {
+        lines.push(
+            `Admitted direct TCP: ${admitted.network.mediatedDirectTcp ? list(admitted.network.mediatedDirectTcp.ports.map(String)) : "(off)"}`,
+        );
         lines.push(
             "Admitted runtime filesystem (private lease paths are aliases):",
         );

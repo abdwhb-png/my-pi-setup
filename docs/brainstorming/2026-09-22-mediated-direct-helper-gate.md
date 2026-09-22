@@ -1,6 +1,8 @@
 # Mediated direct TCP: helper gate result
 
-Status: **blocked at the helper boundary**. No Pi grant, candidate runtime, saved configuration, or installed release was changed.
+Status: **superseded by the implemented O1 boundary**. Promotion remains gated on the WSL2 and native release checks. No saved configuration or installed release was changed by this earlier probe.
+
+The production implementation preserves Bubblewrap's `--disable-userns` and `--assert-userns-disabled`. A trusted outer Zerobox helper now prepares the isolated IPv4 route and reserved listeners, transfers only those listener descriptors, then executes the target in Bubblewrap's user and PID namespaces with all capabilities dropped. Focused tests cover route mutation, signaling, broker access, listener replacement, external UDP, IPv6 egress, raw IP, private destinations, and managed proxy coexistence. The exact Zerobox source is pinned by Pi provenance and the native CI workflow; this document retains the discarded provisional probe for audit history.
 
 ## Reproduction
 
@@ -10,7 +12,9 @@ In the **actual Zerobox helper**, adding Bubblewrap setup capabilities and UID 0
 
 A provisional helper path omitted `--disable-userns` only for mediated mode, installed a replacement seccomp filter against namespace creation, dropped all target setup capabilities, put the target in a nested PID namespace, and connected an outer gateway to a one-use host Unix broker socket before target execution. Focused integration tests passed for capability removal, PID isolation, route mutation denial, listener replacement denial, raw-IP closure, disappearance of the broker socket and inherited socket descriptors, and coexistence with the managed loopback bridge. These tests establish feasibility of that **alternative**, not production security equivalence or a working direct-network feature. The disposable code is saved as `/tmp/zerobox-mediated-helper-gate-tracked-2026-09-22.patch` and `/tmp/zerobox-mediated-helper-gate-upstream-2026-09-22.patch`.
 
-## Required design revision
+## Decision at the time of the probe
+
+The production feature selected the first option below and proved it in the real helper. The remaining text records the gate that applied before that implementation existed.
 
 The implementation must choose and qualify one setup boundary before exposing `network.mediatedDirectTcp`:
 

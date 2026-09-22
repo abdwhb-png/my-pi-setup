@@ -69,6 +69,7 @@ export interface SandboxCapabilities {
     environmentFiltering: true;
     processTreeTermination: true;
     dynamicDenyGlobs: true;
+    mediatedDirectTcp: boolean;
     inboundBinding: boolean;
     privateNetworkListeners: true;
     arbitraryUnixSockets: boolean;
@@ -88,6 +89,7 @@ export const SANDBOX_CAPABILITIES: SandboxCapabilities = Object.freeze({
     environmentFiltering: true,
     processTreeTermination: true,
     dynamicDenyGlobs: true,
+    mediatedDirectTcp: false,
     inboundBinding: false,
     privateNetworkListeners: true,
     arbitraryUnixSockets: false,

@@ -64,6 +64,7 @@ export interface SandboxExecutionContextV2 extends Omit<
     version: 2;
     home: { path: string; namespace: "lease-private" };
     network: Omit<SandboxExecutionContextV1["network"], "loopback"> & {
+        mediatedDirectTcp?: { ports: number[] };
         loopback: Omit<
             SandboxExecutionContextV1["network"]["loopback"],
             "localListeners"
@@ -438,6 +439,7 @@ export function parseSandboxExecutionContext(
     const home = recordValue(context.home);
     const network = recordValue(context.network);
     const loopback = recordValue(network?.loopback);
+    const mediatedDirectTcp = recordValue(network?.mediatedDirectTcp);
     const ipc = recordValue(context.ipc);
     const environment = recordValue(context.environment);
     if (
@@ -446,6 +448,16 @@ export function parseSandboxExecutionContext(
         typeof home.path !== "string" ||
         !home.path ||
         !network ||
+        (network.mediatedDirectTcp !== undefined &&
+            (!mediatedDirectTcp ||
+                Object.keys(mediatedDirectTcp).some((key) => key !== "ports") ||
+                !portArray(mediatedDirectTcp.ports) ||
+                mediatedDirectTcp.ports.length === 0 ||
+                mediatedDirectTcp.ports.length > 64 ||
+                mediatedDirectTcp.ports.some(
+                    (port, index, ports) =>
+                        index > 0 && port <= ports[index - 1]!,
+                ))) ||
         !loopback ||
         !["sandbox-only", "published", "disabled"].includes(
             String(loopback.localListeners),
@@ -503,6 +515,13 @@ export function parseSandboxExecutionContext(
         home: { path: home.path, namespace: "lease-private" },
         network: {
             ...base.network,
+            ...(mediatedDirectTcp
+                ? {
+                      mediatedDirectTcp: {
+                          ports: [...(mediatedDirectTcp.ports as number[])],
+                      },
+                  }
+                : {}),
             loopback: {
                 ...base.network.loopback,
                 localListeners: publications.length
@@ -700,6 +719,13 @@ export function createSandboxExecutionContext(
             deny: [...policy.network.deny],
             domainClientProxyRequired:
                 policy.network.mode === "domain-allowlist",
+            ...(policy.network.mediatedDirectTcp
+                ? {
+                      mediatedDirectTcp: {
+                          ports: [...policy.network.mediatedDirectTcp.ports],
+                      },
+                  }
+                : {}),
             loopback: {
                 hostNamespace: "isolated",
                 hostBridgePorts,
@@ -814,7 +840,7 @@ export function formatSandboxSystemContext(
         "Sandbox execution context v1",
         stateFact,
         "Treat these as environment facts, not a causal diagnosis of any command failure.",
-        "network.domainClientProxyRequired applies to allow/allowHost. loopback.hostBridgePorts accept raw TCP only through the managed policy proxy; unlisted host loopback ports are blocked.",
+        "network.domainClientProxyRequired applies to allow/allowHost. network.mediatedDirectTcp ports permit hostname-inspected direct TCP through the same domain policy. loopback.hostBridgePorts accept raw TCP only through the managed policy proxy; unlisted host loopback ports are blocked.",
         JSON.stringify(snapshot),
         CONTEXT_END,
     ].join("\n");

@@ -68,6 +68,9 @@
             },
             "allowLocalBinding": {
               "type": "boolean"
+            },
+            "mediatedDirectTcp": {
+              "$ref": "#/$defs/globalMediatedDirectTcp"
             }
           }
         },
@@ -262,6 +265,9 @@
             },
             "allowLocalBinding": {
               "type": "boolean"
+            },
+            "mediatedDirectTcp": {
+              "$ref": "#/$defs/projectMediatedDirectTcp"
             }
           }
         },
@@ -406,6 +412,98 @@
           "$ref": "#/$defs/dockerOperations"
         }
       }
+    },
+    "mediatedDirectTcpPorts": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+      }
+    },
+    "globalMediatedDirectTcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed",
+        "ports"
+      ],
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "ports": {
+          "$ref": "#/$defs/mediatedDirectTcpPorts"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "allowed": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ports": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ports": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "projectMediatedDirectTcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "ports"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "ports": {
+          "$ref": "#/$defs/mediatedDirectTcpPorts"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ports": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ports": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
     },
     "resources": {
       "type": "object",

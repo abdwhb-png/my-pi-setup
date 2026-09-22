@@ -32,3 +32,13 @@ test("network ports, host temporary storage, sockets and Docker grants cannot re
  const docker={...previous,docker:{mode:"full" as const,endpoint:"unix:///var/run/docker.sock"}};
  expect(sandboxAccessRemoved(docker,previous)).toBe(true);
 });
+
+test("removing a mediated direct TCP port revokes admitted descendants", () => {
+ const previous=validatePiSandboxConfig({network:{mediatedDirectTcp:{enabled:true,ports:[80,443]}}});
+ const narrowed=validatePiSandboxConfig({network:{mediatedDirectTcp:{enabled:true,ports:[443]}}});
+ const expanded=validatePiSandboxConfig({network:{mediatedDirectTcp:{enabled:true,ports:[80,443,8443]}}});
+ const disabled=validatePiSandboxConfig({network:{mediatedDirectTcp:{enabled:false,ports:[]}}});
+ expect(sandboxAccessRemoved(previous,narrowed)).toBe(true);
+ expect(sandboxAccessRemoved(previous,expanded)).toBe(false);
+ expect(sandboxAccessRemoved(previous,disabled)).toBe(true);
+});

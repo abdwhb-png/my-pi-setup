@@ -55,6 +55,32 @@ const policy: SandboxPolicy = {
 };
 
 describe("Sandbox execution context", () => {
+    test("preserves only canonical mediated direct TCP grants", () => {
+        const context = createSandboxExecutionContext(
+            {
+                ...policy,
+                network: {
+                    ...policy.network,
+                    mediatedDirectTcp: { ports: [80, 443] },
+                },
+            },
+            lease,
+            { homeDir: "/home/test" },
+        );
+
+        expect(context.network.mediatedDirectTcp).toEqual({ ports: [80, 443] });
+        expect(parseSandboxExecutionContext(context)).toEqual(context);
+        expect(
+            parseSandboxExecutionContext({
+                ...context,
+                network: {
+                    ...context.network,
+                    mediatedDirectTcp: { ports: [443, 80] },
+                },
+            }),
+        ).toBeUndefined();
+    });
+
     test("v3 records engine admission without presenting planned v2 rules as applied", () => {
         const report = {schema: 1 as const, runtime: {target: "x86_64-unknown-linux-gnu" as const, version: "test", manifestSha256: "a".repeat(64), component: "shell" as const}, helperSha256: "b".repeat(64),
             kernelMounts: [{ destination: "/__zerobox/runtime", root: "/bundle/shell", source: "/dev/test", filesystem: "ext4", access: "ro" as const }], mounts:[{source:"/bundle/shell",destination:"/__zerobox/runtime",access:"ro" as const,origin:"runtime" as const}],filesystem:{...policy.filesystem,allowRead:["/observed"]}, network:{...policy.network,allowLocalBinding:true}, resources:{unixSockets:[],tcpPublications:[]},path:["/__zerobox/runtime/bin"],environment:{inherit:[],set:["PATH","HOME"],deny:[]},home:{path:"/home/sandbox",namespace:"lease-private" as const},tmp:{path:"/tmp" as const,namespace:"lease-private" as const},docker:{mode:"disabled" as const}};

@@ -224,6 +224,7 @@ describe('renderSandboxStatusDetails', () => {
                     allowedHostDomains: [],
                     deniedDomains: [],
                     allowLocalBinding: true,
+                    mediatedDirectTcp: { enabled: false, ports: [] },
                 },
                 filesystem: {
                     allowRead: [],
@@ -249,6 +250,12 @@ describe('renderSandboxStatusDetails', () => {
         const output = renderSandboxStatusDetails(resolved, true);
         expect(output).toContain('Sandbox: HOST (unsandboxed)');
         expect(output).toContain('Docker: off (shell mode is host)');
+    });
+
+    it('reports the effective mediated direct TCP ports', () => {
+        const resolved = resolvedWithDocker({ mode: 'disabled' });
+        resolved.config.network.mediatedDirectTcp = { enabled: true, ports: [80, 443] };
+        expect(renderSandboxStatusDetails(resolved, true)).toContain('Direct TCP: 80, 443');
     });
 
     it('reports Docker off when the sandbox is disabled', () => {

@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { SandboxMode } from "../../_shared/shell-runtime/contracts.ts";
 import { SandboxExecutionError } from "../runtime/contracts.ts";
-import { validatePiSandboxConfig } from "../runtime/policies.ts";
+import {
+    normalizeMediatedDirectTcpPorts,
+    validatePiSandboxConfig,
+} from "../runtime/policies.ts";
 import {
     validateGlobalInstallations,
     parseInstallationSelection,
@@ -169,17 +172,55 @@ function validateLayer(
     for (const field of ["network", "filesystem", "environment"] as const)
         if (layer[field] !== undefined)
             record(layer[field], `${scope}.${field}`);
-    if (layer.network !== undefined) {
+    const configuredNetwork =
+        layer.network === undefined
+            ? undefined
+            : record(layer.network, scope + ".network");
+    if (configuredNetwork !== undefined) {
         known(
-            record(layer.network, scope + ".network"),
+            configuredNetwork,
             [
                 "allowedDomains",
                 "allowedHostDomains",
                 "deniedDomains",
                 "allowLocalBinding",
+                "mediatedDirectTcp",
             ],
             scope + ".network",
         );
+        if (configuredNetwork.mediatedDirectTcp !== undefined) {
+            const direct = record(
+                configuredNetwork.mediatedDirectTcp,
+                `${scope}.network.mediatedDirectTcp`,
+            );
+            const switchName = scope === "global" ? "allowed" : "enabled";
+            known(
+                direct,
+                [switchName, "ports"],
+                `${scope}.network.mediatedDirectTcp`,
+            );
+            if (typeof direct[switchName] !== "boolean")
+                invalid(
+                    `${scope}.network.mediatedDirectTcp.${switchName} must be a boolean`,
+                );
+            let ports: number[];
+            try {
+                ports = normalizeMediatedDirectTcpPorts(
+                    direct.ports,
+                    `${scope}.network.mediatedDirectTcp.ports`,
+                );
+            } catch (error) {
+                invalid(error instanceof Error ? error.message : String(error));
+            }
+            if (direct[switchName] === true && ports.length === 0)
+                invalid(
+                    `${scope}.network.mediatedDirectTcp requires at least one port when ${switchName} is true`,
+                );
+            if (direct[switchName] === false && ports.length > 0)
+                invalid(
+                    `${scope}.network.mediatedDirectTcp cannot declare ports when ${switchName} is false`,
+                );
+        }
     }
     const configuredFilesystem =
         layer.filesystem === undefined
@@ -244,8 +285,11 @@ function validateLayer(
     else parseInstallationSelection(environment?.installations, scope);
     const { installations: _installations, ...ordinaryEnvironment } =
         environment ?? {};
+    const { mediatedDirectTcp: _mediatedDirectTcp, ...ordinaryNetwork } =
+        configuredNetwork ?? {};
     validatePiSandboxConfig({
         ...generic,
+        network: ordinaryNetwork,
         ...(ordinaryFilesystem === undefined
             ? {}
             : { filesystem: ordinaryFilesystem }),
