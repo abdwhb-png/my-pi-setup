@@ -1,7 +1,7 @@
 # Design: write_plan / edit_plan Tools
 
 **Date:** 2026-07-06
-**Superseded ownership:** Since 2026-07-22, these tools are owned by the native `pi-scoped-write` extension. The behavioural contract below remains applicable; only the extension boundary changed.
+**Current status (2026-09-22):** Historical design. The current tool is `submit_plan`, and `agent/extensions/plan-workflow/` owns plan writing, review, and the submission guard. Current configuration uses `plans.planFileDir` in Pi settings. The original terminology and implementation proposal below are retained as historical context.
 **Context:** Agent fails to write plan files in the designated `pi-plans/` directory, causing `plan_submit` rejections. The plan role's `write`/`edit` tools need path-guarding wrappers.
 
 ## Architecture

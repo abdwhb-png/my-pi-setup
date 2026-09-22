@@ -2,6 +2,8 @@
 
 # Modular Deterministic SDD Implementation Plan
 
+> Historical implementation plan: references to `plan_submit` below describe the former plan workflow. The current tool is `submit_plan` in `agent/extensions/plan-workflow/`; the original plan text is retained for context.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development to implement this plan task-by-task. Steps use checkbox syntax for tracking. Do not fork pi-subagents.
 
 **Goal:** Replace the manually polled SDD queue with a deterministic, profile-driven TDD orchestrator that uses the public pi-subagents 0.35.1 foreground delegation contract.

@@ -24,4 +24,4 @@ The extension is named `plan-workflow`; the existing `plans` settings key remain
 
 One review can be open per session. Tool cancellation or session shutdown/reload aborts it. Old results cannot be delivered into a replacement session. There is no short timer on human review. Native history, annotations and preferences remain owned by Plannotator.
 
-Tests use temporary agent directories and CLI process fixtures. Browser qualification uses temporary Plannotator data, not personal history. Do not reinstall the official Pi extension alongside this adapter: it registers its own `plan_submit` tool and planning workflow.
+Tests use temporary agent directories and CLI process fixtures. Browser qualification uses temporary Plannotator data, not personal history. Use the standalone CLI with this adapter; `plan-workflow` owns Pi tool registration and approval handoff.
