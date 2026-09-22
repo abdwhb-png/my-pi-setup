@@ -129,7 +129,7 @@ jobs:
           sfw bun install --frozen-lockfile --ignore-scripts
           cd extensions/sandbox
           sfw bun install --frozen-lockfile --ignore-scripts
-          sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@24.0.0
+          sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@33.0.0
           mkdir -p ../../node_modules/@gotgenes
           ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
           ln -s "$GITHUB_WORKSPACE/projects/pi-integrations/pi-fancy-footer" ../../node_modules/pi-fancy-footer
