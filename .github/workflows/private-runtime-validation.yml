@@ -77,6 +77,12 @@ jobs:
           set -euo pipefail
           cd projects/pi-core
           sfw npm ci
+          model_data_root=$(mktemp -d "${RUNNER_TEMP}/pi-ai-model-data.XXXXXX")
+          sfw npm pack @earendil-works/pi-ai@0.85.0 --pack-destination "$model_data_root" --ignore-scripts
+          echo "46188bdacb555a07466a0111f3963f20932a16199e4d6cfb8d44a7fe5fc6e342  $model_data_root/earendil-works-pi-ai-0.85.0.tgz" | sha256sum -c -
+          mkdir -p packages/ai/src/providers
+          tar -xzf "$model_data_root/earendil-works-pi-ai-0.85.0.tgz" \
+            -C packages/ai/src/providers --strip-components=3 package/dist/providers/data
           npm run build:offline
           cd ../pi-integrations/pi-test-harness
           sfw npm ci
