@@ -21,8 +21,8 @@ import {
     Text,
 } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { createWidget } from "./_shared/fancy-footer.js";
-import { createUiColors } from "./_shared/ui/ui-colors.js";
+import { createWidget } from "../_shared/fancy-footer.js";
+import { createUiColors } from "../_shared/ui/ui-colors.js";
 
 export type LoopMode = "tests" | "custom" | "self";
 

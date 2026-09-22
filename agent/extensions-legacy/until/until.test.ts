@@ -57,10 +57,10 @@ mock.module("@sinclair/typebox", () => ({
 }));
 
 let untilFactory: any;
-let buildStatusText: typeof import("../until.ts")["buildStatusText"];
-let loopWidgetId: typeof import("../until.ts")["LOOP_WIDGET_ID"];
+let buildStatusText: typeof import("./index.ts")["buildStatusText"];
+let loopWidgetId: typeof import("./index.ts")["LOOP_WIDGET_ID"];
 beforeAll(async () => {
-  const untilModule = await import("../until.ts");
+  const untilModule = await import("./index.ts");
   untilFactory = untilModule.default;
   buildStatusText = untilModule.buildStatusText;
   loopWidgetId = untilModule.LOOP_WIDGET_ID;
