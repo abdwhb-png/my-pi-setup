@@ -117,7 +117,11 @@ export async function hostToolReadClosure(
         stdout: "pipe",
         stderr: "pipe",
     });
-    if (ldd.exitCode !== 0) {
+    const lddOutput = `${ldd.stdout.toString()}\n${ldd.stderr.toString()}`;
+    if (
+        ldd.exitCode !== 0 &&
+        !/not a dynamic executable|statically linked/i.test(lddOutput)
+    ) {
         throw new Error(
             `Could not inspect host test tool ${executable}: ${ldd.stderr.toString()}`,
         );

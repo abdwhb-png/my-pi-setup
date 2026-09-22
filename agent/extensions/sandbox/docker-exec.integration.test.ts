@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createServer } from "node:net";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Socket } from "node:net";
 import { DOCKER_ACCESS_PROFILES } from "./docker-presentation.ts";
@@ -10,6 +10,7 @@ import { validatePiSandboxConfig } from "./runtime/policies.ts";
 import { createBashProcessSupervisor } from "../_shared/command-execution/exec.ts";
 import { createSandboxedBashOps } from "./index.ts";
 import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./runtime/private-temp.ts";
+import { hostToolReadClosure } from "./runtime/integration-fixtures.ts";
 
 test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINARY || !process.env.PI_SANDBOX_ZEROBOX_SHA256)("real Docker and Compose clients enforce Administration, inspection, and break-glass", async () => {
     const binaryPath = process.env.PI_SANDBOX_ZEROBOX_BINARY;
@@ -18,10 +19,14 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
     const root = await mkdtemp("/var/tmp/pi-docker-exec-");
     const socketRoot = await mkdtemp("/var/tmp/d-");
     const leaseRoot = await mkdtemp("/var/tmp/z-");
-    const cliConfig = { filesystem: { allowRead: [".",
-        await realpath("/usr/bin/docker"),
-        await realpath("/usr/local/lib/docker/cli-plugins/docker-compose"),
-    ] } };
+    const cliRead = [
+        ...(await hostToolReadClosure("/usr/bin/docker")),
+        ...(await hostToolReadClosure("/usr/local/lib/docker/cli-plugins/docker-compose")),
+    ];
+    const cliConfig = {
+        filesystem: { allowRead: [".", ...new Set(cliRead)] },
+        environment: { path: ["/usr/bin"] },
+    };
     const serviceOptions = {
         backend: createZeroboxBackend({ binaryPath, expectedProvenance: { version: "0.3.3-fork.17", binarySha256 }, probeRoot: join(socketRoot, "probe") }),
         createLease: () => createPrivateTempLease({ rootDir: leaseRoot }),

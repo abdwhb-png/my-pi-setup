@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { createBashProcessSupervisor } from "../_shared/command-execution/exec.ts";
@@ -13,6 +13,7 @@ import {
     recoverStalePrivateTempLeases,
 } from "./runtime/private-temp.ts";
 import { createZeroboxBackend } from "./runtime/zerobox-backend.ts";
+import { hostToolReadClosure } from "./runtime/integration-fixtures.ts";
 
 const CANDIDATE_BINARY_ENV = "PI_SANDBOX_ZEROBOX_BINARY";
 const CANDIDATE_SHA256_ENV = "PI_SANDBOX_ZEROBOX_SHA256";
@@ -23,7 +24,7 @@ test.skipIf(
     const root = await mkdtemp(join(import.meta.dir, ".docker-policy-config-"));
     const leaseRoot = await mkdtemp("/tmp/pi-zbx-");
     const socketRoot = await mkdtemp("/tmp/pi-docker-");
-    const dockerClient = await realpath("/usr/bin/docker");
+    const dockerRead = await hostToolReadClosure("/usr/bin/docker");
     const agentDir = join(root, "agent");
     const cwd = join(root, "project");
     const socket = join(socketRoot, "engine.sock");
@@ -80,7 +81,8 @@ test.skipIf(
     const global = (allowed: boolean) => ({
         version: 2,
         machineId: localMachineId(),
-        filesystem: { allowRead: [".", dockerClient] },
+        filesystem: { allowRead: [".", ...dockerRead] },
+        environment: { path: ["/usr/bin"] },
         docker: {
             allowed,
             mode: "targeted",
@@ -204,53 +206,69 @@ test.skipIf(
                 "});",
             ].join("\n"),
         );
-        let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
         try {
-            session = await createTestSession({
-                cwd,
-                propagateErrors: false,
-                extensions: [
-                    sandboxEntrypoint,
-                    resolve(import.meta.dir, "../bash-execution/index.ts"),
-                ],
-            });
             const runPiDocker = async (label: string) => {
                 const requestsBefore = requests.length;
-                await session!.run(
-                    when(label, [
-                        calls("safe_bash", { command: dockerCommand }),
-                        says(label),
-                    ]),
-                );
-                return {
-                    requestsBefore,
-                    result: session!.events.toolResultsFor("safe_bash").at(-1),
-                };
+                const session = await createTestSession({
+                    cwd,
+                    propagateErrors: false,
+                    extensions: [
+                        sandboxEntrypoint,
+                        resolve(import.meta.dir, "../bash-execution/index.ts"),
+                    ],
+                });
+                try {
+                    await session.run(
+                        when(label, [
+                            calls("safe_bash", { command: dockerCommand }),
+                            says(label),
+                        ]),
+                    );
+                    return {
+                        requestsBefore,
+                        result: session.events.toolResultsFor("safe_bash").at(-1),
+                    };
+                } finally {
+                    await session.session.extensionRunner?.emit({
+                        type: "session_shutdown",
+                        reason: "quit",
+                    });
+                    session.dispose();
+                }
             };
 
             const globallyBlockedPi = await runPiDocker("Global Docker is disabled");
             expect(await readFile(leaseCreatedPath, "utf8")).toBe("created");
             expect(await readFile(leaseRecoveredPath, "utf8")).toBe("recovered");
-            expect(globallyBlockedPi.result?.isError).toBe(true);
+            expect(globallyBlockedPi.result?.details).toMatchObject({
+                execution: { outcome: "failed", exitCode: expect.any(Number) },
+            });
             expect(globallyBlockedPi.result?.text).not.toContain("fixture");
             expect(requests).toHaveLength(globallyBlockedPi.requestsBefore);
 
             await writeFile(globalPath, JSON.stringify(global(true)), { mode: 0o600 });
             await rm(projectPath);
             const absentProjectPi = await runPiDocker("Project Docker is absent");
-            expect(absentProjectPi.result?.isError).toBe(true);
+            expect(absentProjectPi.result?.details).toMatchObject({
+                execution: { outcome: "failed", exitCode: expect.any(Number) },
+            });
             expect(absentProjectPi.result?.text).not.toContain("fixture");
             expect(requests).toHaveLength(absentProjectPi.requestsBefore);
 
             await writeFile(projectPath, JSON.stringify(project(true)), { mode: 0o600 });
             const admittedPi = await runPiDocker("Project Docker is activated");
             expect(admittedPi.result?.isError).toBe(false);
+            expect(admittedPi.result?.details).toMatchObject({
+                execution: { outcome: "succeeded", exitCode: 0 },
+            });
             expect(admittedPi.result?.text).toContain("fixture");
             expect(requests.length).toBeGreaterThan(admittedPi.requestsBefore);
 
             await writeFile(globalPath, JSON.stringify(global(false)), { mode: 0o600 });
             const globallyRevokedPi = await runPiDocker("Global Docker is revoked");
-            expect(globallyRevokedPi.result?.isError).toBe(true);
+            expect(globallyRevokedPi.result?.details).toMatchObject({
+                execution: { outcome: "failed", exitCode: expect.any(Number) },
+            });
             expect(globallyRevokedPi.result?.text).not.toContain("fixture");
             expect(requests).toHaveLength(globallyRevokedPi.requestsBefore);
 
@@ -258,20 +276,20 @@ test.skipIf(
             await writeFile(projectPath, JSON.stringify(project(true)), { mode: 0o600 });
             const readmittedPi = await runPiDocker("Project Docker is reactivated");
             expect(readmittedPi.result?.isError).toBe(false);
+            expect(readmittedPi.result?.details).toMatchObject({
+                execution: { outcome: "succeeded", exitCode: 0 },
+            });
             expect(readmittedPi.result?.text).toContain("fixture");
             expect(requests.length).toBeGreaterThan(readmittedPi.requestsBefore);
 
             await writeFile(projectPath, JSON.stringify(project(false)), { mode: 0o600 });
             const projectRevokedPi = await runPiDocker("Project Docker is revoked");
-            expect(projectRevokedPi.result?.isError).toBe(true);
+            expect(projectRevokedPi.result?.details).toMatchObject({
+                execution: { outcome: "failed", exitCode: expect.any(Number) },
+            });
             expect(projectRevokedPi.result?.text).not.toContain("fixture");
             expect(requests).toHaveLength(projectRevokedPi.requestsBefore);
         } finally {
-            await session?.session.extensionRunner?.emit({
-                type: "session_shutdown",
-                reason: "quit",
-            });
-            session?.dispose();
             if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
             else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
@@ -282,4 +300,4 @@ test.skipIf(
         await rm(leaseRoot, { recursive: true, force: true });
         await rm(socketRoot, { recursive: true, force: true });
     }
-}, 60_000);
+}, 120_000);

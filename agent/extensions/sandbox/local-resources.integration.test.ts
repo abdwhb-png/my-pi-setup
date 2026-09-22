@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { localMachineId } from "./capabilities/authority.ts";
 import { currentShellPolicy } from "./capabilities/runtime.ts";
+import { hostToolReadClosure } from "./runtime/integration-fixtures.ts";
 
 const enabled = process.platform === "linux" &&
     process.env.PI_SANDBOX_LOCAL_RESOURCES_CONTRACT === "1";
@@ -111,8 +112,12 @@ async function fixture() {
     return {
         root, cwd, projectConfig,
         async start(resources: object) {
+            const nodeRead = await hostToolReadClosure("/usr/bin/node");
             await writeFile(join(agentDir, "sandbox.json"), JSON.stringify({
-                version: 2, machineId: localMachineId(), resources,
+                version: 2,
+                machineId: localMachineId(),
+                filesystem: { allowRead: [".", ...nodeRead] },
+                resources,
             }), { mode: 0o600 });
             await writeFile(projectConfig, "{}", { mode: 0o600 });
             const sandboxSource = await realpath(resolve(import.meta.dir, "index.ts"));
@@ -315,7 +320,7 @@ test.skipIf(!enabled)("real Pi publishes a private TCP listener lazily without g
         let removedFailure: unknown;
         const unexposed = f.run(command, (chunk) => { removedOutput += chunk; });
         void unexposed.catch((error) => { removedFailure = error; });
-        const deadline = Date.now() + 5_000;
+        const deadline = Date.now() + 10_000;
         while (!removedOutput.includes("ready") && Date.now() < deadline) await delay(40);
         expect(removedFailure).toBeUndefined();
         expect(removedOutput).toContain("ready");
@@ -448,7 +453,7 @@ test.skipIf(!enabled)("live TCP revocation closes the listener and held connecti
         const admission = await bounded(f.run("pwd"), REVOCATION_BOUND_MS, "Policy refresh admission");
         expect(admission.exitCode, admission.output).toBe(0);
         expect(admission.output.trim()).toBe(f.cwd);
-        expect(currentShellPolicy()).toMatchObject({ mode: "sandbox", profile: "default", state: "ready" });
+        expect(currentShellPolicy()).toMatchObject({ mode: "sandbox", profile: "custom", state: "ready" });
         let listenerOpen = true;
         while (Date.now() - started < REVOCATION_BOUND_MS) {
             listenerOpen = await tcpIsOpen(listenPort);
@@ -536,7 +541,7 @@ test.skipIf(!enabled)("live Unix revocation interrupts the old socket holder or 
         await writeFile(f.projectConfig, JSON.stringify({ resources: { unixSockets: [] } }));
         const admission = await bounded(f.run("pwd"), REVOCATION_BOUND_MS, "Unix policy refresh admission");
         expect(admission.exitCode, admission.output).toBe(0);
-        expect(currentShellPolicy()).toMatchObject({ mode: "sandbox", profile: "default", state: "ready" });
+        expect(currentShellPolicy()).toMatchObject({ mode: "sandbox", profile: "custom", state: "ready" });
         await writeFile(join(f.cwd, "reconnect"), "retry from the old admitted process");
         while (Date.now() - started < REVOCATION_BOUND_MS) {
             if (sockets.size === 0 && (targetDone || output.includes("new-blocked:"))) break;

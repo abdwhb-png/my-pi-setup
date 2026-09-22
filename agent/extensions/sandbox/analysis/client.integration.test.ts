@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
 import { createPrivateTempLease, recoverStalePrivateTempLeases } from "../runtime/private-temp.ts";
 import { createSandboxService, type SandboxService } from "../runtime/service.ts";
 import { createZeroboxBackend } from "../runtime/zerobox-backend.ts";
 import { executeAnalysisHostRequest, runAnalysisChild } from "./host.ts";
+import { PRIVATE_ANALYSIS_ROOT } from "../runtime/shell-baseline.ts";
 
 import {
     createAnalysisSandboxService,
@@ -43,10 +44,10 @@ async function createIsolatedAnalysisService(): Promise<AnalysisSandboxService> 
         service: runtime,
         runChild: runAnalysisChild,
         now: () => performance.now(),
-        bunPath: await realpath(process.execPath),
-        nodePath: await realpath("/usr/bin/node"),
-        prlimitPath: await realpath("/usr/bin/prlimit"),
-        sandboxRoot: await realpath(resolve(import.meta.dir, "..")),
+        bunPath: join(PRIVATE_ANALYSIS_ROOT, "bin/bun"),
+        nodePath: join(PRIVATE_ANALYSIS_ROOT, "bin/node"),
+        prlimitPath: join(PRIVATE_ANALYSIS_ROOT, "bin/prlimit"),
+        sandboxRoot: PRIVATE_ANALYSIS_ROOT,
     };
     // Exercise the real client and engines with isolated host dependencies.
     // The host-process IPC transport is outside this fixture's coverage.

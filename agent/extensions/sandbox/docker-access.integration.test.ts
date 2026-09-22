@@ -7,6 +7,7 @@ import { validatePiSandboxConfig, type PiSandboxConfig } from "./runtime/policie
 import { createSandboxService } from "./runtime/service.ts";
 import { createZeroboxBackend } from "./runtime/zerobox-backend.ts";
 import { createPrivateTempLease, recoverStalePrivateTempLeases } from "./runtime/private-temp.ts";
+import { hostToolReadClosure } from "./runtime/integration-fixtures.ts";
 
 test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINARY || !process.env.PI_SANDBOX_ZEROBOX_SHA256)("the real broker respects explicit CLI reads and excludes a bind-mounted target until its explicit exception is enabled", async () => {
     const binaryPath = process.env.PI_SANDBOX_ZEROBOX_BINARY;
@@ -15,6 +16,7 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
     const root = await mkdtemp("/var/tmp/d-");
     const leaseRoot = await mkdtemp("/var/tmp/z-");
     const dockerClient = await realpath("/usr/bin/docker");
+    const dockerRead = await hostToolReadClosure("/usr/bin/docker");
     const socket = join(root, "engine.sock");
     const id = "a".repeat(64);
     const methods: string[] = [];
@@ -50,7 +52,7 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
     try {
         for (const allowUnsafeTarget of [false, true]) {
             const config = validatePiSandboxConfig({
-                filesystem: { allowRead: [".", dockerClient], denyWrite: [".env"] },
+                filesystem: { allowRead: [".", ...dockerRead], denyWrite: [".env"] },
                 environment: { variables: { DIAGNOSTIC_FIXTURE: "retained" }, path: ["/usr/bin"] },
                 resources: { unixSockets: [socket], tcpPublications: [{ transport: "tcp", scope: "host", listen: "127.0.0.1:34567", target: "127.0.0.1:34568" }] },
             }, { mode: "targeted", endpoint: `unix://${socket}`, targets: [{ selector: { type: "compose-service", project: "fixture", service: "api" }, operations: ["logs"], allowUnsafeTarget }] });

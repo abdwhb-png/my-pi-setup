@@ -185,18 +185,14 @@ jobs:
             --input-root "$RUNNER_TEMP/private-runtime" \
             --version "native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
       - name: Run every explicit Zerobox candidate contract on the native kernel
+        working-directory: .pi/agent
         env:
           PI_SANDBOX_ZEROBOX_SOURCE_ROOT: ${{ github.workspace }}/projects/zerobox
         run: |
-          native_agent_root="/var/tmp/pi-native-agent-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          mkdir -p "$native_agent_root"
-          sudo mount --bind "$GITHUB_WORKSPACE/.pi/agent" "$native_agent_root"
-          echo "NATIVE_AGENT_ROOT=$native_agent_root" >> "$GITHUB_ENV"
-          cd "$native_agent_root"
           bun run test:sandbox:zerobox-candidate
       - name: Verify atomic installation through a fresh Pi session
+        working-directory: .pi/agent
         run: |
-          cd "$NATIVE_AGENT_ROOT"
           bun extensions/sandbox/runtime/distribution/stage-release.ts \
             --candidate-root "$PI_SANDBOX_RUNTIME_BUNDLE" --runtime-base "$HOME/.pi/runtimes" \
             --managed-binary "$HOME/.pi/bin/zerobox" \
