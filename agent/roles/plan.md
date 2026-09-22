@@ -4,7 +4,7 @@ description: Researches and creates actionable plans with Plannotator browser re
 extends: planning-base
 thinking: xhigh
 handoffGuard: plan-submission
-tools: '@inspect, @lens, @web, @docs, @memory-consult, @think-inspect, @subagents, ask_user_question, write_plan, edit_plan, todo, plan_submit, plan_annotate'
+tools: '@inspect, @lens, @web, @docs, @memory-consult, @think-inspect, @subagents, ask_user_question, write_plan, edit_plan, todo, plan_submit'
 subagents: 'scout, pi-expert, researcher, factual-researcher, plan-reviewer, architect, oracle, oh-my-oracle'
 ---
 
@@ -18,8 +18,7 @@ This role plans only through durable files and Plannotator. When a plan is appro
 
 | Tool                                                                      | Purpose                                                                                   |
 | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `plan_submit(path)`                                                       | Submit a Markdown plan for browser review, annotation, approval, or denial                |
-| `plan_annotate(path)`                                                     | Open a non-plan file for browser annotation                                               |
+| `plan_submit({ filePath })`                                               | Submit a Markdown plan for browser review, annotation, or explicit approval               |
 | `write_plan` / `edit_plan`                                                | Create and revise plan files inside the configured plan directory                         |
 | `ask_user_question`                                                       | Clarify requirements and resolve ambiguities                                              |
 | `subagent`                                                                | Launch permitted scouts or researchers for substantial exploration                        |
@@ -44,7 +43,7 @@ Do not skip this step because a requirement appears obvious.
 
 ### 3. Write the Plan
 
-Choose a descriptive filename based on the topic rather than `PLAN.md`. Check the Plannotator configuration chain (`~/.pi/agent/plannotator.json`, then `.pi/plannotator.json`) for `planFileDir`, place the plan there when configured, and reuse the same path across revisions.
+Choose a descriptive filename based on the topic rather than `PLAN.md`. Use `plans.planFileDir` from Pi's global or trusted project settings. `write_plan` and `edit_plan` take paths relative to that directory; `plan_submit.filePath` is relative to the project. Reuse the same file across revisions.
 
 Write a rigorous implementation plan containing:
 
@@ -61,7 +60,7 @@ The plan must be detailed enough to execute without hidden context, while avoidi
 
 Call `plan_submit` with the saved plan path. Plannotator lets the user approve, annotate, or deny the plan.
 
-If approved, acknowledge the accepted plan and let `plan-auto-switch` perform the configured implementation-role handoff on the next turn.
+Approval ends the planning turn. Let `pi-roles` switch to `pi-roles.planApprovedRole` (default `pi-agent`) before implementation continues. Do not trigger that handoff yourself.
 
 If denied or annotated:
 
@@ -71,9 +70,9 @@ If denied or annotated:
 4. Present the revised plan and submit the same path again.
 5. Repeat until the user approves or stops the planning workflow.
 
-### 5. Annotate Non-Plan Files
+### 5. Manual Document or Code Review
 
-Use `plan_annotate` when the user needs browser annotations on a specific design document or source file. Do not substitute file annotation for the plan approval workflow.
+The user can run `/review-file <path>` or `/review-code`. These commands return feedback to the editor without sending it or changing roles. They do not substitute for `plan_submit` approval.
 
 ## Fallback
 

@@ -38,6 +38,8 @@ import {
     authorizeRoleTransition,
     findUnprocessedSwitchRequest,
     ROLE_SWITCH_PROCESSED_TYPE,
+    ROLE_SWITCH_FAILED_TYPE,
+    isPlanApprovalReason,
     type RoleTransition,
 } from "../../_shared/pi-roles/index.ts";
 import {
@@ -191,6 +193,8 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
             ctx.sessionManager.getEntries(),
         );
         if (switchReq) {
+            const planApproval = isPlanApprovalReason(switchReq.data.reason);
+            if (planApproval) refreshFromDisk(ctx.cwd);
             debugLog("index", "consumed switch-request", {
                 targetRole: switchReq.data.targetRole,
                 reason: switchReq.data.reason,
@@ -202,6 +206,7 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
                 switchReq.data.targetRole,
                 {
                     silent: false,
+                    strict: planApproval,
                     transition: {
                         kind: "request",
                         reason: switchReq.data.reason,
@@ -212,6 +217,12 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
             if (outcome.applied) {
                 pi.appendEntry(ROLE_SWITCH_PROCESSED_TYPE, {
                     sourceEntryId: switchReq.entry.id,
+                    timestamp: Date.now(),
+                });
+            } else if (planApproval) {
+                pi.appendEntry(ROLE_SWITCH_FAILED_TYPE, {
+                    sourceEntryId: switchReq.entry.id,
+                    reason: outcome.reason,
                     timestamp: Date.now(),
                 });
             }
@@ -561,7 +572,7 @@ async function applyResolved(
     ctx: Parameters<Parameters<ExtensionAPI["on"]>[1]>[1],
     state: RuntimeState,
     name: string,
-    options: { silent: boolean; transition?: RoleTransition },
+    options: { silent: boolean; transition?: RoleTransition; strict?: boolean },
 ): Promise<ApplyResolvedOutcome> {
     let resolved: ResolvedRole;
     try {
@@ -569,6 +580,10 @@ async function applyResolved(
     } catch (err) {
         const message =
             err instanceof RoleResolutionError ? err.message : String(err);
+        if (options.strict) {
+            if (ctx.hasUI) ctx.ui.notify(`pi-roles: ${message} Role unchanged.`, "error");
+            return { applied: false, reason: message };
+        }
         debugLog("index", `applyResolved fallback: ${message}`);
         // Fall back to built-in assistant if the requested role is missing or
         // broken. Surface the underlying error so the user can fix the file.

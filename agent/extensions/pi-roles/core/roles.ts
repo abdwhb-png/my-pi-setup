@@ -14,7 +14,7 @@
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Value } from "typebox/value";
@@ -92,7 +92,7 @@ function findProjectRolesDir(start: string): string | null {
 }
 
 function userRolesDir(): string {
-    return join(homedir(), ".pi", "agent", "roles");
+    return join(getAgentDir(), "roles");
 }
 
 /**

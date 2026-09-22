@@ -6,12 +6,12 @@ import type {
     ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import {
-    loadPlannotatorConfig,
+    loadPlansConfig,
     resolvePlanFileDir,
-} from "@plannotator/pi-extension/config.js";
+} from "../../_shared/plans-config.ts";
+import { getToolPolicy } from "../../_shared/tool-policy/index.ts";
 import {
-    getActiveRole,
-    readFrontmatter,
+    requiresPlanSubmission as roleRequiresPlanSubmission,
     registerRoleTransitionPolicy,
 } from "../../_shared/pi-roles/index.ts";
 import {
@@ -50,18 +50,12 @@ function asLifecycleEntries(entries: readonly unknown[]): LifecycleEntry[] {
     );
 }
 
-function getPlanDir(cwd: string): string | undefined {
-    const config = loadPlannotatorConfig(cwd);
-    return resolvePlanFileDir(config.config);
+function getPlanDir(ctx: ExtensionContext): string | undefined {
+    return resolvePlanFileDir(loadPlansConfig(ctx.cwd, ctx.isProjectTrusted()));
 }
 
-function requiresPlanSubmission(ctx: ExtensionContext): boolean {
-    const active = getActiveRole(ctx.sessionManager.getEntries());
-    if (!active) return false;
-    const frontmatter = readFrontmatter<{ handoffGuard?: unknown }>(
-        active.path,
-    );
-    return frontmatter?.handoffGuard === HANDOFF_GUARD;
+function requiresPlanSubmission(): boolean {
+    return roleRequiresPlanSubmission(getToolPolicy().getRole());
 }
 
 function readString(
@@ -105,7 +99,7 @@ function appendRevision(
     ctx: ExtensionContext,
 ): void {
     const rawPath = readString(event.input, "path");
-    const planDir = getPlanDir(ctx.cwd);
+    const planDir = getPlanDir(ctx);
     if (!rawPath || !planDir) return;
     const path = normalizeWrittenPlanPath(rawPath, ctx.cwd, planDir);
     if (!path) return;
@@ -129,7 +123,7 @@ function appendSubmission(
 ): void {
     const rawPath = readString(event.input, "filePath");
     const approved = readApproved(event.details);
-    const planDir = getPlanDir(ctx.cwd);
+    const planDir = getPlanDir(ctx);
     if (!rawPath || approved === null || !planDir) return;
     const path = normalizeSubmittedPlanPath(rawPath, ctx.cwd, planDir);
     if (!path) return;
@@ -193,7 +187,7 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
 
     pi.on("tool_result", (event: ToolResultEvent, ctx: ExtensionContext) => {
         currentCwd = ctx.cwd;
-        if (event.isError || !requiresPlanSubmission(ctx)) return;
+        if (event.isError || !requiresPlanSubmission()) return;
         if (event.toolName === "write_plan" || event.toolName === "edit_plan") {
             appendRevision(pi, event, ctx);
         }
@@ -207,11 +201,11 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
             "Abandon one tracked plan revision; an approved revision is still required before leaving",
         handler: async (args, ctx: ExtensionCommandContext) => {
             currentCwd = ctx.cwd;
-            if (!requiresPlanSubmission(ctx)) {
+            if (!requiresPlanSubmission()) {
                 ctx.ui.notify("No plan-submission guard is active.", "info");
                 return;
             }
-            const planDir = getPlanDir(ctx.cwd);
+            const planDir = getPlanDir(ctx);
             const path = planDir
                 ? normalizeSubmittedPlanPath(args, ctx.cwd, planDir)
                 : null;

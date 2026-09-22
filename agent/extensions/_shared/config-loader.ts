@@ -59,6 +59,10 @@ export interface LoadConfigOptions<T> {
      * Default: getAgentDir() from @earendil-works/pi-coding-agent.
      */
     agentDir?: string;
+    /** Ignore all project-local configuration when the project is untrusted. */
+    projectTrusted?: boolean;
+    /** Report malformed configuration instead of silently falling back. */
+    strict?: boolean;
     /**
      * Inject a pre-built SettingsManager (for testing).
      * Default: SettingsManager.create(cwd, agentDir).
@@ -75,12 +79,17 @@ function defaultMerge<T>(base: T, overlay: Partial<T>): T {
 function readJsonFile<T>(
     path: string,
     normalize: (raw: unknown) => Partial<T>,
+    strict = false,
 ): Partial<T> {
     if (!existsSync(path)) return {};
     try {
         const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
         return normalize(raw);
-    } catch {
+    } catch (error) {
+        if (strict)
+            throw new Error(`Invalid configuration ${path}: ${String(error)}`, {
+                cause: error,
+            });
         return {};
     }
 }
@@ -96,7 +105,29 @@ function loadLayersFromSettings<T>(
     settingsKey: string,
     normalize: (raw: unknown) => Partial<T>,
     injected?: SettingsManager,
+    projectTrusted = true,
+    strict = false,
 ): Array<Partial<T>> {
+    if (strict && !injected) {
+        const fromSettings = (raw: unknown) =>
+            normalize(
+                raw && typeof raw === "object" && settingsKey in raw
+                    ? (raw as Record<string, unknown>)[settingsKey]
+                    : undefined,
+            );
+        return [
+            readJsonFile(join(agentDir, "settings.json"), fromSettings, true),
+            ...(projectTrusted
+                ? [
+                      readJsonFile(
+                          join(cwd, ".pi", "settings.json"),
+                          fromSettings,
+                          true,
+                      ),
+                  ]
+                : []),
+        ];
+    }
     try {
         const manager = injected ?? SettingsManager.create(cwd, agentDir);
         const globalRaw = (
@@ -105,8 +136,12 @@ function loadLayersFromSettings<T>(
         const projectRaw = (
             manager.getProjectSettings() as Record<string, unknown>
         )[settingsKey];
-        return [normalize(globalRaw), normalize(projectRaw)];
-    } catch {
+        return [
+            normalize(globalRaw),
+            ...(projectTrusted ? [normalize(projectRaw)] : []),
+        ];
+    } catch (error) {
+        if (strict) throw error;
         return [];
     }
 }
@@ -122,13 +157,14 @@ function loadLayersFromLegacy<T>(
     filename: string,
     projectLocal: boolean,
     normalize: (raw: unknown) => Partial<T>,
+    strict = false,
 ): Array<Partial<T>> {
     const globalPath = join(agentDir, filename);
-    const global = readJsonFile(globalPath, normalize);
+    const global = readJsonFile(globalPath, normalize, strict);
     if (!projectLocal) return [global];
 
     const projectPath = join(cwd, ".pi", filename);
-    const project = readJsonFile(projectPath, normalize);
+    const project = readJsonFile(projectPath, normalize, strict);
     return [global, project];
 }
 
@@ -186,13 +222,16 @@ export function loadExtensionConfig<T>(
                 src.settingsKey!,
                 normalize,
                 _settingsManager,
+                options.projectTrusted,
+                options.strict,
             ).filter(isNonEmpty);
             const legacyLayers = loadLayersFromLegacy(
                 agentDir,
                 cwd,
                 src.legacyFilename!,
-                src.projectLocal ?? true,
+                (src.projectLocal ?? true) && (options.projectTrusted ?? true),
                 normalize,
+                options.strict,
             ).filter(isNonEmpty);
 
             // Winner loads last so it overrides per-key. Inner order
@@ -210,6 +249,8 @@ export function loadExtensionConfig<T>(
                     src.settingsKey,
                     normalize,
                     _settingsManager,
+                    options.projectTrusted,
+                    options.strict,
                 );
                 layers = settingsLayers.filter(isNonEmpty);
             }
@@ -220,8 +261,10 @@ export function loadExtensionConfig<T>(
                     agentDir,
                     cwd,
                     src.legacyFilename,
-                    src.projectLocal ?? true,
+                    (src.projectLocal ?? true) &&
+                        (options.projectTrusted ?? true),
                     normalize,
+                    options.strict,
                 );
                 layers = legacyLayers.filter(isNonEmpty);
             }

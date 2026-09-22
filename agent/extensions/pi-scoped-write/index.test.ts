@@ -4,10 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-mock.module('@plannotator/pi-extension/config.js', () => ({
-    loadPlannotatorConfig: () => ({ config: {} }),
-    resolvePlanFileDir: () => 'docs/plans',
-}));
 
 const temporaryDirectories: string[] = [];
 

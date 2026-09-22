@@ -106,6 +106,7 @@ const ROLE_TOOL_POLICY_EVENT = "pi-roles:tool-policy";
 interface RoleToolPolicy {
     version: 1;
     roleName: string;
+    handoffGuard?: string;
     mode: "all" | "set";
     toolNames: string[];
 }
@@ -128,12 +129,20 @@ function parseRoleToolPolicy(
         ? {
               version: 1,
               roleName: candidate.roleName,
+              handoffGuard:
+                  typeof candidate.handoffGuard === "string"
+                      ? candidate.handoffGuard
+                      : undefined,
               mode: "all",
               toolNames: [],
           }
         : {
               version: 1,
               roleName: candidate.roleName,
+              handoffGuard:
+                  typeof candidate.handoffGuard === "string"
+                      ? candidate.handoffGuard
+                      : undefined,
               mode: "set",
               toolNames: [...candidate.toolNames],
           };

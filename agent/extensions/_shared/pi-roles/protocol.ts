@@ -25,6 +25,13 @@ export const ROLE_SWITCH_REQUEST_ENTRY_TYPE =
 
 /** Custom entry type pi-roles writes after consuming a request. */
 export const ROLE_SWITCH_PROCESSED_TYPE = "pi-roles:switch-processed" as const;
+export const ROLE_SWITCH_FAILED_TYPE = "pi-roles:switch-failed" as const;
+
+export function isPlanApprovalReason(reason: string | undefined): boolean {
+    return (
+        reason === "plans:approved" || reason === "plannotator:plan-approved"
+    );
+}
 
 /** Runtime event carrying the active role's effective tool policy. */
 export const ROLE_TOOL_POLICY_EVENT = "pi-roles:tool-policy" as const;
@@ -37,15 +44,23 @@ export type RoleToolPolicyPayload =
     | {
           version: 1;
           roleName: string;
+          handoffGuard?: string;
           mode: "all";
           toolNames: [];
       }
     | {
           version: 1;
           roleName: string;
+          handoffGuard?: string;
           mode: "set";
           toolNames: string[];
       };
+
+export function requiresPlanSubmission(
+    role: { handoffGuard?: string } | null | undefined,
+): boolean {
+    return role?.handoffGuard === "plan-submission";
+}
 
 // ── Payload schema ──
 
@@ -130,7 +145,8 @@ export function findUnprocessedSwitchRequest(
                 (p) =>
                     p &&
                     p.type === "custom" &&
-                    p.customType === ROLE_SWITCH_PROCESSED_TYPE &&
+                    (p.customType === ROLE_SWITCH_PROCESSED_TYPE ||
+                        p.customType === ROLE_SWITCH_FAILED_TYPE) &&
                     (p.data as SwitchProcessedPayload | undefined)
                         ?.sourceEntryId === e.id,
             );

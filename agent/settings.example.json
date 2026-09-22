@@ -19,7 +19,6 @@
         "npm:pi-mcp-adapter",
         "npm:@juicesharp/rpiv-todo",
         "npm:pi-hermes-memory",
-        "~/projects/pi-integrations/plannotator/apps/pi-extension",
         "~/projects/pi-integrations/pi-fancy-footer",
         "npm:@gotgenes/pi-permission-system",
         "npm:@ogulcancelik/pi-herdr",
@@ -28,6 +27,9 @@
     "packageLifecycleTrust": {
         "confirm": false,
         "showStatus": true
+    },
+    "plans": {
+        "planFileDir": "pi-plans"
     },
     "aiProviders": {
         "providers": {
@@ -116,6 +118,7 @@
     "pi-roles": {
         "roleScope": "both",
         "defaultRole": "pi-agent",
+        "planApprovedRole": "pi-agent",
         "showStatus": false
     },
     "subagents": {

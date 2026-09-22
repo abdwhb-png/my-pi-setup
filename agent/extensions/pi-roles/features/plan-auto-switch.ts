@@ -8,9 +8,8 @@
  * to force an immediate new turn so pi-roles can consume the request
  * in its own `before_agent_start` handler.
  *
- * Uses the main plannotator's `plannotator-autoexecute-processed`
- * marker so the main plannotator's `agent_end` handler doesn't
- * double-fire.
+ * Writes local processed markers, while recognizing legacy Plannotator
+ * approvals and deduplication markers when old sessions are resumed.
  *
  * pi-roles remains the sole owner of `state.activeRole` and the
  * system prompt. This extension's only job is detecting the approval
@@ -24,33 +23,32 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
     findUnprocessedSwitchRequest,
-    getDefaultRole,
+    isPlanApprovalReason,
     writeRoleSwitchRequest,
 } from "../../_shared/pi-roles/index.ts";
+import { loadSettings } from "../core/settings.ts";
 import {
     createLatestIdleTaskScheduler,
     queueWhenIdle,
     type IdleTaskScheduler,
 } from "../../_shared/queue-when-idle.ts";
 
-/** Custom entry type emitted by plannotator-bridge on plan approval. */
-const PLAN_APPROVED_ENTRY_TYPE = "plannotator:plan-approved";
+/** Custom entry type emitted by the local plans extension. */
+const PLAN_APPROVED_ENTRY_TYPE = "plans:approved";
 
 /**
- * Processed marker used by this extension AND the main plannotator.
- * Using the same marker prevents both from firing on the same approval.
+ * Legacy fork marker, read only for backward-compatible deduplication.
  */
 export const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED =
     "plannotator-autoexecute-processed";
 
 /**
- * Legacy marker — kept exported for backward-compatible dedup in
- * `findUnprocessedPlanApproval`. New entries use the shared marker above.
+ * Local marker for handled approvals.
  */
 export const PROCESSED_MARKER_PREFIX = "plan-auto-switch:processed";
 
 const APPROVED_PLAN_CONTINUATION = "Continue with the approved plan.";
-const PLAN_APPROVED_SWITCH_REASON = "plannotator:plan-approved";
+const PLAN_APPROVED_SWITCH_REASON = "plans:approved";
 
 /**
  * Start a fresh top-level prompt after the current agent run becomes idle.
@@ -105,7 +103,8 @@ export function findUnprocessedPlanApproval(
         if (
             !e ||
             e.type !== "custom" ||
-            e.customType !== PLAN_APPROVED_ENTRY_TYPE
+            (e.customType !== PLAN_APPROVED_ENTRY_TYPE &&
+                e.customType !== "plannotator:plan-approved")
         )
             continue;
 
@@ -144,7 +143,7 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
         }
 
         const pending = findUnprocessedSwitchRequest(entries);
-        if (!pending || pending.data.reason !== PLAN_APPROVED_SWITCH_REASON) {
+        if (!pending || !isPlanApprovalReason(pending.data.reason)) {
             continuationScheduler.invalidate();
             return;
         }
@@ -163,7 +162,7 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
                     findUnprocessedSwitchRequest(latestEntries);
                 if (
                     latestPending?.entry.id !== requestEntryId ||
-                    latestPending.data.reason !== PLAN_APPROVED_SWITCH_REASON
+                    !isPlanApprovalReason(latestPending.data.reason)
                 ) {
                     return;
                 }
@@ -185,16 +184,31 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
         const approval = findUnprocessedPlanApproval(entries);
         if (!approval) return;
 
-        const targetRole = getDefaultRole();
+        let targetRole: string;
+        try {
+            targetRole =
+                loadSettings(ctx.cwd, ctx.isProjectTrusted())
+                    .planApprovedRole ?? "pi-agent";
+        } catch (error) {
+            pi.appendEntry(PROCESSED_MARKER_PREFIX, {
+                sourceEntryId: approval.entry.id,
+                error: String(error),
+                timestamp: Date.now(),
+            });
+            ctx.ui.notify(
+                `Cannot switch after plan approval: ${String(error)}`,
+                "error",
+            );
+            return;
+        }
         writeRoleSwitchRequest(pi, {
             targetRole,
             reason: PLAN_APPROVED_SWITCH_REASON,
             sourceEntryId: approval.entry.id,
         });
 
-        // Use the shared marker so the main plannotator's agent_end
-        // handler sees this as already processed.
-        pi.appendEntry(PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED, {
+        // Persist consumption before queuing the fresh implementation turn.
+        pi.appendEntry(PROCESSED_MARKER_PREFIX, {
             sourceEntryId: approval.entry.id,
             timestamp: Date.now(),
         });
@@ -207,4 +221,5 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
     pi.on("session_start", (_event, ctx) => {
         reconcileApprovedPlanSwitch(ctx);
     });
+    pi.on("session_shutdown", () => continuationScheduler.invalidate());
 }

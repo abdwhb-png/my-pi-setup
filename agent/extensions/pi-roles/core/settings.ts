@@ -13,7 +13,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { dirname, join, resolve } from "node:path";
 import { Value } from "typebox/value";
 import { debugLog } from "./debug.ts";
@@ -33,7 +33,7 @@ function findProjectSettingsFile(start: string): string | null {
 }
 
 function userSettingsFile(): string {
-    return join(homedir(), ".pi", "agent", "settings.json");
+    return join(getAgentDir(), "settings.json");
 }
 
 function readNamespace(path: string | null): Partial<PiRolesSettings> {
@@ -51,6 +51,15 @@ function readNamespace(path: string | null): Partial<PiRolesSettings> {
     if (!parsed || typeof parsed !== "object") return {};
     const raw = (parsed as Record<string, unknown>)[NAMESPACE];
     if (!raw || typeof raw !== "object") return {};
+    if (
+        "planApprovedRole" in raw &&
+        (typeof raw.planApprovedRole !== "string" ||
+            !raw.planApprovedRole.trim())
+    ) {
+        throw new Error(
+            "pi-roles.planApprovedRole must be a nonempty role name",
+        );
+    }
     // Validate but don't throw — coerce/discard unknown fields. Cast is safe
     // because additionalProperties: true on the schema, and Check confirmed
     // every present field matches.
@@ -62,8 +71,13 @@ function readNamespace(path: string | null): Partial<PiRolesSettings> {
  * Load and merge pi-roles settings. Project values take precedence; absent
  * fields fall back to the documented defaults at the call site.
  */
-export function loadSettings(cwd: string): PiRolesSettings {
+export function loadSettings(
+    cwd: string,
+    projectTrusted = true,
+): PiRolesSettings {
     const user = readNamespace(userSettingsFile());
-    const project = readNamespace(findProjectSettingsFile(cwd));
+    const project = projectTrusted
+        ? readNamespace(findProjectSettingsFile(cwd))
+        : {};
     return { ...user, ...project };
 }

@@ -22,7 +22,6 @@
         "tsup",
         "@juicesharp/rpiv-ask-user-question",
         "@juicesharp/rpiv-todo",
-        "@plannotator/pi-extension",
         "pi-hermes-memory",
         "pi-intercom",
         "pi-mcp-adapter",

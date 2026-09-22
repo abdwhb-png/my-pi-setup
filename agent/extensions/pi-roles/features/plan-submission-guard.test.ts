@@ -4,15 +4,18 @@ const registerRoleTransitionPolicy = mock();
 const getActiveRole = mock();
 const readFrontmatter = mock();
 
-mock.module("@plannotator/pi-extension/config.js", () => ({
-    loadPlannotatorConfig: () => ({ config: { planFileDir: "pi-plans" } }),
+mock.module("../../_shared/plans-config.ts", () => ({
+    loadPlansConfig: () => ({ planFileDir: "pi-plans" }),
     resolvePlanFileDir: () => "pi-plans",
 }));
+const realRoles = await import("../../_shared/pi-roles/index.ts");
 mock.module("../../_shared/pi-roles/index.ts", () => ({
+    ...realRoles,
     getActiveRole,
     readFrontmatter,
     registerRoleTransitionPolicy,
 }));
+mock.module("../../_shared/tool-policy/index.ts", () => ({ getToolPolicy: () => ({ getRole: readFrontmatter }) }));
 
 const {
     default: registerPlanSubmissionGuard,
@@ -40,6 +43,7 @@ function setup() {
     };
     const ctx = {
         cwd: "/workspace",
+        isProjectTrusted: () => true,
         hasUI: false,
         sessionManager: { getEntries: () => entries },
         ui: { notify: mock(), confirm: mock(() => true) },

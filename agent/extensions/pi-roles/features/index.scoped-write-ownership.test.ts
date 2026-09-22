@@ -7,10 +7,6 @@ const sessionPlanPersistenceGuard = mock();
 import { readFileSync } from 'node:fs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-mock.module('@plannotator/pi-extension/config.js', () => ({
-    loadPlannotatorConfig: () => ({ config: {} }),
-    resolvePlanFileDir: () => 'docs/plans',
-}));
 mock.module('./plan-auto-switch.ts', () => ({ default: () => undefined }));
 mock.module('./prompt-role-switch.ts', () => ({ default: () => undefined }));
 mock.module('./role-subagents.ts', () => ({ default: () => undefined }));

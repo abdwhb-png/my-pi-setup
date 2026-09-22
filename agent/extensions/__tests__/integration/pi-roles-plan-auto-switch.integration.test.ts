@@ -16,14 +16,13 @@ import {
     ROLE_SWITCH_PROCESSED_TYPE,
     ROLE_SWITCH_REQUEST_ENTRY_TYPE,
     ROLE_TOOL_POLICY_EVENT,
-    getDefaultRole,
     type RoleToolPolicyPayload,
 } from '../../_shared/pi-roles/index.ts';
 import { publicExtensionEntrypoints } from './public-extension-session.ts';
 
 // Pin Plannotator's external contract independently of the consumer under test.
 const PLAN_APPROVED_ENTRY_TYPE = 'plannotator:plan-approved';
-const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED = 'plannotator-autoexecute-processed';
+const PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED = 'plan-auto-switch:processed';
 const APPROVED_PLAN_CONTINUATION = 'Continue with the approved plan.';
 const APPROVE_PLAN_FIXTURE_TOOL = 'approve_plan_fixture';
 const COMPETING_MESSAGE_TYPE = 'plan-auto-switch:test-competing-message';
@@ -38,6 +37,7 @@ interface SessionEntry {
 
 const tempDirectories: string[] = [];
 const sessions: TestSession[] = [];
+const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 afterEach(async () => {
     for (const session of sessions.splice(0)) {
@@ -47,6 +47,8 @@ afterEach(async () => {
     for (const directory of tempDirectories.splice(0)) {
         rmSync(directory, { recursive: true, force: true });
     }
+    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
 });
 
 function approvalFixture(pi: ExtensionAPI): void {
@@ -146,6 +148,7 @@ function createFixtureProject(targetRole: string): string {
 
     const cwd = mkdtempSync(join(tmpdir(), 'plan-auto-switch-integration-'));
     tempDirectories.push(cwd);
+    process.env.PI_CODING_AGENT_DIR = cwd;
 
     const rolesDirectory = join(cwd, '.pi', 'roles');
     mkdirSync(rolesDirectory, { recursive: true });
@@ -159,6 +162,7 @@ function createFixtureProject(targetRole: string): string {
         JSON.stringify({
             'pi-roles': {
                 defaultRole: targetRole,
+                planApprovedRole: targetRole,
                 roleScope: 'project',
                 showWidget: false,
             },
@@ -191,7 +195,7 @@ async function waitForEntry(
 
 describe('plan-auto-switch real Pi lifecycle', () => {
     it('leaves plan after approval when Yeet is loaded', async () => {
-        const targetRole = getDefaultRole();
+        const targetRole = 'implement-fixture';
         const cwd = createFixtureProject(targetRole);
         const previousInitialRole = process.env.PI_ROLE;
         process.env.PI_ROLE = 'plan';
@@ -239,7 +243,7 @@ describe('plan-auto-switch real Pi lifecycle', () => {
         );
         expect(request.data).toMatchObject({
             targetRole,
-            reason: 'plannotator:plan-approved',
+            reason: 'plans:approved',
         });
 
         const processed = await waitForEntry(
@@ -327,7 +331,7 @@ describe('plan-auto-switch real Pi lifecycle', () => {
     });
 
     it('reconciles the pending switch after a competing triggerTurn wins the idle race', async () => {
-        const targetRole = getDefaultRole();
+        const targetRole = 'implement-fixture';
         const cwd = createFixtureProject(targetRole);
         const previousInitialRole = process.env.PI_ROLE;
         process.env.PI_ROLE = 'plan';

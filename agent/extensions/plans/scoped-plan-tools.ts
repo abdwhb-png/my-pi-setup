@@ -13,10 +13,11 @@ import type {
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-    loadPlannotatorConfig,
+    loadPlansConfig,
     resolvePlanFileDir,
-} from "@plannotator/pi-extension/config.js";
-import { getActiveRole, readFrontmatter } from "../_shared/pi-roles/index.ts";
+} from "../_shared/plans-config.ts";
+import { getActiveRole, requiresPlanSubmission } from "../_shared/pi-roles/index.ts";
+import { getToolPolicy } from "../_shared/tool-policy/index.ts";
 import { createScopedWriter, type ScopedWriteActor } from "../_shared/scoped-write.ts";
 import { recordSavedPlan } from "./tracker.ts";
 
@@ -63,11 +64,8 @@ function planWriteActor(ctx: ExtensionContext): PlanWriteActor {
  * Hint appended to successful plan writes when the active role opts into the
  * plan-submission handoff guard. Empty for unguarded roles.
  */
-function planReviewHint(ctx: ExtensionContext): string {
-    const role = getActiveRole(ctx.sessionManager.getEntries());
-    if (!role) return "";
-    const frontmatter = readFrontmatter<{ handoffGuard?: unknown }>(role.path);
-    if (frontmatter?.handoffGuard !== "plan-submission") return "";
+function planReviewHint(): string {
+    if (!requiresPlanSubmission(getToolPolicy().getRole())) return "";
     return "\nPlan revision pending review: submit it with plan_submit for approval.";
 }
 
@@ -107,7 +105,7 @@ export function resolvePlanPath(
     if (!planDir || !planDir.trim()) {
         return {
             resolved: null,
-            error: "No plan directory configured. Set 'planFileDir' in plannotator.json.",
+            error: "No plan directory configured. Set 'plans.planFileDir' in settings.json.",
         };
     }
 
@@ -291,11 +289,11 @@ export function registerPlanTools(pi: ExtensionAPI): void {
             "Write a Markdown plan inside the configured planFileDir and return its resolved cwd-relative path.",
         parameters: writePlanSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-            const config = loadPlannotatorConfig(ctx.cwd);
+            const config = loadPlansConfig(ctx.cwd, ctx.isProjectTrusted());
             const result = writePlan(
                 params.path,
                 ctx.cwd,
-                resolvePlanFileDir(config.config),
+                resolvePlanFileDir(config),
                 params.content,
                 planWriteActor(ctx),
             );
@@ -312,7 +310,7 @@ export function registerPlanTools(pi: ExtensionAPI): void {
                         type: "text",
                         text:
                             result.error ??
-                            `${result.message}${planReviewHint(ctx)}`,
+                            `${result.message}${planReviewHint()}`,
                     },
                 ],
                 details: result,
@@ -328,11 +326,11 @@ export function registerPlanTools(pi: ExtensionAPI): void {
             "Edit a Markdown plan inside the configured planFileDir and return its resolved cwd-relative path.",
         parameters: editPlanSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-            const config = loadPlannotatorConfig(ctx.cwd);
+            const config = loadPlansConfig(ctx.cwd, ctx.isProjectTrusted());
             const result = editPlan(
                 params.path,
                 ctx.cwd,
-                resolvePlanFileDir(config.config),
+                resolvePlanFileDir(config),
                 params.edits,
                 planWriteActor(ctx),
             );
@@ -349,7 +347,7 @@ export function registerPlanTools(pi: ExtensionAPI): void {
                         type: "text",
                         text:
                             result.error ??
-                            `${result.message}${planReviewHint(ctx)}`,
+                            `${result.message}${planReviewHint()}`,
                     },
                 ],
                 details: result,

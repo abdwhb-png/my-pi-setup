@@ -20,6 +20,7 @@ import {
   queueApprovedPlanContinuation,
 } from "./plan-auto-switch";
 import planAutoSwitch from "./plan-auto-switch";
+mock.module("../core/settings.ts", () => ({ loadSettings: () => ({}) }));
 
 
 describe("findUnprocessedPlanApproval", () => {
@@ -143,6 +144,8 @@ describe("planAutoSwitch lifecycle", () => {
       sendUserMessage,
     } as any;
     const ctx = {
+      cwd: "/fixture",
+      isProjectTrusted: () => false,
       isIdle: () => true,
       sessionManager: { getEntries: () => entries },
     };
@@ -154,7 +157,7 @@ describe("planAutoSwitch lifecycle", () => {
       expect.objectContaining({ sourceEntryId: "approval-1" }),
     );
     expect(appendEntry).toHaveBeenCalledWith(
-      PLUG_PLANNOTATOR_AUTOEXECUTE_PROCESSED,
+      PROCESSED_MARKER_PREFIX,
       expect.objectContaining({ sourceEntryId: "approval-1" }),
     );
 

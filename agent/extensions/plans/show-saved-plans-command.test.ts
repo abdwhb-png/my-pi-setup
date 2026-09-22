@@ -8,8 +8,8 @@ import type {
     ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
-mock.module("@plannotator/pi-extension/config.js", () => ({
-    loadPlannotatorConfig: () => ({ config: { planFileDir: "pi-plans" } }),
+mock.module("../_shared/plans-config.ts", () => ({
+    loadPlansConfig: () => ({ planFileDir: "pi-plans" }),
     resolvePlanFileDir: () => "pi-plans",
 }));
 
@@ -26,6 +26,7 @@ function registerExtension(): {
     const tools = new Map<string, ToolDefinition>();
     const commands = new Map<string, Command>();
     registerPlans({
+        on() {},
         registerTool(tool: ToolDefinition) {
             tools.set(tool.name, tool);
         },
@@ -43,6 +44,7 @@ function context(
 ): ExtensionContext {
     return {
         cwd,
+        isProjectTrusted: () => true,
         hasUI: true,
         ui: {
             notify(message: string) {

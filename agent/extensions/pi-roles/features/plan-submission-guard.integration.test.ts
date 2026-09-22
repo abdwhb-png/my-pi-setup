@@ -19,6 +19,7 @@ import {
 
 const sessions: TestSession[] = [];
 const directories: string[] = [];
+const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 function writeRole(directory: string, name: string, handoffGuard?: string): void {
     writeFileSync(
@@ -37,6 +38,8 @@ function writeRole(directory: string, name: string, handoffGuard?: string): void
 function createProject(): string {
     const cwd = mkdtempSync(join(tmpdir(), "plan-submission-guard-"));
     directories.push(cwd);
+    process.env.PI_CODING_AGENT_DIR = cwd;
+    writeFileSync(join(cwd, "settings.json"), JSON.stringify({ plans: { planFileDir: "pi-plans" } }));
     const roles = join(cwd, ".pi", "roles");
     mkdirSync(roles, { recursive: true });
     writeRole(roles, "plan", "plan-submission");
@@ -104,8 +107,13 @@ async function waitForEntry(
     throw new Error("Timed out waiting for expected session entry.");
 }
 
-afterEach(() => {
-    for (const session of sessions.splice(0)) session.dispose();
+afterEach(async () => {
+    for (const session of sessions.splice(0)) {
+        await session.session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
+        session.dispose();
+    }
+    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
     for (const directory of directories.splice(0)) {
         rmSync(directory, { recursive: true, force: true });
     }

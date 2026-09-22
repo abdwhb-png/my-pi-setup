@@ -5,6 +5,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { registerPlanTools } from "./scoped-plan-tools.ts";
+import { registerReviews } from "./review.ts";
 import { registerShowSavedPlansCommand } from "./show-saved-plans-command.ts";
 import { recordSavedPlan } from "./tracker.ts";
 import {
@@ -79,6 +80,7 @@ function formatHistory(
 
 export default function plansExtension(pi: ExtensionAPI): void {
     registerPlanTools(pi);
+    registerReviews(pi);
     registerShowSavedPlansCommand(pi);
 
     pi.registerTool({

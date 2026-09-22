@@ -291,6 +291,8 @@ export const PiRolesSettingsSchema = Type.Object(
          * If set to a missing role, we warn and use the built-in pi-agent role.
          */
         defaultRole: Type.Optional(Type.String({ minLength: 1 })),
+        /** Explicit implementation target after plan approval. Independent of defaultRole. */
+        planApprovedRole: Type.Optional(Type.String({ minLength: 1 })),
         /**
          * How to compose the active role with Pi's original system prompt.
          * Default: "strict-additive".

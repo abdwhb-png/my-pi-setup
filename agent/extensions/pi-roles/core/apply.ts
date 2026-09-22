@@ -295,12 +295,14 @@ export async function applyRole(
             ? {
                   version: 1,
                   roleName: role.name,
+                  handoffGuard: role.handoffGuard,
                   mode: "set",
                   toolNames: [...filtered.names],
               }
             : {
                   version: 1,
                   roleName: role.name,
+                  handoffGuard: role.handoffGuard,
                   mode: "all",
                   toolNames: [],
               };
