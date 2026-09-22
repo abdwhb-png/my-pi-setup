@@ -16,6 +16,7 @@ const OMITTED_OPTIONAL_PATCH = "scripts/upstream-no-preemptive-codex-protect.pat
 const candidateBinary = process.env.PI_SANDBOX_ZEROBOX_BINARY;
 const candidateSha = process.env.PI_SANDBOX_ZEROBOX_SHA256;
 const candidateSource = process.env.PI_SANDBOX_ZEROBOX_SOURCE_ROOT;
+const candidateBundle = process.env.PI_SANDBOX_RUNTIME_BUNDLE;
 
 interface ZeroboxManifest {
     version: string;
@@ -31,6 +32,11 @@ interface ZeroboxManifest {
 }
 async function readProvenance(): Promise<ZeroboxManifest> {
     return Bun.file(new URL("./runtime/zerobox-provenance.json", import.meta.url)).json();
+}
+
+async function readCandidateProvenance(): Promise<{ binarySha256: string }> {
+    if (!candidateBundle) throw new Error("Explicit candidate bundle required");
+    return Bun.file(join(candidateBundle, "provenance.json")).json();
 }
 
 interface SandboxPackageJson {
@@ -147,9 +153,9 @@ describe("sandbox dependency contract", () => {
         }
     });
 
-    it.skipIf(!candidateBinary || !candidateSha)("qualifies only the explicitly supplied candidate binary", async () => {
-        if (!candidateBinary || !candidateSha) throw new Error("Explicit candidate binary and SHA256 required");
-        const provenance = await readProvenance();
+    it.skipIf(!candidateBinary || !candidateSha || !candidateBundle)("qualifies only the explicitly supplied candidate binary", async () => {
+        if (!candidateBinary || !candidateSha || !candidateBundle) throw new Error("Explicit candidate binary, SHA256 and bundle required");
+        const provenance = await readCandidateProvenance();
         const binary = await readFile(candidateBinary);
         expect((await stat(candidateBinary)).mode & 0o111).not.toBe(0);
         const actualSha = createHash("sha256").update(binary).digest("hex");

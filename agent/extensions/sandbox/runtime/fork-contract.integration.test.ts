@@ -28,7 +28,7 @@ function runStrict(args: string[], cwd: string, sandboxArgs: string[] = []) {
             env: {
                 HOME: cwd,
                 ZEROBOX_HOME: join(cwd, "z"),
-                PATH: PRIVATE_SHELL_PATH,
+                PATH: `${PRIVATE_SHELL_PATH}:/usr/bin`,
             },
             stdin: "ignore",
             stdout: "pipe",
@@ -70,7 +70,7 @@ describe.skipIf(!enabled)("accepted Zerobox fork contract", () => {
                 ["--deny-write-glob=*/node_modules/*"],
             );
 
-            expect(result.exitCode).toBe(0);
+            expect(result.exitCode, new TextDecoder().decode(result.stderr)).toBe(0);
             expect(new TextDecoder().decode(result.stdout)).toBe("shebang-ok");
             expect(await Bun.file(denied).exists()).toBe(false);
         } finally {
@@ -95,7 +95,7 @@ describe.skipIf(!enabled)("accepted Zerobox fork contract", () => {
                 ["--deny-write-glob=*/node_modules/*"],
             );
 
-            expect(result.exitCode).toBe(37);
+            expect(result.exitCode, new TextDecoder().decode(result.stderr)).toBe(37);
             expect(new TextDecoder().decode(result.stderr)).toBe(
                 "real-target-error\n",
             );
