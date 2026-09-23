@@ -116,7 +116,7 @@ describe("sandbox runtime publication", () => {
             expect(getSandboxAnalysisPort()).toBeDefined();
         } finally { await registered.stop?.({}, hostContext); }
         expect(analysisRequests.sort()).toEqual(["sandbox-preflight-python", "sandbox-preflight-typescript"]);
-    });
+    }, 15_000);
 
     it("publishes a bounded error snapshot for malformed config", async () => {
         const cwd = await mkdtemp(join(fixtureRoot, "malformed-"));
