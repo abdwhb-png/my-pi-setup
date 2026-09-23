@@ -6,17 +6,17 @@
       "name": "agent",
       "dependencies": {
         "@dietrichgebert/ponytail": "^4.8.4",
-        "@earendil-works/chord": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-chord-0.87.1.tgz",
-        "@earendil-works/pi-agent-core": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-agent-core-0.87.1.tgz",
-        "@earendil-works/pi-ai": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-ai-0.87.1.tgz",
-        "@earendil-works/pi-client": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-client-0.87.1.tgz",
-        "@earendil-works/pi-coding-agent": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-coding-agent-0.87.1.tgz",
-        "@earendil-works/pi-durable": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-durable-0.87.1.tgz",
-        "@earendil-works/pi-protocol": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-protocol-0.87.1.tgz",
-        "@earendil-works/pi-server": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-server-0.87.1.tgz",
-        "@earendil-works/pi-session-backend-sqlite-node": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-session-backend-sqlite-node-0.87.1.tgz",
-        "@earendil-works/pi-telemetry": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-telemetry-0.87.1.tgz",
-        "@earendil-works/pi-tui": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-tui-0.87.1.tgz",
+        "@earendil-works/chord": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-chord-0.87.1.tgz",
+        "@earendil-works/pi-agent-core": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-agent-core-0.87.1.tgz",
+        "@earendil-works/pi-ai": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-ai-0.87.1.tgz",
+        "@earendil-works/pi-client": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-client-0.87.1.tgz",
+        "@earendil-works/pi-coding-agent": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-coding-agent-0.87.1.tgz",
+        "@earendil-works/pi-durable": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-durable-0.87.1.tgz",
+        "@earendil-works/pi-protocol": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-protocol-0.87.1.tgz",
+        "@earendil-works/pi-server": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-server-0.87.1.tgz",
+        "@earendil-works/pi-session-backend-sqlite-node": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-session-backend-sqlite-node-0.87.1.tgz",
+        "@earendil-works/pi-telemetry": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-telemetry-0.87.1.tgz",
+        "@earendil-works/pi-tui": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-tui-0.87.1.tgz",
         "@mendable/firecrawl-js": "^4.28.0",
         "@sinclair/typebox": "0.34.49",
         "node-notifier": "10.0.1",
@@ -25,7 +25,7 @@
         "yaml": "2.9.0",
       },
       "devDependencies": {
-        "@abdwhb-png/pi-test-harness": "0.8.0",
+        "@abdwhb-png/pi-test-harness": "file:../runtime/pi-test-harness/releases/0.8.1-fork.2-e4bacb0/pi-test-harness-0.8.1-fork.2.tgz",
         "@types/bun": "^1.3.14",
         "@types/node": "^25.9.3",
         "@types/node-notifier": "8.0.5",
@@ -36,20 +36,20 @@
     },
   },
   "overrides": {
-    "@earendil-works/chord": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-chord-0.87.1.tgz",
-    "@earendil-works/pi-agent-core": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-agent-core-0.87.1.tgz",
-    "@earendil-works/pi-ai": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-ai-0.87.1.tgz",
-    "@earendil-works/pi-client": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-client-0.87.1.tgz",
-    "@earendil-works/pi-coding-agent": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-coding-agent-0.87.1.tgz",
-    "@earendil-works/pi-durable": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-durable-0.87.1.tgz",
-    "@earendil-works/pi-protocol": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-protocol-0.87.1.tgz",
-    "@earendil-works/pi-server": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-server-0.87.1.tgz",
-    "@earendil-works/pi-session-backend-sqlite-node": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-session-backend-sqlite-node-0.87.1.tgz",
-    "@earendil-works/pi-telemetry": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-telemetry-0.87.1.tgz",
-    "@earendil-works/pi-tui": "file:../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-tui-0.87.1.tgz",
+    "@earendil-works/chord": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-chord-0.87.1.tgz",
+    "@earendil-works/pi-agent-core": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-agent-core-0.87.1.tgz",
+    "@earendil-works/pi-ai": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-ai-0.87.1.tgz",
+    "@earendil-works/pi-client": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-client-0.87.1.tgz",
+    "@earendil-works/pi-coding-agent": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-coding-agent-0.87.1.tgz",
+    "@earendil-works/pi-durable": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-durable-0.87.1.tgz",
+    "@earendil-works/pi-protocol": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-protocol-0.87.1.tgz",
+    "@earendil-works/pi-server": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-server-0.87.1.tgz",
+    "@earendil-works/pi-session-backend-sqlite-node": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-session-backend-sqlite-node-0.87.1.tgz",
+    "@earendil-works/pi-telemetry": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-telemetry-0.87.1.tgz",
+    "@earendil-works/pi-tui": "file:../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-tui-0.87.1.tgz",
   },
   "packages": {
-    "@abdwhb-png/pi-test-harness": ["@abdwhb-png/pi-test-harness@0.8.0", "", { "peerDependencies": { "@earendil-works/pi-agent-core": "^0.85.0", "@earendil-works/pi-ai": "^0.85.0", "@earendil-works/pi-coding-agent": "^0.85.0" } }, "sha512-hNBwv/jNLiPlVPCVqnaPDS8nf+gt/Z8JOVgHgXg8YR+v+OVQ4+ygpmKhSyqrMk3zvK9BkP2dojbdAtO9LsZlWQ=="],
+    "@abdwhb-png/pi-test-harness": ["@abdwhb-png/pi-test-harness@../runtime/pi-test-harness/releases/0.8.1-fork.2-e4bacb0/pi-test-harness-0.8.1-fork.2.tgz", { "peerDependencies": { "@earendil-works/pi-agent-core": "^0.87.1", "@earendil-works/pi-ai": "^0.87.1", "@earendil-works/pi-coding-agent": "^0.87.1" } }, "sha512-gE6JOlsUUqQVhah38gYOp/CnFkVm34ZYZcE8omyRHC4n7uPKjj2jeVYTpEJdeaMJjKzqKLJqEIY1mmeoV+9/Hw=="],
 
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.124.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-cN5O8i9UVxHeOQAzj/XjshWXG8KiibJDw9OGpH2Z/eR3n/RBxdoLxDJOcfqAJWvjaMDFfHTBADU04hWRJVkDyA=="],
 
@@ -95,27 +95,27 @@
 
     "@dietrichgebert/ponytail": ["@dietrichgebert/ponytail@4.10.0", "", {}, "sha512-O2H+RWO0ojk8D8yz9q1F82ybKTXpYtrBb7mHkQT+/iCtsXndAxJo05KU1hkLPjV203ABq+cj89Th9jFvdnc6Mg=="],
 
-    "@earendil-works/chord": ["@earendil-works/chord@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-chord-0.87.1.tgz", { "dependencies": { "esbuild": "0.28.2" } }, "sha512-bg7IkJGFcEaMqqYgOGUiq5Ky9RghpRfrlZ8I/v/1b4bBZ02A7t3E+6uhPRbadwWb/kWsnVFbZsqOKRN4a3LLCg=="],
+    "@earendil-works/chord": ["@earendil-works/chord@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-chord-0.87.1.tgz", { "dependencies": { "esbuild": "0.28.2" } }, "sha512-bg7IkJGFcEaMqqYgOGUiq5Ky9RghpRfrlZ8I/v/1b4bBZ02A7t3E+6uhPRbadwWb/kWsnVFbZsqOKRN4a3LLCg=="],
 
-    "@earendil-works/pi-agent-core": ["@earendil-works/pi-agent-core@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-agent-core-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-ai": "^0.87.1", "@earendil-works/pi-telemetry": "^0.87.1", "diff": "8.0.4", "ignore": "7.0.8", "typebox": "1.3.27", "yaml": "2.9.0" } }, "sha512-Zev3B0HK7YS5A4EZQ2XnEqiJuirx6QBiltJ+LpmjV5a/+2IU0cfKtIfnkNkORK707XOvKBY2WRtk7cAwHpbh2Q=="],
+    "@earendil-works/pi-agent-core": ["@earendil-works/pi-agent-core@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-agent-core-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-ai": "^0.87.1", "@earendil-works/pi-telemetry": "^0.87.1", "diff": "8.0.4", "ignore": "7.0.8", "typebox": "1.3.27", "yaml": "2.9.0" } }, "sha512-Zev3B0HK7YS5A4EZQ2XnEqiJuirx6QBiltJ+LpmjV5a/+2IU0cfKtIfnkNkORK707XOvKBY2WRtk7cAwHpbh2Q=="],
 
-    "@earendil-works/pi-ai": ["@earendil-works/pi-ai@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-ai-0.87.1.tgz", { "dependencies": { "@anthropic-ai/sdk": "0.124.0", "@aws-sdk/client-bedrock-runtime": "3.1127.0", "@earendil-works/pi-telemetry": "^0.87.1", "@google/genai": "2.21.0", "@smithy/node-http-handler": "4.12.1", "http-proxy-agent": "9.1.0", "https-proxy-agent": "9.1.0", "openai": "6.40.0", "partial-json": "0.1.7", "typebox": "1.3.27" }, "bin": { "pi-ai": "dist/cli.js" } }, "sha512-NsT7nf8xYizHMNWzFhMI1b8DlO9Y1kxK4mbsPG14pZmJlcz7/3Rp4vt002lpr8jDPm7aKZsK4E+sQbnaXNVXtg=="],
+    "@earendil-works/pi-ai": ["@earendil-works/pi-ai@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-ai-0.87.1.tgz", { "dependencies": { "@anthropic-ai/sdk": "0.124.0", "@aws-sdk/client-bedrock-runtime": "3.1127.0", "@earendil-works/pi-telemetry": "^0.87.1", "@google/genai": "2.21.0", "@smithy/node-http-handler": "4.12.1", "http-proxy-agent": "9.1.0", "https-proxy-agent": "9.1.0", "openai": "6.40.0", "partial-json": "0.1.7", "typebox": "1.3.27" }, "bin": { "pi-ai": "dist/cli.js" } }, "sha512-NsT7nf8xYizHMNWzFhMI1b8DlO9Y1kxK4mbsPG14pZmJlcz7/3Rp4vt002lpr8jDPm7aKZsK4E+sQbnaXNVXtg=="],
 
-    "@earendil-works/pi-client": ["@earendil-works/pi-client@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-client-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-protocol": "^0.87.1" } }, "sha512-x8dfZ7ppAao9SDnZvD5/DErVdq2fI7hg4lFj7qEhtgo6wimrRafGSLsqLklFVjb6kxU2W3j9F4RZz0rRcb0cwA=="],
+    "@earendil-works/pi-client": ["@earendil-works/pi-client@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-client-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-protocol": "^0.87.1" } }, "sha512-x8dfZ7ppAao9SDnZvD5/DErVdq2fI7hg4lFj7qEhtgo6wimrRafGSLsqLklFVjb6kxU2W3j9F4RZz0rRcb0cwA=="],
 
-    "@earendil-works/pi-coding-agent": ["@earendil-works/pi-coding-agent@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-coding-agent-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-agent-core": "^0.87.1", "@earendil-works/pi-ai": "^0.87.1", "@earendil-works/pi-tui": "^0.87.1", "@silvia-odwyer/photon-node": "0.3.4", "chalk": "6.0.0", "cross-spawn": "7.0.6", "diff": "8.0.4", "grok-mermaid": "0.2.3", "highlight.js": "10.7.3", "hosted-git-info": "9.0.3", "ignore": "7.0.8", "jiti": "2.7.0", "minimatch": "10.2.6", "proper-lockfile": "4.1.2", "semver": "7.8.5", "typebox": "1.3.27", "undici": "8.10.2", "yaml": "2.9.0" }, "bin": { "pi": "dist/bundle/cli.js" } }, "sha512-+YJo9VKwUIbhDWlawIW/kcU7/b16wwflptM2sKr6fla5lN1yFr4icMEl4pldcIBGcICkY2LAIRkSC1nhKxaHrQ=="],
+    "@earendil-works/pi-coding-agent": ["@earendil-works/pi-coding-agent@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-coding-agent-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-agent-core": "^0.87.1", "@earendil-works/pi-ai": "^0.87.1", "@earendil-works/pi-tui": "^0.87.1", "@silvia-odwyer/photon-node": "0.3.4", "chalk": "6.0.0", "cross-spawn": "7.0.6", "diff": "8.0.4", "grok-mermaid": "0.2.3", "highlight.js": "10.7.3", "hosted-git-info": "9.0.3", "ignore": "7.0.8", "jiti": "2.7.0", "minimatch": "10.2.6", "proper-lockfile": "4.1.2", "semver": "7.8.5", "typebox": "1.3.27", "undici": "8.10.2", "yaml": "2.9.0" }, "bin": { "pi": "dist/bundle/cli.js" } }, "sha512-zPv/ZgeKUFiaLhoDZabheZaJ3LU6trVYj1LtZD8oXCaSYIPQ1IX32h2taSL09y9Op3vexApveXzBzvH07RVi0w=="],
 
-    "@earendil-works/pi-durable": ["@earendil-works/pi-durable@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-durable-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-ai": "^0.87.1" } }, "sha512-6FpUkV3yk1PYjzaOjVVCETogiSGWqf6g3ZorHOqU6UQ2QMMAYbZNchVxwmtfZVFh2r3tk3DSJoMV8Z8aK/mCyA=="],
+    "@earendil-works/pi-durable": ["@earendil-works/pi-durable@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-durable-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-ai": "^0.87.1" } }, "sha512-6FpUkV3yk1PYjzaOjVVCETogiSGWqf6g3ZorHOqU6UQ2QMMAYbZNchVxwmtfZVFh2r3tk3DSJoMV8Z8aK/mCyA=="],
 
-    "@earendil-works/pi-protocol": ["@earendil-works/pi-protocol@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-protocol-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "typebox": "1.3.27" } }, "sha512-48WVjryAIiKOJXnKgO15h2MT/oeH5uf0S4DykcVj3ZrxMTDSGxcUaS5VtvHtFQ1rZSSIjkVcblE13k0GksBuoQ=="],
+    "@earendil-works/pi-protocol": ["@earendil-works/pi-protocol@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-protocol-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "typebox": "1.3.27" } }, "sha512-48WVjryAIiKOJXnKgO15h2MT/oeH5uf0S4DykcVj3ZrxMTDSGxcUaS5VtvHtFQ1rZSSIjkVcblE13k0GksBuoQ=="],
 
-    "@earendil-works/pi-server": ["@earendil-works/pi-server@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-server-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-agent-core": "^0.87.1", "@earendil-works/pi-protocol": "^0.87.1" } }, "sha512-EZYQ6mSOv7IyDcWoBflNGJcyIBjTnQY9W4z1tF3vOMY5xbksHOsVVzU9Kh49z8iIXGYNawKZSyjaWi9OJjO7Sw=="],
+    "@earendil-works/pi-server": ["@earendil-works/pi-server@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-server-0.87.1.tgz", { "dependencies": { "@earendil-works/chord": "^0.87.1", "@earendil-works/pi-agent-core": "^0.87.1", "@earendil-works/pi-protocol": "^0.87.1" } }, "sha512-EZYQ6mSOv7IyDcWoBflNGJcyIBjTnQY9W4z1tF3vOMY5xbksHOsVVzU9Kh49z8iIXGYNawKZSyjaWi9OJjO7Sw=="],
 
-    "@earendil-works/pi-session-backend-sqlite-node": ["@earendil-works/pi-session-backend-sqlite-node@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-session-backend-sqlite-node-0.87.1.tgz", { "dependencies": { "@earendil-works/pi-agent-core": "^0.87.1", "@earendil-works/pi-ai": "^0.87.1" } }, "sha512-33ek0u5DgMNtJ8NqmUSUTxaIzQLTsFKruOjJNgGOmhBiBqmSVF/ye34JGXgXYImbrMWpYeX8l7rb8ZBx5T8k3A=="],
+    "@earendil-works/pi-session-backend-sqlite-node": ["@earendil-works/pi-session-backend-sqlite-node@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-session-backend-sqlite-node-0.87.1.tgz", { "dependencies": { "@earendil-works/pi-agent-core": "^0.87.1", "@earendil-works/pi-ai": "^0.87.1" } }, "sha512-33ek0u5DgMNtJ8NqmUSUTxaIzQLTsFKruOjJNgGOmhBiBqmSVF/ye34JGXgXYImbrMWpYeX8l7rb8ZBx5T8k3A=="],
 
-    "@earendil-works/pi-telemetry": ["@earendil-works/pi-telemetry@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-telemetry-0.87.1.tgz", {}, "sha512-MC6TRQH5lgMXpcN+Vku2WMI2T8BsiUPzMQHGo81uqFZD3/9O79WWJAysEDGuzduP6R4tvtgwMLwmqIxynM10JQ=="],
+    "@earendil-works/pi-telemetry": ["@earendil-works/pi-telemetry@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-telemetry-0.87.1.tgz", {}, "sha512-MC6TRQH5lgMXpcN+Vku2WMI2T8BsiUPzMQHGo81uqFZD3/9O79WWJAysEDGuzduP6R4tvtgwMLwmqIxynM10JQ=="],
 
-    "@earendil-works/pi-tui": ["@earendil-works/pi-tui@../runtime/pi-core/releases/0.87.1-2d46040466a9-b2154cf15fa8/packed/tarballs/earendil-works-pi-tui-0.87.1.tgz", { "dependencies": { "get-east-asian-width": "1.6.0", "marked": "18.0.11" } }, "sha512-gaSqWcw2HJc2szHzasADBPsz3ONH0kiVGaqiQLAugImx5adWRaDBiAa8hUE0TWYlSy3sjbM5fodWvREosKuv7w=="],
+    "@earendil-works/pi-tui": ["@earendil-works/pi-tui@../runtime/pi-core/releases/0.87.1-00c5e7e300ba-51024884e6e0/packed/tarballs/earendil-works-pi-tui-0.87.1.tgz", { "dependencies": { "get-east-asian-width": "1.6.0", "marked": "18.0.11" } }, "sha512-gaSqWcw2HJc2szHzasADBPsz3ONH0kiVGaqiQLAugImx5adWRaDBiAa8hUE0TWYlSy3sjbM5fodWvREosKuv7w=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.28.2", "", { "os": "aix", "cpu": "ppc64" }, "sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ=="],
 
