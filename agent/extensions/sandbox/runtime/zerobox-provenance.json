@@ -167,15 +167,15 @@
     },
     {
       "path": "scripts/upstream-mediated-direct-tcp.patch",
-      "sha256": "291ea8b3b978fcf551ad91687504f12b05c8b284ea1b6704ed72d54573853f98"
+      "sha256": "9e9b60c4429eef3d6197384fc3836d67ae3738534d9b353240dc7fb5705d4c0d"
     }
   ],
   "binaryName": "zerobox",
-  "binarySha256": "47876c7a3c20be196892d348adafff37a2f36362b2a6e8a764ed061d9905bb97",
+  "binarySha256": "c871a0cf7b42ab95651933fe51402e7d162a2b884af510088accaa9a68dc0c00",
   "omittedOptionalPatches": [
     "scripts/upstream-no-preemptive-codex-protect.patch"
   ],
-  "forkCommit": "ed2e0a1ceb3ac1b1552ef89aebed796ea1f59013",
+  "forkCommit": "0f07773c9f5d0268d51d50178b969ba732ac3f3a",
   "baselineSnapshot": {
     "commit": "6bc49bb",
     "sourceDiffSha256": "e3847ff7e72eef9aa8c092f5843b07647c48ecc1e56c2e0c53d0acd1e2a6686c",

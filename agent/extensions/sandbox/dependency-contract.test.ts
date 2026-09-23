@@ -132,7 +132,7 @@ describe("sandbox dependency contract", () => {
             engineRef: "rust-v0.131.0-alpha.22",
             engineCommit: "9b8cf56cdefb09f54564ccc295fd42f6647f558f",
             binaryName: "zerobox",
-            forkCommit: "ed2e0a1ceb3ac1b1552ef89aebed796ea1f59013",
+            forkCommit: "0f07773c9f5d0268d51d50178b969ba732ac3f3a",
             baselineSnapshot: {
                 commit: "6bc49bb",
                 sourceDiffSha256: "e3847ff7e72eef9aa8c092f5843b07647c48ecc1e56c2e0c53d0acd1e2a6686c",
