@@ -51,7 +51,7 @@ describe('pi-subagents-addons discovery contract', () => {
         );
 
         expect(settings.packages).toContain(
-            'git:github.com/abdwhb-png/pi-subagents@dev',
+            '~/projects/pi-integrations/pi-subagents-runtime-0.87.1',
         );
         expect(installed.version).toBeDefined();
         expect(installed.version).toBe('0.69.0');

@@ -629,13 +629,14 @@ describe('refresh', () => {
             });
             return new Response(JSON.stringify(rawPayload), { status: 200 });
         };
-        const { catalog } = makeCatalog({ fetchFn, ttlMs: 0, timeoutMs: 30 });
+        // The refresh persists a file; allow for concurrent suite I/O before expiry.
+        const { catalog } = makeCatalog({ fetchFn, ttlMs: 0, timeoutMs: 1_000 });
 
         const result = await catalog.refresh();
         expect(result.status).toBe('updated');
 
-        // Outlive the would-be 30ms timeout to prove the timer was cleared.
-        await new Promise((resolve) => setTimeout(resolve, 70));
+        // Outlive the would-be timeout to prove the timer was cleared.
+        await new Promise((resolve) => setTimeout(resolve, 1_100));
         expect(abortedAfterSettle).toBe(false);
     });
 

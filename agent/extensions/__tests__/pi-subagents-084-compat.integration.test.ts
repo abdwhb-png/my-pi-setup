@@ -17,12 +17,12 @@ const FANOUT_CHILD_EXTENSION_PATH = resolve(
 	"../src/extension/fanout-child.ts",
 );
 const PI_SUBAGENTS_ENTRY_PATH = fileURLToPath(import.meta.resolve("pi-subagents"));
-const MANAGED_GIT_ENTRY_PATH = join(
+const PINNED_LOCAL_ENTRY_PATH = join(
 	homedir(),
-	".pi/agent/git/github.com/abdwhb-png/pi-subagents/index.ts",
+	"projects/pi-integrations/pi-subagents-runtime-0.87.1/index.ts",
 );
 
-describe("pi-subagents managed fork on the current Pi runtime", () => {
+describe("pi-subagents pinned fork on the current Pi runtime", () => {
 	let testSession: TestSession | undefined;
 	let previousParentSessionEnv: string | undefined;
 
@@ -33,8 +33,8 @@ describe("pi-subagents managed fork on the current Pi runtime", () => {
 		else process.env[PARENT_SESSION_ENV] = previousParentSessionEnv;
 	});
 
-	it("loads the managed Git fork instead of the historical checkout", () => {
-		expect(PI_SUBAGENTS_ENTRY_PATH).toBe(MANAGED_GIT_ENTRY_PATH);
+	it("loads the pinned local fork", () => {
+		expect(PI_SUBAGENTS_ENTRY_PATH).toBe(PINNED_LOCAL_ENTRY_PATH);
 	});
 
 	it("reports a Fleet logical failure as an errored Pi tool result", async () => {

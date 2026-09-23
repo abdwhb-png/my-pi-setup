@@ -21,7 +21,7 @@ async function fixture() {
         requestedProfile: "host", profile: "host", grants: emptyGrants(),
         requestedGrants: emptyGrants(), authorityPath: "/unused",
     }));
-    const session = await createTestSession({ cwd, extensionFactories: [bashExecution] });
+    const session = await createTestSession({ cwd, extensionFactories: [bashExecution], propagateErrors: false });
     return {
         session,
         async dispose() {
@@ -36,14 +36,10 @@ async function fixture() {
 test("safe_bash returns a normalized fractional timeout without restoring raw output", async () => {
     const f = await fixture();
     try {
-        const realTools = f.session.session.agent.state.tools;
-        const running = f.session.run(when("Run the bounded fixture", [
+        await f.session.run(when("Run the bounded fixture", [
             calls("safe_bash", { command: "printf RAW_TIMEOUT_FIXTURE; sleep 2", timeout: 0.08000000001 }),
             says("done"),
         ]));
-        // Observe Pi's native thrown-error result; the harness collection wrapper reformats errors.
-        f.session.session.agent.state.tools = realTools;
-        await running;
         const result = f.session.events.toolResultsFor("safe_bash").at(-1)!;
         expect(result.isError).toBe(true);
         expect(result.text).toBe("Command timed out after 0.08 seconds");

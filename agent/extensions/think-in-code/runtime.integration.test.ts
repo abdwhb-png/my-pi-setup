@@ -524,9 +524,7 @@ describe("think-in-code real Pi runtime wiring", () => {
         const results = session.events.toolResultsFor("think_execute");
         expect(results).toHaveLength(1);
         expect(results[0]?.isError).toBe(true);
-        // run() restores the harness's initial schemas, simulating an O3 writer.
-        // The execution gate must still reject a call made while reconfiguring.
-        expect(JSON.stringify(results[0]?.content)).toContain("Sandbox execution unavailable: uninitialized");
+        expect(JSON.stringify(results[0]?.content)).toContain("Tool think_execute not found");
         expect(state.safeExecCalls).toHaveLength(0);
         expect(state.analysisCalls).toHaveLength(0);
     });

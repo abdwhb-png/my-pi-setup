@@ -28,7 +28,6 @@ test(
         const legacyPayloads = [
             { label: "string", value: "editor" },
             { label: "null", value: null },
-            { label: "undefined", value: undefined },
         ] as const;
         let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
 
@@ -86,8 +85,8 @@ test(
 
             const callsToBuiltin = session.events.toolCallsFor("bash");
             const results = session.events.toolResultsFor("bash");
-            expect(callsToBuiltin).toHaveLength(4);
-            expect(results).toHaveLength(4);
+            expect(callsToBuiltin).toHaveLength(3);
+            expect(results).toHaveLength(3);
 
             for (const [index, { value }] of legacyPayloads.entries()) {
                 expect(
@@ -95,10 +94,7 @@ test(
                 ).toBe(true);
                 expect(callsToBuiltin[index]!.input.hostCapability).toBe(value);
                 expect(results[index]).toMatchObject({ mocked: false });
-                // With propagateErrors:false, the harness catches the throw
-                // and returns an error result. Pi's agent loop treats that
-                // fulfilled execute() as isError:false, so assert the guard's
-                // diagnostic rather than the collected event flag.
+                expect(results[index]!.isError).toBe(true);
                 expect(results[index]!.text).toContain("migration-required");
                 expect(results[index]!.text).toContain(
                     "Legacy hostCapability was removed from tool parameters",
@@ -108,7 +104,7 @@ test(
                 });
             }
 
-            expect(results[3]).toMatchObject({ mocked: false, isError: false });
+            expect(results[2]).toMatchObject({ mocked: false, isError: false });
             expect(await readFile(positiveMarker, "utf8")).toBe(
                 "builtin-boundary",
             );

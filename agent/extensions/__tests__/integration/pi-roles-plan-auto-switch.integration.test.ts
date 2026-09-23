@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
+import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
     calls,
@@ -307,7 +308,7 @@ describe('plan-auto-switch real Pi lifecycle', () => {
             runner
                 .getRegisteredCommands()
                 .filter((command) => command.name === 'abandon-plan'),
-        ).toHaveLength(1);
+        ).toHaveLength(0); // plan-workflow, the command owner, is not loaded.
         expect(
             runner
                 .getAllRegisteredTools()
@@ -399,11 +400,11 @@ async function expectFinalProviderCatalog(session: TestSession): Promise<void> {
         transported = String(init?.body);
         return new Response('fixture transport stop', { status: 400 });
     }, { preconnect() {} });
-    await stream({ ...model, api: 'openai-completions' }, {
+    await stream({ ...model, api: 'openai-completions' }, normalizeContext({
         systemPrompt: session.session.systemPrompt,
         messages: [{ role: 'user', content: 'Verify final catalog', timestamp: 0 }],
         tools: session.session.agent.state.tools,
-    }, {
+    }), {
         apiKey: 'fixture-not-a-secret', fetch, maxRetries: 0,
         onPayload: payload => session.session.extensionRunner.emitBeforeProviderRequest(payload),
     }).result();
@@ -430,7 +431,7 @@ it.each(['manual', 'switch_role', 'apply-patches'] as const)('%s sends the final
     expect(session.session.getActiveToolNames()).not.toContain('edit');
     if (route === 'manual') {
         await session.session.prompt('/role pi-agent');
-        await session.session.extensionRunner.emitBeforeAgentStart('apply', undefined, session.session.systemPrompt, { cwd, customPrompt: 'custom system prompt' });
+        await session.session.extensionRunner.emitBeforeAgentStart('apply', undefined, { cwd, customPrompt: 'custom system prompt' });
     } else {
         await session.run(when(route === 'apply-patches' ? '/apply-patches' : 'Switch role', route === 'apply-patches'
             ? [says('Applied fixture patches.')]
