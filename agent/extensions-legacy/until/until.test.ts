@@ -13,14 +13,14 @@ const fakeHandle = {
   remove: mock(() => undefined),
 };
 
-mock.module("../_shared/fancy-footer", () => ({
+mock.module("../../extensions/_shared/fancy-footer.ts", () => ({
   createWidget: mock((_pi: any, def: any) => {
     widgetDefs.push(def);
     return fakeHandle;
   }),
 }));
 
-mock.module("../_shared/ui/ui-colors.js", () => ({
+mock.module("../../extensions/_shared/ui/ui-colors.ts", () => ({
   createUiColors: () => ({
     primary: (t: string) => t,
     meta: (t: string) => t,
