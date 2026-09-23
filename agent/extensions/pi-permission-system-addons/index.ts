@@ -1,4 +1,8 @@
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+    Theme,
+} from "@earendil-works/pi-coding-agent";
 import {
     getPermissionsService,
     PERMISSIONS_READY_CHANNEL,
@@ -14,6 +18,28 @@ import {
 } from "./widget.ts";
 
 const YOLO_AUTHORIZER_NAME = "pi-yolo-permission";
+const YOLO_SESSION_ENTRY = "pi-permission-system-addons:yolo-session";
+
+function recordedSessionYolo(ctx: ExtensionContext): boolean {
+    for (const entry of ctx.sessionManager.getBranch().toReversed()) {
+        if (
+            entry.type !== "custom" ||
+            entry.customType !== YOLO_SESSION_ENTRY
+        ) {
+            continue;
+        }
+        const data = entry.data;
+        return (
+            typeof data === "object" &&
+            data !== null &&
+            "sessionId" in data &&
+            data.sessionId === ctx.sessionManager.getSessionId() &&
+            "enabled" in data &&
+            data.enabled === true
+        );
+    }
+    return false;
+}
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -35,7 +61,8 @@ export default function (pi: ExtensionAPI) {
         order: 13,
         align: "left",
         styled: true,
-        render: (ctx) => renderYoloWidget(ctx.theme, sessionYolo, widgetOptions),
+        render: (ctx) =>
+            renderYoloWidget(ctx.theme, sessionYolo, widgetOptions),
     });
 
     function refreshYoloWidget(ctx: {
@@ -48,30 +75,27 @@ export default function (pi: ExtensionAPI) {
         );
     }
 
-    pi.events.on(
-        PERMISSIONS_READY_CHANNEL,
-        (payload: unknown) => {
-            const ready = payload as PermissionsReadyEvent;
-            if (!ready?.sessionId) return;
-            sessionId = ready.sessionId;
+    pi.events.on(PERMISSIONS_READY_CHANNEL, (payload: unknown) => {
+        const ready = payload as PermissionsReadyEvent;
+        if (!ready?.sessionId) return;
+        sessionId = ready.sessionId;
 
-            const service = getPermissionsService(ready.sessionId);
-            if (!service) return;
+        const service = getPermissionsService(ready.sessionId);
+        if (!service) return;
 
-            // permissions:ready fires at least once per session and may repeat
-            // (v27+); registering again without disposing would throw.
-            for (const dispose of authorizerDisposers.splice(0)) dispose();
-            const dispose = service.registerAuthorizer(
-                YOLO_AUTHORIZER_NAME,
-                async (_details, _query, log) => {
-                    if (!sessionYolo) return { kind: "defer" };
-                    log.review("session_yolo.auto_allow", {});
-                    return { kind: "allow" };
-                },
-            );
-            authorizerDisposers.push(dispose);
-        },
-    );
+        // permissions:ready fires at least once per session and may repeat
+        // (v27+); registering again without disposing would throw.
+        for (const dispose of authorizerDisposers.splice(0)) dispose();
+        const dispose = service.registerAuthorizer(
+            YOLO_AUTHORIZER_NAME,
+            async (_details, _query, log) => {
+                if (!sessionYolo) return { kind: "defer" };
+                log.review("session_yolo.auto_allow", {});
+                return { kind: "allow" };
+            },
+        );
+        authorizerDisposers.push(dispose);
+    });
 
     pi.registerCommand("yolo-permission", {
         description:
@@ -106,7 +130,14 @@ export default function (pi: ExtensionAPI) {
                 return;
             }
 
-            sessionYolo = action === "on";
+            const enabled = action === "on";
+            if (sessionYolo !== enabled) {
+                pi.appendEntry(YOLO_SESSION_ENTRY, {
+                    sessionId: ctx.sessionManager.getSessionId(),
+                    enabled,
+                });
+                sessionYolo = enabled;
+            }
             ctx.ui.notify(
                 `Session YOLO permission mode: ${sessionYolo ? "ON" : "OFF"}`,
                 "info",
@@ -127,11 +158,19 @@ export default function (pi: ExtensionAPI) {
         }
     }
 
-    pi.on("session_start", (_event, ctx) => {
+    pi.on("session_start", (event, ctx) => {
         reloadConfig(ctx.cwd);
         sessionCache.clear();
-        sessionYolo = false;
+        sessionYolo =
+            event.reason === "new" || event.reason === "fork"
+                ? false
+                : recordedSessionYolo(ctx);
         sessionId = null;
+        refreshYoloWidget(ctx);
+    });
+
+    pi.on("session_tree", (_event, ctx) => {
+        sessionYolo = recordedSessionYolo(ctx);
         refreshYoloWidget(ctx);
     });
 

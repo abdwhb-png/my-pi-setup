@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+    SessionManager,
+    type ExtensionAPI,
+} from '@earendil-works/pi-coding-agent';
 import type {
     AuthorizerLog,
     AuthorizerVerdict,
@@ -59,8 +65,15 @@ mock.module('pi-fancy-footer/api/metrics', () => ({
 const { default: extension } = await import('./index.ts');
 
 type EventListener = (event: any, ctx: any) => Promise<any> | any;
+type SessionEntry = { type: 'custom'; customType: string; data: unknown };
+type SessionManagerFixture = {
+    getSessionId(): string;
+    getBranch(): Array<{ type: string; customType?: string; data?: unknown }>;
+    appendCustomEntry?(customType: string, data: unknown): string;
+};
 type CommandContext = {
     ui: { notify(message: string, level: string): void };
+    sessionManager: SessionManagerFixture;
     waitForIdle(): Promise<void>;
     reload(): Promise<void>;
 };
@@ -68,7 +81,12 @@ type CommandDefinition = {
     handler(args: string, ctx: CommandContext): Promise<void>;
 };
 
-function setup() {
+function setup(sessionManager?: SessionManagerFixture) {
+    const entries: SessionEntry[] = [];
+    const manager = sessionManager ?? {
+        getSessionId: () => 'session-1',
+        getBranch: () => entries,
+    };
     const listeners = new Map<string, EventListener>();
     const eventListeners = new Map<string, (payload?: unknown) => void>();
     const flags: string[] = [];
@@ -76,6 +94,13 @@ function setup() {
     const commandDefinitions = new Map<string, CommandDefinition>();
 
     const pi = {
+        appendEntry(customType: string, data: unknown) {
+            if (manager.appendCustomEntry) {
+                manager.appendCustomEntry(customType, data);
+            } else {
+                entries.push({ type: 'custom', customType, data });
+            }
+        },
         registerFlag(name: string) {
             flags.push(name);
         },
@@ -103,6 +128,8 @@ function setup() {
         flags,
         commands,
         commandDefinitions,
+        sessionManager: manager,
+        entries,
     };
 }
 
@@ -128,11 +155,12 @@ describe('extension entry point', () => {
     });
 
     it('enables session yolo immediately without reloading', async () => {
-        const { commandDefinitions } = setup();
+        const { commandDefinitions, sessionManager } = setup();
         const command = commandDefinitions.get('yolo-permission');
         const notifications: Array<[string, string]> = [];
         let reloads = 0;
         const ctx: CommandContext = {
+            sessionManager,
             ui: {
                 notify(message: string, level: string) {
                     notifications.push([message, level]);
@@ -158,7 +186,7 @@ describe('extension entry point', () => {
 
     it('allows main permission-system asks while session yolo is on', async () => {
         permissionService = { registerAuthorizer };
-        const { commandDefinitions, eventListeners } = setup();
+        const { commandDefinitions, eventListeners, listeners, sessionManager } = setup();
         const onPermissionsReady = eventListeners.get('permissions:ready');
 
         expect(onPermissionsReady).toBeDefined();
@@ -171,6 +199,7 @@ describe('extension entry point', () => {
         ];
         const command = commandDefinitions.get('yolo-permission')!;
         const ctx: CommandContext = {
+            sessionManager,
             ui: { notify() {} },
             async waitForIdle() {},
             async reload() {},
@@ -195,17 +224,19 @@ describe('extension entry point', () => {
 
         expect(await authorize(details, query, log)).toEqual({ kind: 'defer' });
         await command.handler('on', ctx);
+        await listeners.get('session_start')!({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent' });
         expect(await authorize(details, query, log)).toEqual({ kind: 'allow' });
         await command.handler('off', ctx);
         expect(await authorize(details, query, log)).toEqual({ kind: 'defer' });
     });
 
-    it('resets session yolo when a session starts', async () => {
-        const { commandDefinitions, listeners } = setup();
+    it('restores last explicit choice on reload and resume, but not new or fork', async () => {
+        const { commandDefinitions, listeners, sessionManager, entries } = setup();
         const command = commandDefinitions.get('yolo-permission')!;
         const onSessionStart = listeners.get('session_start')!;
         const notifications: Array<[string, string]> = [];
         const ctx: CommandContext = {
+            sessionManager,
             ui: {
                 notify(message: string, level: string) {
                     notifications.push([message, level]);
@@ -215,11 +246,170 @@ describe('extension entry point', () => {
             async reload() {},
         };
 
+        await onSessionStart({ reason: 'startup' }, { ...ctx, cwd: '/nonexistent' });
         await command.handler('on', ctx);
-        await onSessionStart({}, { cwd: '/nonexistent' });
-        await command.handler('status', ctx);
+        expect(entries).toEqual([
+            {
+                type: 'custom',
+                customType: 'pi-permission-system-addons:yolo-session',
+                data: { sessionId: 'session-1', enabled: true },
+            },
+        ]);
+        await command.handler('on', ctx);
+        expect(entries).toHaveLength(1);
 
+        for (const reason of ['reload', 'resume', 'startup']) {
+            await onSessionStart({ reason }, { ...ctx, cwd: '/nonexistent' });
+            await command.handler('status', ctx);
+            expect(notifications.at(-1)?.[0]).toContain('ON');
+        }
+        await command.handler('off', ctx);
+        await command.handler('off', ctx);
+        expect(entries).toHaveLength(2);
+        await onSessionStart({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent' });
+        await command.handler('status', ctx);
         expect(notifications.at(-1)?.[0]).toContain('OFF');
+
+        await command.handler('on', ctx);
+        for (const reason of ['new', 'fork']) {
+            await onSessionStart({ reason }, { ...ctx, cwd: '/nonexistent' });
+            await command.handler('status', ctx);
+            expect(notifications.at(-1)?.[0]).toContain('OFF');
+        }
+    });
+
+    it('fails closed for an invalid latest entry or another session ID', async () => {
+        const { commandDefinitions, listeners, sessionManager, entries } = setup();
+        const command = commandDefinitions.get('yolo-permission')!;
+        const start = listeners.get('session_start')!;
+        const notices: string[] = [];
+        const ctx: CommandContext = {
+            sessionManager,
+            ui: { notify(message) { notices.push(message); } },
+            async waitForIdle() {},
+            async reload() {},
+        };
+
+        entries.push({
+            type: 'custom',
+            customType: 'pi-permission-system-addons:yolo-session',
+            data: { sessionId: 'other-session', enabled: true },
+        });
+        await start({ reason: 'startup' }, { ...ctx, cwd: '/nonexistent' });
+        await command.handler('status', ctx);
+        expect(notices.at(-1)).toContain('OFF');
+
+        await command.handler('on', ctx);
+        entries.push({
+            type: 'custom',
+            customType: 'pi-permission-system-addons:yolo-session',
+            data: { sessionId: 'session-1', enabled: 'true' },
+        });
+        await start({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent' });
+        await command.handler('status', ctx);
+        expect(notices.at(-1)).toContain('OFF');
+    });
+
+    it('tracks the active branch after session tree navigation', async () => {
+        const { commandDefinitions, listeners, sessionManager, entries } = setup();
+        const command = commandDefinitions.get('yolo-permission')!;
+        const ctx: CommandContext = {
+            sessionManager,
+            ui: { notify() {} },
+            async waitForIdle() {},
+            async reload() {},
+        };
+        const tree = listeners.get('session_tree');
+        expect(tree).toBeDefined();
+        await command.handler('on', ctx);
+        await command.handler('off', ctx);
+        entries.pop(); // Navigate to the branch where ON was the last decision.
+        await tree!({}, { ...ctx, cwd: '/nonexistent' });
+        await command.handler('status', {
+            ...ctx,
+            ui: { notify(message) { expect(message).toContain('ON'); } },
+        });
+        entries.pop(); // Navigate before the first decision.
+        await tree!({}, { ...ctx, cwd: '/nonexistent' });
+        await command.handler('status', {
+            ...ctx,
+            ui: { notify(message) { expect(message).toContain('OFF'); } },
+        });
+    });
+
+    it('restores only this session from a reopened Pi session file without adding LLM context', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'yolo-session-'));
+        try {
+            const firstManager = SessionManager.create(directory, directory);
+            // Pi flushes a new session to disk only after an assistant message.
+            firstManager.appendMessage({
+                role: 'assistant',
+                content: [{ type: 'text', text: 'Session persistence fixture.' }],
+                api: 'openai-responses',
+                provider: 'openai',
+                model: 'test-model',
+                usage: {
+                    input: 0,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    totalTokens: 0,
+                    cost: {
+                        input: 0,
+                        output: 0,
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                        total: 0,
+                    },
+                },
+                stopReason: 'stop',
+                timestamp: Date.now(),
+            });
+            const first = setup(firstManager);
+            const ctx = (sessionManager: SessionManager) => ({
+                cwd: directory,
+                sessionManager,
+                ui: { notify() {} },
+                async waitForIdle() {},
+                async reload() {},
+            });
+            await first.listeners.get('session_start')!({ reason: 'startup' }, ctx(firstManager));
+            await first.commandDefinitions.get('yolo-permission')!.handler('on', ctx(firstManager));
+            const file = firstManager.getSessionFile();
+            expect(file).toBeDefined();
+            expect(firstManager.getBranch().some(
+                (entry) => entry.type === 'custom' &&
+                    entry.customType === 'pi-permission-system-addons:yolo-session',
+            )).toBe(true);
+            expect(JSON.stringify(firstManager.buildSessionContext())).not.toContain(
+                'pi-permission-system-addons:yolo-session',
+            );
+            await first.listeners.get('session_shutdown')!({}, ctx(firstManager));
+
+            const reopenedManager = SessionManager.open(file!, directory, directory);
+            const reopened = setup(reopenedManager);
+            const notices: string[] = [];
+            const resumedCtx = {
+                ...ctx(reopenedManager),
+                ui: { notify(message: string) { notices.push(message); } },
+            };
+            await reopened.listeners.get('session_start')!({ reason: 'startup' }, resumedCtx);
+            await reopened.commandDefinitions.get('yolo-permission')!.handler('status', resumedCtx);
+            expect(notices.at(-1)).toContain('ON');
+            await reopened.commandDefinitions.get('yolo-permission')!.handler('off', resumedCtx);
+
+            const againManager = SessionManager.open(file!, directory, directory);
+            const again = setup(againManager);
+            const againCtx = {
+                ...ctx(againManager),
+                ui: { notify(message: string) { notices.push(message); } },
+            };
+            await again.listeners.get('session_start')!({ reason: 'resume' }, againCtx);
+            await again.commandDefinitions.get('yolo-permission')!.handler('status', againCtx);
+            expect(notices.at(-1)).toContain('OFF');
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
     });
 
     it('applies session yolo to inherited asks only while enabled', async () => {
@@ -229,18 +419,19 @@ describe('extension entry point', () => {
                 matchedPattern: 'rm -rf *',
             }),
         };
-        const { commandDefinitions, listeners } = setup();
+        const { commandDefinitions, listeners, sessionManager } = setup();
         const command = commandDefinitions.get('yolo-permission')!;
         const onSessionStart = listeners.get('session_start')!;
         const onToolCall = listeners.get('tool_call')!;
         const commandCtx: CommandContext = {
+            sessionManager,
             ui: { notify() {} },
             async waitForIdle() {},
             async reload() {},
         };
         const toolCtx = { hasUI: false };
 
-        await onSessionStart({}, { cwd: '/nonexistent' });
+        await onSessionStart({ reason: 'startup' }, { cwd: '/nonexistent', sessionManager });
         await command.handler('on', commandCtx);
         expect(
             await onToolCall(
@@ -262,24 +453,26 @@ describe('extension entry point', () => {
     });
 
     it("updates the yolo-permission widget through the session lifecycle", async () => {
-        const { listeners, commandDefinitions } = setup();
+        const { listeners, commandDefinitions, sessionManager } = setup();
         const command = commandDefinitions.get('yolo-permission')!;
         const onSessionStart = listeners.get('session_start')!;
         const onSessionShutdown = listeners.get('session_shutdown')!;
         const setWidget = mock((_id: string, _value?: string[]) => {});
         const ctx = {
+            sessionManager,
             hasUI: true,
             ui: { notify() {}, theme: undefined, setWidget },
             async waitForIdle() {},
             async reload() {},
         };
 
-        await onSessionStart({}, ctx);
+        await onSessionStart({ reason: 'startup' }, { ...ctx, cwd: '/nonexistent' });
         expect(setWidget).toHaveBeenLastCalledWith('yolo-permission', [
             expect.stringContaining('yoloSession: off'),
         ]);
 
         await command.handler('on', ctx);
+        await onSessionStart({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent' });
         expect(setWidget).toHaveBeenLastCalledWith('yolo-permission', [
             expect.stringContaining('yoloSession: on'),
         ]);
