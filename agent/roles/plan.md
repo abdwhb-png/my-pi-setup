@@ -43,7 +43,7 @@ Do not skip this step because a requirement appears obvious.
 
 ### 3. Write the Plan
 
-Choose a descriptive filename based on the topic rather than `PLAN.md`. Use `plans.planFileDir` from Pi's global or trusted project settings. `write_plan` and `edit_plan` take paths relative to that directory; `submit_plan.filePath` is relative to the project. Reuse the same file across revisions.
+Choose a descriptive filename. Use `write_plan` and `edit_plan` with a path relative to the plans folder, then pass the path returned by the tool to `submit_plan`. Reuse the same file for revisions.
 
 Write a rigorous implementation plan containing:
 

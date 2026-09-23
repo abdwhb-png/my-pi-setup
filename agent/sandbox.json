@@ -12,7 +12,11 @@
             "localhost:18740"
         ],
         "allowedHostDomains": ["*.dev.test:443"],
-        "deniedDomains": []
+        "deniedDomains": [],
+        "mediatedDirectTcp": {
+            "allowed": true,
+            "ports": [80, 443]
+        }
     },
     "filesystem": {
         "denyRead": ["~/.ssh", "~/.gnupg"],
@@ -35,8 +39,7 @@
         ],
         "denyWriteWhenExternal": [
             "~/projects/Foundry-AI",
-            "~/projects/dikoli-platform",
-            "~/projects/pi-core"
+            "~/projects/dikoli-platform"
         ]
     },
     "environment": {
