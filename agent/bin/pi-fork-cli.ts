@@ -1,4 +1,5 @@
 import { deployFork, rollbackFork, verifyRuntimeCoherence, type CoherenceReport } from "./pi-fork-release.ts";
+import type { PiInstallationPaths } from "./pi-installation-paths.ts";
 import { loadCurrentPiRuntime, type ActivePiRuntime } from "./pi-runtime-store.ts";
 
 const USAGE = "Usage: pi-fork <status|deploy|verify|rollback>";
@@ -13,18 +14,31 @@ export interface PiForkCliDependencies {
   writeError(message: string): void;
 }
 
-const defaultDependencies: PiForkCliDependencies = {
-  deploy: () => deployFork(),
-  rollback: () => rollbackFork(),
-  loadCurrent: () => loadCurrentPiRuntime(),
-  verify: (runtime) => verifyRuntimeCoherence(runtime),
-  writeOutput: (message) => process.stdout.write(`${message}\n`),
-  writeError: (message) => process.stderr.write(`${message}\n`),
-};
+export function createPiForkCliDependencies(
+  paths: PiInstallationPaths,
+): PiForkCliDependencies {
+  return {
+    deploy: () =>
+      deployFork({
+        sourceRoot: paths.sourceRoot,
+        runtimeRoot: paths.runtimeRoot,
+        agentDir: paths.agentDir,
+      }),
+    rollback: () =>
+      rollbackFork({
+        runtimeRoot: paths.runtimeRoot,
+        agentDir: paths.agentDir,
+      }),
+    loadCurrent: () => loadCurrentPiRuntime(paths.runtimeRoot),
+    verify: (runtime) => verifyRuntimeCoherence(runtime, paths.agentDir),
+    writeOutput: (message) => process.stdout.write(`${message}\n`),
+    writeError: (message) => process.stderr.write(`${message}\n`),
+  };
+}
 
 export async function runPiForkCli(
   args: string[],
-  dependencies: PiForkCliDependencies = defaultDependencies,
+  dependencies: PiForkCliDependencies,
 ): Promise<number> {
   if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
     dependencies.writeOutput(USAGE);

@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolvePiInstallationPaths } from "../agent/bin/pi-installation-paths.ts";
 import {
   classifyUpdateCommand,
   isPackageMutationCommand,
@@ -10,6 +12,7 @@ import {
   runRealPi,
 } from "../agent/bin/pi-wrapper-lib.ts";
 
+const paths = resolvePiInstallationPaths(resolve(import.meta.dir, ".."));
 const args = process.argv.slice(2);
 const cwd = process.cwd();
 const updatePolicy = classifyUpdateCommand(args);
@@ -20,7 +23,7 @@ if (!updatePolicy.allowed) {
 
 let realPi: string;
 try {
-  realPi = resolveRealPiPath();
+  realPi = resolveRealPiPath(process.env.PI_REAL_BIN, paths.runtimeRoot);
 } catch (cause) {
   const message = cause instanceof Error ? cause.message : String(cause);
   console.error(`${message}\nRun: pi-fork deploy`);
@@ -32,14 +35,25 @@ if (!process.env.PI_SUBAGENT_PI_BINARY?.trim()) {
 }
 
 if (process.env.PI_PACKAGE_FINALIZER_ACTIVE !== "1") {
-  await runPackageFinalizer(cwd, { force: false, quiet: true });
+  await runPackageFinalizer(cwd, {
+    force: false,
+    quiet: true,
+    agentDir: paths.agentDir,
+  });
 }
 
-const prepared = prepareToolGroupArgs(args, isToolGroupsPackageConfigured(cwd));
+const prepared = prepareToolGroupArgs(
+  args,
+  isToolGroupsPackageConfigured(cwd, paths.agentDir),
+);
 const exitCode = runRealPi(realPi, prepared.args, cwd, prepared.requestedTools);
 
 if (exitCode === 0 && process.env.PI_PACKAGE_FINALIZER_ACTIVE !== "1" && isPackageMutationCommand(args)) {
-  await runPackageFinalizer(cwd, { force: true, quiet: false });
+  await runPackageFinalizer(cwd, {
+    force: true,
+    quiet: false,
+    agentDir: paths.agentDir,
+  });
 }
 
 process.exit(exitCode);

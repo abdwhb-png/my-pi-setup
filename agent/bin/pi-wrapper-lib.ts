@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -10,17 +9,24 @@ import {
   TOOL_GROUPS_PACKAGE_SOURCE,
 } from "../extensions/_shared/tool-groups/package-order.ts";
 import { TOOL_GROUPS_REQUESTED_TOOLS_ENV } from "../extensions/_shared/tool-groups/types.ts";
-import { loadActivePiRuntime, resolvePiLaunchCommand } from "./pi-runtime-store.ts";
+import {
+  getPiRuntimeRoot,
+  loadCurrentPiRuntime,
+  resolvePiLaunchCommand,
+} from "./pi-runtime-store.ts";
 
 export interface PreparedToolGroupArgs {
   args: string[];
   requestedTools?: string[];
 }
 
-export function resolveRealPiPath(realPi = process.env.PI_REAL_BIN, homeDir = homedir()): string {
+export function resolveRealPiPath(
+  realPi = process.env.PI_REAL_BIN,
+  runtimeRoot = getPiRuntimeRoot(),
+): string {
   const override = realPi?.trim();
   if (override) return resolve(override);
-  return loadActivePiRuntime(homeDir).executable;
+  return loadCurrentPiRuntime(runtimeRoot).executable;
 }
 
 const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";

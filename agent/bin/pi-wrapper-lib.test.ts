@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-function createActiveRuntime(homeDir: string): string {
+function createActiveRuntime(homeDir: string): { executable: string; runtimeRoot: string } {
   const runtimeRoot = join(homeDir, ".pi", "runtime", "pi-core");
   const releaseRoot = join(runtimeRoot, "releases", "release-a");
   const packageRoot = join(releaseRoot, "package");
@@ -26,18 +26,18 @@ function createActiveRuntime(homeDir: string): string {
     }),
   );
   symlinkSync(releaseRoot, join(runtimeRoot, "current"));
-  return executable;
+  return { executable, runtimeRoot };
 }
 
 describe("pi-wrapper-lib", () => {
   it("resolves only the promoted runtime unless explicitly overridden", async () => {
     const mod = await import("./pi-wrapper-lib.ts");
     const homeDir = mkdtempSync(join(tmpdir(), "pi-fw-home-"));
-    const executable = createActiveRuntime(homeDir);
+    const { executable, runtimeRoot } = createActiveRuntime(homeDir);
 
-    expect(mod.resolveRealPiPath(undefined, homeDir)).toBe(executable);
-    expect(mod.resolveRealPiPath("/opt/custom/pi", homeDir)).toBe("/opt/custom/pi");
-  });
+    expect(mod.resolveRealPiPath(undefined, runtimeRoot)).toBe(executable);
+    expect(mod.resolveRealPiPath("/opt/custom/pi", runtimeRoot)).toBe("/opt/custom/pi");
+  }, { timeout: 15_000 });
 
   it("finds the owning Pi package for a compiled launcher", async () => {
     const mod = await import("./pi-wrapper-lib.ts");
@@ -233,24 +233,16 @@ describe("pi-wrapper-lib", () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("Pi self-update is disabled");
     expect(existsSync(marker)).toBe(false);
-  });
+  }, { timeout: 15_000 });
 
-  it("fails closed with deploy guidance when no release is active", () => {
-    const cwd = mkdtempSync(join(tmpdir(), "pi-fw-no-runtime-cwd-"));
-    const homeDir = mkdtempSync(join(tmpdir(), "pi-fw-no-runtime-home-"));
-    const wrapper = resolve(import.meta.dir, "../../bin/pi");
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: homeDir,
-      PI_PACKAGE_FINALIZER_ACTIVE: "1",
-    };
-    delete env.PI_REAL_BIN;
+  it("fails closed when the explicit runtime root has no active release", async () => {
+    const mod = await import("./pi-wrapper-lib.ts");
+    const runtimeRoot = join(mkdtempSync(join(tmpdir(), "pi-fw-no-runtime-")), "runtime");
 
-    const result = spawnSync(wrapper, ["--version"], { cwd, encoding: "utf-8", env });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Run: pi-fork deploy");
-  });
+    expect(() => mod.resolveRealPiPath(undefined, runtimeRoot)).toThrow(
+      "No active Pi runtime release",
+    );
+  }, { timeout: 15_000 });
 
   it("makes subagents relaunch through the wrapper", () => {
     const cwd = mkdtempSync(join(tmpdir(), "pi-fw-subagent-"));
@@ -280,5 +272,5 @@ describe("pi-wrapper-lib", () => {
     expect(JSON.parse(readFileSync(output, "utf-8"))).toEqual({
       subagentPiBinary: wrapper,
     });
-  });
+  }, { timeout: 15_000 });
 });

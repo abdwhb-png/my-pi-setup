@@ -1,4 +1,12 @@
 #!/usr/bin/env bun
-import { runPiForkCli } from "../agent/bin/pi-fork-cli.ts";
+import { resolve } from "node:path";
+import {
+  createPiForkCliDependencies,
+  runPiForkCli,
+} from "../agent/bin/pi-fork-cli.ts";
+import { resolvePiInstallationPaths } from "../agent/bin/pi-installation-paths.ts";
 
-process.exit(await runPiForkCli(process.argv.slice(2)));
+const paths = resolvePiInstallationPaths(resolve(import.meta.dir, ".."));
+const dependencies = createPiForkCliDependencies(paths);
+
+process.exit(await runPiForkCli(process.argv.slice(2), dependencies));
