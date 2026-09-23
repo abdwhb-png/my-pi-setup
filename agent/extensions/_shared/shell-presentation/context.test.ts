@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { rewriteProviderSystemPrompt } from "../provider-system-prompt.ts";
 import { injectProviderToolsCatalog } from "../tool-policy/provider-catalog.ts";
 import { SHELL_CONTEXT_START, stripShellSystemContext, updateShellContext } from "./context.ts";
@@ -14,7 +15,7 @@ const cases: Array<[string, Record<string, unknown>]> = [
     ["google-generative-ai", { config: { systemInstruction: "Base" }, contents: conversation }],
     ["google-vertex", { config: { systemInstruction: { parts: [{ text: "Base" }] } }, contents: conversation }],
     ["bedrock-converse-stream", { system: [{ text: "Base" }, { cachePoint: { type: "default" } }], messages: conversation }],
-    ["pi-messages", { context: { systemPrompt: "Base", messages: conversation } }],
+    ["pi-messages", { context: normalizeContext({ systemPrompt: "Base", messages: [{ role: "user", content: "Continue my task", timestamp: 1 }] }) }],
 ];
 
 test.each(cases)("%s: keeps sandbox metadata outside conversation and preserves the input request", (api, payload) => {

@@ -11,7 +11,6 @@
  * When tools[] has entries, only those tools are displayed.
  */
 
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ToolResultEvent,
@@ -33,7 +32,7 @@ export default function (pi: ExtensionAPI) {
     if (isRPCMode()) return;
 
     const filter = new ToolFilter();
-    let toolResults: ToolResultMessage[] = [];
+    let toolResults: Array<{ toolName: string; isError: boolean }> = [];
 
     pi.on("session_start", async (_event, ctx) => {
         const config = loadToolSummaryConfig(ctx.cwd);
@@ -49,13 +48,8 @@ export default function (pi: ExtensionAPI) {
 
     pi.on("tool_result", async (event: ToolResultEvent) => {
         toolResults.push({
-            role: "toolResult",
-            toolCallId: event.toolCallId,
             toolName: event.toolName,
-            content: event.content,
-            details: event.details,
             isError: event.isError,
-            timestamp: Date.now(),
         });
     });
 

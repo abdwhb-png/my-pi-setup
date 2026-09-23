@@ -16,7 +16,7 @@ for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi 
         const runner = session.session.extensionRunner;
         if (!runner) throw new Error('Missing real Pi runner');
         session.session.agent.state.model = { ...session.session.agent.state.model, provider: 'zai', id: 'glm-5.2', api: 'openai-completions' };
-        await runner.emitBeforeAgentStart('Please inspect this fixture thoroughly before doing anything else. '.repeat(3), undefined, 'Custom SYSTEM', { cwd: session.cwd, customPrompt: 'Custom SYSTEM' });
+        await runner.emitBeforeAgentStart('Please inspect this fixture thoroughly before doing anything else. '.repeat(3), undefined, { cwd: session.cwd, customPrompt: 'Custom SYSTEM' });
         const params = { model: 'glm-5.2', messages: [{ role: 'system', content: 'Custom SYSTEM' }], tools: [{ type: 'function', function: { name: 'edit', parameters: {} } }], thinking: { type: 'enabled' } };
         const first = await runner.emitBeforeProviderRequest(params) as typeof params;
         expect(JSON.stringify(first)).toContain('- edit');
@@ -32,7 +32,7 @@ for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi 
         expect(response).toMatchObject({ service_tier: 'priority' });
         expect(JSON.stringify(response)).toContain('- safe_bash');
 
-        await runner.emitBeforeAgentStart('default', undefined, 'Pi default prompt', { cwd: session.cwd });
+        await runner.emitBeforeAgentStart('default', undefined, { cwd: session.cwd, customPrompt: 'Pi default prompt' });
         expect(await runner.emitBeforeProviderRequest(params)).toEqual(params);
     } finally {
         await session.session.extensionRunner?.emit({ type: 'session_shutdown', reason: 'quit' });

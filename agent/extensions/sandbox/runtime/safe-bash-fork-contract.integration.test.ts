@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
@@ -386,7 +387,7 @@ describe.skipIf(process.platform !== "linux" ||
         const activeSession = session.session;
         const originalStream = activeSession.agent.streamFunction;
         session.session.agent.streamFunction = async (model, context, options) => {
-            const request = await activeSession.extensionRunner!.emitBeforeProviderRequest({ instructions: context.systemPrompt, input: context.messages });
+            const request = await activeSession.extensionRunner!.emitBeforeProviderRequest({ instructions: getCurrentSystemPrompt(context.messages), input: context.messages });
             if (!request || typeof request !== "object" || !("instructions" in request) || typeof request.instructions !== "string")
                 throw new Error("Missing system instructions in fixture request");
             modelInputs.push({

@@ -2,7 +2,6 @@
  * Core logic for tool-summary: counting and formatting tool usage.
  */
 
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { UiColorsCreation } from "../_shared/ui/ui-colors.ts";
 import type { ToolCounts } from "./types.ts";
 
@@ -10,7 +9,9 @@ import type { ToolCounts } from "./types.ts";
  * Count tool usage from turn-end tool results.
  * Groups by toolName, counting total calls and errors.
  */
-export function countToolUsage(results: ToolResultMessage[]): ToolCounts {
+export function countToolUsage(
+    results: readonly { toolName: string; isError: boolean }[],
+): ToolCounts {
     const total: Record<string, number> = {};
     const errors: Record<string, number> = {};
 

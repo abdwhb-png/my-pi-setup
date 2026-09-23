@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     SessionEntry,
@@ -22,6 +23,13 @@ export {
 
 const KEY = Symbol.for("pi.execution-provenance.v1");
 const CONTEXT_RECEIPT = Symbol.for("pi.execution-provenance.context.v1");
+
+function wireDetails(value: object): JsonValue {
+    // JSON serialization removes legacy non-JSON fields before Pi stores the result.
+    // oxlint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- JSON.parse yields a JsonValue after JSON.stringify succeeds.
+    return JSON.parse(JSON.stringify(value)) as JsonValue;
+}
+
 interface Registry {
     records: Map<string, ExecutionProvenance>;
 }
@@ -343,10 +351,10 @@ export function addExecutionContext(
             if (!context) return message;
             return {
                 ...message,
-                details: {
+                details: wireDetails({
                     ...(details && typeof details === "object" ? details : {}),
                     sandboxContextReceiptVisible: true,
-                },
+                }),
                 content: [
                     ...message.content,
                     { type: "text" as const, text: context.slice(1) },
@@ -356,10 +364,10 @@ export function addExecutionContext(
         const execution = resolveExecution(message.toolCallId, details);
         return {
             ...message,
-            details: {
+            details: wireDetails({
                 ...mergeExecutionDetails(details, execution),
                 executionReceiptVisible: true,
-            },
+            }),
             content: [
                 ...message.content,
                 {

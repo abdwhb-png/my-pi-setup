@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
 import type { Context, Model } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 
 import { createThinkExecuteContent } from "./public-contract.ts";
 
@@ -39,7 +40,6 @@ const compat: Parameters<typeof convertMessages>[2] = {
     supportsOpenAIGrammarTools: false,
     cacheControlFormat: undefined,
     sendSessionAffinityHeaders: false,
-    deferredToolsMode: undefined,
     sessionAffinityFormat: "openai",
     supportsLongCacheRetention: true,
 };
@@ -72,7 +72,7 @@ test("OpenAI completions sends the Think public content without details", () => 
         ],
     };
 
-    const messages = convertMessages(model, context, compat);
+    const messages = convertMessages(model, normalizeContext(context), compat);
 
     expect(messages).toEqual([
         {

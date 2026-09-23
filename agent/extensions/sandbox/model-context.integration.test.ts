@@ -1,4 +1,5 @@
 import type { Context } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expect, test } from "bun:test";
 import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
@@ -91,7 +92,7 @@ function fixture() {
 
 async function requestSystem(session: Awaited<ReturnType<typeof createTestSession>>, context: Context): Promise<string> {
     const input = structuredClone(context.messages);
-    const payload = await session.session.extensionRunner!.emitBeforeProviderRequest({ instructions: context.systemPrompt, input });
+    const payload = await session.session.extensionRunner!.emitBeforeProviderRequest({ instructions: getCurrentSystemPrompt(context.messages), input });
     expect(payload).toMatchObject({ input });
     if (!payload || typeof payload !== "object" || !("instructions" in payload) || typeof payload.instructions !== "string")
         throw new Error("Missing system instructions in fixture provider request");
@@ -110,10 +111,11 @@ test.each(["openai-responses", "openai-completions"] as const)("%s sends sandbox
         const original = session.session.agent.streamFunction;
         session.session.agent.streamFunction = async (model, context, options) => {
             const input = structuredClone(context.messages);
+            const systemPrompt = getCurrentSystemPrompt(context.messages);
             const payload = await session.session.extensionRunner!.emitBeforeProviderRequest(api === "openai-responses"
-                ? { instructions: context.systemPrompt, input }
-                : { messages: [{ role: "system", content: context.systemPrompt }, ...input] });
-            requests.push({ payload, input, messages: JSON.stringify(context.messages), system: context.systemPrompt ?? "" });
+                ? { instructions: systemPrompt, input }
+                : { messages: [{ role: "system", content: systemPrompt }, ...input] });
+            requests.push({ payload, input, messages: JSON.stringify(context.messages), system: systemPrompt });
             return original(model, context, options);
         };
         await running;
@@ -149,7 +151,7 @@ test.each(["standard", "custom"] as const)("refreshes one ephemeral context with
         const original = session.session.agent.streamFunction;
         session.session.agent.streamFunction = async (model, context, options) => {
             contexts.push(await requestSystem(session, context));
-            systems.push(context.systemPrompt ?? "");
+            systems.push(getCurrentSystemPrompt(context.messages));
             preparations.push(f.preparations());
             return original(model, context, options);
         };

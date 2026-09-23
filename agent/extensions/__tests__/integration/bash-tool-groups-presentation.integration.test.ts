@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -53,7 +54,7 @@ test.each([
             const original = session.session.agent.streamFunction;
             session.session.agent.streamFunction = (model, context, options) => {
                 modelContext = JSON.stringify(context.messages);
-                modelSystem = context.systemPrompt ?? "";
+                modelSystem = getCurrentSystemPrompt(context.messages);
                 return original(model, context, options);
             };
             await running;

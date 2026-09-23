@@ -1,7 +1,33 @@
 import { expect, test } from 'bun:test';
+import { Type } from '@earendil-works/pi-ai';
+import { getCurrentSystemPrompt, normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
 import { injectProviderToolsCatalog, appendToolsListPrompt, CATALOG_START } from './provider-catalog.ts';
 
 const fn = { name: 'edit', description: 'Edit a file', parameters: { type: 'object' } };
+
+test('pi-messages catalogs the current transcript tools and updates the transmitted prompt', () => {
+    const edit = { name: 'edit', description: 'Edit a file', parameters: Type.Object({}) };
+    const read = { name: 'read', description: 'Read a file', parameters: Type.Object({}) };
+    const safeBash = { name: 'safe_bash', description: 'Run a command', parameters: Type.Object({}) };
+    const context = normalizeContext({
+        systemPrompt: 'Custom',
+        tools: [edit, read],
+        messages: [
+            { role: 'user', content: 'Continue', timestamp: 1 },
+            { role: 'system', content: 'Later instructions', toolsRemoved: [{ name: 'read' }], toolsAdded: [safeBash], timestamp: 2 },
+        ],
+    });
+    const before = structuredClone(context);
+    const result = injectProviderToolsCatalog('pi-messages', { context, options: { toolChoice: 'auto' } });
+    expect(result.supported).toBe(true);
+    if (!result.supported) throw new Error(result.reason);
+    expect(result.tools.map(tool => tool.name)).toEqual(['edit', 'safe_bash']);
+    const sent = result.payload as { context: typeof context };
+    expect(getCurrentSystemPrompt(sent.context.messages)).toContain('- safe_bash: Run a command');
+    expect(getCurrentSystemPrompt(sent.context.messages)).not.toContain('- read: Read a file');
+    expect(sent.context).not.toHaveProperty('systemPrompt');
+    expect(context).toEqual(before);
+});
 const cases: Array<[string, Record<string, unknown>]> = [
     ['openai-completions', { messages: [{ role: 'system', content: 'Custom' }], tools: [{ type: 'function', function: fn }] }],
     ['mistral-conversations', { messages: [{ role: 'system', content: 'Custom' }], tools: [{ type: 'function', function: fn }] }],
@@ -12,7 +38,7 @@ const cases: Array<[string, Record<string, unknown>]> = [
     ['google-generative-ai', { contents: [], config: { systemInstruction: 'Custom', tools: [{ functionDeclarations: [fn] }] } }],
     ['google-vertex', { contents: [], config: { systemInstruction: { parts: [{ text: 'Custom' }] }, tools: [{ functionDeclarations: [fn] }] } }],
     ['bedrock-converse-stream', { messages: [], system: [{ text: 'Custom' }, { cachePoint: { type: 'default' } }], toolConfig: { tools: [{ toolSpec: { ...fn, inputSchema: { json: {} } } }] } }],
-    ['pi-messages', { context: { systemPrompt: 'Custom', messages: [], tools: [fn] } }],
+    ['pi-messages', { context: normalizeContext({ systemPrompt: 'Custom', messages: [], tools: [{ ...fn, parameters: Type.Object({}) }] }) }],
 ];
 for (const [api, payload] of cases) {
     test(`${api}: injects exactly the request tools and preserves the original payload`, () => {
@@ -72,7 +98,7 @@ for (const [api, payload] of [
     ['anthropic-messages', { messages: [], system: 'Custom', tools: [{ ...fn, input_schema: {} }], tool_choice: { type: 'none' } }],
     ['google-generative-ai', { contents: [], config: { systemInstruction: 'Custom', tools: [{ functionDeclarations: [fn] }], toolConfig: { functionCallingConfig: { mode: 'NONE', allowedFunctionNames: ['edit'] } } } }],
     ['google-vertex', { contents: [], config: { systemInstruction: 'Custom', tools: [{ functionDeclarations: [fn] }], toolConfig: { functionCallingConfig: { mode: 'NONE' } } } }],
-    ['pi-messages', { context: { systemPrompt: 'Custom', messages: [], tools: [fn] }, options: { toolChoice: 'none' } }],
+    ['pi-messages', { context: normalizeContext({ systemPrompt: 'Custom', messages: [], tools: [{ ...fn, parameters: Type.Object({}) }] }), options: { toolChoice: 'none' } }],
 ] as const) {
     test(`${api}: honors the provider-native disabled selection`, () => {
         const result = injectProviderToolsCatalog(api, payload);

@@ -1,11 +1,15 @@
 import { appendFileSync } from "node:fs";
-import type { Context } from "@earendil-works/pi-ai";
+import type { ToolCall, TranscriptContext } from "@earendil-works/pi-ai";
 import {
     createFauxCore,
     fauxAssistantMessage,
     fauxToolCall,
     type FauxResponseFactory,
 } from "@earendil-works/pi-ai/providers/faux";
+import {
+    getCurrentSystemPrompt,
+    getCurrentTools,
+} from "@earendil-works/pi-ai/utils/transcript";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const tracePath = process.env.THINK_SMOKE_TRACE;
@@ -31,8 +35,10 @@ function textOf(content: OpaqueValue): string {
         .join("\n");
 }
 
-function traceContext(context: Context, label: string): void {
+function traceContext(context: TranscriptContext, label: string): void {
     if (!tracePath) return;
+    const tools = getCurrentTools(context.messages);
+    const systemPrompt = getCurrentSystemPrompt(context.messages);
     const receipts = context.messages
         .map((message) => textOf(property(message, "content")))
         .filter((text) => text.includes('"type":"think-execution-receipts"'));
@@ -49,35 +55,32 @@ function traceContext(context: Context, label: string): void {
         `${JSON.stringify({
             phase,
             label,
-            tools: context.tools?.map((candidate) => candidate.name) ?? [],
+            tools: tools.map((candidate) => candidate.name),
             thinkSchemaGuidancePresent:
-                context.tools
-                    ?.find((candidate) => candidate.name === "think_execute")
+                tools
+                    .find((candidate) => candidate.name === "think_execute")
                     ?.description.includes("bounded result") === true &&
-                context.tools
-                    ?.find((candidate) => candidate.name === "think_execute")
+                tools
+                    .find((candidate) => candidate.name === "think_execute")
                     ?.description.includes(
                         "Use it when only filtering, parsing, aggregation, extraction, comparison, or summarization is needed",
                     ) === true,
-            contextToolListPresent:
-                context.systemPrompt?.includes(
-                    "Available tools:\n- think_execute: Derive a bounded result",
-                ) === true,
+            contextToolListPresent: systemPrompt.includes(
+                "Available tools:\n- think_execute: Derive a bounded result",
+            ),
             contextToolGuidelinesPresent:
-                context.systemPrompt?.includes(
+                systemPrompt.includes(
                     "Tool usage guidelines:\n- Use think_execute when only a bounded derivation is needed",
-                ) === true &&
-                context.systemPrompt?.includes(
+                ) &&
+                systemPrompt.includes(
                     "Keep native tools as the natural choice when their exact output must be observed",
-                ) === true,
-            autonomousThinkRoutingPresent:
-                context.systemPrompt?.includes(
-                    "Use these tools autonomously",
-                ) === true,
-            ctxTools:
-                context.tools
-                    ?.map((candidate) => candidate.name)
-                    .filter((name) => name.startsWith("ctx_")) ?? [],
+                ),
+            autonomousThinkRoutingPresent: systemPrompt.includes(
+                "Use these tools autonomously",
+            ),
+            ctxTools: tools
+                .map((candidate) => candidate.name)
+                .filter((name) => name.startsWith("ctx_")),
             toolResults,
             snapshotMessageCount: receipts.length,
             snapshotBytes: receipts.map((text) =>
@@ -98,13 +101,13 @@ function traced(
     };
 }
 
-function tool(name: string, arguments_: Record<string, unknown>, id: string) {
+function tool(name: string, arguments_: ToolCall["arguments"], id: string) {
     return fauxAssistantMessage(fauxToolCall(name, arguments_, { id }), {
         stopReason: "toolUse",
     });
 }
 
-function archiveIds(context: Context): string[] {
+function archiveIds(context: TranscriptContext): string[] {
     return context.messages.flatMap((message) => {
         if (message.role !== "toolResult") return [];
         const firstLine = textOf(message.content).split("\n", 1)[0];

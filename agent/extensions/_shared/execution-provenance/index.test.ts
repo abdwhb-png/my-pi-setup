@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { JsonValue } from '@earendil-works/pi-ai';
 import { addExecutionContext, hostExecution, unknownExecution, parseExecutionProvenance, recordExecution } from './index.ts';
 import {
     mergeSandboxContextForFailure,
@@ -31,8 +32,12 @@ const sandboxContext: SandboxExecutionContextV1 = {
     environment: { inherit: [], set: ['HOME'], deny: [] },
 };
 
+function wireDetails(value: unknown): JsonValue {
+    return JSON.parse(JSON.stringify(value));
+}
+
 test('context copies preserve raw text, images, historical facts and unknown history', () => {
-    const messages: AgentMessage[] = [{ role: 'toolResult', toolCallId: 'past', toolName: 'read', content: [{ type: 'text', text: 'raw' }, { type: 'image', data: 'AA==', mimeType: 'image/png' }], isError: false, timestamp: 1, details: { execution: hostExecution(), executionReceiptVisible: false } }, { role: 'toolResult', toolCallId: 'old', toolName: 'bash', content: [{ type: 'text', text: 'old' }], isError: false, timestamp: 2 }];
+    const messages: AgentMessage[] = [{ role: 'toolResult', toolCallId: 'past', toolName: 'read', content: [{ type: 'text', text: 'raw' }, { type: 'image', data: 'AA==', mimeType: 'image/png' }], isError: false, timestamp: 1, details: wireDetails({ execution: hostExecution(), executionReceiptVisible: false }) }, { role: 'toolResult', toolCallId: 'old', toolName: 'bash', content: [{ type: 'text', text: 'old' }], isError: false, timestamp: 2 }];
     const original = JSON.stringify(messages);
     recordExecution('past', { ...hostExecution(), outcome: 'failed' });
     const first = addExecutionContext(messages);
@@ -98,7 +103,7 @@ test('Think failure keeps its JSON receipt and receives the analysis dispatch co
         content: [{ type: 'text', text: JSON.stringify({ tool: 'think_execute', status: 'error', sourceExecution: hostExecution(), analysisExecution: { ...unknownExecution(), status: 'sandboxed', profile: 'analysis-strict', backend: 'zerobox', outcome: 'failed' } }) }],
         isError: true,
         timestamp: 1,
-        details: { sandboxExecutionContext: { ...sandboxContext, profile: 'analysis-strict', tmp: { path: '/tmp', namespace: 'lease-private' } } },
+        details: wireDetails({ sandboxExecutionContext: { ...sandboxContext, profile: 'analysis-strict', tmp: { path: '/tmp', namespace: 'lease-private' } } }),
     };
 
     const decorated = addExecutionContext([message]);
@@ -108,7 +113,7 @@ test('Think failure keeps its JSON receipt and receives the analysis dispatch co
 });
 
 test('model context identifies archived output text independently from source execution', () => {
-    const message: AgentMessage = { role: 'toolResult', toolCallId: 'archived', toolName: 'read', content: [{ type: 'text', text: 'page' }], isError: false, timestamp: 1, details: { execution: hostExecution(), outputArchive: { kind: 'output-text', sourceExecution: unknownExecution(), storage: hostExecution() } } };
+    const message: AgentMessage = { role: 'toolResult', toolCallId: 'archived', toolName: 'read', content: [{ type: 'text', text: 'page' }], isError: false, timestamp: 1, details: wireDetails({ execution: hostExecution(), outputArchive: { kind: 'output-text', sourceExecution: unknownExecution(), storage: hostExecution() } }) };
     const result = addExecutionContext([message]);
     expect(JSON.stringify(result)).toContain('Output archive:');
     expect(JSON.stringify(message)).not.toContain('Output archive:');
@@ -130,7 +135,7 @@ test('sandbox failures receive their dispatch context without inferring a cause'
         ...sandboxContext,
         filesystem: { ...sandboxContext.filesystem, allowRead: ['/later-policy'] },
     });
-    const message: AgentMessage = { role: 'toolResult', toolCallId: 'failed', toolName: 'bash', content: [{ type: 'text', text: 'raw stderr' }], isError: true, timestamp: 1, details };
+    const message: AgentMessage = { role: 'toolResult', toolCallId: 'failed', toolName: 'bash', content: [{ type: 'text', text: 'raw stderr' }], isError: true, timestamp: 1, details: wireDetails(details) };
 
     const decorated = addExecutionContext([message]);
     expect(JSON.stringify(decorated)).toContain('raw stderr');

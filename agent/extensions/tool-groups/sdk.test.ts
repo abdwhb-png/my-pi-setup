@@ -228,14 +228,12 @@ describe('tool-groups SDK integration', () => {
             );
             expect(tool).toBeDefined();
 
-            const result = await tool!.execute('call_probe', {});
+            await tool!.execute('call_probe', {});
 
-            expect(result.addedToolNames).not.toContain('@inspect');
-            expect(
-                result.addedToolNames?.every(
-                    (name) => !name.startsWith('@'),
-                ),
-            ).toBe(true);
+            const activeNames = session.getActiveToolNames();
+            expect(activeNames).toContain('read');
+            expect(activeNames).not.toContain('@inspect');
+            expect(activeNames.every((name) => !name.startsWith('@'))).toBe(true);
             session.dispose();
         } finally {
             await rm(tmpDir, { recursive: true, force: true });

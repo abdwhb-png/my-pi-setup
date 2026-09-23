@@ -1,5 +1,9 @@
+import { getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
 import type { BeforeProviderRequestEvent } from "@earendil-works/pi-coding-agent";
-import { rewriteProviderSystemPrompt } from "../provider-system-prompt.ts";
+import {
+    piMessagesTranscript,
+    rewriteProviderSystemPrompt,
+} from "../provider-system-prompt.ts";
 import { toolPresentation, type PresentedTool } from "./presentation.ts";
 type ProviderPayload = BeforeProviderRequestEvent["payload"];
 
@@ -361,9 +365,9 @@ export function injectProviderToolsCatalog(
                 );
                 break;
             case "pi-messages":
-                if (!record(value.context))
-                    throw new Error("Missing Pi context");
-                tools = definitions(value.context.tools);
+                tools = definitions(
+                    getCurrentTools(piMessagesTranscript(value)),
+                );
                 break;
             default:
                 return {

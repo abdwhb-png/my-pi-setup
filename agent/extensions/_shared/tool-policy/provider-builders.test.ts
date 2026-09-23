@@ -1,6 +1,7 @@
 import { expect, test, mock } from 'bun:test';
 import { zstdDecompressSync } from 'node:zlib';
 import { Type, type Api, type Model, type StreamOptions } from '@earendil-works/pi-ai';
+import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
 import { injectProviderToolsCatalog } from './provider-catalog.ts';
 
 let transported: unknown;
@@ -51,8 +52,9 @@ for (const api of apis) test(`${api}: real request builder reaches only the simu
         },
     };
     const { stream } = await import(`@earendil-works/pi-ai/api/${api}`);
-    const result = await stream(model, { systemPrompt: 'Custom SYSTEM', messages: [{ role: 'user', content: 'fixture', timestamp: 0 }],
-        tools: ['edit', 'safe_bash'].map(name => ({ name, description: `${name} description`, parameters: Type.Object({}) })) }, options).result();
+    const context = normalizeContext({ systemPrompt: 'Custom SYSTEM', messages: [{ role: 'user', content: 'fixture', timestamp: 0 }],
+        tools: ['edit', 'safe_bash'].map(name => ({ name, description: `${name} description`, parameters: Type.Object({}) })) });
+    const result = await stream(model, context, options).result();
     expect(transformed, result.errorMessage).toBeDefined();
     expect(transported, result.errorMessage).toEqual(transformed);
     expect(JSON.stringify(transported)).toContain('<pi-runtime-tools>');
@@ -61,8 +63,7 @@ for (const api of apis) test(`${api}: real request builder reaches only the simu
     transformed = undefined;
     let callableNames: string[] | undefined;
     let noneBlock = '';
-    const noneResult = await stream(model, { systemPrompt: 'Custom SYSTEM', messages: [{ role: 'user', content: 'fixture', timestamp: 0 }],
-        tools: ['edit', 'safe_bash'].map(name => ({ name, description: `${name} description`, parameters: Type.Object({}) })) }, {
+    const noneResult = await stream(model, context, {
         ...options,
         toolChoice: 'none',
         onPayload(payload: unknown) {
@@ -75,15 +76,8 @@ for (const api of apis) test(`${api}: real request builder reaches only the simu
             return transformed;
         },
     }).result();
-    if (api === 'azure-openai-responses') {
-        // The installed Azure builder does not serialize StreamOptions.toolChoice.
-        // The finalizer must report the resulting payload as unspecified.
-        expect(callableNames, noneResult.errorMessage).toBeUndefined();
-        expect(noneBlock).toContain('(callability unspecified by this provider request)');
-    } else {
-        expect(callableNames, noneResult.errorMessage).toEqual([]);
-        expect(noneBlock).toMatch(/\(no immediate(?:ly callable)? function tools\)/);
-    }
+    expect(callableNames, noneResult.errorMessage).toEqual([]);
+    expect(noneBlock).toMatch(/\(no immediate(?:ly callable)? function tools\)/);
     if (api === 'mistral-conversations') {
         // Mistral renames camelCase request fields after onPayload.
         expect(transported).toMatchObject({ tool_choice: 'none' });

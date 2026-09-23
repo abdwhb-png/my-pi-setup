@@ -65,6 +65,67 @@ function messagePrompt(
     return result;
 }
 
+/** Validate the normalized pi-messages transcript used by both prompt and catalog adapters. */
+export function piMessagesTranscript(
+    value: ProviderPayload,
+): Array<Record<string, ProviderPayload> & { role: string }> {
+    if (
+        !record(value) ||
+        !record(value.context) ||
+        !isArray(value.context.messages)
+    )
+        throw new Error("Missing Pi context");
+    const messages = value.context.messages;
+    if (
+        !messages.every(
+            (
+                message,
+            ): message is Record<string, ProviderPayload> & { role: string } =>
+                record(message) && typeof message.role === "string",
+        )
+    )
+        throw new Error("Invalid Pi transcript message");
+    return messages;
+}
+
+function piMessagesPrompt(
+    messages: ReturnType<typeof piMessagesTranscript>,
+    transform: (text: string) => string,
+    strip: (text: string) => string,
+): ProviderPayload[] {
+    let inserted = false;
+    const result = messages.map((message) => {
+        if (message.role !== "system") return message;
+        const content = textField(
+            message.content,
+            inserted ? strip : transform,
+            !inserted,
+            strip,
+        );
+        inserted = true;
+        const sections = record(message.sections)
+            ? Object.fromEntries(
+                  Object.entries(message.sections).map(([name, section]) => [
+                      name,
+                      typeof section === "string" ? strip(section) : section,
+                  ]),
+              )
+            : message.sections;
+        return {
+            ...message,
+            content,
+            ...(sections === undefined ? {} : { sections }),
+        };
+    });
+    if (!inserted)
+        result.unshift({
+            role: "system",
+            content: transform(""),
+            timestamp: 0,
+        });
+    return result;
+}
+
 /** Return a request-local copy; never mutate conversation or session state. */
 export function rewriteProviderSystemPrompt(
     api: string,
@@ -152,18 +213,13 @@ export function rewriteProviderSystemPrompt(
                         : textField(value.system, transform, true, strip, true),
             };
         case "pi-messages":
-            if (!record(value.context) || !isArray(value.context.messages))
-                throw new Error("Missing Pi context");
+            const messages = piMessagesTranscript(value);
+            if (!record(value.context)) throw new Error("Missing Pi context");
             return {
                 ...value,
                 context: {
                     ...value.context,
-                    systemPrompt: textField(
-                        value.context.systemPrompt,
-                        transform,
-                        true,
-                        strip,
-                    ),
+                    messages: piMessagesPrompt(messages, transform, strip),
                 },
             };
         default:

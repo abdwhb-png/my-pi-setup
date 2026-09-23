@@ -6,7 +6,7 @@ import {
     mock,
 } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -144,7 +144,7 @@ describe("think_* tool handlers", () => {
         const expectRejected = (
             name: string,
             schema: (typeof SCHEMAS)[keyof typeof SCHEMAS],
-            args: Record<string, unknown>,
+            args: ToolCall["arguments"],
         ): void => {
             expect(() =>
                 validateToolArguments(
