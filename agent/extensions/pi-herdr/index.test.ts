@@ -1,6 +1,26 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { TestHooks, mountPolicy } from "../_shared/testing/tool-policy-fixture.ts";
-import herdrExtension from "./index";
+
+// Force the createWidget fallback path (ctx.ui.setWidget) in tests so the
+// widget wiring is observable without pi-fancy-footer installed.
+mock.module("pi-fancy-footer/api", () => ({
+	contributeFancyFooterWidgets: () => {
+		throw new Error("pi-fancy-footer not installed (test fallback)");
+	},
+	requestFancyFooterWidgetDiscovery: () => {},
+	requestFancyFooterRefresh: () => {},
+	getExtensionStatusesSnapshot: () => ({}),
+	subscribeExtensionStatusesSnapshot: () => () => {},
+	publishExtensionStatusesSnapshot: () => {},
+	FANCY_FOOTER_EXTENSION_STATUSES_SNAPSHOT_EVENT:
+		"fancy-footer:extension-statuses",
+}));
+
+mock.module("pi-fancy-footer/api/metrics", () => ({
+	collectSessionUsageMetrics: () => ({}),
+}));
+
+const { default: herdrExtension } = await import("./index");
 
 const currentPane = {
 	pane_id: "w1:p1",
@@ -587,5 +607,47 @@ describe("pi-herdr", () => {
 
 		expect(calls).toEqual([["agent", "send-keys", "reviewer", "esc", "ctrl+c"]]);
 		expect(result.content[0].text).toBe("Sent esc ctrl+c to reviewer");
+	});
+
+	test("autocompletes on, off, and status for herdr-tools", () => {
+		const runtime = registerRuntime(() => ({}));
+		const completions = runtime.commands.get("herdr-tools").getArgumentCompletions;
+
+		expect(completions).toBeTypeOf("function");
+		expect(completions("o")).toEqual([
+			{ value: "on", label: "on" },
+			{ value: "off", label: "off" },
+		]);
+		expect(completions("s")).toEqual([
+			{ value: "status", label: "status" },
+		]);
+		expect(completions("")).toEqual([
+			{ value: "on", label: "on" },
+			{ value: "off", label: "off" },
+			{ value: "status", label: "status" },
+		]);
+	});
+
+	test("reflects herdr tool visibility in the footer widget", async () => {
+		const runtime = registerRuntime(() => ({}));
+		const setWidget = mock((_id: string, _value?: string[]) => {});
+		const ctx = {
+			hasUI: true,
+			ui: { notify() {}, theme: undefined, setWidget },
+		};
+
+		runtime.handlers.get("session_start")!({ reason: "startup" }, ctx);
+		expect(setWidget).toHaveBeenLastCalledWith("herdr-tools", undefined);
+
+		await runtime.commands.get("herdr-tools").handler("on", ctx);
+		expect(setWidget).toHaveBeenLastCalledWith("herdr-tools", [
+			expect.stringContaining("herdr: on"),
+		]);
+
+		await runtime.commands.get("herdr-tools").handler("off", ctx);
+		expect(setWidget).toHaveBeenLastCalledWith("herdr-tools", undefined);
+
+		runtime.handlers.get("session_shutdown")!({}, ctx);
+		expect(setWidget).toHaveBeenLastCalledWith("herdr-tools", undefined);
 	});
 });

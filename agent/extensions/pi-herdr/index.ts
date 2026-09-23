@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import {
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_LINES,
@@ -8,10 +8,15 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { createWidget } from "../_shared/fancy-footer.ts";
 import {
     getToolPolicy,
     registerToolPolicyContribution,
 } from "../_shared/tool-policy/index.ts";
+import {
+    HERDR_WIDGET_ID,
+    renderHerdrWidget,
+} from "./widget.ts";
 
 type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 type ReadSource = "visible" | "recent" | "recent-unwrapped" | "detection";
@@ -369,16 +374,50 @@ export default function (pi: ExtensionAPI) {
         return "hidden";
     }
 
+    const widget = createWidget(pi, {
+        id: HERDR_WIDGET_ID,
+        label: "Herdr Tools",
+        description: "Visibility of Herdr tools in this session",
+        row: 2,
+        order: 14,
+        align: "left",
+        styled: true,
+        render: (ctx) => renderHerdrWidget(ctx.theme, herdrEnabled()),
+    });
+
+    function refreshHerdrWidget(ctx: {
+        hasUI?: boolean;
+        ui?: { theme?: Theme | null };
+    }): void {
+        widget.update(
+            ctx as never,
+            renderHerdrWidget(ctx.ui?.theme, herdrEnabled()),
+        );
+    }
+
     pi.registerCommand("herdr-tools", {
         description: "Temporarily show or hide Herdr tools for this session",
+        getArgumentCompletions: (prefix: string) => {
+            const normalized = prefix.trim().toLowerCase();
+            if (normalized.includes(" ")) return null;
+            const options = ["on", "off", "status"];
+            const matches = options.filter((option) =>
+                option.startsWith(normalized),
+            );
+            return matches.length
+                ? matches.map((value) => ({ value, label: value }))
+                : null;
+        },
         handler: async (args, ctx) => {
             const action = args.trim() || "status";
             if (action === "on") {
                 manualGrant = true;
                 syncVisibility();
+                refreshHerdrWidget(ctx);
             } else if (action === "off") {
                 manualGrant = false;
                 syncVisibility();
+                refreshHerdrWidget(ctx);
             } else if (action !== "status") {
                 ctx.ui.notify("Usage: /herdr-tools [on|off|status]", "warning");
                 return;
@@ -387,9 +426,10 @@ export default function (pi: ExtensionAPI) {
         },
     });
 
-    pi.on("session_start", () => {
+    pi.on("session_start", (_event, ctx) => {
         manualGrant = false;
         syncVisibility();
+        refreshHerdrWidget(ctx);
     });
 
     pi.on("tool_call", (event) => {
@@ -402,9 +442,10 @@ export default function (pi: ExtensionAPI) {
         };
     });
 
-    pi.on("session_shutdown", () => {
+    pi.on("session_shutdown", (_event, ctx) => {
         manualGrant = false;
         visibility.dispose();
+        widget.remove(ctx as never);
     });
 
     async function execHerdr(args: string[], signal?: AbortSignal) {
