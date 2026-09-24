@@ -24,6 +24,27 @@ test("advises ordered alternatives only for a child provider error before useful
     }
 });
 
+test("async completion validates the actual child run and thinking-suffixed model", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-fallback-async-child-"));
+    const parentFile = join(root, "parent.jsonl");
+    const sessionFile = join(root, "parent", "child-456", "run-0", "session.jsonl");
+    mkdirSync(join(root, "parent", "child-456", "run-0"), { recursive: true });
+    writeFileSync(parentFile, "");
+    writeFileSync(sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", provider: "p", model: "broken", stopReason: "error", errorMessage: "provider unavailable", content: [] } })}\n`);
+    const failed = { index: 0, agent: "worker", success: false, error: "provider unavailable", outputState: "absent", model: "p/broken:low", requestedModel: "p/broken", thinking: "low", sessionFile };
+    try {
+        const details = { mode: "single", runId: "outer-123", sessionId: parentFile, results: [failed] };
+        expect(findFailedModelAdvice(details, parentFile, { worker: ["p/second"] })).toEqual([
+            { runId: "outer-123", index: 0, agent: "worker", failedModel: "p/broken", candidates: ["p/second"] },
+        ]);
+        expect(findFailedModelAdvice({ ...details, results: [{ ...failed, model: "p/other:low" }] }, parentFile, { worker: ["p/second"] })).toEqual([]);
+        expect(findFailedModelAdvice({ ...details, results: [{ ...failed, requestedModel: "p/other" }] }, parentFile, { worker: ["p/second"] })).toEqual([]);
+        expect(findFailedModelAdvice({ ...details, results: [{ ...failed, sessionFile: parentFile }] }, parentFile, { worker: ["p/second"] })).toEqual([]);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test("does not advise after partial assistant reasoning or tool activity", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-fallback-unsafe-"));
     const parentFile = join(root, "parent.jsonl");

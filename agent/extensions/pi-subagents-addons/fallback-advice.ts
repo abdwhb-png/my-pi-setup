@@ -135,6 +135,29 @@ function failedAssistantModel(
     }
 }
 
+/** Verify the actual provider model even when the result includes a thinking suffix. */
+function matchesFailedModel(
+    result: Record<string, unknown>,
+    failedModel: string,
+): boolean {
+    if (
+        typeof result.requestedModel === "string" &&
+        result.requestedModel !== failedModel
+    )
+        return false;
+    if (typeof result.model !== "string" || result.model === failedModel)
+        return true;
+    const thinking = result.thinking;
+    return (
+        result.requestedModel === failedModel &&
+        typeof thinking === "string" &&
+        ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(
+            thinking,
+        ) &&
+        result.model === `${failedModel}:${thinking}`
+    );
+}
+
 /** Interpret the official package's compacted result, not its untrusted error text. */
 export function findFailedModelAdvice(
     details: unknown,
@@ -187,17 +210,23 @@ export function findFailedModelAdvice(
             result.runner !== undefined
         )
             continue;
+        // Async completion identifies the outer run; its child transcript has a distinct run ID.
+        const childRunId = asyncFailure
+            ? basename(dirname(dirname(result.sessionFile)))
+            : details.runId;
+        if (
+            asyncFailure &&
+            typeof result.runId === "string" &&
+            result.runId !== childRunId
+        )
+            continue;
         const failedModel = failedAssistantModel(
             parentSessionFile,
-            details.runId,
+            childRunId,
             result.index,
             result.sessionFile,
         );
-        if (
-            !failedModel ||
-            (typeof result.model === "string" && result.model !== failedModel)
-        )
-            continue;
+        if (!failedModel || !matchesFailedModel(result, failedModel)) continue;
         const candidates = fallbackModels[result.agent]?.filter(
             (model) => model !== failedModel,
         );
@@ -295,7 +324,8 @@ export function registerFallbackAdvice(
         if (
             !record(data) ||
             typeof data.sessionId !== "string" ||
-            data.sessionId !== sessionId
+            (data.sessionId !== sessionId &&
+                data.sessionId !== parentSessionFile)
         )
             return;
         enqueue(data, parentSessionFile);
