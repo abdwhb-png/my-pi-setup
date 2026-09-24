@@ -33,7 +33,7 @@ describe('pi-subagents-addons discovery contract', () => {
         ).toBe(false);
     });
 
-    it('uses the Pi-managed pi-subagents version exposing fleetStatus', () => {
+    it('uses the Pi-managed upstream PR build exposing fleetStatus', () => {
         const agentDir = path.resolve(EXTENSIONS_DIR, '..');
         const packageRoot = resolvePiSubagentsPackageRoot();
         const settings = JSON.parse(
@@ -50,11 +50,10 @@ describe('pi-subagents-addons discovery contract', () => {
             'utf8',
         );
 
-        expect(settings.packages).toContain(
-            '~/projects/pi-integrations/pi-subagents-runtime-0.87.1',
-        );
-        expect(installed.version).toBeDefined();
-        expect(installed.version).toBe('0.69.0');
+        const prSource = '../../projects/pi-integrations/pi-subagents-upstream-peer-fix/dist-pkg';
+        expect(settings.packages?.filter((source) => source.includes('pi-subagents'))).toEqual([prSource]);
+        expect(packageRoot).toBe(path.resolve(agentDir, prSource));
+        expect(installed.version).toBe('0.71.0');
         expect(extensionApi).toContain('ping.capabilities.fleetStatus');
     });
 });

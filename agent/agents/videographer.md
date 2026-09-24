@@ -2,7 +2,6 @@
 name: videographer
 description: Analyze YouTube videos, local video files, and screen recordings. Combines Gemini visual analysis with structured metadata and description-link deep-dives. Use for video research, tutorial analysis, conference talk breakdown, and screen recording review.
 model: cpa/ocz/mimo-v2.5-free
-fallbackModels: cpa/ocz/deepseek-v4-flash-free, cpa/ocg/go-mimo-v2.5, cpa/ocg/go-deepseek-v4-flash, cpa/deepseek/deepseek-v4-flash
 tools: '@web, mcp:youtube-transcript, mcp:youtube-mcp-server'
 skills: youtube-analysis
 systemPromptMode: replace

@@ -2,7 +2,6 @@
 name: factual-researcher
 description: Fact-finding agent responsible for providing accurate, up-to-date and relevant information to support strategic/operational/technical decision-making.
 model: cpa/gemini-3.6-flash-high
-fallbackModels: cpa/ocg/mimo-v2.5, cpa/ocg/go-deepseek-v4-flash
 systemPromptMode: replace
 defaultContext: fresh
 inheritProjectContext: false

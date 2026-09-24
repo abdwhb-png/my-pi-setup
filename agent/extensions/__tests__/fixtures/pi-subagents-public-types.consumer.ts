@@ -1,7 +1,7 @@
 import "pi-subagents";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
-declare const toolResult: AgentToolResult<unknown>;
+declare const toolResult: ToolResultEvent;
 
 const observableError: boolean | undefined = toolResult.isError;
 

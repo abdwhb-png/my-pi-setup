@@ -4,5 +4,105 @@
     },
     "subagentWaitGuard": {
         "enabled": false
+    },
+    "fallbackAdvice": {
+        "enabled": true,
+        "fallbackModels": {
+            "worker": [
+                "cpa/z-ai/glm-5.3",
+                "cpa/deepseek/deepseek-v4-flash-0731",
+                "cpa/ocz/deepseek-v4-flash-free",
+                "cpa/z-ai/glm-5.2:free"
+            ],
+            "quick-worker": [
+                "cpa/muse-spark-1.3-contributor",
+                "cpa/deepseek/deepseek-v4-flash-0731",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "scout": [
+                "cpa/ocg/mimo-2.5",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "brainstorm-scout": [
+                "cpa/gemini-3.8-flash",
+                "cpa/ocg/go-deepseek-v4-flash",
+                "cpa/deepseek/deepseek-v4-flash-0731",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "researcher": [
+                "cpa/muse-spark-1.3-contributor",
+                "cpa/ocg/go-glm-5.3-flash",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "reviewer": [
+                "cpa/ocg/go-minimax-m3",
+                "cpa/deepseek/deepseek-v4-pro-0813"
+            ],
+            "oracle": [
+                "cpa/ocg/go-deepseek-v4-pro",
+                "cpa/z-ai/glm-5.3",
+                "cpa/deepseek/deepseek-v4-pro-0813"
+            ],
+            "plan-reviewer": [
+                "cpa/ocg/go-minimax-m3",
+                "cpa/minimax/minimax-m3",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "oh-my-oracle": [
+                "cpa/ocg/go-deepseek-v4-pro",
+                "cpa/deepseek/deepseek-v4-pro-0813"
+            ],
+            "architect": [
+                "cpa/ocg/go-deepseek-v4-pro",
+                "cpa/deepseek/deepseek-v4-pro-0813"
+            ],
+            "code-reviewer": [
+                "cpa/ocg/go-minimax-m3",
+                "cpa/ocg/go-glm-5.3-flash"
+            ],
+            "test-engineer": [
+                "cpa/claude-opus-4-6-thinking",
+                "cpa/ocg/go-glm-5.3-flash",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "sdd-orchestrator": [
+                "cpa/ocg/go-deepseek-v4-pro",
+                "cpa/deepseek/deepseek-v4-pro-0813"
+            ],
+            "sdd-worker": [
+                "cpa/deepseek/deepseek-v4-flash-0731",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "sdd-combined-reviewer": [
+                "cpa/ocg/go-deepseek-v4-pro",
+                "cpa/minimax/minimax-m3",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "sdd-quality-reviewer": [
+                "cpa/ocg/go-deepseek-v4-pro",
+                "cpa/minimax/minimax-m3",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "sdd-spec-reviewer": [
+                "cpa/ocg/go-deepseek-v4-pro",
+                "cpa/minimax/minimax-m3",
+                "cpa/ocz/deepseek-v4-flash-free"
+            ],
+            "pi-expert": [
+                "cpa/claude-opus-4-6-thinking",
+                "cpa/ocg/mimo-v2.5",
+                "cpa/ocg/go-deepseek-v4-flash"
+            ],
+            "factual-researcher": [
+                "cpa/ocg/mimo-v2.5",
+                "cpa/ocg/go-deepseek-v4-flash"
+            ],
+            "videographer": [
+                "cpa/ocz/deepseek-v4-flash-free",
+                "cpa/ocg/go-mimo-v2.5",
+                "cpa/ocg/go-deepseek-v4-flash",
+                "cpa/deepseek/deepseek-v4-flash"
+            ]
+        }
     }
 }

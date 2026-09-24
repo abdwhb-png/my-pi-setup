@@ -6,7 +6,9 @@
     "theme": "dark",
     "steeringMode": "all",
     "followUpMode": "all",
-    "npmCommand": ["bun"],
+    "npmCommand": [
+        "bun"
+    ],
     "extensions": [
         "~/.pi/agent/extensions/package-finalizer.ts",
         "~/projects/shared-services/pi-lens-dist/index.js",
@@ -53,7 +55,11 @@
         }
     },
     "thinkInCode": {
-        "languages": ["javascript", "typescript", "python"],
+        "languages": [
+            "javascript",
+            "typescript",
+            "python"
+        ],
         "retentionHours": 24,
         "projectQuotaBytes": 536870912,
         "restoreTokenBudget": 1500,
@@ -80,7 +86,11 @@
     "fileResolver": {
         "fd": {
             "respectGitignore": false,
-            "excludePatterns": [".git", "node_modules", ".cache"]
+            "excludePatterns": [
+                ".git",
+                "node_modules",
+                ".cache"
+            ]
         },
         "rg": {
             "respectGitignore": false
@@ -88,7 +98,10 @@
         "ls": {
             "respectGitignore": false
         },
-        "additionalDirectories": ["~/.pi", "~/projects/shared-services"],
+        "additionalDirectories": [
+            "~/.pi",
+            "~/projects/shared-services"
+        ],
         "enableRealtimeFallback": true
     },
     "toolSummary": {
@@ -130,10 +143,6 @@
         "agentOverrides": {
             "worker": {
                 "model": "cpa/ocg/go-deepseek-v4-flash",
-                "fallbackModels": [
-                    "cpa/deepseek/deepseek-v4-flash",
-                    "cpa/qwen/qwen3.6-plus-preview:free"
-                ],
                 "thinking": "high",
                 "tools": [
                     "@inspect",
@@ -147,44 +156,30 @@
             },
             "scout": {
                 "model": "cpa/ocg/mimo-v2.5",
-                "fallbackModels": [
-                    "cpa/deepseek/deepseek-v4-flash",
-                    "cpa/qwen/qwen3.6-plus-preview:free"
-                ],
                 "thinking": "high",
-                "tools": ["@inspect", "@lens", "safe_bash", "write"]
+                "tools": [
+                    "@inspect",
+                    "@lens",
+                    "safe_bash",
+                    "write"
+                ]
             },
             "researcher": {
-                "model": "cpa/ocg/go-deepseek-v4-pro",
-                "fallbackModels": [
-                    "cpa/deepseek/deepseek-v4-pro",
-                    "cpa/nvidia/nemotron-3-super-120b-a12b:free"
-                ]
+                "model": "cpa/ocg/go-deepseek-v4-pro"
             },
             "reviewer": {
-                "model": "zai/glm-5.2",
-                "fallbackModels": [
-                    "cpa/zai-coding/glm-5.2",
-                    "cpa/ocg/go-glm-5.2",
-                    "cpa/ocg/go-deepseek-v4-pro",
-                    "cpa/deepseek/deepseek-v4-pro"
-                ]
+                "model": "zai/glm-5.2"
             },
             "planner": {
                 "model": "cpa/ocg/go-deepseek-v4-pro",
-                "fallbackModels": [
-                    "cpa/deepseek/deepseek-v4-pro",
-                    "cpa/nvidia/nemotron-3-super-120b-a12b:free"
-                ],
-                "tools": ["@inspect", "@lens", "write_plan"]
+                "tools": [
+                    "@inspect",
+                    "@lens",
+                    "write_plan"
+                ]
             },
             "oracle": {
                 "model": "zai/glm-5.2",
-                "fallbackModels": [
-                    "cpa/ocg/go-glm-5.2",
-                    "cpa/ocg/go-deepseek-v4-pro",
-                    "cpa/deepseek/deepseek-v4-pro"
-                ],
                 "thinking": "xhigh"
             },
             "delegate": {
@@ -197,11 +192,6 @@
             },
             "context-builder": {
                 "model": "cpa/ocg/mimo-v2.5",
-                "fallbackModels": [
-                    "cpa/ocg/go-deepseek-v4-pro",
-                    "cpa/deepseek/deepseek-v4-flash",
-                    "cpa/qwen/qwen3.6-plus-preview:free"
-                ],
                 "tools": [
                     "@inspect",
                     "@lens",
@@ -211,46 +201,18 @@
                 ]
             },
             "plan-reviewer": {
-                "model": "openai-codex/gpt-5.6-luna",
-                "fallbackModels": [
-                    "cpa/ocg/go-deepseek-v4-pro",
-                    "cpa/deepseek/deepseek-v4-pro",
-                    "cpa/nvidia/nemotron-3-super-120b-a12b:free"
-                ]
+                "model": "openai-codex/gpt-5.6-luna"
             },
-            "sdd-orchestrator": {
-                "fallbackModels": [
-                    "zai/glm-5.2",
-                    "cpa/zai-coding/glm-5.2",
-                    "cpa/ocg/go-deepseek-v4-pro",
-                    "cpa/deepseek/deepseek-v4-pro",
-                    "cpa/nvidia/nemotron-3-super-120b-a12b:free"
-                ]
-            },
-            "oh-my-oracle": {
-                "fallbackModels": [
-                    "zai/glm-5.2",
-                    "cpa/zai-coding/glm-5.2",
-                    "cpa/ocg/go-deepseek-v4-pro",
-                    "cpa/deepseek/deepseek-v4-pro"
-                ]
-            },
+            "sdd-orchestrator": {},
+            "oh-my-oracle": {},
             "quick-worker": {
                 "model": "cpa/ocg/go-deepseek-v4-flash",
-                "fallbackModels": [
-                    "cpa/deepseek/deepseek-v4-flash",
-                    "cpa/qwen/qwen3.6-plus-preview:free"
-                ],
                 "subagentOnlyExtensions": [
                     "~/.pi/agent/extensions/save-tokens/subagent-profiles/ultra.ts"
                 ]
             },
             "sdd-worker": {
-                "model": "cpa/ocg/go-deepseek-v4-flash",
-                "fallbackModels": [
-                    "cpa/deepseek/deepseek-v4-flash",
-                    "cpa/qwen/qwen3.6-plus-preview:free"
-                ]
+                "model": "cpa/ocg/go-deepseek-v4-flash"
             }
         }
     }

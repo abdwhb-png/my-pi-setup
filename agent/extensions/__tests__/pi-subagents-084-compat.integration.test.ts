@@ -9,20 +9,20 @@ import {
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 const FANOUT_CHILD_EXTENSION_PATH = resolve(
 	fileURLToPath(import.meta.resolve("pi-subagents")),
-	"../src/extension/fanout-child.ts",
+	"../src/extension/fanout-child.js",
 );
 const PI_SUBAGENTS_ENTRY_PATH = fileURLToPath(import.meta.resolve("pi-subagents"));
-const PINNED_LOCAL_ENTRY_PATH = join(
+const PR_BRANCH_ENTRY_PATH = join(
 	homedir(),
-	"projects/pi-integrations/pi-subagents-runtime-0.87.1/index.ts",
+	"projects/pi-integrations/pi-subagents-upstream-peer-fix/dist-pkg/index.js",
 );
 
-describe("pi-subagents pinned fork on the current Pi runtime", () => {
+describe("pi-subagents upstream PR build on the current Pi runtime", () => {
 	let testSession: TestSession | undefined;
 	let previousParentSessionEnv: string | undefined;
 
@@ -33,8 +33,8 @@ describe("pi-subagents pinned fork on the current Pi runtime", () => {
 		else process.env[PARENT_SESSION_ENV] = previousParentSessionEnv;
 	});
 
-	it("loads the pinned local fork", () => {
-		expect(PI_SUBAGENTS_ENTRY_PATH).toBe(PINNED_LOCAL_ENTRY_PATH);
+	it("resolves the compiled upstream PR branch, not the customized fork", () => {
+		expect(PI_SUBAGENTS_ENTRY_PATH).toBe(PR_BRANCH_ENTRY_PATH);
 	});
 
 	it("reports a Fleet logical failure as an errored Pi tool result", async () => {
@@ -71,7 +71,7 @@ describe("pi-subagents pinned fork on the current Pi runtime", () => {
 		let settledEvents = 0;
 
 		testSession = await createTestSession({
-			extensions: [PI_SUBAGENTS_ENTRY_PATH],
+			extensions: [join(dirname(PI_SUBAGENTS_ENTRY_PATH), "src/extension/index.js")],
 			extensionFactories: [
 				(pi) => {
 					pi.on("agent_settled", () => {
@@ -83,6 +83,7 @@ describe("pi-subagents pinned fork on the current Pi runtime", () => {
 
 		await testSession.run(
 			when("Show active subagents", [
+				calls("subagents_enable", {}),
 				calls("subagent", { action: "status" }),
 				says("There are no active subagents."),
 			]),

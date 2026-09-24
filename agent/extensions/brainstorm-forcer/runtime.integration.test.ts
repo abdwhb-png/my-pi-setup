@@ -688,7 +688,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         dirname(fileURLToPath(import.meta.resolve("pi-subagents"))),
         "src",
         "extension",
-        "index.ts",
+        "index.js",
       );
       const { default: brainstormForcer } = await import("./index");
       await mkdir(join(isolatedAgentDir, "agents"), { recursive: true });
@@ -796,7 +796,7 @@ if (process.env[HARNESS_RUNTIME_ENV] === "1") {
         expect(
           (rpcRequests[0] as any).params.workflowScript,
         ).toContain("verify_local_code_supported");
-        expect(asyncCompletions[0]).toMatchObject({
+        expect(asyncCompletions.find((completion) => completion.id === naturalRunId)).toMatchObject({
           id: naturalRunId,
           success: true,
           results: [

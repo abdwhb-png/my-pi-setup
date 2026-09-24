@@ -1,28 +1,41 @@
 import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+    parseFallbackAdviceConfig,
+    registerFallbackAdvice,
+} from "./fallback-advice.ts";
 import registerSubagentsOverview from "./pi-subagents-overview/index.ts";
 import registerSubagentWaitGuard from "./subagent-wait-guard/index.ts";
-
-type AddonName = "piSubagentsOverview" | "subagentWaitGuard";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function addonEnabled(name: AddonName): boolean {
-    try {
-        const parsed: unknown = JSON.parse(
-            readFileSync(new URL("./config.json", import.meta.url), "utf8"),
-        );
-        if (!isRecord(parsed)) return false;
-        const addon = parsed[name];
-        return isRecord(addon) && addon.enabled === true;
-    } catch {
-        return false;
-    }
+export function readAddonsConfig(
+    path: string | URL = new URL("./config.json", import.meta.url),
+) {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!isRecord(parsed)) throw new Error("Invalid subagents addon config");
+    return {
+        subagentWaitGuard:
+            isRecord(parsed.subagentWaitGuard) &&
+            parsed.subagentWaitGuard.enabled === true,
+        piSubagentsOverview:
+            isRecord(parsed.piSubagentsOverview) &&
+            parsed.piSubagentsOverview.enabled === true,
+        fallbackAdvice: parseFallbackAdviceConfig(
+            parsed.fallbackAdvice ?? { enabled: false },
+        ),
+    };
 }
 
-export default function registerSubagentsAddons(pi: ExtensionAPI): void {
-    if (addonEnabled("subagentWaitGuard")) registerSubagentWaitGuard(pi);
-    if (addonEnabled("piSubagentsOverview")) registerSubagentsOverview(pi);
+export default function registerSubagentsAddons(
+    pi: ExtensionAPI,
+    configPath?: string | URL,
+): void {
+    const config = readAddonsConfig(configPath);
+    if (config.subagentWaitGuard) registerSubagentWaitGuard(pi);
+    if (config.piSubagentsOverview) registerSubagentsOverview(pi);
+    if (config.fallbackAdvice.enabled)
+        registerFallbackAdvice(pi, config.fallbackAdvice);
 }
