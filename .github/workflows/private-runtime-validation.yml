@@ -96,12 +96,11 @@ jobs:
           set -euo pipefail
           cd projects/pi-core
           sfw npm ci
-          model_data_root=$(mktemp -d "${RUNNER_TEMP}/pi-ai-model-data.XXXXXX")
-          sfw npm pack @earendil-works/pi-ai@0.85.0 --pack-destination "$model_data_root" --ignore-scripts
-          echo "46188bdacb555a07466a0111f3963f20932a16199e4d6cfb8d44a7fe5fc6e342  $model_data_root/earendil-works-pi-ai-0.85.0.tgz" | sha256sum -c -
-          mkdir -p packages/ai/src/providers
-          tar -xzf "$model_data_root/earendil-works-pi-ai-0.85.0.tgz" \
-            -C packages/ai/src/providers --strip-components=3 package/dist/providers/data
+          # This immutable generated data comes from the locally validated
+          # Pi-core 0.87.1 release. The fork does not track generated shards.
+          model_data=../../.pi/.github/fixtures/pi-ai-model-data-0.87.1.tar.gz
+          echo "218961ebfec6b64e7d764c4d7575316b1f10cd0cf9f564c1c26ed2f58e782dcf  $model_data" | sha256sum -c -
+          tar -xzf "$model_data" -C packages/ai/src/providers
           npm run build:offline
           pi_tarball_root=$(node -e 'const path = require("node:path"); const manifest = require("../../.pi/agent/package.json"); const spec = manifest.dependencies["@earendil-works/pi-coding-agent"]; process.stdout.write(path.dirname(path.resolve("../../.pi/agent", spec.slice("file:".length))))')
           mkdir -p "$pi_tarball_root"
