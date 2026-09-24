@@ -87,7 +87,7 @@ export PI_SANDBOX_SFW_MEDIATED_DIRECT_CONTRACT=1
 export PI_SANDBOX_REAL_ANALYSIS_CONTRACT=1
 export PI_SANDBOX_REAL_ANALYSIS_IPC_CONTRACT=1
 
-exec bun test --isolate \
+for contract in \
     extensions/sandbox/execution.test.ts \
     extensions/sandbox/dependency-contract.test.ts \
     extensions/sandbox/local-resources.integration.test.ts \
@@ -111,4 +111,6 @@ exec bun test --isolate \
     extensions/sandbox/runtime/read-only-cwd.integration.test.ts \
     extensions/sandbox/runtime/websocket.integration.test.ts \
     extensions/sandbox/runtime/fork-contract.integration.test.ts \
-    extensions/sandbox/runtime/safe-bash-fork-contract.integration.test.ts
+    extensions/sandbox/runtime/safe-bash-fork-contract.integration.test.ts; do
+    bun test --isolate "$contract"
+done

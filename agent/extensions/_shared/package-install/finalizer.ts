@@ -8,6 +8,7 @@ import {
     readdirSync,
     rmSync,
     symlinkSync,
+    unlinkSync,
     writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -192,31 +193,31 @@ export function ensurePackageLinks(
         const targetPath = packageRoot;
         mkdirSync(dirname(linkPath), { recursive: true });
 
-        let linkExists = false;
+        let stats: ReturnType<typeof lstatSync> | undefined;
         try {
-            linkExists = !!lstatSync(linkPath);
-        } catch {}
-        if (linkExists) {
-            try {
-                const stats = lstatSync(linkPath);
-                if (stats.isSymbolicLink()) {
-                    const currentRealPath = realpathSync(linkPath);
-                    const targetRealPath = realpathSync(targetPath);
-                    if (currentRealPath === targetRealPath) continue;
-                    rmSync(linkPath, { recursive: true, force: true });
-                } else if (
-                    isReplaceablePackageShim(linkPath, packageName) ||
-                    ownedLinkPaths.has(linkPath)
-                ) {
-                    rmSync(linkPath, { recursive: true, force: true });
-                } else {
-                    continue;
-                }
-            } catch {
-                // Broken symlink or inaccessible path — remove it so we can create a fresh one.
+            stats = lstatSync(linkPath);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        if (stats) {
+            if (stats.isSymbolicLink()) {
+                const targetRealPath = realpathSync(targetPath);
+                let currentRealPath: string | undefined;
                 try {
-                    rmSync(linkPath, { recursive: true, force: true });
-                } catch {}
+                    currentRealPath = realpathSync(linkPath);
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+                        throw error;
+                }
+                if (currentRealPath === targetRealPath) continue;
+                unlinkSync(linkPath);
+            } else if (
+                isReplaceablePackageShim(linkPath, packageName) ||
+                ownedLinkPaths.has(linkPath)
+            ) {
+                rmSync(linkPath, { recursive: true, force: true });
+            } else {
+                continue;
             }
         }
 
