@@ -22,6 +22,7 @@ Inspect session files directly only when the tools are unavailable, fail, or can
 
 - Never patch the global Bun installation to fix a Pi package issue. Prefer a Pi extension, wrapper, explicit finalizer, or repository-managed symlink.
 - The daily `pi` command is `~/.pi/bin/pi` and runs only the promoted release under `~/.pi/runtime/pi-core/releases/`. Use `pi-fork deploy` to build and promote the local fork, `pi-fork status` and `pi-fork verify` to inspect it, and `pi-fork rollback` to restore the previous release. Bare/self `pi update` is blocked; `PI_REAL_BIN` is only an explicit development override.
+- Install, remove, and update Pi packages through the daily Pi CLI (`pi install npm:<package>`, `pi remove <source>`, `pi update <source>`), not by running Bun/npm directly against Pi's managed package directory or editing its dependency manifest. Pin a version in the Pi source when the task requires one. Configure supply-chain scanning through Pi's `npmCommand` rather than bypassing Pi's package manager. Pi core updates are the exception: promote the local fork with `pi-fork deploy`, never `pi update self`.
 - Use the `pi-extensions` skill for Pi package and extension development and the `pi-cli` skill for Pi command-line flags or automation.
 - Before trusting a Pi package E2E result, verify the concrete package root resolved at runtime: installed `node_modules`, Git clone, or local path.
 - Treat `agent/settings.json` as the model-configuration source of truth for `pi-subagents` unless the configured model is factually unavailable in the harness.

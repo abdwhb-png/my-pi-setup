@@ -7,7 +7,7 @@ import {
 	when,
 } from "@abdwhb-png/pi-test-harness";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
@@ -17,12 +17,7 @@ const FANOUT_CHILD_EXTENSION_PATH = resolve(
 	"../src/extension/fanout-child.js",
 );
 const PI_SUBAGENTS_ENTRY_PATH = fileURLToPath(import.meta.resolve("pi-subagents"));
-const PR_BRANCH_ENTRY_PATH = join(
-	homedir(),
-	"projects/pi-integrations/pi-subagents-upstream-peer-fix/dist-pkg/index.js",
-);
-
-describe("pi-subagents upstream PR build on the current Pi runtime", () => {
+describe("pi-subagents on the current Pi runtime", () => {
 	let testSession: TestSession | undefined;
 	let previousParentSessionEnv: string | undefined;
 
@@ -31,10 +26,6 @@ describe("pi-subagents upstream PR build on the current Pi runtime", () => {
 		testSession = undefined;
 		if (previousParentSessionEnv === undefined) delete process.env[PARENT_SESSION_ENV];
 		else process.env[PARENT_SESSION_ENV] = previousParentSessionEnv;
-	});
-
-	it("resolves the compiled upstream PR branch, not the customized fork", () => {
-		expect(PI_SUBAGENTS_ENTRY_PATH).toBe(PR_BRANCH_ENTRY_PATH);
 	});
 
 	it("reports a Fleet logical failure as an errored Pi tool result", async () => {
