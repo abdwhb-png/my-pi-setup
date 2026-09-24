@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/pi-test-harness
-          ref: 87bd1c0ec7c84b62ed29f887bccc062b082c7fea
+          ref: e4bacb0cb344a9d24663242c38171599c5d18f3e
           path: projects/pi-integrations/pi-test-harness
       - uses: actions/checkout@v4
         with:
@@ -139,6 +139,10 @@ jobs:
           cd ../pi-integrations/pi-test-harness
           sfw npm ci
           npm run build
+          test_harness_tarball="$GITHUB_WORKSPACE/.pi/runtime/pi-test-harness/releases/0.8.1-fork.2-e4bacb0/pi-test-harness-0.8.1-fork.2.tgz"
+          mkdir -p "$(dirname "$test_harness_tarball")"
+          cp dist/package.tgz "$test_harness_tarball"
+          echo "804e893a5b1452a41585a877f2060ea7f0a7164566df865865c13ca26c911c2e27eee3ca8e3da3795613a4425d79a3098cacea28b26a1086359a67a857ef7f1f  $test_harness_tarball" | sha512sum -c -
           cd ../pi-fancy-footer
           sfw npm ci --ignore-scripts --no-audit --no-fund
           cd ../pi-mcp-adapter
