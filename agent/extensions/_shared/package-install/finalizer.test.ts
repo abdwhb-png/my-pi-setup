@@ -1,10 +1,12 @@
 import { describe, expect, it, mock } from 'bun:test';
 import {
+    chmodSync,
     existsSync,
     lstatSync,
     mkdirSync,
     mkdtempSync,
     realpathSync,
+    rmSync,
     symlinkSync,
     writeFileSync,
 } from 'node:fs';
@@ -71,6 +73,42 @@ describe('package-install-finalizer', () => {
         expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
         expect(realpathSync(linkPath)).toBe(realpathSync(packageRoot));
     });
+
+    it.skipIf(process.platform !== 'linux' || process.getuid?.() === 0)(
+        'reports the removal failure when a stale symlink cannot be replaced',
+        () => {
+            const root = makeTempDir('pi-finalizer-denied-');
+            const agentDir = join(root, 'agent');
+            const linkRoot = join(agentDir, 'node_modules');
+            const oldRoot = join(root, 'old');
+            const newRoot = join(root, 'new');
+            const linkPath = join(linkRoot, 'test-package');
+            mkdirSync(linkRoot, { recursive: true });
+            mkdirSync(oldRoot);
+            mkdirSync(newRoot);
+            symlinkSync(oldRoot, linkPath, 'dir');
+            chmodSync(linkRoot, 0o500);
+            try {
+                let failure: unknown;
+                try {
+                    packageFinalizer.ensurePackageLinks(
+                        newRoot,
+                        'test-package',
+                        'user',
+                        root,
+                        agentDir,
+                    );
+                } catch (error) {
+                    failure = error;
+                }
+                expect(failure).toMatchObject({ code: 'EACCES', syscall: 'unlink' });
+                expect(realpathSync(linkPath)).toBe(oldRoot);
+            } finally {
+                chmodSync(linkRoot, 0o700);
+                rmSync(root, { recursive: true, force: true });
+            }
+        },
+    );
 
     it('replaces a stale shim with a real symlink', () => {
         const agentDir = makeTempDir('pi-agent-');

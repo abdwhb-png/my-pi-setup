@@ -15,6 +15,12 @@ Shell PATH contains selected installation command directories, legacy `environme
 
 Configured denies remain enforced, including within a writable project. The default policy does not grant the host HOME, `/etc` or the filesystem root. FUSE views enforce dynamic exclusions without reopening their parent directories.
 
+### Nested Pi and machine identity
+
+Pi binds its sandbox authority to the Linux machine identity and user ID. A Pi process started by a sandboxed shell reads `/etc/machine-id` when it loads that authority; without an explicit read grant, extension loading can fail with `ENOENT: no such file or directory, open '/etc/machine-id'`. Grant only `/etc/machine-id` through the global `filesystem.allowRead` list when nested Pi commands are needed. Do not grant `/etc` or write access, and do not use the machine ID stored in `sandbox.json` as a fallback: that would let a copied authority validate on another machine.
+
+Global read grants are inherited by projects that do not narrow them. This choice therefore exposes the host's stable machine identifier to sandboxed commands in those projects. It is an intentional configuration grant, not an implicit private-runtime dependency. Confirm the effective admission report contains the exact file read before relying on nested Pi commands.
+
 ## Private state
 
 Bash and Think collection use separate leases below `~/.pi/zbx/`. Analysis uses a fresh lease per request. The physical lease control directory is masked, even when it is inside the project.

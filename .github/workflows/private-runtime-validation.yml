@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/zerobox
-          ref: 0f07773c9f5d0268d51d50178b969ba732ac3f3a
+          ref: 5746c5caa929ea6641b6726d9cd4f7b30128aade
           path: projects/zerobox
       - uses: actions/checkout@v4
         with:
@@ -171,7 +171,7 @@ jobs:
         working-directory: .pi/agent
         run: |
           env -u PI_SANDBOX_RUNTIME_BUNDLE -u PI_SANDBOX_ZEROBOX_BINARY -u PI_SANDBOX_ZEROBOX_SHA256 \
-            bun test --isolate extensions/_shared/command-execution extensions/_shared/sandbox-runtime extensions/bash-execution extensions/sandbox extensions/think-in-code
+            bun test --isolate extensions/_shared/package-install/finalizer.test.ts extensions/_shared/command-execution extensions/_shared/sandbox-runtime extensions/bash-execution extensions/sandbox extensions/think-in-code
       - name: Replay patches and build the static engine
         working-directory: projects/zerobox
         run: |
