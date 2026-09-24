@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/pi
-          ref: 0bb2d904515eed3311028dadcb0edbf3637fa93e
+          ref: 00c5e7e300baf77ea05c78fabac625b213e7a578
           path: projects/pi-core
       - uses: actions/checkout@v4
         with:
