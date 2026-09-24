@@ -1,49 +1,10 @@
+import { ZAI_MODELS } from "@earendil-works/pi-ai/providers/zai.models";
 /**
- * pi-glm-tweaks — Pi-native tweaks for Z.AI's GLM-5.2.
- *
- * Restricts the Pi thinking-level UI to the three modes GLM-5.2 actually
- * supports (off, high, max), wires the native `thinkingFormat: "zai"` wire
- * translation, auto-clamps hidden levels, and applies token-efficiency
- * hygiene (per-turn system-prompt nudge, intra-loop ratchet, wire-level
- * clear_thinking and skip-short-thinking).
- *
- * Wire map (see https://docs.z.ai/guides/capabilities/thinking,
- * https://docs.z.ai/guides/capabilities/thinking-mode, and
- * providers/openai-completions.js in pi-ai):
- *
- *   Pi level  | thinking.type | reasoning_effort
- *   ----------|---------------|------------------
- *   off       | "disabled"    | (omitted)
- *   high      | "enabled"     | "high"
- *   xhigh     | "enabled"     | "max"
- *
- * Hidden levels (minimal, low, medium) are Pi-side concepts:
- * low/medium get server-side-mapped to "high" (we mirror that in
- * thinkingLevelMap), and minimal maps to "minimal" (model skips
- * thinking per z.ai docs). They're hidden from the UI to keep the
- * surface simple (off | high | max), but wire mapping is correct
- * as a safety net for stale config.
- *
- * Behavior:
- *   - On session_start, re-register the `zai` provider with GLM-5.2 redefined
- *     against the OpenAI-compat endpoint and the tight thinkingLevelMap.
- *     registerProvider takes effect immediately after bindCore (no /reload).
- *   - On model_select to zai/glm-5.2, clamp a stale hidden level to "high"
- *     and notify. Set the footer status hint.
- *   - On model_select to any other model, clear the footer status.
- *   - On every user turn, inject a soft system-prompt budget fragment
- *     (`glm-budget-nudge`, default on).
- *   - Per LLM call, count cumulative reasoning_content; if over a
- *     threshold, inject a one-shot user-side hint to push the model back
- *     toward tool calls (`glm-budget-nudge`).
- *   - On every outgoing request, force `clear_thinking: true` (the coding
- *     endpoint defaults to preserved thinking, which silently compounds
- *     `reasoning_content` across turns). `glm-clear-thinking`, default on.
- *   - On short user prompts (<80 chars), force `thinking.type: "disabled"`
- *     to save tokens on trivial turns. `glm-skip-short-thinking`, default on.
- *
- * Auth is untouched. The provider's existing key (ZAI_API_KEY env, /login,
- * or models.json apiKey) continues to resolve against the new baseUrl.
+ * GLM-5.2 request tweaks and peak-hours widget. Pi's model catalog owns
+ * thinking levels for built-in Z.AI and OpenRouter GLM models, including
+ * GLM-5.3; never replace those definitions. Only a custom direct Z.AI
+ * GLM-5.2 entry missing its map gets the built-in map at session_start.
+ * CPA model metadata belongs in ai-providers.json overrides.
  */
 import {
     getSettingsListTheme,
@@ -56,7 +17,7 @@ import {
     Text,
     type SettingItem,
 } from "@earendil-works/pi-tui";
-import { createWidget } from "../_shared/fancy-footer";
+import { createWidget } from "../../extensions/_shared/fancy-footer";
 import {
     computePeakStatus,
     isZaiGlm52,
@@ -116,38 +77,6 @@ You are operating under a per-turn thinking budget. Behave accordingly:
 - Take a tool call every 200-300 thinking tokens. Don't sit and speculate without acting.
 - Prefer a concrete tool call over further internal deliberation.
 </glm-thinking-budget>`;
-
-// Redefined glm-5.2 model entry. `cost` mirrors the built-in (Z.AI does
-// not publish per-token rates; zeros is conservative). thinkingLevelMap
-// doubles as UI-hide (`null`) and wire-level safety net: Pi's zai branch
-// in openai-completions.js reads this map for reasoning_effort, and a
-// null entry produces no reasoning_effort field on the wire. baseUrl
-// is per-model (not provider-level) so we don't override any custom
-// baseUrl the user may have set on other `zai/*` models.
-const GLM52_MODEL = {
-    id: MODEL_ID,
-    name: "GLM-5.2",
-    api: "openai-completions",
-    baseUrl: ZAI_CODING_BASE_URL,
-    reasoning: true,
-    input: ["text"] as ("text" | "image")[],
-    contextWindow: 1_000_000,
-    maxTokens: 131_072,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    thinkingLevelMap: {
-        minimal: "minimal",
-        low: "high",
-        medium: "high",
-        high: "high",
-        xhigh: "max",
-    },
-    compat: {
-        supportsDeveloperRole: false,
-        supportsReasoningEffort: true,
-        thinkingFormat: "zai" as const,
-        zaiToolStream: true,
-    },
-};
 
 // Build the /glm-tweaks status panel. Read-only snapshot of the active
 // model, current thinking level, and the on/off state of every flag.
@@ -392,7 +321,25 @@ export default function (pi: ExtensionAPI) {
     // off real UTC, so the 60s interval below keeps it fresh across the
     // 06:00–10:00 UTC boundary even when no event fires.
     let latestCtx: ExtensionContext | undefined;
-    let peakTimer: Timer | undefined;
+    let peakTimer: ReturnType<typeof setInterval> | undefined;
+    let missingDirectAuth = false;
+    let warnedMissingDirectAuth = false;
+    const warnMissingDirectAuth = (
+        model: ModelRef | undefined,
+        ctx: ExtensionContext,
+    ) => {
+        if (
+            !missingDirectAuth ||
+            warnedMissingDirectAuth ||
+            model?.provider !== PROVIDER
+        )
+            return;
+        warnedMissingDirectAuth = true;
+        ctx.ui.notify(
+            "pi-glm-tweaks: ZAI auth not configured. Run `/login` or set ZAI_API_KEY to use the direct zai provider.",
+            "warning",
+        );
+    };
     const widget = createWidget(pi, {
         id: "pi-glm-tweaks.status",
         label: "GLM status",
@@ -413,16 +360,24 @@ export default function (pi: ExtensionAPI) {
         }
     };
 
+    const trackPeakWidget = (ctx: ExtensionContext) => {
+        latestCtx = ctx;
+        updatePeakWidget();
+        if (peakTimer !== undefined) clearInterval(peakTimer);
+        peakTimer = isZaiPeakModel(ctx.model)
+            ? setInterval(updatePeakWidget, 60_000)
+            : undefined;
+        peakTimer?.unref?.();
+    };
+
     pi.on("session_start", async (_event, ctx) => {
-        // Build the full `zai` provider model list, patching only glm-5.2.
-        // registerProvider replaces ALL models for the provider when models
-        // are provided, so a single-entry list would silently drop
-        // glm-4.7, glm-5-turbo, glm-5.1, and any user-added zai entries.
+        missingDirectAuth = false;
+        warnedMissingDirectAuth = false;
+        trackPeakWidget(ctx);
         const existing = ctx.modelRegistry
             .getAll()
             .filter((m) => m.provider === PROVIDER);
         if (existing.length === 0) return;
-        if (!existing.some((m) => m.id === MODEL_ID)) return;
 
         // registerProvider requires apiKey (or oauth) when defining models,
         // even for a provider that already has auth resolved. Pull the
@@ -431,39 +386,26 @@ export default function (pi: ExtensionAPI) {
         // apiKey.
         const apiKey = await ctx.modelRegistry.getApiKeyForProvider(PROVIDER);
         if (!apiKey) {
-            ctx.ui.notify(
-                "pi-glm-tweaks: ZAI auth not configured. Run `/login` or set ZAI_API_KEY to enable GLM-5.2 thinking tweaks.",
-                "warning",
-            );
+            missingDirectAuth = true;
+            warnMissingDirectAuth(ctx.model, ctx);
             return;
         }
+        const glm52 = existing.find((m) => m.id === MODEL_ID);
+        if (!glm52 || glm52.thinkingLevelMap) return;
 
-        // Per-model spread preserves every original field (api, baseUrl,
-        // headers, compat extras) for non-target models. Only glm-5.2 gets
-        // the new thinkingLevelMap, baseUrl, and OpenAI-compat compat block.
-        // baseUrl is set at BOTH provider level (required by validation;
-        // satisfies the model-registry check) and per-model in GLM52_MODEL
-        // (per-model takes precedence at request time, so any custom
-        // baseUrl the user has on other `zai/*` models is preserved by
-        // the spread).
-        const models = existing.map((m) =>
-            isZaiGlm52(m) ? GLM52_MODEL : { ...m },
-        );
+        // registerProvider replaces all provider models: retain the list and
+        // patch only the incomplete GLM-5.2 entry from Pi's built-in catalog.
+        const models = [...existing];
+        models[models.indexOf(glm52)] = {
+            ...glm52,
+            thinkingLevelMap: ZAI_MODELS[MODEL_ID].thinkingLevelMap,
+            compat: { ...ZAI_MODELS[MODEL_ID].compat, ...glm52.compat },
+        };
         pi.registerProvider(PROVIDER, {
             baseUrl: ZAI_CODING_BASE_URL,
             apiKey,
             models,
         });
-
-        // Seed the widget so it reflects the initial model without waiting
-        // for the first model_select. latestCtx lets the 60s interval refresh
-        // the clock-driven peak indicator thereafter.
-        latestCtx = ctx;
-        updatePeakWidget();
-
-        if (peakTimer !== undefined) clearInterval(peakTimer);
-        peakTimer = setInterval(updatePeakWidget, 60_000);
-        peakTimer.unref?.();
     });
 
     pi.on("session_shutdown", async () => {
@@ -592,11 +534,11 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("model_select", (event, ctx) => {
-        latestCtx = ctx;
         // Refresh the widget on every model switch; its visible/render guards
         // decide whether to show (GLM-5.2 / GLM-5-Turbo on a z.ai route) or
         // hide. This replaces the old ctx.ui.setStatus('glm-thinking', …).
-        updatePeakWidget();
+        trackPeakWidget(ctx);
+        warnMissingDirectAuth(event.model, ctx);
 
         if (!isZaiGlm52(event.model)) return;
 

@@ -1,51 +1,39 @@
 # pi-glm-tweaks inspired from `@estebanforge/pi-glm-tweaks`
 
-Pi-native tweaks for Z.AI's **GLM-5.2**. Restricts the Pi thinking-level UI to the three modes GLM-5.2 actually supports (**off**, **high**, **max**), wires the native `thinkingFormat:"zai"` translation, and auto-clamps any stale level when the model is selected.
+**Archived.** `agent/extensions-legacy/` is not auto-loaded by Pi. Move the entire directory back to `agent/extensions/` to opt in again; review the request flags first, since their latency, token, and quality effects were not measured here.
 
-Works with Pi's built-in `zai/glm-5.2` model out of the box, or a custom entry in `~/.pi/agent/models.json`. The extension re-registers it with the OpenAI-compat endpoint and the proper thinking map. Other Z.AI models (`zai/glm-4.7`, `zai/glm-5-turbo`, `zai/glm-5.1`, plus any custom entries) are preserved across the re-registration.
+Pi-native request tweaks and peak-hours widget for **GLM-5.2**. Pi's built-in catalog and provider code own thinking levels and wire translation for direct Z.AI and OpenRouter GLM models, including GLM-5.3. This extension does not override those definitions. Configure CPA model metadata with `ai-providers.json` overrides.
 
 ## What it does
 
-GLM-5.2 ships three thinking modes (per [docs.z.ai thinking](https://docs.z.ai/guides/capabilities/thinking) and [thinking-mode](https://docs.z.ai/guides/capabilities/thinking-mode)):
+The built-in direct `zai/glm-5.2` model exposes three levels (see [Z.AI thinking documentation](https://docs.z.ai/guides/capabilities/thinking)):
 
-| Pi thinking level  | GLM-5.2 wire                                                 |
-| ------------------ | ------------------------------------------------------------ |
-| `off`              | `thinking: { type: "disabled" }`                             |
-| `high`             | `thinking: { type: "enabled" }` + `reasoning_effort: "high"` |
-| `max` (Pi `xhigh`) | `thinking: { type: "enabled" }` + `reasoning_effort: "max"`  |
+| Pi thinking level | GLM-5.2 wire                                                 |
+| ----------------- | ------------------------------------------------------------ |
+| `off`             | `thinking: { type: "disabled" }`                             |
+| `high`            | `thinking: { type: "enabled" }` + `reasoning_effort: "high"` |
+| `max`             | `thinking: { type: "enabled" }` + `reasoning_effort: "max"`  |
 
-Pi natively exposes six thinking levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`). GLM-5.2 supports all of them via `reasoning_effort`, but the middle three are hidden from the UI to keep the surface simple: `low`/`medium` both map to `"high"` (mirroring the server-side behaviour), `minimal` maps to `"minimal"` (model skips thinking). Only `off`, `high`, and `xhigh` are shown.
+Pi also defines GLM-5.3 levels (`low`, `high`, `max`; no `off`). OpenRouter has its own built-in GLM mappings; this extension leaves them untouched.
 
-This extension collapses that mismatch:
+1. **Custom model fallback:** on `session_start`, only if a custom direct `zai/glm-5.2` entry lacks `thinkingLevelMap` and direct Z.AI auth is available, copy the map from Pi's built-in catalog. Preserve the entry's URL, prices, headers, other metadata and all other Z.AI models. A model already carrying a map is never re-registered.
+2. **Auto-clamp on `model_select`:** for GLM-5.2 on direct Z.AI or CPA `zai-coding`, change stale `minimal`, `low` or `medium` to `high` and notify.
+3. **Footer widget:** show the thinking hint and peak-hours indicator for GLM on direct Z.AI or CPA `zai-coding`.
+4. **`/glm-tweaks` command:** status panel and flag toggle (see [`/glm-tweaks` command](#glm-tweaks-command)).
 
-1. **Re-registers `zai/glm-5.2`** on `session_start` with `api: "openai-completions"`, `baseUrl: https://api.z.ai/api/coding/paas/v4`, `compat.thinkingFormat: "zai"`, and a tight `thinkingLevelMap`:
-   ```ts
-   {
-     minimal: "minimal", // → reasoning_effort: "minimal" (model skips thinking)
-     low:     "high",    // → reasoning_effort: "high" (server maps low→high)
-     medium:  "high",    // → reasoning_effort: "high" (server maps medium→high)
-     high:    "high",    // → reasoning_effort: "high"
-     xhigh:   "max",     // → reasoning_effort: "max"
-     // off omitted → supported, sends thinking.type = "disabled"
-   }
-   ```
-2. **Auto-clamps on `model_select`** — if the current level is one we hid (e.g. you switched from a model that allowed `medium`), quietly bump to `high` and notify.
-3. **Footer hint** — sets `ctx.ui.setStatus("glm-thinking", "thinking: off | high | max")` while GLM-5.2 is the active model.
-4. **`/glm-tweaks` command** — status panel + flag toggle from inside Pi (see [`/glm-tweaks` command](#glm-tweaks-command)).
-
-`Shift+Tab`, `/thinking`, and the level picker all see only the three GLM-5.2 modes.
+For direct Z.AI, `Shift+Tab`, `/thinking` and the level picker follow Pi's built-in map (or the same map filled into a custom entry). CPA levels come from its configured overrides.
 
 ## Token-efficiency tweaks
 
-GLM-5.2 overthinks on long agent loops — it can spend an entire turn on `reasoning_content` without taking a tool call. The Z.AI API does not expose a `max_thinking_tokens` parameter, so the post that popularised this observation does it at the provider layer (mid-stream injection). We can't intercept the stream, but we can approximate the win with three cheap, opt-out tweaks:
+These optional flags were added to experiment with reasoning latency and token use on GLM-5.2. They are not required for Pi's native thinking levels; their benefit has not been measured in this setup:
 
 | Flag                      | Default | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `glm-budget-nudge`        | `true`  | (a) Appends a soft thinking-budget fragment to the system prompt on every zai/glm-5.2 turn. (b) Per LLM call, sums `reasoning_content` across prior assistant messages in the current agent loop (the one started by the most recent user prompt); if cumulative exceeds ~2000 characters (roughly 500 English tokens), injects a one-shot hint to push the model back toward tool calls. Fires at most once per loop. The hint appears in the conversation panel as a user message prefixed `[system reminder: ...]` — that is intentional, so you can see when the ratchet fired. |
-| `glm-clear-thinking`      | `true`  | Forces `clear_thinking: true` on every request. The coding endpoint (`api.z.ai/api/coding/paas/v4`) defaults to preserved thinking, which silently compounds `reasoning_content` across turns. At $4.4/MTok output, this is real money.                                                                                                                                                                                                                                                                                                                                             |
+| `glm-clear-thinking`      | `true`  | Forces `clear_thinking: true` on every request. The coding endpoint defaults to preserved thinking, which Z.AI documents as improving continuity and cache reuse. Forcing `true` opts out of that behavior; its cost and quality effects here are unmeasured.                                                                                                                                                                                                                                                                                                                                             |
 | `glm-skip-short-thinking` | `true`  | For user prompts under 80 chars, forces `thinking.type: "disabled"` for that turn. Trivial questions ("what time is it") don't need deep thinking.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
-All three flags surface in `pi config` and Pi's flag editor — `pi config set glm-budget-nudge false` to disable.
+When this extension is loaded, all three flags surface in `pi config` and Pi's flag editor — `pi config set glm-budget-nudge false` to disable.
 
 ## `/glm-tweaks` command
 
@@ -54,7 +42,7 @@ An in-session command for inspecting and flipping the flags above without leavin
 | Invocation                    | Effect                                                                                                                                                                         |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `/glm-tweaks` (TUI)           | Opens an interactive settings menu (the same `SettingsList` component `/settings` uses). Flip any combination of flags, then a single reload fires on close to apply them all. |
-| `/glm-tweaks` (non-TUI / RPC) | Falls back to a read-only status panel (active model, thinking level vs the `off \| high \| max` map, and each flag's on/off state).                                           |
+| `/glm-tweaks` (non-TUI / RPC) | Falls back to a read-only status panel (active model, current thinking level, and each flag's on/off state).                                                         |
 | `/glm-tweaks toggle <flag>`   | One-shot flip: persists, then reloads.                                                                                                                                         |
 | `/glm-tweaks <flag>`          | Shorthand one-shot toggle (flag name without the `toggle` keyword).                                                                                                            |
 
@@ -71,12 +59,13 @@ The command offers tab-completion for `toggle` and the three flag names.
 
 ## Why this exists
 
-Pi's built-in `thinkingFormat: "zai"` (in `openai-completions.js`) already knows the wire translation. The catch is that GLM-5.2's user-defined model in `models.json` typically lacks a `thinkingLevelMap`, so the UI shows all six levels and sends invalid combinations on hidden ones. This extension fills that gap automatically — no manual `models.json` editing.
+Pi already supplies the thinking map and wire translation for its built-in GLM models. A custom direct `zai/glm-5.2` entry without a map does not inherit those supported levels; the extension fills that specific gap without replacing complete model definitions. Its request tweaks and peak-hours widget are separate from model metadata.
 
 ## Compatibility
 
-- Pi (`@earendil-works/pi-coding-agent`) — any version with `registerProvider` taking effect post-bind and `thinkingFormat: "zai"` support, plus the `before_agent_start` / `context` / `before_provider_request` / `registerFlag` hooks.
-- Z.AI API key — resolved through Pi's standard auth storage (env var `ZAI_API_KEY`, `/login`, or `models.json` provider `apiKey`). The extension does not configure auth.
+- Pi (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-ai`) — requires the published Z.AI model catalog, `registerProvider`, and the `before_agent_start` / `context` / `before_provider_request` / `registerFlag` hooks.
+- Any model selected through the direct `zai` provider requires a Z.AI API key, resolved through Pi's standard auth storage (`ZAI_API_KEY`, `/login`, or `models.json` provider `apiKey`). The extension warns only when this direct provider is selected without a key.
+- CPA `zai-coding` and OpenRouter GLM routes do not require direct Z.AI auth. The peak-hours widget works for `cpa/zai-coding/glm-5.2` without it; the extension's model-specific tweaks do not apply to OpenRouter routes.
 
 ## License
 

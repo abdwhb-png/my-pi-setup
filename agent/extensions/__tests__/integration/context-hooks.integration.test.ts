@@ -3,15 +3,12 @@ import { createTestSession } from '@abdwhb-png/pi-test-harness';
 
 import { publicExtensionEntrypoint } from './public-extension-session.ts';
 
-for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi hooks preserve GLM/Codex options across requests and model changes`, async () => {
+for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi hooks preserve context/Codex options across requests and model changes`, async () => {
     const context = publicExtensionEntrypoint('context');
-    const sidecars = [
-        publicExtensionEntrypoint('openai-codex-fast-mode'),
-        publicExtensionEntrypoint('pi-glm-tweaks'),
-    ];
+    const sidecar = publicExtensionEntrypoint('openai-codex-fast-mode');
     const owner = publicExtensionEntrypoint('tool-groups');
     const session = await createTestSession({ systemPrompt: 'Custom SYSTEM',
-        extensions: order === 'first' ? [context, ...sidecars, owner] : [...sidecars, context, owner] });
+        extensions: order === 'first' ? [context, sidecar, owner] : [sidecar, context, owner] });
     try {
         const runner = session.session.extensionRunner;
         if (!runner) throw new Error('Missing real Pi runner');
@@ -20,7 +17,7 @@ for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi 
         const params = { model: 'glm-5.2', messages: [{ role: 'system', content: 'Custom SYSTEM' }], tools: [{ type: 'function', function: { name: 'edit', parameters: {} } }], thinking: { type: 'enabled' } };
         const first = await runner.emitBeforeProviderRequest(params) as typeof params;
         expect(JSON.stringify(first)).toContain('- edit');
-        expect(first.thinking).toMatchObject({ clear_thinking: true });
+        expect(first.thinking).toEqual(params.thinking);
         expect(first.tools).toEqual(params.tools);
         const next = await runner.emitBeforeProviderRequest({ ...first, tools: [] }) as typeof params;
         expect(JSON.stringify(next)).not.toContain('- edit');
