@@ -175,13 +175,13 @@
   "omittedOptionalPatches": [
     "scripts/upstream-no-preemptive-codex-protect.patch"
   ],
-  "forkCommit": "5746c5caa929ea6641b6726d9cd4f7b30128aade",
+  "forkCommit": "359cf4ddbe293836d3ee2bf9377087a22ab2da9f",
   "baselineSnapshot": {
     "commit": "6bc49bb",
     "sourceDiffSha256": "e3847ff7e72eef9aa8c092f5843b07647c48ecc1e56c2e0c53d0acd1e2a6686c",
     "sourceDiffFormat": "git-diff-binary-head-plus-sorted-untracked-v1"
   },
   "helperSha256": "652222cbebc18ee472da8ab763e240666be8343639aca0d9f6da565b49b17b0c",
-  "runtimeManifestSha256": "7ef6b4c14e6d0b7ddaebf1d28f0d1e7740d3d3edcda3876c0993da99d7b15197",
-  "runtimeVersion": "f3-f2-wsl-5746c5c"
+  "runtimeManifestSha256": "30eed410db39b78772608a990fc29e8386fdcd4ca1793fd1438ac9ca5d5f0fef",
+  "runtimeVersion": "f3-f2-wsl-359cf4d"
 }
