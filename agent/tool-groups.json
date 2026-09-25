@@ -44,6 +44,7 @@
         "subagents": [
             "subagent",
             "subagent_supervisor",
+            "subagents_enable",
             "subagent_wait",
             "bg_wait"
         ],

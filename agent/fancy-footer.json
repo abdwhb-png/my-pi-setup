@@ -1,20 +1,27 @@
 {
     "refreshMs": 1200,
-    "responsive": {
-        "enabled": false,
-        "compactBelowRows": 37,
-        "maxBelowEditorRows": 2
-    },
     "iconFamily": "emoji",
     "gaugeStyle": "blocks",
     "gaugeWidth": 10,
     "defaultTextColor": "dim",
     "defaultIconColor": "text",
     "widgets": {
+        "location": {
+            "row": 0
+        },
+        "git-status": {
+            "enabled": false
+        },
+        "provider": {
+            "enabled": true,
+            "align": "right",
+            "row": 0,
+            "position": 1
+        },
         "model": {
             "enabled": true,
             "align": "right",
-            "row": 1,
+            "row": 0,
             "position": 1
         },
         "thinking": {
@@ -29,6 +36,11 @@
             "row": 0,
             "position": 4
         },
+        "provider-status": {
+            "row": 1,
+            "position": 0,
+            "align": "right"
+        },
         "context-capacity": {
             "enabled": false,
             "row": 1,
@@ -40,7 +52,14 @@
             "align": "right",
             "position": 3
         },
-        "location": {
+        "cache-hit-rate": {
+            "row": 1,
+            "position": 10
+        },
+        "cache-read": {
+            "enabled": false
+        },
+        "cache-write": {
             "enabled": false
         },
         "branch": {
@@ -54,35 +73,28 @@
         },
         "diff-removed": {
             "enabled": false
-        },
-        "git-status": {
-            "enabled": false
-        },
-        "pull-request": {
-            "enabled": false
-        },
-        "pull-request-ci-status": {
-            "enabled": false
-        },
-        "pull-request-review-threads": {
-            "enabled": false
-        },
-        "extension-statuses": {
-            "row": 0
         }
     },
     "extensionWidgets": {
         "local-compressor": {
-            "row": 1,
-            "placement": "aboveEditor"
+            "row": 1
         },
-        "session-status-bar.model": {
+        "git-status-widget": {
+            "enabled": true,
             "row": 0,
-            "position": 0
+            "align": "left"
         },
         "session-status-bar.context": {
             "row": 0,
             "position": 3
+        },
+        "session-status-bar.cwd": {
+            "enabled": false
+        },
+        "session-status-bar.model": {
+            "enabled": false,
+            "row": 1,
+            "position": 0
         },
         "session-status-bar.cost": {
             "row": 1
@@ -98,18 +110,13 @@
             "row": 2,
             "align": "right"
         },
-        "git-status-widget": {
-            "enabled": true,
-            "row": 1,
-            "align": "left",
-            "position": 0
-        },
         "dangerous-mode": {
-            "row": 2,
+            "row": 1,
             "position": 0,
             "align": "left"
         },
         "yolo-permission": {
+            "row": 1,
             "position": 1
         },
         "browser-tools": {
@@ -126,11 +133,6 @@
             "row": 2,
             "align": "left"
         },
-        "codex-fast-mode": {
-            "enabled": true,
-            "row": 2,
-            "align": "left"
-        },
         "auto-translate": {
             "row": 2,
             "align": "left"
@@ -139,27 +141,9 @@
             "row": 2,
             "align": "right"
         },
-        "pi-sandbox": {
-            "row": 3,
-            "position": 1,
-            "align": "left"
-        },
         "brainstorm-forcer": {
-            "row": 4,
+            "row": 3,
             "align": "left"
-        },
-        "pi-lens": {
-            "row": 4
         }
-    },
-    "extensionStatusPositions": {
-        "pi-roles": 0,
-        "mcp": 1,
-        "lsp": 2,
-        "ponytail": 8,
-        "caveman": 9,
-        "pi-permission-system": 10,
-        "codex-fast-mode": 11,
-        "tps": 20
     }
 }

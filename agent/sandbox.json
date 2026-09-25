@@ -31,6 +31,7 @@
         "allowRead": [
             ".",
             "~/.local/share/dev-services/secrets/dashboard-token",
+            "/etc/machine-id",
             "~/projects"
         ],
         "denyReadWhenExternal": [

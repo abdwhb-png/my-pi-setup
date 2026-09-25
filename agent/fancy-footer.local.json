@@ -1,0 +1,32 @@
+{
+    "responsive": {
+        "enabled": false,
+        "compactBelowRows": 37,
+        "maxBelowEditorRows": 2
+    },
+    "extensionStatusPositions": {
+        "pi-roles": 0,
+        "mcp": 1,
+        "lsp": 2,
+        "ponytail": 8,
+        "caveman": 9,
+        "pi-permission-system": 10,
+        "codex-fast-mode": 11,
+        "tps": 20
+    },
+    "extensionStatusHiddenIds": [],
+    "extensionWidgets": {
+        "extension-statuses": {
+            "row": 1
+        },
+        "pi-sandbox": {
+            "row": 2,
+            "placement": "aboveEditor",
+            "align": "left"
+        },
+        "local-compressor": {
+            "row": 3,
+            "placement": "aboveEditor"
+        }
+    }
+}
