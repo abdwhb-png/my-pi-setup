@@ -4,7 +4,7 @@ import type {
     ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { createMcpRefResolver } from "pi-mcp-adapter";
+import { createMcpRefResolver } from "../_shared/mcp/ref-resolver.ts";
 import type { RoleToolPolicyPayload } from "../_shared/pi-roles/index.ts";
 import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import { loadToolGroupsConfig } from "../_shared/tool-groups/config.ts";
@@ -92,15 +92,6 @@ function formatDiagnostics(diags: ToolGroupDiagnostic[]): string {
     return `Tool-group diagnostics:\n${lines.join("\n")}`;
 }
 
-/**
- * Build an MCP `mcp:` reference resolver bound to the merged config cache.
- * Returns a function that maps a single `mcp:` reference to concrete tool
- * names, or [] when unresolvable. Non-mcp refs pass through unchanged.
- */
-function buildMcpResolver(cwd: string): (ref: string) => string[] {
-    return createMcpRefResolver(cwd);
-}
-
 const ROLE_TOOL_POLICY_EVENT = "pi-roles:tool-policy";
 
 interface RoleToolPolicy {
@@ -167,7 +158,7 @@ export function createToolGroupsExtension(
         const childAllowedTools = childToolPolicy
             ? new Set(childToolPolicy.allowedTools)
             : undefined;
-        const resolveMcp = buildMcpResolver(cwd);
+        const resolveMcp = createMcpRefResolver(cwd);
 
         for (const [groupName] of Object.entries(groups)) {
             const toolName = `${TOOL_GROUP_PREFIX}${groupName}`;

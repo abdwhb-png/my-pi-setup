@@ -26,9 +26,9 @@ import {
     createEditTool,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { createMcpRefResolver } from "pi-mcp-adapter";
 import { isDangerous } from "../_shared/command-execution/guard";
 import { createWidget } from "../_shared/fancy-footer.ts";
+import { createMcpRefResolver } from "../_shared/mcp/ref-resolver.ts";
 import { createUiColors } from "../_shared/ui/ui-colors.ts";
 import {
     resolvePath,
@@ -59,18 +59,13 @@ export default function slowMode(pi: ExtensionAPI) {
     /** Per-tool slow-mode config. Map key = tool name, value = slow mode active for this tool. */
     let toolConfig = new Map<string, boolean>();
 
-    /** Build an MCP `mcp:` reference resolver bound to the merged config cache. */
-    function buildMcpResolver(): (ref: string) => string[] {
-        return createMcpRefResolver();
-    }
-
     /** Reload the slow-mode tool config from disk. */
     function reloadToolConfig(): SlowModeConfigResult {
         const raw = loadSlowModeConfig();
         const result = validateSlowModeConfig(
             raw,
             pi.getActiveTools(),
-            buildMcpResolver(),
+            createMcpRefResolver(),
         );
         toolConfig = result.tools;
         return result;

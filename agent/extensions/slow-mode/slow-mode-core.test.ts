@@ -16,6 +16,8 @@ import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SettingsManager } from '@earendil-works/pi-coding-agent';
+import { createMcpRefResolver } from '../_shared/mcp/ref-resolver.ts';
+import { computeServerHash } from 'pi-mcp-adapter/metadata-cache';
 import {
     resolvePath,
     myersDiff,
@@ -557,6 +559,37 @@ describe('loadSlowModeConfig', () => {
 
 describe('validateSlowModeConfig', () => {
     const activeTools = ['write', 'edit', 'read', 'bash', 'grep', 'find', 'ls'];
+
+    it('does not review a proxy for a nonexistent MCP tool', () => {
+        const definition = { command: 'fixture' };
+        const resolveMcp = createMcpRefResolver('/unused', {
+            loadConfig: () => ({ mcpServers: { demo: definition } }),
+            loadCache: () => ({
+                version: 1,
+                servers: {
+                    demo: {
+                        configHash: computeServerHash(definition),
+                        cachedAt: Date.now(),
+                        tools: [{ name: 'lookup' }],
+                        resources: [],
+                    },
+                },
+            }),
+        });
+        const result = validateSlowModeConfig(
+            { 'mcp:demo/missing': true },
+            ['mcp__demo'],
+            resolveMcp,
+        );
+        expect(result.tools.size).toBe(0);
+        expect(result.warnings).toHaveLength(1);
+        const valid = validateSlowModeConfig(
+            { 'mcp:demo/lookup': true },
+            ['mcp__demo'],
+            resolveMcp,
+        );
+        expect(valid.tools.get('mcp__demo')).toBe(true);
+    });
 
     it('returns empty warnings when all tools exist', () => {
         const config: SlowModeConfig = { write: true, edit: true, grep: true };

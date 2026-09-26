@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createToolPolicyCoordinator, type PolicyConfiguration } from './index.ts';
+import { createMcpRefResolver } from '../mcp/ref-resolver.ts';
+import { computeServerHash } from 'pi-mcp-adapter/metadata-cache';
 
 function fixture(config: Partial<PolicyConfiguration> = {}) {
     let active = ['read', 'edit', 'bash'];
@@ -35,6 +37,27 @@ describe('tool policy coordinator', () => {
         f.policy.setRole(role('all'));
         expect(f.active()).toContain('edit');
         expect(f.active()).toContain('safe_bash');
+    });
+    test('grants a proxy-only MCP server through a tool group', () => {
+        const definition = { command: 'fixture' };
+        const resolveMcp = createMcpRefResolver('/unused', {
+            loadConfig: () => ({ mcpServers: { docs: definition } }),
+            loadCache: () => ({
+                version: 1,
+                servers: {
+                    docs: {
+                        configHash: computeServerHash(definition),
+                        cachedAt: Date.now(),
+                        tools: [{ name: 'search' }],
+                        resources: [],
+                    },
+                },
+            }),
+        });
+        const f = fixture({ groups: { docs: ['mcp:docs'] }, resolveMcp });
+        f.registry(['read', 'mcp__docs']);
+        f.policy.setRole(role('set', ['@docs']));
+        expect(f.active()).toEqual(['mcp__docs']);
     });
     test('defaults do not widen explicit empty roles', () => {
         const f = fixture();

@@ -3,5 +3,5 @@
     "edit": true,
     "bash": true,
     "safe_bash": false,
-    "@think-exec": true
+    "@think-exec": false
 }
