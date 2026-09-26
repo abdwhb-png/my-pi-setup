@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { loadToolGroupsConfig } from "../_shared/tool-groups/config.ts";
 import {
     parseFallbackAdviceConfig,
     registerFallbackAdvice,
 } from "./fallback-advice.ts";
 import registerSubagentsOverview from "./pi-subagents-overview/index.ts";
 import registerSubagentWaitGuard from "./subagent-wait-guard/index.ts";
+import { registerToolGroupChildSelection } from "./tool-selection-bridge.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -38,4 +40,10 @@ export default function registerSubagentsAddons(
     if (config.piSubagentsOverview) registerSubagentsOverview(pi);
     if (config.fallbackAdvice.enabled)
         registerFallbackAdvice(pi, config.fallbackAdvice);
+
+    const groups = loadToolGroupsConfig(process.cwd()).groups;
+    const disposeToolSelection = registerToolGroupChildSelection(groups, () =>
+        pi.getAllTools().map((tool) => tool.name),
+    );
+    pi.on("session_shutdown", () => disposeToolSelection());
 }
