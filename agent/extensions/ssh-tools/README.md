@@ -17,7 +17,7 @@ This extension adds a `/ssh` command.
 - No persistence across sessions
 - Local `read`, `write`, `edit`, and `bash` stay local
 - When SSH mode is active, the agent also gets `ssh_read`, `ssh_write`, `ssh_edit`, and `ssh_bash`
-- The active remote host, remote working directory, and local working directory are injected into the system prompt while SSH mode is on
+- The **local** working directory is injected into the system prompt while SSH mode is on. The remote host and remote working directory are **not**: they come from the SSH target and, when omitted, from the remote's own `pwd`, so they are treated as untrusted data and reported through tool results instead
 
 That makes remote work explicit instead of silently swapping out local tools.
 
@@ -59,16 +59,16 @@ This is mainly a convenience layer. SSH config is not required for the actual re
 
 This is the part that is easy to get wrong, so it is spelled out.
 
-| Tool        | Relative path                               | Absolute path                                                 |
-| ----------- | ------------------------------------------- | ------------------------------------------------------------- |
-| `ssh_read`  | resolves under the remote working directory | read as given                                                 |
-| `ssh_write` | resolves under the remote working directory | written as given                                              |
-| `ssh_edit`  | resolves under the remote working directory | **rejected** unless it is inside the remote working directory |
-| `ssh_bash`  | runs in the remote working directory        | n/a                                                           |
+| Tool        | Relative path                               | Absolute path                                                           |
+| ----------- | ------------------------------------------- | ----------------------------------------------------------------------- |
+| `ssh_read`  | resolves under the remote working directory | read as given                                                           |
+| `ssh_write` | resolves under the remote working directory | written as given                                                        |
+| `ssh_edit`  | resolves under the remote working directory | **rejected** unless it is lexically inside the remote working directory |
+| `ssh_bash`  | runs in the remote working directory        | n/a                                                                     |
 
 `cd` written inside an `ssh_bash` command still applies, so `cd /etc && ls` works in one call.
 
-Because `ssh_edit` is sandboxed, reaching a file outside the working directory means either an absolute path with `ssh_read` or a shell command with `ssh_bash`.
+Because `ssh_edit` is restricted to the working directory, reaching a file outside it means either an absolute path with `ssh_read` or a shell command with `ssh_bash`.
 
 Paths are normalized (`.` and `..` resolved, duplicate separators collapsed) _before_ the containment check, so `/home/dev/../etc/x` is rejected rather than passing a prefix test and landing on `/etc/x`.
 
@@ -92,7 +92,7 @@ pi resolves tool paths as `ctx?.cwd || cwd` in each tool definition:
 
 `ctx.cwd` is the **local** session directory, and it short-circuits the `cwd` argument passed to `createReadToolDefinition` and friends. A factory `cwd` is only a fallback. So this extension makes every model-supplied path absolute against the remote working directory _before_ handing it to pi, and `ssh_bash` ignores the `cwd` argument it receives entirely.
 
-Pre-resolving to an absolute path removes the `ctx.cwd` dependency but does **not** bypass every local-filesystem behaviour inside pi: `resolveToCwd` still applies `normalizeUnicodeSpaces` (hence the refusal above), and `resolveReadPathAsync` still probes _local_ files for alternate macOS screenshot and Unicode spellings. Those two are pi-side behaviours this extension can only avoid or reject, not correct.
+Pre-resolving to an absolute path removes the `ctx.cwd` dependency but does **not** bypass every local-filesystem behaviour inside pi: `resolveToCwd` still applies `normalizeUnicodeSpaces` (hence the refusal above), and `resolveReadPathAsync` still probes _local_ files for alternate macOS screenshot and Unicode spellings. The first is a pi-side behaviour this extension can only refuse. The second is closed by pinning: `ssh_read` resolves the path once and the read operations reject any other path, so a local file cannot choose which remote file gets read.
 
 Do not "simplify" this by passing `remoteCwd` to the tool factories and trusting it. That reintroduces the bug where `ssh_bash` tries to `cd` into a local path that does not exist on the remote host, and where `ssh_read` with a relative path reads a different file than the model asked for.
 
@@ -109,8 +109,8 @@ ssh_bash  find /var/log -name '*.log' -mtime -1
 ## Write semantics
 
 - content is sent over **stdin**, never on the command line, so there is no argv size ceiling
-- the remote side creates a **unique** temp file with `mktemp` in the target's own directory, so two writers to the same target never share a temp inode, and the rename stays on one filesystem
-- a `trap` removes the temp file on **every** exit, including a failed rename
+- the remote side stages the content in a **unique** temporary **directory** created by `mktemp -d` under `umask 077` in the target's own directory, so two writers to the same target never share a staging path, the rename stays on one filesystem, and another user who can write the target directory cannot swap the staged file for a symlink mid-transfer
+- a `trap` removes that staging directory on **every** exit, including a failed rename, and stays armed after a successful rename so the emptied directory is not leaked
 - the byte count is sent alongside and verified with `wc -c` **before** the rename, so a connection that drops mid-transfer cannot publish a truncated file over an intact one. `cat` exits 0 on an early EOF, so exit status alone does not prove the content arrived
 - a **directory** target is refused: `mv -f file dir` succeeds by moving the file _inside_ the directory
 - a **symlink** target is refused by `ssh_write` and `ssh_edit`. Renaming over a link replaces the link, not the file it points to, and the tool would report success while the file you meant is untouched. Edit the resolved path, or use `ssh_bash`

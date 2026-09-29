@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { normalizeRemotePath } from "./remote-path.ts";
-import { sshOk } from "./transport.ts";
+import { sshOk, type SshExecOptions } from "./transport.ts";
 
 /** A `/ssh` argument before the remote working directory is resolved. */
 export type SshProfile = {
@@ -120,7 +120,31 @@ export function normalizeTargetArg(
     return { name: trimmed, remote: trimmed };
 }
 
-export async function resolveRemoteCwd(profile: SshProfile): Promise<string> {
+/**
+ * Control characters a remote could use to forge prompt lines or to drive the
+ * terminal: C0, DEL/C1, and the two Unicode line separators.
+ */
+// oxlint-disable-next-line no-control-regex
+const REMOTE_CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
+
+/**
+ * The `pwd` output is chosen by the remote, so it is untrusted input that must
+ * not carry more than a plain path. A second line would be promoted into the
+ * system prompt as if the model had been told it, and the local tools stay
+ * enabled, so a hostile host could use it to exfiltrate local files.
+ */
+function assertUsableReportedPath(value: string, remote: string): void {
+    if (!value.startsWith("/") || REMOTE_CONTROL_CHARS.test(value)) {
+        throw new Error(
+            `Remote working directory reported by ${remote} was ${JSON.stringify(value)}, which is not a usable absolute path. Pass it explicitly instead: /ssh ${remote}:/absolute/path`,
+        );
+    }
+}
+
+export async function resolveRemoteCwd(
+    profile: SshProfile,
+    options: SshExecOptions = {},
+): Promise<string> {
     const explicit = profile.cwd?.trim();
     if (explicit) {
         if (!explicit.startsWith("/")) {
@@ -133,12 +157,8 @@ export async function resolveRemoteCwd(profile: SshProfile): Promise<string> {
         }
         return normalizeRemotePath(explicit);
     }
-    const reported = await sshOk(profile.remote, "pwd");
+    const reported = await sshOk(profile.remote, "pwd", options);
     const pwd = reported.toString("utf8").trim();
-    if (!pwd.startsWith("/")) {
-        throw new Error(
-            `Remote working directory reported by ${profile.remote} was ${JSON.stringify(pwd)}, which is not an absolute path.`,
-        );
-    }
+    assertUsableReportedPath(pwd, profile.remote);
     return normalizeRemotePath(pwd);
 }
