@@ -203,8 +203,10 @@ describe('normalizeSafeBashConfig', () => {
         ).toEqual({});
     });
 
-    it('keeps DEFAULT_SAFE_BASH_CONFIG guardPolicy empty (deny by default)', () => {
-        expect(DEFAULT_SAFE_BASH_CONFIG.guardPolicy).toEqual({});
+    it('defaults chmod to cwd-only and leaves every other group to deny', () => {
+        expect(DEFAULT_SAFE_BASH_CONFIG.guardPolicy).toEqual({
+            chmod: 'cwd-only',
+        });
     });
 });
 
@@ -270,10 +272,10 @@ describe('loadSafeBashConfig', () => {
         expect(config.allowedShellCommands).toEqual(['grep', 'rg']);
     });
 
-    it('defaults guardPolicy to empty object (deny by default)', () => {
+    it('defaults guardPolicy to chmod cwd-only (deny for every other group)', () => {
         const sm = SettingsManager.inMemory({} as any);
         const config = loadSafeBashConfig(cwd, undefined, sm);
-        expect(config.guardPolicy).toEqual({});
+        expect(config.guardPolicy).toEqual({ chmod: 'cwd-only' });
     });
 
     it('defaults telemetry to a bounded local archive', () => {
@@ -339,11 +341,23 @@ describe('loadSafeBashConfig', () => {
         ).toEqual({});
     });
 
-    it('reads guardPolicy from settings', () => {
+    it('reads guardPolicy from settings over the chmod default', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { guardPolicy: { sudo: 'allow', rm: 'ask' } },
         } as any);
         const config = loadSafeBashConfig(cwd, undefined, sm);
-        expect(config.guardPolicy).toEqual({ sudo: 'allow', rm: 'ask' });
+        expect(config.guardPolicy).toEqual({
+            chmod: 'cwd-only',
+            sudo: 'allow',
+            rm: 'ask',
+        });
+    });
+
+    it('lets settings override the chmod default', () => {
+        const sm = SettingsManager.inMemory({
+            safeBash: { guardPolicy: { chmod: 'deny' } },
+        } as any);
+        const config = loadSafeBashConfig(cwd, undefined, sm);
+        expect(config.guardPolicy).toEqual({ chmod: 'deny' });
     });
 });

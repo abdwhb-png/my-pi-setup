@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type { DangerMatch } from "./guard.ts";
-import { inspectDeleteScope } from "./guard.ts";
+import { inspectCommandScope } from "./guard.ts";
 
 export type CommandGuardPolicy = "ask" | "deny" | "allow" | "cwd-only";
 
@@ -76,13 +76,27 @@ export async function authorizeDangerousCommand(
     if (policy === "allow") return { allowed: true };
     if (policy === "deny") return { allowed: false, reason: match.message };
     if (policy === "cwd-only") {
-        const scope = inspectDeleteScope(
+        const scope = inspectCommandScope(
             match.normalizedCommand,
             ctx.cwd,
             match.groupId,
         );
         if (scope.verdict === "inside") return { allowed: true };
         const offending = scope.offendingTarget;
+        if (scope.verdict === "catastrophic-mode") {
+            return {
+                allowed: false,
+                reason: `Command blocked by ${options.toolName}: ${match.groupId} mode ${scope.mode} is not permitted`,
+            };
+        }
+        if (scope.verdict === "protected") {
+            return {
+                allowed: false,
+                reason: offending
+                    ? `Command blocked by ${options.toolName}: ${match.groupId} target is protected: ${offending}`
+                    : match.message,
+            };
+        }
         return {
             allowed: false,
             reason: offending

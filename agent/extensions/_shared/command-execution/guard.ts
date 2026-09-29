@@ -5,6 +5,7 @@
  * other extension that wraps bash execution (e.g. the compressor).
  */
 
+import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 
 /** A named bundle of regexes representing one class of dangerous command. */
@@ -77,10 +78,11 @@ export const DANGER_GROUPS: readonly DangerGroup[] = [
     },
     {
         id: "chmod",
-        label: "chmod on root paths (incl. chmod 777 /)",
+        label: "chmod (scope-decided: cwd containment, protected roots, catastrophic modes)",
         patterns: [
-            /\bchmod\s+(-[a-zA-Z]+\s+)?([0-7]{3,4})\s+\//,
-            /\bchmod\s+(-[a-zA-Z]+\s+)?777\s+\/(?!\.)/,
+            // Any chmod is a candidate: the verdict comes from inspectChmodScope
+            // (mode + resolved targets), never from this pattern alone.
+            /\bchmod\b/,
         ],
     },
     {
@@ -436,6 +438,219 @@ function toScope(
         }
     }
     return { verdict: "inside", targets };
+}
+
+/**
+ * Verdict for a cwd-scoped chmod authorization request. Extends the delete
+ * verdicts with the two chmod-specific reasons a mode can be rejected.
+ */
+export type CommandScopeVerdict =
+    | "inside"
+    | "outside"
+    | "protected"
+    | "catastrophic-mode"
+    | "unknown";
+
+/** Result of resolving a command's operands against `cwd`. */
+export interface CommandScope {
+    verdict: CommandScopeVerdict;
+    /** First target that broke the scope, when the verdict names one. */
+    offendingTarget?: string;
+    /** Mode operand as written (chmod only). */
+    mode?: string;
+    targets: string[];
+}
+
+/**
+ * Roots a chmod may never touch, even when the caller's cwd is inside them.
+ * `~/.pi` is the harness-managed tree; the rest are system roots where a
+ * permission change is never a project-scoped operation.
+ */
+export function defaultProtectedRoots(): string[] {
+    return [
+        resolvePath(homedir(), ".pi"),
+        "/etc",
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/boot",
+        "/var",
+    ];
+}
+
+/** Octal mode: 1-4 digits, optionally `0o`-prefixed. */
+const OCTAL_MODE_RE = /^(?:0o)?[0-7]{1,4}$/;
+
+/** Symbolic mode: one or more `[ugoa]*[-+=][rwxXstugo]*` clauses. */
+const SYMBOLIC_MODE_RE =
+    /^[ugoa]*[-+=][rwxXstugo]*(?:,[ugoa]*[-+=][rwxXstugo]*)*$/;
+
+/** setuid, setgid, or other-write — never a project-scoped permission change. */
+function isCatastrophicOctal(mode: string): boolean {
+    const value = Number.parseInt(mode.replace(/^0o/, ""), 8);
+    if (!Number.isFinite(value)) return false;
+    return (
+        (value & 0o4000) !== 0 ||
+        (value & 0o2000) !== 0 ||
+        (value & 0o002) !== 0
+    );
+}
+
+/** Symbolic equivalent of isCatastrophicOctal: setuid/setgid or world-write. */
+function isCatastrophicSymbolic(mode: string): boolean {
+    return mode.split(",").some((clause) => {
+        const parsed = /^([ugoa]*)([-+=])([rwxXstugo]*)$/.exec(clause);
+        if (!parsed) return false;
+        const [, who, operator, perms] = parsed;
+        if (operator === "-") return false;
+        if (perms.includes("s")) return true;
+        if (!perms.includes("w")) return false;
+        // An omitted `who` means all of ugo.
+        const affected = who === "" ? "a" : who;
+        return affected.includes("o") || affected.includes("a");
+    });
+}
+
+function isCatastrophicMode(mode: string): boolean {
+    return OCTAL_MODE_RE.test(mode)
+        ? isCatastrophicOctal(mode)
+        : isCatastrophicSymbolic(mode);
+}
+
+interface ChmodParse {
+    mode?: string;
+    targets: string[];
+    unknown: boolean;
+}
+
+/** Collect chmod mode + resolved absolute targets, or mark the parse unknown. */
+function parseChmod(command: string, cwd: string): ChmodParse {
+    const root = resolvePath(cwd);
+    const targets: string[] = [];
+    let mode: string | undefined;
+    let unknown = false;
+
+    for (const segment of command.split(SHELL_SEPARATORS)) {
+        const tokens = tokenizeShell(segment);
+        if (tokens.length === 0 || tokens[0] !== "chmod") continue;
+        let flagMode = true;
+        for (let i = 1; i < tokens.length; i++) {
+            const tok = tokens[i];
+            if (flagMode) {
+                if (tok === "--") {
+                    flagMode = false;
+                    continue;
+                }
+                // Mode copied from another file: the effective bits are not
+                // visible here, so fail closed instead of guessing.
+                if (tok.startsWith("--reference")) {
+                    unknown = true;
+                    continue;
+                }
+                if (tok.startsWith("-") && tok.length > 1) continue;
+                flagMode = false;
+            }
+            if (
+                mode === undefined &&
+                (OCTAL_MODE_RE.test(tok) || SYMBOLIC_MODE_RE.test(tok))
+            ) {
+                mode = tok;
+                continue;
+            }
+            const expanded = expandTargetOperand(tok);
+            if (expanded === null) {
+                unknown = true;
+                continue;
+            }
+            targets.push(resolvePath(root, expanded));
+        }
+    }
+
+    return { mode, targets, unknown };
+}
+
+function isProtectedTarget(
+    target: string,
+    protectedRoots: readonly string[],
+): boolean {
+    return protectedRoots.some((protectedRoot) =>
+        isContained(target, protectedRoot),
+    );
+}
+
+/**
+ * Determine whether a chmod stays inside `cwd`, avoids protected roots, and
+ * uses a non-catastrophic mode.
+ *
+ * Resolution is lexical: `~`/`$HOME` expand, variables and globs are
+ * unresolvable (fail closed), and symlinks are not followed.
+ */
+export function inspectChmodScope(
+    command: string,
+    cwd: string,
+    protectedRoots: readonly string[] = defaultProtectedRoots(),
+): CommandScope {
+    const parsed = parseChmod(command, cwd);
+    if (parsed.unknown || parsed.targets.length === 0) {
+        return {
+            verdict: "unknown",
+            mode: parsed.mode,
+            targets: parsed.targets,
+        };
+    }
+
+    const roots = protectedRoots.map((protectedRoot) =>
+        resolvePath(protectedRoot),
+    );
+    for (const target of parsed.targets) {
+        if (isProtectedTarget(target, roots)) {
+            return {
+                verdict: "protected",
+                offendingTarget: target,
+                mode: parsed.mode,
+                targets: parsed.targets,
+            };
+        }
+    }
+
+    const root = resolvePath(cwd);
+    for (const target of parsed.targets) {
+        if (!isContained(target, root)) {
+            return {
+                verdict: "outside",
+                offendingTarget: target,
+                mode: parsed.mode,
+                targets: parsed.targets,
+            };
+        }
+    }
+
+    if (parsed.mode !== undefined && isCatastrophicMode(parsed.mode)) {
+        return {
+            verdict: "catastrophic-mode",
+            mode: parsed.mode,
+            targets: parsed.targets,
+        };
+    }
+
+    return { verdict: "inside", mode: parsed.mode, targets: parsed.targets };
+}
+
+/**
+ * Scope verdict for any cwd-scoped danger group. Unsupported groups fail
+ * closed to `unknown`.
+ */
+export function inspectCommandScope(
+    command: string,
+    cwd: string,
+    groupId: string,
+    protectedRoots: readonly string[] = defaultProtectedRoots(),
+): CommandScope {
+    if (groupId === "chmod") {
+        return inspectChmodScope(command, cwd, protectedRoots);
+    }
+    return inspectDeleteScope(command, cwd, groupId);
 }
 
 /**

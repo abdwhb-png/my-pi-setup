@@ -40,15 +40,16 @@ export interface SafeBashConfig {
      */
     allowedShellCommands: AllowedShellCommand[];
     /** Per-danger-group action. Missing groups default to `deny`. */
-    guardPolicy: Record<string, SafeBashGuardPolicy>;
-    /** Local, redacted command-attempt telemetry used by `/safe-bash-audit`. */
+    guardPolicy: Record<string, SafeBashGuardPolicy>;    /** Local, redacted command-attempt telemetry used by `/safe-bash-audit`. */
     telemetry: SafeBashTelemetryConfig;
 }
 
 export const DEFAULT_SAFE_BASH_CONFIG: SafeBashConfig = {
     mode: "coexist",
     allowedShellCommands: [],
-    guardPolicy: {},
+    // chmod is scope-decided: in-cwd benign modes pass, everything outside cwd,
+    // under a protected root (~/.pi, system roots), or world-writable/setuid is blocked.
+    guardPolicy: { chmod: "cwd-only" },
     telemetry: {
         enabled: true,
         directory: "~/.pi/agent/safe-bash-telemetry",

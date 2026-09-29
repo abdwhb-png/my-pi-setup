@@ -70,9 +70,11 @@ describe('isDangerous - safe commands', () => {
         expect(isDangerous('killall node')).toBeNull();
     });
 
-    it('should allow chmod on non-root paths', () => {
-        expect(isDangerous('chmod +x script.sh')).toBeNull();
-        expect(isDangerous('chmod 755 ./build.sh')).toBeNull();
+    it('reports chmod as a scoped candidate group, not an automatic block', () => {
+        // chmod is decided by inspectChmodScope via the `cwd-only` policy; the
+        // group pattern only marks the command as a candidate.
+        expect(inspectDangerous('chmod +x script.sh')?.groupId).toBe('chmod');
+        expect(inspectDangerous('chmod 755 ./build.sh')?.groupId).toBe('chmod');
     });
 
     it('should allow chown on non-root paths', () => {

@@ -34,6 +34,20 @@ Danger group `file-delete-api` blocks direct filesystem deletion APIs inside int
 
 Python deletion calls supplied through heredoc stdin are also detected. Ordinary scripts and read-only interpreter one-liners remain allowed unless another danger group matches.
 
+## chmod scope guard
+
+Danger group `chmod` matches every `chmod` invocation and decides by resolved target and mode rather than by syntax. The group defaults to `cwd-only` (`DEFAULT_SAFE_BASH_CONFIG.guardPolicy`), so in-cwd benign modes run and everything else blocks:
+
+- **inside `cwd`**: allowed when the mode is benign (`755`, `644`, `+x`, `u+rwx,g-w`).
+- **outside `cwd`**: blocked, including relative spellings that escape (`chmod +x ../other/tool`) and `~` targets.
+- **protected root**: blocked even when `cwd` is inside it. Defaults are `~/.pi` plus `/etc`, `/usr`, `/bin`, `/sbin`, `/lib`, `/boot`, `/var`.
+- **catastrophic mode**: blocked anywhere — other-write (`777`, `666`, `o+w`, `a+w`), setuid/setgid (`4755`, `u+s`).
+- **unresolvable**: blocked. Variables, globs, and backticks cannot be resolved statically, and `chmod --reference=…` copies bits that are not visible here.
+
+Mode and target are parsed, not pattern-matched, so symbolic modes, `-R`, `--` separators, `0o755`, and relative paths cannot spell around the check. Resolution is lexical: `resolvePath` does not follow symlinks, so a symlink inside `cwd` pointing outside is not caught (same limitation as `rm`).
+
+Example: from `~/.pi`, `chmod +x bin/pi-fork` and `chmod 755 /home/<user>/.pi/bin/pi-fork` are both blocked because the target resolves under a protected root.
+
 ## Guard policy
 
 Configure each danger group under `safeBash.guardPolicy`:
@@ -55,7 +69,9 @@ Actions:
 - `deny`: block. This is the default for missing groups.
 - `ask`: interactive choice to allow once, allow the exact normalized command for the session, deny, or deny with a reason. Non-interactive sessions deny.
 - `allow`: execute without prompting while preserving telemetry guard evidence.
-- `cwd-only`: allow only when every resolvable delete target stays lexically inside the session working directory (`ctx.cwd`). An unresolvable target (variable, glob, backtick, bare `rm`) or any target outside `cwd` blocks with a reason naming the offending path. Supported for the `rm` and `file-delete-api` groups; other groups fail closed to `deny`.
+- `cwd-only`: allow only when the command's resolvable targets stay lexically inside the session working directory (`ctx.cwd`) and avoid the chmod-specific checks above. An unresolvable target (variable, glob, backtick, bare `rm`) or any target outside `cwd` blocks with a reason naming the offending path. Supported for `rm`, `file-delete-api`, and `chmod`; other groups fail closed to `unknown`.
+
+`chmod` ships with `cwd-only` as its code default. Setting `safeBash.guardPolicy.chmod` to `deny` blocks every `chmod` invocation, and `allow` skips the scope checks entirely.
 
 Every matching group is evaluated, so allowing one group cannot bypass another matching group's `ask` or `deny` policy.
 

@@ -18,7 +18,7 @@ function createExtensionApi() {
 
 describe("pi-ssh-tools", () => {
     it('activates and revokes SSH under an explicit role without retaining an old-session activation', async () => {
-        const { default: extension } = await import('./pi-ssh-tools.ts');
+        const { default: extension } = await import('./index.ts');
         const hooks = new TestHooks();
         const commands = new Map<string, any>();
         const registered = ['read'];
@@ -43,7 +43,7 @@ describe("pi-ssh-tools", () => {
         expect(active).toEqual(['read']);
     });
     it("registers SSH tools", async () => {
-        const { default: sshToolsExtension } = await import("./pi-ssh-tools.ts");
+        const { default: sshToolsExtension } = await import("./index.ts");
         const { api, tools } = createExtensionApi();
 
         sshToolsExtension(api as never);

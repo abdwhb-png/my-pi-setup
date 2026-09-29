@@ -1,4 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 
 import {
@@ -270,5 +272,83 @@ describe('safe-bash guard policy', () => {
             PROMPT,
         );
         expect(result).toEqual({ allowed: true });
+    });
+
+    it('cwd-only allows an in-cwd chmod and denies an outside-cwd chmod', async () => {
+        const inCwd = inspectDangerous('chmod +x bin/tool');
+        if (!inCwd) throw new Error('expected chmod candidate');
+        expect(
+            await authorizeDangerousCommand(
+                inCwd,
+                'cwd-only',
+                context({ cwd: '/home/user/project' }),
+                new GuardSessionApprovals(),
+                PROMPT,
+            ),
+        ).toEqual({ allowed: true });
+
+        const outCwd = inspectDangerous('chmod 755 /opt/tool');
+        if (!outCwd) throw new Error('expected chmod candidate');
+        const blocked = await authorizeDangerousCommand(
+            outCwd,
+            'cwd-only',
+            context({ cwd: '/home/user/project' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.reason).toContain('outside working dir');
+        expect(blocked.reason).toContain('/opt/tool');
+    });
+
+    it('cwd-only blocks a protected chmod even from inside its own tree', async () => {
+        const piRoot = join(homedir(), '.pi');
+        const match = inspectDangerous('chmod +x bin/pi-fork');
+        if (!match) throw new Error('expected chmod candidate');
+        const blocked = await authorizeDangerousCommand(
+            match,
+            'cwd-only',
+            context({ cwd: piRoot }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.reason).toContain('protected');
+        expect(blocked.reason).toContain(join(piRoot, 'bin/pi-fork'));
+    });
+
+    it('cwd-only blocks the symbolic spelling of a protected chmod target', async () => {
+        const piRoot = join(homedir(), '.pi');
+        const absolute = inspectDangerous(`chmod 755 ${piRoot}/bin/pi-fork`);
+        const relative = inspectDangerous('chmod +x bin/pi-fork');
+        if (!absolute || !relative) {
+            throw new Error('expected chmod candidates');
+        }
+        const ctx = context({ cwd: piRoot });
+        const approvals = new GuardSessionApprovals();
+        for (const match of [absolute, relative]) {
+            const result = await authorizeDangerousCommand(
+                match,
+                'cwd-only',
+                ctx,
+                approvals,
+                PROMPT,
+            );
+            expect(result.allowed).toBe(false);
+        }
+    });
+
+    it('cwd-only blocks catastrophic chmod modes inside cwd', async () => {
+        const match = inspectDangerous('chmod 777 notes.txt');
+        if (!match) throw new Error('expected chmod candidate');
+        const blocked = await authorizeDangerousCommand(
+            match,
+            'cwd-only',
+            context({ cwd: '/home/user/project' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.reason).toContain('777');
     });
 });

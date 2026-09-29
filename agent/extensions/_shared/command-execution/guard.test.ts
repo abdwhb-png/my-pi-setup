@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
+    inspectChmodScope,
+    inspectCommandScope,
     inspectDeleteScope,
+    inspectDangerous,
     isDangerous,
     redirectShellCommand,
     redirectShellCommandWithPolicy,
@@ -119,5 +124,155 @@ describe('inspectDeleteScope unsupported groups', () => {
     it('fails closed to unknown for other groupIds', () => {
         const scope = inspectDeleteScope('rm /etc/hosts', '/tmp', 'sudo');
         expect(scope.verdict).toBe('unknown');
+    });
+});
+
+describe('chmod danger group matching', () => {
+    it('reports every chmod invocation as a scoped candidate', () => {
+        expect(inspectDangerous('chmod +x script.sh')?.groupId).toBe('chmod');
+        expect(inspectDangerous('chmod 755 ./build.sh')?.groupId).toBe('chmod');
+    });
+});
+
+describe('inspectChmodScope', () => {
+    const cwd = '/home/user/project';
+    const noProtected: string[] = [];
+
+    it('marks a relative target inside cwd as inside', () => {
+        const scope = inspectChmodScope('chmod +x bin/tool', cwd, noProtected);
+        expect(scope.verdict).toBe('inside');
+        expect(scope.targets).toContain('/home/user/project/bin/tool');
+        expect(scope.mode).toBe('+x');
+        expect(scope.offendingTarget).toBeUndefined();
+    });
+
+    it('marks a cwd-absolute target as inside regardless of mode spelling', () => {
+        expect(
+            inspectChmodScope(`chmod 755 ${cwd}/build.sh`, cwd, noProtected)
+                .verdict,
+        ).toBe('inside');
+        expect(
+            inspectChmodScope(`chmod u+x ${cwd}/build.sh`, cwd, noProtected)
+                .verdict,
+        ).toBe('inside');
+        expect(
+            inspectChmodScope(`chmod -- 755 ${cwd}/build.sh`, cwd, noProtected)
+                .verdict,
+        ).toBe('inside');
+        expect(
+            inspectChmodScope('chmod 0o755 ./build.sh', cwd, noProtected)
+                .verdict,
+        ).toBe('inside');
+    });
+
+    it('marks an outside-cwd target as outside even when spelled relatively', () => {
+        const scope = inspectChmodScope(
+            'chmod +x ../other/tool',
+            cwd,
+            noProtected,
+        );
+        expect(scope.verdict).toBe('outside');
+        expect(scope.offendingTarget).toBe('/home/user/other/tool');
+    });
+
+    it('marks an absolute system target as outside', () => {
+        const scope = inspectChmodScope('chmod 755 /opt/tool', cwd, noProtected);
+        expect(scope.verdict).toBe('outside');
+        expect(scope.offendingTarget).toBe('/opt/tool');
+    });
+
+    it('blocks a protected root even when cwd is inside it', () => {
+        const piRoot = join(homedir(), '.pi');
+        const scope = inspectChmodScope('chmod +x bin/pi-fork', piRoot, [
+            piRoot,
+        ]);
+        expect(scope.verdict).toBe('protected');
+        expect(scope.offendingTarget).toBe(join(piRoot, 'bin/pi-fork'));
+    });
+
+    it('treats the root directory as a protected target', () => {
+        expect(inspectChmodScope('chmod 777 /', cwd, noProtected).verdict).toBe(
+            'outside',
+        );
+    });
+
+    it('flags world-writable and setuid modes as catastrophic anywhere', () => {
+        for (const mode of ['777', '1777', '666', '4755', '2755']) {
+            const scope = inspectChmodScope(
+                `chmod ${mode} notes.txt`,
+                cwd,
+                noProtected,
+            );
+            expect(scope.verdict).toBe('catastrophic-mode');
+            expect(scope.mode).toBe(mode);
+        }
+    });
+
+    it('flags symbolic modes that grant other-write or setuid', () => {
+        for (const mode of ['o+w', 'a+w', 'a+rwx', 'u+s', 'ug+s', 'o=rw']) {
+            expect(
+                inspectChmodScope(
+                    `chmod ${mode} notes.txt`,
+                    cwd,
+                    noProtected,
+                ).verdict,
+            ).toBe('catastrophic-mode');
+        }
+    });
+
+    it('allows benign modes inside cwd', () => {
+        for (const mode of ['+x', 'u+x', '-x', '755', '644', '664', 'u+rwx,g-w']) {
+            expect(
+                inspectChmodScope(
+                    `chmod ${mode} notes.txt`,
+                    cwd,
+                    noProtected,
+                ).verdict,
+            ).toBe('inside');
+        }
+    });
+
+    it('marks an unresolvable variable target as unknown', () => {
+        expect(
+            inspectChmodScope('chmod +x $TARGET', cwd, noProtected).verdict,
+        ).toBe('unknown');
+    });
+
+    it('marks a chmod without a resolvable target as unknown', () => {
+        expect(inspectChmodScope('chmod 755', cwd, noProtected).verdict).toBe(
+            'unknown',
+        );
+    });
+});
+
+describe('inspectCommandScope dispatch', () => {
+    const cwd = '/home/user/project';
+
+    it('routes rm and file-delete-api to the delete scope', () => {
+        expect(inspectCommandScope('rm notes.md', cwd, 'rm').verdict).toBe(
+            'inside',
+        );
+        expect(
+            inspectCommandScope(
+                `python3 -c "import os; os.remove('/etc/hosts')"`,
+                cwd,
+                'file-delete-api',
+            ).verdict,
+        ).toBe('outside');
+    });
+
+    it('routes chmod to the chmod scope', () => {
+        expect(
+            inspectCommandScope('chmod 777 notes.md', cwd, 'chmod').verdict,
+        ).toBe('catastrophic-mode');
+        expect(
+            inspectCommandScope('chmod +x notes.md', cwd, 'chmod').verdict,
+        ).toBe('inside');
+    });
+
+    it('fails closed to unknown for unsupported groups', () => {
+        expect(inspectCommandScope('sudo true', cwd, 'sudo').verdict).toBe(
+            'unknown',
+        );
     });
 });
