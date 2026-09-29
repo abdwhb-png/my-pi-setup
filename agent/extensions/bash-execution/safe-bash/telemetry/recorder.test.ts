@@ -173,6 +173,122 @@ describe("safe-bash telemetry recorder", () => {
         expect(onError).toHaveBeenCalledTimes(1);
     });
 
+    it("records guard policy, scope verdict, and resolved targets", async () => {
+        const events: SafeBashTelemetryEvent[] = [];
+        const recorder = createSafeBashTelemetryRecorder({
+            config: DEFAULT_SAFE_BASH_CONFIG.telemetry,
+            sessionId: "session-1",
+            cwd: "/workspace/project",
+            writer: {
+                append: async (event) => {
+                    events.push(event);
+                },
+                flush: async () => undefined,
+            },
+            clock: () => new Date("2026-08-25T12:00:00.000Z"),
+            idGenerator: () => "event-1",
+        });
+
+        await recorder.record({
+            operation: "safe_bash",
+            toolCallId: "call-1",
+            command: "rm /etc/hosts",
+            match: deletionMatch,
+            outcome: "blocked",
+            policy: "cwd-only",
+            scopeVerdict: "outside",
+            targets: ["/etc/hosts", "/etc/passwd"],
+        });
+
+        expect(events[0]).toMatchObject({
+            policy: "cwd-only",
+            scopeVerdict: "outside",
+            targets: ["/etc/hosts", "/etc/passwd"],
+        });
+    });
+
+    it("links a repeated blocked target set to the earlier event", async () => {
+        const events: SafeBashTelemetryEvent[] = [];
+        let n = 0;
+        const recorder = createSafeBashTelemetryRecorder({
+            config: DEFAULT_SAFE_BASH_CONFIG.telemetry,
+            sessionId: "session-1",
+            cwd: "/workspace/project",
+            writer: {
+                append: async (event) => {
+                    events.push(event);
+                },
+                flush: async () => undefined,
+            },
+            idGenerator: () => `event-${++n}`,
+        });
+        const goal = [
+            "/workspace/project/autopilot-loop.ts",
+            "/workspace/project/guard-policy.ts",
+        ];
+
+        // Audit events 558dfd23 → ebf84f73: the same files, a different group
+        // and different wording, eight seconds apart.
+        await recorder.record({
+            operation: "safe_bash",
+            toolCallId: "call-1",
+            command: "rm autopilot-loop.ts guard-policy.ts",
+            match: deletionMatch,
+            outcome: "blocked",
+            policy: "cwd-only",
+            scopeVerdict: "inside",
+            targets: goal,
+        });
+        await recorder.record({
+            operation: "safe_bash",
+            toolCallId: "call-2",
+            command: "python3 - <<'PY' Path('guard-policy.ts').unlink() PY",
+            match: deletionMatch,
+            outcome: "blocked",
+            policy: "cwd-only",
+            scopeVerdict: "inside",
+            targets: [...goal].reverse(),
+        });
+
+        expect(events[0]?.repeatOfEventId).toBeUndefined();
+        expect(events[1]?.repeatOfEventId).toBe("event-1");
+    });
+
+    it("does not link a different target set", async () => {
+        const events: SafeBashTelemetryEvent[] = [];
+        let n = 0;
+        const recorder = createSafeBashTelemetryRecorder({
+            config: DEFAULT_SAFE_BASH_CONFIG.telemetry,
+            sessionId: "session-1",
+            cwd: "/workspace/project",
+            writer: {
+                append: async (event) => {
+                    events.push(event);
+                },
+                flush: async () => undefined,
+            },
+            idGenerator: () => `event-${++n}`,
+        });
+
+        for (const [call, target] of [
+            ["call-1", "/workspace/project/a.ts"],
+            ["call-2", "/workspace/project/b.ts"],
+        ] as const) {
+            await recorder.record({
+                operation: "safe_bash",
+                toolCallId: call,
+                command: `rm ${target}`,
+                match: deletionMatch,
+                outcome: "blocked",
+                policy: "cwd-only",
+                scopeVerdict: "inside",
+                targets: [target],
+            });
+        }
+
+        expect(events[1]?.repeatOfEventId).toBeUndefined();
+    });
+
     it("does not let writer failures alter command behavior", async () => {
         const recorder = createSafeBashTelemetryRecorder({
             config: DEFAULT_SAFE_BASH_CONFIG.telemetry,

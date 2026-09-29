@@ -32,7 +32,17 @@ Danger group `file-delete-api` blocks direct filesystem deletion APIs inside int
 - Perl `unlink`/`rmdir`;
 - Ruby `FileUtils.rm_rf`, `File.delete`/`unlink`, and `Dir.rmdir`.
 
-Python deletion calls supplied through heredoc stdin are also detected. Ordinary scripts and read-only interpreter one-liners remain allowed unless another danger group matches.
+Python deletion calls supplied through heredoc stdin are also detected. `node -e`/`--eval` and `bun -e`/`--eval` one-liners are covered by the same pattern, including a bare destructured call (`await rm(dir, { recursive: true })`), not only a dotted one (`fs.rmSync(...)`). Ordinary scripts and read-only interpreter one-liners remain allowed unless another danger group matches.
+
+## Command-position matching
+
+`rm` and `shutdown` match an invocation at a command position, not the bare word. The bare word also appears as an identifier or string literal in interpreter one-liners and heredocs, which produced confirmed false positives in the audit (`53ab0c7f`: the `rm` in `import { mkdtemp, rm } from "node:fs/promises"`; `9697380d`: the string literal `'shutdown'` in a Python `replace()` call).
+
+Still matched: `rm file`, `cd x && rm file`, `sudo rm file`, `command rm file`, `env FOO=1 rm file`, `git rm file`, `xargs rm`, `find . -exec rm {} +`, `shutdown -h now`, `reboot`, `sudo reboot`, `systemctl poweroff`.
+
+`git rm` is matched on purpose and routed through the `cwd-only` scope check, because it deletes the working-tree file. With `rm: cwd-only` an in-cwd `git rm` is therefore allowed; `deny` still blocks it.
+
+`xargs rm` and `find -exec rm` match the group but expose no `rm` segment to the scope parser, so they fail closed with a `no-invocation` verdict.
 
 ## chmod scope guard
 
@@ -78,7 +88,14 @@ Actions:
 - `deny`: block. This is the default for missing groups.
 - `ask`: interactive choice to allow once, allow the exact normalized command for the session, deny, or deny with a reason. Non-interactive sessions deny.
 - `allow`: execute without prompting while preserving telemetry guard evidence.
-- `cwd-only`: allow only when the command's resolvable targets stay lexically inside the session working directory (`ctx.cwd`) and avoid the chmod-specific checks above. An unresolvable target (variable, glob, backtick, bare `rm`) or any target outside `cwd` blocks with a reason naming the offending path. Supported for `rm`, `file-delete-api`, and `chmod`; other groups fail closed to `unknown`.
+- `cwd-only`: allow only when the command's resolvable targets stay lexically inside the session working directory (`ctx.cwd`) and avoid the chmod-specific checks above. Supported for `rm`, `file-delete-api`, and `chmod`; other groups fail closed to `unknown`.
+
+Denial reasons name the class, so the agent can act on the block instead of retrying a variant spelling:
+
+- `outside`: names the offending resolved path.
+- `unresolvable`: names the raw operand that could not be resolved (variable, glob, backtick), or reports that the invocation has no resolvable target.
+- `no-invocation`: the group matched a form the parser cannot read as an invocation (`xargs rm`, `find -exec rm`, or a mention inside a string).
+- `protected` / `symlink` / `catastrophic-mode`: chmod-specific, see above.
 
 `chmod` ships with `cwd-only` as its code default, taken from the shared `DEFAULT_DANGER_GROUP_POLICY` in [`_shared/command-execution/policy.ts`](../_shared/command-execution/policy.ts)<!-- markdown-links: missing /home/abdwhb/.pi/agent/extensions/bash-execution/_shared/command-execution/policy.ts -->. `think-in-code` starts from the same constant for its own `commandPolicy.guardPolicy`, so a scope-decided group is never blanket-denied by one consumer and scoped by another. Setting `safeBash.guardPolicy.chmod` to `deny` blocks every `chmod` invocation, and `allow` skips the scope checks entirely.
 
@@ -166,6 +183,8 @@ Telemetry is local JSONL:
 - Command text may still contain sensitive data that best-effort redaction misses. Treat directory as sensitive.
 
 Each event records schema version, event ID, time, session/tool-call IDs, project path, sequence, decision, outcome, command length, optional redacted command, and optional matched group/pattern/reason.
+
+Blocked events additionally record the guard evidence needed to adjudicate them after the fact: `policy` (the effective policy for the matched group), `scopeVerdict` (what a `cwd-only` scope decided), `targets` (up to 8 resolved targets, redacted), and `repeatOfEventId` (the earlier blocked event that hit the same resolved target set). Without `policy` and `scopeVerdict` an `rm` block cannot be attributed to `deny` or to a `cwd-only` fail-closed; the audit window that motivated these fields had 13 such unattributable events. The fields are additive, so `SAFE_BASH_TELEMETRY_SCHEMA_VERSION` stays at 2.
 
 ## Audit command
 

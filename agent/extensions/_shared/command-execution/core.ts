@@ -21,6 +21,7 @@ import {
     inspectDangerousMatches,
     redirectShellCommandWithPolicy,
     type AllowedShellCommand,
+    type CommandScopeVerdict,
     type DangerMatch,
 } from "./guard.ts";
 import {
@@ -64,6 +65,15 @@ export interface CommandExecutionRecord<
     patternId?: string;
     reason?: string;
     error?: string;
+    /** Effective guard policy for the matched group, when the guard denied it. */
+    policy?: CommandGuardPolicy;
+    /** Scope verdict, when a `cwd-only` scope decided the outcome. */
+    scopeVerdict?: CommandScopeVerdict;
+    /**
+     * Targets the scope resolved. Feeds the repeat-goal key in the recorder and
+     * names the resolved paths in the audit evidence.
+     */
+    targets?: readonly string[];
 }
 
 export interface CommandExecutionTelemetryRecorder<
@@ -155,6 +165,9 @@ export function createCommandExecutionService<
                     match: danger,
                     outcome: "blocked",
                     reason: authorization.reason,
+                    policy: authorization.policy,
+                    scopeVerdict: authorization.scopeVerdict,
+                    targets: authorization.scopeTargets,
                 });
                 const reason = authorization.reason ?? danger.message;
                 throw new SafeExecutionError("guard", reason, reason);

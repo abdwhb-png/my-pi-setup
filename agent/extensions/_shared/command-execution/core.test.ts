@@ -32,7 +32,7 @@ const ctx = {
 
 function setup(options: {
     command?: string;
-    guardPolicy?: Record<string, "ask" | "deny" | "allow">;
+    guardPolicy?: Record<string, "ask" | "deny" | "allow" | "cwd-only">;
     enforceNativeTools?: boolean;
     rewriteRules?: Array<{ match: string; rewrite: string }>;
     executeError?: Error;
@@ -141,6 +141,32 @@ describe("safe execution core", () => {
             decision: "blocked",
             groupId: "native-tool-redirect",
             outcome: "blocked",
+        });
+    });
+
+    it("records the effective policy and scope verdict for a blocked cwd-only command", async () => {
+        const harness = setup({
+            command: "rm /etc/hosts",
+            guardPolicy: { rm: "cwd-only" },
+        });
+
+        await expect(
+            harness.service.execute({
+                toolCallId: "call-scope",
+                operation: "safe_bash",
+                command: harness.command,
+                ctx,
+            }),
+        ).rejects.toThrow(/outside working dir/);
+
+        expect(harness.createOperations).not.toHaveBeenCalled();
+        // `decision` is derived by the recorder from `match`; the core layer
+        // records the guard evidence itself.
+        expect(harness.telemetry[0]).toMatchObject({
+            outcome: "blocked",
+            policy: "cwd-only",
+            scopeVerdict: "outside",
+            targets: ["/etc/hosts"],
         });
     });
 
