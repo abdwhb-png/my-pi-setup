@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'bun:test';
-import { homedir } from 'node:os';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
     inspectChmodScope,
@@ -245,6 +246,61 @@ describe('inspectChmodScope', () => {
     });
 });
 
+describe('inspectChmodScope symlink targets', () => {
+    let root: string;
+
+    beforeEach(() => {
+        root = mkdtempSync(join(tmpdir(), 'chmod-scope-'));
+    });
+
+    afterEach(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it('rejects a symlink target because chmod would follow it', () => {
+        writeFileSync(join(root, 'real.txt'), 'x');
+        symlinkSync('real.txt', join(root, 'link.txt'));
+
+        const scope = inspectChmodScope('chmod +x link.txt', root, []);
+        expect(scope.verdict).toBe('symlink');
+        expect(scope.offendingTarget).toBe(join(root, 'link.txt'));
+    });
+
+    it('reports the symlink rather than the outside target it points at', () => {
+        mkdirSync(join(root, 'project'));
+        symlinkSync(join(root, 'outside.txt'), join(root, 'project', 'escape'));
+
+        const scope = inspectChmodScope(
+            'chmod 755 escape',
+            join(root, 'project'),
+            [],
+        );
+        expect(scope.verdict).toBe('symlink');
+        expect(scope.offendingTarget).toBe(join(root, 'project', 'escape'));
+    });
+
+    it('keeps the lexical verdict for a nonexistent target', () => {
+        expect(inspectChmodScope('chmod +x ghost.txt', root, []).verdict).toBe(
+            'inside',
+        );
+        expect(
+            inspectChmodScope('chmod +x ../ghost.txt', root, []).verdict,
+        ).toBe('outside');
+    });
+
+    it('leaves a symlinked intermediate component unresolved (residual)', () => {
+        mkdirSync(join(root, 'realdir'));
+        writeFileSync(join(root, 'realdir', 'f.txt'), 'x');
+        symlinkSync('realdir', join(root, 'linkdir'));
+
+        // Only the final component is inspected, so a symlinked parent stays
+        // lexically inside. Documented residual — not a containment guarantee.
+        expect(
+            inspectChmodScope('chmod 755 linkdir/f.txt', root, []).verdict,
+        ).toBe('inside');
+    });
+});
+
 describe('inspectCommandScope dispatch', () => {
     const cwd = '/home/user/project';
 
@@ -274,5 +330,18 @@ describe('inspectCommandScope dispatch', () => {
         expect(inspectCommandScope('sudo true', cwd, 'sudo').verdict).toBe(
             'unknown',
         );
+    });
+
+    it('keeps rm scope lexical: deleting a symlink removes the link itself', () => {
+        const root = mkdtempSync(join(tmpdir(), 'rm-scope-'));
+        try {
+            writeFileSync(join(root, 'real.txt'), 'x');
+            symlinkSync('real.txt', join(root, 'link.txt'));
+            expect(inspectCommandScope('rm link.txt', root, 'rm').verdict).toBe(
+                'inside',
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 });

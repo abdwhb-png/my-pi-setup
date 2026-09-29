@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { homedir } from 'node:os';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 
@@ -350,5 +351,43 @@ describe('safe-bash guard policy', () => {
         );
         expect(blocked.allowed).toBe(false);
         expect(blocked.reason).toContain('777');
+    });
+
+    it('cwd-only names the resolution failure instead of the generic match', async () => {
+        const match = inspectDangerous('chmod +x $TARGET');
+        if (!match) throw new Error('expected chmod candidate');
+        const blocked = await authorizeDangerousCommand(
+            match,
+            'cwd-only',
+            context({ cwd: '/home/user/project' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.reason).toContain('could not be resolved statically');
+        expect(blocked.reason).toContain('chmod +x $TARGET');
+    });
+
+    it('cwd-only blocks a symlink target instead of following it', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'chmod-policy-'));
+        try {
+            writeFileSync(join(root, 'real.txt'), 'x');
+            symlinkSync('real.txt', join(root, 'link.txt'));
+            const match = inspectDangerous('chmod +x link.txt');
+            if (!match) throw new Error('expected chmod candidate');
+
+            const blocked = await authorizeDangerousCommand(
+                match,
+                'cwd-only',
+                context({ cwd: root }),
+                new GuardSessionApprovals(),
+                PROMPT,
+            );
+            expect(blocked.allowed).toBe(false);
+            expect(blocked.reason).toContain('symlink');
+            expect(blocked.reason).toContain(join(root, 'link.txt'));
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 });

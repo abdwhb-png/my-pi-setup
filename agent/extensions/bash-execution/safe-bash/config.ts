@@ -13,8 +13,11 @@ import {
     isAllowedShellCommand,
     type AllowedShellCommand,
 } from "../../_shared/command-execution/guard.ts";
-import type { CommandGuardPolicy } from "../../_shared/command-execution/policy.ts";
-import { loadExtensionConfig } from "../../_shared/config-loader.ts";
+import {
+    DEFAULT_DANGER_GROUP_POLICY,
+    isCommandGuardPolicy,
+    type CommandGuardPolicy,
+} from "../../_shared/command-execution/policy.ts";import { loadExtensionConfig } from "../../_shared/config-loader.ts";
 import { SAFE_BASH_AUDIT_BOUNDS } from "./telemetry/types.ts";
 
 export type SafeBashMode = "coexist" | "replace";
@@ -40,16 +43,18 @@ export interface SafeBashConfig {
      */
     allowedShellCommands: AllowedShellCommand[];
     /** Per-danger-group action. Missing groups default to `deny`. */
-    guardPolicy: Record<string, SafeBashGuardPolicy>;    /** Local, redacted command-attempt telemetry used by `/safe-bash-audit`. */
+    guardPolicy: Record<string, SafeBashGuardPolicy>;
+
+    /** Local, redacted command-attempt telemetry used by `/safe-bash-audit`. */
     telemetry: SafeBashTelemetryConfig;
 }
 
 export const DEFAULT_SAFE_BASH_CONFIG: SafeBashConfig = {
     mode: "coexist",
     allowedShellCommands: [],
-    // chmod is scope-decided: in-cwd benign modes pass, everything outside cwd,
-    // under a protected root (~/.pi, system roots), or world-writable/setuid is blocked.
-    guardPolicy: { chmod: "cwd-only" },
+    // Scope-decided groups (currently chmod) start from the shared default so a
+    // consumer never blanket-denies a group whose pattern always matches.
+    guardPolicy: { ...DEFAULT_DANGER_GROUP_POLICY },
     telemetry: {
         enabled: true,
         directory: "~/.pi/agent/safe-bash-telemetry",
@@ -141,13 +146,7 @@ export function normalizeSafeBashConfig(raw: unknown): Partial<SafeBashConfig> {
         for (const [groupId, value] of Object.entries(
             guardPolicyRaw as Record<string, unknown>,
         )) {
-            if (
-                knownGroups.has(groupId) &&
-                (value === "ask" ||
-                    value === "deny" ||
-                    value === "allow" ||
-                    value === "cwd-only")
-            ) {
+            if (knownGroups.has(groupId) && isCommandGuardPolicy(value)) {
                 filtered[groupId] = value;
             }
         }

@@ -5,6 +5,34 @@ import { inspectCommandScope } from "./guard.ts";
 
 export type CommandGuardPolicy = "ask" | "deny" | "allow" | "cwd-only";
 
+/**
+ * Membership check for a `guardPolicy` value. Single source of truth for the
+ * accepted set, so a consumer's config loader cannot silently drop a policy the
+ * shared type allows (for example the scope-decided `cwd-only`).
+ */
+export function isCommandGuardPolicy(
+    value: unknown,
+): value is CommandGuardPolicy {
+    return (
+        value === "ask" ||
+        value === "deny" ||
+        value === "allow" ||
+        value === "cwd-only"
+    );
+}
+
+/**
+ * Danger groups whose verdict comes from resolving operands against `ctx.cwd`
+ * instead of the matched pattern alone.
+ *
+ * Every consumer that runs commands through this guard must start from this
+ * record: their group patterns match unconditionally, so a consumer that
+ * defaults to `{}` would blanket-deny the group instead of scoping it.
+ */
+export const DEFAULT_DANGER_GROUP_POLICY: Readonly<
+    Record<string, CommandGuardPolicy>
+> = Object.freeze({ chmod: "cwd-only" });
+
 export interface GuardPromptOptions {
     toolName: string;
 }
@@ -81,28 +109,51 @@ export async function authorizeDangerousCommand(
             ctx.cwd,
             match.groupId,
         );
-        if (scope.verdict === "inside") return { allowed: true };
         const offending = scope.offendingTarget;
-        if (scope.verdict === "catastrophic-mode") {
-            return {
-                allowed: false,
-                reason: `Command blocked by ${options.toolName}: ${match.groupId} mode ${scope.mode} is not permitted`,
-            };
+        switch (scope.verdict) {
+            case "inside":
+                return { allowed: true };
+            case "catastrophic-mode":
+                return {
+                    allowed: false,
+                    reason: `Command blocked by ${options.toolName}: ${match.groupId} mode ${scope.mode} is not permitted`,
+                };
+            case "protected":
+                return {
+                    allowed: false,
+                    reason: offending
+                        ? `Command blocked by ${options.toolName}: ${match.groupId} target is protected: ${offending}`
+                        : match.message,
+                };
+            case "symlink":
+                return {
+                    allowed: false,
+                    reason: offending
+                        ? `Command blocked by ${options.toolName}: ${match.groupId} target is a symlink it would follow: ${offending}`
+                        : match.message,
+                };
+            case "outside":
+                return {
+                    allowed: false,
+                    reason: offending
+                        ? `Command blocked by ${options.toolName}: ${match.groupId} target outside working dir: ${offending}`
+                        : match.message,
+                };
+            case "unknown":
+                return {
+                    allowed: false,
+                    reason: `Command blocked by ${options.toolName}: ${match.groupId} target or mode could not be resolved statically (variable, glob, or --reference): ${match.normalizedCommand}`,
+                };
+            default: {
+                // Compile-time exhaustiveness: a new verdict breaks the build
+                // here instead of silently reusing another reason.
+                const unhandled: never = scope.verdict;
+                return {
+                    allowed: false,
+                    reason: `Command blocked by ${options.toolName}: ${match.groupId} unhandled scope verdict ${String(unhandled)}`,
+                };
+            }
         }
-        if (scope.verdict === "protected") {
-            return {
-                allowed: false,
-                reason: offending
-                    ? `Command blocked by ${options.toolName}: ${match.groupId} target is protected: ${offending}`
-                    : match.message,
-            };
-        }
-        return {
-            allowed: false,
-            reason: offending
-                ? `Command blocked by ${options.toolName}: ${match.groupId} target outside working dir: ${offending}`
-                : match.message,
-        };
     }
     if (approvals.has(match)) return { allowed: true };
     if (!ctx.hasUI) {

@@ -68,7 +68,20 @@ describe("think-in-code config", () => {
         expect(normalized.network).toBe(false);
     });
 
-    it("owns an independent deny-default command policy and telemetry", () => {
+    it("keeps the scope-decided cwd-only policy for a known group", () => {
+        const normalized = normalizeThinkInCodeConfig({
+            commandPolicy: {
+                guardPolicy: { rm: "cwd-only", sudo: "allow", mkfs: "prompt" },
+            },
+        });
+
+        expect(normalized.commandPolicy.guardPolicy).toEqual({
+            rm: "cwd-only",
+            sudo: "allow",
+        });
+    });
+
+    it("owns its own command policy and telemetry", () => {
         const normalized = normalizeThinkInCodeConfig({
             commandPolicy: {
                 guardPolicy: { sudo: "allow", unknown: "allow" },
@@ -106,8 +119,7 @@ describe("think-in-code config", () => {
             enabled: false,
             retentionDays: 7,
             captureCommand: false,
-            maxCommandLength: 500,
-            auditDays: 5,
+            maxCommandLength: 500,            auditDays: 5,
             auditLimit: 20,
         });
     });
@@ -216,7 +228,10 @@ describe("think-in-code config", () => {
         );
 
         expect(loaded.commandPolicy.allowedShellCommands).toEqual(["grep"]);
-        expect(loaded.commandPolicy.guardPolicy).toEqual({ sudo: "allow" });
+        expect(loaded.commandPolicy.guardPolicy).toEqual({
+            chmod: "cwd-only",
+            sudo: "allow",
+        });
         expect(loaded.commandPolicy.rewrites).toHaveLength(1);
         expect(loaded.telemetry.retentionDays).toBe(7);
         expect(loaded.telemetry.captureCommand).toBe(false);

@@ -1,10 +1,12 @@
 /**
- * Shared bash guard logic — no pi dependencies, just pure pattern matching.
+ * Shared bash guard logic — no pi dependencies: pattern matching, lexical path
+ * resolution, and a symlink check for chmod operands.
  *
  * Provides isDangerous() used by both the safe-bash extension and any
  * other extension that wraps bash execution (e.g. the compressor).
  */
 
+import { lstatSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 
@@ -448,6 +450,7 @@ export type CommandScopeVerdict =
     | "inside"
     | "outside"
     | "protected"
+    | "symlink"
     | "catastrophic-mode"
     | "unknown";
 
@@ -580,11 +583,31 @@ function isProtectedTarget(
 }
 
 /**
- * Determine whether a chmod stays inside `cwd`, avoids protected roots, and
- * uses a non-catastrophic mode.
+ * True when the resolved target is a symlink.
+ *
+ * `chmod` follows symlink arguments and changes the mode of the file they point
+ * at (unlike `rm`, which unlinks the link itself), so a link is never a
+ * project-scoped permission change. Only the final component is inspected: a
+ * symlinked parent directory is not resolved.
+ *
+ * A path this process cannot stat is a path `chmod` cannot act on either, so
+ * stat failures keep the lexical verdict instead of blocking the command.
+ */
+function isSymlinkTarget(target: string): boolean {
+    try {
+        return lstatSync(target).isSymbolicLink();
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Determine whether a chmod stays inside `cwd`, avoids protected roots and
+ * symlink targets, and uses a non-catastrophic mode.
  *
  * Resolution is lexical: `~`/`$HOME` expand, variables and globs are
- * unresolvable (fail closed), and symlinks are not followed.
+ * unresolvable (fail closed), and the final target component must not be a
+ * symlink.
  */
 export function inspectChmodScope(
     command: string,
@@ -615,6 +638,17 @@ export function inspectChmodScope(
     }
 
     const root = resolvePath(cwd);
+    for (const target of parsed.targets) {
+        if (isSymlinkTarget(target)) {
+            return {
+                verdict: "symlink",
+                offendingTarget: target,
+                mode: parsed.mode,
+                targets: parsed.targets,
+            };
+        }
+    }
+
     for (const target of parsed.targets) {
         if (!isContained(target, root)) {
             return {

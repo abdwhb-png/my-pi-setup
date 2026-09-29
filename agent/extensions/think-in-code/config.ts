@@ -18,7 +18,11 @@ import {
     isAllowedShellCommand,
     type AllowedShellCommand,
 } from "../_shared/command-execution/guard.ts";
-import type { CommandGuardPolicy } from "../_shared/command-execution/policy.ts";
+import {
+    DEFAULT_DANGER_GROUP_POLICY,
+    isCommandGuardPolicy,
+    type CommandGuardPolicy,
+} from "../_shared/command-execution/policy.ts";
 import {
     normalizeCommandRewriteRules,
     type BashRewriteRule,
@@ -42,7 +46,9 @@ export const DEFAULT_THINK_IN_CODE_CONFIG: ThinkInCodeConfig = Object.freeze({
     network: false,
     commandPolicy: {
         allowedShellCommands: [],
-        guardPolicy: {},
+        // Scope-decided groups (currently chmod) start from the shared default so
+        // this consumer never blanket-denies a group whose pattern always matches.
+        guardPolicy: { ...DEFAULT_DANGER_GROUP_POLICY },
         rewrites: [],
     },
     telemetry: {
@@ -146,7 +152,7 @@ function isPositiveInteger(value: unknown): value is number {
 }
 
 function clampDown(
-    name: keyof ThinkInCodeConfigLimits,
+    _name: keyof ThinkInCodeConfigLimits,
     value: unknown,
     ceiling: number,
 ): number {
@@ -170,10 +176,7 @@ function normalizeGuardPolicy(
     for (const [groupId, value] of Object.entries(
         raw as Record<string, unknown>,
     )) {
-        if (
-            knownGroups.has(groupId) &&
-            (value === "ask" || value === "deny" || value === "allow")
-        ) {
+        if (knownGroups.has(groupId) && isCommandGuardPolicy(value)) {
             result[groupId] = value;
         }
     }

@@ -36,15 +36,24 @@ Python deletion calls supplied through heredoc stdin are also detected. Ordinary
 
 ## chmod scope guard
 
-Danger group `chmod` matches every `chmod` invocation and decides by resolved target and mode rather than by syntax. The group defaults to `cwd-only` (`DEFAULT_SAFE_BASH_CONFIG.guardPolicy`), so in-cwd benign modes run and everything else blocks:
+Danger group `chmod` matches every `chmod` invocation and decides by resolved target and mode rather than by syntax. The group defaults to `cwd-only` via the shared `DEFAULT_DANGER_GROUP_POLICY`, so in-cwd benign modes run and everything else blocks:
 
 - **inside `cwd`**: allowed when the mode is benign (`755`, `644`, `+x`, `u+rwx,g-w`).
 - **outside `cwd`**: blocked, including relative spellings that escape (`chmod +x ../other/tool`) and `~` targets.
 - **protected root**: blocked even when `cwd` is inside it. Defaults are `~/.pi` plus `/etc`, `/usr`, `/bin`, `/sbin`, `/lib`, `/boot`, `/var`.
+- **symlink target**: blocked. `chmod` follows a symlink argument and changes the mode of the file it points at, so a link is never a project-scoped permission change.
 - **catastrophic mode**: blocked anywhere — other-write (`777`, `666`, `o+w`, `a+w`), setuid/setgid (`4755`, `u+s`).
-- **unresolvable**: blocked. Variables, globs, and backticks cannot be resolved statically, and `chmod --reference=…` copies bits that are not visible here.
+- **unresolvable**: blocked, with a reason naming the failure. Variables, globs, and backticks cannot be resolved statically, and `chmod --reference=…` copies bits that are not visible here.
 
-Mode and target are parsed, not pattern-matched, so symbolic modes, `-R`, `--` separators, `0o755`, and relative paths cannot spell around the check. Resolution is lexical: `resolvePath` does not follow symlinks, so a symlink inside `cwd` pointing outside is not caught (same limitation as `rm`).
+Mode and target are parsed, not pattern-matched, so symbolic modes, `-R`, `--` separators, `0o755`, and relative paths cannot spell around the check.
+
+Resolution limits, stated so they are not mistaken for guarantees:
+
+- Only the final target component is inspected. A symlinked **parent** directory is not resolved, so `chmod 755 linkdir/file` stays lexically inside `cwd` even when `linkdir` points elsewhere.
+- Containment is lexical (`resolvePath`), not `realpath`.
+- A path the guard cannot `stat` keeps the lexical verdict: `chmod` could not act on it either.
+
+The asymmetry with `rm` is deliberate: `rm` unlinks a symlink rather than following it, so `inspectDeleteScope` stays purely lexical.
 
 Example: from `~/.pi`, `chmod +x bin/pi-fork` and `chmod 755 /home/<user>/.pi/bin/pi-fork` are both blocked because the target resolves under a protected root.
 
@@ -71,7 +80,7 @@ Actions:
 - `allow`: execute without prompting while preserving telemetry guard evidence.
 - `cwd-only`: allow only when the command's resolvable targets stay lexically inside the session working directory (`ctx.cwd`) and avoid the chmod-specific checks above. An unresolvable target (variable, glob, backtick, bare `rm`) or any target outside `cwd` blocks with a reason naming the offending path. Supported for `rm`, `file-delete-api`, and `chmod`; other groups fail closed to `unknown`.
 
-`chmod` ships with `cwd-only` as its code default. Setting `safeBash.guardPolicy.chmod` to `deny` blocks every `chmod` invocation, and `allow` skips the scope checks entirely.
+`chmod` ships with `cwd-only` as its code default, taken from the shared `DEFAULT_DANGER_GROUP_POLICY` in [`_shared/command-execution/policy.ts`](../_shared/command-execution/policy.ts)<!-- markdown-links: missing /home/abdwhb/.pi/agent/extensions/bash-execution/_shared/command-execution/policy.ts -->. `think-in-code` starts from the same constant for its own `commandPolicy.guardPolicy`, so a scope-decided group is never blanket-denied by one consumer and scoped by another. Setting `safeBash.guardPolicy.chmod` to `deny` blocks every `chmod` invocation, and `allow` skips the scope checks entirely.
 
 Every matching group is evaluated, so allowing one group cannot bypass another matching group's `ask` or `deny` policy.
 
