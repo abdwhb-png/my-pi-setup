@@ -37,10 +37,13 @@ export interface DangerMatch {
 export const DANGER_GROUPS: readonly DangerGroup[] = [
     {
         id: "rm",
-        label: "rm (all invocations blocked in replace mode)",
+        label: "rm invocations at a command position (incl. git rm, xargs, -exec)",
         patterns: [
-            // bare rm — all invocations blocked in replace mode; use write/edit tools
-            /\brm\b/,
+            // rm at a command position. The bare word is not enough: it also
+            // appears as an identifier in interpreter one-liners (audit event
+            // 53ab0c7f). `git rm`, `xargs` and `-exec` positions stay in the
+            // group so the scope check, not the pattern, decides them.
+            /(?:^|[;&|]|\n|-exec\s+|xargs\s+(?:-\S+\s+)*)\s*(?:sudo\s+|command\s+|env\s+\S+\s+)*(?:git\s+)?rm(?=[\s;&|]|$)/,
             // rm with -f/-r targeting '/' or '~', incl. subpaths like /etc, /var
             /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|~\/?(\s|$|\b))/,
             // same with -r before -f
@@ -118,7 +121,10 @@ export const DANGER_GROUPS: readonly DangerGroup[] = [
         patterns: [
             /\b(?:python|python3|python2)\s+-c\s+(?:['"]\s*|[\s\S]*?[^'"\w])(?:shutil\.rmtree|(?:Path\([^)]*\)|[A-Za-z_$][\w$]*)\.(?:unlink|rmdir)|os\.(?:remove|unlink|rmdir|removedirs))\s*\(/,
             /\b(?:python|python3|python2)\s+(?:-\s+)?<<-?\s*['"]?[A-Za-z_][\w]*['"]?[\s\S]*(?:shutil\.rmtree|(?:Path\([^)]*\)|[A-Za-z_$][\w$]*)\.(?:unlink|rmdir)|os\.(?:remove|unlink|rmdir|removedirs))\s*\(/,
-            /\bnode\s+(?:-e|--eval)(?:\s+|=)[\s\S]*(?<!['"])\.(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\s*\(/,
+            // `node` and `bun` share the shape. The bare-call alternative
+            // (`await rm(dir)`) is what the command-position rm pattern used to
+            // catch by accident before it was anchored (audit event 53ab0c7f).
+            /\b(?:node|bun)\s+(?:-e|--eval)(?:\s+|=)[\s\S]*(?:(?<!['"])\.|(?<![\w.$]))(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\s*\(/,
             /\bperl\s+-e\s+(?:['"]\s*|[\s\S]*?[^'"\w])(?:unlink|rmdir)\b/,
             /\bruby\s+-e\s+(?:['"]\s*|[\s\S]*?[^'"\w])(?:FileUtils\.rm_rf|File\.(?:delete|unlink)|Dir\.rmdir)\s*\(/,
         ],
@@ -136,7 +142,13 @@ export const DANGER_GROUPS: readonly DangerGroup[] = [
     {
         id: "shutdown",
         label: "shutdown / reboot / halt / poweroff",
-        patterns: [/\b(?:shutdown|reboot|halt|poweroff)\b/],
+        patterns: [
+            // Command position only: the bare word also appears inside string
+            // literals and identifiers (audit event 9697380d).
+            /(?:^|[;&|]|\n)\s*(?:sudo\s+|command\s+|env\s+\S+\s+)*(?:shutdown|reboot|halt|poweroff)(?=[\s;&|]|$)/,
+            // systemctl reaches the same state without the bare verb.
+            /(?:^|[;&|]|\n)\s*(?:sudo\s+)?systemctl\s+(?:poweroff|reboot|halt)(?=[\s;&|]|$)/,
+        ],
     },
     {
         id: "init",
@@ -224,14 +236,30 @@ export function isDangerous(command: string): string | null {
  *
  * - `inside`: every resolvable target stays lexically under `cwd`.
  * - `outside`: at least one resolvable target is outside `cwd` (fail closed).
- * - `unknown`: at least one target cannot be resolved statically, so the
- *   command is treated as unsafe.
+ * - `unresolvable`: an invocation was found, but its operand is dynamic
+ *   (variable, glob, lone `-`) or missing.
+ * - `no-invocation`: the group pattern matched text this parser cannot read as
+ *   an `rm`/`git rm` segment — `xargs rm`, `find -exec rm`, or a mention inside
+ *   a string. Fail closed.
+ * - `unknown`: the group cannot be scoped at all.
  */
 export interface DeleteTargetScope {
-    verdict: "inside" | "outside" | "unknown";
+    verdict: DeleteScopeVerdict;
+    /**
+     * The operand that broke the scope: a resolved absolute path for `outside`,
+     * the raw unresolved operand for `unresolvable`.
+     */
     offendingTarget?: string;
     targets: string[];
 }
+
+/** Scope verdicts for the delete groups. */
+export type DeleteScopeVerdict =
+    | "inside"
+    | "outside"
+    | "unresolvable"
+    | "no-invocation"
+    | "unknown";
 
 /** Shell command separators that create an independent command segment. */
 const SHELL_SEPARATORS = /&&|\|\||;|\||\r?\n/;
@@ -313,20 +341,41 @@ function isContained(resolved: string, root: string): boolean {
     return resolved === root || resolved.startsWith(root + "/");
 }
 
+/** Index of the first target operand for an `rm` or `git rm` segment. */
+function rmInvocationIndex(tokens: readonly string[]): number | undefined {
+    if (tokens[0] === "rm") return 1;
+    if (tokens[0] === "git" && tokens[1] === "rm") return 2;
+    return undefined;
+}
+
 /** Collect rm absolute targets from a command, or null if any is unresolvable. */
-function collectRmTargets(
-    command: string,
-    cwd: string,
-): { targets: string[]; unknown: boolean } | null {
+/** Targets collected from one command, plus what stopped the resolver. */
+interface CollectedTargets {
+    targets: string[];
+    /** An operand (or literal) could not be resolved statically. */
+    unknown: boolean;
+    /** An `rm`/`git rm` segment was found, even with no operand. */
+    sawInvocation: boolean;
+    /** Raw operand that could not be resolved, when one exists. */
+    offendingOperand?: string;
+}
+
+function collectRmTargets(command: string, cwd: string): CollectedTargets {
     const root = resolvePath(cwd);
     const targets: string[] = [];
     let unknown = false;
+    let sawInvocation = false;
+    let offendingOperand: string | undefined;
 
     for (const segment of command.split(SHELL_SEPARATORS)) {
         const tokens = tokenizeShell(segment);
-        if (tokens.length === 0 || tokens[0] !== "rm") continue;
+        // `git rm` deletes working-tree files, so it is scoped like `rm` rather
+        // than blocked blindly (audit event d955fa02).
+        const invocationIndex = rmInvocationIndex(tokens);
+        if (invocationIndex === undefined) continue;
+        sawInvocation = true;
         let flagMode = true;
-        for (let i = 1; i < tokens.length; i++) {
+        for (let i = invocationIndex; i < tokens.length; i++) {
             const tok = tokens[i];
             if (flagMode) {
                 if (tok === "--") {
@@ -336,6 +385,7 @@ function collectRmTargets(
                 if (tok === "-") {
                     // lone dash = stdin itself (unresolvable)
                     unknown = true;
+                    offendingOperand ??= tok;
                     continue;
                 }
                 if (tok.startsWith("-")) continue;
@@ -344,12 +394,13 @@ function collectRmTargets(
             const expanded = expandTargetOperand(tok);
             if (expanded === null) {
                 unknown = true;
+                offendingOperand ??= tok;
                 continue;
             }
             targets.push(resolvePath(root, expanded));
         }
     }
-    return { targets, unknown };
+    return { targets, unknown, sawInvocation, offendingOperand };
 }
 
 /**
@@ -360,10 +411,7 @@ const DELETE_PATH_LITERAL_RE =
     /(?:shutil\.rmtree|os\.(?:remove|unlink|rmdir|removedirs)|fs\.(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)|FileUtils\.rm_rf|File\.(?:delete|unlink)|Dir\.rmdir|(?:Path\s*\([^)]*\)|[A-Za-z_$][\w$]*)\.(?:unlink|rmdir|rm|rmSync|unlinkSync|rmdirSync)|\b(?:unlink|rmdir)\b)\s*\(\s*["']([^"']+)["']|Path\s*\(\s*["']([^"']+)["']/g;
 
 /** Collect file-delete-api absolute targets, or null if a literal is unresolvable. */
-function collectApiTargets(
-    command: string,
-    cwd: string,
-): { targets: string[]; unknown: boolean } | null {
+function collectApiTargets(command: string, cwd: string): CollectedTargets {
     const root = resolvePath(cwd);
     const literals = new Set<string>();
     let m: RegExpExecArray | null;
@@ -375,17 +423,21 @@ function collectApiTargets(
 
     const targets: string[] = [];
     let unknown = false;
+    let offendingOperand: string | undefined;
     for (const lit of literals) {
         // Skip overlarge / clearly non-path literals (e.g. error strings).
         if (lit.length < 1 || lit.length > 4096) continue;
         const expanded = expandTargetOperand(lit);
         if (expanded === null) {
             unknown = true;
+            offendingOperand ??= lit;
             continue;
         }
         targets.push(resolvePath(root, expanded));
     }
-    return { targets, unknown };
+    // This scope only runs after the group's own pattern matched a deletion
+    // call, so an invocation exists even when no path literal was captured.
+    return { targets, unknown, sawInvocation: true, offendingOperand };
 }
 
 /**
@@ -396,44 +448,39 @@ function collectApiTargets(
  * no targets resolves to `unknown` (fail closed). Outside targets are reported
  * with their first offending absolute path.
  */
+/**
+ * Determine whether a dangerous delete command stays inside `cwd`.
+ *
+ * Supports the `rm` and `file-delete-api` danger groups; any other groupId
+ * fails closed to `unknown`. Dynamic operands fail closed to `unresolvable`,
+ * and opaque invocation forms (`xargs rm`, `find -exec rm`) or invocations with
+ * no operand fail closed to `no-invocation`. Outside targets are reported with
+ * their first offending absolute path.
+ */
 export function inspectDeleteScope(
     command: string,
     cwd: string,
     groupId: string,
 ): DeleteTargetScope {
     if (groupId === "rm") {
-        const collected = collectRmTargets(command, cwd);
-        if (!collected) {
-            return { verdict: "unknown", targets: [] };
-        }
-        return toScope(
-            collected.targets,
-            collected.unknown,
-            resolvePath(cwd),
-        );
+        return toScope(collectRmTargets(command, cwd), resolvePath(cwd));
     }
     if (groupId === "file-delete-api") {
-        const collected = collectApiTargets(command, cwd);
-        if (!collected) {
-            return { verdict: "unknown", targets: [] };
-        }
-        return toScope(
-            collected.targets,
-            collected.unknown,
-            resolvePath(cwd),
-        );
+        return toScope(collectApiTargets(command, cwd), resolvePath(cwd));
     }
     // Any other group cannot be scoped — fail closed.
     return { verdict: "unknown", targets: [] };
 }
 
-function toScope(
-    targets: string[],
-    unknown: boolean,
-    root: string,
-): DeleteTargetScope {
-    if (unknown) return { verdict: "unknown", targets };
-    if (targets.length === 0) return { verdict: "unknown", targets };
+function toScope(collected: CollectedTargets, root: string): DeleteTargetScope {
+    const { targets, unknown, sawInvocation, offendingOperand } = collected;
+    if (unknown || targets.length === 0) {
+        return {
+            verdict: sawInvocation ? "unresolvable" : "no-invocation",
+            offendingTarget: offendingOperand,
+            targets,
+        };
+    }
     for (const target of targets) {
         if (!isContained(target, root)) {
             return { verdict: "outside", offendingTarget: target, targets };
@@ -443,8 +490,8 @@ function toScope(
 }
 
 /**
- * Verdict for a cwd-scoped chmod authorization request. Extends the delete
- * verdicts with the two chmod-specific reasons a mode can be rejected.
+ * Verdict for a cwd-scoped command authorization request. Extends the delete
+ * verdicts with the chmod-specific reasons a mode can be rejected.
  */
 export type CommandScopeVerdict =
     | "inside"
@@ -452,6 +499,8 @@ export type CommandScopeVerdict =
     | "protected"
     | "symlink"
     | "catastrophic-mode"
+    | "unresolvable"
+    | "no-invocation"
     | "unknown";
 
 /** Result of resolving a command's operands against `cwd`. */

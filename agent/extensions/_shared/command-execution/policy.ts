@@ -1,6 +1,10 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { DangerMatch } from "./guard.ts";
+import type {
+    CommandScope,
+    CommandScopeVerdict,
+    DangerMatch,
+} from "./guard.ts";
 import { inspectCommandScope } from "./guard.ts";
 
 export type CommandGuardPolicy = "ask" | "deny" | "allow" | "cwd-only";
@@ -67,10 +71,18 @@ export function resolveGuardPolicy(
 export interface GuardAuthorization {
     allowed: boolean;
     reason?: string;
+    /**
+     * Scope evidence, attached when a `cwd-only` scope denied the command, so
+     * telemetry can record what the scope decided and which targets it resolved.
+     */
+    scopeVerdict?: CommandScopeVerdict;
+    scopeTargets?: readonly string[];
 }
 
 export interface GuardMatchesAuthorization extends GuardAuthorization {
     match?: DangerMatch;
+    /** Effective policy for the denying match, recorded as guard evidence. */
+    policy?: CommandGuardPolicy;
 }
 
 export async function authorizeDangerousMatches(
@@ -89,7 +101,13 @@ export async function authorizeDangerousMatches(
             approvals,
             options,
         );
-        if (!authorization.allowed) return { ...authorization, match };
+        if (!authorization.allowed) {
+            return {
+                ...authorization,
+                match,
+                policy: resolveGuardPolicy(policies, match.groupId),
+            };
+        }
     }
     return { allowed: true, match: matches[0] };
 }
@@ -109,51 +127,13 @@ export async function authorizeDangerousCommand(
             ctx.cwd,
             match.groupId,
         );
-        const offending = scope.offendingTarget;
-        switch (scope.verdict) {
-            case "inside":
-                return { allowed: true };
-            case "catastrophic-mode":
-                return {
-                    allowed: false,
-                    reason: `Command blocked by ${options.toolName}: ${match.groupId} mode ${scope.mode} is not permitted`,
-                };
-            case "protected":
-                return {
-                    allowed: false,
-                    reason: offending
-                        ? `Command blocked by ${options.toolName}: ${match.groupId} target is protected: ${offending}`
-                        : match.message,
-                };
-            case "symlink":
-                return {
-                    allowed: false,
-                    reason: offending
-                        ? `Command blocked by ${options.toolName}: ${match.groupId} target is a symlink it would follow: ${offending}`
-                        : match.message,
-                };
-            case "outside":
-                return {
-                    allowed: false,
-                    reason: offending
-                        ? `Command blocked by ${options.toolName}: ${match.groupId} target outside working dir: ${offending}`
-                        : match.message,
-                };
-            case "unknown":
-                return {
-                    allowed: false,
-                    reason: `Command blocked by ${options.toolName}: ${match.groupId} target or mode could not be resolved statically (variable, glob, or --reference): ${match.normalizedCommand}`,
-                };
-            default: {
-                // Compile-time exhaustiveness: a new verdict breaks the build
-                // here instead of silently reusing another reason.
-                const unhandled: never = scope.verdict;
-                return {
-                    allowed: false,
-                    reason: `Command blocked by ${options.toolName}: ${match.groupId} unhandled scope verdict ${String(unhandled)}`,
-                };
-            }
-        }
+        if (scope.verdict === "inside") return { allowed: true };
+        return {
+            allowed: false,
+            reason: describeScopeDenial(scope, match, options),
+            scopeVerdict: scope.verdict,
+            scopeTargets: scope.targets,
+        };
     }
     if (approvals.has(match)) return { allowed: true };
     if (!ctx.hasUI) {
@@ -190,4 +170,52 @@ export async function authorizeDangerousCommand(
     }
 
     return { allowed: false, reason: "Denied by user" };
+}
+
+/**
+ * Reason for a `cwd-only` denial. Wording lives here, apart from the policy
+ * decision, so every denial path reports the same evidence.
+ */
+function describeScopeDenial(
+    scope: CommandScope,
+    match: DangerMatch,
+    options: GuardPromptOptions,
+): string {
+    const prefix = `Command blocked by ${options.toolName}: ${match.groupId}`;
+    const offending = scope.offendingTarget;
+    switch (scope.verdict) {
+        case "inside":
+            // Unreachable: the caller returns before denying an inside scope.
+            throw new Error(
+                "describeScopeDenial called for an allowed scope verdict",
+            );
+        case "catastrophic-mode":
+            return `${prefix} mode ${scope.mode} is not permitted`;
+        case "protected":
+            return offending
+                ? `${prefix} target is protected: ${offending}`
+                : match.message;
+        case "symlink":
+            return offending
+                ? `${prefix} target is a symlink it would follow: ${offending}`
+                : match.message;
+        case "outside":
+            return offending
+                ? `${prefix} target outside working dir: ${offending}`
+                : match.message;
+        case "unresolvable":
+            return offending
+                ? `${prefix} operand could not be resolved statically: ${offending}`
+                : `${prefix} invocation has no resolvable target: ${match.normalizedCommand}`;
+        case "no-invocation":
+            return `${prefix} matched a form with no resolvable invocation (indirect or quoted): ${match.normalizedCommand}`;
+        case "unknown":
+            return `${prefix} target or mode could not be resolved statically (variable, glob, or --reference): ${match.normalizedCommand}`;
+        default: {
+            // Compile-time exhaustiveness: a new verdict breaks the build here
+            // instead of silently reusing another reason.
+            const unhandled: never = scope.verdict;
+            return `${prefix} unhandled scope verdict ${String(unhandled)}`;
+        }
+    }
 }

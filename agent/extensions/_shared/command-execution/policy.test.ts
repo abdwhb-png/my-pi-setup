@@ -339,8 +339,7 @@ describe('safe-bash guard policy', () => {
         }
     });
 
-    it('cwd-only blocks catastrophic chmod modes inside cwd', async () => {
-        const match = inspectDangerous('chmod 777 notes.txt');
+    it('cwd-only blocks catastrophic chmod modes inside cwd', async () => {        const match = inspectDangerous('chmod 777 notes.txt');
         if (!match) throw new Error('expected chmod candidate');
         const blocked = await authorizeDangerousCommand(
             match,
@@ -389,5 +388,65 @@ describe('safe-bash guard policy', () => {
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
+    });
+
+    it('names the unresolved operand for an unresolvable rm target (audit event a507a4a4)', async () => {
+        const match = inspectDangerous('rm $VAR/x');
+        if (!match) throw new Error('expected rm candidate');
+        const blocked = await authorizeDangerousCommand(
+            match,
+            'cwd-only',
+            context({ cwd: '/home/user' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.reason).toContain('could not be resolved statically');
+        expect(blocked.reason).toContain('$VAR/x');
+    });
+
+    it('separates an indirect rm form from an unresolvable operand', async () => {
+        const match = inspectDangerous('find . -exec rm {} +');
+        if (!match) throw new Error('expected rm candidate');
+        const blocked = await authorizeDangerousCommand(
+            match,
+            'cwd-only',
+            context({ cwd: '/home/user' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.reason).toContain('no resolvable invocation');
+        expect(blocked.reason).not.toContain(
+            'could not be resolved statically',
+        );
+    });
+
+    it('carries the scope verdict and resolved targets for a denied command', async () => {
+        const match = inspectDangerous('rm /etc/hosts');
+        if (!match) throw new Error('expected rm candidate');
+        const blocked = await authorizeDangerousCommand(
+            match,
+            'cwd-only',
+            context({ cwd: '/home/user' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.scopeVerdict).toBe('outside');
+        expect(blocked.scopeTargets).toContain('/etc/hosts');
+    });
+
+    it('carries the policy for a denying match', async () => {
+        const result = await authorizeDangerousMatches(
+            inspectDangerousMatches('rm /etc/hosts'),
+            { rm: 'cwd-only' },
+            context({ cwd: '/home/user' }),
+            new GuardSessionApprovals(),
+            PROMPT,
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.policy).toBe('cwd-only');
+        expect(result.scopeVerdict).toBe('outside');
     });
 });

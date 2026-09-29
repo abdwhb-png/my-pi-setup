@@ -7,6 +7,7 @@ import {
     inspectCommandScope,
     inspectDeleteScope,
     inspectDangerous,
+    inspectDangerousMatches,
     isDangerous,
     redirectShellCommand,
     redirectShellCommandWithPolicy,
@@ -79,13 +80,27 @@ describe('inspectDeleteScope rm', () => {
         expect(scope.offendingTarget).toBe('/home/user/outside');
     });
 
-    it('marks an unresolvable variable target as unknown', () => {
+    it('marks an unresolvable variable operand with the raw operand', () => {
         const scope = inspectDeleteScope('rm $WEIRD_VAR/x', cwd, 'rm');
-        expect(scope.verdict).toBe('unknown');
+        expect(scope.verdict).toBe('unresolvable');
+        expect(scope.offendingTarget).toBe('$WEIRD_VAR/x');
     });
 
-    it('marks a bare rm as unknown', () => {
-        expect(inspectDeleteScope('rm', cwd, 'rm').verdict).toBe('unknown');
+    it('marks an invocation with no operand as unresolvable', () => {
+        expect(inspectDeleteScope('rm', cwd, 'rm').verdict).toBe(
+            'unresolvable',
+        );
+    });
+
+    it('marks an opaque invocation form as no-invocation', () => {
+        // `-exec rm` is a deletion, but no `rm`/`git rm` segment is resolvable,
+        // so the guard cannot name a target. Fail closed either way.
+        expect(
+            inspectDeleteScope('find . -exec rm {} +', cwd, 'rm').verdict,
+        ).toBe('no-invocation');
+        expect(inspectDeleteScope('xargs rm', cwd, 'rm').verdict).toBe(
+            'no-invocation',
+        );
     });
 });
 
@@ -111,13 +126,13 @@ describe('inspectDeleteScope file-delete-api', () => {
         expect(scope.offendingTarget).toBe('/etc/hosts');
     });
 
-    it('marks a node one-liner with a variable path (no literal) as unknown', () => {
+    it('marks a node one-liner with a variable path (no literal) as unresolvable', () => {
         const scope = inspectDeleteScope(
             'node -e "fs.unlinkSync(someVar)"',
             cwd,
             'file-delete-api',
         );
-        expect(scope.verdict).toBe('unknown');
+        expect(scope.verdict).toBe('unresolvable');
     });
 });
 
@@ -298,6 +313,83 @@ describe('inspectChmodScope symlink targets', () => {
         expect(
             inspectChmodScope('chmod 755 linkdir/f.txt', root, []).verdict,
         ).toBe('inside');
+    });
+});
+
+describe('rm group anchoring (audit events 53ab0c7f, d955fa02)', () => {
+    const cwd = '/home/user/project';
+
+    it.each([
+        'rm file',
+        'rm',
+        'cd /some/path && rm file.txt',
+        'sudo rm file',
+        'command rm file',
+        'env FOO=1 rm file',
+        'git rm file',
+        'xargs rm',
+        'find . -exec rm {} +',
+        '  rm -rf dist/',
+    ])('still matches an rm invocation: %s', (command) => {
+        expect(inspectDangerous(command)?.groupId).toBe('rm');
+    });
+
+    it.each([
+        `bun -e 'import { mkdtemp, rm } from "node:fs/promises"; const dir = await mkdtemp("x");'`,
+        'echo "rm is dangerous"',
+        'echo unlink-me',
+    ])('does not match rm text that is not an invocation: %s', (command) => {
+        expect(inspectDangerous(command)).toBeNull();
+    });
+
+    it('routes git rm through the scope check instead of blocking it blindly', () => {
+        const scope = inspectDeleteScope('git rm notes.md', cwd, 'rm');
+        expect(scope.verdict).toBe('inside');
+        expect(scope.targets).toContain('/home/user/project/notes.md');
+    });
+
+    it('keeps an outside-cwd git rm outside', () => {
+        const scope = inspectDeleteScope('git rm /etc/hosts', cwd, 'rm');
+        expect(scope.verdict).toBe('outside');
+        expect(scope.offendingTarget).toBe('/etc/hosts');
+    });
+});
+
+describe('shutdown group anchoring (audit event 9697380d)', () => {
+    it.each([
+        'shutdown -h now',
+        'reboot',
+        'systemctl poweroff',
+        'systemctl reboot',
+    ])('still matches a power command: %s', (command) => {
+        expect(inspectDangerous(command)?.groupId).toBe('shutdown');
+    });
+
+    it('matches a power command behind sudo (sudo group reports first)', () => {
+        expect(
+            inspectDangerousMatches('sudo reboot').map((match) => match.groupId),
+        ).toContain('shutdown');
+    });
+
+    it('does not match the word inside a python heredoc string literal', () => {
+        const command = `python3 << 'PY'\ncode = script.replace('waitDone', 'shutdown')\nprint(code)\nPY`;
+        expect(inspectDangerous(command)).toBeNull();
+    });
+});
+
+describe('interpreter deletion coverage (hole-closing for event 53ab0c7f)', () => {
+    it.each([
+        `bun -e "import {rm} from 'node:fs/promises'; await rm(dir, { recursive: true })"`,
+        `bun --eval="import {rm} from 'node:fs/promises'; await rm(dir)"`,
+        `node -e "import {rm} from 'node:fs/promises'; await rm(dir, { recursive: true })"`,
+        `bun -e "const { rmSync } = require('node:fs'); rmSync('dist', { recursive: true })"`,
+    ])('blocks a bare deletion call in an interpreter one-liner: %s', (command) => {
+        expect(inspectDangerous(command)?.groupId).toBe('file-delete-api');
+    });
+
+    it('does not block an import-only bun one-liner', () => {
+        const command = `bun -e 'import { mkdtemp, rm } from "node:fs/promises"; const dir = await mkdtemp("x");'`;
+        expect(inspectDangerous(command)).toBeNull();
     });
 });
 
