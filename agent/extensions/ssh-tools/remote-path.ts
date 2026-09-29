@@ -19,6 +19,14 @@ export function shellQuote(value: string): string {
     return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+/** POSIX dirname, so a temp file can be created on the target's filesystem. */
+export function remoteDirname(path: string): string {
+    const normalized = normalizeRemoteDir(path);
+    const slash = normalized.lastIndexOf("/");
+    if (slash <= 0) return "/";
+    return normalized.slice(0, slash);
+}
+
 function collapseSeparators(path: string): string {
     return path.replace(/\/{2,}/g, "/");
 }

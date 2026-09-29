@@ -1,0 +1,141 @@
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { buildWriteScript } from "../transport.ts";
+
+/**
+ * Executes the generated write script with a real POSIX shell against a
+ * disposable directory. The `SshProcess` fake verifies strings; only this can
+ * establish that the script actually refuses, cleans up, and preserves the
+ * previous file.
+ */
+
+const roots: string[] = [];
+
+function scratch(): string {
+    const dir = mkdtempSync(join(tmpdir(), "pi-ssh-write-"));
+    roots.push(dir);
+    return dir;
+}
+
+/** Runs the script the same way ssh would: content on stdin. */
+function runWrite(target: string, content: string | Buffer): {
+    status: number;
+    stderr: string;
+} {
+    const expectedBytes = Buffer.byteLength(content);
+    // No encoding: stdout/stderr stay Buffers so a large payload is never
+    // transcoded, and stderr is decoded explicitly below.
+    const result = spawnSync("sh", ["-c", buildWriteScript(target, expectedBytes)], {
+        input: content,
+    });
+    return {
+        status: result.status ?? -1,
+        stderr: result.stderr?.toString("utf8") ?? "",
+    };
+}
+
+afterAll(() => {
+    for (const dir of roots) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("generated write script", () => {
+    it("writes the content and leaves no temp file behind", () => {
+        const dir = scratch();
+        const target = join(dir, "app.conf");
+        const result = runWrite(target, "PORT=3000\n");
+        expect(result.status).toBe(0);
+        expect(readFileSync(target, "utf8")).toBe("PORT=3000\n");
+        expect(readdirSync(dir)).toEqual(["app.conf"]);
+    });
+
+    it("preserves the previous file when the transfer is short", () => {
+        // Declares more bytes than are delivered: the rename must not happen.
+        const dir = scratch();
+        const target = join(dir, "app.conf");
+        writeFileSync(target, "ORIGINAL\n");
+        const script = buildWriteScript(target, 9999);
+        const result = spawnSync("sh", ["-c", script], { input: "short" });
+        expect(result.status).not.toBe(0);
+        expect(result.stderr.toString("utf8")).toContain("short write");
+        expect(readFileSync(target, "utf8")).toBe("ORIGINAL\n");
+        expect(readdirSync(dir)).toEqual(["app.conf"]);
+    });
+
+    it("refuses a directory target and writes nothing", () => {
+        const dir = scratch();
+        const subdir = join(dir, "app");
+        spawnSync("mkdir", [subdir]);
+        const result = runWrite(subdir, "data");
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("is a directory");
+        // The failure mode being guarded: mv into a directory succeeds.
+        expect(readdirSync(subdir)).toEqual([]);
+    });
+
+    it("refuses a symlinked target instead of replacing the link", () => {
+        const dir = scratch();
+        const real = join(dir, "real.conf");
+        const link = join(dir, "link.conf");
+        writeFileSync(real, "REAL\n");
+        symlinkSync(real, link);
+        const result = runWrite(link, "REPLACED\n");
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("is a symlink");
+        expect(readFileSync(real, "utf8")).toBe("REAL\n");
+        // Still a link, not a regular file holding the new content.
+        expect(readFileSync(link, "utf8")).toBe("REAL\n");
+    });
+
+    it("refuses a symlinked target for a new file that does not exist yet", () => {
+        const dir = scratch();
+        const link = join(dir, "dangling.conf");
+        symlinkSync(join(dir, "missing.conf"), link);
+        const result = runWrite(link, "data");
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("is a symlink");
+    });
+
+    it("gives two concurrent writers distinct temp files", () => {
+        const dir = scratch();
+        const script = buildWriteScript(join(dir, "app.conf"), 4);
+        // Two invocations in the same directory must not share a temp name.
+        const a = spawnSync("sh", ["-c", script], { input: "aaaa" });
+        const b = spawnSync("sh", ["-c", script], { input: "bbbb" });
+        expect(a.status).toBe(0);
+        expect(b.status).toBe(0);
+        // Last writer wins atomically; the file is never a mix of both.
+        const final = readFileSync(join(dir, "app.conf"), "utf8");
+        expect(["aaaa", "bbbb"]).toContain(final);
+        expect(readdirSync(dir)).toEqual(["app.conf"]);
+    });
+
+    it("handles a multi-byte payload by comparing wire bytes", () => {
+        const dir = scratch();
+        const target = join(dir, "utf8.txt");
+        const content = "éé";
+        const result = runWrite(target, content);
+        expect(result.status).toBe(0);
+        expect(readFileSync(target, "utf8")).toBe(content);
+    });
+
+    it("writes a file larger than the old argv ceiling", () => {
+        const dir = scratch();
+        const target = join(dir, "big.log");
+        const content = "x".repeat(300_000);
+        const result = runWrite(target, content);
+        expect(result.status).toBe(0);
+        expect(readFileSync(target, "utf8")).toHaveLength(300_000);
+    });
+
+    it("replaces a symlink-free existing file atomically", () => {
+        const dir = scratch();
+        const target = join(dir, "app.conf");
+        writeFileSync(target, "OLD\n");
+        const result = runWrite(target, "NEW\n");
+        expect(result.status).toBe(0);
+        expect(readFileSync(target, "utf8")).toBe("NEW\n");
+    });
+});

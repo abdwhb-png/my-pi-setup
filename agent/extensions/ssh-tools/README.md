@@ -109,8 +109,31 @@ ssh_bash  find /var/log -name '*.log' -mtime -1
 ## Write semantics
 
 - content is sent over **stdin**, never on the command line, so there is no argv size ceiling
-- the remote side writes to `<target>.pi-ssh.tmp` and then renames it over the target, so a failed or truncated write leaves the previous file intact
+- the remote side creates a **unique** temp file with `mktemp` in the target's own directory, so two writers to the same target never share a temp inode, and the rename stays on one filesystem
+- a `trap` removes the temp file on **every** exit, including a failed rename
+- the byte count is sent alongside and verified with `wc -c` **before** the rename, so a connection that drops mid-transfer cannot publish a truncated file over an intact one. `cat` exits 0 on an early EOF, so exit status alone does not prove the content arrived
+- a **directory** target is refused: `mv -f file dir` succeeds by moving the file _inside_ the directory
+- a **symlink** target is refused by `ssh_write` and `ssh_edit`. Renaming over a link replaces the link, not the file it points to, and the tool would report success while the file you meant is untouched. Edit the resolved path, or use `ssh_bash`
 - consequence: the resulting file gets the remote umask's default mode and the SSH user's ownership. The previous implementation (`cat >` in place) preserved the original mode and owner. If you rewrite a file whose mode matters, restore it yourself or use a shell command with `ssh_bash`.
+
+### Interrupted writes report an unknown outcome
+
+If a write is aborted or times out, the extension cannot know whether the remote rename already committed. The tool says **outcome UNKNOWN** and tells the model to read the file before retrying, rather than claiming the previous file is intact. A clean non-zero exit is still reported as a plain failure, because there the script ran to completion and the outcome is known.
+
+Unique temp files stop one writer from corrupting another. They do not prevent a lost update against an unrelated remote editor writing the same file at the same time.
+
+## Transport limits
+
+- an aborted tool call tears down its ssh child; the signal is threaded into the file operations, not just the shell one
+- an already-aborted call never spawns anything
+- a broken stdin pipe (`EPIPE` during a large write) rejects the tool call instead of raising an uncaught stream error
+- backpressure is honoured, so a large payload is not truncated by ending stdin too early
+- abort and timeout escalate `SIGTERM` → `SIGKILL` after a grace period
+- **Killing the local ssh client does not guarantee the remote command dies.** A detached remote process can outlive the tool call. The extension does not claim otherwise.
+- diagnostic output (streaming `ssh_bash` output, and stderr used in error messages) is capped at 1 MiB in memory; every byte still streams to the consumer
+- a data-returning call such as `ssh_read` is capped at 16 MiB and **rejected** if exceeded, never silently truncated — a shortened file would look like a successful read of different content
+
+An `ssh_bash` exit code of 255 is reported as an SSH transport, host-key, or authentication failure with the remote output attached. A remote command that itself exits 255 is indistinguishable from that, so the message says so rather than guessing.
 
 ## Requirements
 

@@ -116,7 +116,9 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             const target = requireActiveTarget();
             const tool = createReadToolDefinition(target.remoteCwd, {
-                operations: createRemoteReadOps(target),
+                // The signal is threaded in so an aborted tool call tears down
+                // the ssh child instead of leaving it running.
+                operations: createRemoteReadOps(target, { signal }),
             });
             return tool.execute(
                 toolCallId,
@@ -150,7 +152,7 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             const target = requireActiveTarget();
             const tool = createWriteToolDefinition(target.remoteCwd, {
-                operations: createRemoteWriteOps(target),
+                operations: createRemoteWriteOps(target, { signal }),
             });
             return tool.execute(
                 toolCallId,
@@ -186,7 +188,7 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             const target = requireActiveTarget();
             const tool = createEditToolDefinition(target.remoteCwd, {
-                operations: createRemoteEditOps(target),
+                operations: createRemoteEditOps(target, { signal }),
             });
             return tool.execute(
                 toolCallId,

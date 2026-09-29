@@ -9,6 +9,7 @@ import {
     assertRemoteAccess,
     buildWriteScript,
     type SshExecOptions,
+    SSH_TRANSPORT_EXIT,
     sshExec,
     sshOk,
 } from "./transport.ts";
@@ -50,16 +51,38 @@ function readRemoteFile(
     return sshOk(remote, `cat ${shellQuote(absolutePath)}`, options);
 }
 
-function writeRemoteFile(
+const OUTCOME_UNKNOWN =
+    "The transfer was interrupted, so whether the file was replaced is UNKNOWN. Do not retry blindly: read the remote file first to see whether the new content landed.";
+
+/**
+ * `expectedBytes` must be the byte length of the content on the wire, not its
+ * JavaScript string length. A multi-byte character would otherwise make the
+ * remote completeness check fail on a transfer that actually succeeded.
+ */
+async function writeRemoteFile(
     remote: string,
     absolutePath: string,
     content: string,
     options: SshExecOptions,
 ): Promise<Buffer> {
-    return sshOk(remote, buildWriteScript(absolutePath), {
-        ...options,
-        stdin: content,
-    });
+    try {
+        return await sshOk(
+            remote,
+            buildWriteScript(absolutePath, Buffer.byteLength(content)),
+            { ...options, stdin: content },
+        );
+    } catch (error) {
+        // An abort or timeout can land after the remote `mv` committed, so the
+        // extension cannot claim the previous file is intact. Saying "failed"
+        // would invite a retry against a file that may already be updated.
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === "aborted" || message.startsWith("timeout:")) {
+            throw new Error(`${OUTCOME_UNKNOWN} (${message})`, {
+                cause: error,
+            });
+        }
+        throw error;
+    }
 }
 
 /**
@@ -116,12 +139,13 @@ export function createRemoteEditOps(
             );
         },
         access: (absolutePath) =>
-            assertRemoteAccess(
-                target.remote,
-                absolutePath,
-                READ_WRITABLE,
-                options,
-            ),
+            assertRemoteAccess(target.remote, absolutePath, READ_WRITABLE, {
+                ...options,
+                // The edit path writes through a temp file and renames, which
+                // would replace a symlink instead of its target. Detecting it
+                // here costs no extra round trip.
+                detectLink: true,
+            }),
     };
 }
 
@@ -139,7 +163,7 @@ export function createRemoteBashOps(
          */
         exec: async (command, _cwd, { onData, signal, timeout }) => {
             const script = `cd ${shellQuote(target.remoteCwd)}\n${command}\n`;
-            const { exitCode } = await sshExec(target.remote, "exec bash -se", {
+            const result = await sshExec(target.remote, "exec bash -se", {
                 spawnFn: options.spawnFn,
                 stdin: script,
                 signal: signal ?? options.signal,
@@ -147,7 +171,20 @@ export function createRemoteBashOps(
                 onStdoutData: onData,
                 onStderrData: onData,
             });
-            return { exitCode };
+            if (result.exitCode === SSH_TRANSPORT_EXIT) {
+                // ssh returns 255 for its own failures, and a remote command
+                // can also exit 255; the two are indistinguishable from the
+                // exit code alone. Report both rather than guess, because a
+                // bare "exited with code 255" is not actionable.
+                const detail =
+                    result.stderr.toString("utf8").trim() ||
+                    result.stdout.toString("utf8").trim() ||
+                    "no output";
+                throw new Error(
+                    `Command on ${target.remote} exited with 255. That usually means an SSH transport, host-key, or authentication failure, though a command that exits 255 itself looks the same. Remote output: ${detail}`,
+                );
+            }
+            return { exitCode: result.exitCode };
         },
     };
 }

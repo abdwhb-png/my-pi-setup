@@ -9,6 +9,10 @@ import {
     remoteProbe,
 } from "./transport.ts";
 
+function commandOf(harness: ReturnType<typeof fakeLaunch>, index = 0): string {
+    return harness.calls[index]?.at(-1) ?? "";
+}
+
 describe("buildSshArgs", () => {
     it("forces non-interactive auth so a prompt cannot hang the tool", () => {
         expect(buildSshArgs("devlab", "pwd")).toContain("BatchMode=yes");
@@ -31,28 +35,241 @@ describe("buildSshArgs", () => {
     });
 });
 
+describe("buildProbeScript with link detection", () => {
+    it("checks -L before -e so a link is not hidden by the referent", () => {
+        const script = buildProbeScript("/home/dev/app.conf", ["r", "w"], {
+            detectLink: true,
+        });
+        expect(script).toContain("[ -L '/home/dev/app.conf' ]");
+        expect(script.indexOf("[ -L ")).toBeLessThan(script.indexOf("[ -e "));
+    });
+
+    it("reports a distinct LINK result", () => {
+        expect(
+            buildProbeScript("/home/dev/app.conf", ["r"], { detectLink: true }),
+        ).toContain("printf LINK");
+    });
+
+    it("omits the link check when detection is off", () => {
+        const script = buildProbeScript("/home/dev/app.conf", ["r"]);
+        expect(script).not.toContain("[ -L ");
+    });
+});
+
+describe("transport lifetime", () => {
+    it("never spawns for an already-aborted call", async () => {
+        const harness = fakeLaunch();
+        const controller = new AbortController();
+        controller.abort();
+        await expect(
+            sshExec("devlab", "sleep 60", {
+                signal: controller.signal,
+                spawnFn: harness.launch,
+            }),
+        ).rejects.toThrow("aborted");
+        expect(harness.calls).toHaveLength(0);
+    });
+
+    it("rejects on a stdin error instead of leaving it uncaught", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "cat", {
+            stdin: "payload",
+            spawnFn: harness.launch,
+        });
+        // ssh died mid-transfer: the pipe breaks.
+        harness.process.emitStdinError(new Error("EPIPE"));
+        await expect(pending).rejects.toThrow("EPIPE");
+    });
+
+    it("settles once even when stdin errors and the child then closes", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "cat", {
+            stdin: "payload",
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStdinError(new Error("EPIPE"));
+        harness.process.emitClose(1);
+        const message = await pending.then(
+            () => "",
+            (error: Error) => error.message,
+        );
+        expect(message).toBe("EPIPE");
+    });
+
+    it("ends stdin immediately when the write does not fill the buffer", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "cat", {
+            stdin: "small",
+            spawnFn: harness.launch,
+        });
+        expect(harness.process.stdinEnded).toBe(true);
+        harness.process.emitClose(0);
+        await pending;
+    });
+
+    it("waits for drain before ending stdin when the buffer fills", async () => {
+        const harness = fakeLaunch({ backpressure: true });
+        const pending = sshExec("devlab", "cat", {
+            stdin: "large",
+            spawnFn: harness.launch,
+        });
+        // Ending stdin here would truncate what the remote command reads.
+        expect(harness.process.stdinEnded).toBe(false);
+        expect(harness.process.waitingForDrain).toBe(true);
+        harness.process.emitDrain();
+        expect(harness.process.stdinEnded).toBe(true);
+        harness.process.emitClose(0);
+        await pending;
+    });
+
+    it("escalates to SIGKILL when the child ignores SIGTERM", async () => {
+        const harness = fakeLaunch();
+        const controller = new AbortController();
+        const pending = sshExec("devlab", "sleep 60", {
+            signal: controller.signal,
+            killGraceMs: 0.02,
+            spawnFn: harness.launch,
+        });
+        controller.abort();
+        expect(harness.process.killSignals).toEqual(["SIGTERM"]);
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(harness.process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+        harness.process.emitClose(null);
+        await expect(pending).rejects.toThrow("aborted");
+    });
+
+    it("bounds retained output while still streaming every byte", async () => {
+        const harness = fakeLaunch();
+        const streamed: number[] = [];
+        const pending = sshExec("devlab", "yes", {
+            maxRetainedOutputBytes: 10,
+            onStdoutData: (chunk) => streamed.push(chunk.length),
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStdout("x".repeat(50));
+        harness.process.emitClose(0);
+        const result = await pending;
+        expect(result.stdout.length).toBe(10);
+        expect(streamed).toEqual([50]);
+    });
+
+    it("bounds diagnostic stderr for the error message", async () => {
+        const harness = fakeLaunch();
+        const pending = sshOk("devlab", "false", {
+            maxRetainedOutputBytes: 5,
+            onStdoutData: () => undefined,
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStderr("permission denied for the target path");
+        harness.process.emitClose(1);
+        const message = await pending.then(
+            () => "",
+            (error: Error) => error.message,
+        );
+        // Bounded, so a huge dump cannot flood the error text.
+        expect(message).toContain("permi");
+        expect(message).not.toContain("target path");
+    });
+
+    it("never truncates a data-returning read, because a short file looks like a different file", async () => {
+        const harness = fakeLaunch();
+        const pending = sshOk("devlab", "cat /home/dev/big.txt", {
+            maxRetainedOutputBytes: 5,
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStdout("y".repeat(500));
+        harness.process.emitClose(0);
+        const result = await pending;
+        expect(result.length).toBe(500);
+    });
+
+    it("rejects a data call that exceeds the hard data limit instead of truncating it", async () => {
+        const harness = fakeLaunch();
+        const pending = sshOk("devlab", "cat /home/dev/huge.bin", {
+            maxDataBytes: 10,
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStdout("z".repeat(50));
+        await expect(pending).rejects.toThrow("exceeded the 10 byte limit");
+    });
+});
+
+describe("remoteProbe link results", () => {
+    it("returns LINK for a symlinked path", async () => {
+        const harness = fakeLaunch();
+        const pending = remoteProbe(
+            "devlab",
+            "/home/dev/link.conf",
+            ["r"],
+            { spawnFn: harness.launch, detectLink: true },
+        );
+        expect(commandOf(harness, 0)).toContain("[ -L '/home/dev/link.conf' ]");
+        harness.process.emitStdout("LINK");
+        harness.process.emitClose(0);
+        expect(await pending).toBe("LINK");
+    });
+});
+
 describe("buildWriteScript", () => {
     it("never inlines file content in the remote command", () => {
-        expect(buildWriteScript("/home/dev/app.conf")).not.toContain("base64");
+        expect(buildWriteScript("/home/dev/app.conf", 5)).not.toContain("base64");
     });
 
-    it("writes through a temporary sibling then renames", () => {
-        const script = buildWriteScript("/home/dev/app.conf");
-        expect(script).toContain("cat > '/home/dev/app.conf.pi-ssh.tmp'");
-        expect(script).toContain(
-            "mv -f '/home/dev/app.conf.pi-ssh.tmp' '/home/dev/app.conf'",
-        );
+    it("creates the temp with mktemp so two writers get distinct inodes", () => {
+        const script = buildWriteScript("/home/dev/app.conf", 5);
+        expect(script).toContain("mktemp");
+        expect(script).toContain("XXXXXX");
     });
 
-    it("cleans the temporary file and fails when the write fails", () => {
-        const script = buildWriteScript("/home/dev/app.conf");
-        expect(script).toContain("rm -f '/home/dev/app.conf.pi-ssh.tmp'");
-        expect(script).toContain("exit 1");
+    it("puts the temp in the target directory so mv stays on one filesystem", () => {
+        const script = buildWriteScript("/home/dev/nested/app.conf", 5);
+        expect(script).toContain("'/home/dev/nested/.pi-ssh.XXXXXX'");
+    });
+
+    it("does not derive the temp name from the target", () => {
+        // A shared temp path lets one writer truncate another's temp, or follow
+        // a pre-existing symlink at that exact name.
+        const script = buildWriteScript("/home/dev/app.conf", 5);
+        expect(script).not.toContain("app.conf.pi-ssh.tmp");
+    });
+
+    it("cleans the temp on every exit, not only a failed cat", () => {
+        const script = buildWriteScript("/home/dev/app.conf", 5);
+        expect(script).toContain("trap");
+        expect(script).toContain('rm -f "$tmp"');
+    });
+
+    it("rejects a directory target before the rename", () => {
+        // `mv -f file dir` succeeds by moving the file *into* the directory.
+        const script = buildWriteScript("/home/dev/app.conf", 5);
+        expect(script).toContain("[ -d '/home/dev/app.conf' ]");
+    });
+
+    it("rejects a symlinked target so the link is not silently replaced", () => {
+        const script = buildWriteScript("/home/dev/app.conf", 5);
+        expect(script).toContain("[ -L '/home/dev/app.conf' ]");
+    });
+
+    it("verifies the transferred byte count before renaming", () => {
+        // `cat` exits 0 on early EOF, so exit status alone does not prove the
+        // content arrived.
+        const script = buildWriteScript("/home/dev/app.conf", 4096);
+        expect(script).toContain("wc -c");
+        expect(script).toContain("4096");
+    });
+
+    it("removes the temp when the byte count does not match", () => {
+        const script = buildWriteScript("/home/dev/app.conf", 4096);
+        expect(script).toContain("short write");
     });
 
     it("quotes a target path containing a space", () => {
-        const script = buildWriteScript("/home/dev/my app.conf");
-        expect(script).toContain("'/home/dev/my app.conf.pi-ssh.tmp'");
+        const script = buildWriteScript("/home/dev/my app.conf", 5);
+        expect(script).toContain("'/home/dev/my app.conf'");
+    });
+
+    it("does not use mv -T, which busybox and BSD mv lack", () => {
+        expect(buildWriteScript("/home/dev/app.conf", 5)).not.toContain("mv -T");
     });
 });
 
@@ -75,7 +292,7 @@ describe("buildProbeScript", () => {
 describe("sshExec", () => {
     it("sends payload over stdin instead of the command line", async () => {
         const harness = fakeLaunch();
-        const pending = sshExec("devlab", buildWriteScript("/tmp/a"), {
+        const pending = sshExec("devlab", buildWriteScript("/tmp/a", 5), {
             stdin: "hello",
             spawnFn: harness.launch,
         });
@@ -119,7 +336,7 @@ describe("sshExec", () => {
             spawnFn: harness.launch,
         });
         controller.abort();
-        expect(harness.process.killed).toBe(true);
+        expect(harness.process.killSignals[0]).toBe("SIGTERM");
         harness.process.emitClose(null);
         await expect(pending).rejects.toThrow("aborted");
     });
@@ -131,7 +348,7 @@ describe("sshExec", () => {
             spawnFn: harness.launch,
         });
         await new Promise((resolve) => setTimeout(resolve, 60));
-        expect(harness.process.killed).toBe(true);
+        expect(harness.process.killSignals[0]).toBe("SIGTERM");
         harness.process.emitClose(null);
         await expect(pending).rejects.toThrow("timeout:0.02");
     });
