@@ -9,6 +9,9 @@ import {
     remoteProbe,
 } from "./transport.ts";
 
+/** Pinned contract: stderr is capped at 64 KiB when the caller sets no cap. */
+const DEFAULT_STDERR_CAP = 65_536;
+
 function commandOf(harness: ReturnType<typeof fakeLaunch>, index = 0): string {
     return harness.calls[index]?.at(-1) ?? "";
 }
@@ -191,6 +194,93 @@ describe("transport lifetime", () => {
         });
         harness.process.emitStdout("z".repeat(50));
         await expect(pending).rejects.toThrow("exceeded the 10 byte limit");
+    });
+
+    it("escalates to SIGKILL even when the data limit already settled the promise", async () => {
+        const harness = fakeLaunch();
+        const pending = sshOk("devlab", "cat /home/dev/huge.bin", {
+            maxDataBytes: 10,
+            killGraceMs: 0.02,
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStdout("z".repeat(50));
+        await expect(pending).rejects.toThrow("exceeded the 10 byte limit");
+        // The promise is settled but the process is still running, and a child
+        // that ignores SIGTERM must still be escalated. Gating the escalation
+        // on promise settlement rather than process closure leaves it alive.
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(harness.process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+    });
+
+    it("ignores output that arrives after the data limit settled", async () => {
+        const harness = fakeLaunch();
+        const pending = sshOk("devlab", "cat /home/dev/huge.bin", {
+            maxDataBytes: 10,
+            killGraceMs: 0.02,
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStdout("z".repeat(50));
+        await expect(pending).rejects.toThrow("exceeded the 10 byte limit");
+        const killsAtSettle = harness.process.killSignals.length;
+        // A late chunk must not re-enter the limit branch and schedule more kills.
+        harness.process.emitStdout("z".repeat(50));
+        expect(harness.process.killSignals.length).toBe(killsAtSettle);
+    });
+
+    it("caps stderr in data mode, where the stdout data limit does not apply", async () => {
+        const harness = fakeLaunch();
+        const pending = sshOk("devlab", "cat /home/dev/a.txt", {
+            maxRetainedOutputBytes: 5,
+            maxDataBytes: 1000,
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStderr("e".repeat(200));
+        harness.process.emitClose(1);
+        const message = await pending.then(
+            () => "",
+            (error: Error) => error.message,
+        );
+        // stdout keeps its own 16 MiB budget, but stderr is only diagnostic.
+        expect(message).not.toContain("e".repeat(6));
+    });
+
+    it("caps stderr at a default budget when the caller sets none", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "cat /home/dev/a.txt", {
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStderr("e".repeat(DEFAULT_STDERR_CAP + 50));
+        harness.process.emitClose(1);
+        const result = await pending;
+        // A hostile or chatty server must not grow local memory without bound.
+        expect(result.stderr.length).toBe(DEFAULT_STDERR_CAP);
+    });
+
+    it("reports an abort as aborted even when the stdin pipe breaks after it", async () => {
+        const harness = fakeLaunch();
+        const controller = new AbortController();
+        const pending = sshExec("devlab", "cat", {
+            stdin: "payload",
+            signal: controller.signal,
+            spawnFn: harness.launch,
+        });
+        controller.abort();
+        // Killing the child breaks the pipe, so EPIPE lands after the abort and
+        // would otherwise mask the "aborted" contract pi matches on.
+        harness.process.emitStdinError(new Error("EPIPE"));
+        await expect(pending).rejects.toThrow("aborted");
+    });
+
+    it("reports a timeout even when the stdin pipe breaks after it", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "cat", {
+            stdin: "payload",
+            timeoutSeconds: 0.02,
+            spawnFn: harness.launch,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        harness.process.emitStdinError(new Error("EPIPE"));
+        await expect(pending).rejects.toThrow("timeout:0.02");
     });
 });
 
