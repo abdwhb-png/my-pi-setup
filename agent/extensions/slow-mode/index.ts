@@ -522,7 +522,7 @@ export default function slowMode(pi: ExtensionAPI) {
         let decision: ReviewResult;
         try {
             decision = await showReview(ctx, {
-                operation: "BASH",
+                operation: "TOOL",
                 filePath: event.toolName,
                 body,
                 allowEdit: false,

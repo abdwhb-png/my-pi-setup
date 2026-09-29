@@ -1,6 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+    ExtensionContext,
+    ThemeColor,
+} from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { createUiColors } from "../_shared/ui/ui-colors.ts";
 
@@ -18,7 +21,11 @@ export type ReviewResult =
  * Options for the review UI component
  */
 export interface ReviewOptions {
-    operation: "WRITE" | "EDIT" | "BASH"; // Type of change being reviewed
+    /**
+     * What kind of change is under review. `TOOL` covers any other tool call
+     * (e.g. `ssh_write`), which has nothing to diff or open externally.
+     */
+    operation: "WRITE" | "EDIT" | "BASH" | "TOOL";
     filePath: string; // Relative path to the file (or tool name)
     body: string; // Content to display (file content, diff, or command)
     stagePath?: string; // Path to staged file (for writes and external editing)
@@ -26,6 +33,17 @@ export interface ReviewOptions {
     newPath?: string; // Staged new file (edits only)
     allowEdit?: boolean; // Allow editing: Ctrl+E/Ctrl+O
 }
+
+/** Header label and its color, per reviewed operation. */
+const OPERATION_LABELS: Record<
+    ReviewOptions["operation"],
+    readonly [ThemeColor, string]
+> = {
+    WRITE: ["warning", " NEW FILE"],
+    EDIT: ["accent", " EDIT (diff)"],
+    BASH: ["warning", " BASH (command review)"],
+    TOOL: ["text", " TOOL (call review)"],
+};
 
 /**
  * Show interactive review UI.
@@ -213,13 +231,9 @@ export async function showReview(
             const colors = createUiColors(theme);
             add(colors.warning(" ⚠ SLOW MODE — review before applying"));
 
-            const opLabel =
-                opts.operation === "WRITE"
-                    ? theme.fg("warning", " NEW FILE")
-                    : opts.operation === "EDIT"
-                      ? theme.fg("accent", " EDIT (diff)")
-                      : theme.fg("warning", " BASH (command review)");
-            add(opLabel);
+            const [labelColor, labelText] =
+                OPERATION_LABELS[opts.operation];
+            add(theme.fg(labelColor, labelText));
 
             add(` ${theme.fg("accent", opts.filePath)}`);
             lines.push("");
@@ -283,12 +297,15 @@ export async function showReview(
             } else {
                 let hints =
                     "y/Enter approve • n/Esc reject • r reject w/ reason • a auto-accept (this turn)";
+                // Only advertise Ctrl+O when openExternal() has something to open.
+                const openable =
+                    opts.operation === "EDIT" || opts.stagePath !== undefined;
                 if (opts.allowEdit && opts.operation === "EDIT") {
                     hints += " • Ctrl+E edit • Ctrl+O view diff";
-                } else if (opts.allowEdit) {
-                    hints += " • Ctrl+O edit externally";
-                } else {
-                    hints += " • Ctrl+O view externally";
+                } else if (openable) {
+                    hints += opts.allowEdit
+                        ? " • Ctrl+O edit externally"
+                        : " • Ctrl+O view externally";
                 }
                 hints += " • ↑↓ line • PgUp/PgDn page • Home/End top/bottom";
                 add(theme.fg("dim", ` ${hints}`));
