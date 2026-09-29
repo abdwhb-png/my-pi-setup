@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -16,6 +23,44 @@ function temporaryProject(): string {
     const directory = mkdtempSync(join(tmpdir(), 'pi-scoped-write-tools-'));
     temporaryDirectories.push(directory);
     return directory;
+}
+
+function registerScopedWriteFixture(): {
+    tools: Map<string, { execute: Function }>;
+    commands: Map<string, { handler: Function }>;
+} {
+    const tools = new Map<string, { execute: Function }>();
+    const commands = new Map<string, { handler: Function }>();
+    registerScopedWrite({
+        registerTool(tool: { name: string; execute: Function }) {
+            tools.set(tool.name, tool);
+        },
+        registerCommand(name: string, command: { handler: Function }) {
+            commands.set(name, command);
+        },
+    } as never);
+    return { tools, commands };
+}
+
+function purgeContext(
+    cwd: string,
+    ui: { hasUI?: boolean; select?: (message: string, options: string[]) => Promise<string> },
+) {
+    return {
+        cwd,
+        hasUI: ui.hasUI ?? true,
+        sessionManager: {
+            getSessionId: () => 'session-1',
+            getEntries: () => [{
+                type: 'custom', customType: 'pi-roles:active-role',
+                data: { name: 'sdd-qa-tester', source: 'user', path: 'qa.md', appliedAt: 1 },
+            }],
+        },
+        ui: {
+            select: ui.select ?? (async () => 'Cancel'),
+            notify: () => undefined,
+        },
+    };
 }
 
 afterEach(() => {
@@ -48,25 +93,10 @@ describe('scoped report tools', () => {
         expect(existsSync(join(cwd, '.pi/artifacts/.audit/session-1.jsonl'))).toBeTrue();
     });
 
-    test('registers report tools and refuses purge when no UI is available', async () => {
-        const tools = new Map<string, { execute: Function }>();
-        registerScopedWrite({
-            registerTool(tool: { name: string; execute: Function }) {
-                tools.set(tool.name, tool);
-            },
-        } as never);
+    test('registers report tools and the purge command, which refuses to run without a UI', async () => {
+        const { tools, commands } = registerScopedWriteFixture();
         const cwd = temporaryProject();
-        const context = {
-            cwd,
-            hasUI: false,
-            sessionManager: {
-                getSessionId: () => 'session-1',
-                getEntries: () => [{
-                    type: 'custom', customType: 'pi-roles:active-role',
-                    data: { name: 'sdd-qa-tester', source: 'user', path: 'qa.md', appliedAt: 1 },
-                }],
-            },
-        };
+        const context = purgeContext(cwd, { hasUI: false });
 
         const write = tools.get('write_report');
         if (!write) throw new Error('write_report was not registered');
@@ -75,10 +105,51 @@ describe('scoped report tools', () => {
         }, undefined, undefined, context);
 
         expect(written.details.kind).toBe('success');
-        const purge = tools.get('artifacts_purge');
-        if (!purge) throw new Error('artifacts_purge was not registered');
-        await expect(purge.execute('call-2', { runId: 'session-1' }, undefined, undefined, context))
+        expect(tools.has('artifacts_purge')).toBeFalse();
+        const purge = commands.get('purge-artifacts');
+        if (!purge) throw new Error('/purge-artifacts was not registered');
+        await expect(purge.handler('session-1', context))
             .rejects.toThrow('requires an interactive confirmation');
+    });
+
+    test('purges only the confirmed run and audits the operator command', async () => {
+        const { commands } = registerScopedWriteFixture();
+        const cwd = temporaryProject();
+        const firstRun = join(cwd, '.pi/artifacts/reports/sdd-qa-tester/run-1');
+        const secondRun = join(cwd, '.pi/artifacts/reports/sdd-qa-tester/run-2');
+        mkdirSync(firstRun, { recursive: true });
+        mkdirSync(secondRun, { recursive: true });
+        writeFileSync(join(firstRun, 'report.md'), 'old', 'utf8');
+        writeFileSync(join(secondRun, 'report.md'), 'keep', 'utf8');
+        const context = purgeContext(cwd, { select: async () => 'Purge' });
+
+        const purge = commands.get('purge-artifacts');
+        if (!purge) throw new Error('/purge-artifacts was not registered');
+        await purge.handler('run-1', context);
+
+        expect(existsSync(firstRun)).toBeFalse();
+        expect(existsSync(secondRun)).toBeTrue();
+        const audit = readFileSync(
+            join(cwd, '.pi/artifacts/.audit/run-1.jsonl'),
+            'utf8',
+        );
+        expect(audit).toContain('"operation":"purge"');
+        expect(audit).toContain('"tool":"command:/purge-artifacts"');
+    });
+
+    test('keeps every artefact when the operator cancels the confirmation', async () => {
+        const { commands } = registerScopedWriteFixture();
+        const cwd = temporaryProject();
+        const run = join(cwd, '.pi/artifacts/reports/sdd-qa-tester/run-1');
+        mkdirSync(run, { recursive: true });
+        writeFileSync(join(run, 'report.md'), 'keep', 'utf8');
+        const context = purgeContext(cwd, { select: async () => 'Cancel' });
+
+        const purge = commands.get('purge-artifacts');
+        if (!purge) throw new Error('/purge-artifacts was not registered');
+        await purge.handler('run-1', context);
+
+        expect(existsSync(join(run, 'report.md'))).toBeTrue();
     });
 
     test('accepts an explicitly registered extension-owned run root', () => {

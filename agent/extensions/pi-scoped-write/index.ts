@@ -140,11 +140,10 @@ const editReportSchema = Type.Object({
     ),
 });
 
-const purgeArtifactsSchema = Type.Object({
-    runId: Type.String({
-        description: "Exact session/run identifier to purge.",
-    }),
-});
+const PURGE_COMMAND = "purge-artifacts";
+// Purge is an operator action, so the audit trail records the command, not a
+// model-callable tool.
+const PURGE_AUDIT_TOOL = "command:/purge-artifacts";
 
 export default function registerScopedWrite(pi: ExtensionAPI): void {
     const roots = sharedArtifactRootRegistry();
@@ -217,49 +216,57 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
         },
     });
 
-    pi.registerTool({
-        name: "artifacts_purge",
-        label: "Purge Artefacts",
+    // Purging run state is irreversible, so it is an operator command only: the
+    // model never receives a schema that can delete artefacts.
+    pi.registerCommand(PURGE_COMMAND, {
         description:
-            "Purge the explicitly registered artefacts of one confirmed run.",
-        parameters: purgeArtifactsSchema,
-        async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+            "Purge the artefacts of one run. /purge-artifacts <runId>",
+        handler: async (args, ctx) => {
+            const runId = args.trim();
+            if (!runId) {
+                if (ctx.hasUI) {
+                    ctx.ui.notify(
+                        "Usage: /purge-artifacts <runId>",
+                        "warning",
+                    );
+                }
+                return;
+            }
             if (!ctx.hasUI) {
                 throw new Error(
                     "Artifact purge requires an interactive confirmation.",
                 );
             }
-            const targets = roots.resolve(ctx.cwd, params.runId);
+            const targets = roots.resolve(ctx.cwd, runId);
             const choice = await ctx.ui.select(
-                `Purge artefacts for '${params.runId}'?\n${targets.join("\n") || "(no artefacts found)"}`,
+                `Purge artefacts for '${runId}'?\n${targets.join("\n") || "(no artefacts found)"}`,
                 ["Purge", "Cancel"],
             );
             if (choice !== "Purge") {
-                throw new Error("Artifact purge was cancelled.");
+                ctx.ui.notify(
+                    `Purge cancelled for '${runId}'.`,
+                    "info",
+                );
+                return;
             }
             const role = currentRole(ctx);
             const result = purgeArtifacts({
                 projectRoot: ctx.cwd,
-                runId: params.runId,
+                runId,
                 actor: {
                     agent: role ?? "unassigned",
                     role: safeSegment(role, "unassigned"),
-                    runId: params.runId,
+                    runId,
                 },
-                tool: "artifacts_purge",
+                tool: PURGE_AUDIT_TOOL,
                 registry: roots,
                 confirmed: true,
             });
             if (result.kind !== "success") toolFailure(result);
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Purged ${result.removedPaths.length} artefact(s).`,
-                    },
-                ],
-                details: result,
-            };
+            ctx.ui.notify(
+                `Purged ${result.removedPaths.length} artefact(s) for '${runId}'.`,
+                "info",
+            );
         },
     });
 }

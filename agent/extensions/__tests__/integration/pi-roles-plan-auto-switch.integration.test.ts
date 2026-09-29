@@ -313,7 +313,7 @@ describe('plan-auto-switch real Pi lifecycle', () => {
             runner
                 .getAllRegisteredTools()
                 .filter((tool) => tool.definition.name === 'switch_role'),
-        ).toHaveLength(1);
+        ).toHaveLength(0);
 
         const automaticContinuation = session.events.messages.find(
             (message) => {
@@ -416,10 +416,10 @@ async function expectFinalProviderCatalog(session: TestSession): Promise<void> {
     expect(names).toEqual(expect.arrayContaining(['edit', 'write', 'safe_bash']));
 }
 
-it.each(['manual', 'switch_role', 'apply-patches'] as const)('%s sends the final pi-agent catalog through the real provider builder', async route => {
+it.each(['manual', 'apply-patches'] as const)('%s sends the final pi-agent catalog through the real provider builder', async route => {
     const cwd = createFixtureProject('pi-agent');
     const rolesDirectory = join(cwd, '.pi', 'roles');
-    writeRole(rolesDirectory, 'debug', 'read, switch_role');
+    writeRole(rolesDirectory, 'debug', 'read');
     const prompts = join(cwd, '.pi', 'prompts');
     mkdirSync(prompts, { recursive: true });
     writeFileSync(join(prompts, 'apply-patches.md'), '---\nrole: pi-agent\ndescription: Apply fixture patches\n---\nApply fixture patches.');
@@ -433,9 +433,7 @@ it.each(['manual', 'switch_role', 'apply-patches'] as const)('%s sends the final
         await session.session.prompt('/role pi-agent');
         await session.session.extensionRunner.emitBeforeAgentStart('apply', undefined, { cwd, customPrompt: 'custom system prompt' });
     } else {
-        await session.run(when(route === 'apply-patches' ? '/apply-patches' : 'Switch role', route === 'apply-patches'
-            ? [says('Applied fixture patches.')]
-            : [calls('switch_role', { roleName: 'pi-agent' }), says('Ready.')]));
+        await session.run(when('/apply-patches', [says('Applied fixture patches.')]));
     }
     await expectFinalProviderCatalog(session);
 });

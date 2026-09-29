@@ -40,10 +40,6 @@ mock.module("./intercom.ts", () => ({
 
 mock.module("./settings.ts", () => ({ loadSettings: () => ({}) }));
 mock.module("./debug.ts", () => ({ debugLog: mock() }));
-mock.module("./switch-role.ts", () => ({
-  formatSwitchRoleResult: (name: string) => `Switched to ${name}`,
-  validateRoleName: () => undefined,
-}));
 
 const { default: piRoles } = await import("./index.ts");
 
@@ -131,15 +127,11 @@ describe("pi-roles transition policy integration", () => {
     expect(mocks.applyRole).not.toHaveBeenCalled();
   });
 
-  it("blocks the switch_role tool before applying the target role", async () => {
+  it("registers no LLM-callable role switch, so transitions stay operator-owned", () => {
     mocks.roles.set("pi-agent", role("pi-agent"));
-    const { tools, ctx } = setup();
-    disposers.push(registerRoleTransitionPolicy(() => ({ allow: false, reason: "Approval required." })));
+    const { tools } = setup();
 
-    const result = await tools.get("switch_role")!.execute("call-1", { roleName: "pi-agent" }, undefined, undefined, ctx) as any;
-
-    expect(result.details).toEqual({ switched: false, reason: "Approval required." });
-    expect(mocks.applyRole).not.toHaveBeenCalled();
+    expect([...tools.keys()]).not.toContain("switch_role");
   });
 
   it("blocks /role --reset before it can discard the guarded session", async () => {

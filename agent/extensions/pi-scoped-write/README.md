@@ -2,7 +2,7 @@
 
 `pi-scoped-write` is a native Pi extension that provides narrow, auditable filesystem mutation capabilities for roles that must produce artefacts without receiving general implementation authority.
 
-It owns `write_debug_probe`, `edit_debug_probe`, `write_report`, `edit_report`, and `artifacts_purge`. Plan tools (`session_plan`, `write_plan`, `edit_plan`, and `/show-saved-plans`) belong to `extensions/plan-workflow/`. The throwaway debug-probe adapter is isolated in `debug-tools.ts`; the integrated `pi-roles` features own no filesystem-mutation tool.
+It owns `write_debug_probe`, `edit_debug_probe`, `write_report`, and `edit_report`, plus the operator-only `/purge-artifacts <runId>` command. Plan tools (`session_plan`, `write_plan`, `edit_plan`, and `/show-saved-plans`) belong to `extensions/plan-workflow/`. The throwaway debug-probe adapter is isolated in `debug-tools.ts`; the integrated `pi-roles` features own no filesystem-mutation tool.
 
 Report attribution prefers the active public `pi-roles` role. In a `pi-subagents` child without an active role, it falls back to the declared `PI_SUBAGENT_CHILD_AGENT`; otherwise it uses the documented neutral identity.
 
@@ -10,4 +10,4 @@ Policies define a root, allowed extensions, permitted operations, size limits, a
 
 The initial adapters expose Markdown/JSON reports, migrate plan writes, and sandbox throwaway debug probes under `.pi/debug/<role>/<session>/`. In-source instrumentation (tagged logs in real source) is deliberately out of scope — use `safe_bash` for that. General source, configuration, and real test-file writes are also out of scope.
 
-Artefact roots can be registered explicitly for run-scoped purge. Purge refuses unsafe run IDs and must be confirmed by its Pi adapter.
+Artefact roots can be registered explicitly for run-scoped purge. Purge refuses unsafe run IDs, requires an interactive confirmation, and is a slash command rather than a tool: the model never receives a schema that deletes artefacts. Audit events record the initiating surface as `command:/purge-artifacts`.

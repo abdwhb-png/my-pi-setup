@@ -42,7 +42,7 @@ test.each([
     const previousPane = process.env.HERDR_PANE_ID;
     process.env.HERDR_ENV = "1";
     process.env.HERDR_PANE_ID = "fixture";
-    writeRole(cwd, "debug", "read, switch_role");
+    writeRole(cwd, "debug", "read");
     writeRole(cwd, "pi-agent");
     writeFileSync(
         join(cwd, ".pi", "settings.json"),
@@ -69,7 +69,7 @@ test.each([
                 roleName,
                 mode: roleName === "debug" ? "set" : "all",
                 toolNames:
-                    roleName === "debug" ? ["read", "switch_role"] : [],
+                    roleName === "debug" ? ["read"] : [],
             });
         });
     };

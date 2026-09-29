@@ -218,7 +218,7 @@ describe("createScopedWriter", () => {
       projectRoot,
       runId: "run-1",
       actor: { agent: "operator", role: "operator", runId: "run-1" },
-      tool: "artifacts_purge",
+      tool: "command:/purge-artifacts",
       registry: roots,
       confirmed: true,
     });

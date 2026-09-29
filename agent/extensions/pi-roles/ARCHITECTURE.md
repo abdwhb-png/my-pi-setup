@@ -51,7 +51,7 @@ Transition policy inputs depend on the structural `RoleTransitionRole` shape `{ 
 
 ## Core lifecycle
 
-`core/index.ts` owns the `--role` flag, `/role`, `switch_role`, message rendering, and session hooks.
+`core/index.ts` owns the `--role` flag, `/role`, message rendering, and session hooks. Role transitions are operator- or feature-owned (`/role`, `plan-auto-switch`); the extension registers no LLM-callable role switch.
 
 1. `session_start` reloads settings and roles, restores persisted state on reload/resume, resolves the selected role, and applies model, thinking, tools, status, and persistence.
 2. `before_agent_start` consumes an unprocessed switch request once, applies the target role, appends its processed marker, and composes the role prompt.

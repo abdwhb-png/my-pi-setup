@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from 'bun:test';
+import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,12 +13,16 @@ afterEach(() => {
     }
 });
 
-test('the scoped-write extension owns debug, report, and purge tools', async () => {
+test('the scoped-write extension owns debug and report tools and purges through a command', async () => {
     const registered = new Map<string, { execute: Function }>();
+    const commands = new Map<string, { handler: Function }>();
     const { default: registerScopedWrite } = await import('./index.ts');
     registerScopedWrite({
         registerTool(tool: { name: string; execute: Function }) {
             registered.set(tool.name, tool);
+        },
+        registerCommand(name: string, command: { handler: Function }) {
+            commands.set(name, command);
         },
     } as unknown as ExtensionAPI);
 
@@ -27,8 +31,8 @@ test('the scoped-write extension owns debug, report, and purge tools', async () 
         'edit_debug_probe',
         'write_report',
         'edit_report',
-        'artifacts_purge',
     ]);
+    expect([...commands.keys()]).toEqual(['purge-artifacts']);
 
     const cwd = mkdtempSync(join(tmpdir(), 'pi-scoped-write-extension-'));
     temporaryDirectories.push(cwd);
@@ -90,6 +94,7 @@ test('report tools attribute a subagent write to its declared child agent', asyn
         registerTool(tool: { name: string; execute: Function }) {
             registered.set(tool.name, tool);
         },
+        registerCommand() {},
     } as unknown as ExtensionAPI);
     const cwd = mkdtempSync(join(tmpdir(), 'pi-scoped-write-subagent-'));
     temporaryDirectories.push(cwd);

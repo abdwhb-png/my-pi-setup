@@ -27,7 +27,7 @@ function writeRole(directory: string, name: string, handoffGuard?: string): void
             "---",
             `name: ${name}`,
             `description: ${name} fixture`,
-            "tools: read, write_plan, submit_plan, switch_role",
+            "tools: read, write_plan, submit_plan",
             ...(handoffGuard ? [`handoffGuard: ${handoffGuard}`] : []),
             "---",
             `# ${name}`,
@@ -101,7 +101,7 @@ afterEach(async () => {
 });
 
 describe("plan submission guard real Pi lifecycle", () => {
-    it("blocks switch_role until a revision is approved", async () => {
+    it("blocks leaving the planning role until a revision is approved", async () => {
         const cwd = createProject();
         const previousRole = process.env.PI_ROLE;
         process.env.PI_ROLE = "plan";
@@ -118,16 +118,14 @@ describe("plan submission guard real Pi lifecycle", () => {
         sessions.push(session!);
 
         await session!.run(
-            when("Write then try to leave planning.", [
+            when("Write a plan draft.", [
                 calls("write_plan", { path: "feature.md", content: "# Draft" }),
-                calls("switch_role", { roleName: "pi-agent" }),
                 says("I must submit or abandon the plan first."),
             ]),
         );
+        await session!.session.prompt("/role pi-agent");
+        await session!.session.agent.waitForIdle();
 
-        expect(session!.events.toolResultsFor("switch_role")[0]?.text).toContain(
-            "An approved plan revision is required before leaving this planning role.",
-        );
         expect(entries(session!).findLast((entry) => entry.customType === ACTIVE_ROLE_ENTRY_TYPE)?.data).toMatchObject({
             name: "plan",
         });

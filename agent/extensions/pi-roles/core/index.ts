@@ -29,7 +29,6 @@ export {
  * in the session log.
  */
 
-import { Type } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ExtensionCommandContext,
@@ -62,7 +61,6 @@ import {
     type SystemPromptMode,
 } from "./schemas.ts";
 import { loadSettings } from "./settings.ts";
-import { formatSwitchRoleResult, validateRoleName } from "./switch-role.ts";
 import { refreshRoleWidget, removeRoleWidget } from "./widget.ts";
 
 const FLAG_NAME = "role";
@@ -293,69 +291,6 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
                 silent: false,
                 transition: { kind: "manual" },
             });
-        },
-    });
-
-    // ---------------------------------------------------------------- switch_role tool
-    // LLM-callable counterpart to `/role <name>`. Resolves and applies the
-    // named role through the same `applyResolved` path as the command, so
-    // model/thinking/tools/session-name are mutated identically. Unlike the
-    // command, the tool does NOT support `--reset` — conversation history is
-    // preserved so the LLM retains context across the handoff (e.g. from
-    // planning to implementation).
-    pi.registerTool({
-        name: "switch_role",
-        label: "Switch Role",
-        description:
-            "Switch the active session role programmatically. The named role must exist " +
-            "in ~/.pi/agent/roles/ or .pi/roles/. Applies the role's model, thinking level, " +
-            "tool set, and system prompt — same as the /role command but callable by the LLM. " +
-            "Conversation history is preserved (no reset). Use this to hand off between " +
-            "specialized roles (e.g. plan → pi-agent after plan approval).",
-        parameters: Type.Object({
-            roleName: Type.String({
-                description:
-                    "Name of the role to switch to. Must match a role file name (without .md). " +
-                    "Use /role list to discover available roles.",
-            }),
-        }),
-        async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-            const roleName =
-                (params as { roleName?: string })?.roleName?.trim() ?? "";
-
-            // Validate against discovered roles (refresh first so newly added
-            // role files are visible without an explicit /role reload).
-            refreshFromDisk(ctx.cwd);
-            const validationError = validateRoleName(roleName, state.roles);
-            if (validationError) {
-                return {
-                    content: [
-                        { type: "text", text: `Error: ${validationError}` },
-                    ],
-                    details: { switched: false },
-                };
-            }
-
-            // Apply through the shared path. Silent=true because the tool result
-            // text already communicates the switch; a TUI banner would be noise.
-            const outcome = await applyResolved(pi, ctx, state, roleName, {
-                silent: true,
-                transition: { kind: "manual" },
-            });
-            if (!outcome.applied) {
-                return {
-                    content: [
-                        { type: "text", text: `Error: ${outcome.reason}` },
-                    ],
-                    details: { switched: false, reason: outcome.reason },
-                };
-            }
-
-            const text = formatSwitchRoleResult(roleName, []);
-            return {
-                content: [{ type: "text", text }],
-                details: { switched: true, roleName },
-            };
         },
     });
 

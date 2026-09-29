@@ -46,15 +46,18 @@ Discovery order is project, user, then built-in:
 
 The first role with a given name wins. The integrated extension ships `pi-agent` and `role-assistant`.
 
-## Commands and tool
+## Commands
 
 - `/role` or `/role list`: list discovered roles.
 - `/role current`: show the active role.
 - `/role reload`: reload role files and reapply the current role.
 - `/role <name>`: switch without clearing conversation history.
 - `/role <name> --reset`: start a new session under the role.
-- `switch_role`: LLM-callable equivalent of `/role <name>`.
 - `/abandon-plan`: feature-owned escape from a guarded plan workflow.
+
+Role transitions are operator- or feature-owned. There is no LLM-callable role
+switch: the model never rewrites its own model, thinking level, tool policy, or
+system prompt.
 
 Startup precedence is pending reset, `--role`, `PI_ROLE`, `settings.json["pi-roles"].defaultRole`, then built-in `pi-agent`.
 
