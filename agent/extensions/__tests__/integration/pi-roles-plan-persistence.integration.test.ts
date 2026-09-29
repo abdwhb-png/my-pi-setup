@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
-    calls,
     createTestSession,
     says,
     type TestSession,
@@ -10,11 +9,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publicExtensionEntrypoints } from "./public-extension-session.ts";
-
-const PLAN_PERSISTENCE_FOLLOW_UP =
-    "[session-plan-persistence-guard] Do not finalize yet. " +
-    'Call session_plan now with action="save", a stable topic, and the complete Markdown plan. ' +
-    "After the save succeeds, present that plan to the user.";
 
 const sessions: TestSession[] = [];
 const directories: string[] = [];
@@ -56,7 +50,7 @@ afterEach(() => {
 });
 
 describe("session plan persistence guard real Pi lifecycle", () => {
-    it("withholds an unpersisted answer, forces real session_plan save, then allows final plan", async () => {
+    it("delivers an unpersisted answer verbatim while still gating the handoff", async () => {
         const cwd = createProject();
         const previousRole = process.env.PI_ROLE;
         process.env.PI_ROLE = "quick-planner";
@@ -73,14 +67,8 @@ describe("session plan persistence guard real Pi lifecycle", () => {
         sessions.push(session!);
 
         await session!.run(
-            when("Create a quick plan.", [says("unpersisted runtime plan")]),
-            when(PLAN_PERSISTENCE_FOLLOW_UP, [
-                calls("session_plan", {
-                    action: "save",
-                    topic: "runtime-quick-plan",
-                    content: "# Runtime quick plan\n\nPersisted.",
-                }),
-                says("persisted runtime plan"),
+            when("Stop planning and explain why.", [
+                says("unpersisted runtime explanation"),
             ]),
         );
 
@@ -90,21 +78,77 @@ describe("session plan persistence guard real Pi lifecycle", () => {
             .filter((part) => part.type === "text")
             .map((part) => part.text)
             .join("\n");
-        expect(assistantText).toContain("session-plan-persistence-guard");
-        expect(assistantText).not.toContain("unpersisted runtime plan");
-        expect(assistantText).toContain("persisted runtime plan");
-        expect(session!.events.toolResultsFor("session_plan")[0]).toMatchObject({
-            isError: false,
-        });
+        expect(assistantText).toContain("unpersisted runtime explanation");
+        expect(assistantText).not.toContain("session-plan-persistence-guard");
+        expect(session!.events.toolResultsFor("session_plan")).toHaveLength(0);
+    });
+
+    it("refuses to leave the planning role until a plan is saved", async () => {
+        const cwd = createProject();
+        const previousRole = process.env.PI_ROLE;
+        process.env.PI_ROLE = "quick-planner";
+        let session: TestSession;
+        try {
+            session = await createTestSession({
+                cwd,
+                extensions: publicExtensionEntrypoints("pi-roles", "plan-workflow"),
+            });
+        } finally {
+            if (previousRole === undefined) delete process.env.PI_ROLE;
+            else process.env.PI_ROLE = previousRole;
+        }
+        sessions.push(session!);
+
+        await session!.run(
+            when("Create a quick plan.", [says("planning in progress")]),
+        );
+        await session!.session.prompt("/role pi-agent");
+        await session!.session.agent.waitForIdle();
+
         expect(
             session!.session.sessionManager
                 .getEntries()
-                .some(
+                .filter(
                     (entry) =>
                         entry.type === "custom" &&
-                        entry.customType ===
-                            "session-plan-persistence-guard:saved",
-                ),
-        ).toBe(true);
+                        entry.customType === "pi-roles:active-role",
+                )
+                .at(-1),
+        ).toMatchObject({ data: { name: "quick-planner" } });
+    });
+
+    it("lets /session-plan-abandon release the handoff gate", async () => {
+        const cwd = createProject();
+        const previousRole = process.env.PI_ROLE;
+        process.env.PI_ROLE = "quick-planner";
+        let session: TestSession;
+        try {
+            session = await createTestSession({
+                cwd,
+                systemPrompt: "Custom SYSTEM.md",
+                extensions: publicExtensionEntrypoints("pi-roles", "plan-workflow"),
+            });
+        } finally {
+            if (previousRole === undefined) delete process.env.PI_ROLE;
+            else process.env.PI_ROLE = previousRole;
+        }
+        sessions.push(session!);
+
+        await session!.run(when("Plan a change.", [says("planning")]));
+        await session!.session.prompt("/session-plan-abandon");
+        await session!.session.agent.waitForIdle();
+        await session!.session.prompt("/role pi-agent");
+        await session!.session.agent.waitForIdle();
+
+        expect(
+            session!.session.sessionManager
+                .getEntries()
+                .filter(
+                    (entry) =>
+                        entry.type === "custom" &&
+                        entry.customType === "pi-roles:active-role",
+                )
+                .at(-1),
+        ).toMatchObject({ data: { name: "pi-agent" } });
     });
 });

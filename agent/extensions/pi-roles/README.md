@@ -54,10 +54,13 @@ The first role with a given name wins. The integrated extension ships `pi-agent`
 - `/role <name>`: switch without clearing conversation history.
 - `/role <name> --reset`: start a new session under the role.
 - `/abandon-plan`: feature-owned escape from a guarded plan workflow.
+- `/session-plan-abandon`: release the `session-plan-persistence` guard for the current planning role without saving a plan. Distinct from `/abandon-plan`, which is owned by `plan-workflow` and abandons one tracked plan revision.
 
 Role transitions are operator- or feature-owned. There is no LLM-callable role
 switch: the model never rewrites its own model, thinking level, tool policy, or
 system prompt.
+
+The `session-plan-persistence` guard enforces persistence **before handoff only**. It never withholds, rewrites, or delays an assistant answer, so a planning role asked to stop and explain can answer without first manufacturing a plan. A guarded turn is released by either a successful `session_plan` save or `/session-plan-abandon`.
 
 Startup precedence is pending reset, `--role`, `PI_ROLE`, `settings.json["pi-roles"].defaultRole`, then built-in `pi-agent`.
 

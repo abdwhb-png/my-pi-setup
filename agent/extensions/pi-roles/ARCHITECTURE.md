@@ -71,6 +71,8 @@ Role state is persisted as `pi-roles:active-role`, so a new Jiti extension insta
 
 `extensions/plan-workflow/` owns the plan revision lifecycle and plan-submission transition guard. It registers that guard through the public `_shared/pi-roles/transition-policy.ts` interface; pi-roles core evaluates the policy without importing plan workflow modules.
 
+`session-plan-persistence-guard.ts` gates the handoff boundary only. It registers a transition policy and a `session_plan` success recorder, plus the operator command `/session-plan-abandon`; it registers no `message_end`, `turn_end`, or `before_agent_start` handler, so it cannot withhold or delay an assistant answer. Resolution state is derived from session entries (`…:saved` and `…:abandoned`) rather than in-memory state, so it survives reload.
+
 Feature-owned transition policies use stable `pi-roles.*` keys. Re-registering a named policy replaces its stale handler after reload.
 
 ## Tool visibility

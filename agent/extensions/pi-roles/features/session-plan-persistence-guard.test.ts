@@ -17,37 +17,32 @@ const {
 
 type Handler = (event: any, ctx: any) => any;
 
-const usage = {
-    input: 1,
-    output: 1,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 2,
-    cost: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        total: 0,
-    },
-};
-
-function assistantText(text: string) {
-    return {
-        role: "assistant",
-        content: [{ type: "text", text }],
-        api: "openai-completions",
-        provider: "openai",
-        model: "test-model",
-        usage,
-        stopReason: "stop",
-        timestamp: Date.now(),
+interface CommandContext {
+    cwd: string;
+    hasUI: boolean;
+    ui: {
+        confirm: (title: string, message: string) => Promise<boolean>;
+        notify: (message: string, level: string) => void;
+    };
+    sessionManager: {
+        getSessionId: () => string;
+        getSessionFile: () => undefined;
+        getEntries: () => Array<{
+            type: "custom";
+            customType: string;
+            data: Record<string, unknown>;
+        }>;
     };
 }
 
-function setup() {
+function setup(options: { hasUI?: boolean; confirm?: boolean } = {}) {
     const handlers = new Map<string, Handler>();
+    const commands = new Map<
+        string,
+        { handler: (args: string, ctx: CommandContext) => Promise<void> }
+    >();
     const sentUserMessages: Array<{ content: string; options?: unknown }> = [];
+    const notifications: Array<{ message: string; level: string }> = [];
     const entries: Array<{
         type: "custom";
         customType: string;
@@ -55,6 +50,10 @@ function setup() {
     }> = [];
     const pi = {
         on: (event: string, handler: Handler) => handlers.set(event, handler),
+        registerCommand: (
+            name: string,
+            command: { handler: (args: string, ctx: CommandContext) => Promise<void> },
+        ) => commands.set(name, command),
         sendUserMessage: (content: string, options?: unknown) => {
             sentUserMessages.push({ content, options });
         },
@@ -62,7 +61,15 @@ function setup() {
             entries.push({ type: "custom", customType, data });
         },
     };
-    const ctx = {
+    const ctx: CommandContext = {
+        cwd: "/workspace",
+        hasUI: options.hasUI ?? true,
+        ui: {
+            confirm: async () => options.confirm ?? true,
+            notify: (message: string, level: string) => {
+                notifications.push({ message, level });
+            },
+        },
         sessionManager: {
             getSessionId: () => "session-1",
             getSessionFile: () => undefined,
@@ -71,7 +78,7 @@ function setup() {
     };
 
     registerSessionPlanPersistenceGuard(pi as never);
-    return { ctx, entries, handlers, sentUserMessages };
+    return { ctx, entries, handlers, sentUserMessages, commands, notifications };
 }
 
 describe("session plan persistence guard", () => {
@@ -89,51 +96,40 @@ describe("session plan persistence guard", () => {
         });
     });
 
-    it("withholds final prose and forces session_plan save when current planning turn has no successful save", () => {
-        const { ctx, handlers, sentUserMessages } = setup();
+    it("registers no content-path handlers, so it can never withhold an answer", () => {
+        const { handlers } = setup();
 
-        handlers.get("before_agent_start")!({}, ctx);
-        const result = handlers.get("message_end")!(
-            { message: assistantText("unpersisted plan") },
-            ctx,
-        );
-        handlers.get("turn_end")!({}, ctx);
-
-        expect(result.message.content).toEqual([
-            expect.objectContaining({
-                type: "text",
-                text: expect.stringContaining("session_plan"),
-            }),
-        ]);
-        expect(JSON.stringify(result.message.content)).not.toContain(
-            "unpersisted plan",
-        );
-        expect(sentUserMessages).toEqual([
-            {
-                content: expect.stringContaining("session_plan"),
-                options: { deliverAs: "followUp" },
-            },
-        ]);
+        expect(handlers.has("message_end")).toBe(false);
+        expect(handlers.has("turn_end")).toBe(false);
+        expect(handlers.has("before_agent_start")).toBe(false);
     });
 
-    it("fails closed when lifecycle state is missing after reload", () => {
-        const { ctx, handlers } = setup();
+    it("fails closed on handoff when lifecycle state is missing after reload", () => {
+        const { entries } = setup();
+        entries.push({
+            type: "custom",
+            customType: "pi-roles:active-role",
+            data: { name: "quick-planner", appliedAt: 100 },
+        });
+        const policy = registerRoleTransitionPolicy.mock.calls[0]?.[0];
 
-        const result = handlers.get("message_end")!(
-            { message: assistantText("answer after reload") },
-            ctx,
-        );
-
-        expect(result?.message?.content).toEqual([
-            expect.objectContaining({
-                text: expect.stringContaining("session_plan"),
+        expect(
+            policy({
+                from: {
+                    name: "quick-planner",
+                    handoffGuard: "session-plan-persistence",
+                },
+                to: { name: "pi-agent" },
+                sessionEntries: entries,
             }),
-        ]);
+        ).toEqual({
+            allow: false,
+            reason: expect.stringContaining("session_plan"),
+        });
     });
 
-    it("allows final prose after a successful session_plan save and records durable evidence", () => {
-        const { ctx, entries, handlers, sentUserMessages } = setup();
-        handlers.get("before_agent_start")!({}, ctx);
+    it("records durable evidence on a successful save and allows handoff", () => {
+        const { ctx, entries, handlers } = setup();
 
         handlers.get("tool_result")!(
             {
@@ -148,14 +144,7 @@ describe("session plan persistence guard", () => {
             },
             ctx,
         );
-        const result = handlers.get("message_end")!(
-            { message: assistantText("persisted plan") },
-            ctx,
-        );
-        handlers.get("turn_end")!({}, ctx);
 
-        expect(result).toBeUndefined();
-        expect(sentUserMessages).toEqual([]);
         expect(entries).toEqual([
             {
                 type: "custom",
@@ -197,7 +186,6 @@ describe("session plan persistence guard", () => {
             reason: expect.stringContaining("session_plan"),
         });
 
-        handlers.get("before_agent_start")!({}, ctx);
         handlers.get("tool_result")!(
             {
                 toolName: "session_plan",
@@ -270,13 +258,13 @@ describe("session plan persistence guard", () => {
         ).toEqual({ allow: true });
     });
 
-    it("allows final prose after reload restores a role with a saved plan", () => {
+    it("allows leaving after reload restores a role with a saved plan", () => {
         getActiveRole.mockReturnValue({
             name: "quick-planner",
             path: "/roles/quick-planner.md",
             appliedAt: 200,
         });
-        const { ctx, entries, handlers } = setup();
+        const { entries } = setup();
         entries.push(
             {
                 type: "custom",
@@ -307,15 +295,18 @@ describe("session plan persistence guard", () => {
                 },
             },
         );
-
-        handlers.get("before_agent_start")!({}, ctx);
+        const policy = registerRoleTransitionPolicy.mock.calls[0]?.[0];
 
         expect(
-            handlers.get("message_end")!(
-                { message: assistantText("implementation handoff") },
-                ctx,
-            ),
-        ).toBeUndefined();
+            policy({
+                from: {
+                    name: "quick-planner",
+                    handoffGuard: "session-plan-persistence",
+                },
+                to: { name: "pi-agent" },
+                sessionEntries: entries,
+            }),
+        ).toEqual({ allow: true });
     });
 
     it("requires a new save after leaving and re-entering the planning role", () => {
@@ -359,9 +350,8 @@ describe("session plan persistence guard", () => {
         });
     });
 
-    it("does not accept history, failed saves, or roles without opt-in", () => {
+    it("does not accept history or failed saves as persistence evidence", () => {
         const { ctx, entries, handlers } = setup();
-        handlers.get("before_agent_start")!({}, ctx);
 
         handlers.get("tool_result")!(
             {
@@ -385,20 +375,118 @@ describe("session plan persistence guard", () => {
             ctx,
         );
 
+        const policy = registerRoleTransitionPolicy.mock.calls[0]?.[0];
         expect(
-            handlers.get("message_end")!(
-                { message: assistantText("still unpersisted") },
-                ctx,
-            ),
-        ).toBeDefined();
+            policy({
+                from: {
+                    name: "quick-planner",
+                    handoffGuard: "session-plan-persistence",
+                },
+                to: { name: "pi-agent" },
+                sessionEntries: entries,
+            }),
+        ).toEqual({
+            allow: false,
+            reason: expect.stringContaining("session_plan"),
+        });
         expect(entries).toEqual([]);
+    });
 
+    it("does not engage for roles without the session-plan persistence opt-in", async () => {
         readFrontmatter.mockReturnValue({});
+        const { ctx, entries, commands, notifications } = setup();
+
+        const command = commands.get("session-plan-abandon");
+        if (!command) throw new Error("/session-plan-abandon was not registered");
+        await command.handler("", ctx);
+
+        expect(notifications).toEqual([
+            {
+                message: expect.stringContaining(
+                    "No session-plan persistence guard is active",
+                ),
+                level: "info",
+            },
+        ]);
+        expect(entries).toEqual([]);
         expect(
-            handlers.get("message_end")!(
-                { message: assistantText("ordinary response") },
-                ctx,
-            ),
-        ).toBeUndefined();
+            registerRoleTransitionPolicy.mock.calls[0]?.[0]({
+                from: { name: "quick-planner" },
+                to: { name: "pi-agent" },
+                sessionEntries: entries,
+            }),
+        ).toEqual({ allow: true });
+    });
+
+    it("releases the handoff gate through /session-plan-abandon", async () => {
+        const { ctx, entries, commands, notifications } = setup();
+        entries.push({
+            type: "custom",
+            customType: "pi-roles:active-role",
+            data: { name: "quick-planner", appliedAt: 100 },
+        });
+        const command = commands.get("session-plan-abandon");
+        if (!command) throw new Error("/session-plan-abandon was not registered");
+
+        await command.handler("", ctx);
+
+        expect(entries.slice(1)).toEqual([
+            {
+                type: "custom",
+                customType: "session-plan-persistence-guard:abandoned",
+                data: expect.objectContaining({
+                    role: "quick-planner",
+                    roleAppliedAt: 100,
+                }),
+            },
+        ]);
+        expect(notifications).toEqual([
+            {
+                message: expect.stringContaining("Released"),
+                level: "info",
+            },
+        ]);
+        expect(
+            registerRoleTransitionPolicy.mock.calls[0]?.[0]({
+                from: {
+                    name: "quick-planner",
+                    handoffGuard: "session-plan-persistence",
+                },
+                to: { name: "pi-agent" },
+                sessionEntries: entries,
+            }),
+        ).toEqual({ allow: true });
+    });
+
+    it("requires an interactive confirmation and honours a declined abandon", async () => {
+        const noUi = setup({ hasUI: false });
+        const noUiCommand = noUi.commands.get("session-plan-abandon");
+        if (!noUiCommand)
+            throw new Error("/session-plan-abandon was not registered");
+
+        await expect(noUiCommand.handler("", noUi.ctx)).rejects.toThrow(
+            "requires an interactive confirmation",
+        );
+
+        const declined = setup({ confirm: false });
+        const declinedCommand = declined.commands.get("session-plan-abandon");
+        if (!declinedCommand)
+            throw new Error("/session-plan-abandon was not registered");
+        await declinedCommand.handler("", declined.ctx);
+
+        expect(declined.entries).toEqual([]);
+        expect(
+            registerRoleTransitionPolicy.mock.calls[0]?.[0]({
+                from: {
+                    name: "quick-planner",
+                    handoffGuard: "session-plan-persistence",
+                },
+                to: { name: "pi-agent" },
+                sessionEntries: declined.entries,
+            }),
+        ).toEqual({
+            allow: false,
+            reason: expect.stringContaining("session_plan"),
+        });
     });
 });

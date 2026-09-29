@@ -1,8 +1,7 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
+    ExtensionCommandContext,
     ExtensionContext,
-    MessageEndEvent,
     ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -18,8 +17,8 @@ import {
 
 const HANDOFF_GUARD = "session-plan-persistence";
 const SAVED_ENTRY = "session-plan-persistence-guard:saved";
+const ABANDONED_ENTRY = "session-plan-persistence-guard:abandoned";
 const POLICY_KEY = "pi-roles.session-plan-persistence-guard";
-const INTERVENTION_CAP = 5;
 
 const SuccessfulSaveDetailsSchema = Type.Object({
     action: Type.Literal("save"),
@@ -37,26 +36,25 @@ const ActiveRoleEntrySchema = Type.Object({
     }),
 });
 
-const SavedEntrySchema = Type.Object({
-    type: Type.Literal("custom"),
-    customType: Type.Literal(SAVED_ENTRY),
-    data: Type.Object({
-        role: Type.String({ minLength: 1 }),
-        roleAppliedAt: Type.Number(),
-    }),
+const ResolutionEntryDataSchema = Type.Object({
+    role: Type.String({ minLength: 1 }),
+    roleAppliedAt: Type.Number(),
 });
 
-type GuardState = {
-    saveRequired: boolean;
-    pendingFollowUp: boolean;
-    interventions: number;
-};
-
-function sessionIdentity(ctx: ExtensionContext): string {
-    return (
-        ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId()
-    );
-}
+// A guarded planning turn is resolved by exactly two operator-visible facts:
+// the plan was persisted, or the operator explicitly abandoned planning.
+const ResolutionEntrySchema = Type.Union([
+    Type.Object({
+        type: Type.Literal("custom"),
+        customType: Type.Literal(SAVED_ENTRY),
+        data: ResolutionEntryDataSchema,
+    }),
+    Type.Object({
+        type: Type.Literal("custom"),
+        customType: Type.Literal(ABANDONED_ENTRY),
+        data: ResolutionEntryDataSchema,
+    }),
+]);
 
 function guardedRole(
     ctx: ExtensionContext,
@@ -66,13 +64,6 @@ function guardedRole(
     const frontmatter = readFrontmatter<{ handoffGuard?: string }>(active.path);
     if (frontmatter?.handoffGuard !== HANDOFF_GUARD) return null;
     return { name: active.name, appliedAt: active.appliedAt };
-}
-
-function isFinalAssistantProse(message: AssistantMessage): boolean {
-    if (message.content.some((part) => part.type === "toolCall")) return false;
-    return message.content.some(
-        (part) => part.type === "text" && part.text.trim().length > 0,
-    );
 }
 
 function isSuccessfulPlanSave(event: {
@@ -109,7 +100,7 @@ function activeRoleActivation(
     return null;
 }
 
-function hasCurrentRoleSave(
+function hasCurrentRoleResolution(
     // oxlint-disable-next-line typescript/no-restricted-types -- pi-roles policies expose session entries as unknown.
     entries: readonly unknown[],
     expectedRole: string,
@@ -118,90 +109,46 @@ function hasCurrentRoleSave(
     if (!activation || activation.name !== expectedRole) return false;
 
     const activationTimes = new Set<number>();
-    const savedActivationTimes = new Set<number>();
+    const resolvedActivationTimes = new Set<number>();
     for (let index = entries.length - 1; index >= 0; index -= 1) {
         const entry = entries[index];
         if (Value.Check(ActiveRoleEntrySchema, entry)) {
             if (entry.data.name !== expectedRole) return false;
             activationTimes.add(entry.data.appliedAt);
-            if (savedActivationTimes.has(entry.data.appliedAt)) return true;
+            if (resolvedActivationTimes.has(entry.data.appliedAt)) return true;
             continue;
         }
         if (
-            Value.Check(SavedEntrySchema, entry) &&
+            Value.Check(ResolutionEntrySchema, entry) &&
             entry.data.role === expectedRole
         ) {
-            savedActivationTimes.add(entry.data.roleAppliedAt);
+            resolvedActivationTimes.add(entry.data.roleAppliedAt);
             if (activationTimes.has(entry.data.roleAppliedAt)) return true;
         }
     }
     return false;
 }
 
-function replacementMessage(message: AssistantMessage): AssistantMessage {
-    return {
-        ...message,
-        content: [
-            {
-                type: "text",
-                text: '[session-plan-persistence-guard] Answer withheld: current planning role did not persist its plan. Call session_plan with action="save", complete Markdown content, and a stable topic. Then present the saved plan.',
-            },
-        ],
-    };
-}
-
-export function buildPlanPersistenceFollowUp(): string {
-    return (
-        "[session-plan-persistence-guard] Do not finalize yet. " +
-        'Call session_plan now with action="save", a stable topic, and the complete Markdown plan. ' +
-        "After the save succeeds, present that plan to the user."
-    );
-}
-
 function evaluateTransition(
     input: RoleTransitionPolicyInput,
 ): RoleTransitionDecision {
     if (input.from?.handoffGuard !== HANDOFF_GUARD) return { allow: true };
-    if (hasCurrentRoleSave(input.sessionEntries, input.from.name)) {
+    if (hasCurrentRoleResolution(input.sessionEntries, input.from.name)) {
         return { allow: true };
     }
     return {
         allow: false,
-        reason: "A successful session_plan save is required before leaving this planning role.",
+        reason: "A successful session_plan save or /session-plan-abandon is required before leaving this planning role.",
     };
-}
-
-function requireSave(
-    states: Map<string, GuardState>,
-    ctx: ExtensionContext,
-): void {
-    const role = guardedRole(ctx);
-    if (!role) return;
-    const id = sessionIdentity(ctx);
-    const previous = states.get(id);
-    states.set(id, {
-        saveRequired: !hasCurrentRoleSave(
-            ctx.sessionManager.getEntries(),
-            role.name,
-        ),
-        pendingFollowUp: false,
-        interventions: previous?.interventions ?? 0,
-    });
 }
 
 function recordSave(
     pi: ExtensionAPI,
-    states: Map<string, GuardState>,
     event: ToolResultEvent,
     ctx: ExtensionContext,
 ): void {
     const role = guardedRole(ctx);
     if (!role || !isSuccessfulPlanSave(event)) return;
-    states.set(sessionIdentity(ctx), {
-        saveRequired: false,
-        pendingFollowUp: false,
-        interventions: 0,
-    });
     pi.appendEntry(SAVED_ENTRY, {
         role: role.name,
         roleAppliedAt: role.appliedAt,
@@ -211,57 +158,47 @@ function recordSave(
     });
 }
 
-function withholdUnpersistedAnswer(
-    states: Map<string, GuardState>,
-    event: MessageEndEvent,
-    ctx: ExtensionContext,
-): { message: AssistantMessage } | undefined {
-    if (!guardedRole(ctx) || event.message.role !== "assistant")
-        return undefined;
-    if (!isFinalAssistantProse(event.message)) return undefined;
-    const id = sessionIdentity(ctx);
-    const state = states.get(id) ?? {
-        saveRequired: true,
-        pendingFollowUp: false,
-        interventions: 0,
-    };
-    states.set(id, state);
-    if (!state.saveRequired || state.interventions >= INTERVENTION_CAP) {
-        return undefined;
-    }
-    state.interventions += 1;
-    state.pendingFollowUp = true;
-    return { message: replacementMessage(event.message) };
-}
-
-function consumePendingFollowUp(
-    states: Map<string, GuardState>,
-    ctx: ExtensionContext,
-): boolean {
-    if (!guardedRole(ctx)) return false;
-    const state = states.get(sessionIdentity(ctx));
-    if (!state?.pendingFollowUp) return false;
-    state.pendingFollowUp = false;
-    return true;
-}
-
 export default function registerSessionPlanPersistenceGuard(
     pi: ExtensionAPI,
 ): void {
-    const states = new Map<string, GuardState>();
-    const sendUserMessage = pi.sendUserMessage.bind(pi);
-
     registerRoleTransitionPolicy(evaluateTransition, POLICY_KEY);
-    pi.on("before_agent_start", (_event, ctx) => requireSave(states, ctx));
-    pi.on("tool_result", (event, ctx) => recordSave(pi, states, event, ctx));
-    pi.on("message_end", (event, ctx) =>
-        withholdUnpersistedAnswer(states, event, ctx),
-    );
-    pi.on("turn_end", (_event, ctx) => {
-        if (!consumePendingFollowUp(states, ctx)) return;
-        sendUserMessage(buildPlanPersistenceFollowUp(), {
-            deliverAs: "followUp",
-        });
+
+    // This guard owns the handoff boundary only. It never withholds, rewrites,
+    // or delays an assistant answer: a planning role that is asked to stop and
+    // explain must be able to answer without first manufacturing a plan.
+    pi.on("tool_result", (event, ctx) => recordSave(pi, event, ctx));
+
+    pi.registerCommand("session-plan-abandon", {
+        description:
+            "Release the session-plan persistence guard for the current planning role without saving a plan. /session-plan-abandon",
+        handler: async (_args, ctx: ExtensionCommandContext) => {
+            const role = guardedRole(ctx);
+            if (!role) {
+                ctx.ui.notify(
+                    "No session-plan persistence guard is active.",
+                    "info",
+                );
+                return;
+            }
+            if (!ctx.hasUI) {
+                throw new Error(
+                    "Abandoning the session plan requires an interactive confirmation.",
+                );
+            }
+            const confirmed = await ctx.ui.confirm(
+                "Abandon planning",
+                `Release the plan-persistence guard for "${role.name}"? Saved plans stay on disk.`,
+            );
+            if (!confirmed) return;
+            pi.appendEntry(ABANDONED_ENTRY, {
+                role: role.name,
+                roleAppliedAt: role.appliedAt,
+                timestamp: Date.now(),
+            });
+            ctx.ui.notify(
+                `Released the plan-persistence guard for "${role.name}".`,
+                "info",
+            );
+        },
     });
-    pi.on("session_shutdown", () => states.clear());
 }
