@@ -109,17 +109,45 @@ async function writeRemoteFile(
  * resolution happens in the extension's tool wrappers, never in the pi tool
  * factory `cwd`, because pi resolves paths as `ctx?.cwd || cwd`.
  */
+/**
+ * `expectedPath` is the absolute path this extension resolved. pi re-resolves
+ * the path against its LOCAL cwd and then probes the LOCAL filesystem for
+ * macOS AM/PM, NFD, and curly-quote variants, so the path that reaches these
+ * operations can differ from the one that was asked for. A local file must
+ * never decide which remote file gets read.
+ */
 export function createRemoteReadOps(
     target: ActiveSshTarget,
+    expectedPath: string,
     options: SshExecOptions = {},
 ): ReadOperations {
+    const assertUnchanged = (path: string) => {
+        if (path !== expectedPath) {
+            throw new Error(
+                `Refusing to read ${JSON.stringify(path)}: pi resolved the requested path to it, but the SSH extension resolved ${JSON.stringify(expectedPath)}. A local file would otherwise choose the remote file. Pass the path pi's local probing would substitute as the request instead.`,
+            );
+        }
+    };
     return {
-        readFile: (absolutePath) =>
-            readRemoteFile(target.remote, absolutePath, options),
-        access: (absolutePath) =>
-            assertRemoteAccess(target.remote, absolutePath, READABLE, options),
-        detectImageMimeType: async (absolutePath) =>
-            imageMimeType(absolutePath),
+        // Async so a rejected path surfaces as a rejected promise rather than a
+        // synchronous throw, matching what pi's operations contract expects.
+        readFile: async (absolutePath) => {
+            assertUnchanged(absolutePath);
+            return readRemoteFile(target.remote, absolutePath, options);
+        },
+        access: async (absolutePath) => {
+            assertUnchanged(absolutePath);
+            return assertRemoteAccess(
+                target.remote,
+                absolutePath,
+                READABLE,
+                options,
+            );
+        },
+        detectImageMimeType: async (absolutePath) => {
+            assertUnchanged(absolutePath);
+            return imageMimeType(absolutePath);
+        },
     };
 }
 
@@ -168,6 +196,27 @@ export function createRemoteEditOps(
     };
 }
 
+/** pi's own ceiling, so an oversized timeout cannot silently lose its timer. */
+const MAX_TIMEOUT_SECONDS = 2_147_483.647;
+
+/**
+ * pi enforces the timeout contract inside its LOCAL shell operations
+ * (`bash.js`, `resolveTimeoutMs`), which this extension replaces. Without the
+ * same check a negative or oversized timeout skips the timer entirely, so the
+ * remote command would run with no bound at all.
+ */
+function assertValidTimeout(timeout: number | undefined): void {
+    if (timeout === undefined) return;
+    if (!Number.isFinite(timeout) || timeout <= 0) {
+        throw new Error("Invalid timeout: must be a finite number of seconds");
+    }
+    if (timeout > MAX_TIMEOUT_SECONDS) {
+        throw new Error(
+            `Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`,
+        );
+    }
+}
+
 export function createRemoteBashOps(
     target: ActiveSshTarget,
     options: SshExecOptions = {},
@@ -181,6 +230,7 @@ export function createRemoteBashOps(
          * prepends the remote working directory.
          */
         exec: async (command, _cwd, { onData, signal, timeout }) => {
+            assertValidTimeout(timeout);
             const script = `cd ${shellQuote(target.remoteCwd)}\n${command}\n`;
             const result = await sshExec(target.remote, "exec bash -se", {
                 spawnFn: options.spawnFn,

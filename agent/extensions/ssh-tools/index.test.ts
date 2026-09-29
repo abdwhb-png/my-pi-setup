@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { TestHooks, mountPolicy } from "../_shared/testing/tool-policy-fixture.ts";
 
 const LOCAL_CWD = "/home/abdwhb/projects/cryptoLoan/crypto-vault";
@@ -153,6 +156,40 @@ describe("ssh-tools extension", () => {
             ).rejects.toThrow(
                 "outside the active SSH working directory /home/dev",
             );
+        },
+        LOAD_BUDGET_MS,
+    );
+
+    it(
+        "refuses a read whose path pi's local probing changed",
+        async () => {
+            // pi rewrites " AM." to a narrow no-break space and, when THAT file
+            // exists locally, hands the operations the substituted path. This
+            // drives the real pi read factory, so it proves the guard is wired
+            // and does not depend on the extension's own resolution alone.
+            const dir = mkdtempSync(join(tmpdir(), "pi-ssh-local-"));
+            writeFileSync(join(dir, "shot\u202FAM.png"), "local");
+            try {
+                const harness = mountExtension();
+                await activateFixture(harness);
+                await harness.commands.get("ssh").handler(
+                    "fixture:/home/dev",
+                    harness.ctx,
+                );
+                const read = harness.tools.get("ssh_read");
+                // A local file must never choose which remote file gets read.
+                await expect(
+                    read?.execute(
+                        "1",
+                        { path: join(dir, "shot AM.png") },
+                        undefined,
+                        undefined,
+                        {},
+                    ),
+                ).rejects.toThrow("Refusing to read");
+            } finally {
+                rmSync(dir, { recursive: true, force: true });
+            }
         },
         LOAD_BUDGET_MS,
     );

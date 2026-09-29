@@ -154,6 +154,28 @@ describe("resolveRemoteCwd", () => {
         ).resolves.toBe("/repo");
     });
 
+    it("canonicalizes dot segments in an explicit working directory", async () => {
+        // "/repo/." would otherwise become the containment base, so a relative
+        // path would resolve to "/repo/file" and fail the "/repo/." prefix test.
+        await expect(
+            resolveRemoteCwd({
+                name: "devlab",
+                remote: "devlab",
+                cwd: "/repo/.",
+            }),
+        ).resolves.toBe("/repo");
+    });
+
+    it("canonicalizes a redundant parent segment in an explicit working directory", async () => {
+        await expect(
+            resolveRemoteCwd({
+                name: "devlab",
+                remote: "devlab",
+                cwd: "/repo/sub/..",
+            }),
+        ).resolves.toBe("/repo");
+    });
+
     it("rejects a relative explicit working directory", async () => {
         // A relative remote cwd would make every relative path resolve against
         // the local session directory, which is the bug this extension exists to

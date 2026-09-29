@@ -112,6 +112,59 @@ describe("interrupted write reporting", () => {
 });
 
 describe("createRemoteBashOps", () => {
+    it("rejects a non-positive timeout the way pi does", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteBashOps(target, { spawnFn: harness.launch });
+        const outcome = ops.exec("sleep 600", LOCAL_CWD, {
+            onData: noData,
+            timeout: -1,
+        });
+        // pi enforces this inside the LOCAL shell operations, which this
+        // extension replaces. Validation must reject before spawning, which
+        // also keeps this test from awaiting a call that never returns.
+        expect(harness.calls).toHaveLength(0);
+        await expect(outcome).rejects.toThrow(
+            "Invalid timeout: must be a finite number of seconds",
+        );
+    });
+
+    it("rejects a zero timeout", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteBashOps(target, { spawnFn: harness.launch });
+        const outcome = ops.exec("sleep 600", LOCAL_CWD, {
+            onData: noData,
+            timeout: 0,
+        });
+        expect(harness.calls).toHaveLength(0);
+        await expect(outcome).rejects.toThrow(
+            "Invalid timeout: must be a finite number of seconds",
+        );
+    });
+
+    it("rejects a non-finite timeout", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteBashOps(target, { spawnFn: harness.launch });
+        const outcome = ops.exec("sleep 600", LOCAL_CWD, {
+            onData: noData,
+            timeout: Number.POSITIVE_INFINITY,
+        });
+        expect(harness.calls).toHaveLength(0);
+        await expect(outcome).rejects.toThrow(
+            "Invalid timeout: must be a finite number of seconds",
+        );
+    });
+
+    it("rejects a timeout beyond the timer range", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteBashOps(target, { spawnFn: harness.launch });
+        const outcome = ops.exec("sleep 600", LOCAL_CWD, {
+            onData: noData,
+            timeout: 3_000_000,
+        });
+        expect(harness.calls).toHaveLength(0);
+        await expect(outcome).rejects.toThrow("Invalid timeout: maximum is");
+    });
+
     it("changes into the remote working directory, not the local one", async () => {
         const harness = fakeLaunch();
         const ops = createRemoteBashOps(target, { spawnFn: harness.launch });
@@ -215,9 +268,50 @@ describe("createRemoteBashOps", () => {
 });
 
 describe("createRemoteReadOps", () => {
+    it("refuses a path pi substituted from the local filesystem", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteReadOps(target, "/home/dev/shot.png", {
+            spawnFn: harness.launch,
+        });
+        // pi resolves the path against its LOCAL cwd and then probes the local
+        // filesystem for macOS AM/PM, NFD, and curly-quote variants. A local
+        // file can therefore become the path that reaches the remote, which
+        // would read a file the extension never resolved.
+        await expect(
+            ops.readFile("/home/dev/shot\u202FAM.png"),
+        ).rejects.toThrow("Refusing to read");
+        // The guard must run before any ssh I/O.
+        expect(harness.calls).toHaveLength(0);
+    });
+
+    it("refuses a substituted path on the access check too", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteReadOps(target, "/home/dev/app.conf", {
+            spawnFn: harness.launch,
+        });
+        await expect(ops.access("/home/dev/app’conf")).rejects.toThrow(
+            "Refusing to read",
+        );
+        expect(harness.calls).toHaveLength(0);
+    });
+
+    it("reads the resolved path unchanged", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteReadOps(target, "/home/dev/ufw.conf", {
+            spawnFn: harness.launch,
+        });
+        const pending = ops.readFile("/home/dev/ufw.conf");
+        expect(commandOf(harness)).toBe("cat '/home/dev/ufw.conf'");
+        harness.process.emitStdout("rules\n");
+        harness.process.emitClose(0);
+        expect((await pending).toString()).toBe("rules\n");
+    });
+
     it("reads a remote file with cat", async () => {
         const harness = fakeLaunch();
-        const ops = createRemoteReadOps(target, { spawnFn: harness.launch });
+        const ops = createRemoteReadOps(target, "/home/dev/ufw.conf", {
+            spawnFn: harness.launch,
+        });
         const pending = ops.readFile("/home/dev/ufw.conf");
         expect(commandOf(harness)).toBe("cat '/home/dev/ufw.conf'");
         harness.process.emitStdout("ENABLED=yes");
@@ -227,7 +321,9 @@ describe("createRemoteReadOps", () => {
 
     it("quotes a path containing a single quote", async () => {
         const harness = fakeLaunch();
-        const ops = createRemoteReadOps(target, { spawnFn: harness.launch });
+        const ops = createRemoteReadOps(target, "/home/dev/it's.conf", {
+            spawnFn: harness.launch,
+        });
         const pending = ops.readFile("/home/dev/it's.conf");
         expect(commandOf(harness)).toBe(`cat '/home/dev/it'"'"'s.conf'`);
         harness.process.emitClose(0);
@@ -236,7 +332,9 @@ describe("createRemoteReadOps", () => {
 
     it("reports a missing remote file by name and host", async () => {
         const harness = fakeLaunch();
-        const ops = createRemoteReadOps(target, { spawnFn: harness.launch });
+        const ops = createRemoteReadOps(target, "/home/dev/gone.conf", {
+            spawnFn: harness.launch,
+        });
         const pending = ops.access("/home/dev/gone.conf");
         expect(commandOf(harness)).toContain("[ -e '/home/dev/gone.conf' ]");
         harness.process.emitStdout("NOENT");
@@ -248,7 +346,9 @@ describe("createRemoteReadOps", () => {
 
     it("distinguishes an unreadable file from a missing one", async () => {
         const harness = fakeLaunch();
-        const ops = createRemoteReadOps(target, { spawnFn: harness.launch });
+        const ops = createRemoteReadOps(target, "/etc/shadow", {
+            spawnFn: harness.launch,
+        });
         const pending = ops.access("/etc/shadow");
         harness.process.emitStdout("NOACCESS");
         harness.process.emitClose(0);
@@ -258,11 +358,13 @@ describe("createRemoteReadOps", () => {
     });
 
     it("detects image types by extension without touching the host", async () => {
-        const ops = createRemoteReadOps(target);
-        expect(await ops.detectImageMimeType?.("/home/dev/a.png")).toBe(
+        // One pinned path per ops, since the guard rejects anything else.
+        const image = createRemoteReadOps(target, "/home/dev/a.png");
+        expect(await image.detectImageMimeType?.("/home/dev/a.png")).toBe(
             "image/png",
         );
-        expect(await ops.detectImageMimeType?.("/home/dev/a.txt")).toBeNull();
+        const text = createRemoteReadOps(target, "/home/dev/a.txt");
+        expect(await text.detectImageMimeType?.("/home/dev/a.txt")).toBeNull();
     });
 });
 
@@ -381,7 +483,9 @@ describe("createRemoteEditOps", () => {
 
     it("does not probe for links on the read path, where following one is fine", async () => {
         const harness = fakeLaunch();
-        const ops = createRemoteReadOps(target, { spawnFn: harness.launch });
+        const ops = createRemoteReadOps(target, "/home/dev/link.conf", {
+            spawnFn: harness.launch,
+        });
         const pending = ops.access("/home/dev/link.conf");
         expect(commandOf(harness)).not.toContain("[ -L ");
         harness.process.emitStdout("OK");

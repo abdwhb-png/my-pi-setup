@@ -37,7 +37,7 @@ export function normalizeRemoteDir(path: string): string {
 }
 
 /** Collapse duplicate separators and resolve `.` and `..` segments. */
-function normalizeSegments(path: string): string {
+export function normalizeRemotePath(path: string): string {
     const absolute = path.startsWith("/");
     const resolved: string[] = [];
     for (const segment of path.split("/")) {
@@ -72,7 +72,7 @@ export function assertInsideRemoteCwd(path: string, remoteCwd: string): string {
     const base = normalizeRemoteDir(remoteCwd);
     // Resolve `..` before the prefix test. Without this, "/home/dev/../etc/x"
     // passes a naive startsWith check and pi then normalizes it to "/etc/x".
-    const target = normalizeSegments(path);
+    const target = normalizeRemotePath(path);
     if (base === "/" || target === base || target.startsWith(`${base}/`)) {
         return target;
     }
@@ -99,12 +99,12 @@ export function resolveRemotePath(path: string, remoteCwd: string): string {
         );
     }
     if (path.startsWith("/")) {
-        return normalizeSegments(path);
+        return normalizeRemotePath(path);
     }
     if (base === "/") {
-        return normalizeSegments(`/${path}`);
+        return normalizeRemotePath(`/${path}`);
     }
-    return assertInsideRemoteCwd(normalizeSegments(`${base}/${path}`), base);
+    return assertInsideRemoteCwd(normalizeRemotePath(`${base}/${path}`), base);
 }
 
 /**

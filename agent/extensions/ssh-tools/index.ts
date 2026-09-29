@@ -115,16 +115,26 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         parameters: readBase.parameters,
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             const target = requireActiveTarget();
+            // Resolve the path here, then pin that exact result. pi re-resolves
+            // it against its LOCAL cwd and probes the LOCAL filesystem for
+            // macOS AM/PM, NFD, and curly-quote variants, so without pinning a
+            // local file could decide which remote file gets read.
+            const expectedPath = resolveRemotePath(
+                params.path,
+                target.remoteCwd,
+            );
             const tool = createReadToolDefinition(target.remoteCwd, {
                 // The signal is threaded in so an aborted tool call tears down
                 // the ssh child instead of leaving it running.
-                operations: createRemoteReadOps(target, { signal }),
+                operations: createRemoteReadOps(target, expectedPath, {
+                    signal,
+                }),
             });
             return tool.execute(
                 toolCallId,
                 {
                     ...params,
-                    path: resolveRemotePath(params.path, target.remoteCwd),
+                    path: expectedPath,
                 },
                 signal,
                 onUpdate,

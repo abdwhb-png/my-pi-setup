@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { normalizeRemoteDir } from "./remote-path.ts";
+import { normalizeRemotePath } from "./remote-path.ts";
 import { sshOk } from "./transport.ts";
 
 /** A `/ssh` argument before the remote working directory is resolved. */
@@ -131,7 +131,7 @@ export async function resolveRemoteCwd(profile: SshProfile): Promise<string> {
                 `Remote working directory must be an absolute path, but "${explicit}" is relative. Use /ssh ${profile.name}:/absolute/path`,
             );
         }
-        return normalizeRemoteDir(explicit);
+        return normalizeRemotePath(explicit);
     }
     const reported = await sshOk(profile.remote, "pwd");
     const pwd = reported.toString("utf8").trim();
@@ -140,5 +140,5 @@ export async function resolveRemoteCwd(profile: SshProfile): Promise<string> {
             `Remote working directory reported by ${profile.remote} was ${JSON.stringify(pwd)}, which is not an absolute path.`,
         );
     }
-    return normalizeRemoteDir(pwd);
+    return normalizeRemotePath(pwd);
 }
