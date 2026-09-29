@@ -128,9 +128,10 @@ Unique temp files stop one writer from corrupting another. They do not prevent a
 - an already-aborted call never spawns anything
 - a broken stdin pipe (`EPIPE` during a large write) rejects the tool call instead of raising an uncaught stream error
 - backpressure is honoured, so a large payload is not truncated by ending stdin too early
-- abort and timeout escalate `SIGTERM` → `SIGKILL` after a grace period
+- abort, timeout, and exceeding the data cap escalate `SIGTERM` → `SIGKILL` after a grace period, tracked on process closure rather than on the tool call settling, so a child that ignores `SIGTERM` still dies
 - **Killing the local ssh client does not guarantee the remote command dies.** A detached remote process can outlive the tool call. The extension does not claim otherwise.
-- diagnostic output (streaming `ssh_bash` output, and stderr used in error messages) is capped at 1 MiB in memory; every byte still streams to the consumer
+- streaming `ssh_bash` output retained in memory for an error message is capped at 1 MiB; every byte still streams to the consumer
+- **stderr** is capped at 64 KiB in memory, in every mode including data-returning calls. It gets its own budget rather than sharing stdout's, because a data call keeps all of stdout and must not let a chatty or hostile remote grow local memory without bound
 - a data-returning call such as `ssh_read` is capped at 16 MiB and **rejected** if exceeded, never silently truncated — a shortened file would look like a successful read of different content
 
 An `ssh_bash` exit code of 255 is reported as an SSH transport, host-key, or authentication failure with the remote output attached. A remote command that itself exits 255 is indistinguishable from that, so the message says so rather than guessing.
