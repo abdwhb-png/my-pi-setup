@@ -43,6 +43,8 @@ You can always bypass the picker and type a host manually:
 
 That means the package still works even if you do not use `~/.ssh/config`.
 
+A target that starts with `-`, or that carries a dash after `user@`, is rejected. It reaches `ssh` as a single argument with no shell, so metacharacters are inert, but ssh reads a leading dash as an **option** rather than a host. `-oProxyCommand=<cmd>` is the dangerous one: it runs a local command during connection. Bracketed IPv6 literals (`[2001:db8::1]`) are supported, including with a working directory (`[2001:db8::1]:/repo`).
+
 ## How host selection works
 
 The picker reads `Host ...` aliases from your local `~/.ssh/config`.

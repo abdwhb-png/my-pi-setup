@@ -17,7 +17,6 @@ describe("normalizeTargetArg", () => {
             remote: "devlab",
         });
     });
-
     it("trims surrounding whitespace before matching", () => {
         expect(normalizeTargetArg("  devlab  ", profiles).remote).toBe("devlab");
     });
@@ -39,6 +38,88 @@ describe("normalizeTargetArg", () => {
 
     it("prefers a known profile over colon splitting for a bare alias", () => {
         expect(normalizeTargetArg("devlab", profiles).cwd).toBeUndefined();
+    });
+});
+
+describe("option-shaped SSH destinations", () => {
+    // The target reaches spawn("ssh", [remote, command]) with no shell, so
+    // metacharacters are inert, but a leading dash makes ssh read it as an
+    // option rather than a host. -oProxyCommand is the dangerous one: it runs
+    // a local command during connection.
+    const hostile = [
+        "-oProxyCommand=touch /tmp/pwned",
+        "-oProxyCommand=id",
+        "-F/tmp/evil-config",
+        "-Jattacker:22",
+        "-Wattacker:22",
+        "-",
+    ];
+
+    for (const arg of hostile) {
+        it(`rejects ${JSON.stringify(arg)}`, () => {
+            expect(() => normalizeTargetArg(arg, [])).toThrow("option");
+        });
+    }
+
+    it("rejects a whole destination that starts with a dash even with a valid host part", () => {
+        // ssh sees one argv string, so "-oProxyCommand=id@host" is an option
+        // even though everything after the @ looks like a real host.
+        expect(() => normalizeTargetArg("-oProxyCommand=id@host", [])).toThrow(
+            "option",
+        );
+    });
+
+    it("rejects a dash smuggled in the host part after user@", () => {
+        expect(() => normalizeTargetArg("user@-oProxyCommand=id", [])).toThrow(
+            "option",
+        );
+    });
+
+    it("rejects an option smuggled after a colon-separated working directory", () => {
+        expect(() => normalizeTargetArg("-oProxyCommand=id:/repo", [])).toThrow(
+            "option",
+        );
+    });
+
+    it("rejects an option-shaped target even when it matches a profile", () => {
+        const hostileProfile: SshProfile[] = [
+            { name: "-oProxyCommand=id", remote: "-oProxyCommand=id" },
+        ];
+        expect(() =>
+            normalizeTargetArg("-oProxyCommand=id", hostileProfile),
+        ).toThrow("option");
+    });
+
+    it("still accepts an ordinary bracketed IPv6 destination", () => {
+        expect(normalizeTargetArg("[2001:db8::1]", []).remote).toBe(
+            "[2001:db8::1]",
+        );
+    });
+
+    it("still accepts a bracketed IPv6 destination with a working directory", () => {
+        expect(normalizeTargetArg("[2001:db8::1]:/repo", [])).toEqual({
+            name: "[2001:db8::1]:/repo",
+            remote: "[2001:db8::1]",
+            cwd: "/repo",
+        });
+    });
+
+    it("still accepts a user@ with a bracketed IPv6 host", () => {
+        expect(normalizeTargetArg("user@[2001:db8::1]:/repo", [])).toEqual({
+            name: "user@[2001:db8::1]:/repo",
+            remote: "user@[2001:db8::1]",
+            cwd: "/repo",
+        });
+    });
+
+    it("still accepts a bracketed IPv6 destination whose text begins with a bracket", () => {
+        // A bracket is not a dash; only a leading dash makes an option.
+        expect(normalizeTargetArg("[-oX]", []).remote).toBe("[-oX]");
+    });
+
+    it("still accepts a port suffix form", () => {
+        expect(normalizeTargetArg("devlab:2222", []).remote).toBe("devlab");
+        expect(normalizeTargetArg("devlab:2222", []).cwd).toBe("2222");
     });
 });
 
