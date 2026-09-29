@@ -133,14 +133,23 @@ export function buildWriteScript(
     // The template is a literal, so it is single quoted; only the command
     // substitution in the assignment needs double quotes to expand.
     const temp = `"$(mktemp ${shellQuote(`${remoteDirname(absolutePath)}/.pi-ssh.XXXXXX`)})"`;
+    // Refusal messages are quoted as a WHOLE string. Interpolating the already
+    // single-quoted path into a double-quoted echo would re-enable $() and
+    // backticks, because single quotes are literal inside double quotes.
+    const directoryRefusal = shellQuote(
+        `refusing to write: ${absolutePath} is a directory`,
+    );
+    const symlinkRefusal = shellQuote(
+        `refusing to write: ${absolutePath} is a symlink`,
+    );
     return [
         `tmp=${temp} || exit 1`,
         `trap 'rm -f "$tmp"' EXIT`,
         // mv into a directory succeeds by moving the file inside it, and a
         // rename over a symlink replaces the link rather than its referent.
         // Both silently write somewhere the model did not name.
-        `[ -d ${target} ] && { echo "refusing to write: ${target} is a directory" >&2; exit 1; }`,
-        `[ -L ${target} ] && { echo "refusing to write: ${target} is a symlink" >&2; exit 1; }`,
+        `[ -d ${target} ] && { printf '%s\\n' ${directoryRefusal} >&2; exit 1; }`,
+        `[ -L ${target} ] && { printf '%s\\n' ${symlinkRefusal} >&2; exit 1; }`,
         `cat > "$tmp" || exit 1`,
         `actual=$(wc -c < "$tmp")`,
         `[ "$actual" -eq ${expectedBytes} ] || { rm -f "$tmp"; echo "short write: got $actual of ${expectedBytes} bytes" >&2; exit 1; }`,

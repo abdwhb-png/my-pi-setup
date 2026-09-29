@@ -130,6 +130,31 @@ describe("generated write script", () => {
         expect(readFileSync(target, "utf8")).toHaveLength(300_000);
     });
 
+    it("does not execute a command substitution embedded in the path", () => {
+        // Regression: the refusal message used to interpolate the single-quoted
+        // path inside a double-quoted echo, where $() is live. Single quotes
+        // are literal inside double quotes, so the substitution ran. The
+        // payload carries no slash, because remoteDirname would split on one
+        // and fail at mktemp before the refusal is reached.
+        const dir = scratch();
+        const target = join(dir, "dir$(touch PWNED)");
+        spawnSync("mkdir", [target]);
+        const result = runWrite(target, "data");
+        expect(result.status).not.toBe(0);
+        // If the substitution had run, stderr would show its (empty) output
+        // instead of the literal text.
+        expect(result.stderr).toContain("dir$(touch PWNED)");
+    });
+
+    it("does not execute a backtick embedded in the path", () => {
+        const dir = scratch();
+        const target = join(dir, "dir`touch PWNED_TICK`");
+        spawnSync("mkdir", [target]);
+        const result = runWrite(target, "data");
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("dir`touch PWNED_TICK`");
+    });
+
     it("replaces a symlink-free existing file atomically", () => {
         const dir = scratch();
         const target = join(dir, "app.conf");

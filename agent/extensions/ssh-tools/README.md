@@ -114,7 +114,7 @@ ssh_bash  find /var/log -name '*.log' -mtime -1
 - the byte count is sent alongside and verified with `wc -c` **before** the rename, so a connection that drops mid-transfer cannot publish a truncated file over an intact one. `cat` exits 0 on an early EOF, so exit status alone does not prove the content arrived
 - a **directory** target is refused: `mv -f file dir` succeeds by moving the file _inside_ the directory
 - a **symlink** target is refused by `ssh_write` and `ssh_edit`. Renaming over a link replaces the link, not the file it points to, and the tool would report success while the file you meant is untouched. Edit the resolved path, or use `ssh_bash`
-- consequence: the resulting file gets the remote umask's default mode and the SSH user's ownership. The previous implementation (`cat >` in place) preserved the original mode and owner. If you rewrite a file whose mode matters, restore it yourself or use a shell command with `ssh_bash`.
+- consequence: the resulting file is owned by the SSH user, and `mktemp` creates the temp with mode `0600` regardless of umask, so the renamed file ends up `0600`. The previous implementation (`cat >` in place) preserved the original mode and owner. **If you rewrite a file that another user or service must read, restore the mode yourself** (`ssh_bash` `chmod`), because `0600` will break it.
 
 ### Interrupted writes report an unknown outcome
 
