@@ -63,6 +63,39 @@ describe("interrupted write reporting", () => {
         expect(message).not.toContain("UNKNOWN");
     });
 
+    it("reports unknown outcome when the connection dies after the rename", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteWriteOps(target, { spawnFn: harness.launch });
+        const pending = ops.writeFile("/home/dev/app.conf", "x");
+        // ssh reserves 255 for its own failures, so a connection that drops
+        // after the remote rename already committed is indistinguishable from
+        // a session that never started. Reporting a plain failure would invite
+        // a retry against a file that may already hold the new content.
+        harness.process.emitStderr("Connection closed by remote host.");
+        harness.process.emitClose(255);
+        await expect(pending).rejects.toThrow("UNKNOWN");
+    });
+
+    it("keeps the underlying 255 detail as the cause of an unknown outcome", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteWriteOps(target, { spawnFn: harness.launch });
+        const pending = ops.writeFile("/home/dev/app.conf", "x");
+        harness.process.emitStderr("Connection closed by remote host.");
+        harness.process.emitClose(255);
+        const error = await pending.then(
+            () => undefined,
+            (thrown: Error) => thrown,
+        );
+        // The remote's own diagnostic must survive into the structured cause
+        // even though the outcome itself is unknown.
+        const cause = error?.cause;
+        const causeMessage = cause instanceof Error ? cause.message : String(cause);
+        expect(causeMessage).toContain("Connection closed by remote host.");
+        // And the exit code that made it an unknown outcome, not a known
+        // failure, must be stated where the model reads it.
+        expect(error?.message).toContain("255");
+    });
+
     it("reports unknown outcome on a timeout", async () => {
         const harness = fakeLaunch();
         // A timeout has to be armed; without it a null exit code is just an

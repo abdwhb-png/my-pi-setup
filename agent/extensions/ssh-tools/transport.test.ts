@@ -326,7 +326,21 @@ describe("buildWriteScript", () => {
     it("cleans the temp on every exit, not only a failed cat", () => {
         const script = buildWriteScript("/home/dev/app.conf", 5);
         expect(script).toContain("trap");
-        expect(script).toContain('rm -f "$tmp"');
+        expect(script).toContain('rm -rf "$tmpdir"');
+    });
+
+    it("keeps the cleanup trap armed after a successful rename", () => {
+        // The payload has been moved out, so the trap only has an empty
+        // directory left. Disabling it would leak one directory per write.
+        const script = buildWriteScript("/home/dev/app.conf", 5);
+        expect(script).not.toContain("trap - EXIT");
+    });
+
+    it("refuses an unsafe target before allocating any staging space", () => {
+        const script = buildWriteScript("/home/dev/app.conf", 5);
+        // A rejected target should leave no trace in the remote directory.
+        expect(script.indexOf("[ -d ")).toBeLessThan(script.indexOf("mktemp"));
+        expect(script.indexOf("[ -L ")).toBeLessThan(script.indexOf("mktemp"));
     });
 
     it("rejects a directory target before the rename", () => {

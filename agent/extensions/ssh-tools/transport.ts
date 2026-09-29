@@ -129,10 +129,11 @@ export function buildSshArgs(remote: string, command: string): string[] {
 /**
  * Write content to `absolutePath` atomically and completely.
  *
- * The temp file is created with `mktemp` in the target's own directory, so a
- * rename stays within one filesystem and two writers to the same target get
- * distinct inodes. A shared, target-derived temp name let one writer truncate
- * another's temp or follow a pre-existing symlink at that path.
+ * The content is staged in a private temporary directory created in the
+ * target's own directory, so a rename stays within one filesystem and two
+ * writers to the same target get distinct staging paths. A shared,
+ * target-derived temp name let one writer truncate another's temp or follow a
+ * pre-existing symlink at that path.
  *
  * Completeness is checked by byte count, not exit status: `cat` exits 0 on an
  * early EOF, so a dropped connection could otherwise publish a truncated file
@@ -145,7 +146,7 @@ export function buildWriteScript(
     const target = shellQuote(absolutePath);
     // The template is a literal, so it is single quoted; only the command
     // substitution in the assignment needs double quotes to expand.
-    const temp = `"$(mktemp ${shellQuote(`${remoteDirname(absolutePath)}/.pi-ssh.XXXXXX`)})"`;
+    const temp = `"$(mktemp -d ${shellQuote(`${remoteDirname(absolutePath)}/.pi-ssh.XXXXXX`)})"`;
     // Refusal messages are quoted as a WHOLE string. Interpolating the already
     // single-quoted path into a double-quoted echo would re-enable $() and
     // backticks, because single quotes are literal inside double quotes.
@@ -156,18 +157,29 @@ export function buildWriteScript(
         `refusing to write: ${absolutePath} is a symlink`,
     );
     return [
-        `tmp=${temp} || exit 1`,
-        `trap 'rm -f "$tmp"' EXIT`,
+        // Refuse before allocating anything, so a rejected target leaves no
+        // trace in the remote directory.
         // mv into a directory succeeds by moving the file inside it, and a
         // rename over a symlink replaces the link rather than its referent.
         // Both silently write somewhere the model did not name.
         `[ -d ${target} ] && { printf '%s\\n' ${directoryRefusal} >&2; exit 1; }`,
         `[ -L ${target} ] && { printf '%s\\n' ${symlinkRefusal} >&2; exit 1; }`,
-        `cat > "$tmp" || exit 1`,
-        `actual=$(wc -c < "$tmp")`,
-        `[ "$actual" -eq ${expectedBytes} ] || { rm -f "$tmp"; echo "short write: got $actual of ${expectedBytes} bytes" >&2; exit 1; }`,
-        `mv -f "$tmp" ${target} || exit 1`,
-        `trap - EXIT`,
+        // A private staging directory, not a bare temp file. `mktemp` closes the
+        // file it creates and `cat` then reopens it by name, so in a shared,
+        // non-sticky target directory another user can replace the name with a
+        // symlink in between and redirect the write. A 0700 directory owned by
+        // the SSH user cannot be modified that way, and the payload inside it
+        // is the only thing ever opened.
+        `umask 077`,
+        `tmpdir=${temp} || exit 1`,
+        // The trap stays armed after the rename: the payload has been moved out
+        // and the directory is empty, so this removes it. Disabling the trap
+        // would leak one empty directory per successful write.
+        `trap 'rm -rf "$tmpdir"' EXIT`,
+        `cat > "$tmpdir/payload" || exit 1`,
+        `actual=$(wc -c < "$tmpdir/payload")`,
+        `[ "$actual" -eq ${expectedBytes} ] || { rm -rf "$tmpdir"; echo "short write: got $actual of ${expectedBytes} bytes" >&2; exit 1; }`,
+        `mv -f "$tmpdir/payload" ${target} || exit 1`,
     ].join("\n");
 }
 
@@ -234,7 +246,8 @@ export function sshExec(
         };
         const stderrBudget: RetentionBudget = {
             used: 0,
-            limit: options.maxRetainedOutputBytes ?? DEFAULT_MAX_DIAGNOSTIC_BYTES,
+            limit:
+                options.maxRetainedOutputBytes ?? DEFAULT_MAX_DIAGNOSTIC_BYTES,
         };
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];
@@ -402,7 +415,7 @@ function failureDetail(result: SshExecResult): string {
     );
 }
 
-function describeFailure(remote: string, result: SshExecResult): string {
+export function describeFailure(remote: string, result: SshExecResult): string {
     const detail = failureDetail(result);
     if (result.exitCode === SSH_TRANSPORT_EXIT) {
         return `SSH transport or authentication failure on ${remote}: ${detail}`;

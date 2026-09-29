@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { buildWriteScript } from "../transport.ts";
 
 /**
@@ -35,6 +35,18 @@ function runWrite(target: string, content: string | Buffer): {
         status: result.status ?? -1,
         stderr: result.stderr?.toString("utf8") ?? "",
     };
+}
+
+/** Runs the script asynchronously so several can be in flight together. */
+function runWriteAsync(script: string, content: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+        const child = spawn("sh", ["-c", script], {
+            stdio: ["pipe", "ignore", "ignore"],
+        });
+        child.on("close", (code) => resolve(code ?? -1));
+        child.on("error", reject);
+        child.stdin.end(content);
+    });
 }
 
 afterAll(() => {
@@ -98,18 +110,45 @@ describe("generated write script", () => {
         expect(result.stderr).toContain("is a symlink");
     });
 
-    it("gives two concurrent writers distinct temp files", () => {
+    it("gives two genuinely concurrent writers distinct temp files", async () => {
         const dir = scratch();
-        const script = buildWriteScript(join(dir, "app.conf"), 4);
-        // Two invocations in the same directory must not share a temp name.
-        const a = spawnSync("sh", ["-c", script], { input: "aaaa" });
-        const b = spawnSync("sh", ["-c", script], { input: "bbbb" });
-        expect(a.status).toBe(0);
-        expect(b.status).toBe(0);
+        const target = join(dir, "app.conf");
+        // Payloads large enough that both transfers are in flight at the same
+        // time: a shared staging path would interleave one writer's bytes into
+        // the other's file instead of each writer publishing a whole payload.
+        const payloadA = "a".repeat(400_000);
+        const payloadB = "b".repeat(400_000);
+        const script = buildWriteScript(target, 400_000);
+        const [a, b] = await Promise.all([
+            runWriteAsync(script, payloadA),
+            runWriteAsync(script, payloadB),
+        ]);
+        expect(a).toBe(0);
+        expect(b).toBe(0);
         // Last writer wins atomically; the file is never a mix of both.
-        const final = readFileSync(join(dir, "app.conf"), "utf8");
-        expect(["aaaa", "bbbb"]).toContain(final);
+        const final = readFileSync(target, "utf8");
+        expect([payloadA, payloadB]).toContain(final);
         expect(readdirSync(dir)).toEqual(["app.conf"]);
+    });
+
+    it("stages the payload in a private directory, not a reopenable temp file", () => {
+        const script = buildWriteScript("/home/dev/app.conf", 5);
+        // `mktemp` alone creates a file whose name `cat` reopens, so on a
+        // shared, non-sticky target directory another user can swap it for a
+        // symlink in between and redirect the write. A 0700 directory the SSH
+        // user owns cannot be modified that way.
+        expect(script).toContain("mktemp -d");
+        expect(script).toContain("umask 077");
+    });
+
+    it("leaves the published file unreadable by other users", () => {
+        const dir = scratch();
+        const target = join(dir, "app.conf");
+        const result = runWrite(target, "data");
+        expect(result.status).toBe(0);
+        // mktemp creates the staging entry 0600 and the script sets umask 077
+        // before writing, so the renamed file never widens permissions.
+        expect(statSync(target).mode & 0o777).toBe(0o600);
     });
 
     it("handles a multi-byte payload by comparing wire bytes", () => {

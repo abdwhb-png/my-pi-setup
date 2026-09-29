@@ -8,7 +8,9 @@ import { shellQuote } from "./remote-path.ts";
 import {
     assertRemoteAccess,
     buildWriteScript,
+    describeFailure,
     type SshExecOptions,
+    type SshExecResult,
     SSH_TRANSPORT_EXIT,
     sshExec,
     sshOk,
@@ -65,8 +67,9 @@ async function writeRemoteFile(
     content: string,
     options: SshExecOptions,
 ): Promise<Buffer> {
+    let result: SshExecResult;
     try {
-        return await sshOk(
+        result = await sshExec(
             remote,
             buildWriteScript(absolutePath, Buffer.byteLength(content)),
             { ...options, stdin: content },
@@ -83,6 +86,22 @@ async function writeRemoteFile(
         }
         throw error;
     }
+    if (result.exitCode === 0) {
+        return result.stdout;
+    }
+    // ssh reserves 255 for its own failures, so a session that died after the
+    // rename committed is indistinguishable from one that never started. Both
+    // are an unknown outcome rather than a known failure.
+    const cause = new Error(describeFailure(remote, result));
+    if (result.exitCode === SSH_TRANSPORT_EXIT) {
+        throw new Error(
+            `${OUTCOME_UNKNOWN} (ssh exited ${SSH_TRANSPORT_EXIT} before reporting a result: ${cause.message})`,
+            { cause },
+        );
+    }
+    // A reported non-zero exit is a real failure: the remote script ran to
+    // completion, so whether the rename happened is known.
+    throw cause;
 }
 
 /**
