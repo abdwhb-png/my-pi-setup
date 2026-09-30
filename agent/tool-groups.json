@@ -49,7 +49,12 @@
         "ssh-tools": ["ssh_read", "ssh_write", "ssh_edit", "ssh_bash"],
         "subagents": ["subagent", "subagent_supervisor", "bg_wait"],
         "subagents-parent": ["@subagents", "subagents_enable"],
-        "review": ["@inspect", "@lens", "@think-inspect", "contact_supervisor"],
+        "review": [
+            "@inspect",
+            "@lens-inspect",
+            "@think-inspect",
+            "contact_supervisor"
+        ],
         "review-max": ["@review", "@report-write", "@docs", "memory_search"],
         "herdr": ["herdr_layout", "herdr_pane", "herdr_agent"]
     }
