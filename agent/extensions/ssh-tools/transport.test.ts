@@ -60,6 +60,82 @@ describe("buildProbeScript with link detection", () => {
 });
 
 describe("transport lifetime", () => {
+    it("uses a configured file-transfer deadline when the caller has no timeout", async () => {
+        const harness = fakeLaunch();
+        const prior = process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS;
+        let pending: ReturnType<typeof sshExec>;
+        try {
+            process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS = "0.01";
+            pending = sshExec("devlab", "cat", {
+                spawnFn: harness.launch,
+                killGraceMs: 10,
+            });
+        } finally {
+            if (prior === undefined) delete process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS;
+            else process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS = prior;
+        }
+        await expect(pending).rejects.toThrow("timeout:0.01");
+        expect(harness.process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+    }, 2_000);
+
+    it("lets a caller's explicit timeout override an invalid configured deadline", async () => {
+        const harness = fakeLaunch();
+        const prior = process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS;
+        try {
+            process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS = "not-a-number";
+            const pending = sshExec("devlab", "cat", {
+                spawnFn: harness.launch,
+                timeoutSeconds: 0.01,
+                killGraceMs: 10,
+            });
+            await expect(pending).rejects.toThrow("timeout:0.01");
+            expect(harness.calls).toHaveLength(1);
+        } finally {
+            if (prior === undefined) delete process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS;
+            else process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS = prior;
+        }
+    }, 2_000);
+
+    it("rejects an invalid configured transfer deadline before spawning", async () => {
+        const harness = fakeLaunch();
+        const prior = process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS;
+        try {
+            process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS = "not-a-number";
+            await expect(sshExec("devlab", "cat", { spawnFn: harness.launch })).rejects.toThrow("Invalid timeout");
+            expect(harness.calls).toHaveLength(0);
+        } finally {
+            if (prior === undefined) delete process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS;
+            else process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS = prior;
+        }
+    });
+    it("rejects invalid ceilings before launching instead of failing open", async () => {
+        const harness = fakeLaunch();
+        const first = sshExec("devlab", "cat", { spawnFn: harness.launch, maxDataBytes: NaN });
+        if (harness.calls.length) harness.process.emitClose(0);
+        await expect(first).rejects.toThrow("maxDataBytes");
+        const second = sshExec("devlab", "cat", { spawnFn: harness.launch, maxRetainedOutputBytes: NaN });
+        if (harness.calls.length) harness.process.emitClose(0);
+        await expect(second).rejects.toThrow("maxRetainedOutputBytes");
+        expect(harness.calls).toHaveLength(0);
+    });
+
+    it("keeps the most recent diagnostic and marks omitted bytes", async () => {
+        const harness = fakeLaunch();
+        const pending = sshOk("devlab", "false", { spawnFn: harness.launch, maxRetainedOutputBytes: 32 });
+        harness.process.emitStderr("warning:" + "x".repeat(60));
+        harness.process.emitStderr("permission denied");
+        harness.process.emitClose(1);
+        const error = await pending.then(() => "", (e: Error) => e.message);
+        expect(error).toContain("permission denied");
+        expect(error).toContain("omitted");
+    });
+
+    it("settles a timed-out child even if close never arrives after SIGKILL", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "cat", { spawnFn: harness.launch, timeoutSeconds: 0.01, killGraceMs: 10 });
+        await expect(pending).rejects.toThrow("timeout:0.01");
+        expect(harness.process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+    }, 2_000);
     it("never spawns for an already-aborted call", async () => {
         const harness = fakeLaunch();
         const controller = new AbortController();
@@ -96,7 +172,7 @@ describe("transport lifetime", () => {
             () => "",
             (error: Error) => error.message,
         );
-        expect(message).toBe("EPIPE");
+        expect(message).toContain("EPIPE");
     });
 
     it("ends stdin immediately when the write does not fill the buffer", async () => {
@@ -133,12 +209,13 @@ describe("transport lifetime", () => {
             killGraceMs: 0.02,
             spawnFn: harness.launch,
         });
+        const outcome = pending.then(() => "", (error: Error) => error.message);
         controller.abort();
         expect(harness.process.killSignals).toEqual(["SIGTERM"]);
         await new Promise((resolve) => setTimeout(resolve, 60));
         expect(harness.process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
         harness.process.emitClose(null);
-        await expect(pending).rejects.toThrow("aborted");
+        expect(await outcome).toContain("aborted");
     });
 
     it("bounds retained output while still streaming every byte", async () => {
@@ -156,6 +233,21 @@ describe("transport lifetime", () => {
         expect(streamed).toEqual([50]);
     });
 
+    it("keeps only the latest diagnostic bytes across many tiny chunks", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "chatty", {
+            maxRetainedOutputBytes: 8,
+            onStdoutData: () => undefined,
+            spawnFn: harness.launch,
+        });
+        for (let i = 0; i < 200; i++) harness.process.emitStdout(String(i % 10));
+        harness.process.emitStdout("LATEST");
+        harness.process.emitClose(0);
+        const result = await pending;
+        expect(result.stdout.toString()).toBe("89LATEST");
+        expect(result.stdoutTruncated).toBe(true);
+    });
+
     it("bounds diagnostic stderr for the error message", async () => {
         const harness = fakeLaunch();
         const pending = sshOk("devlab", "false", {
@@ -170,8 +262,8 @@ describe("transport lifetime", () => {
             (error: Error) => error.message,
         );
         // Bounded, so a huge dump cannot flood the error text.
-        expect(message).toContain("permi");
-        expect(message).not.toContain("target path");
+        expect(message).toContain("path");
+        expect(message).toContain("omitted");
     });
 
     it("never truncates a data-returning read, because a short file looks like a different file", async () => {

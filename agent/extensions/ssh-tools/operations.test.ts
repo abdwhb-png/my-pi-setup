@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
 import { fakeLaunch } from "./testing/ssh-double.ts";
 import {
     type ActiveSshTarget,
@@ -6,6 +8,7 @@ import {
     createRemoteEditOps,
     createRemoteReadOps,
     createRemoteWriteOps,
+    reportRemoteCommit,
 } from "./operations.ts";
 
 const LOCAL_CWD = "/home/abdwhb/projects/cryptoLoan/crypto-vault";
@@ -27,6 +30,37 @@ const WRITE_CEILING_BYTES = 16_777_216;
 function commandOf(harness: ReturnType<typeof fakeLaunch>, index = 0) {
     return harness.calls[index]?.at(-1) ?? "";
 }
+
+describe("pi's post-commit abort boundary", () => {
+    it("reports a confirmed write instead of pi's generic post-write abort", async () => {
+        const controller = new AbortController();
+        const ops = {
+            mkdir: async () => undefined,
+            writeFile: async (_path: string, _content: string) => {
+                controller.abort();
+            },
+        };
+        const outcome = reportRemoteCommit(controller.signal, async (committed) => {
+            const wrapped = createWriteToolDefinition("/", {
+                operations: { ...ops, writeFile: async (path, content) => { await ops.writeFile(path, content); committed(); } },
+            });
+            return wrapped.execute("1", { path: "/remote/a", content: "x" }, controller.signal, undefined, { cwd: "/" } as never);
+        });
+        await expect(outcome).rejects.toThrow("completed on the remote");
+    });
+
+    it("does not claim a commit when pi aborts before writing", async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const tool = createWriteToolDefinition("/", { operations: {
+            mkdir: async () => undefined, writeFile: async () => undefined,
+        } });
+        await expect(reportRemoteCommit(controller.signal, (committed) => {
+            void committed;
+            return tool.execute("1", { path: "/remote/a", content: "x" }, controller.signal, undefined, { cwd: "/" } as never);
+        })).rejects.toThrow("Operation aborted");
+    });
+});
 
 describe("interrupted write reporting", () => {
     it("reports the outcome as unknown when the write is aborted", async () => {
@@ -132,6 +166,35 @@ describe("interrupted write reporting", () => {
         harness.process.emitClose(0);
         controller.abort();
         await expect(pending).rejects.toThrow("Do not retry");
+    });
+
+    it("reports an unconfirmed stdin failure as UNKNOWN, retaining its cause", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteWriteOps(target, { spawnFn: harness.launch });
+        const pending = ops.writeFile("/home/dev/app.conf", "x");
+        harness.process.emitStdinError(new Error("EPIPE"));
+        const error = await pending.then(() => undefined, (caught: Error) => caught);
+        expect(error?.message).toContain("UNKNOWN");
+        expect(error?.message).toContain("read the remote file first");
+        expect(error).toBeInstanceOf(Error);
+        expect(error?.cause).toBeInstanceOf(Error);
+        expect(String(error?.cause)).toContain("EPIPE");
+    });
+
+    it("reports UNKNOWN when stdout exceeds the cap before an exit status", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteWriteOps(target, { spawnFn: harness.launch });
+        const pending = ops.writeFile("/home/dev/app.conf", "x");
+        harness.process.emitStdout(Buffer.alloc(16_777_217));
+        await expect(pending).rejects.toThrow("UNKNOWN");
+    });
+
+    it("reports UNKNOWN when the process errors after starting a write", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteWriteOps(target, { spawnFn: harness.launch });
+        const pending = ops.writeFile("/home/dev/app.conf", "x");
+        harness.process.emitError(new Error("connection lost"));
+        await expect(pending).rejects.toThrow("UNKNOWN");
     });
 
     it("reports unknown outcome when the connection dies after the rename", async () => {
@@ -241,10 +304,26 @@ describe("createRemoteBashOps", () => {
         const ops = createRemoteBashOps(target, { spawnFn: harness.launch });
         const pending = ops.exec("uname -a", LOCAL_CWD, { onData: noData });
         const script = harness.process.stdinWrites[0]?.toString() ?? "";
-        expect(script).toContain("cd '/home/dev'");
+        expect(script).toContain("cd '/home/dev' || exit");
         expect(script).not.toContain("crypto-vault");
         harness.process.emitClose(0);
         await pending;
+    });
+
+    it("does not run a command from the SSH login directory when remote cd fails", async () => {
+        const harness = fakeLaunch();
+        const absentTarget = { ...target, remoteCwd: `${process.cwd()}/no-such-ssh-directory` };
+        const ops = createRemoteBashOps(absentTarget, { spawnFn: harness.launch });
+        const pending = ops.exec("echo SHOULD_NOT_RUN", LOCAL_CWD, { onData: noData });
+        const script = harness.process.stdinWrites[0]?.toString() ?? "";
+        const result = spawnSync("sh", ["-c", commandOf(harness)], {
+            input: script,
+            encoding: "utf8",
+        });
+        harness.process.emitClose(result.status);
+        await pending;
+        expect(result.status).not.toBe(0);
+        expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
     });
 
     it("still honours a cd written inside the command", async () => {
@@ -260,13 +339,67 @@ describe("createRemoteBashOps", () => {
         await pending;
     });
 
+    it("loads the whole script before executing commands that read stdin", async () => {
+        const harness = fakeLaunch();
+        const localTarget = { ...target, remoteCwd: process.cwd() };
+        const ops = createRemoteBashOps(localTarget, { spawnFn: harness.launch });
+        const pending = ops.exec("cat >/dev/null\necho AFTER", LOCAL_CWD, {
+            onData: noData,
+        });
+        const script = harness.process.stdinWrites[0]?.toString() ?? "";
+        // A local shell with the same stdin protocol exposes the defect:
+        // bash -s lets cat eat the following line instead of executing it.
+        const result = spawnSync("sh", ["-c", commandOf(harness)], {
+            input: script,
+            encoding: "utf8",
+        });
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("AFTER");
+        harness.process.emitClose(0);
+        await pending;
+    });
+
+    it("does not move a large bash script onto the remote argument list", async () => {
+        const harness = fakeLaunch();
+        const localTarget = { ...target, remoteCwd: process.cwd() };
+        const ops = createRemoteBashOps(localTarget, { spawnFn: harness.launch });
+        const pending = ops.exec(`echo LARGE_OK\n#${"x".repeat(200_000)}`, LOCAL_CWD, {
+            onData: noData,
+        });
+        const result = spawnSync("sh", ["-c", commandOf(harness)], {
+            input: harness.process.stdinWrites[0],
+            encoding: "utf8",
+        });
+        expect(result.status).toBe(0);
+        expect(result.stdout.trim()).toBe("LARGE_OK");
+        harness.process.emitClose(0);
+        await pending;
+    });
+
+    it("continues after an intermediate failure without errexit", async () => {
+        const harness = fakeLaunch();
+        const localTarget = { ...target, remoteCwd: process.cwd() };
+        const ops = createRemoteBashOps(localTarget, { spawnFn: harness.launch });
+        const pending = ops.exec("false\necho RECOVERED", LOCAL_CWD, {
+            onData: noData,
+        });
+        const result = spawnSync("sh", ["-c", commandOf(harness)], {
+            input: harness.process.stdinWrites[0],
+            encoding: "utf8",
+        });
+        expect(result.status).toBe(0);
+        expect(result.stdout.trim()).toBe("RECOVERED");
+        harness.process.emitClose(0);
+        await pending;
+    });
+
     it("keeps the command off the ssh command line", async () => {
         const harness = fakeLaunch();
         const ops = createRemoteBashOps(target, { spawnFn: harness.launch });
         const pending = ops.exec("rm -rf /important", LOCAL_CWD, {
             onData: noData,
         });
-        expect(commandOf(harness)).toBe("exec bash -se");
+        expect(commandOf(harness)).toContain("script=$(cat; printf .)");
         harness.process.emitClose(0);
         await pending;
     });

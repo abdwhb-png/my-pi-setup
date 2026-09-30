@@ -13,6 +13,7 @@ import {
     type SshExecOptions,
     type SshExecResult,
     SSH_TRANSPORT_EXIT,
+    UnconfirmedTransferError,
     sshExec,
     sshOk,
 } from "./transport.ts";
@@ -64,6 +65,42 @@ const OUTCOME_UNKNOWN =
  */
 const MAX_WRITE_BYTES = DEFAULT_MAX_DATA_BYTES;
 
+export function assertWriteSize(path: string, content: string): number {
+    const bytes = Buffer.byteLength(content);
+    if (bytes > MAX_WRITE_BYTES) {
+        throw new Error(
+            `Refusing to write ${path}: the payload is ${bytes} bytes, which exceeds the ${MAX_WRITE_BYTES} byte ceiling for a single call. Write the file in ranges, or use ssh_bash.`,
+        );
+    }
+    return bytes;
+}
+
+export const COMMITTED_ABORT =
+    "The write completed on the remote host, but the turn was aborted before the tool result was reported. The file HAS been updated. Do not retry: read the remote file to confirm its contents.";
+
+/** Keep pi's post-write abort check from concealing a confirmed commit. */
+export async function reportRemoteCommit<T>(
+    signal: AbortSignal | undefined,
+    run: (onCommit: () => void) => Promise<T>,
+): Promise<T> {
+    let committed = false;
+    try {
+        return await run(() => {
+            committed = true;
+        });
+    } catch (error) {
+        if (
+            committed &&
+            signal?.aborted &&
+            error instanceof Error &&
+            error.message === "Operation aborted"
+        ) {
+            throw new Error(COMMITTED_ABORT, { cause: error });
+        }
+        throw error;
+    }
+}
+
 /**
  * `expectedBytes` must be the byte length of the content on the wire, not its
  * JavaScript string length. A multi-byte character would otherwise make the
@@ -74,15 +111,9 @@ async function writeRemoteFile(
     absolutePath: string,
     content: string,
     options: SshExecOptions,
+    onCommit?: () => void,
 ): Promise<Buffer> {
-    const payloadBytes = Buffer.byteLength(content);
-    // Checked before spawning: an over-ceiling payload is refused rather than
-    // buffered, so the limit costs nothing and cannot be discovered late.
-    if (payloadBytes > MAX_WRITE_BYTES) {
-        throw new Error(
-            `Refusing to write ${absolutePath}: the payload is ${payloadBytes} bytes, which exceeds the ${MAX_WRITE_BYTES} byte ceiling for a single call. Write the file in ranges, or use ssh_bash.`,
-        );
-    }
+    const payloadBytes = assertWriteSize(absolutePath, content);
     let result: SshExecResult;
     try {
         result = await sshExec(
@@ -95,7 +126,11 @@ async function writeRemoteFile(
         // extension cannot claim the previous file is intact. Saying "failed"
         // would invite a retry against a file that may already be updated.
         const message = error instanceof Error ? error.message : String(error);
-        if (message === "aborted" || message.startsWith("timeout:")) {
+        if (
+            message === "aborted" ||
+            message.startsWith("timeout:") ||
+            error instanceof UnconfirmedTransferError
+        ) {
             throw new Error(`${OUTCOME_UNKNOWN} (${message})`, {
                 cause: error,
             });
@@ -103,6 +138,7 @@ async function writeRemoteFile(
         throw error;
     }
     if (result.exitCode === 0) {
+        onCommit?.();
         // The rename committed, so the outcome is known. pi's write and edit
         // factories re-check the abort signal after this returns and would
         // throw a bare "Operation aborted", which reads as "nothing happened"
@@ -110,10 +146,7 @@ async function writeRemoteFile(
         // error can still be the one the model reads, beats letting a
         // misleading message replace it.
         if (options.signal?.aborted) {
-            throw new Error(
-                "The write completed on the remote host, but the turn was aborted before the tool result was reported. The file HAS been updated. Do not retry: read the remote file to confirm its contents.",
-                { cause: new Error("aborted") },
-            );
+            throw new Error(COMMITTED_ABORT, { cause: new Error("aborted") });
         }
         return result.stdout;
     }
@@ -190,6 +223,7 @@ export function createRemoteReadOps(
 export function createRemoteWriteOps(
     target: ActiveSshTarget,
     options: SshExecOptions = {},
+    onCommit?: () => void,
 ): WriteOperations {
     return {
         writeFile: async (absolutePath, content) => {
@@ -198,6 +232,7 @@ export function createRemoteWriteOps(
                 absolutePath,
                 content,
                 options,
+                onCommit,
             );
         },
         mkdir: async (dir) => {
@@ -209,6 +244,7 @@ export function createRemoteWriteOps(
 export function createRemoteEditOps(
     target: ActiveSshTarget,
     options: SshExecOptions = {},
+    onCommit?: () => void,
 ): EditOperations {
     return {
         readFile: (absolutePath) =>
@@ -219,6 +255,7 @@ export function createRemoteEditOps(
                 absolutePath,
                 content,
                 options,
+                onCommit,
             );
         },
         access: (absolutePath) =>
@@ -267,15 +304,26 @@ export function createRemoteBashOps(
          */
         exec: async (command, _cwd, { onData, signal, timeout }) => {
             assertValidTimeout(timeout);
-            const script = `cd ${shellQuote(target.remoteCwd)}\n${command}\n`;
-            const result = await sshExec(target.remote, "exec bash -se", {
-                spawnFn: options.spawnFn,
-                stdin: script,
-                signal: signal ?? options.signal,
-                timeoutSeconds: timeout,
-                onStdoutData: onData,
-                onStderrData: onData,
-            });
+            const script = `cd ${shellQuote(target.remoteCwd)} || exit\n${command}\n`;
+            // Read the script before executing it: with bash -s, a command
+            // such as `cat` can consume subsequent script lines from stdin.
+            // Keep the script in a Bash variable rather than an exec argument
+            // so large commands do not hit the OS argv limit. The sentinel
+            // preserves trailing newlines stripped by command substitution.
+            // Evaluate the captured text with stdin closed, so a command in
+            // the script cannot consume later script lines.
+            const result = await sshExec(
+                target.remote,
+                `exec bash -c 'script=$(cat; printf .); eval "\${script%.}" </dev/null'`,
+                {
+                    spawnFn: options.spawnFn,
+                    stdin: script,
+                    signal: signal ?? options.signal,
+                    timeoutSeconds: timeout,
+                    onStdoutData: onData,
+                    onStderrData: onData,
+                },
+            );
             if (result.exitCode === SSH_TRANSPORT_EXIT) {
                 // ssh returns 255 for its own failures, and a remote command
                 // can also exit 255; the two are indistinguishable from the

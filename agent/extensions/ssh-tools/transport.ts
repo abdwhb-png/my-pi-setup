@@ -12,10 +12,22 @@ import { remoteDirname, shellQuote } from "./remote-path.ts";
 /** OpenSSH reserves 255 for its own failures: transport, host key, auth. */
 export const SSH_TRANSPORT_EXIT = 255;
 
+/** A process started the transfer but provided no authoritative exit status. */
+export class UnconfirmedTransferError extends Error {
+    constructor(cause: Error) {
+        super(
+            `SSH transfer ended before an exit status was available: ${cause.message}`,
+            { cause },
+        );
+    }
+}
+
 export type SshExecResult = {
     stdout: Buffer;
     stderr: Buffer;
     exitCode: number | null;
+    stdoutTruncated?: boolean;
+    stderrTruncated?: boolean;
 };
 
 export interface SshProcess {
@@ -38,6 +50,8 @@ export type SshLaunch = (args: readonly string[]) => SshProcess;
 type RetentionBudget = {
     used: number;
     limit: number;
+    truncated: boolean;
+    head: number;
 };
 
 export type SshExecOptions = {
@@ -66,6 +80,8 @@ export type SshExecOptions = {
 const DEFAULT_MAX_RETAINED_OUTPUT = 1_048_576;
 export const DEFAULT_MAX_DATA_BYTES = 16_777_216;
 const DEFAULT_KILL_GRACE_MS = 2_000;
+export const DEFAULT_TRANSFER_TIMEOUT_SECONDS = 120;
+const MAX_TIMEOUT_SECONDS = 2_147_483.647;
 /**
  * stderr is only ever kept to build an error message, in both streaming and
  * data mode, so it is always bounded. The cap is separate from the streaming
@@ -225,6 +241,38 @@ export function sshExec(
     options: SshExecOptions = {},
 ): Promise<SshExecResult> {
     return new Promise<SshExecResult>((resolve, reject) => {
+        for (const [name, value] of [
+            ["maxDataBytes", options.maxDataBytes],
+            ["maxRetainedOutputBytes", options.maxRetainedOutputBytes],
+        ] as const) {
+            if (
+                value !== undefined &&
+                (!Number.isSafeInteger(value) || value < 0)
+            ) {
+                reject(
+                    new Error(`${name} must be a non-negative finite integer`),
+                );
+                return;
+            }
+        }
+        const configuredTimeout = process.env.PI_SSH_TRANSFER_TIMEOUT_SECONDS;
+        const timeoutSeconds =
+            options.timeoutSeconds ??
+            (configuredTimeout === undefined
+                ? DEFAULT_TRANSFER_TIMEOUT_SECONDS
+                : Number(configuredTimeout));
+        if (
+            !Number.isFinite(timeoutSeconds) ||
+            timeoutSeconds <= 0 ||
+            timeoutSeconds > MAX_TIMEOUT_SECONDS
+        ) {
+            reject(
+                new Error(
+                    "Invalid timeout: must be a finite positive number of seconds within the timer range",
+                ),
+            );
+            return;
+        }
         // An already-aborted call must not spawn anything: the remote command
         // would run with nobody listening for the result.
         if (options.signal?.aborted) {
@@ -249,9 +297,14 @@ export function sshExec(
         const stdoutBudget: RetentionBudget = {
             used: 0,
             limit: diagnostic
-                ? (options.maxRetainedOutputBytes ??
-                  DEFAULT_MAX_RETAINED_OUTPUT)
+                ? Math.min(
+                      options.maxRetainedOutputBytes ??
+                          DEFAULT_MAX_RETAINED_OUTPUT,
+                      DEFAULT_MAX_RETAINED_OUTPUT,
+                  )
                 : Number.POSITIVE_INFINITY,
+            truncated: false,
+            head: 0,
         };
         const stderrBudget: RetentionBudget = {
             used: 0,
@@ -263,6 +316,8 @@ export function sshExec(
                 options.maxRetainedOutputBytes ?? DEFAULT_MAX_DIAGNOSTIC_BYTES,
                 DEFAULT_MAX_DIAGNOSTIC_BYTES,
             ),
+            truncated: false,
+            head: 0,
         };
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];
@@ -285,19 +340,31 @@ export function sshExec(
             killRequested = true;
             child.kill("SIGTERM");
             killTimer = setTimeout(() => {
-                if (!childClosed) child.kill("SIGKILL");
+                if (childClosed) return;
+                child.kill("SIGKILL");
+                // A child with missing close must not hold the mutation queue
+                // forever. The remote outcome remains unconfirmed.
+                if (!settled) {
+                    settled = true;
+                    cleanup();
+                    reject(
+                        new Error(
+                            options.signal?.aborted
+                                ? "aborted"
+                                : timedOut
+                                  ? `timeout:${timeoutSeconds}`
+                                  : "SSH process did not close after SIGKILL",
+                        ),
+                    );
+                }
             }, options.killGraceMs ?? DEFAULT_KILL_GRACE_MS);
             killTimer.unref?.();
         };
 
-        const timer =
-            typeof options.timeoutSeconds === "number" &&
-            options.timeoutSeconds > 0
-                ? setTimeout(() => {
-                      timedOut = true;
-                      killChild();
-                  }, options.timeoutSeconds * 1000)
-                : undefined;
+        const timer = setTimeout(() => {
+            timedOut = true;
+            killChild();
+        }, timeoutSeconds * 1000);
 
         const onAbort = () => {
             killChild();
@@ -310,7 +377,7 @@ export function sshExec(
             // the escalation there would leave a child that ignores SIGTERM
             // running with no owner. The timer is cleared in onClose, where the
             // process is known to be gone.
-            if (timer) clearTimeout(timer);
+            clearTimeout(timer);
             options.signal?.removeEventListener("abort", onAbort);
         };
 
@@ -321,10 +388,40 @@ export function sshExec(
             chunk: Buffer,
             budget: RetentionBudget,
         ) => {
-            if (budget.used >= budget.limit) return;
-            const room = budget.limit - budget.used;
-            chunks.push(chunk.length > room ? chunk.subarray(0, room) : chunk);
+            if (chunk.length === 0) return;
+            if (chunk.length >= budget.limit) {
+                if (budget.used || chunk.length > budget.limit)
+                    budget.truncated = true;
+                chunks.length = 0;
+                budget.head = 0;
+                if (budget.limit)
+                    chunks.push(
+                        Buffer.from(
+                            chunk.subarray(chunk.length - budget.limit),
+                        ),
+                    );
+                budget.used = budget.limit;
+                return;
+            }
+            chunks.push(Buffer.from(chunk));
             budget.used += chunk.length;
+            while (budget.used > budget.limit) {
+                const first = chunks[budget.head];
+                const excess = budget.used - budget.limit;
+                if (first.length <= excess) {
+                    budget.head++;
+                    budget.used -= first.length;
+                } else {
+                    chunks[budget.head] = Buffer.from(first.subarray(excess));
+                    budget.used -= excess;
+                }
+                budget.truncated = true;
+            }
+            // Amortize removal rather than shifting the entire tail per event.
+            if (budget.head >= 64 && budget.head * 2 >= chunks.length) {
+                chunks.splice(0, budget.head);
+                budget.head = 0;
+            }
         };
 
         child.onStdout((chunk) => {
@@ -338,8 +435,10 @@ export function sshExec(
                     cleanup();
                     killChild();
                     reject(
-                        new Error(
-                            `Remote output exceeded the ${dataLimit} byte limit for a data-returning call. Read the file in ranges, or use ssh_bash with a streaming command.`,
+                        new UnconfirmedTransferError(
+                            new Error(
+                                `Remote output exceeded the ${dataLimit} byte limit for a data-returning call. Read the file in ranges, or use ssh_bash with a streaming command.`,
+                            ),
                         ),
                     );
                     return;
@@ -363,7 +462,7 @@ export function sshExec(
             // leaving it orphaned.
             if (!childClosed) killChild();
             cleanup();
-            reject(error);
+            reject(new UnconfirmedTransferError(error));
         });
         // A broken stdin pipe is a transfer failure, not a process failure: it
         // fires on the stream, and without this it would be an uncaught error.
@@ -386,10 +485,10 @@ export function sshExec(
                 return;
             }
             if (timedOut) {
-                reject(new Error(`timeout:${options.timeoutSeconds}`));
+                reject(new Error(`timeout:${timeoutSeconds}`));
                 return;
             }
-            reject(error);
+            reject(new UnconfirmedTransferError(error));
         });
         child.onClose((code) => {
             childClosed = true;
@@ -406,12 +505,14 @@ export function sshExec(
                 return;
             }
             if (timedOut) {
-                reject(new Error(`timeout:${options.timeoutSeconds}`));
+                reject(new Error(`timeout:${timeoutSeconds}`));
                 return;
             }
             resolve({
-                stdout: Buffer.concat(stdoutChunks),
-                stderr: Buffer.concat(stderrChunks),
+                stdout: Buffer.concat(stdoutChunks.slice(stdoutBudget.head)),
+                stdoutTruncated: stdoutBudget.truncated,
+                stderr: Buffer.concat(stderrChunks.slice(stderrBudget.head)),
+                stderrTruncated: stderrBudget.truncated,
                 exitCode: code,
             });
         });
@@ -436,7 +537,11 @@ export function sshExec(
             // rather than leaving a process with no owner.
             if (!childClosed) killChild();
             cleanup();
-            reject(error);
+            reject(
+                new UnconfirmedTransferError(
+                    error instanceof Error ? error : new Error(String(error)),
+                ),
+            );
             return;
         }
         if (!backpressured) {
@@ -451,8 +556,10 @@ export function sshExec(
 
 function failureDetail(result: SshExecResult): string {
     return (
-        result.stderr.toString("utf8").trim() ||
-        result.stdout.toString("utf8").trim() ||
+        result.stderr.toString("utf8").trim() +
+            (result.stderrTruncated ? " [earlier output omitted]" : "") ||
+        result.stdout.toString("utf8").trim() +
+            (result.stdoutTruncated ? " [earlier output omitted]" : "") ||
         "no output from the remote command"
     );
 }

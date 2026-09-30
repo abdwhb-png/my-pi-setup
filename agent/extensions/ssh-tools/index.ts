@@ -9,6 +9,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
 import {
+    assertWriteSize,
+    reportRemoteCommit,
     createRemoteBashOps,
     createRemoteEditOps,
     createRemoteReadOps,
@@ -162,19 +164,24 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         parameters: writeBase.parameters,
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             const target = requireActiveTarget();
-            const tool = createWriteToolDefinition(target.remoteCwd, {
-                operations: createRemoteWriteOps(target, { signal }),
+            const path = resolveRemotePath(params.path, target.remoteCwd);
+            assertWriteSize(path, params.content);
+            return reportRemoteCommit(signal, (onCommit) => {
+                const tool = createWriteToolDefinition(target.remoteCwd, {
+                    operations: createRemoteWriteOps(
+                        target,
+                        { signal },
+                        onCommit,
+                    ),
+                });
+                return tool.execute(
+                    toolCallId,
+                    { ...params, path },
+                    signal,
+                    onUpdate,
+                    ctx,
+                );
             });
-            return tool.execute(
-                toolCallId,
-                {
-                    ...params,
-                    path: resolveRemotePath(params.path, target.remoteCwd),
-                },
-                signal,
-                onUpdate,
-                ctx,
-            );
         },
         renderCall: createRemoteRenderCall(
             "ssh_write",
@@ -198,22 +205,26 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         prepareArguments: editBase.prepareArguments,
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             const target = requireActiveTarget();
-            const tool = createEditToolDefinition(target.remoteCwd, {
-                operations: createRemoteEditOps(target, { signal }),
-            });
-            return tool.execute(
-                toolCallId,
-                {
-                    ...params,
-                    path: resolveSandboxedRemotePath(
-                        params.path,
-                        target.remoteCwd,
-                    ),
-                },
-                signal,
-                onUpdate,
-                ctx,
+            const path = resolveSandboxedRemotePath(
+                params.path,
+                target.remoteCwd,
             );
+            return reportRemoteCommit(signal, (onCommit) => {
+                const tool = createEditToolDefinition(target.remoteCwd, {
+                    operations: createRemoteEditOps(
+                        target,
+                        { signal },
+                        onCommit,
+                    ),
+                });
+                return tool.execute(
+                    toolCallId,
+                    { ...params, path },
+                    signal,
+                    onUpdate,
+                    ctx,
+                );
+            });
         },
         renderCall: createRemoteRenderCall(
             "ssh_edit",
@@ -267,10 +278,12 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         },
         handler: async (args, ctx) => {
             const assertCurrent = visibility.captureGuard();
-            const input = args.trim();
+            // Trimming the whole argument would erase significant spaces at
+            // the end of an explicit remote directory.
+            const input = args.trimStart();
             const profiles = parseSshConfigProfiles();
 
-            if (input === "status") {
+            if (input.trim() === "status") {
                 ctx.ui.notify(
                     activeTarget
                         ? `SSH mode: ${activeTarget.name} (${activeTarget.remote}:${activeTarget.remoteCwd})`
@@ -280,7 +293,7 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
                 return;
             }
 
-            if (input === "off") {
+            if (input.trim() === "off") {
                 if (!activeTarget) {
                     ctx.ui.notify("SSH mode is already off", "info");
                     return;
@@ -289,7 +302,7 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
                 return;
             }
 
-            if (input) {
+            if (input.trim()) {
                 await activate(normalizeTargetArg(input, profiles), ctx);
                 return;
             }

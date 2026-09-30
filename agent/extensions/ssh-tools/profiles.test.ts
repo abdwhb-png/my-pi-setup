@@ -23,6 +23,10 @@ describe("normalizeTargetArg", () => {
         expect(normalizeTargetArg("  devlab  ", profiles).remote).toBe("devlab");
     });
 
+    it("preserves whitespace after the path separator", () => {
+        expect(normalizeTargetArg("devlab:/repo ", profiles).cwd).toBe("/repo ");
+    });
+
     it("splits an explicit remote working directory", () => {
         expect(normalizeTargetArg("devlab:/home/dev", profiles)).toEqual({
             name: "devlab:/home/dev",
@@ -136,14 +140,13 @@ describe("resolveRemoteCwd", () => {
         ).resolves.toBe("/repo");
     });
 
-    it("trims an explicit working directory", async () => {
-        await expect(
-            resolveRemoteCwd({
-                name: "fixture",
-                remote: "unreachable-host",
-                cwd: "  /repo  ",
-            }),
-        ).resolves.toBe("/repo");
+    it("refuses an explicit working directory whose trailing whitespace names another directory", async () => {
+        await expect(resolveRemoteCwd({
+            name: "fixture", remote: "unreachable-host", cwd: "/repo\u00A0",
+        })).rejects.toThrow("contains a Unicode space");
+        await expect(resolveRemoteCwd({
+            name: "fixture", remote: "unreachable-host", cwd: "/repo ",
+        })).resolves.toBe("/repo ");
     });
 
     it("strips a trailing separator from an explicit working directory", async () => {
@@ -189,6 +192,16 @@ describe("resolveRemoteCwd", () => {
                 cwd: "repo",
             }),
         ).rejects.toThrow("absolute path");
+    });
+
+    it("does not let caller disable the activation-probe deadline", async () => {
+        const harness = fakeLaunch();
+        const pending = resolveRemoteCwd(
+            { name: "devlab", remote: "devlab" },
+            { spawnFn: harness.launch, timeoutSeconds: Number.POSITIVE_INFINITY },
+        );
+        await expect(pending).rejects.toThrow("Invalid timeout");
+        expect(harness.calls).toHaveLength(0);
     });
 
     it("bounds the activation probe independently of ConnectTimeout", async () => {

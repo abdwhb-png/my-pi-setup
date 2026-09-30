@@ -57,9 +57,9 @@ export class FakeSshProcess implements SshProcess {
         this.killSignals.push(signal);
     }
 
-    emitStdout(text: string): void {
+    emitStdout(chunk: string | Buffer): void {
         for (const listener of this.stdoutListeners)
-            listener(Buffer.from(text));
+            listener(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
     }
     emitStderr(text: string): void {
         for (const listener of this.stderrListeners)

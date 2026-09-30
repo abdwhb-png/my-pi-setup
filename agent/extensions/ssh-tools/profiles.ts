@@ -102,8 +102,10 @@ export function normalizeTargetArg(
     arg: string,
     profiles: SshProfile[],
 ): SshProfile {
-    const trimmed = arg.trim();
-    const known = profiles.find((profile) => profile.name === trimmed);
+    // Only the host token may be trimmed. Trimming the entire argument would
+    // silently select a different remote directory when its name ends in space.
+    const trimmed = arg.trimStart();
+    const known = profiles.find((profile) => profile.name === trimmed.trim());
     if (known) {
         assertHostArgument(known.remote);
         return known;
@@ -119,8 +121,9 @@ export function normalizeTargetArg(
             cwd: trimmed.slice(separator + 1),
         };
     }
-    assertHostArgument(trimmed);
-    return { name: trimmed, remote: trimmed };
+    const host = trimmed.trim();
+    assertHostArgument(host);
+    return { name: host, remote: host };
 }
 
 /**
@@ -160,8 +163,9 @@ export async function resolveRemoteCwd(
     profile: SshProfile,
     options: SshExecOptions = {},
 ): Promise<string> {
-    const explicit = profile.cwd?.trim();
-    if (explicit) {
+    const explicit = profile.cwd;
+    if (explicit !== undefined) {
+        assertPathSurvivesPiNormalization(explicit);
         if (!explicit.startsWith("/")) {
             // A relative remote working directory would make every relative
             // path resolve against the local session directory, which is the
