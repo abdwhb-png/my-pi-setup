@@ -3,5 +3,8 @@
     "edit": true,
     "bash": true,
     "safe_bash": false,
-    "@think-exec": false
+    "@think-exec": false,
+    "ssh_write": true,
+    "ssh_edit": true,
+    "ssh_bash": true
 }
