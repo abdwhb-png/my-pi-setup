@@ -26,8 +26,10 @@ import {
 } from "./guard.ts";
 import {
     authorizeDangerousMatches,
-    type CommandGuardPolicy,
+    type GuardPolicyValue,
     type GuardSessionApprovals,
+    type SandboxScope,
+    type ScopeGuardPolicy,
 } from "./policy.ts";
 import {
     applyFirstRewrite,
@@ -66,9 +68,14 @@ export interface CommandExecutionRecord<
     reason?: string;
     error?: string;
     /** Effective guard policy for the matched group, when the guard denied it. */
-    policy?: CommandGuardPolicy;
-    /** Scope verdict, when a `cwd-only` scope decided the outcome. */
+    policy?: GuardPolicyValue;
+    /** Scope verdict, when a scope policy decided the outcome. */
     scopeVerdict?: CommandScopeVerdict;
+    /**
+     * Which scope member decided, when the policy had more than one. Lets audit
+     * evidence distinguish a `cwd-only` denial from a `sandbox-only` denial.
+     */
+    scopeMember?: ScopeGuardPolicy;
     /**
      * Targets the scope resolved. Feeds the repeat-goal key in the recorder and
      * names the resolved paths in the audit evidence.
@@ -116,7 +123,12 @@ export interface CommandExecutionServiceOptions<
 > {
     approvals: GuardSessionApprovals;
     getAllowedShellCommands(): readonly AllowedShellCommand[];
-    getGuardPolicy(): Readonly<Record<string, CommandGuardPolicy>>;
+    getGuardPolicy(): Readonly<Record<string, GuardPolicyValue>>;
+    /**
+     * Current sandbox facts for the `sandbox-only` permission. Omitted or
+     * returning `undefined` makes every `sandbox-only` member fail closed.
+     */
+    getSandboxScope?(): SandboxScope | undefined;
     getRewriteRules(): readonly BashRewriteRule[];
     getTelemetryRecorder(): CommandExecutionTelemetryRecorder<Operation> | null;
     shouldEnforceNativeTools(): boolean;
@@ -149,7 +161,15 @@ export function createCommandExecutionService<
                 options.getGuardPolicy(),
                 request.ctx,
                 options.approvals,
-                { toolName: executionName },
+                {
+                    toolName: executionName,
+                    ...(options.getSandboxScope
+                        ? {
+                              resolveSandboxScope: () =>
+                                  options.getSandboxScope?.(),
+                          }
+                        : {}),
+                },
             );
             const danger = authorization.match ?? null;
             if (!authorization.allowed && danger) {
@@ -167,6 +187,7 @@ export function createCommandExecutionService<
                     reason: authorization.reason,
                     policy: authorization.policy,
                     scopeVerdict: authorization.scopeVerdict,
+                    scopeMember: authorization.scopeMember,
                     targets: authorization.scopeTargets,
                 });
                 const reason = authorization.reason ?? danger.message;

@@ -8,7 +8,9 @@ import {
     inspectDeleteScope,
     inspectDangerous,
     inspectDangerousMatches,
+    inspectGroupScope,
     isDangerous,
+    isScopableGroup,
     redirectShellCommand,
     redirectShellCommandWithPolicy,
 } from './guard.ts';
@@ -140,6 +142,275 @@ describe('inspectDeleteScope unsupported groups', () => {
     it('fails closed to unknown for other groupIds', () => {
         const scope = inspectDeleteScope('rm /etc/hosts', '/tmp', 'sudo');
         expect(scope.verdict).toBe('unknown');
+    });
+});
+
+describe('scope-rule applicability', () => {
+    it('scopes exactly the groups that have filesystem targets', () => {
+        for (const groupId of [
+            'rm',
+            'file-delete-api',
+            'chmod',
+            'chown',
+            'dd',
+        ]) {
+            expect(isScopableGroup(groupId)).toBe(true);
+        }
+    });
+
+    it('treats groups without a path operand as not scopable', () => {
+        for (const groupId of [
+            'sudo',
+            'mkfs',
+            'raw-disk-write',
+            'forkbomb',
+            'remote-shell',
+            'reverse-shell',
+            'exec-injection',
+            'shutdown',
+            'init',
+            'kill',
+            'cryptominer',
+        ]) {
+            expect(isScopableGroup(groupId)).toBe(false);
+        }
+    });
+
+    it('is not scopable for an unknown group id', () => {
+        expect(isScopableGroup('nope')).toBe(false);
+        // Prototype keys must not read as scope rules.
+        expect(isScopableGroup('toString')).toBe(false);
+    });
+
+    it('fails closed to unknown for a non-scopable group', () => {
+        const scope = inspectGroupScope(
+            'sudo rm -rf /',
+            '/home/user/project',
+            'sudo',
+            ['/home/user/project'],
+        );
+        expect(scope.verdict).toBe('unknown');
+    });
+
+    it('fails closed to unknown when the authorized root set is empty', () => {
+        expect(
+            inspectGroupScope(
+                'rm -rf notes',
+                '/home/user/project',
+                'rm',
+                [],
+            ).verdict,
+        ).toBe('unknown');
+    });
+});
+
+describe('chown danger-group matching', () => {
+    it('matches root ownership changes with multiple or long options', () => {
+        for (const command of [
+            'chown -R -L root project',
+            'chown --recursive root project',
+            'chown --no-dereference root link',
+        ]) {
+            expect(inspectDangerous(command)?.groupId).toBe('chown');
+        }
+    });
+});
+
+describe('inspectGroupScope chown', () => {
+    const cwd = '/home/user/project';
+
+    it('treats the first operand as the owner spec, not a target', () => {
+        const scope = inspectGroupScope(
+            'chown user:group notes.txt',
+            cwd,
+            'chown',
+            [cwd],
+        );
+        expect(scope.verdict).toBe('inside');
+        expect(scope.targets).toEqual(['/home/user/project/notes.txt']);
+    });
+
+    it('resolves every target after the owner spec', () => {
+        const scope = inspectGroupScope(
+            'chown user a.txt sub/b.txt',
+            cwd,
+            'chown',
+            [cwd],
+        );
+        expect(scope.verdict).toBe('inside');
+        expect(scope.targets).toEqual([
+            '/home/user/project/a.txt',
+            '/home/user/project/sub/b.txt',
+        ]);
+    });
+
+    it('rejects a target outside the authorized roots', () => {
+        const scope = inspectGroupScope(
+            'chown root /etc',
+            cwd,
+            'chown',
+            [cwd],
+        );
+        expect(scope.verdict).toBe('outside');
+        expect(scope.offendingTarget).toBe('/etc');
+    });
+
+    it('admits a target inside any authorized root, not only the first', () => {
+        const scope = inspectGroupScope(
+            'chown user /srv/data/notes.txt',
+            cwd,
+            'chown',
+            [cwd, '/srv/data'],
+        );
+        expect(scope.verdict).toBe('inside');
+    });
+
+    it('fails closed on an unresolvable target', () => {
+        expect(
+            inspectGroupScope('chown user $TARGET', cwd, 'chown', [cwd])
+                .verdict,
+        ).toBe('unresolvable');
+    });
+
+    it('reports a bare owner spec as unresolvable, like a bare rm', () => {
+        // The chown segment is recognized but carries no target, matching the
+        // existing `rm`-with-no-operand contract.
+        expect(
+            inspectGroupScope('chown user', cwd, 'chown', [cwd]).verdict,
+        ).toBe('unresolvable');
+    });
+
+    it('reports an opaque chown form as no-invocation', () => {
+        expect(
+            inspectGroupScope('xargs chown', cwd, 'chown', [cwd]).verdict,
+        ).toBe('no-invocation');
+    });
+
+    it('fails closed on --reference because the owner is not visible', () => {
+        expect(
+            inspectGroupScope(
+                'chown --reference=other.txt notes.txt',
+                cwd,
+                'chown',
+                [cwd],
+            ).verdict,
+        ).toBe('unresolvable');
+    });
+
+    it('honours a -- separator', () => {
+        const scope = inspectGroupScope(
+            'chown -- user notes.txt',
+            cwd,
+            'chown',
+            [cwd],
+        );
+        expect(scope.verdict).toBe('inside');
+        expect(scope.targets).toEqual(['/home/user/project/notes.txt']);
+    });
+});
+
+describe('inspectGroupScope dd', () => {
+    const cwd = '/home/user/project';
+
+    it('scopes the of= write destination and ignores the if= read', () => {
+        const scope = inspectGroupScope(
+            'dd if=/etc/hosts of=./copy.txt',
+            cwd,
+            'dd',
+            [cwd],
+        );
+        expect(scope.verdict).toBe('inside');
+        expect(scope.targets).toEqual(['/home/user/project/copy.txt']);
+    });
+
+    it('rejects a write destination outside the authorized roots', () => {
+        const scope = inspectGroupScope(
+            'dd if=./in.txt of=/etc/out.img',
+            cwd,
+            'dd',
+            [cwd],
+        );
+        expect(scope.verdict).toBe('outside');
+        expect(scope.offendingTarget).toBe('/etc/out.img');
+    });
+
+    it('reports a dd with no of= as unresolvable, like a bare rm', () => {
+        expect(inspectGroupScope('dd if=./in.txt', cwd, 'dd', [cwd]).verdict).toBe(
+            'unresolvable',
+        );
+    });
+
+    it('fails closed on an unresolvable of= value', () => {
+        expect(
+            inspectGroupScope('dd if=./in of=$OUT', cwd, 'dd', [cwd]).verdict,
+        ).toBe('unresolvable');
+    });
+
+    it('accepts the separated of =value spelling', () => {
+        const scope = inspectGroupScope(
+            'dd if=./in of =./out.img',
+            cwd,
+            'dd',
+            [cwd],
+        );
+        expect(scope.verdict).toBe('inside');
+        expect(scope.targets).toEqual(['/home/user/project/out.img']);
+    });
+});
+
+describe('protected roots under a non-cwd root set', () => {
+    const piRoot = join(homedir(), '.pi');
+
+    it('vetoes a chmod inside an authorized root that is itself protected', () => {
+        const scope = inspectGroupScope(
+            'chmod +x bin/pi-fork',
+            piRoot,
+            'chmod',
+            [piRoot],
+            [piRoot],
+        );
+        expect(scope.verdict).toBe('protected');
+        expect(scope.offendingTarget).toBe(join(piRoot, 'bin/pi-fork'));
+    });
+
+    it('keeps the catastrophic-mode veto when the roots are sandbox grants', () => {
+        const scope = inspectGroupScope(
+            'chmod 777 notes.txt',
+            piRoot,
+            'chmod',
+            [piRoot],
+            [],
+        );
+        expect(scope.verdict).toBe('catastrophic-mode');
+    });
+});
+
+describe('inspectCommandScope', () => {
+    const cwd = '/home/user/project';
+
+    it('delegates rm to the cwd root set', () => {
+        const scope = inspectCommandScope('rm -rf dist', cwd, 'rm');
+        expect(scope.verdict).toBe('inside');
+        expect(inspectCommandScope('rm -rf /etc', cwd, 'rm').verdict).toBe(
+            'outside',
+        );
+    });
+
+    it('keeps rm containment-only so /etc reads as outside, not protected', () => {
+        // `rm` never applied the protected-root veto before this change and
+        // its denial wording is part of the existing contract.
+        expect(inspectCommandScope('rm -rf /etc/hosts', cwd, 'rm')).toMatchObject(
+            { verdict: 'outside', offendingTarget: '/etc/hosts' },
+        );
+    });
+
+    it('dispatches chmod through the protected-root defaults', () => {
+        expect(
+            inspectCommandScope('chmod +x notes.sh', cwd, 'chmod').verdict,
+        ).toBe('inside');
+        expect(
+            inspectCommandScope('chmod 777 notes.sh', cwd, 'chmod').verdict,
+        ).toBe('catastrophic-mode');
     });
 });
 

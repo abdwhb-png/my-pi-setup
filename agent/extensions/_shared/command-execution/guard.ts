@@ -8,7 +8,7 @@
 
 import { lstatSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve as resolvePath } from "node:path";
+import { dirname, resolve as resolvePath } from "node:path";
 
 /** A named bundle of regexes representing one class of dangerous command. */
 export interface DangerGroup {
@@ -93,7 +93,9 @@ export const DANGER_GROUPS: readonly DangerGroup[] = [
     {
         id: "chown",
         label: "chown to root",
-        patterns: [/\bchown\s+(-[a-zA-Z]+\s+)?root/],
+        patterns: [
+            /\bchown\s+(?:(?:--(?:[a-z-]+(?:=\S+)?)?|-[a-zA-Z]+)\s+)*root(?=[:\s]|$)/,
+        ],
     },
     {
         id: "remote-shell",
@@ -463,16 +465,19 @@ export function inspectDeleteScope(
     groupId: string,
 ): DeleteTargetScope {
     if (groupId === "rm") {
-        return toScope(collectRmTargets(command, cwd), resolvePath(cwd));
+        return toScope(collectRmTargets(command, cwd), [resolvePath(cwd)]);
     }
     if (groupId === "file-delete-api") {
-        return toScope(collectApiTargets(command, cwd), resolvePath(cwd));
+        return toScope(collectApiTargets(command, cwd), [resolvePath(cwd)]);
     }
     // Any other group cannot be scoped — fail closed.
     return { verdict: "unknown", targets: [] };
 }
 
-function toScope(collected: CollectedTargets, root: string): DeleteTargetScope {
+function toScope(
+    collected: CollectedTargets,
+    roots: readonly string[],
+): DeleteTargetScope {
     const { targets, unknown, sawInvocation, offendingOperand } = collected;
     if (unknown || targets.length === 0) {
         return {
@@ -482,7 +487,7 @@ function toScope(collected: CollectedTargets, root: string): DeleteTargetScope {
         };
     }
     for (const target of targets) {
-        if (!isContained(target, root)) {
+        if (!roots.some((root) => isContained(target, root))) {
             return { verdict: "outside", offendingTarget: target, targets };
         }
     }
@@ -663,7 +668,26 @@ export function inspectChmodScope(
     cwd: string,
     protectedRoots: readonly string[] = defaultProtectedRoots(),
 ): CommandScope {
-    const parsed = parseChmod(command, cwd);
+    return resolveChmodScope(
+        parseChmod(command, cwd),
+        [resolvePath(cwd)],
+        protectedRoots,
+    );
+}
+
+/**
+ * Verdict for a parsed chmod against an explicit root set.
+ *
+ * Order is fixed: unknown, then protected roots, then symlinks, then root
+ * containment, then the mode rules. Protected roots and the catastrophic-mode
+ * rules are independent of the root set, so they hold for `cwd-only` and
+ * `sandbox-only` alike.
+ */
+function resolveChmodScope(
+    parsed: ChmodParse,
+    roots: readonly string[],
+    protectedRoots: readonly string[],
+): CommandScope {
     if (parsed.unknown || parsed.targets.length === 0) {
         return {
             verdict: "unknown",
@@ -672,11 +696,11 @@ export function inspectChmodScope(
         };
     }
 
-    const roots = protectedRoots.map((protectedRoot) =>
+    const protectedTargets = protectedRoots.map((protectedRoot) =>
         resolvePath(protectedRoot),
     );
     for (const target of parsed.targets) {
-        if (isProtectedTarget(target, roots)) {
+        if (isProtectedTarget(target, protectedTargets)) {
             return {
                 verdict: "protected",
                 offendingTarget: target,
@@ -686,7 +710,6 @@ export function inspectChmodScope(
         }
     }
 
-    const root = resolvePath(cwd);
     for (const target of parsed.targets) {
         if (isSymlinkTarget(target)) {
             return {
@@ -699,7 +722,7 @@ export function inspectChmodScope(
     }
 
     for (const target of parsed.targets) {
-        if (!isContained(target, root)) {
+        if (!roots.some((root) => isContained(target, root))) {
             return {
                 verdict: "outside",
                 offendingTarget: target,
@@ -721,19 +744,282 @@ export function inspectChmodScope(
 }
 
 /**
- * Scope verdict for any cwd-scoped danger group. Unsupported groups fail
- * closed to `unknown`.
+ * How a danger group's operands are resolved for a scope decision.
+ *
+ * - `delete`: `rm` / `git rm` operands (incl. `xargs`, `find -exec`).
+ * - `api-delete`: path literals captured from interpreter deletion calls.
+ * - `mode`: `chmod` mode operand plus targets, with the mode rules below.
+ * - `owner`: `chown` owner spec plus targets.
+ * - `of-device`: the `dd of=` write destination.
+ */
+export type ScopeRule =
+    | "delete"
+    | "api-delete"
+    | "mode"
+    | "owner"
+    | "of-device";
+
+/**
+ * Danger groups that have filesystem targets a scope permission can decide.
+ *
+ * Single source of truth for scope applicability: the policy layer rejects a
+ * scope permission for any group missing here, and the config layer reports the
+ * rejection instead of silently denying every command. Groups absent from this
+ * map (`sudo`, `mkfs`, `shutdown`, reverse shells, …) have no path operand, so
+ * `cwd-only` / `sandbox-only` cannot mean anything for them; they stay with
+ * `allow` / `ask` / `deny`.
+ */
+export const SCOPE_RULES: Readonly<Record<string, ScopeRule>> = Object.freeze({
+    rm: "delete",
+    "file-delete-api": "api-delete",
+    chmod: "mode",
+    chown: "owner",
+    dd: "of-device",
+});
+
+/** Whether `groupId` has a scope rule, and so accepts a scope permission. */
+export function isScopableGroup(groupId: string): boolean {
+    return Object.hasOwn(SCOPE_RULES, groupId);
+}
+
+/**
+ * Collect `chown` absolute targets. The first non-flag operand is the owner
+ * spec (`user`, `user:group`); everything after it is a target. `--reference`
+ * copies ownership that is not visible here, so it fails closed.
+ */
+function collectOwnerTargets(command: string, cwd: string): CollectedTargets {
+    const root = resolvePath(cwd);
+    const targets: string[] = [];
+    let unknown = false;
+    let sawInvocation = false;
+    let offendingOperand: string | undefined;
+
+    for (const segment of command.split(SHELL_SEPARATORS)) {
+        const tokens = tokenizeShell(segment);
+        if (tokens[0] !== "chown") continue;
+        sawInvocation = true;
+        let flagMode = true;
+        let optionsEnded = false;
+        let ownerSeen = false;
+        for (let i = 1; i < tokens.length; i++) {
+            const tok = tokens[i];
+            if (tok === "--" && !optionsEnded) {
+                optionsEnded = true;
+                flagMode = false;
+                continue;
+            }
+            if (!optionsEnded && tok.startsWith("-")) {
+                if (
+                    !flagMode ||
+                    tok.startsWith("--reference") ||
+                    tok === "--recursive" ||
+                    /^-[a-zA-Z]*[RHL][a-zA-Z]*$/.test(tok)
+                ) {
+                    // GNU options can appear after the owner. Descendant
+                    // traversal and late flags cannot be scoped statically.
+                    unknown = true;
+                    offendingOperand ??= tok;
+                }
+                continue;
+            }
+            flagMode = false;
+            if (!ownerSeen) {
+                ownerSeen = true;
+                continue;
+            }
+            const expanded = expandTargetOperand(tok);
+            if (expanded === null) {
+                unknown = true;
+                offendingOperand ??= tok;
+                continue;
+            }
+            targets.push(resolvePath(root, expanded));
+        }
+    }
+    return { targets, unknown, sawInvocation, offendingOperand };
+}
+
+/**
+ * `chown` dereferences links by default. Inspect every existing path component,
+ * not just the operand: a symlinked parent can redirect an in-root spelling.
+ * Missing paths cannot be changed yet; unreadable paths fail closed.
+ */
+function inspectOwnerPath(target: string): "symlink" | "unknown" | undefined {
+    let component = target;
+    while (true) {
+        try {
+            if (lstatSync(component).isSymbolicLink()) return "symlink";
+        } catch (error) {
+            if (
+                typeof error !== "object" ||
+                error === null ||
+                !("code" in error) ||
+                (error.code !== "ENOENT" && error.code !== "ENOTDIR")
+            ) {
+                return "unknown";
+            }
+        }
+        const parent = dirname(component);
+        if (parent === component) return undefined;
+        component = parent;
+    }
+}
+
+/**
+ * Collect the `dd` write destination. `if=` is a read and is not scoped; a `dd`
+ * with no `of=` writes to stdout, which touches no path.
+ */
+function collectDdTargets(command: string, cwd: string): CollectedTargets {
+    const root = resolvePath(cwd);
+    const targets: string[] = [];
+    let unknown = false;
+    let sawInvocation = false;
+    let offendingOperand: string | undefined;
+
+    for (const segment of command.split(SHELL_SEPARATORS)) {
+        const tokens = tokenizeShell(segment);
+        if (tokens[0] !== "dd") continue;
+        // The invocation is recognized even with no `of=`, so a bare `dd`
+        // fails closed as `unresolvable` rather than `no-invocation`.
+        sawInvocation = true;
+        for (let i = 1; i < tokens.length; i++) {
+            const tok = tokens[i];
+            // GNU accepts both `of=value` and a separate `of =value`.
+            const value = tok.startsWith("of=")
+                ? tok.slice(3)
+                : tok === "of" && tokens[i + 1]?.startsWith("=")
+                  ? tokens[++i].slice(1)
+                  : undefined;
+            if (value === undefined) continue;
+            const expanded = expandTargetOperand(value);
+            if (expanded === null) {
+                unknown = true;
+                offendingOperand ??= value;
+                continue;
+            }
+            targets.push(resolvePath(root, expanded));
+        }
+    }
+    return { targets, unknown, sawInvocation, offendingOperand };
+}
+
+/**
+ * Scope verdict for a danger group against an explicit root set.
+ *
+ * `roots` is the set the caller's permission authorizes: `[ctx.cwd]` for
+ * `cwd-only`, the sandbox write grants for `sandbox-only`. A target inside any
+ * root is `inside`; a target outside every root is `outside`.
+ *
+ * `protectedRoots` defaults per rule: `mode` (chmod) is additionally vetoed by
+ * the harness and system roots, and by the catastrophic-mode rules, under every
+ * root set. The delete rules stay containment-only, which is their existing
+ * contract. Groups with no scope rule fail closed to `unknown`.
+ */
+export function inspectGroupScope(
+    command: string,
+    cwd: string,
+    groupId: string,
+    roots: readonly string[],
+    protectedRoots?: readonly string[],
+): CommandScope {
+    const rule = SCOPE_RULES[groupId];
+    if (rule === undefined) return { verdict: "unknown", targets: [] };
+    const effectiveProtected =
+        protectedRoots ?? (rule === "mode" ? defaultProtectedRoots() : []);
+    const resolvedRoots = roots.map((root) => resolvePath(root));
+    if (resolvedRoots.length === 0) return { verdict: "unknown", targets: [] };
+
+    switch (rule) {
+        case "delete":
+            return finalizeScope(
+                toScope(collectRmTargets(command, cwd), resolvedRoots),
+                effectiveProtected,
+            );
+        case "api-delete":
+            return finalizeScope(
+                toScope(collectApiTargets(command, cwd), resolvedRoots),
+                effectiveProtected,
+            );
+        case "owner": {
+            const scope = toScope(
+                collectOwnerTargets(command, cwd),
+                resolvedRoots,
+            );
+            if (scope.verdict !== "inside") return scope;
+            for (const target of scope.targets) {
+                const hazard = inspectOwnerPath(target);
+                if (hazard) {
+                    return {
+                        verdict: hazard,
+                        offendingTarget: target,
+                        targets: scope.targets,
+                    };
+                }
+            }
+            return finalizeScope(scope, effectiveProtected);
+        }
+        case "of-device":
+            return finalizeScope(
+                toScope(collectDdTargets(command, cwd), resolvedRoots),
+                effectiveProtected,
+            );
+        case "mode":
+            return resolveChmodScope(
+                parseChmod(command, cwd),
+                resolvedRoots,
+                effectiveProtected,
+            );
+        default: {
+            // Compile-time exhaustiveness: a new ScopeRule without a branch
+            // fails closed here instead of falling through undefined.
+            const unhandled: never = rule;
+            return { verdict: "unknown", targets: [], mode: String(unhandled) };
+        }
+    }
+}
+
+/**
+ * Re-label a target that is inside the authorized roots but still hits a
+ * protected root, so a permission that authorizes the directory cannot silently
+ * authorize the harness tree or the system roots inside it.
+ */
+function finalizeScope(
+    scope: CommandScope,
+    protectedRoots: readonly string[],
+): CommandScope {
+    if (scope.verdict !== "inside" || scope.targets.length === 0) return scope;
+    if (protectedRoots.length === 0) return scope;
+    const resolved = protectedRoots.map((root) => resolvePath(root));
+    for (const target of scope.targets) {
+        if (isProtectedTarget(target, resolved)) {
+            return {
+                verdict: "protected",
+                offendingTarget: target,
+                targets: scope.targets,
+            };
+        }
+    }
+    return scope;
+}
+
+/**
+ * Scope verdict for the cwd-scoped permission. Thin wrapper over
+ * `inspectGroupScope` so `cwd` and the protected-root contract stay in one
+ * place for every consumer.
  */
 export function inspectCommandScope(
     command: string,
     cwd: string,
     groupId: string,
-    protectedRoots: readonly string[] = defaultProtectedRoots(),
+    protectedRoots?: readonly string[],
 ): CommandScope {
-    if (groupId === "chmod") {
-        return inspectChmodScope(command, cwd, protectedRoots);
-    }
-    return inspectDeleteScope(command, cwd, groupId);
+    return inspectGroupScope(
+        command,
+        cwd,
+        groupId,
+        [resolvePath(cwd)],
+        protectedRoots,
+    );
 }
 
 /**

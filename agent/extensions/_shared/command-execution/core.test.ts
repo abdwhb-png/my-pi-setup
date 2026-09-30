@@ -12,7 +12,11 @@ import {
     type CommandExecutionRecord,
 } from "./core";
 import { SafeExecutionError } from "./failure.ts";
-import { GuardSessionApprovals } from "./policy.ts";
+import {
+    GuardSessionApprovals,
+    type GuardPolicyValue,
+    type SandboxScope,
+} from "./policy.ts";
 
 type TestOperation =
     | "safe_bash"
@@ -32,7 +36,8 @@ const ctx = {
 
 function setup(options: {
     command?: string;
-    guardPolicy?: Record<string, "ask" | "deny" | "allow" | "cwd-only">;
+    guardPolicy?: Record<string, GuardPolicyValue>;
+    sandboxScope?: SandboxScope;
     enforceNativeTools?: boolean;
     rewriteRules?: Array<{ match: string; rewrite: string }>;
     executeError?: Error;
@@ -69,10 +74,14 @@ function setup(options: {
             details: undefined,
         };
     });
-    const service = createCommandExecutionService<TestOperation>({
+    const serviceOptions = {
         approvals: new GuardSessionApprovals(),
         getAllowedShellCommands: () => [],
         getGuardPolicy: () => options.guardPolicy ?? {},
+        sandboxScope: options.sandboxScope,
+        getSandboxScope() {
+            return this.sandboxScope;
+        },
         getRewriteRules: () => options.rewriteRules ?? [],
         getTelemetryRecorder: () => ({
             record: async (input: TestRecord) => {
@@ -84,7 +93,8 @@ function setup(options: {
             options.enforceNativeTools ?? false,
         createOperations,
         createDefinition: () => ({ execute }),
-    });
+    };
+    const service = createCommandExecutionService<TestOperation>(serviceOptions);
 
     return {
         command: options.command ?? "printf ok",
@@ -97,6 +107,24 @@ function setup(options: {
 }
 
 describe("safe execution core", () => {
+    it("preserves the sandbox resolver's options receiver", async () => {
+        const harness = setup({
+            guardPolicy: { rm: "sandbox-only" },
+            sandboxScope: { mode: "sandbox", writableRoots: [ctx.cwd] },
+        });
+
+        const result = await harness.service.execute({
+            toolCallId: "call-scoped",
+            operation: "safe_bash",
+            command: "rm /workspace/file.txt",
+            ctx,
+        });
+        expect(result).toMatchObject({
+            content: [{ type: "text", text: "ok" }],
+        });
+        expect(harness.execute).toHaveBeenCalledTimes(1);
+    });
+
     it("blocks dangerous commands before execution and records the origin", async () => {
         const harness = setup({ command: "sudo printf blocked" });
 

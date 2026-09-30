@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
@@ -390,6 +390,70 @@ describe('safe-bash guard policy', () => {
         }
     });
 
+    it('scope policies block chown through symlinked targets or parents', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'chown-policy-'));
+        try {
+            const cwd = join(root, 'project');
+            mkdirSync(cwd);
+            writeFileSync(join(root, 'outside.txt'), 'x');
+            symlinkSync(join(root, 'outside.txt'), join(cwd, 'link.txt'));
+            symlinkSync(root, join(cwd, 'linked-parent'));
+
+            for (const [target, command] of [
+                ['link.txt', 'chown root link.txt'],
+                ['linked-parent/outside.txt', 'chown root linked-parent/outside.txt'],
+            ] as const) {
+                const match = inspectDangerous(command);
+                if (!match) throw new Error('expected chown candidate');
+                for (const policy of ['cwd-only', 'sandbox-only'] as const) {
+                    const options = policy === 'cwd-only'
+                        ? PROMPT
+                        : {
+                              toolName: 'safe_bash',
+                              resolveSandboxScope: () => ({
+                                  mode: 'sandbox' as const,
+                                  writableRoots: [cwd],
+                              }),
+                          };
+                    const blocked = await authorizeDangerousCommand(
+                        match,
+                        policy,
+                        context({ cwd }),
+                        new GuardSessionApprovals(),
+                        options,
+                    );
+                    expect(blocked.allowed).toBe(false);
+                    expect(blocked.reason).toContain('symlink');
+                    expect(blocked.reason).toContain(join(cwd, target));
+                }
+            }
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('cwd-only refuses recursive chown whose descendants cannot be scoped', async () => {
+        for (const command of [
+            'chown -R root .',
+            'chown -RL root .',
+            'chown --recursive root .',
+            'chown root -R .',
+            'chown root --recursive .',
+        ]) {
+            const match = inspectDangerous(command);
+            if (!match) throw new Error('expected chown candidate');
+            const blocked = await authorizeDangerousCommand(
+                match,
+                'cwd-only',
+                context({ cwd: '/home/user/project' }),
+                new GuardSessionApprovals(),
+                PROMPT,
+            );
+            expect(blocked.allowed).toBe(false);
+            expect(blocked.reason).toContain('could not be resolved statically');
+        }
+    });
+
     it('names the unresolved operand for an unresolvable rm target (audit event a507a4a4)', async () => {
         const match = inspectDangerous('rm $VAR/x');
         if (!match) throw new Error('expected rm candidate');
@@ -437,16 +501,195 @@ describe('safe-bash guard policy', () => {
         expect(blocked.scopeTargets).toContain('/etc/hosts');
     });
 
-    it('carries the policy for a denying match', async () => {
-        const result = await authorizeDangerousMatches(
-            inspectDangerousMatches('rm /etc/hosts'),
-            { rm: 'cwd-only' },
-            context({ cwd: '/home/user' }),
+describe('sandbox-only and anyOf scope policies', () => {
+    const SANDBOX = {
+        mode: 'sandbox' as const,
+        writableRoots: ['/home/user/projects/app', join(homedir(), '.pi')],
+    };
+
+    function sandboxOptions(
+        scope: { mode: 'sandbox' | 'host'; writableRoots: string[] } | undefined = SANDBOX,
+    ) {
+        return { toolName: 'safe_bash', resolveSandboxScope: () => scope };
+    }
+
+    /** Resolver present but reporting no sandbox facts: the fail-closed case. */
+    const noSandbox = {
+        toolName: 'safe_bash',
+        resolveSandboxScope: () => undefined,
+    };
+
+    function match(command: string) {
+        const found = inspectDangerous(command);
+        if (!found) throw new Error(`expected dangerous command: ${command}`);
+        return found;
+    }
+
+    it('allows a granted target in sandbox mode', async () => {
+        const result = await authorizeDangerousCommand(
+            match('rm -rf /home/user/projects/app/dist'),
+            'sandbox-only',
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions(),
+        );
+        expect(result.allowed).toBe(true);
+    });
+
+    it('denies a granted target in host mode, naming the mode', async () => {
+        const result = await authorizeDangerousCommand(
+            match('rm -rf /home/user/projects/app/dist'),
+            'sandbox-only',
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions({ mode: 'host', writableRoots: SANDBOX.writableRoots }),
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toContain('sandbox mode');
+    });
+
+    it('denies a target outside the grants, naming the target', async () => {
+        const result = await authorizeDangerousCommand(
+            match('rm -rf /etc/hosts'),
+            'sandbox-only',
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions(),
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toContain('/etc/hosts');
+        expect(result.reason).toContain('sandbox');
+    });
+
+    it('denies fail-closed when no sandbox scope is available', async () => {
+        const result = await authorizeDangerousCommand(
+            match('rm -rf /home/user/projects/app/dist'),
+            'sandbox-only',
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            noSandbox,
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toContain('sandbox mode');
+    });
+
+    it('denies when the resolver itself is not provided', async () => {
+        const result = await authorizeDangerousCommand(
+            match('rm -rf /home/user/projects/app/dist'),
+            'sandbox-only',
+            context({ cwd: '/home/user/projects/app' }),
             new GuardSessionApprovals(),
             PROMPT,
         );
         expect(result.allowed).toBe(false);
-        expect(result.policy).toBe('cwd-only');
-        expect(result.scopeVerdict).toBe('outside');
     });
+
+    it('keeps the protected-root veto for a chmod inside a granted root', async () => {
+        const result = await authorizeDangerousCommand(
+            match('chmod +x bin/pi-fork'),
+            'sandbox-only',
+            context({ cwd: join(homedir(), '.pi') }),
+            new GuardSessionApprovals(),
+            sandboxOptions(),
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toContain('protected');
+    });
+
+    it('keeps the catastrophic-mode veto under sandbox-only', async () => {
+        const result = await authorizeDangerousCommand(
+            match('chmod 777 notes.txt'),
+            'sandbox-only',
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions(),
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toContain('777');
+    });
+
+    it('scopes chown under sandbox-only', async () => {
+        const inside = await authorizeDangerousCommand(
+            match('chown root /home/user/projects/app/notes.txt'),
+            'sandbox-only',
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions(),
+        );
+        expect(inside.allowed).toBe(true);
+
+        const outside = await authorizeDangerousCommand(
+            match('chown root /etc/hosts'),
+            'sandbox-only',
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions(),
+        );
+        expect(outside.allowed).toBe(false);
+    });
+
+    it('anyOf allows when the first member admits', async () => {
+        const result = await authorizeDangerousCommand(
+            match('rm -rf /home/user/projects/app/dist'),
+            { anyOf: ['cwd-only', 'sandbox-only'] },
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions(),
+        );
+        expect(result.allowed).toBe(true);
+    });
+
+    it('anyOf allows when only the second member admits', async () => {
+        const result = await authorizeDangerousCommand(
+            match('rm -rf /srv/data/cache'),
+            { anyOf: ['cwd-only', 'sandbox-only'] },
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions({
+                mode: 'sandbox',
+                writableRoots: ['/srv/data'],
+            }),
+        );
+        expect(result.allowed).toBe(true);
+    });
+
+    it('anyOf denies with evidence from every member when none admits', async () => {
+        const result = await authorizeDangerousCommand(
+            match('rm -rf /etc/hosts'),
+            { anyOf: ['cwd-only', 'sandbox-only'] },
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions({ mode: 'host', writableRoots: ['/home/user/projects/app'] }),
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toContain('cwd-only');
+        expect(result.reason).toContain('sandbox-only');
+    });
+
+    it('denies a scope policy on a group with no path target, naming the group', async () => {
+        for (const policy of ['cwd-only', 'sandbox-only'] as const) {
+            const result = await authorizeDangerousCommand(
+                match('sudo apt update'),
+                policy,
+                context({ cwd: '/home/user/projects/app' }),
+                new GuardSessionApprovals(),
+                sandboxOptions(),
+            );
+            expect(result.allowed).toBe(false);
+            expect(result.reason).toContain('sudo');
+        }
+    });
+
+    it('records the deciding member so audit evidence can tell them apart', async () => {
+        const result = await authorizeDangerousCommand(
+            match('rm -rf /srv/data/cache'),
+            { anyOf: ['cwd-only', 'sandbox-only'] },
+            context({ cwd: '/home/user/projects/app' }),
+            new GuardSessionApprovals(),
+            sandboxOptions({ mode: 'sandbox', writableRoots: ['/srv/data'] }),
+        );
+        expect(result.allowed).toBe(true);
+        expect(result.scopeMember).toBe('sandbox-only');
+    });
+});
 });

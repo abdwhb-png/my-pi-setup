@@ -11,17 +11,20 @@ import type { SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
     DANGER_GROUP_IDS,
     isAllowedShellCommand,
+    isScopableGroup,
     type AllowedShellCommand,
 } from "../../_shared/command-execution/guard.ts";
 import {
     DEFAULT_DANGER_GROUP_POLICY,
-    isCommandGuardPolicy,
-    type CommandGuardPolicy,
-} from "../../_shared/command-execution/policy.ts";import { loadExtensionConfig } from "../../_shared/config-loader.ts";
+    isGuardPolicyValue,
+    scopeMembersOf,
+    type GuardPolicyValue,
+} from "../../_shared/command-execution/policy.ts";
+import { loadExtensionConfig } from "../../_shared/config-loader.ts";
 import { SAFE_BASH_AUDIT_BOUNDS } from "./telemetry/types.ts";
 
 export type SafeBashMode = "coexist" | "replace";
-export type SafeBashGuardPolicy = CommandGuardPolicy;
+export type SafeBashGuardPolicy = GuardPolicyValue;
 
 export interface SafeBashTelemetryConfig {
     enabled: boolean;
@@ -42,8 +45,18 @@ export interface SafeBashConfig {
      * Only `AllowedShellCommand` values are accepted; unknown entries are dropped.
      */
     allowedShellCommands: AllowedShellCommand[];
-    /** Per-danger-group action. Missing groups default to `deny`. */
+    /**
+     * Per-danger-group action. Missing groups default to `deny`. A value is a
+     * policy string, or `{ anyOf: [...] }` to admit a command when any listed
+     * scope policy does.
+     */
     guardPolicy: Record<string, SafeBashGuardPolicy>;
+    /**
+     * Config entries that were dropped during normalization, e.g. a scope
+     * permission on a group with no path target. Surfaced by `/safe-bash
+     * status` so a silently-denying policy is visible instead of mysterious.
+     */
+    guardPolicyNotes: string[];
 
     /** Local, redacted command-attempt telemetry used by `/safe-bash-audit`. */
     telemetry: SafeBashTelemetryConfig;
@@ -55,6 +68,7 @@ export const DEFAULT_SAFE_BASH_CONFIG: SafeBashConfig = {
     // Scope-decided groups (currently chmod) start from the shared default so a
     // consumer never blanket-denies a group whose pattern always matches.
     guardPolicy: { ...DEFAULT_DANGER_GROUP_POLICY },
+    guardPolicyNotes: [],
     telemetry: {
         enabled: true,
         directory: "~/.pi/agent/safe-bash-telemetry",
@@ -143,14 +157,36 @@ export function normalizeSafeBashConfig(raw: unknown): Partial<SafeBashConfig> {
     ) {
         const knownGroups = new Set(DANGER_GROUP_IDS);
         const filtered: Record<string, SafeBashGuardPolicy> = {};
+        const notes: string[] = [];
         for (const [groupId, value] of Object.entries(
             guardPolicyRaw as Record<string, unknown>,
         )) {
-            if (knownGroups.has(groupId) && isCommandGuardPolicy(value)) {
-                filtered[groupId] = value;
+            if (!knownGroups.has(groupId)) {
+                notes.push(
+                    `guardPolicy.${groupId}: unknown danger group, ignored`,
+                );
+                continue;
             }
+            if (!isGuardPolicyValue(value)) {
+                notes.push(
+                    `guardPolicy.${groupId}: invalid policy value, ignored`,
+                );
+                continue;
+            }
+            // A scope permission needs a path to decide on. Rejecting it here
+            // keeps the setting from reading as enabled while denying every
+            // command, and names the policies that do apply for this group.
+            const members = scopeMembersOf(value);
+            if (members && !isScopableGroup(groupId)) {
+                notes.push(
+                    `guardPolicy.${groupId}: ${members.join("/")} needs a path target, which this group has none of; use allow, ask, or deny. Entry ignored.`,
+                );
+                continue;
+            }
+            filtered[groupId] = value;
         }
         if (Object.keys(filtered).length > 0) result.guardPolicy = filtered;
+        if (notes.length > 0) result.guardPolicyNotes = notes;
     }
 
     return result;
@@ -178,6 +214,10 @@ export function loadSafeBashConfig(
                 ...base.guardPolicy,
                 ...overlay.guardPolicy,
             },
+            guardPolicyNotes: [
+                ...(base.guardPolicyNotes ?? []),
+                ...(overlay.guardPolicyNotes ?? []),
+            ],
             telemetry: {
                 ...base.telemetry,
                 ...overlay.telemetry,

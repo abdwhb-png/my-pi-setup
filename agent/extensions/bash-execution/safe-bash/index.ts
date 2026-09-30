@@ -44,6 +44,10 @@ import type { SandboxBashOperationOptions } from "../../_shared/sandbox-runtime/
 import { CapabilityError } from "../../_shared/shell-capability-error.ts";
 import { registerShellContext } from "../../_shared/shell-presentation/context.ts";
 import { shellToolPresentation } from "../../_shared/shell-presentation/index.ts";
+import {
+    currentShellPolicy,
+    resolveWritableRoots,
+} from "../../_shared/shell-runtime/index.ts";
 import { shouldBlockBashCall } from "./apply-mode.ts";
 import { registerSafeBashAuditCommand } from "./audit-command.ts";
 import {
@@ -52,7 +56,10 @@ import {
     type SafeBashGuardPolicy,
     type SafeBashMode,
 } from "./config.ts";
-import { buildSafeBashContext } from "./description.ts";
+import {
+    buildSafeBashContext,
+    type SafeBashDescriptionInput,
+} from "./description.ts";
 import {
     createSafeBashTelemetryRecorder,
     type SafeBashTelemetryRecorder,
@@ -88,6 +95,17 @@ export function registerSafeBash(
         approvals: guardSessionApprovals,
         getAllowedShellCommands: () => currentAllowedShellCommands,
         getGuardPolicy: () => currentGuardPolicy,
+        getSandboxScope: () => {
+            // Read at decision time, not at registration: `/sandbox mode` can
+            // change the mode and grants mid-session, and `sandbox-only` must
+            // follow the live state. No policy yet means fail closed.
+            const policy = currentShellPolicy();
+            if (!policy) return undefined;
+            return {
+                mode: policy.mode === "host" ? "host" : "sandbox",
+                writableRoots: resolveWritableRoots(policy),
+            };
+        },
         getRewriteRules: () => currentRewriteRules,
         getTelemetryRecorder: () => telemetryRecorder,
         shouldEnforceNativeTools,
@@ -95,28 +113,15 @@ export function registerSafeBash(
             options.createOperations(operationOptions),
     });
 
-    function getSafeBashDescriptionInput(): {
-        config: Pick<
-            SafeBashConfig,
-            "mode" | "guardPolicy" | "allowedShellCommands"
-        >;
-        enforceNativeTools: boolean;
-    } {
-        const cfg =
-            currentConfig ??
-            ({
-                mode: currentMode,
-                guardPolicy: currentGuardPolicy,
-                allowedShellCommands: currentAllowedShellCommands,
-            } as Pick<
-                SafeBashConfig,
-                "mode" | "guardPolicy" | "allowedShellCommands"
-            >);
+    function getSafeBashDescriptionInput(): SafeBashDescriptionInput {
         return {
             config: {
                 mode: currentMode,
-                guardPolicy: cfg.guardPolicy,
-                allowedShellCommands: cfg.allowedShellCommands,
+                guardPolicy: currentConfig?.guardPolicy ?? currentGuardPolicy,
+                guardPolicyNotes: currentConfig?.guardPolicyNotes ?? [],
+                allowedShellCommands:
+                    currentConfig?.allowedShellCommands ??
+                    currentAllowedShellCommands,
             },
             enforceNativeTools: shouldEnforceNativeTools(),
         };

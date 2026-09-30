@@ -145,7 +145,7 @@ describe('normalizeSafeBashConfig', () => {
         });
     });
 
-    it('drops invalid policies and unknown danger groups', () => {
+    it('drops invalid policies and unknown danger groups, noting each', () => {
         expect(
             normalizeSafeBashConfig({
                 guardPolicy: {
@@ -155,7 +155,14 @@ describe('normalizeSafeBashConfig', () => {
                     unknown: 'deny',
                 },
             }),
-        ).toEqual({ guardPolicy: { sudo: 'allow' } });
+        ).toEqual({
+            guardPolicy: { sudo: 'allow' },
+            guardPolicyNotes: [
+                'guardPolicy.rm: invalid policy value, ignored',
+                'guardPolicy.mkfs: invalid policy value, ignored',
+                'guardPolicy.unknown: unknown danger group, ignored',
+            ],
+        });
     });
 
     it('rejects malformed guardPolicy values', () => {
@@ -197,10 +204,85 @@ describe('normalizeSafeBashConfig', () => {
         });
     });
 
-    it('rejects cwd-only for unknown danger groups', () => {
+    it('rejects cwd-only for unknown danger groups, noting the drop', () => {
         expect(
             normalizeSafeBashConfig({ guardPolicy: { unknownGroup: 'cwd-only' } }),
-        ).toEqual({});
+        ).toEqual({
+            guardPolicyNotes: [
+                'guardPolicy.unknownGroup: unknown danger group, ignored',
+            ],
+        });
+    });
+
+    it('rejects a scope permission on a group with no path target', () => {
+        // D1: accepted here it would deny every command silently, so the entry
+        // is dropped and named in the status line instead.
+        const result = normalizeSafeBashConfig({
+            guardPolicy: { sudo: 'cwd-only', shutdown: 'sandbox-only' },
+        });
+        expect(result.guardPolicy).toBeUndefined();
+        expect(result.guardPolicyNotes).toEqual([
+            'guardPolicy.sudo: cwd-only needs a path target, which this group has none of; use allow, ask, or deny. Entry ignored.',
+            'guardPolicy.shutdown: sandbox-only needs a path target, which this group has none of; use allow, ask, or deny. Entry ignored.',
+        ]);
+    });
+
+    it('accepts scope permissions on every group with a path target', () => {
+        expect(
+            normalizeSafeBashConfig({
+                guardPolicy: {
+                    rm: 'cwd-only',
+                    chmod: 'sandbox-only',
+                    chown: 'cwd-only',
+                    dd: 'sandbox-only',
+                    'file-delete-api': 'cwd-only',
+                },
+            }),
+        ).toEqual({
+            guardPolicy: {
+                rm: 'cwd-only',
+                chmod: 'sandbox-only',
+                chown: 'cwd-only',
+                dd: 'sandbox-only',
+                'file-delete-api': 'cwd-only',
+            },
+        });
+    });
+
+    it('accepts the anyOf object form for a scopable group', () => {
+        expect(
+            normalizeSafeBashConfig({
+                guardPolicy: {
+                    rm: { anyOf: ['cwd-only', 'sandbox-only'] },
+                },
+            }),
+        ).toEqual({
+            guardPolicy: {
+                rm: { anyOf: ['cwd-only', 'sandbox-only'] },
+            },
+        });
+    });
+
+    it('rejects anyOf with a non-scope member, an empty list, or duplicates', () => {
+        for (const value of [
+            { anyOf: ['cwd-only', 'allow'] },
+            { anyOf: [] },
+            { anyOf: ['cwd-only', 'cwd-only'] },
+        ]) {
+            expect(
+                normalizeSafeBashConfig({ guardPolicy: { rm: value } }),
+            ).toEqual({
+                guardPolicyNotes: ['guardPolicy.rm: invalid policy value, ignored'],
+            });
+        }
+    });
+
+    it('rejects anyOf on a group with no path target', () => {
+        const result = normalizeSafeBashConfig({
+            guardPolicy: { sudo: { anyOf: ['cwd-only', 'sandbox-only'] } },
+        });
+        expect(result.guardPolicy).toBeUndefined();
+        expect(result.guardPolicyNotes?.[0]).toContain('needs a path target');
     });
 
     it('defaults chmod to cwd-only and leaves every other group to deny', () => {

@@ -1,5 +1,8 @@
 import type { CommandScopeVerdict } from "../../../_shared/command-execution/guard.ts";
-import type { CommandGuardPolicy } from "../../../_shared/command-execution/policy.ts";
+import type {
+    GuardPolicyValue,
+    ScopeGuardPolicy,
+} from "../../../_shared/command-execution/policy.ts";
 
 export const SAFE_BASH_TELEMETRY_SCHEMA_VERSION = 2 as const;
 export const SAFE_BASH_AUDIT_BOUNDS = {
@@ -34,9 +37,14 @@ export interface SafeBashTelemetryEvent {
      * schema version stays put, and records written before this field simply
      * lack it.
      */
-    policy?: CommandGuardPolicy;
-    /** Scope verdict, when a `cwd-only` scope decided the outcome. */
+    policy?: GuardPolicyValue;
+    /** Scope verdict, when a scope policy decided the outcome. */
     scopeVerdict?: CommandScopeVerdict;
+    /**
+     * Which scope member decided, when the policy was an `anyOf` with more than
+     * one member. Additive like `policy`, so older records simply lack it.
+     */
+    scopeMember?: ScopeGuardPolicy;
     /** Resolved targets the scope inspected, bounded and redacted. */
     targets?: string[];
     /** Earlier blocked event that repeated this event's resolved target set. */

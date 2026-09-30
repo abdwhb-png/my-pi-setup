@@ -21,8 +21,8 @@ import {
 } from "../_shared/command-execution/guard.ts";
 import {
     DEFAULT_DANGER_GROUP_POLICY,
-    isCommandGuardPolicy,
-    type CommandGuardPolicy,
+    isGuardPolicyValue,
+    type GuardPolicyValue,
 } from "../_shared/command-execution/policy.ts";
 import {
     normalizeCommandRewriteRules,
@@ -64,7 +64,7 @@ export const DEFAULT_THINK_IN_CODE_CONFIG: ThinkInCodeConfig = Object.freeze({
 
 export interface ThinkCommandPolicyConfig {
     allowedShellCommands: AllowedShellCommand[];
-    guardPolicy: Record<string, CommandGuardPolicy>;
+    guardPolicy: Record<string, GuardPolicyValue>;
     rewrites: BashRewriteRule[];
 }
 
@@ -166,18 +166,16 @@ const THINK_REWRITE_PROFILES: ReadonlySet<string> = new Set([
     "think_batch_execute",
 ]);
 
-function normalizeGuardPolicy(
-    raw: unknown,
-): Record<string, CommandGuardPolicy> {
+function normalizeGuardPolicy(raw: unknown): Record<string, GuardPolicyValue> {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
         return {};
     }
     const knownGroups = new Set(DANGER_GROUP_IDS);
-    const result: Record<string, CommandGuardPolicy> = {};
+    const result: Record<string, GuardPolicyValue> = {};
     for (const [groupId, value] of Object.entries(
         raw as Record<string, unknown>,
     )) {
-        if (knownGroups.has(groupId) && isCommandGuardPolicy(value)) {
+        if (knownGroups.has(groupId) && isGuardPolicyValue(value)) {
             result[groupId] = value;
         }
     }

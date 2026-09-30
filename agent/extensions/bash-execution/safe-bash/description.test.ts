@@ -5,7 +5,7 @@ import { buildSafeBashContext } from "./description";
 describe("buildSafeBashContext", () => {
     it("default config shows mode and deny-default count", () => {
         const result = buildSafeBashContext({
-            config: { mode: "coexist", guardPolicy: {}, allowedShellCommands: [] },
+            config: { mode: "coexist", guardPolicy: {}, guardPolicyNotes: [], allowedShellCommands: [] },
             enforceNativeTools: true,
         });
         expect(result).toStartWith("safe_bash:");
@@ -20,6 +20,7 @@ describe("buildSafeBashContext", () => {
             config: {
                 mode: "replace",
                 guardPolicy: { sudo: "allow", rm: "ask", chmod: "ask" },
+                guardPolicyNotes: [],
                 allowedShellCommands: [],
             },
             enforceNativeTools: true,
@@ -34,6 +35,7 @@ describe("buildSafeBashContext", () => {
             config: {
                 mode: "coexist",
                 guardPolicy: {},
+                guardPolicyNotes: [],
                 allowedShellCommands: ["grep", "find"],
             },
             enforceNativeTools: true,
@@ -49,6 +51,7 @@ describe("buildSafeBashContext", () => {
                     rm: "cwd-only",
                     "file-delete-api": "cwd-only",
                 },
+                guardPolicyNotes: [],
                 allowedShellCommands: [],
             },
             enforceNativeTools: true,
@@ -58,10 +61,55 @@ describe("buildSafeBashContext", () => {
 
     it("shows relaxed native-redirect when not enforced", () => {
         const result = buildSafeBashContext({
-            config: { mode: "coexist", guardPolicy: {}, allowedShellCommands: [] },
+            config: { mode: "coexist", guardPolicy: {}, guardPolicyNotes: [], allowedShellCommands: [] },
             enforceNativeTools: false,
         });
         expect(result).toContain("native-redirect: relaxed");
+    });
+
+    it("shows sandbox-only and anyOf scope groups", () => {
+        const result = buildSafeBashContext({
+            config: {
+                mode: "coexist",
+                guardPolicy: {
+                    rm: "sandbox-only",
+                    chown: "cwd-only",
+                    dd: { anyOf: ["cwd-only", "sandbox-only"] },
+                },
+                guardPolicyNotes: [],
+                allowedShellCommands: [],
+            },
+            enforceNativeTools: true,
+        });
+        expect(result).toContain("sandbox-only=[rm]");
+        expect(result).toContain("cwd-only=[chown]");
+        expect(result).toContain(
+            "scope-anyOf=[dd:cwd-only|sandbox-only]",
+        );
+    });
+
+    it("surfaces rejected guardPolicy entries so a silent drop is visible", () => {
+        const result = buildSafeBashContext({
+            config: {
+                mode: "coexist",
+                guardPolicy: { chmod: "cwd-only" },
+                guardPolicyNotes: [
+                    "guardPolicy.sudo: cwd-only needs a path target, which this group has none of; use allow, ask, or deny. Entry ignored.",
+                ],
+                allowedShellCommands: [],
+            },
+            enforceNativeTools: true,
+        });
+        expect(result).toContain("Ignored guardPolicy");
+        expect(result).toContain("guardPolicy.sudo");
+    });
+
+    it("omits the ignored-policy clause when nothing was rejected", () => {
+        const result = buildSafeBashContext({
+            config: { mode: "coexist", guardPolicy: {}, guardPolicyNotes: [], allowedShellCommands: [] },
+            enforceNativeTools: true,
+        });
+        expect(result).not.toContain("Ignored guardPolicy");
     });
 
     it("keeps output under 500 chars even with many allow groups", () => {
@@ -70,7 +118,7 @@ describe("buildSafeBashContext", () => {
             guardPolicy[g] = "allow";
         }
         const result = buildSafeBashContext({
-            config: { mode: "replace", guardPolicy, allowedShellCommands: ["grep"] },
+            config: { mode: "replace", guardPolicy, guardPolicyNotes: [], allowedShellCommands: ["grep"] },
             enforceNativeTools: true,
         });
         expect(result.length).toBeLessThan(600);

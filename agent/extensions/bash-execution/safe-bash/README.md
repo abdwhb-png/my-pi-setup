@@ -67,6 +67,20 @@ The asymmetry with `rm` is deliberate: `rm` unlinks a symlink rather than follow
 
 Example: from `~/.pi`, `chmod +x bin/pi-fork` and `chmod 755 /home/<user>/.pi/bin/pi-fork` are both blocked because the target resolves under a protected root.
 
+## Scopable groups
+
+A scope permission (`cwd-only` / `sandbox-only`) needs a path to decide on, so it applies only to groups that have filesystem targets. The canonical map is `SCOPE_RULES` in [`_shared/command-execution/guard.ts`](../../_shared/command-execution/guard.ts), read through `isScopableGroup`:
+
+- `rm` — `delete` rule over `rm` / `git rm` operands.
+- `file-delete-api` — `api-delete` rule over path literals in interpreter delete calls.
+- `chmod` — `mode` rule over targets plus the mode rules above.
+- `chown` — `owner` rule over every operand after the owner spec.
+- `dd` — `of-device` rule over the `of=` write destination.
+
+The other groups have no path operand, so a scope permission on them is **rejected at config load**, named in `/safe-bash status`, and never silently denies: `sudo`, `mkfs`, `raw-disk-write`, `forkbomb`, `remote-shell`, `reverse-shell`, `exec-injection`, `shutdown`, `init`, `kill`, `cryptominer`. They stay with `allow`, `ask`, or `deny`.
+
+Scoped `chown` rejects symlinks in any existing target path component because `chown` follows them by default. `-R` / `--recursive` and link-traversal flags (`-H`, `-L`) fail closed: the guard cannot inspect every descendant. `chown --reference=…` also fails closed because it copies ownership from another file. `dd` is scoped on `of=` only; `if=` is a read.
+
 ## Guard policy
 
 Configure each danger group under `safeBash.guardPolicy`:
@@ -75,9 +89,9 @@ Configure each danger group under `safeBash.guardPolicy`:
 {
     "safeBash": {
         "guardPolicy": {
-            "sudo": "allow",
-            "rm": "ask",
-            "file-delete-api": "deny"
+            "sudo": "deny",
+            "rm": "allow",
+            "file-delete-api": "ask"
         }
     }
 }
@@ -88,16 +102,29 @@ Actions:
 - `deny`: block. This is the default for missing groups.
 - `ask`: interactive choice to allow once, allow the exact normalized command for the session, deny, or deny with a reason. Non-interactive sessions deny.
 - `allow`: execute without prompting while preserving telemetry guard evidence.
-- `cwd-only`: allow only when the command's resolvable targets stay lexically inside the session working directory (`ctx.cwd`) and avoid the chmod-specific checks above. Supported for `rm`, `file-delete-api`, and `chmod`; other groups fail closed to `unknown`.
+- `cwd-only`: allow only when the command's resolvable targets stay lexically inside the session working directory (`ctx.cwd`). Supported for the scopable groups above; other groups are rejected at config load.
+- `sandbox-only`: allow only when the shell is in **sandbox mode** _and_ every resolved target is inside the sandbox's granted write roots. It denies in host mode even for granted targets, and denies when the sandbox facts are unavailable. Implemented in `evaluateScopePolicies` with the same parser as `cwd-only`; the roots come from the live shell policy via `resolveWritableRoots`. `<sandbox-home>` / `<sandbox-tmp>` grant tokens are dropped, since a host path can never sit inside a sandbox-private mount.
+
+Combine the two with the object form, which admits a command when **any** member does. Members must be scope policies, non-empty, and duplicate-free:
+
+```json
+{
+    "safeBash": {
+        "guardPolicy": { "rm": { "anyOf": ["cwd-only", "sandbox-only"] } }
+    }
+}
+```
+
+A rejection is recorded in `guardPolicyNotes` and rendered by `/safe-bash status`, so a dropped entry is visible instead of a silent deny.
 
 Denial reasons name the class, so the agent can act on the block instead of retrying a variant spelling:
 
 - `outside`: names the offending resolved path.
 - `unresolvable`: names the raw operand that could not be resolved (variable, glob, backtick), or reports that the invocation has no resolvable target.
 - `no-invocation`: the group matched a form the parser cannot read as an invocation (`xargs rm`, `find -exec rm`, or a mention inside a string).
-- `protected` / `symlink` / `catastrophic-mode`: chmod-specific, see above.
+- `protected` / `catastrophic-mode`: chmod-specific, see above. `symlink` also applies to scoped `chown` targets and their parent directories.
 
-`chmod` ships with `cwd-only` as its code default, taken from the shared `DEFAULT_DANGER_GROUP_POLICY` in [`_shared/command-execution/policy.ts`](../_shared/command-execution/policy.ts)<!-- markdown-links: missing /home/abdwhb/.pi/agent/extensions/bash-execution/_shared/command-execution/policy.ts -->. `think-in-code` starts from the same constant for its own `commandPolicy.guardPolicy`, so a scope-decided group is never blanket-denied by one consumer and scoped by another. Setting `safeBash.guardPolicy.chmod` to `deny` blocks every `chmod` invocation, and `allow` skips the scope checks entirely.
+`chmod` ships with `cwd-only` as its code default, taken from the shared `DEFAULT_DANGER_GROUP_POLICY` in [`_shared/command-execution/policy.ts`](../../_shared/command-execution/policy.ts). `think-in-code` starts from the same constant for its own `commandPolicy.guardPolicy`, so a scope-decided group is never blanket-denied by one consumer and scoped by another. Setting `safeBash.guardPolicy.chmod` to `deny` blocks every `chmod` invocation, and `allow` skips the scope checks entirely.
 
 Every matching group is evaluated, so allowing one group cannot bypass another matching group's `ask` or `deny` policy.
 
@@ -135,7 +162,7 @@ Configure under `safeBash.allowedShellCommands`:
 
 Purpose: bypass **native-tool redirection only**. `isDangerous()` and every guard group still run on these commands, so this is not a guard allow.
 
-Accepted values are a closed set — the shell commands that have a native Pi tool equivalent: `grep`, `rg`, `find`, `fd`, `ls`, `ack`, `ag`. They map to the native tools `grep`, `find`, and `ls`. The type is `AllowedShellCommand[]`, defined once in [`_shared/command-execution/guard.ts`](../_shared/command-execution/guard.ts) next to the redirect map.
+Accepted values are a closed set — the shell commands that have a native Pi tool equivalent: `grep`, `rg`, `find`, `fd`, `ls`, `ack`, `ag`. They map to the native tools `grep`, `find`, and `ls`. The type is `AllowedShellCommand[]`, defined once in [`_shared/command-execution/guard.ts`](../../_shared/command-execution/guard.ts) next to the redirect map.
 
 Matching is by first word of the normalized command, exact match: no prefixes, no arguments, no case folding, and no leading `sudo`. `"grep -r"`, `"Grep"`, and `"sudo grep"` never match this list. Only the listed commands are redirected in the first place, so a command such as `sudo grep …` passes through whether or not it appears here. Entries outside the set are dropped during config normalization, so a typo silently removes the bypass rather than widening it.
 
@@ -184,7 +211,7 @@ Telemetry is local JSONL:
 
 Each event records schema version, event ID, time, session/tool-call IDs, project path, sequence, decision, outcome, command length, optional redacted command, and optional matched group/pattern/reason.
 
-Blocked events additionally record the guard evidence needed to adjudicate them after the fact: `policy` (the effective policy for the matched group), `scopeVerdict` (what a `cwd-only` scope decided), `targets` (up to 8 resolved targets, redacted), and `repeatOfEventId` (the earlier blocked event that hit the same resolved target set). Without `policy` and `scopeVerdict` an `rm` block cannot be attributed to `deny` or to a `cwd-only` fail-closed; the audit window that motivated these fields had 13 such unattributable events. The fields are additive, so `SAFE_BASH_TELEMETRY_SCHEMA_VERSION` stays at 2.
+Blocked events additionally record the guard evidence needed to adjudicate them after the fact: `policy` (the effective policy for the matched group), `scopeVerdict` (what a scope check decided), `scopeMember` (which member of an `anyOf` decided), `targets` (up to 8 resolved targets, redacted), and `repeatOfEventId` (the earlier blocked event that hit the same resolved target set). Without `policy` and `scopeVerdict` an `rm` block cannot be attributed to `deny` or to a `cwd-only` fail-closed; the audit window that motivated these fields had 13 such unattributable events. The fields are additive, so `SAFE_BASH_TELEMETRY_SCHEMA_VERSION` stays at 2.
 
 ## Audit command
 

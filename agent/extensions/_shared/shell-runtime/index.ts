@@ -1,4 +1,6 @@
 import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve as resolvePath } from "node:path";
 import { CapabilityError } from "../shell-capability-error.ts";
 import type { ShellCapabilityResolution } from "./contracts.ts";
 
@@ -95,6 +97,34 @@ export async function resolveShellPolicyForExecution(
             "Shell runtime changed during policy preparation. The command was not executed.",
         );
     return requireShellPolicy(cwd);
+}
+
+/**
+ * Absolute, resolved write roots the sandbox currently grants, for a scope
+ * permission to authorize against.
+ *
+ * Grant paths are written in host space with `~` and sandbox-namespace tokens.
+ * `~` expands to the real home directory. `<sandbox-home>` and `<sandbox-tmp>`
+ * name sandbox-private mounts with no host path, so they are dropped: a host
+ * path can never be inside them, and keeping the literal token would only
+ * invite a prefix match against a directory named `<sandbox-home>`.
+ *
+ * This lives beside the grant resolution it reads so the guard and the status
+ * line cannot disagree about what the sandbox allows.
+ */
+export function resolveWritableRoots(
+    policy: ShellCapabilityResolution,
+): string[] {
+    const roots: string[] = [];
+    for (const grant of policy.grants.writePaths) {
+        if (grant.startsWith("<")) continue;
+        const expanded =
+            grant === "~" || grant.startsWith("~/")
+                ? `${homedir()}${grant.slice(1)}`
+                : grant;
+        if (expanded.length > 0) roots.push(resolvePath(expanded));
+    }
+    return roots;
 }
 
 /** Resolve an explicit !s request without changing the selected session mode. */
