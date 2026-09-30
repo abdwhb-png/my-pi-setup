@@ -37,13 +37,31 @@ function runWrite(target: string, content: string | Buffer): {
     };
 }
 
-/** Runs the script asynchronously so several can be in flight together. */
-function runWriteAsync(script: string, content: string): Promise<number> {
+/**
+ * Runs the script asynchronously so several can be in flight together. A `gate`
+ * path makes the command block until that file exists, which is what forces the
+ * transfers to actually overlap: without a barrier the first writer can finish
+ * before the second writes, and the test would pass even with a shared staging
+ * path.
+ */
+function runWriteAsync(
+    script: string,
+    content: string,
+    gate?: string,
+): Promise<{ status: number; stderr: string }> {
+    const prelude = gate ? `while [ ! -e '${gate}' ]; do :; done\n` : "";
     return new Promise((resolve, reject) => {
-        const child = spawn("sh", ["-c", script], {
-            stdio: ["pipe", "ignore", "ignore"],
+        const child = spawn("sh", ["-c", `${prelude}${script}`], {
+            stdio: ["pipe", "ignore", "pipe"],
         });
-        child.on("close", (code) => resolve(code ?? -1));
+        const stderr: Buffer[] = [];
+        child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+        child.on("close", (code) =>
+            resolve({
+                status: code ?? -1,
+                stderr: Buffer.concat(stderr).toString("utf8"),
+            }),
+        );
         child.on("error", reject);
         child.stdin.end(content);
     });
@@ -119,17 +137,26 @@ describe("generated write script", () => {
         const payloadA = "a".repeat(400_000);
         const payloadB = "b".repeat(400_000);
         const script = buildWriteScript(target, 400_000);
-        const [a, b] = await Promise.all([
-            runWriteAsync(script, payloadA),
-            runWriteAsync(script, payloadB),
-        ]);
-        expect(a).toBe(0);
-        expect(b).toBe(0);
+        // In its own directory: the target directory is asserted to contain
+        // nothing but the written file, so the gate must not live there.
+        const gate = join(scratch(), "gate");
+        // Both processes are started, not awaited: each parks on the gate with
+        // nothing written yet, so releasing them together forces a real overlap
+        // rather than leaving the ordering to chance.
+        const first = runWriteAsync(script, payloadA, gate);
+        const second = runWriteAsync(script, payloadB, gate);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        writeFileSync(gate, "");
+        const [a, b] = await Promise.all([first, second]);
+        expect(a.status).toBe(0);
+        expect(b.status).toBe(0);
+        // A failing writer reports why, instead of only an exit code.
+        expect([a.stderr, b.stderr]).toEqual(["", ""]);
         // Last writer wins atomically; the file is never a mix of both.
         const final = readFileSync(target, "utf8");
         expect([payloadA, payloadB]).toContain(final);
         expect(readdirSync(dir)).toEqual(["app.conf"]);
-    });
+    }, 20_000);
 
     it("stages the payload in a private directory, not a reopenable temp file", () => {
         const script = buildWriteScript("/home/dev/app.conf", 5);

@@ -45,7 +45,8 @@ const SSH_MODE_GUIDANCE = [
     "ssh_bash starts in the remote working directory, and a cd inside the command still applies.",
     "Relative paths in ssh_read, ssh_write, and ssh_edit resolve under the remote working directory.",
     "ssh_edit refuses absolute paths outside the remote working directory; use an absolute path with ssh_read, or ssh_bash, to reach other system files.",
-    "Writes are atomic: content goes over stdin and lands via a rename, so a failed write leaves the previous file intact.",
+    "Writes are atomic: content goes over stdin and lands via a rename, so a write refused before the rename leaves the previous file intact. An interrupted write, or one whose SSH connection died, reports outcome UNKNOWN because the rename may already have landed: read the remote file before retrying rather than retrying blind.",
+    "A single write is capped at 16 MiB, the same ceiling as a read. Write larger files in ranges, or use ssh_bash.",
     "Key-based or agent-based SSH auth is required. There is no interactive password or host-key prompt.",
 ];
 

@@ -112,15 +112,18 @@ ssh_bash  find /var/log -name '*.log' -mtime -1
 - the remote side stages the content in a **unique** temporary **directory** created by `mktemp -d` under `umask 077` in the target's own directory, so two writers to the same target never share a staging path, the rename stays on one filesystem, and another user who can write the target directory cannot swap the staged file for a symlink mid-transfer
 - a `trap` removes that staging directory on **every** exit, including a failed rename, and stays armed after a successful rename so the emptied directory is not leaked
 - the byte count is sent alongside and verified with `wc -c` **before** the rename, so a connection that drops mid-transfer cannot publish a truncated file over an intact one. `cat` exits 0 on an early EOF, so exit status alone does not prove the content arrived
-- a **directory** target is refused: `mv -f file dir` succeeds by moving the file _inside_ the directory
+- a **directory** target is refused: `mv -f file dir` succeeds by moving the file _inside_ the directory. This is re-checked immediately before the rename, which narrows the window to the rename itself, but a concurrent writer that turns the target into a directory in that instant is still possible. Closing it entirely needs descriptor-based resolution (`openat2(RESOLVE_BENEATH)` or similar), which this does not attempt
 - a **symlink** target is refused by `ssh_write` and `ssh_edit`. Renaming over a link replaces the link, not the file it points to, and the tool would report success while the file you meant is untouched. Edit the resolved path, or use `ssh_bash`
-- consequence: the resulting file is owned by the SSH user, and `mktemp` creates the temp with mode `0600` regardless of umask, so the renamed file ends up `0600`. The previous implementation (`cat >` in place) preserved the original mode and owner. **If you rewrite a file that another user or service must read, restore the mode yourself** (`ssh_bash` `chmod`), because `0600` will break it.
+- consequence: the resulting file is owned by the SSH user. `mktemp -d` creates the staging _directory_; the payload itself is created by `cat` under the `umask 077` set above, so the renamed file ends up `0600`. The previous implementation (`cat >` in place) preserved the original mode and owner. **If you rewrite a file that another user or service must read, restore the mode yourself** (`ssh_bash` `chmod`), because `0600` will break it.
+- a single write is capped at **16 MiB**, the same ceiling a read uses, and is refused before anything is spawned. Node transcodes the whole payload to a Buffer and holds it again until drain, so an unbounded write would peak at two to three times its size for the whole transfer. Write larger files in ranges, or use `ssh_bash`
 
 ### Interrupted writes report an unknown outcome
 
 If a write is aborted or times out, the extension cannot know whether the remote rename already committed. The tool says **outcome UNKNOWN** and tells the model to read the file before retrying, rather than claiming the previous file is intact. A clean non-zero exit is still reported as a plain failure, because there the script ran to completion and the outcome is known.
 
 Unique temp files stop one writer from corrupting another. They do not prevent a lost update against an unrelated remote editor writing the same file at the same time.
+
+A write that is refused, or that fails with a clean non-zero exit, ran to completion and did not reach the rename, so the previous file is intact. An interrupted write, an SSH connection that dies mid-transfer, and a child killed with no exit code are all reported as **outcome UNKNOWN** instead, because the rename may already have landed. A write whose transport succeeded but whose turn was aborted before the result was reported says so explicitly, because a bare "aborted" would read as "nothing happened" and invite a duplicate write.
 
 ## Transport limits
 
@@ -131,8 +134,9 @@ Unique temp files stop one writer from corrupting another. They do not prevent a
 - abort, timeout, and exceeding the data cap escalate `SIGTERM` → `SIGKILL` after a grace period, tracked on process closure rather than on the tool call settling, so a child that ignores `SIGTERM` still dies
 - **Killing the local ssh client does not guarantee the remote command dies.** A detached remote process can outlive the tool call. The extension does not claim otherwise.
 - streaming `ssh_bash` output retained in memory for an error message is capped at 1 MiB; every byte still streams to the consumer
-- **stderr** is capped at 64 KiB in memory, in every mode including data-returning calls. It gets its own budget rather than sharing stdout's, because a data call keeps all of stdout and must not let a chatty or hostile remote grow local memory without bound
+- **stderr** is capped at 64 KiB in memory, in every mode including data-returning calls. It gets its own budget rather than sharing stdout's, because a data call keeps all of stdout and must not let a chatty or hostile remote grow local memory without bound. That ceiling is a hard limit: the stdout tail option may lower it, never raise it
 - a data-returning call such as `ssh_read` is capped at 16 MiB and **rejected** if exceeded, never silently truncated — a shortened file would look like a successful read of different content
+- `/ssh <host>` bounds its `pwd` probe with its own 30s wall clock. `ConnectTimeout=10` covers only TCP connect and auth, so a host that accepts the connection and then stalls would otherwise leave the command pending forever
 
 An `ssh_bash` exit code of 255 is reported as an SSH transport, host-key, or authentication failure with the remote output attached. A remote command that itself exits 255 is indistinguishable from that, so the message says so rather than guessing.
 
@@ -160,7 +164,7 @@ If a stale control socket is left behind, clear it with `ssh -O exit devlab`.
 
 - image reads are supported for common extensions: jpg, jpeg, png, gif, webp
 - a missing remote file is reported as `Remote path not found on <host>: <path>`, and an inaccessible one as `Remote path is not readable on <host>: <path>`
-- an SSH transport or authentication failure reports exit 255 separately and includes the remote stderr verbatim
+- an SSH transport or authentication failure reports exit 255 separately and includes the remote stderr, trimmed to the retained budget above
 
 ## License
 
