@@ -5,6 +5,7 @@ import { loadExtensionConfig } from "./config-loader.ts";
 export interface PlansConfig {
     planFileDir?: string;
     browserCommand?: string;
+    autoExecute: boolean;
 }
 
 export function loadPlansConfig(
@@ -13,12 +14,12 @@ export function loadPlansConfig(
     agentDir?: string,
 ): PlansConfig {
     return loadExtensionConfig<PlansConfig>(cwd, {
-        defaults: {},
+        defaults: { autoExecute: true },
         normalize: (raw) => {
             if (raw === undefined) return {};
             if (!raw || typeof raw !== "object" || Array.isArray(raw))
                 throw new Error("plans must be an object");
-            const config: PlansConfig = {};
+            const config: Partial<PlansConfig> = {};
             for (const [key, value] of [
                 [
                     "planFileDir",
@@ -34,22 +35,23 @@ export function loadPlansConfig(
                     throw new Error(`${key} must be a nonempty string`);
                 config[key] = value;
             }
+            if ("autoExecute" in raw) {
+                if (typeof raw.autoExecute !== "boolean")
+                    throw new Error("autoExecute must be a boolean");
+                config.autoExecute = raw.autoExecute;
+            }
             return config;
         },
         agentDir,
         projectTrusted,
         strict: true,
-        sources: [
-            {
-                settingsKey: "plans",
-                legacyFilename: "plannotator.json",
-                cumulative: true,
-            },
-        ],
+        sources: [{ settingsKey: "plans" }],
     });
 }
 
-export function resolvePlanFileDir(config: PlansConfig): string | undefined {
+export function resolvePlanFileDir(
+    config: Pick<PlansConfig, "planFileDir">,
+): string | undefined {
     const path = config.planFileDir?.trim();
     return path?.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }

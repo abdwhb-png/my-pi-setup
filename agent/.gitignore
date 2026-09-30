@@ -14,19 +14,15 @@ models-store.json
 model-thinking.json
 settings.json.*
 
-mcp-*/
-mcp-*
-mcp.json
-git/
-
 extensions/oc.ts
 extensions/tx9/
 extensions/pi-permission-system/logs/
 extensions/herdr-agent-state.ts
 
-run-history.jsonl
-trust.json
-package-finalizer-state.json
+mcp-*/
+mcp-*
+mcp.json
+git/
 npm/
 pi-hermes-memory/
 hermes-memory-config.json
@@ -35,9 +31,14 @@ projects-memory/
 intercom/
 missions/
 cache/
-
-models.backup
 .portable-path-backups/
+
+run-history.jsonl
+trust.json
+package-finalizer-state.json
+models.backup
+fancy-footer.json.*
+fancy-footer.local.json.*
 
 bin/hypa.legacy
 

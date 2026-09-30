@@ -17,10 +17,49 @@ import {
     registerToolPolicyContribution,
 } from "../_shared/tool-policy/index.ts";
 import {
+    getPlanReviewState,
+    nextPlanRevision,
+    normalizeSubmittedPlanPath,
+    PLAN_REVIEW_REVISION_ENTRY,
+} from "./plan-submission-lifecycle.ts";
+import {
     runPlannotator,
     type ReviewDecision,
     type ReviewMode,
 } from "./plannotator-cli.ts";
+
+interface ActiveSubmission {
+    path: string;
+    revision: number;
+}
+
+interface ActiveReview {
+    controller: AbortController;
+    sessionId: string;
+    submission?: ActiveSubmission;
+    abandoned: boolean;
+}
+
+export interface SubmissionReviews {
+    getActiveSubmission(ctx: ExtensionContext): ActiveSubmission | undefined;
+    abandonSubmission(
+        ctx: ExtensionContext,
+        submission: ActiveSubmission,
+    ): void;
+}
+
+type SubmissionDecision =
+    | ReviewDecision
+    | {
+          decision: "abandoned";
+          feedback: string;
+      };
+
+const ABANDONED_REVIEW: SubmissionDecision = {
+    decision: "abandoned",
+    feedback:
+        "The user abandoned this plan for now. Planning is paused; do not resubmit or implement it unless asked.",
+};
 
 const GATE_ERROR =
     "submit_plan requires an active role with handoffGuard: plan-submission.";
@@ -45,7 +84,7 @@ function hash(file: string): string {
     return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
-export function registerReviews(pi: ExtensionAPI): void {
+export function registerReviews(pi: ExtensionAPI): SubmissionReviews {
     const policy = registerToolPolicyContribution(
         pi,
         "plans.review",
@@ -55,10 +94,10 @@ export function registerReviews(pi: ExtensionAPI): void {
                 : { deny: ["submit_plan"] },
     );
     let generation = 0;
-    let active: AbortController | undefined;
+    let active: ActiveReview | undefined;
     pi.on("session_shutdown", () => {
         generation++;
-        active?.abort();
+        active?.controller.abort();
         active = undefined;
     });
     pi.on("tool_call", (event) => {
@@ -76,17 +115,23 @@ export function registerReviews(pi: ExtensionAPI): void {
         raw: string | undefined,
         signal: AbortSignal | undefined,
         receive: (
-            decision: ReviewDecision,
+            decision: SubmissionDecision,
             file?: string,
             digest?: string,
+            autoExecute?: boolean,
         ) => T,
     ): Promise<T> {
         if (active)
             throw new Error("A review is already open in this session.");
         const controller = new AbortController();
-        active = controller;
         const origin = generation;
         const sessionId = ctx.sessionManager.getSessionId();
+        const current: ActiveReview = {
+            controller,
+            sessionId,
+            abandoned: false,
+        };
+        active = current;
         const abort = () => controller.abort();
         signal?.addEventListener("abort", abort, { once: true });
         if (signal?.aborted) abort();
@@ -112,37 +157,69 @@ export function registerReviews(pi: ExtensionAPI): void {
                     );
                 if (statSync(file).size > 1_048_576)
                     throw new Error("Plan exceeds 1 MiB.");
+                const path = normalizeSubmittedPlanPath(raw!, ctx.cwd, dir);
+                if (!path)
+                    throw new Error(
+                        "Plan path must be inside plans.planFileDir without traversal.",
+                    );
+                const entries = ctx.sessionManager.getEntries();
+                const state = getPlanReviewState(entries, path);
+                const revision =
+                    !state || state.status === "abandoned"
+                        ? nextPlanRevision(entries, path)
+                        : state.revision;
+                if (!state || state.status === "abandoned") {
+                    pi.appendEntry(PLAN_REVIEW_REVISION_ENTRY, {
+                        path,
+                        revision,
+                        operation: "submit_plan",
+                        timestamp: Date.now(),
+                    });
+                }
+                current.submission = { path, revision };
             }
             const digest = mode === "submit" ? hash(file!) : undefined;
-            const result = await runPlannotator({
-                mode,
-                cwd: ctx.cwd,
-                filePath: file,
-                browserCommand: config.browserCommand,
-                signal: controller.signal,
-            });
+            let result: SubmissionDecision;
+            try {
+                result = await runPlannotator({
+                    mode,
+                    cwd: ctx.cwd,
+                    filePath: file,
+                    browserCommand: config.browserCommand,
+                    signal: controller.signal,
+                });
+            } catch (error) {
+                if (!current.abandoned) throw error;
+                result = ABANDONED_REVIEW;
+            }
             assertCurrent();
             if (
                 origin !== generation ||
-                controller.signal.aborted ||
+                (controller.signal.aborted && !current.abandoned) ||
+                signal?.aborted ||
                 ctx.sessionManager.getSessionId() !== sessionId
             )
                 throw new Error("Review cancelled: session changed.");
-            if (mode === "submit") {
+            if (current.abandoned) result = ABANDONED_REVIEW;
+            if (mode === "submit" && !current.abandoned) {
                 if (!requiresPlanSubmission(getToolPolicy().getRole()))
                     throw new Error(GATE_ERROR);
                 if (
                     resolveFile(ctx.cwd, raw!) !== file ||
-                    hash(file) !== digest
+                    hash(file) !== digest ||
+                    getPlanReviewState(
+                        ctx.sessionManager.getEntries(),
+                        current.submission!.path,
+                    )?.revision !== current.submission!.revision
                 )
                     throw new Error(
                         "Plan changed during review. Submit the current revision again.",
                     );
             }
-            return receive(result, file, digest);
+            return receive(result, file, digest, config.autoExecute);
         } finally {
             signal?.removeEventListener("abort", abort);
-            if (active === controller) active = undefined;
+            if (active === current) active = undefined;
         }
     }
 
@@ -161,7 +238,7 @@ export function registerReviews(pi: ExtensionAPI): void {
                 "submit",
                 params.filePath,
                 signal,
-                (result, file, digest) => {
+                (result, file, digest, autoExecute) => {
                     const approved = result.decision === "approved";
                     if (approved)
                         pi.appendEntry("plans:approved", {
@@ -169,6 +246,7 @@ export function registerReviews(pi: ExtensionAPI): void {
                             planPath: file,
                             contentHash: digest,
                             feedback: result.feedback,
+                            autoExecute,
                             timestamp: Date.now(),
                         });
                     return {
@@ -181,7 +259,7 @@ export function registerReviews(pi: ExtensionAPI): void {
                             },
                         ],
                         details: { ...result, approved, planPath: file },
-                        terminate: approved,
+                        terminate: approved || result.decision === "abandoned",
                     };
                 },
             );
@@ -233,4 +311,21 @@ export function registerReviews(pi: ExtensionAPI): void {
             },
         });
     }
+
+    return {
+        getActiveSubmission(ctx) {
+            return active?.sessionId === ctx.sessionManager.getSessionId()
+                ? active.submission
+                : undefined;
+        },
+        abandonSubmission(ctx, submission) {
+            if (
+                active?.sessionId !== ctx.sessionManager.getSessionId() ||
+                active.submission !== submission
+            )
+                return;
+            active.abandoned = true;
+            active.controller.abort();
+        },
+    };
 }

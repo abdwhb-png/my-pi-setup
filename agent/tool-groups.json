@@ -29,7 +29,6 @@
             "ast_grep_search",
             "ast_grep_outline",
             "lsp_navigation",
-            "lsp_diagnostics",
             "symbol_search",
             "module_report",
             "read_symbol",

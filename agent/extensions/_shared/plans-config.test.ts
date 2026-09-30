@@ -20,7 +20,7 @@ function fixture() {
     return { agentDir, cwd };
 }
 
-test("new plans fields override legacy individually; untrusted project is ignored", () => {
+test("settings override per field and ignore untrusted projects and legacy configuration", () => {
     const { agentDir, cwd } = fixture();
     writeFileSync(
         join(agentDir, "plannotator.json"),
@@ -32,23 +32,37 @@ test("new plans fields override legacy individually; untrusted project is ignore
     );
     writeFileSync(
         join(agentDir, "settings.json"),
-        JSON.stringify({ plans: { planFileDir: "new" } }),
+        JSON.stringify({ plans: { planFileDir: "new", autoExecute: false } }),
     );
     writeFileSync(
         join(cwd, ".pi/settings.json"),
-        JSON.stringify({ plans: { browserCommand: "project-browser" } }),
+        JSON.stringify({ plans: { browserCommand: "project-browser", autoExecute: true } }),
     );
     expect(loadPlansConfig(cwd, false, agentDir)).toEqual({
         planFileDir: "new",
-        browserCommand: "browser",
+        autoExecute: false,
     });
     expect(loadPlansConfig(cwd, true, agentDir)).toEqual({
         planFileDir: "new",
         browserCommand: "project-browser",
+        autoExecute: true,
     });
     expect(resolvePlanFileDir({ planFileDir: "~/plans" })).toBe(
         join(homedir(), "plans"),
     );
+});
+
+test.each(["{}", "not json"])("legacy configuration is never read (%s)", (legacy) => {
+    const { agentDir, cwd } = fixture();
+    writeFileSync(join(agentDir, "plannotator.json"), legacy);
+    writeFileSync(join(cwd, ".pi/plannotator.json"), legacy);
+    expect(loadPlansConfig(cwd, true, agentDir)).toEqual({ autoExecute: true });
+});
+
+test.each([["false"], [0], [null], [[]]])("autoExecute rejects non-booleans (%j)", (autoExecute) => {
+    const { agentDir, cwd } = fixture();
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ plans: { autoExecute } }));
+    expect(() => loadPlansConfig(cwd, false, agentDir)).toThrow("autoExecute must be a boolean");
 });
 
 test("invalid configuration reports an explicit error", () => {

@@ -81,8 +81,8 @@ function formatHistory(
 
 export default function planWorkflowExtension(pi: ExtensionAPI): void {
     registerPlanTools(pi);
-    registerPlanSubmissionGuard(pi);
-    registerReviews(pi);
+    const reviews = registerReviews(pi);
+    registerPlanSubmissionGuard(pi, reviews);
     registerShowSavedPlansCommand(pi);
 
     pi.registerTool({

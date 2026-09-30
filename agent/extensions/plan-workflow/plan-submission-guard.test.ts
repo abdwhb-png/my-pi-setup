@@ -34,6 +34,8 @@ function setup() {
         data: Record<string, unknown>;
     }> = [];
     const pi = {
+        sendUserMessage: mock(),
+        sendMessage: mock(),
         on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) =>
             handlers.set(event, handler),
         appendEntry: (customType: string, data: Record<string, unknown>) =>
@@ -43,13 +45,15 @@ function setup() {
     };
     const ctx = {
         cwd: "/workspace",
+        signal: new AbortController().signal,
         isProjectTrusted: () => true,
+        isIdle: () => false,
         hasUI: false,
-        sessionManager: { getEntries: () => entries },
+        sessionManager: { getEntries: () => entries, getSessionId: () => "fixture-session" },
         ui: { notify: mock(), confirm: mock(() => true) },
     };
 
-    registerPlanSubmissionGuard(pi as never);
+    registerPlanSubmissionGuard(pi as never, { getActiveSubmission: () => undefined, abandonSubmission: mock() });
     return { handlers, commands, entries, pi, ctx };
 }
 
@@ -243,7 +247,7 @@ describe("plan submission guard", () => {
     });
 
     it("abandons a tracked revision only after interactive confirmation", async () => {
-        const { handlers, commands, entries, ctx } = setup();
+        const { handlers, commands, entries, ctx, pi } = setup();
         ctx.hasUI = true;
         await handlers.get("tool_result")!(
             {
@@ -278,10 +282,8 @@ describe("plan submission guard", () => {
                 transition: { kind: "manual" },
                 sessionEntries: entries,
             }),
-        ).toEqual({
-            allow: false,
-            reason: "An approved plan revision is required before leaving this planning role.",
-        });
+        ).toEqual({ allow: true });
+        expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
     });
 
     it("registers no turn_end reminder", async () => {

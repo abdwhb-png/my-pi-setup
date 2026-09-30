@@ -1,4 +1,5 @@
 // oxlint-disable typescript/no-restricted-types -- Pi tool results and session entries intentionally expose unknown at extension boundaries.
+import { resolve } from "node:path";
 import type {
     ExtensionAPI,
     ExtensionCommandContext,
@@ -23,11 +24,17 @@ import {
     PLAN_REVIEW_ABANDONED_ENTRY,
     PLAN_REVIEW_REVISION_ENTRY,
     PLAN_REVIEW_SUBMITTED_ENTRY,
+    type PlanReviewState,
 } from "./plan-submission-lifecycle.ts";
+import type { SubmissionReviews } from "./plannotator-review.ts";
 
 const HANDOFF_GUARD = "plan-submission";
 // Keep the registration key across relocation so a Pi reload replaces the old handler.
 const POLICY_KEY = "pi-roles.plan-submission-guard";
+
+function isPending(state: PlanReviewState): boolean {
+    return state.status === "draft" || state.status === "submitted-denied";
+}
 
 type LifecycleEntry = {
     type: string;
@@ -133,7 +140,7 @@ function appendSubmission(
     if (event.toolCallId && wasToolCallRecorded(entries, event.toolCallId))
         return;
     const state = getPlanReviewState(entries, path);
-    if (!state) return;
+    if (!state || state.status === "abandoned") return;
     pi.appendEntry(PLAN_REVIEW_SUBMITTED_ENTRY, {
         path,
         revision: state.revision,
@@ -143,8 +150,11 @@ function appendSubmission(
     });
 }
 
-export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
-    let currentCwd: string | null = null;
+export default function registerPlanSubmissionGuard(
+    pi: ExtensionAPI,
+    reviews: SubmissionReviews,
+): void {
+    let currentContext: ExtensionContext | null = null;
 
     registerRoleTransitionPolicy((input: RoleTransitionPolicyInput) => {
         if (input.from?.handoffGuard !== HANDOFF_GUARD) {
@@ -153,7 +163,7 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
         if (input.to.handoffGuard === HANDOFF_GUARD) {
             return { allow: true };
         }
-        if (!currentCwd) {
+        if (!currentContext) {
             return {
                 allow: false,
                 reason: "Plan review guard is not initialized for this session.",
@@ -163,17 +173,14 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
         const states = listPlanReviewStates(
             asLifecycleEntries(input.sessionEntries),
         );
-        if (!states.some((state) => state.status === "approved")) {
+        if (states.length === 0) {
             return {
                 allow: false,
                 reason: "An approved plan revision is required before leaving this planning role.",
             };
         }
 
-        const pending = states.filter(
-            (state) =>
-                state.status !== "approved" && state.status !== "abandoned",
-        );
+        const pending = states.filter(isPending);
         if (pending.length === 0) return { allow: true };
         const paths = pending.map((state) => state.path).join(", ");
         return {
@@ -183,11 +190,14 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
     }, POLICY_KEY);
 
     pi.on("session_start", (_event, ctx) => {
-        currentCwd = ctx.cwd;
+        currentContext = ctx;
+    });
+    pi.on("session_shutdown", () => {
+        currentContext = null;
     });
 
     pi.on("tool_result", (event: ToolResultEvent, ctx: ExtensionContext) => {
-        currentCwd = ctx.cwd;
+        currentContext = ctx;
         if (event.isError || !requiresPlanSubmission()) return;
         if (event.toolName === "write_plan" || event.toolName === "edit_plan") {
             appendRevision(pi, event, ctx);
@@ -203,20 +213,38 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
 
     pi.registerCommand("abandon-plan", {
         description:
-            "Abandon one tracked plan revision; an approved revision is still required before leaving",
+            "Pause a pending plan and cancel its review: /abandon-plan [plan-path]. Omit the path for the active submission.",
+        getArgumentCompletions: (prefix) => {
+            const ctx = currentContext;
+            if (!ctx || !requiresPlanSubmission()) return null;
+            return listPlanReviewStates(ctx.sessionManager.getEntries())
+                .filter(isPending)
+                .map((state) => ({
+                    value: state.path.startsWith("../")
+                        ? resolve(ctx.cwd, state.path)
+                        : state.path,
+                    label: state.path,
+                    description: `Revision ${state.revision} · ${state.status}`,
+                }))
+                .filter((item) => item.value.startsWith(prefix));
+        },
         handler: async (args, ctx: ExtensionCommandContext) => {
-            currentCwd = ctx.cwd;
+            currentContext = ctx;
             if (!requiresPlanSubmission()) {
                 ctx.ui.notify("No plan-submission guard is active.", "info");
                 return;
             }
+            const sessionId = ctx.sessionManager.getSessionId();
+            const active = reviews.getActiveSubmission(ctx);
             const planDir = getPlanDir(ctx);
-            const path = planDir
-                ? normalizeSubmittedPlanPath(args, ctx.cwd, planDir)
-                : null;
+            const path = !args.trim()
+                ? active?.path
+                : planDir
+                  ? normalizeSubmittedPlanPath(args, ctx.cwd, planDir)
+                  : null;
             if (!path) {
                 ctx.ui.notify(
-                    "Provide a plan path inside the configured plan directory.",
+                    "Provide a pending plan path inside the configured plan directory; use /abandon-plan autocomplete to choose one.",
                     "warning",
                 );
                 return;
@@ -232,6 +260,13 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
                 );
                 return;
             }
+            if (!isPending(state)) {
+                ctx.ui.notify(
+                    `Plan ${path} is already ${state.status}.`,
+                    "info",
+                );
+                return;
+            }
             if (!ctx.hasUI) {
                 throw new Error(
                     "Abandoning a plan requires an interactive confirmation.",
@@ -239,14 +274,49 @@ export default function registerPlanSubmissionGuard(pi: ExtensionAPI): void {
             }
             const confirmed = await ctx.ui.confirm(
                 "Abandon plan revision",
-                `Abandon ${path} revision ${state.revision}? The file will remain on disk, and an approved revision is still required before leaving.`,
+                `Pause ${path} revision ${state.revision}? The file will remain on disk. This revision will no longer require approval before a manual role switch.`,
             );
             if (!confirmed) return;
+            const latest = getPlanReviewState(
+                ctx.sessionManager.getEntries(),
+                path,
+            );
+            const activeNow = reviews.getActiveSubmission(ctx);
+            if (
+                ctx.signal?.aborted ||
+                ctx.sessionManager.getSessionId() !== sessionId ||
+                !requiresPlanSubmission() ||
+                latest?.revision !== state.revision ||
+                latest.status !== state.status ||
+                ((active?.path === path || activeNow?.path === path) &&
+                    active !== activeNow)
+            ) {
+                ctx.ui.notify(
+                    "Plan or session changed during confirmation; nothing was abandoned. Try again.",
+                    "warning",
+                );
+                return;
+            }
             pi.appendEntry(PLAN_REVIEW_ABANDONED_ENTRY, {
                 path,
                 revision: state.revision,
                 timestamp: Date.now(),
             });
+            const notice = `I have abandoned ${path} revision ${state.revision} for now. Keep the saved file and pause planning. Do not resubmit or implement it unless I explicitly ask.`;
+            if (ctx.isIdle()) {
+                // A fresh prompt would consume an unrelated paused approval's role switch.
+                pi.sendMessage(
+                    {
+                        customType: "plans:abandoned",
+                        content: notice,
+                        display: true,
+                    },
+                    { triggerTurn: false },
+                );
+            } else {
+                pi.sendUserMessage(notice, { deliverAs: "followUp" });
+            }
+            if (active?.path === path) reviews.abandonSubmission(ctx, active);
             ctx.ui.notify(
                 `Abandoned ${path} revision ${state.revision}.`,
                 "info",

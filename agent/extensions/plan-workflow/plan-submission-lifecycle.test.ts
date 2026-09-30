@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { homedir } from "node:os";
+import { join, relative } from "node:path";
 import {
     getPlanReviewState,
     listPlanReviewStates,
@@ -37,6 +39,11 @@ describe("plan submission lifecycle", () => {
 
     it("rejects a submitted path outside the configured plan directory", () => {
         expect(normalizeSubmittedPlanPath("README.md", cwd, planDir)).toBeNull();
+    });
+
+    it("normalizes home-relative submissions inside an external plan directory", () => {
+        const root = join(homedir(), "pi-plan-path-fixture");
+        expect(normalizeSubmittedPlanPath("~/pi-plan-path-fixture/test.md", cwd, root)).toBe(relative(cwd, join(root, "test.md")));
     });
 
     it("marks a matching approved submission as approved", () => {

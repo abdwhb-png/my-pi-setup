@@ -1,5 +1,6 @@
 // oxlint-disable typescript/no-restricted-types -- Pi custom session entry data is intentionally unknown at this boundary.
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export const PLAN_REVIEW_REVISION_ENTRY = "plan-review-guard:revision";
 export const PLAN_REVIEW_SUBMITTED_ENTRY = "plan-review-guard:submitted";
@@ -42,7 +43,10 @@ function normalizePlanPath(
     if (!trimmed || trimmed.includes("..")) return null;
 
     const planRoot = resolve(cwd, planDir);
-    const target = resolve(baseDir, trimmed);
+    const target = resolve(
+        baseDir,
+        trimmed.startsWith("~/") ? join(homedir(), trimmed.slice(2)) : trimmed,
+    );
     if (!isWithin(planRoot, target)) return null;
     return toCwdRelativePath(target, cwd);
 }

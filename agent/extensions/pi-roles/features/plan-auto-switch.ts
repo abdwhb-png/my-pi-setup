@@ -4,7 +4,7 @@
  * Listens on `turn_end` (was `before_agent_start`) to detect plan
  * approvals as soon as the turn that produced them ends — not at the
  * start of the *next* turn. On detection it writes a
- * `pi-roles:switch-request` entry and sends a "Continue" user message
+ * `pi-roles:switch-request` entry and, unless autoExecute is false, sends a user message
  * to force an immediate new turn so pi-roles can consume the request
  * in its own `before_agent_start` handler.
  *
@@ -26,12 +26,12 @@ import {
     isPlanApprovalReason,
     writeRoleSwitchRequest,
 } from "../../_shared/pi-roles/index.ts";
-import { loadSettings } from "../core/settings.ts";
 import {
     createLatestIdleTaskScheduler,
     queueWhenIdle,
     type IdleTaskScheduler,
 } from "../../_shared/queue-when-idle.ts";
+import { loadSettings } from "../core/settings.ts";
 
 /** Custom entry type emitted by the local plans extension. */
 const PLAN_APPROVED_ENTRY_TYPE = "plans:approved";
@@ -78,6 +78,7 @@ interface PlanApprovedPayload {
     approved?: boolean;
     feedback?: string;
     timestamp?: number;
+    autoExecute?: boolean;
 }
 
 /**
@@ -144,6 +145,20 @@ export default function planAutoSwitch(pi: ExtensionAPI): void {
 
         const pending = findUnprocessedSwitchRequest(entries);
         if (!pending || !isPlanApprovalReason(pending.data.reason)) {
+            continuationScheduler.invalidate();
+            return;
+        }
+
+        const source = entries.find(
+            (entry) => entry.id === pending.data.sourceEntryId,
+        );
+        if (
+            source?.type === "custom" &&
+            source.data &&
+            typeof source.data === "object" &&
+            "autoExecute" in source.data &&
+            source.data.autoExecute === false
+        ) {
             continuationScheduler.invalidate();
             return;
         }
