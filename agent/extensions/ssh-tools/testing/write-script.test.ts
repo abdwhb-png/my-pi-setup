@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -39,17 +39,18 @@ function runWrite(target: string, content: string | Buffer): {
 
 /**
  * Runs the script asynchronously so several can be in flight together. A `gate`
- * path makes the command block until that file exists, which is what forces the
- * transfers to actually overlap: without a barrier the first writer can finish
+ * path blocks a writer until both have acknowledged readiness. A shell-side
+ * deadline prevents failed gate release from leaving spinning processes.
+ * Without a barrier the first writer can finish
  * before the second writes, and the test would pass even with a shared staging
  * path.
  */
 function runWriteAsync(
     script: string,
     content: string,
-    gate?: string,
+    gate?: { path: string; ready: string },
 ): Promise<{ status: number; stderr: string }> {
-    const prelude = gate ? `while [ ! -e '${gate}' ]; do :; done\n` : "";
+    const prelude = gate ? `: > '${gate.ready}'\ncount=0\nuntil [ -e '${gate.path}' ]; do\n  count=$((count + 1))\n  if [ "$count" -gt 200 ]; then echo 'gate timed out' >&2; exit 1; fi\n  sleep 0.02\ndone\n` : "";
     return new Promise((resolve, reject) => {
         const child = spawn("sh", ["-c", `${prelude}${script}`], {
             stdio: ["pipe", "ignore", "pipe"],
@@ -63,6 +64,9 @@ function runWriteAsync(
             }),
         );
         child.on("error", reject);
+        // The gate may time out before this payload drains. EPIPE must reject
+        // the test rather than surface as an unhandled stream error.
+        child.stdin.on("error", reject);
         child.stdin.end(content);
     });
 }
@@ -139,15 +143,29 @@ describe("generated write script", () => {
         const script = buildWriteScript(target, 400_000);
         // In its own directory: the target directory is asserted to contain
         // nothing but the written file, so the gate must not live there.
-        const gate = join(scratch(), "gate");
+        const barrier = scratch();
+        const gate = join(barrier, "gate");
+        const readyA = join(barrier, "ready-a");
+        const readyB = join(barrier, "ready-b");
         // Both processes are started, not awaited: each parks on the gate with
         // nothing written yet, so releasing them together forces a real overlap
         // rather than leaving the ordering to chance.
-        const first = runWriteAsync(script, payloadA, gate);
-        const second = runWriteAsync(script, payloadB, gate);
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        writeFileSync(gate, "");
+        const first = runWriteAsync(script, payloadA, { path: gate, ready: readyA });
+        const second = runWriteAsync(script, payloadB, { path: gate, ready: readyB });
+        let bothReady = false;
+        try {
+            for (let attempt = 0; attempt < 200; attempt++) {
+                bothReady = existsSync(readyA) && existsSync(readyB);
+                if (bothReady) break;
+                await Bun.sleep(20);
+            }
+        } finally {
+            writeFileSync(gate, "");
+        }
+        // Even on failed readiness, wait for both shells to exit before
+        // rejecting so the test cannot leave child processes behind.
         const [a, b] = await Promise.all([first, second]);
+        expect(bothReady).toBe(true);
         expect(a.status).toBe(0);
         expect(b.status).toBe(0);
         // A failing writer reports why, instead of only an exit code.
