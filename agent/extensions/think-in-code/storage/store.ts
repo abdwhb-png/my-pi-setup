@@ -32,7 +32,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { Database } from "bun:sqlite";
+import type { Database as BunDatabase } from "bun:sqlite";
 
 import {
     redactTextPreservingContext,
@@ -40,6 +40,7 @@ import {
 } from "../../_shared/redaction.ts";
 import type { ThinkInCodeConfig } from "../config.ts";
 import { applySchema, PROJECT_META_KEYS, SCHEMA_VERSION } from "./schema.ts";
+import { openSqlite, type SqliteConnection } from "./sqlite.ts";
 
 export interface StoreOptions {
     config: ThinkInCodeConfig;
@@ -170,7 +171,7 @@ function boundedMetadata(value: string, maxLength: number): string {
 }
 
 export class ThinkStore {
-    readonly #database: Database;
+    readonly #database: SqliteConnection;
     readonly #archiveDir: string;
     readonly #storeRoot: string;
     readonly #canonicalPath: string;
@@ -194,8 +195,11 @@ export class ThinkStore {
         assertNoSymlink(this.#archiveDir, "archive directory");
         const dbPath = join(this.#storeRoot, DEFAULT_DB_NAME);
         assertNoSymlink(dbPath, "database path");
-        this.#database = new Database(dbPath, { create: true });
-        THINK_STORE_RAW_HANDLES.set(this, this.#database);
+        const opened = openSqlite(dbPath);
+        this.#database = opened.connection;
+        if (opened.rawBunDatabase) {
+            THINK_STORE_RAW_HANDLES.set(this, opened.rawBunDatabase);
+        }
         chmodSync(dbPath, FILE_MODE);
         applySchema(this.#database, this.#canonicalPath, this.#now);
         this.#database.run("PRAGMA journal_mode = WAL");
@@ -901,7 +905,7 @@ export const __test = {
     normalizeFtsTokens,
 };
 
-const THINK_STORE_RAW_HANDLES = new WeakMap<ThinkStore, Database>();
+const THINK_STORE_RAW_HANDLES = new WeakMap<ThinkStore, BunDatabase>();
 
 /**
  * Test-only escape hatch to access the raw database handle. Production code
@@ -909,7 +913,7 @@ const THINK_STORE_RAW_HANDLES = new WeakMap<ThinkStore, Database>();
  * transaction-rollback and boundary-protection tests can exercise raw SQL
  * paths that have no public counterpart.
  */
-export function __getRawDatabase(store: ThinkStore): Database {
+export function __getRawDatabase(store: ThinkStore): BunDatabase {
     const handle = THINK_STORE_RAW_HANDLES.get(store);
     if (!handle) {
         throw new Error(

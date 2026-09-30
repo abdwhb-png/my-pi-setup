@@ -11,6 +11,7 @@
  * defaults rather than widening the ceiling.
  */
 
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import type { SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
@@ -450,7 +451,5 @@ export function resolveProjectStorePath(
 
 /** SHA-256 (lowercase hex) of the canonical project path. */
 export function hashProjectPath(canonicalPath: string): string {
-    const hasher = new Bun.CryptoHasher("sha256");
-    hasher.update(canonicalPath);
-    return hasher.digest("hex");
+    return createHash("sha256").update(canonicalPath).digest("hex");
 }

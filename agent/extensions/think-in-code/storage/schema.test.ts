@@ -6,8 +6,7 @@
  * persistence and migration semantics survive process restarts.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
 import {
     applySchema,
@@ -15,9 +14,10 @@ import {
     SCHEMA_STATEMENTS,
     SCHEMA_VERSION,
 } from "./schema.ts";
+import { openSqlite, type SqliteConnection } from "./sqlite.ts";
 
-function freshDb(): Database {
-    return new Database(":memory:");
+function freshDb(): SqliteConnection {
+    return openSqlite(":memory:").connection;
 }
 
 describe("storage/schema", () => {

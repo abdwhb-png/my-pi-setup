@@ -240,7 +240,9 @@ Pinned sandbox components:
 - `@sebastianwessel/quickjs@3.1.0` — JavaScript/TypeScript analyzer.
 - `@bsull/eryx@0.6.0` — Python analyzer.
 
-The store uses `bun:sqlite` (ships with Bun). No extra database
+The store uses Bun's `bun:sqlite` in the main Pi process and Node 24's
+`node:sqlite` in Node-launched children (including detached reviewers).
+Both use the same project SQLite file and schema; no extra database
 dependency is added.
 
 ## Prerequisite: Linux + Node JSPI
@@ -255,8 +257,11 @@ executable smoke at install time. A missing capability publishes an
 
 Pi runtime validation runs under Bun via
 `@abdwhb-png/pi-test-harness` with a published test runtime
-(`runtime.integration.test.ts`). The actual real-Linux isolation is
-exercised by the focused tests under
+(`runtime.integration.test.ts`). The explicit Node child loader and tool
+activation check is `node --test extensions/__tests__/integration/think-in-code-node-runtime.mjs`
+from `agent/`; it uses an isolated home and no model call. Cross-runtime
+store compatibility is covered by `storage/cross-runtime.test.ts`. The actual
+real-Linux isolation is exercised by the focused tests under
 `agent/extensions/sandbox/analysis/`.
 
 The explicit end-to-end acceptance gate lives beside this extension under

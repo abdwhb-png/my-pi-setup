@@ -249,6 +249,12 @@ describe("think-in-code config", () => {
         expect(projectPath.endsWith(`/projects/${expectedHash}`)).toBe(true);
     });
 
+    it("preserves the existing project directory hash", () => {
+        expect(hashProjectPath("/probe/project")).toBe(
+            "daa3430be137b5374fcd676cf18fd53d1b592909873b51b4b87b8cf1554a43bd",
+        );
+    });
+
     it("produces deterministic hashes for identical canonical paths", () => {
         expect(hashProjectPath("/workspace/foo")).toBe(
             hashProjectPath("/workspace/foo"),

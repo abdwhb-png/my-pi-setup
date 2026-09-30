@@ -20,7 +20,7 @@
  *   consumed): post-compaction snapshots with deterministic content.
  */
 
-import type { Database } from "bun:sqlite";
+import type { SqliteConnection } from "./sqlite.ts";
 
 export const SCHEMA_VERSION = 1;
 
@@ -98,7 +98,7 @@ export interface AppliedSchema {
  * or older schema.
  */
 export function applySchema(
-    db: Database,
+    db: SqliteConnection,
     canonicalPath: string,
     now: () => number = Date.now,
 ): AppliedSchema {
