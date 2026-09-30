@@ -66,9 +66,9 @@ This is the part that is easy to get wrong, so it is spelled out.
 | `ssh_edit`  | resolves under the remote working directory | **rejected** unless it is lexically inside the remote working directory |
 | `ssh_bash`  | runs in the remote working directory        | n/a                                                                     |
 
-`cd` written inside an `ssh_bash` command still applies, so `cd /etc && ls` works in one call.
+`ssh_bash` does not enable Bash `errexit`: an intermediate failing command does not stop later commands by default, as with local Bash. If the initial change to the remote working directory fails, the command stops rather than running from the SSH login directory. A `cd` written inside the command still applies, so `cd /etc && ls` works in one call. The command script is fully read before execution; commands that read stdin see EOF rather than consuming subsequent script lines. Use a here-document or pipe when a command needs input.
 
-Because `ssh_edit` is restricted to the working directory, reaching a file outside it means either an absolute path with `ssh_read` or a shell command with `ssh_bash`.
+For a file outside the remote working directory, use an absolute path with `ssh_read` or `ssh_write`; `ssh_edit` cannot target it directly. `ssh_bash` can also operate on it explicitly.
 
 Paths are normalized (`.` and `..` resolved, duplicate separators collapsed) _before_ the containment check, so `/home/dev/../etc/x` is rejected rather than passing a prefix test and landing on `/etc/x`.
 
@@ -110,12 +110,12 @@ ssh_bash  find /var/log -name '*.log' -mtime -1
 
 - content is sent over **stdin**, never on the command line, so there is no argv size ceiling
 - the remote side stages the content in a **unique** temporary **directory** created by `mktemp -d` under `umask 077` in the target's own directory, so two writers to the same target never share a staging path, the rename stays on one filesystem, and another user who can write the target directory cannot swap the staged file for a symlink mid-transfer
-- a `trap` removes that staging directory on **every** exit, including a failed rename, and stays armed after a successful rename so the emptied directory is not leaked
+- an `EXIT` trap removes that staging directory on normal shell exit, including a failed rename, and stays armed after a successful rename. `SIGKILL` (or a host crash) bypasses traps and can leave staging behind
 - the byte count is sent alongside and verified with `wc -c` **before** the rename, so a connection that drops mid-transfer cannot publish a truncated file over an intact one. `cat` exits 0 on an early EOF, so exit status alone does not prove the content arrived
 - a **directory** target is refused: `mv -f file dir` succeeds by moving the file _inside_ the directory. This is re-checked immediately before the rename, which narrows the window to the rename itself, but a concurrent writer that turns the target into a directory in that instant is still possible. Closing it entirely needs descriptor-based resolution (`openat2(RESOLVE_BENEATH)` or similar), which this does not attempt
 - a **symlink** target is refused by `ssh_write` and `ssh_edit`. Renaming over a link replaces the link, not the file it points to, and the tool would report success while the file you meant is untouched. Edit the resolved path, or use `ssh_bash`
 - consequence: the resulting file is owned by the SSH user. `mktemp -d` creates the staging _directory_; the payload itself is created by `cat` under the `umask 077` set above, so the renamed file ends up `0600`. The previous implementation (`cat >` in place) preserved the original mode and owner. **If you rewrite a file that another user or service must read, restore the mode yourself** (`ssh_bash` `chmod`), because `0600` will break it.
-- a single write is capped at **16 MiB**, the same ceiling a read uses, and is refused before anything is spawned. Node transcodes the whole payload to a Buffer and holds it again until drain, so an unbounded write would peak at two to three times its size for the whole transfer. Write larger files in ranges, or use `ssh_bash`
+- a single write is capped at **16 MiB**, the same ceiling a read uses, and is refused before anything is spawned. `ssh_edit` must first read the existing file, so it cannot edit a remote file larger than 16 MiB. Node transcodes the whole payload to a Buffer and holds it again until drain, so an unbounded write would peak at two to three times its size for the whole transfer. Write larger files in ranges, or use `ssh_bash`
 
 ### Interrupted writes report an unknown outcome
 
@@ -129,14 +129,14 @@ A write that is refused, or that fails with a clean non-zero exit, ran to comple
 
 - an aborted tool call tears down its ssh child; the signal is threaded into the file operations, not just the shell one
 - an already-aborted call never spawns anything
-- a broken stdin pipe (`EPIPE` during a large write) rejects the tool call instead of raising an uncaught stream error
+- a broken stdin pipe (`EPIPE` during a large write) rejects the tool call as an unconfirmed transfer instead of raising an uncaught stream error
 - backpressure is honoured, so a large payload is not truncated by ending stdin too early
 - abort, timeout, and exceeding the data cap escalate `SIGTERM` → `SIGKILL` after a grace period, tracked on process closure rather than on the tool call settling, so a child that ignores `SIGTERM` still dies
 - **Killing the local ssh client does not guarantee the remote command dies.** A detached remote process can outlive the tool call. The extension does not claim otherwise.
-- streaming `ssh_bash` output retained in memory for an error message is capped at 1 MiB; every byte still streams to the consumer
+- streaming `ssh_bash` output retained in memory for an error message is capped at 1 MiB; every byte still streams to the consumer. Retained diagnostics keep the most recent bytes and mark earlier omitted output
 - **stderr** is capped at 64 KiB in memory, in every mode including data-returning calls. It gets its own budget rather than sharing stdout's, because a data call keeps all of stdout and must not let a chatty or hostile remote grow local memory without bound. That ceiling is a hard limit: the stdout tail option may lower it, never raise it
 - a data-returning call such as `ssh_read` is capped at 16 MiB and **rejected** if exceeded, never silently truncated — a shortened file would look like a successful read of different content
-- `/ssh <host>` bounds its `pwd` probe with its own 30s wall clock. `ConnectTimeout=10` covers only TCP connect and auth, so a host that accepts the connection and then stalls would otherwise leave the command pending forever
+- ordinary SSH calls have a 120s default deadline. Set `PI_SSH_TRANSFER_TIMEOUT_SECONDS` to a finite, positive number of seconds (up to 2147483.647) before starting pi to allow slower transfers; an invalid value is refused before launching SSH. An explicit `ssh_bash` timeout or the `/ssh <host>` 30s `pwd` probe deadline takes precedence. A timed-out write has outcome UNKNOWN: read the remote file before retrying. `ConnectTimeout=10` covers only TCP connect and auth, so a host that accepts the connection and then stalls would otherwise leave the command pending forever
 
 An `ssh_bash` exit code of 255 is reported as an SSH transport, host-key, or authentication failure with the remote output attached. A remote command that itself exits 255 is indistinguishable from that, so the message says so rather than guessing.
 
