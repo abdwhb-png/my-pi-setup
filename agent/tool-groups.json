@@ -33,21 +33,22 @@
             "symbol_search",
             "module_report",
             "read_symbol",
-            "read_enclosing"
+            "read_enclosing",
+            "lens_diagnostics"
         ],
-        "lens": ["lens_diagnostics", "ast_grep_dump", "@lens-inspect"],
-        "lens-write": ["@lens", "ast_grep_replace", "lens_diagnostic_mark"],
+        "lens-write": ["ast_grep_replace", "lens_diagnostic_mark"],
+        "lens": [
+            "@lens-inspect",
+            "@lens-write",
+            "lens_health",
+            "lens_project_scan"
+        ],
         "think-inspect": ["think_artifact_search"],
         "think-exec": ["think_execute"],
         "think": ["@think-inspect", "@think-exec"],
         "ssh-tools": ["ssh_read", "ssh_write", "ssh_edit", "ssh_bash"],
-        "subagents": [
-            "subagent",
-            "subagent_supervisor",
-            "subagents_enable",
-            "subagent_wait",
-            "bg_wait"
-        ],
+        "subagents": ["subagent", "subagent_supervisor", "bg_wait"],
+        "subagents-parent": ["@subagents", "subagents_enable"],
         "review": ["@inspect", "@lens", "@think-inspect", "contact_supervisor"],
         "review-max": ["@review", "@report-write", "@docs", "memory_search"],
         "herdr": ["herdr_layout", "herdr_pane", "herdr_agent"]

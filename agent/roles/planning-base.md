@@ -2,7 +2,7 @@
 name: planning-base
 description: Provides a rigorous, implementation-agnostic planning foundation
 thinking: xhigh
-tools: '@inspect, @lens, @web, @memory-consult, ask_user_question, session_plan, @subagents, todo'
+tools: '@inspect, @lens, @web, @memory-consult, ask_user_question, session_plan, @subagents-parent, todo'
 subagents: scout, pi-expert, researcher, factual-researcher, plan-reviewer, architect, test-engineer
 ---
 

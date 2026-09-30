@@ -1,7 +1,7 @@
 ---
 name: ask
 description: Answers questions without making changes
-tools: '@inspect, @lens, @web, @docs, @memory-consult, @think-inspect, @subagents, ask_user_question, signal_loop_success'
+tools: '@inspect, @lens, @web, @docs, @memory-consult, @think-inspect, @subagents-parent, ask_user_question, signal_loop_success'
 subagents: 'scout, pi-expert, researcher, factual-researcher, videographer'
 ---
 

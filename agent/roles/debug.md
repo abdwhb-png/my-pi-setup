@@ -1,7 +1,7 @@
 ---
 name: debug
 description: 'Find root cause empirically. Propose fixes without implementing them.'
-tools: '@inspect, @lens, @think, @docs, @memory-consult, @subagents, safe_bash, write_debug_probe, edit_debug_probe, ask_user_question, todo, signal_loop_success'
+tools: '@inspect, @lens, @think, @docs, @memory-consult, @subagents-parent, safe_bash, write_debug_probe, edit_debug_probe, ask_user_question, todo, signal_loop_success'
 subagents: 'scout, pi-expert, researcher, factual-researcher'
 ---
 

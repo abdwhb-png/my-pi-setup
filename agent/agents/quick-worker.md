@@ -1,7 +1,7 @@
 ---
 name: quick-worker
 description: Strict bounded implementation worker for small, explicit, reversible tasks with an exact file allowlist and focused verification.
-tools: "@inspect, @lens-write, @implement"
+tools: "@inspect, @lens-inspect, @lens-write, @implement"
 thinking: medium
 systemPromptMode: replace
 inheritProjectContext: true
