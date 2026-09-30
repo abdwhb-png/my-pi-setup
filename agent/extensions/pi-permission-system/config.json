@@ -77,8 +77,11 @@
         },
         "external_directory": {
             "*": "ask",
+            "/tmp": "allow",
             "/tmp/*": "allow",
+            "/tmp/pi-*": "allow",
             "/tmp/pi-*/*": "allow",
+            "~/.pi": "allow",
             "~/.pi/*": "allow",
             "~/.bun/install/global/node_modules/@earendil-works": "allow",
             "~/.bun/install/global/node_modules/@earendil-works/*": "allow",

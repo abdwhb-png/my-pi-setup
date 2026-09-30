@@ -2,7 +2,7 @@
 
 Local Pi policy wrapper for the separately installed `pi-agent-browser-native` package.
 
-Pi loads the native package from `~/projects/pi-integrations/pi-agent-browser-native`. The native package owns the `agent_browser` implementation and Chromium lifecycle. This wrapper only controls model access:
+Pi loads the native package from the Git-installed checkout at `~/.pi/agent/git/github.com/abdwhb-png/pi-agent-browser-native`. The native package owns the `agent_browser` implementation and Chromium lifecycle. This wrapper only controls model access:
 
 - hidden by default;
 - `/browser-tools on` grants access for the current session;

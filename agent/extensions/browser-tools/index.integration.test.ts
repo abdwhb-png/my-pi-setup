@@ -10,7 +10,7 @@ const AGENT_ROOT = resolve(import.meta.dir, "../..");
 const BROWSER_TOOLS_EXTENSION = resolve(import.meta.dir, "index.ts");
 const NATIVE_BROWSER_EXTENSION = resolve(
   homedir(),
-  "projects/pi-integrations/pi-agent-browser-native/dist/extensions/agent-browser/index.js",
+  ".pi/agent/git/github.com/abdwhb-png/pi-agent-browser-native/dist/extensions/agent-browser/index.js",
 );
 const TOOL_GROUPS_EXTENSION = resolve(import.meta.dir, "../tool-groups/index.ts");
 
