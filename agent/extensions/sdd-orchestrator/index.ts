@@ -2,12 +2,13 @@ import {
     getAgentDir,
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
+import { publishWorkflowAgentDefinitions } from "../_shared/subagents/workflow-agents.ts";
 import { SddActivityStore } from "./activity-store.ts";
 import { openSddLive } from "./activity-ui.ts";
 import { DelegationClient } from "./delegation-client.ts";
 import { registerSddExtension, type SddRuntime } from "./extension-tools.ts";
 import { openManifestReview } from "./review-ui.ts";
-import { createSddAgentGate } from "./sdd-agents.ts";
+import { createSddAgentGate, getSddAgentEntries } from "./sdd-agents.ts";
 import { SddStore } from "./store.ts";
 import { SddWorkflow } from "./workflow.ts";
 import { GitWorkspaceManager } from "./workspace.ts";
@@ -53,5 +54,11 @@ export function createRuntime(
 }
 
 export default function sddOrchestrator(pi: ExtensionAPI): void {
+    const unpublishAgents = publishWorkflowAgentDefinitions(
+        pi.events,
+        "sdd-orchestrator",
+        getSddAgentEntries(),
+    );
+    pi.on("session_shutdown", () => unpublishAgents());
     registerSddExtension(pi, createRuntime(pi));
 }
