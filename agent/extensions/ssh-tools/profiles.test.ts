@@ -190,6 +190,24 @@ describe("resolveRemoteCwd", () => {
         ).rejects.toThrow("absolute path");
     });
 
+    it("rejects a reported path whose trailing non-breaking space was trimmed away", async () => {
+        const harness = fakeLaunch();
+        const pending = resolveRemoteCwd(
+            { name: "devlab", remote: "devlab" },
+            { spawnFn: harness.launch },
+        );
+        // "/repo\u00A0" and "/repo" are DIFFERENT directories, and the
+        // non-breaking space is one of the characters pi rewrites. A blanket
+        // trim() erases the difference and silently selects the wrong one.
+        harness.process.emitStdout("/repo\u00A0\n");
+        harness.process.emitClose(0);
+        // Rejected with the same rule model-supplied paths are held to, so the
+        // working directory and the tool call can never name different paths.
+        await expect(pending).rejects.toThrow(
+            "contains a Unicode space that pi rewrites",
+        );
+    });
+
     it("rejects a reported path carrying a second line of instructions", async () => {
         const harness = fakeLaunch();
         const pending = resolveRemoteCwd(
@@ -214,6 +232,17 @@ describe("resolveRemoteCwd", () => {
         harness.process.emitStdout("/repo\u001b[31mred\u0007\n");
         harness.process.emitClose(0);
         await expect(pending).rejects.toThrow("not a usable absolute path");
+    });
+
+    it("accepts a plain reported path and still strips the one expected newline", async () => {
+        const harness = fakeLaunch();
+        const pending = resolveRemoteCwd(
+            { name: "devlab", remote: "devlab" },
+            { spawnFn: harness.launch },
+        );
+        harness.process.emitStdout("/repo\n");
+        harness.process.emitClose(0);
+        expect(await pending).toBe("/repo");
     });
 
     it("rejects a dot working directory with a readable message", async () => {

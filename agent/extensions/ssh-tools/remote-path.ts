@@ -59,7 +59,7 @@ export function normalizeRemotePath(path: string): string {
  * target a different file. Reject it instead: a loud refusal beats writing the
  * wrong file. Mirrors `UNICODE_SPACES` in pi's `dist/utils/paths.js`.
  */
-function assertPathSurvivesPiNormalization(path: string): void {
+export function assertPathSurvivesPiNormalization(path: string): void {
     if (PI_NORMALIZED_SPACES.test(path)) {
         throw new Error(
             `Remote path ${JSON.stringify(path)} contains a Unicode space that pi rewrites to an ASCII space, which would target a different file. Rename the file on the remote host, or reach it with ssh_bash.`,

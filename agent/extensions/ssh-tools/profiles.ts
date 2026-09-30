@@ -1,7 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { normalizeRemotePath } from "./remote-path.ts";
+import {
+    assertPathSurvivesPiNormalization,
+    normalizeRemotePath,
+} from "./remote-path.ts";
 import { sshOk, type SshExecOptions } from "./transport.ts";
 
 /** A `/ssh` argument before the remote working directory is resolved. */
@@ -139,6 +142,10 @@ function assertUsableReportedPath(value: string, remote: string): void {
             `Remote working directory reported by ${remote} was ${JSON.stringify(value)}, which is not a usable absolute path. Pass it explicitly instead: /ssh ${remote}:/absolute/path`,
         );
     }
+    // A character pi rewrites names a different path here than it would after
+    // pi touches it, so the working directory and the tool call could disagree.
+    // This reuses the same rule the model-supplied paths are held to.
+    assertPathSurvivesPiNormalization(value);
 }
 
 export async function resolveRemoteCwd(
@@ -158,7 +165,11 @@ export async function resolveRemoteCwd(
         return normalizeRemotePath(explicit);
     }
     const reported = await sshOk(profile.remote, "pwd", options);
-    const pwd = reported.toString("utf8").trim();
+    // Strip only the single line terminator `pwd` is expected to emit. A
+    // blanket trim() also erases characters that name a different directory,
+    // such as a trailing non-breaking space, which would silently select the
+    // wrong working directory instead of refusing it.
+    const pwd = reported.toString("utf8").replace(/\r?\n$/, "");
     assertUsableReportedPath(pwd, profile.remote);
     return normalizeRemotePath(pwd);
 }
