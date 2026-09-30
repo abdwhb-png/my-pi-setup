@@ -148,6 +148,14 @@ function assertUsableReportedPath(value: string, remote: string): void {
     assertPathSurvivesPiNormalization(value);
 }
 
+/**
+ * `ConnectTimeout` bounds only TCP connect and auth. A host that accepts the
+ * connection and then stalls would leave `/ssh` pending forever, because
+ * nothing else in the command path sets a deadline. A caller's `timeoutSeconds`
+ * overrides this.
+ */
+export const ACTIVATION_PROBE_TIMEOUT_SECONDS = 30;
+
 export async function resolveRemoteCwd(
     profile: SshProfile,
     options: SshExecOptions = {},
@@ -164,7 +172,14 @@ export async function resolveRemoteCwd(
         }
         return normalizeRemotePath(explicit);
     }
-    const reported = await sshOk(profile.remote, "pwd", options);
+    const reported = await sshOk(profile.remote, "pwd", {
+        // `ConnectTimeout` bounds only TCP connect and auth. A host that
+        // accepts the connection and then stalls would leave `/ssh` pending
+        // forever, because nothing else in the command path sets a deadline.
+        // The caller may override it; the default is the floor that exists.
+        timeoutSeconds: ACTIVATION_PROBE_TIMEOUT_SECONDS,
+        ...options,
+    });
     // Strip only the single line terminator `pwd` is expected to emit. A
     // blanket trim() also erases characters that name a different directory,
     // such as a trailing non-breaking space, which would silently select the

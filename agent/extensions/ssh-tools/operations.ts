@@ -8,6 +8,7 @@ import { shellQuote } from "./remote-path.ts";
 import {
     assertRemoteAccess,
     buildWriteScript,
+    DEFAULT_MAX_DATA_BYTES,
     describeFailure,
     type SshExecOptions,
     type SshExecResult,
@@ -57,6 +58,13 @@ const OUTCOME_UNKNOWN =
     "The transfer was interrupted, so whether the file was replaced is UNKNOWN. Do not retry blindly: read the remote file first to see whether the new content landed.";
 
 /**
+ * A single write is bounded at the same ceiling a read is. Node transcodes the
+ * whole content to a Buffer and holds it again until drain, so an unbounded
+ * payload would peak at roughly twice its size for the whole transfer.
+ */
+const MAX_WRITE_BYTES = DEFAULT_MAX_DATA_BYTES;
+
+/**
  * `expectedBytes` must be the byte length of the content on the wire, not its
  * JavaScript string length. A multi-byte character would otherwise make the
  * remote completeness check fail on a transfer that actually succeeded.
@@ -67,11 +75,19 @@ async function writeRemoteFile(
     content: string,
     options: SshExecOptions,
 ): Promise<Buffer> {
+    const payloadBytes = Buffer.byteLength(content);
+    // Checked before spawning: an over-ceiling payload is refused rather than
+    // buffered, so the limit costs nothing and cannot be discovered late.
+    if (payloadBytes > MAX_WRITE_BYTES) {
+        throw new Error(
+            `Refusing to write ${absolutePath}: the payload is ${payloadBytes} bytes, which exceeds the ${MAX_WRITE_BYTES} byte ceiling for a single call. Write the file in ranges, or use ssh_bash.`,
+        );
+    }
     let result: SshExecResult;
     try {
         result = await sshExec(
             remote,
-            buildWriteScript(absolutePath, Buffer.byteLength(content)),
+            buildWriteScript(absolutePath, payloadBytes),
             { ...options, stdin: content },
         );
     } catch (error) {

@@ -227,7 +227,37 @@ describe("transport lifetime", () => {
         await outcome;
     });
 
-    it("rejects a data call that exceeds the hard data limit instead of truncating it", async () => {
+    it("never lets the stdout tail option raise the stderr cap", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "cat /home/dev/a.txt", {
+            // The documented stdout tail cap. It must not also become the stderr
+            // budget, or a remote could choose how much stderr is retained.
+            maxRetainedOutputBytes: 1_000_000,
+            spawnFn: harness.launch,
+        });
+        harness.process.emitStderr("e".repeat(DEFAULT_STDERR_CAP + 5000));
+        harness.process.emitClose(1);
+        const result = await pending;
+        expect(result.stderr.length).toBe(DEFAULT_STDERR_CAP);
+    });
+
+    it("puts heavy stdout and heavy stderr in the same call without either starving", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "cat /home/dev/a.txt", {
+            maxDataBytes: 1_000_000,
+            spawnFn: harness.launch,
+        });
+        // Both streams over budget in one call: the stderr bound must not
+        // consume the stdout allowance or vice versa.
+        harness.process.emitStdout("o".repeat(50_000));
+        harness.process.emitStderr("e".repeat(DEFAULT_STDERR_CAP + 5000));
+        harness.process.emitClose(0);
+        const result = await pending;
+        expect(result.stdout.length).toBe(50_000);
+        expect(result.stderr.length).toBe(DEFAULT_STDERR_CAP);
+    });
+
+    it("reports the data limit without a shell", async () => {
         const harness = fakeLaunch();
         const pending = sshOk("devlab", "cat /home/dev/huge.bin", {
             maxDataBytes: 10,

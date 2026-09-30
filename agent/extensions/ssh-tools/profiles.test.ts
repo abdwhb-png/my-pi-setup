@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { fakeLaunch } from "./testing/ssh-double.ts";
 import {
+    ACTIVATION_PROBE_TIMEOUT_SECONDS,
     type SshProfile,
     normalizeTargetArg,
     resolveRemoteCwd,
@@ -188,6 +189,29 @@ describe("resolveRemoteCwd", () => {
                 cwd: "repo",
             }),
         ).rejects.toThrow("absolute path");
+    });
+
+    it("bounds the activation probe independently of ConnectTimeout", async () => {
+        // ConnectTimeout covers only connect and auth, so a host that stalls
+        // after accepting the connection would leave the probe pending forever.
+        expect(Number.isFinite(ACTIVATION_PROBE_TIMEOUT_SECONDS)).toBe(true);
+        expect(ACTIVATION_PROBE_TIMEOUT_SECONDS).toBeGreaterThan(0);
+
+        const harness = fakeLaunch();
+        const pending = resolveRemoteCwd(
+            { name: "devlab", remote: "devlab" },
+            { spawnFn: harness.launch, timeoutSeconds: 0.02, killGraceMs: 0.02 },
+        );
+        const outcome = pending.then(
+            () => undefined,
+            (error: Error) => error.message,
+        );
+        // The default is far too long to wait out here, so a short one is passed
+        // to prove the probe is actually bounded rather than left to ConnectTimeout.
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(harness.process.killSignals).toContain("SIGTERM");
+        harness.process.emitClose(null);
+        expect(await outcome).toContain("timeout:");
     });
 
     it("rejects a reported path whose trailing non-breaking space was trimmed away", async () => {

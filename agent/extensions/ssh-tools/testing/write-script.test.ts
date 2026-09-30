@@ -194,6 +194,20 @@ describe("generated write script", () => {
         expect(result.stderr).toContain("dir`touch PWNED_TICK`");
     });
 
+    it("re-checks the target immediately before the rename", () => {
+        // The first refusal happens before staging, so the target has the whole
+        // transfer to become a directory. Re-checking narrows that window to the
+        // rename itself; the residual race is documented, not claimed gone.
+        const script = buildWriteScript("/home/dev/app.conf", 5);
+        const checks = script
+            .split("\n")
+            .filter((line) => line.includes("[ -d "));
+        expect(checks.length).toBe(2);
+        expect(script.indexOf(checks[1]!)).toBeLessThan(
+            script.indexOf("mv -f"),
+        );
+    });
+
     it("replaces a symlink-free existing file atomically", () => {
         const dir = scratch();
         const target = join(dir, "app.conf");

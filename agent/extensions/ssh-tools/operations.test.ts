@@ -18,6 +18,12 @@ const target: ActiveSshTarget = {
 
 const noData = () => undefined;
 
+/**
+ * Pinned contract: a write is bounded at the same 16 MiB a read is, so a
+ * large payload cannot be transcoded and buffered without limit.
+ */
+const WRITE_CEILING_BYTES = 16_777_216;
+
 function commandOf(harness: ReturnType<typeof fakeLaunch>, index = 0) {
     return harness.calls[index]?.at(-1) ?? "";
 }
@@ -61,6 +67,32 @@ describe("interrupted write reporting", () => {
             (error: Error) => error.message,
         );
         expect(message).not.toContain("UNKNOWN");
+    });
+
+    it("refuses a write larger than the payload ceiling before spawning", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteWriteOps(target, { spawnFn: harness.launch });
+        const outcome = ops.writeFile(
+            "/home/dev/big.log",
+            "x".repeat(WRITE_CEILING_BYTES + 1),
+        );
+        // Asserted before awaiting so an absent ceiling fails fast instead of
+        // waiting on a child that will never close.
+        expect(harness.calls).toHaveLength(0);
+        await expect(outcome).rejects.toThrow("exceeds the");
+    });
+
+    it("accepts a write exactly at the payload ceiling", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteWriteOps(target, { spawnFn: harness.launch });
+        const outcome = ops.writeFile(
+            "/home/dev/big.log",
+            "x".repeat(WRITE_CEILING_BYTES),
+        );
+        await Promise.resolve();
+        harness.process.emitClose(0);
+        await outcome;
+        expect(harness.calls).toHaveLength(1);
     });
 
     it("reports unknown outcome when the child is killed by an external signal", async () => {

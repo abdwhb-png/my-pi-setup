@@ -64,7 +64,7 @@ export type SshExecOptions = {
 };
 
 const DEFAULT_MAX_RETAINED_OUTPUT = 1_048_576;
-const DEFAULT_MAX_DATA_BYTES = 16_777_216;
+export const DEFAULT_MAX_DATA_BYTES = 16_777_216;
 const DEFAULT_KILL_GRACE_MS = 2_000;
 /**
  * stderr is only ever kept to build an error message, in both streaming and
@@ -156,6 +156,9 @@ export function buildWriteScript(
     const symlinkRefusal = shellQuote(
         `refusing to write: ${absolutePath} is a symlink`,
     );
+    const becameDirectoryRefusal = shellQuote(
+        `refusing to write: ${absolutePath} became a directory during the transfer`,
+    );
     return [
         // Refuse before allocating anything, so a rejected target leaves no
         // trace in the remote directory.
@@ -179,6 +182,12 @@ export function buildWriteScript(
         `cat > "$tmpdir/payload" || exit 1`,
         `actual=$(wc -c < "$tmpdir/payload")`,
         `[ "$actual" -eq ${expectedBytes} ] || { rm -rf "$tmpdir"; echo "short write: got $actual of ${expectedBytes} bytes" >&2; exit 1; }`,
+        // Re-checked immediately before the rename. The first check leaves a
+        // window the length of the whole transfer in which the target could
+        // become a directory, and `mv -f file dir` would then succeed by moving
+        // the payload inside it. This narrows the window to the rename; it does
+        // not close it, because that needs descriptor-based resolution.
+        `[ -d ${target} ] && { printf '%s\\n' ${becameDirectoryRefusal} >&2; exit 1; }`,
         `mv -f "$tmpdir/payload" ${target} || exit 1`,
     ].join("\n");
 }
@@ -246,8 +255,14 @@ export function sshExec(
         };
         const stderrBudget: RetentionBudget = {
             used: 0,
-            limit:
+            // `maxRetainedOutputBytes` is documented as the stdout tail cap, so
+            // it must not be able to raise the stderr budget: stderr is
+            // remote-determined, and a caller widening it would put unbounded
+            // retention back. It may still narrow it, which is harmless.
+            limit: Math.min(
                 options.maxRetainedOutputBytes ?? DEFAULT_MAX_DIAGNOSTIC_BYTES,
+                DEFAULT_MAX_DIAGNOSTIC_BYTES,
+            ),
         };
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];
