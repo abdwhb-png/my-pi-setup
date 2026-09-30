@@ -87,12 +87,32 @@ async function writeRemoteFile(
         throw error;
     }
     if (result.exitCode === 0) {
+        // The rename committed, so the outcome is known. pi's write and edit
+        // factories re-check the abort signal after this returns and would
+        // throw a bare "Operation aborted", which reads as "nothing happened"
+        // and invites a duplicate write. Reporting the truth here, while this
+        // error can still be the one the model reads, beats letting a
+        // misleading message replace it.
+        if (options.signal?.aborted) {
+            throw new Error(
+                "The write completed on the remote host, but the turn was aborted before the tool result was reported. The file HAS been updated. Do not retry: read the remote file to confirm its contents.",
+                { cause: new Error("aborted") },
+            );
+        }
         return result.stdout;
     }
     // ssh reserves 255 for its own failures, so a session that died after the
     // rename committed is indistinguishable from one that never started. Both
     // are an unknown outcome rather than a known failure.
     const cause = new Error(describeFailure(remote, result));
+    if (result.exitCode === null) {
+        // No exit code at all means the child was killed, so whether the rename
+        // committed is unknown exactly as for a dropped transfer.
+        throw new Error(
+            `${OUTCOME_UNKNOWN} (ssh closed without reporting an exit code: ${cause.message})`,
+            { cause },
+        );
+    }
     if (result.exitCode === SSH_TRANSPORT_EXIT) {
         throw new Error(
             `${OUTCOME_UNKNOWN} (ssh exited ${SSH_TRANSPORT_EXIT} before reporting a result: ${cause.message})`,

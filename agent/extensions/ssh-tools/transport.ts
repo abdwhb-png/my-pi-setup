@@ -258,10 +258,16 @@ export function sshExec(
         let childClosed = false;
         let timedOut = false;
         let killTimer: ReturnType<typeof setTimeout> | undefined;
+        // Set once the process has been asked to die. The escalation is armed
+        // exactly once, on that first request, so a later error path cannot
+        // restart the grace period or spam a second SIGTERM.
+        let killRequested = false;
 
         // SIGTERM first, SIGKILL if the child ignores it. A single kill() can
         // leave the process running and the promise never settling.
         const killChild = () => {
+            if (killRequested) return;
+            killRequested = true;
             child.kill("SIGTERM");
             killTimer = setTimeout(() => {
                 if (!childClosed) child.kill("SIGKILL");
@@ -283,8 +289,13 @@ export function sshExec(
         };
 
         const cleanup = () => {
+            // Deliberately does NOT clear killTimer. Settling the promise is
+            // not evidence that the process died: a broken stdin pipe often
+            // arrives *because* this transport just sent SIGTERM, and clearing
+            // the escalation there would leave a child that ignores SIGTERM
+            // running with no owner. The timer is cleared in onClose, where the
+            // process is known to be gone.
             if (timer) clearTimeout(timer);
-            if (killTimer) clearTimeout(killTimer);
             options.signal?.removeEventListener("abort", onAbort);
         };
 
@@ -332,6 +343,10 @@ export function sshExec(
         child.onError((error) => {
             if (settled) return;
             settled = true;
+            // Node emits `error` when there is no process at all, in which case
+            // kill() is a no-op. When one exists, terminate it rather than
+            // leaving it orphaned.
+            if (!childClosed) killChild();
             cleanup();
             reject(error);
         });
@@ -340,12 +355,17 @@ export function sshExec(
         child.onStdinError((error) => {
             if (settled) return;
             settled = true;
+            // A broken pipe usually means the child already exited, but it is
+            // also the normal consequence of the SIGTERM this transport sent.
+            // Re-terminate so a child that ignores SIGTERM cannot outlive the
+            // call, and keep the escalation armed until it closes.
+            if (!childClosed) killChild();
             cleanup();
-            // Killing the child breaks the pipe, so EPIPE lands after the abort
-            // or timeout that caused it. Reporting the pipe error instead would
-            // lose the two message shapes pi matches on to render "Command
-            // aborted" and "Command timed out", and a write would then be
-            // reported as a definite failure rather than an unknown outcome.
+            // An abort or timeout that killed the child also breaks the pipe, so
+            // EPIPE lands after it. Reporting the pipe error instead would lose
+            // the two message shapes pi matches on to render "Command aborted"
+            // and "Command timed out", and a write would then be reported as a
+            // definite failure rather than an unknown outcome.
             if (options.signal?.aborted) {
                 reject(new Error("aborted"));
                 return;
@@ -358,6 +378,10 @@ export function sshExec(
         });
         child.onClose((code) => {
             childClosed = true;
+            // The process is gone, so any pending escalation has nothing left to
+            // do. This runs before the settled check so a late close still
+            // clears a timer armed by an earlier failure path.
+            if (killTimer) clearTimeout(killTimer);
             if (settled) return;
             settled = true;
             cleanup();
@@ -393,6 +417,9 @@ export function sshExec(
             backpressured = !child.writeStdin(options.stdin);
         } catch (error) {
             settled = true;
+            // The child exists but never received its payload, so terminate it
+            // rather than leaving a process with no owner.
+            if (!childClosed) killChild();
             cleanup();
             reject(error);
             return;

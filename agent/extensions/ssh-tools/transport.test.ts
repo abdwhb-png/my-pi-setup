@@ -186,6 +186,47 @@ describe("transport lifetime", () => {
         expect(result.length).toBe(500);
     });
 
+    it("still escalates to SIGKILL when the stdin pipe breaks after an abort", async () => {
+        const harness = fakeLaunch();
+        const controller = new AbortController();
+        const pending = sshExec("devlab", "cat", {
+            stdin: "payload",
+            signal: controller.signal,
+            killGraceMs: 0.02,
+            spawnFn: harness.launch,
+        });
+        // Attach the handler before the rejection can fire: emitStdinError
+        // settles the promise synchronously, and a later .catch would leave an
+        // unhandled rejection.
+        const outcome = pending.then(
+            () => undefined,
+            () => undefined,
+        );
+        controller.abort();
+        // SIGTERM closed the pipe, so EPIPE lands after the abort. Settling on
+        // that error must not cancel the escalation: a child that ignores
+        // SIGTERM would otherwise keep running with nobody holding it.
+        harness.process.emitStdinError(new Error("EPIPE"));
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(harness.process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+        harness.process.emitClose(null);
+        await outcome;
+    });
+
+    it("terminates the child when the process reports an error mid-call", async () => {
+        const harness = fakeLaunch();
+        const pending = sshExec("devlab", "pwd", { spawnFn: harness.launch });
+        const outcome = pending.then(
+            () => undefined,
+            () => undefined,
+        );
+        harness.process.emitError(new Error("ssh: killed"));
+        // A live process that errors must not be left running.
+        expect(harness.process.killSignals).toContain("SIGTERM");
+        harness.process.emitClose(null);
+        await outcome;
+    });
+
     it("rejects a data call that exceeds the hard data limit instead of truncating it", async () => {
         const harness = fakeLaunch();
         const pending = sshOk("devlab", "cat /home/dev/huge.bin", {

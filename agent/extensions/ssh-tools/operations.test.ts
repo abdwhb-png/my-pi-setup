@@ -63,6 +63,45 @@ describe("interrupted write reporting", () => {
         expect(message).not.toContain("UNKNOWN");
     });
 
+    it("reports unknown outcome when the child is killed by an external signal", async () => {
+        const harness = fakeLaunch();
+        const ops = createRemoteWriteOps(target, { spawnFn: harness.launch });
+        const pending = ops.writeFile("/home/dev/app.conf", "x");
+        // A null exit code means no code was reported at all, so whether the
+        // remote rename committed is unknown, exactly as for a dropped transfer.
+        harness.process.emitClose(null);
+        await expect(pending).rejects.toThrow("UNKNOWN");
+    });
+
+    it("states that a committed write landed when the turn is aborted first", async () => {
+        const harness = fakeLaunch();
+        const controller = new AbortController();
+        const ops = createRemoteWriteOps(target, {
+            spawnFn: harness.launch,
+            signal: controller.signal,
+        });
+        const pending = ops.writeFile("/home/dev/app.conf", "x");
+        harness.process.emitClose(0);
+        // The rename committed. pi's write factory re-checks the signal after
+        // writeFile returns and would throw a bare "Operation aborted", which
+        // reads as "nothing happened" and invites a duplicate write.
+        controller.abort();
+        await expect(pending).rejects.toThrow("completed on the remote");
+    });
+
+    it("tells the model not to retry a write that already committed", async () => {
+        const harness = fakeLaunch();
+        const controller = new AbortController();
+        const ops = createRemoteEditOps(target, {
+            spawnFn: harness.launch,
+            signal: controller.signal,
+        });
+        const pending = ops.writeFile("/home/dev/app.conf", "x");
+        harness.process.emitClose(0);
+        controller.abort();
+        await expect(pending).rejects.toThrow("Do not retry");
+    });
+
     it("reports unknown outcome when the connection dies after the rename", async () => {
         const harness = fakeLaunch();
         const ops = createRemoteWriteOps(target, { spawnFn: harness.launch });
