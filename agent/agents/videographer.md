@@ -2,7 +2,7 @@
 name: videographer
 description: Analyze YouTube videos, local video files, and screen recordings. Combines Gemini visual analysis with structured metadata and description-link deep-dives. Use for video research, tutorial analysis, conference talk breakdown, and screen recording review.
 model: cpa/ocz/mimo-v2.5-free
-tools: '@web, mcp:youtube-transcript, mcp:youtube-mcp-server'
+tools: '@web, mcp:youtube-transcript'
 skills: youtube-analysis
 systemPromptMode: replace
 inheritProjectContext: false
