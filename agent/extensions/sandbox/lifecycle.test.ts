@@ -11,11 +11,17 @@ import {
 } from "bun:test";
 import { renameSync } from "node:fs";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
+import {
+    DefaultResourceLoader,
+    SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import type { ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DockerTargetAccess } from "./docker-access.ts";
+import { SANDBOX_SECTIONS } from "./command-ui.ts";
+import { renderPanelTitle } from "../_shared/ui/framed-panels.ts";
 import type { SandboxProfileContextsV1, SandboxProfileContexts, SandboxExecutionContextV3 } from "../_shared/sandbox-runtime/execution-context.ts";
 import type {
     BashOperations,
@@ -173,7 +179,11 @@ function deferred<T = void>(): Deferred<T> {
 }
 
 function fakeTheme(): Theme {
-    return { fg: (color: string, text: string) => `fg:${color}:${text}` } as unknown as Theme;
+    return {
+        fg: (color: string, text: string) => `fg:${color}:${text}`,
+        bold: (text: string) => text,
+        italic: (text: string) => text,
+    } as unknown as Theme;
 }
 
 function registerSandbox(
@@ -222,6 +232,7 @@ function context(
     (context as unknown as { notify?: typeof notify }).notify = notify;
     return {
         cwd,
+        mode: "rpc",
         hasUI: true,
         isProjectTrusted: () => projectTrusted,
         ui: { notify, select, input, confirm, theme: fakeTheme() },
@@ -239,6 +250,22 @@ type NotifyMock = ReturnType<typeof mock<(message: string, level?: string) => vo
 function notifyCalls(ctx: ExtensionContext): Array<[string, string | undefined]> {
     const notify = (ctx.ui as unknown as { notify: NotifyMock }).notify;
     return notify.mock.calls as Array<[string, string | undefined]>;
+}
+
+function automateOverlay(ctx: ExtensionContext, input = ["\x1b"], reopenedInput = ["\x1b"]) {
+    const rendered: string[][] = [];
+    let closed = 0;
+    ctx.ui.custom = async (factory, options) => {
+        expect(options?.overlay).toBe(true);
+        const { TuiMainScreen, ProcessTerminal } = await import("@earendil-works/pi-tui");
+        const { KeybindingsManager } = await import("../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js");
+        let result;
+        const component = await factory(new TuiMainScreen(new ProcessTerminal()), fakeTheme(), new KeybindingsManager(), value => { result = value; closed += 1; });
+        rendered.push(component.render(100));
+        for (const key of rendered.length === 1 ? input : reopenedInput) component.handleInput?.(key);
+        return result!;
+    };
+    return { rendered, get closed() { return closed; } };
 }
 
 const execArgs = [
@@ -1262,7 +1289,10 @@ describe("sandbox lifecycle", () => {
     it("updates Docker client availability only after admission through the Pi lifecycle", async () => {
         await writeGlobalConfig({ host: { allowed: true }, docker: { allowed: true } });
         await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ docker: { enabled: true } }), { mode: 0o600 });
-        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
+        const session = await createTestSession({
+            cwd,
+            extensionFactories: [sandboxExtension],
+        });
         try {
             expect(renderWidget()).toContain("client check pending");
             const admitted: SandboxExecutionContextV3 = {
@@ -1318,6 +1348,120 @@ describe("sandbox lifecycle", () => {
         expect(report).not.toContain("never-display-this");
         expect(await Bun.file(join(cwd, "marker")).exists()).toBe(false);
         await registered.handlers.get("session_shutdown")?.({}, ctx);
+    });
+
+    it("opens a compact status dashboard with four navigation sections and collapsed grants", async () => {
+        await writeGlobalConfig({
+            filesystem: {
+                allowWrite: Array.from({ length: 30 }, (_, index) => join(cwd, `grant-${index}`)),
+            },
+        });
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        ctx.mode = "tui";
+        const { rendered } = automateOverlay(ctx, ["\x1b"]);
+        await sandboxCommand(registered).handler("status", ctx);
+        const report = rendered[0]?.join("\n");
+        for (const section of SANDBOX_SECTIONS) {
+            expect(report).toContain(section);
+        }
+        expect(report).not.toContain("grant-29");
+        expect(notifyCalls(ctx)).toEqual([]);
+    });
+
+    it.each(["doctor", "status", "docker"])("opens %s diagnostics in a framed overlay in TUI mode", async command => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        ctx.mode = "tui";
+        const { rendered } = automateOverlay(ctx);
+        await sandboxCommand(registered).handler(command, ctx);
+        expect(notifyCalls(ctx)).toEqual([]);
+        expect(rendered).toHaveLength(1);
+        expect(rendered[0]?.[0]).toContain("╭");
+        expect(rendered[0]?.join("\n")).toContain("Sandbox");
+    });
+
+    it.each(["rpc", "json", "print"] as const)("retains plain reports in %s mode", async mode => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        ctx.mode = mode;
+        ctx.ui.custom = mock(async () => { throw new Error("Headless report opened an overlay"); });
+        for (const command of ["status", "doctor", "docker"]) await sandboxCommand(registered).handler(command, ctx);
+        expect(ctx.ui.custom).not.toHaveBeenCalled();
+        expect(notifyCalls(ctx)).toHaveLength(3);
+        expect(notifyCalls(ctx).every(([message, level]) => message.length > 0 && level === "info")).toBe(true);
+    });
+
+    it("keeps a refused mode change visible inside the reopened dashboard", async () => {
+        await writeGlobalConfig({ host: { allowed: false } });
+        const registered = registerSandbox();
+        const ctx = context(cwd, undefined, "refused-mode", true, {
+            select: ["host (unavailable: global host.allowed is false)"],
+        });
+        ctx.mode = "tui";
+        const overlay = automateOverlay(ctx, ["\t", "\r"]);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        try {
+            await sandboxCommand(registered).handler("", ctx);
+            expect(overlay.rendered).toHaveLength(2);
+            expect(overlay.rendered[1]?.join("\n")).toContain("Last action failed");
+            expect(currentShellPolicy()?.mode).toBe("sandbox");
+        } finally {
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        }
+    });
+
+    it("returns to Status after cancelling the native mode selector", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        ctx.mode = "tui";
+        const overlay = automateOverlay(ctx, ["\t", "\r"]);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        try {
+            await sandboxCommand(registered).handler("", ctx);
+            expect(overlay.rendered).toHaveLength(2);
+            expect(overlay.rendered[1]?.join("\n")).toContain(renderPanelTitle(fakeTheme(), SANDBOX_SECTIONS[0], false));
+            expect(currentShellPolicy()?.mode).toBe("sandbox");
+        } finally {
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        }
+    });
+
+    it("closes the framed main menu before opening the existing mode selector", async () => {
+        await writeGlobalConfig({ host: { allowed: true } });
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        ctx.mode = "tui";
+        const overlay = automateOverlay(ctx, ["\t", "\r"]);
+        ctx.ui.select = async () => {
+            expect(overlay.closed).toBe(1);
+            return "host";
+        };
+        await registered.handlers.get("session_start")?.({}, ctx);
+        try {
+            await sandboxCommand(registered).handler("", ctx);
+            expect(overlay.rendered).toHaveLength(2);
+            expect(overlay.rendered[1]?.join("\n")).toContain("Host · unsandboxed");
+            expect(currentShellPolicy()?.mode).toBe("host");
+        } finally {
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        }
+    });
+
+    it("leaves session mode untouched when the framed main menu is cancelled", async () => {
+        const registered = registerSandbox();
+        const ctx = context(cwd);
+        ctx.mode = "tui";
+        const overlay = automateOverlay(ctx, ["\x1b"]);
+        await registered.handlers.get("session_start")?.({}, ctx);
+        try {
+            await sandboxCommand(registered).handler("", ctx);
+            expect(overlay.closed).toBe(1);
+            expect(ctx.ui.select).not.toHaveBeenCalled();
+            expect(currentShellPolicy()?.mode).toBe("sandbox");
+        } finally {
+            await registered.handlers.get("session_shutdown")?.({}, ctx);
+        }
     });
 
     it("offers session modes and preserves the current mode on cancellation or refusal", async () => {
@@ -1670,6 +1814,44 @@ describe("sandbox lifecycle", () => {
         expect(getSandboxRuntime().state).toBe("uninitialized");
     });
 
+    it("keeps the active shell usable when another resource loader discovers sandbox", async () => {
+        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
+        try {
+            const loader = new DefaultResourceLoader({
+                cwd,
+                agentDir: isolatedAgentDirectory,
+                settingsManager: SettingsManager.inMemory(),
+                extensionFactories: [sandboxExtension],
+                noSkills: true,
+                noPromptTemplates: true,
+                noThemes: true,
+                noContextFiles: true,
+            });
+            await loader.reload();
+            const output: string[] = [];
+            const operations = resolveBashOperations(createBashProcessSupervisor());
+            const result = await operations.exec("printf discovery-ok", cwd, {
+                onData: chunk => output.push(chunk.toString()),
+            });
+            expect(result.exitCode).toBe(0);
+            expect(output.join("")).toBe("discovery-ok");
+            await session.session.prompt("/sandbox mode sandbox");
+            const notifications = session.events.uiCallsFor("notify");
+            expect(
+                notifications.some(call =>
+                    String(call.args[0]).includes("Sandbox mode was not applied"),
+                ),
+            ).toBe(false);
+            expect(getSandboxRuntime().state).toBe("enabled");
+        } finally {
+            await session.session.extensionRunner.emit({
+                type: "session_shutdown",
+                reason: "quit",
+            });
+            session.dispose();
+        }
+    });
+
     it("supports Pi's shutdown-old then start-new reload sequence", async () => {
         const first = registerSandbox();
         const ctx = context(cwd);
@@ -1692,6 +1874,8 @@ describe("sandbox lifecycle", () => {
         const second = registerSandbox();
         await second.handlers.get("session_start")?.({}, ctx);
         const currentRuntime = getSandboxRuntime();
+        await first.handlers.get("session_start")?.({}, ctx);
+        expect(getSandboxRuntime()).toBe(currentRuntime);
         await first.handlers.get("session_shutdown")?.({}, ctx);
 
         expect(reset).toHaveBeenCalledTimes(1);

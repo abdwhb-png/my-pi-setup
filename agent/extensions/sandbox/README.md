@@ -15,19 +15,23 @@ A change to either configuration file is checked before each model request and s
 
 ## Commands
 
-| Command | Purpose |
-| --- | --- |
-| `/sandbox` | Show status and an action selector. |
-| `/sandbox status` | Print configured permissions and runtime status. |
-| `/sandbox mode` | Select sandbox or host, with an explanation if host is unavailable. |
-| `/sandbox installations` | Inspect, add, edit, revoke or select local installations with a preview before saving. |
-| `/sandbox doctor [executable]` | Inspect policy and optionally resolve an executable without running it. |
-| `/sandbox mode sandbox\|host` | Select the execution mode for this session. |
-| `/sandbox migrate` | Preview and confirm migration to the two-file format. |
-| `/sandbox recover` | Verify and recover an interrupted migration. |
-| `/sandbox docker` | Show Docker policy and runtime status. |
-| `/sandbox docker on\|off` | Save this project's activation choice within the global Docker ceiling. |
+| Command                                       | Purpose                                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/sandbox`                                    | Show status and an action selector.                                                                                                         |
+| `/sandbox status`                             | Inspect configured permissions and runtime status.                                                                                          |
+| `/sandbox mode`                               | Select sandbox or host, with an explanation if host is unavailable.                                                                         |
+| `/sandbox installations`                      | Inspect, add, edit, revoke or select local installations with a preview before saving.                                                      |
+| `/sandbox doctor [executable]`                | Inspect policy and optionally resolve an executable without running it.                                                                     |
+| `/sandbox mode sandbox\|host`                 | Select the execution mode for this session.                                                                                                 |
+| `/sandbox migrate`                            | Preview and confirm migration to the two-file format.                                                                                       |
+| `/sandbox recover`                            | Verify and recover an interrupted migration.                                                                                                |
+| `/sandbox docker`                             | Show Docker policy and runtime status.                                                                                                      |
+| `/sandbox docker on\|off`                     | Save this project's activation choice within the global Docker ceiling.                                                                     |
 | `/sandbox docker break-glass [1m-<ceiling>m]` | Confirm a temporary exec exception for one eligible container. The duration ceiling defaults to 30 minutes and is configurable per machine. |
+
+In the TUI, `/sandbox` opens two panes: **Status**, **Permissions**, **Doctor** and **Docker** in the left navigation, with a short summary and controls on the right. Status, doctor and Docker commands open their matching section. Labels and values use separate shared theme colors. Green checks mean verified results; amber marks pending access or warnings; red crosses mark blockers. Paths, dependency checks and detailed rules stay inside expandable sections. Doctor inspects metadata without running commands or changing permissions.
+
+Use Up/Down in the left pane to choose a section, then Right or Enter to enter its content. Tab/Shift-Tab switches panes; Left returns to navigation. In the right pane, Up/Down selects a control and Enter opens it. Escape returns from details to the summary, then closes the dashboard. Within details, Up/Down, PageUp/PageDown and Home/End scroll. Controls open the existing prompts and return to the same section with refreshed state. Below 64 columns, the dashboard shows the focused pane. RPC, JSON and print sessions retain plain-text reports and standard selection prompts.
 
 Docker requires both global `docker.allowed: true` with an explicit policy and project `docker.enabled: true`. An absent project activation leaves Docker disabled.
 

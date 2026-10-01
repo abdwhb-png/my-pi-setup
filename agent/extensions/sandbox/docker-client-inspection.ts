@@ -82,31 +82,45 @@ export function dockerClientWidgetLabel(
     return "CLI exposed · Compose exposed";
 }
 
-export function formatDockerClientInspection(
+export type SandboxDiagnosticLine = string | { label: string; value: string };
+
+export function dockerClientInspectionLines(
     inspection?: DockerClientInspection,
-): string[] {
+): SandboxDiagnosticLine[] {
     if (!inspection)
         return [
-            "Docker client check: pending admission. Run /sandbox doctor docker for planned inspection.",
+            {
+                label: "Docker client check",
+                value: "pending admission. Run /sandbox doctor docker for planned inspection.",
+            },
         ];
     const phase =
         inspection.admission === "admitted"
             ? "admitted scope"
             : "planned inspection";
     return [
-        `Docker CLI: ${inspection.cli.state} (${phase})`,
+        { label: "Docker CLI", value: `${inspection.cli.state} (${phase})` },
         ...(inspection.cli.path
             ? [
-                  `  Executable: ${inspection.cli.path}`,
-                  `  Canonical target: ${inspection.cli.realPath}`,
+                  { label: "  Executable", value: inspection.cli.path },
+                  {
+                      label: "  Canonical target",
+                      value: String(inspection.cli.realPath),
+                  },
               ]
             : []),
         ...inspection.cli.issues.map((issue) => `  ${issue}`),
-        `Docker Compose: ${inspection.compose.state} (${phase}; standard plugin directories)`,
+        {
+            label: "Docker Compose",
+            value: `${inspection.compose.state} (${phase}; standard plugin directories)`,
+        },
         ...(inspection.compose.path
             ? [
-                  `  Plugin: ${inspection.compose.path}`,
-                  `  Canonical target: ${inspection.compose.realPath}`,
+                  { label: "  Plugin", value: inspection.compose.path },
+                  {
+                      label: "  Canonical target",
+                      value: String(inspection.compose.realPath),
+                  },
               ]
             : []),
         ...inspection.compose.issues.map((issue) => `  ${issue}`),
@@ -120,4 +134,12 @@ export function formatDockerClientInspection(
             : []),
         "Static inspection does not prove client execution, custom plugin discovery or daemon readiness. This inspection executes no commands and changes no permissions.",
     ];
+}
+
+export function formatDockerClientInspection(
+    inspection?: DockerClientInspection,
+): string[] {
+    return dockerClientInspectionLines(inspection).map((line) =>
+        typeof line === "string" ? line : `${line.label}: ${line.value}`,
+    );
 }

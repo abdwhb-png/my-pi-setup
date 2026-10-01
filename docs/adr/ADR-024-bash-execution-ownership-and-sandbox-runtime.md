@@ -62,6 +62,11 @@ publish over or release the current instance. `enabled` publishes Bash and
 analysis in one assignment. Error diagnostics remain private and bounded at
 the public failure boundary.
 
+Sandbox claims ownership only on `session_start`. Resource discovery can load
+extension factories without activating them; discovery must leave the running
+runtime intact.
+An instance that has already started cannot reclaim a newer instance's runtime.
+
 Sandbox owns Zerobox configuration, probes, leases, analysis workers, runtime
 state, `/sandbox`, `--no-sandbox`, and its widget. It registers no Bash tool or
 hook and provides no local adapter.

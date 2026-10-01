@@ -32,6 +32,7 @@ import {
     withFileMutationQueue,
     type ExtensionAPI,
     type ExtensionContext,
+    type RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
 import {
     type BashOperations,
@@ -91,6 +92,11 @@ import {
     releaseShellRuntime,
 } from "./capabilities/runtime.ts";
 import {
+    showSandboxDashboard,
+    type SandboxDashboardSource,
+    type SandboxDashboardState,
+} from "./command-ui.ts";
+import {
     inspectDockerAccess,
     formatDockerAccess,
     type DockerTargetAccess,
@@ -110,7 +116,7 @@ import {
     formatBreakGlassRemaining,
     BREAK_GLASS_COUNTDOWN_WINDOW_MS,
 } from "./docker-presentation.ts";
-import { sandboxDoctor } from "./doctor.ts";
+import { sandboxDoctor, inspectSandboxDoctor } from "./doctor.ts";
 import { registerSandboxModelContext } from "./model-context.ts";
 import {
     DOCKER_OPERATIONS,
@@ -760,7 +766,6 @@ export function createSandboxExtension(
     const shutdownBashProcesses = (): void => {
         for (const supervisor of bashProcessSupervisors) supervisor.shutdown();
     };
-    claimSandboxRuntime(runtimeOwner);
     pi.on("tool_call", (event, ctx) => {
         if (event.toolName !== "write" && event.toolName !== "edit") return;
         const path = event.input.path;
@@ -1802,7 +1807,8 @@ export function createSandboxExtension(
 
     // Resolve local shell authority independently from strict engine startup.
     pi.on("session_start", async (_event, ctx) => {
-        if (!ownsSandboxRuntime(runtimeOwner)) return;
+        // Resource discovery must not replace a running session's owner.
+        if (modeSessionEpoch > 0 && !ownsSandboxRuntime(runtimeOwner)) return;
         modeSessionEpoch += 1;
         pendingModeChange = undefined;
         claimSandboxRuntime(runtimeOwner);
@@ -1973,7 +1979,7 @@ export function createSandboxExtension(
         releaseSandboxRuntime(runtimeOwner);
     });
 
-    pi.registerCommand("sandbox", {
+    const sandboxCommand: Omit<RegisteredCommand, "name" | "sourceInfo"> = {
         description:
             "Inspect shell policy, select the session mode, or configure Docker access",
         getArgumentCompletions: (prefix: string) => {
@@ -2004,6 +2010,138 @@ export function createSandboxExtension(
         },
         handler: async (args, ctx) => {
             let arg = args.trim().toLowerCase();
+            if (
+                ctx.mode === "tui" &&
+                (!arg ||
+                    arg === "status" ||
+                    arg === "docker" ||
+                    arg === "doctor" ||
+                    arg.startsWith("doctor "))
+            ) {
+                let actionProblem: string | undefined;
+                const source: SandboxDashboardSource = {
+                    read: () => {
+                        const runtime = getSandboxRuntime();
+                        try {
+                            return {
+                                resolved: loadShell(ctx),
+                                runtime,
+                                clients: sandboxDockerFooterState.clients,
+                                actionProblem,
+                            };
+                        } catch (error) {
+                            return {
+                                runtime,
+                                error: configurationErrorMessage(error),
+                                actionProblem,
+                            };
+                        }
+                    },
+                    inspect: async (executable) => {
+                        let bundle:
+                            | Awaited<
+                                  ReturnType<
+                                      typeof inspectManagedPrivateRuntime
+                                  >
+                              >
+                            | undefined;
+                        let runtimeProblem: string | undefined;
+                        try {
+                            bundle = await inspectManagedPrivateRuntime(
+                                options.zeroboxBackend,
+                            );
+                        } catch (error) {
+                            runtimeProblem = errorMessage(error);
+                        }
+                        const resolved = loadShell(ctx);
+                        const runtime = getSandboxRuntime();
+                        const context =
+                            runtime.state === "enabled" &&
+                            runtime.sandboxFingerprint ===
+                                resolved.shell.sandboxFingerprint
+                                ? runtime.contexts?.["bash-general"]
+                                : undefined;
+                        return {
+                            ...inspectSandboxDoctor(
+                                resolved,
+                                executable,
+                                context,
+                                bundle,
+                            ),
+                            runtimeProblem,
+                        };
+                    },
+                };
+                let state: SandboxDashboardState = {
+                    section: arg.startsWith("doctor")
+                        ? "Doctor"
+                        : arg === "docker"
+                          ? "Docker"
+                          : "Status",
+                    executable: arg.startsWith("doctor ")
+                        ? args.trim().slice(7).trim()
+                        : undefined,
+                };
+                // oxlint-disable no-await-in-loop -- Native prompts must finish before the dashboard reopens.
+                while (true) {
+                    const intent = await showSandboxDashboard(
+                        ctx,
+                        source,
+                        state,
+                    );
+                    if (!intent) return;
+                    state = intent.state;
+                    if (intent.action === "inspect-command") {
+                        const executable =
+                            state.section === "Docker"
+                                ? "docker"
+                                : await ctx.ui.input(
+                                      "Inspect one sandbox executable (without arguments)",
+                                      "git",
+                                  );
+                        if (!executable?.trim()) continue;
+                        state = {
+                            section: "Doctor",
+                            executable: executable.trim(),
+                        };
+                    } else {
+                        actionProblem = undefined;
+                        // Preserve Pi's guarded, lazy context getters while routing failures into the dashboard.
+                        const actionUi = new Proxy(ctx.ui, {
+                            get(target, property) {
+                                if (property === "notify")
+                                    return (
+                                        message: string,
+                                        level?: "info" | "warning" | "error",
+                                    ) => {
+                                        if (level === "error")
+                                            actionProblem = message;
+                                        else target.notify(message, level);
+                                    };
+                                // oxlint-disable-next-line @typescript-eslint/no-unsafe-return -- Reflect.get is typed any; Proxy forwards the typed Pi UI target and preserves its getters.
+                                return Reflect.get(target, property, target);
+                            },
+                        });
+                        const actionContext = new Proxy(ctx, {
+                            get(target, property) {
+                                // oxlint-disable-next-line @typescript-eslint/no-unsafe-return -- Reflect.get is typed any; Proxy preserves Pi's guarded context getters without freezing them.
+                                return property === "ui"
+                                    ? actionUi
+                                    : Reflect.get(target, property, target);
+                            },
+                        });
+                        try {
+                            await sandboxCommand.handler(
+                                intent.action,
+                                actionContext,
+                            );
+                        } catch (error) {
+                            actionProblem = configurationErrorMessage(error);
+                        }
+                    }
+                }
+                // oxlint-enable no-await-in-loop
+            }
             if ((!arg || arg === "mode") && ctx.hasUI) {
                 try {
                     const resolved = loadShell(ctx);
@@ -2043,7 +2181,7 @@ export function createSandboxExtension(
                         ) {
                             ctx.ui.notify(
                                 `Host mode is unavailable. Set host.allowed in ${sandboxConfigPath(getAgentDir())} to authorize it. The project cannot grant host access.`,
-                                "warning",
+                                "error",
                             );
                             return;
                         }
@@ -2495,7 +2633,8 @@ export function createSandboxExtension(
                 );
             }
         },
-    });
+    };
+    pi.registerCommand("sandbox", sandboxCommand);
 }
 
 export default createSandboxExtension;

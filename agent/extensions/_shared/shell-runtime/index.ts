@@ -228,14 +228,44 @@ export function activeShellOperations(): ActiveShellOperation[] {
         }),
     );
 }
-export function formatShellPolicy(policy: ShellCapabilityResolution): string {
+export function shellPolicyLines(
+    policy: ShellCapabilityResolution,
+): Array<string | { label: string; value: string }> {
+    const diagnostic = policy.diagnostic;
     return [
-        `Shell profile: ${policy.profile} (requested: ${policy.requestedProfile}; ${policy.state})`,
-        "Scope: shell only. Native file tools, extensions and MCP tools run on the host outside this shell boundary.",
-        `Mode: ${policy.mode}`,
-        `Network: ${policy.mode === "host" ? "host network (shell sandbox restrictions do not apply)" : policy.grants.domains.concat(policy.grants.hostDomains).join(", ") || "denied"}`,
-        `Temporary files: ${policy.mode === "host" || policy.grants.hostTmp ? "host /tmp" : "private /tmp; native file tools see a different /tmp"}`,
+        {
+            label: "Shell profile",
+            value: `${policy.profile} (requested: ${policy.requestedProfile}; ${policy.state})`,
+        },
+        {
+            label: "Scope",
+            value: "shell only. Native file tools, extensions and MCP tools run on the host outside this shell boundary.",
+        },
+        { label: "Mode", value: `${policy.mode}` },
+        {
+            label: "Network",
+            value:
+                policy.mode === "host"
+                    ? "host network (shell sandbox restrictions do not apply)"
+                    : policy.grants.domains
+                          .concat(policy.grants.hostDomains)
+                          .join(", ") || "denied",
+        },
+        {
+            label: "Temporary files",
+            value:
+                policy.mode === "host" || policy.grants.hostTmp
+                    ? "host /tmp"
+                    : "private /tmp; native file tools see a different /tmp",
+        },
         "Legacy hostCapability parameters are rejected. Select Sandbox or host mode explicitly.",
-        ...(policy.diagnostic ? [policy.diagnostic] : []),
-    ].join("\n");
+        ...(diagnostic ? [diagnostic] : []),
+    ];
+}
+export function formatShellPolicy(policy: ShellCapabilityResolution): string {
+    return shellPolicyLines(policy)
+        .map((line) =>
+            typeof line === "string" ? line : `${line.label}: ${line.value}`,
+        )
+        .join("\n");
 }
