@@ -1,122 +1,70 @@
 import { expect, test } from "bun:test";
-import {
-    calls,
-    createTestSession,
-    says,
-    when,
-} from "@abdwhb-png/pi-test-harness";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
+import { runIsolatedContract } from "./isolated-contract.ts";
 
-import { localMachineId } from "../../_shared/sandbox-runtime/machine-identity.ts";
-import { publicExtensionEntrypoints } from "./public-extension-session.ts";
-
-const managedZerobox = join(homedir(), ".pi", "bin", "zerobox");
-
-test.skipIf(process.platform !== "linux" || !existsSync(managedZerobox))(
-    "Sandbox and Bash diagnose an unexposed sibling using the admitted runtime",
+test.skipIf(
+    process.platform !== "linux" ||
+        process.env.PI_SANDBOX_PATH_DIAGNOSTIC_CONTRACT !== "1",
+)(
+    "Sandbox and Bash diagnose an unexposed sibling using an isolated pinned runtime",
     async () => {
-        const root = await mkdtemp("/var/tmp/pi-path-diagnostic-");
-        const cwd = join(root, "project");
-        const sibling = join(root, "sibling");
-        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-        const previousCwd = process.cwd();
-        let session: Awaited<ReturnType<typeof createTestSession>> | undefined;
+        for (const key of [
+            "PI_SANDBOX_ZEROBOX_BINARY",
+            "PI_SANDBOX_RUNTIME_BUNDLE",
+        ]) {
+            const value = process.env[key];
+            if (!value || !isAbsolute(value))
+                throw new Error(`${key} must pin an absolute candidate path`);
+        }
+        if (!/^[a-f0-9]{64}$/.test(process.env.PI_SANDBOX_ZEROBOX_SHA256 ?? ""))
+            throw new Error(
+                "PI_SANDBOX_ZEROBOX_SHA256 must pin the candidate bytes",
+            );
+        // Zerobox's private socket paths must stay below Linux's AF_UNIX limit.
+        const home = await mkdtemp("/tmp/");
+        const root = await mkdtemp("/var/tmp/pi-path-");
+        const cwd = process.cwd();
+        const agentDir = process.env.PI_CODING_AGENT_DIR;
         try {
-            await mkdir(join(cwd, ".pi"), { recursive: true });
-            await mkdir(sibling);
-            process.chdir(cwd);
-            process.env.PI_CODING_AGENT_DIR = root;
-            await writeFile(
-                join(cwd, ".pi/settings.json"),
-                JSON.stringify({
-                    safeBash: {
-                        mode: "coexist",
-                        telemetry: { enabled: false },
+            const output = await runIsolatedContract(
+                [
+                    "test",
+                    "--isolate",
+                    join(
+                        import.meta.dir,
+                        "fixtures/sandbox-bash-path-diagnostic.contract.test.ts",
+                    ),
+                ],
+                {
+                    cwd: resolve(import.meta.dir, "../../.."),
+                    timeoutMs: 45_000,
+                    env: {
+                        ...process.env,
+                        HOME: home,
+                        PI_CODING_AGENT_DIR: root,
+                        PI_SANDBOX_PATH_DIAGNOSTIC_CHILD: "1",
+                        PI_SANDBOX_PATH_DIAGNOSTIC_ROOT: root,
+                        XDG_CONFIG_HOME: join(home, "config"),
+                        XDG_CACHE_HOME: join(home, "cache"),
+                        XDG_STATE_HOME: join(home, "state"),
+                        TMPDIR: join(home, "tmp"),
                     },
-                }),
+                },
             );
-            await writeFile(
-                join(root, "sandbox.json"),
-                JSON.stringify({ version: 2, machineId: localMachineId() }),
-                { mode: 0o600 },
+            console.error(
+                output
+                    .split("\n")
+                    .filter((line) => line.startsWith("[sandbox-path]"))
+                    .join("\n"),
             );
-            session = await createTestSession({
-                cwd,
-                extensions: publicExtensionEntrypoints(
-                    "sandbox",
-                    "bash-execution",
-                ),
-            });
-
-            await session.run(
-                when("Inspect the sibling", [
-                    calls("bash", { command: `cd ${sibling}` }),
-                    calls("safe_bash", { command: `cd ${sibling}` }),
-                    says("done"),
-                ]),
-            );
-            for (const tool of ["bash", "safe_bash"]) {
-                const result = session.events.toolResultsFor(tool).at(-1)!;
-                expect(result.mocked).toBe(false);
-                expect(result.isError).toBe(true);
-                expect(result.text).toContain(
-                    `cd: ${sibling}: No such file or directory`,
-                );
-                expect(result.text).toContain(
-                    `Sandbox: ${sibling} is outside the admitted read scope.`,
-                );
-                expect(result.details).toMatchObject({
-                    execution: { status: "sandboxed", exitCode: 1 },
-                    sandboxExecutionContext: {
-                        version: 3,
-                        admission: "admitted",
-                    },
-                });
-            }
-
-            const command = `s cd ${sibling}`;
-            const event = await session.session.extensionRunner.emitUserBash({
-                type: "user_bash",
-                command,
-                cwd,
-                excludeFromContext: false,
-            });
-            const forced = await session.session.executeBash(
-                command,
-                undefined,
-                { operations: event?.operations },
-            );
-            expect(forced.exitCode).toBe(1);
-            expect(forced.output).toContain(
-                `Sandbox: ${sibling} is outside the admitted read scope.`,
-            );
-
-            const missing = join(cwd, "missing");
-            await session.run(
-                when("Inspect a missing project path", [
-                    calls("bash", { command: `cd ${missing}` }),
-                    says("done"),
-                ]),
-            );
-            const missingResult = session.events.toolResultsFor("bash").at(-1)!;
-            expect(missingResult.isError).toBe(true);
-            expect(missingResult.text).toContain("No such file or directory");
-            expect(missingResult.text).not.toContain("Sandbox:");
+            expect(output).toContain("[sandbox-path] complete");
+            expect(process.cwd()).toBe(cwd);
+            expect(process.env.PI_CODING_AGENT_DIR).toBe(agentDir);
         } finally {
-            await session?.session.extensionRunner?.emit({
-                type: "session_shutdown",
-                reason: "quit",
-            });
-            session?.dispose();
-            if (previousAgentDir === undefined)
-                delete process.env.PI_CODING_AGENT_DIR;
-            else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-            process.chdir(previousCwd);
             await rm(root, { recursive: true, force: true });
+            await rm(home, { recursive: true, force: true });
         }
     },
-    60_000,
+    50_000,
 );

@@ -12,7 +12,7 @@ export const SUBAGENT_PROGRESS_MARKER = "[subagent-progress]";
 const SUBAGENT_PROGRESS_PROTOCOL =
     "[subagent-wait-guard progress protocol] While delegated runs are active, prefix exactly one factual progress or attention update with `" +
     SUBAGENT_PROGRESS_MARKER +
-    "` only after a successful `subagent` or `subagent_wait` result, or when a run enters paused attention; never use it for a final answer. The marker is removed before display.";
+    "` only after a successful `subagent` or `bg_wait` result, or when a run enters paused attention; never use it for a final answer. The marker is removed before display.";
 const ACTIVE_RUNS_REMINDER_PREFIX = "\n\n[subagent-wait-guard active runs] ";
 
 /** Adds the progress protocol and current run identities without duplicating stale reminders. */
@@ -96,19 +96,6 @@ const REPLACEMENT_GUIDANCE = {
         "This non-interactive session must wait before answering; a single blocking-wait instruction will follow.",
 } as const satisfies Record<GuardNoticeKind, string>;
 
-/** True only for the interactive TUI. RPC exposes UI APIs but cannot receive a native TUI wake. */
-export function isInteractiveTuiRuntime(
-    hasUI: boolean,
-    argv: readonly string[],
-): boolean {
-    if (!hasUI) return false;
-    return !argv.some(
-        (argument, index) =>
-            argument === "--mode=rpc" ||
-            (argument === "--mode" && argv[index + 1] === "rpc"),
-    );
-}
-
 /** Hidden parent reminder used without rewriting interactive assistant output. */
 export function buildParentReminder(
     runIds: readonly string[],
@@ -143,8 +130,7 @@ export function buildFollowUp(runIds: readonly string[]): string {
     return (
         "[subagent-wait-guard] Subagent run(s) " +
         runList(runIds) +
-        " are still in flight. Use the standalone `subagent_wait` tool with `{ all: true }`, " +
-        'not `subagent({ action: "wait" })`; `wait` is not a subagent management action. ' +
+        " are still in flight. Use `bg_wait` with `{ all: true }` when this turn must collect the outstanding reports. " +
         "After all runs reach terminal state, retrieve and incorporate every final report before answering."
     );
 }

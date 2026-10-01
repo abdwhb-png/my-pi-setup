@@ -4,6 +4,14 @@ This Pi package augments upstream `pi-subagents`; it does not replace discovery,
 
 Daily Pi uses official `pi-subagents@0.73.1` with `pi-mcp-adapter@3.0.0`, installed and verified after operator approval on 2026-09-28. Package imports resolve through `~/.pi/agent/npm/node_modules/`, independently of the contribution repository and its worktrees. See [ADR-028](../../../docs/adr/ADR-028-generated-subagent-tool-overrides.md).
 
+## Optional wait guard
+
+When enabled, the wait guard uses the shared status RPC client and the package's current-session `asyncSnapshot`. It does not maintain a second run registry or infer async IDs from fleet display keys. Missing, malformed or truncated status produces a visible diagnostic, with one bounded RPC attempt per failed turn; a later request or successful delegation result retries status.
+
+Pi's `ctx.mode` selects behavior. TUI sessions preserve parent output and add one hidden reminder per active snapshot, relying on the package's native completion notifications. Print, JSON and RPC sessions replace premature final prose and request at most one follow-up turn to collect reports with `bg_wait`. Paused work receives an attention reminder without an automatic wait loop. Terminal status clears reminder state. A successful `subagent` or `bg_wait` result authorizes one explicit marked progress update.
+
+Deterministic guard tests load its real public entrypoint in Pi's test harness and mock the external RPC/tool boundary. They do not require an external contribution checkout. These checks verify guard behavior, not live child execution or provider reliability.
+
 ## Generated tool overrides
 
 Keep `tools: '@inspect, @lens'` in agent Markdown. At parent session startup and `/reload`, the addon expands groups through the shared tool-groups resolver and writes concrete `subagents.agentOverrides.<name>.tools` values. It does not rewrite Markdown or use the unpublished `pi-subagents/tool-selection` hook.

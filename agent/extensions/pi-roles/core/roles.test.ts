@@ -166,6 +166,15 @@ describe("normalizeTools", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveRole", () => {
+  it.each(["@delegates", "@delegates-parent"])("preserves configurable inherited aliases such as %s", alias => {
+    const inheritedTools = ["@inspect", alias];
+    const parent = rawFromText(fm({ name: "base", tools: inheritedTools.join(", ") }), "base");
+    const child = rawFromText(fm({ name: "child", extends: "base" }), "child");
+    expect(resolveRole("child", [parent, child]).tools).toEqual({ kind: "set", names: inheritedTools });
+    const overriddenTools = ["@custom-review", "session_plan"];
+    const override = rawFromText(fm({ name: "child", extends: "base", tools: overriddenTools.join(", ") }), "child");
+    expect(resolveRole("child", [parent, override]).tools).toEqual({ kind: "set", names: overriddenTools });
+  });
   it("single-level inheritance overrides correctly", () => {
     const parent = rawFromText(
       fm({

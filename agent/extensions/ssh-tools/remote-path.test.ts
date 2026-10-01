@@ -28,6 +28,17 @@ describe("normalizeRemoteDir", () => {
 });
 
 describe("resolveRemotePath", () => {
+    it.each(["/home/dev", "/srv/project", "/root/work"])(
+        "uses the configured remote working directory %s",
+        (remoteCwd) => {
+            expect(resolveRemotePath("notes.md", remoteCwd)).toBe(
+                `${remoteCwd}/notes.md`,
+            );
+            expect(resolveSandboxedRemotePath("notes.md", remoteCwd)).toBe(
+                `${remoteCwd}/notes.md`,
+            );
+        },
+    );
     it("resolves a relative name under the remote working directory", () => {
         expect(resolveRemotePath("notes.md", "/home/dev")).toBe(
             "/home/dev/notes.md",
@@ -109,9 +120,9 @@ describe("resolveSandboxedRemotePath", () => {
     });
 
     it("accepts an absolute path inside the remote working directory", () => {
-        expect(resolveSandboxedRemotePath("/home/dev/app.conf", "/home/dev")).toBe(
-            "/home/dev/app.conf",
-        );
+        expect(
+            resolveSandboxedRemotePath("/home/dev/app.conf", "/home/dev"),
+        ).toBe("/home/dev/app.conf");
     });
 
     it("rejects an absolute path outside the remote working directory", () => {
@@ -121,9 +132,9 @@ describe("resolveSandboxedRemotePath", () => {
     });
 
     it("still rejects a relative path that escapes", () => {
-        expect(() => resolveSandboxedRemotePath("../escape", "/home/dev")).toThrow(
-            "outside the active SSH working directory /home/dev",
-        );
+        expect(() =>
+            resolveSandboxedRemotePath("../escape", "/home/dev"),
+        ).toThrow("outside the active SSH working directory /home/dev");
     });
 
     it("rejects an absolute path that climbs out with ..", () => {

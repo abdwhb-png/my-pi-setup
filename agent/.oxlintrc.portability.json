@@ -1,0 +1,6 @@
+{
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "jsPlugins": ["./tooling/portability/oxlint-plugin.mjs"],
+    "categories": { "correctness": "off", "suspicious": "off", "perf": "off" },
+    "rules": { "pi-portability/no-personal-home": "error" }
+}

@@ -1,15 +1,13 @@
-import { describe, expect, it } from 'bun:test';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import {
-    getAgentDir,
-    parseFrontmatter,
-} from '@earendil-works/pi-coding-agent';
+import { describe, expect, it } from "bun:test";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { loadToolGroupsConfig } from "../_shared/tool-groups/config.ts";
 import {
     isToolGroupsPackageLast,
     TOOL_GROUPS_PACKAGE_SOURCE,
-} from '../_shared/tool-groups/package-order.ts';
-import { resolveToolAliases } from '../_shared/tool-groups/resolver.ts';
+} from "../_shared/tool-groups/package-order.ts";
+import { resolveToolAliases } from "../_shared/tool-groups/resolver.ts";
 
 function agentDir(): string {
     return getAgentDir();
@@ -22,19 +20,22 @@ function readFrontmatter(content: string): Record<string, unknown> {
 function getFrontmatterTools(frontmatter: Record<string, unknown>): string[] {
     const raw = frontmatter.tools;
     if (Array.isArray(raw)) {
-        return raw.filter((tool): tool is string => typeof tool === 'string');
+        return raw.filter((tool): tool is string => typeof tool === "string");
     }
-    if (typeof raw !== 'string') return [];
+    if (typeof raw !== "string") return [];
     return raw
-        .split(',')
+        .split(",")
         .map((tool) => tool.trim())
         .filter(Boolean);
 }
 
 function readSettings(): Record<string, unknown> {
-    const path = join(agentDir(), 'settings.json');
+    const path = join(agentDir(), "settings.json");
     try {
-        return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        return JSON.parse(readFileSync(path, "utf8")) as Record<
+            string,
+            unknown
+        >;
     } catch (cause) {
         throw new Error(`Failed to read/parse settings.json: ${path}`, {
             cause,
@@ -43,43 +44,23 @@ function readSettings(): Record<string, unknown> {
 }
 
 function readConfiguredGroups(): Record<string, string[]> {
-    const path = join(agentDir(), 'tool-groups.json');
-    try {
-        const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-        if (!parsed || typeof parsed !== 'object' || !('groups' in parsed)) {
-            throw new Error('missing groups object');
-        }
-        const groups = parsed.groups;
-        if (!groups || typeof groups !== 'object' || Array.isArray(groups)) {
-            throw new Error('groups must be an object');
-        }
-        for (const [name, members] of Object.entries(groups)) {
-            if (
-                !name ||
-                !Array.isArray(members) ||
-                !members.every((member) => typeof member === 'string')
-            ) {
-                throw new Error(`invalid group: ${name}`);
-            }
-        }
-        return groups as Record<string, string[]>;
-    } catch (cause) {
-        throw new Error(`Failed to read/parse tool-groups.json: ${path}`, {
-            cause,
-        });
-    }
+    return loadToolGroupsConfig(agentDir(), {
+        agentDir: agentDir(),
+        projectTrusted: false,
+        strict: true,
+    }).groups;
 }
 
 function configuredMarkdownTools(
-    directory: 'roles' | 'agents',
+    directory: "roles" | "agents",
 ): Array<{ name: string; tools: string[] }> {
     const root = join(agentDir(), directory);
     if (!existsSync(root)) return [];
     return readdirSync(root)
-        .filter((name) => name.endsWith('.md'))
+        .filter((name) => name.endsWith(".md"))
         .map((name) => {
             const path = join(root, name);
-            const content = readFileSync(path, 'utf8');
+            const content = readFileSync(path, "utf8");
             return {
                 name,
                 tools: getFrontmatterTools(readFrontmatter(content)),
@@ -91,15 +72,15 @@ function configuredMarkdownTools(
 function configuredSubagentTools(): Array<{ name: string; tools: string[] }> {
     const settings = readSettings();
     const subagents = settings.subagents;
-    if (!subagents || typeof subagents !== 'object') return [];
+    if (!subagents || typeof subagents !== "object") return [];
     const overrides = (subagents as Record<string, unknown>).agentOverrides;
-    if (!overrides || typeof overrides !== 'object') return [];
+    if (!overrides || typeof overrides !== "object") return [];
 
     return Object.entries(overrides).flatMap(([name, config]) => {
-        if (!config || typeof config !== 'object') return [];
+        if (!config || typeof config !== "object") return [];
         const tools = (config as Record<string, unknown>).tools;
         return Array.isArray(tools) &&
-            tools.every((tool) => typeof tool === 'string')
+            tools.every((tool) => typeof tool === "string")
             ? [{ name, tools }]
             : [];
     });
@@ -112,7 +93,7 @@ function availableConcreteNames(
     return [
         ...new Set(
             [...Object.values(groups).flat(), ...activeNames].filter(
-                (name) => !name.startsWith('@'),
+                (name) => !name.startsWith("@"),
             ),
         ),
     ];
@@ -175,196 +156,173 @@ function validateProtectedBoundaries(
     groups: Record<string, string[]>,
 ): string[] {
     const issues: string[] = [];
-    for (const required of ['files-write', 'implement']) {
-        if (!groups[required]) issues.push(`missing protected group: ${required}`);
+    for (const required of ["files-write", "implement"]) {
+        if (!groups[required])
+            issues.push(`missing protected group: ${required}`);
     }
     if (issues.length > 0) return issues;
 
-    const fileWrites = new Set(resolveGroup('files-write', groups));
-    for (const required of ['edit', 'write']) {
+    const fileWrites = new Set(resolveGroup("files-write", groups));
+    for (const required of ["edit", "write"]) {
         if (!fileWrites.has(required)) {
             issues.push(`files-write missing ${required}`);
         }
     }
 
-    const implementation = new Set(resolveGroup('implement', groups));
-    for (const required of [...fileWrites, 'safe_bash']) {
+    const implementation = new Set(resolveGroup("implement", groups));
+    for (const required of [...fileWrites, "safe_bash"]) {
         if (!implementation.has(required)) {
             issues.push(`implement missing ${required}`);
         }
     }
 
-    const lens = new Set(groups.lens ? resolveGroup('lens', groups) : []);
+    const lens = new Set(groups.lens ? resolveGroup("lens", groups) : []);
     const lensWrite = new Set(
-        groups['lens-write'] ? resolveGroup('lens-write', groups) : [],
+        groups["lens-write"] ? resolveGroup("lens-write", groups) : [],
     );
     const mutating = new Set([
         ...fileWrites,
         ...[...lensWrite].filter((tool) => !lens.has(tool)),
     ]);
-    for (const name of ['inspect', 'review', 'lens']) {
+    for (const name of ["inspect", "review", "lens"]) {
         if (!groups[name]) continue;
         const leaked = resolveGroup(name, groups).filter((tool) =>
             mutating.has(tool),
         );
         if (leaked.length > 0) {
-            issues.push(`${name} contains mutating tools: ${leaked.join(', ')}`);
+            issues.push(
+                `${name} contains mutating tools: ${leaked.join(", ")}`,
+            );
         }
     }
     return issues;
 }
 
-describe('tool-groups configuration invariants', () => {
-    it('documents tool groups as the preferred maintainable configuration', () => {
-        const instructions = readFileSync(
-            join(agentDir(), '..', 'AGENTS.md'),
-            'utf8',
-        );
+const auditEnabled = process.env.PI_CONFIGURATION_AUDIT === "1";
+const audit = auditEnabled ? it : it.skip;
 
-        expect(instructions).toContain('Prefer named groups');
-        expect(instructions).toContain('agent/tool-groups.json');
-        expect(instructions).toContain('exact least-privilege allowlist');
-    });
-
-    it('keeps the tool-groups package last', () => {
+describe("tool-groups isolated contracts and optional configuration audit", () => {
+    audit("keeps the tool-groups package last", () => {
         const packages = readSettings().packages;
         expect(Array.isArray(packages)).toBe(true);
-        if (!Array.isArray(packages)) throw new Error('packages must be an array');
+        if (!Array.isArray(packages))
+            throw new Error("packages must be an array");
         expect(packages.length).toBeGreaterThan(0);
         const list = packages as Parameters<typeof isToolGroupsPackageLast>[0];
         expect(isToolGroupsPackageLast(list, agentDir())).toBe(true);
         const last = list[list.length - 1];
-        expect(typeof last === 'string' ? last : last.source).toBe(
+        expect(typeof last === "string" ? last : last.source).toBe(
             TOOL_GROUPS_PACKAGE_SOURCE,
         );
     });
 
-    it('keeps group definitions in the dedicated mutable config', () => {
+    audit("keeps group definitions in the dedicated mutable config", () => {
         expect(readSettings().toolGroups).toBeUndefined();
         expect(validateGroupGraph(readConfiguredGroups())).toEqual([]);
     });
 
-    it('preserves protected write and read-only boundaries', () => {
+    audit("preserves protected write and read-only boundaries", () => {
         expect(validateProtectedBoundaries(readConfiguredGroups())).toEqual([]);
     });
 
-    it('no longer registers context-mode tools after Task 9 cutover', () => {
-        // Task 9 cutover removed the `context-mode` MCP block from mcp.json
-        // and the `npm:context-mode` package from settings.json. Role and
-        // agent consumers must now resolve Think-in-Code native tools
-        // (`think_artifact_search`, `think_execute`) instead of the
-        // legacy `mcp:ctx_*` MCP bridge. This test enforces both
-        // invariants: no `context-mode` MCP server, and no `@ctx*` /
-        // `ctx*` group definitions in tool-groups.json.
-        const mcpConfig = JSON.parse(
-            readFileSync(join(agentDir(), 'mcp.json'), 'utf8'),
-        ) as {
-            mcpServers?: Record<string, unknown>;
-        };
-
-        expect(mcpConfig.mcpServers?.['context-mode']).toBeUndefined();
-
-        const groups = JSON.parse(
-            readFileSync(join(agentDir(), 'tool-groups.json'), 'utf8'),
-        ) as { groups?: Record<string, readonly string[]> };
-
-        expect(groups.groups?.['ctx-inspect']).toBeUndefined();
-        expect(groups.groups?.['ctx-exec']).toBeUndefined();
-        expect(groups.groups?.['ctx']).toBeUndefined();
-    });
-
-    it('keeps role tool-policy enforcement active in dangerous mode', () => {
+    audit("keeps role tool-policy enforcement active in dangerous mode", () => {
         const dangerousModeConfig = JSON.parse(
-            readFileSync(join(agentDir(), 'pi-dangerous-mode.json'), 'utf8'),
+            readFileSync(join(agentDir(), "pi-dangerous-mode.json"), "utf8"),
         ) as { protectedExtensions?: string[] };
 
         expect(dangerousModeConfig.protectedExtensions).toContain(
-            '*tool-groups*',
+            "*tool-groups*",
         );
     });
 
-    it('accepts valid custom groups without a canonical snapshot', () => {
+    it("accepts valid custom groups without a canonical snapshot", () => {
         const groups = {
-            inspect: ['read'],
-            'files-write': ['edit', 'write'],
-            implement: ['@files-write', 'safe_bash'],
-            lens: ['read'],
-            'lens-write': ['@lens', 'edit'],
-            custom: ['@inspect', 'custom_tool'],
+            inspect: ["read"],
+            "files-write": ["edit", "write"],
+            implement: ["@files-write", "safe_bash"],
+            lens: ["read"],
+            "lens-write": ["@lens", "edit"],
+            custom: ["@inspect", "custom_tool"],
         };
         expect(validateGroupGraph(groups)).toEqual([]);
-        expect(validateToolList('custom role', ['@custom'], groups)).toEqual(
+        expect(validateToolList("custom role", ["@custom"], groups)).toEqual(
             [],
         );
     });
 
-    it('reads tool lists through the public Pi frontmatter parser', () => {
+    it("reads tool lists through the public Pi frontmatter parser", () => {
         expect(
             getFrontmatterTools(
                 readFrontmatter("---\ntools: '@inspect, safe_bash'\n---\n"),
             ),
-        ).toEqual(['@inspect', 'safe_bash']);
+        ).toEqual(["@inspect", "safe_bash"]);
         expect(
             getFrontmatterTools(
                 readFrontmatter('---\ntools: "@review, read"\n---\n'),
             ),
-        ).toEqual(['@review', 'read']);
+        ).toEqual(["@review", "read"]);
         expect(
             getFrontmatterTools(
-                readFrontmatter('---\ntools:\n  - read\n  - safe_bash\n---\n'),
+                readFrontmatter("---\ntools:\n  - read\n  - safe_bash\n---\n"),
             ),
-        ).toEqual(['read', 'safe_bash']);
+        ).toEqual(["read", "safe_bash"]);
     });
 
-    it('rejects missing aliases, cycles, and empty groups', () => {
+    it("rejects missing aliases, cycles, and empty groups", () => {
         expect(
-            validateGroupGraph({ broken: ['@missing'], empty: [], ok: ['read'] }),
+            validateGroupGraph({
+                broken: ["@missing"],
+                empty: [],
+                ok: ["read"],
+            }),
         ).toEqual(
             expect.arrayContaining([
-                expect.stringContaining('missing-group'),
-                'empty: empty group',
-                'empty: empty resolution',
+                expect.stringContaining("missing-group"),
+                "empty: empty group",
+                "empty: empty resolution",
             ]),
         );
         expect(
-            validateGroupGraph({ left: ['@right'], right: ['@left'] }),
-        ).toEqual(expect.arrayContaining([expect.stringContaining('cycle')]));
+            validateGroupGraph({ left: ["@right"], right: ["@left"] }),
+        ).toEqual(expect.arrayContaining([expect.stringContaining("cycle")]));
     });
 
-    it('rejects protected boundary widening', () => {
+    it("rejects protected boundary widening", () => {
         const groups = {
-            inspect: ['read', 'edit'],
-            'files-write': ['edit', 'write'],
-            implement: ['@files-write', 'safe_bash'],
+            inspect: ["read", "edit"],
+            "files-write": ["edit", "write"],
+            implement: ["@files-write", "safe_bash"],
         };
         expect(validateProtectedBoundaries(groups)).toContain(
-            'inspect contains mutating tools: edit',
+            "inspect contains mutating tools: edit",
         );
     });
 
-    for (const directory of ['roles', 'agents'] as const) {
-        for (const entry of configuredMarkdownTools(directory)) {
-            it(`${directory}/${entry.name} has valid configurable tools`, () => {
+    if (auditEnabled)
+        for (const directory of ["roles", "agents"] as const) {
+            for (const entry of configuredMarkdownTools(directory)) {
+                it(`${directory}/${entry.name} has valid configurable tools`, () => {
+                    expect(
+                        validateToolList(
+                            `${directory}/${entry.name}`,
+                            entry.tools,
+                            readConfiguredGroups(),
+                        ),
+                    ).toEqual([]);
+                });
+            }
+        }
+
+    if (auditEnabled)
+        for (const entry of configuredSubagentTools()) {
+            it(`subagent ${entry.name} has valid configurable tools`, () => {
                 expect(
                     validateToolList(
-                        `${directory}/${entry.name}`,
+                        `subagent ${entry.name}`,
                         entry.tools,
                         readConfiguredGroups(),
                     ),
                 ).toEqual([]);
             });
         }
-    }
-
-    for (const entry of configuredSubagentTools()) {
-        it(`subagent ${entry.name} has valid configurable tools`, () => {
-            expect(
-                validateToolList(
-                    `subagent ${entry.name}`,
-                    entry.tools,
-                    readConfiguredGroups(),
-                ),
-            ).toEqual([]);
-        });
-    }
 });

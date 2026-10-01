@@ -86,8 +86,10 @@ export PI_SANDBOX_MEDIATED_DIRECT_CONTRACT=1
 export PI_SANDBOX_SFW_MEDIATED_DIRECT_CONTRACT=1
 export PI_SANDBOX_REAL_ANALYSIS_CONTRACT=1
 export PI_SANDBOX_REAL_ANALYSIS_IPC_CONTRACT=1
+export PI_SANDBOX_PATH_DIAGNOSTIC_CONTRACT=1
 
 for contract in \
+    extensions/__tests__/integration/sandbox-bash-path-diagnostic.integration.test.ts \
     extensions/sandbox/execution.test.ts \
     extensions/sandbox/dependency-contract.test.ts \
     extensions/sandbox/local-resources.integration.test.ts \
