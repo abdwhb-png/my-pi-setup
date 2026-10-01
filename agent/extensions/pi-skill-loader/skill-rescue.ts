@@ -15,6 +15,7 @@ export interface RescuedSkill {
     path: string;
     baseDir: string;
     content: string;
+    disableModelInvocation?: boolean;
 }
 
 export interface SkillDiagnostic {
@@ -92,6 +93,7 @@ export async function discoverSkillFallbacks(
 ): Promise<SkillDiscoveryResult> {
     const skills: RescuedSkill[] = [];
     const diagnostics: SkillDiagnostic[] = [];
+    const seenPaths = new Set<string>();
 
     for (const root of roots) {
         let files: string[];
@@ -102,10 +104,12 @@ export async function discoverSkillFallbacks(
         }
 
         for (const path of files) {
+            if (seenPaths.has(path)) continue;
+            seenPaths.add(path);
             const rawContent = (await readFile(path)).toString("utf8");
             if (!rawContent.startsWith("\uFEFF")) continue;
 
-            // Pi core requires frontmatter to begin at byte zero; retain a safe in-memory fallback.
+            // Normalize only in memory; callers omit skills already present in Pi's catalog.
             const content = rawContent.slice(1);
             const { frontmatter } = parseFrontmatter(content);
             if (
@@ -127,6 +131,9 @@ export async function discoverSkillFallbacks(
                 path,
                 baseDir: dirname(path),
                 content,
+                ...(frontmatter["disable-model-invocation"] === true
+                    ? { disableModelInvocation: true }
+                    : {}),
             });
             diagnostics.push({
                 type: "bom",

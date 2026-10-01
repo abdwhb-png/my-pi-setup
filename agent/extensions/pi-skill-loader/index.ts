@@ -11,6 +11,10 @@ import {
 import { Box, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { requestMarkdownLinkTransform } from "../_shared/markdown-links.ts";
+import {
+    loadConfig as loadSkillVisibility,
+    loadEffectiveState,
+} from "../_shared/skill-visibility.ts";
 import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
 import {
     extractDollarPrefix,
@@ -336,7 +340,7 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
     });
 
     // ---- before_agent_start: BOM-normalized fallback skills catalog ----
-    pi.on("before_agent_start", (event) => {
+    pi.on("before_agent_start", (event, ctx) => {
         const coreSkillNames = new Set(
             pi
                 .getCommands()
@@ -350,15 +354,23 @@ export default function piSkillLoader(pi: ExtensionAPI): void {
         );
         if (fallbacks.length === 0) return undefined;
 
+        const config = loadSkillVisibility();
         const catalog = fallbacks
+            .filter(
+                (skill) =>
+                    !skill.disableModelInvocation &&
+                    loadEffectiveState(skill.name, config, ctx.cwd).state ===
+                        "enabled",
+            )
             .map(
                 (skill) =>
                     `- \`${skill.name}\`: ${skill.description}\n  Load full instructions with \`load_skill\`.`,
             )
             .join("\n");
-        return {
-            systemPrompt: `${event.systemPrompt}\n\n## BOM-normalized fallback skills\n${catalog}`,
-        };
+        event.systemPromptOptions.sections.bom_fallback_skills = catalog
+            ? `## BOM-normalized fallback skills\n${catalog}`
+            : "";
+        return undefined;
     });
 
     // ---- /validate-skills command ----
