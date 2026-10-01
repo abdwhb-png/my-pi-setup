@@ -14,6 +14,6 @@ export function resolvePiInstallationPaths(piRoot: string): PiInstallationPaths 
     piRoot: resolvedPiRoot,
     agentDir: join(resolvedPiRoot, "agent"),
     runtimeRoot: join(resolvedPiRoot, "runtime", "pi-core"),
-    sourceRoot: join(dirname(resolvedPiRoot), "projects", "pi-core"),
+    sourceRoot: join(dirname(resolvedPiRoot), "engineering", "pi-core"),
   };
 }

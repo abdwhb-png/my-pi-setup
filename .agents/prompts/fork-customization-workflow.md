@@ -1,4 +1,4 @@
-I have installed this pi package/extension, but when I used it I noticed I need to customize it so I forked it in `~/projects/pi-integrations`.
+I have installed this pi package/extension, but when I used it I noticed I need to customize it so I forked it in `~/engineering/pi-integrations`.
 
 ## Fork Workflow
 
@@ -36,7 +36,7 @@ The fork's project structure determines how it can be installed.
 **Monorepo package** (e.g. plannotator): the extension lives in a subdirectory (`apps/pi-extension/`) of a larger project.
 
 - **Cannot use remote GitHub URL** — pi's `installGit` always clones the full repo and reads from root; it has no mechanism to target a subdirectory.
-- Must use **local path** in `settings.json` instead (e.g. `~/projects/pi-integrations/<fork>/apps/pi-extension`)
+- Must use **local path** in `settings.json` instead (e.g. `~/engineering/pi-integrations/<fork>/apps/pi-extension`)
 - Also needs `prepare: true` in `trust.json` if the extension has TypeScript files that pi loads directly (pi may need to report trust before running `.ts` extensions)
 
 Check these to decide:
@@ -48,7 +48,7 @@ Check these to decide:
 ### 4. Local Installation Test
 
 - Build the package (`npm run build` or equivalent)
-- Point pi's `settings.json` to the local path (e.g. `~/projects/pi-integrations/<fork>` or the monorepo subdir)
+- Point pi's `settings.json` to the local path (e.g. `~/engineering/pi-integrations/<fork>` or the monorepo subdir)
 - If the extension uses TypeScript entry points directly (not `dist/`), ensure `trust.json` marks it as trusted or includes `"prepare": true` so pi pre-compiles it
 - **Run the actual pi command that was broken** to confirm the fix works end-to-end
 

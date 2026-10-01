@@ -11,10 +11,10 @@
         "paths": {
             "bun:test": ["./node_modules/bun-types/test.d.ts"],
             "pi-fancy-footer": [
-                "../../projects/pi-integrations/pi-fancy-footer/src/index.ts"
+                "../../engineering/pi-integrations/pi-fancy-footer/src/index.ts"
             ],
             "pi-fancy-footer/api": [
-                "../../projects/pi-integrations/pi-fancy-footer/src/api.ts"
+                "../../engineering/pi-integrations/pi-fancy-footer/src/api.ts"
             ]
         }
     },

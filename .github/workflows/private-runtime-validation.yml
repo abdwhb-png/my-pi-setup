@@ -25,22 +25,22 @@ jobs:
         with:
           repository: abdwhb-png/pi
           ref: 00c5e7e300baf77ea05c78fabac625b213e7a578
-          path: projects/pi-core
+          path: engineering/pi-core
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/pi-test-harness
           ref: e4bacb0cb344a9d24663242c38171599c5d18f3e
-          path: projects/pi-integrations/pi-test-harness
+          path: engineering/pi-integrations/pi-test-harness
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/pi-fancy-footer
           ref: 53e304c7695b5b3e9e1d01ac456ed342432b9169
-          path: projects/pi-integrations/pi-fancy-footer
+          path: engineering/pi-integrations/pi-fancy-footer
       - uses: actions/checkout@v4
         with:
           repository: abdwhb-png/pi-mcp-adapter
           ref: 53733d3d7b052618896d691fe5bfb4b917f979da
-          path: projects/pi-integrations/pi-mcp-adapter
+          path: engineering/pi-integrations/pi-mcp-adapter
       - uses: actions/setup-node@v4
         with:
           node-version: "24.18.0"
@@ -94,7 +94,7 @@ jobs:
           npm_config_allow_git: none
         run: |
           set -euo pipefail
-          cd projects/pi-core
+          cd engineering/pi-core
           sfw npm ci
           # This immutable generated data comes from the locally validated
           # Pi-core 0.87.1 release. The fork does not track generated shards.
@@ -154,8 +154,8 @@ jobs:
           sfw npm install --prefix "$RUNNER_TEMP/permission" --save-exact --ignore-scripts --no-audit --no-fund @gotgenes/pi-permission-system@33.0.0
           mkdir -p ../../node_modules/@gotgenes
           ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../node_modules/@gotgenes/pi-permission-system
-          ln -s "$GITHUB_WORKSPACE/projects/pi-integrations/pi-fancy-footer" ../../node_modules/pi-fancy-footer
-          ln -s "$GITHUB_WORKSPACE/projects/pi-integrations/pi-mcp-adapter" ../../node_modules/pi-mcp-adapter
+          ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-fancy-footer" ../../node_modules/pi-fancy-footer
+          ln -s "$GITHUB_WORKSPACE/engineering/pi-integrations/pi-mcp-adapter" ../../node_modules/pi-mcp-adapter
           mkdir -p ../../npm/node_modules/@gotgenes
           ln -s "$RUNNER_TEMP/permission/node_modules/@gotgenes/pi-permission-system" ../../npm/node_modules/@gotgenes/pi-permission-system
       - name: Verify installed integration imports before compiling

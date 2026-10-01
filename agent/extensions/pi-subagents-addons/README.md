@@ -109,4 +109,4 @@ Do not move contribution checkouts until no daily runtime or active session depe
 
 For rollback, first coordinate sessions. Disabling `toolGroupOverrides.enabled` only stops regeneration: persisted overrides remain. Remove only still-matching owned fields through the persistence module with a reviewed empty compilation; restore the four preexisting selections only from a verified backup, preserving later edits. Ownership conflicts require an explicit decision. Restore the matching previous addon and package source through Pi CLI, plus only the MCP filename/config changes made by this migration. Never replace a whole settings file with a stale backup. Keep fallback advice; restoring the older customized automatic-fallback fork is not part of this rollback.
 
-Backups are retained under `~/projects/pi-integrations/.backups/pi-subagents/`. No backup deletion is part of cutover or recovery.
+Backups are retained under `~/engineering/pi-integrations/.backups/pi-subagents/`. No backup deletion is part of cutover or recovery.

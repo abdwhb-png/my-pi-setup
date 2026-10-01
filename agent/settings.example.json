@@ -11,7 +11,7 @@
     ],
     "extensions": [
         "~/.pi/agent/extensions/package-finalizer.ts",
-        "~/projects/shared-services/pi-lens-dist/index.js",
+        "~/engineering/shared-services/pi-lens-dist/index.js",
         "~/.pi/agent/extensions/pi-overrides/index.ts"
     ],
     "packages": [
@@ -21,7 +21,7 @@
         "npm:pi-mcp-adapter",
         "npm:@juicesharp/rpiv-todo",
         "npm:pi-hermes-memory",
-        "~/projects/pi-integrations/pi-fancy-footer",
+        "~/engineering/pi-integrations/pi-fancy-footer",
         "npm:@gotgenes/pi-permission-system",
         "npm:@ogulcancelik/pi-herdr",
         "./extensions/tool-groups"
@@ -100,7 +100,7 @@
         },
         "additionalDirectories": [
             "~/.pi",
-            "~/projects/shared-services"
+            "~/engineering/shared-services"
         ],
         "enableRealtimeFallback": true
     },

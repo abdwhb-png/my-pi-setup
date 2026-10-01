@@ -6,6 +6,6 @@ test("resolves installation paths independently from HOME", () => {
     piRoot: "/srv/alice/.pi",
     agentDir: "/srv/alice/.pi/agent",
     runtimeRoot: "/srv/alice/.pi/runtime/pi-core",
-    sourceRoot: "/srv/alice/projects/pi-core",
+    sourceRoot: "/srv/alice/engineering/pi-core",
   });
 });

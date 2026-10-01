@@ -5,7 +5,7 @@
  * handler, archive) against locally running compression services. This is the
  * Pi-side half of the split verification: the Docker lifecycle, topology, and
  * security checks live in
- * `~/projects/shared-services/compression/scripts/verify-local-backends.ts`.
+ * `~/engineering/shared-services/compression/scripts/verify-local-backends.ts`.
  *
  * This script assumes the selected service is already running on its loopback
  * relay (headroom `127.0.0.1:8787`, edgee `127.0.0.1:8320`). It does NOT

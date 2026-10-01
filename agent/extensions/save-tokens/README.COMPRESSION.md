@@ -117,7 +117,7 @@ both for a recoverable truncation.
 
 ## Switching Backends
 
-From `~/projects/shared-services/compression`, stop the current Compose profile,
+From `~/engineering/shared-services/compression`, stop the current Compose profile,
 start the selected one, update `saveTokens.compressor.backend`, then run
 `/reload`:
 

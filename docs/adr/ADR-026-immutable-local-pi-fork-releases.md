@@ -13,10 +13,10 @@ Accepted
 The active Pi setup mixes several unrelated states:
 
 - the globally installed CLI is `@earendil-works/pi-coding-agent@0.84.3`;
-- `~/.pi/agent` references the local `~/projects/pi-core` coding-agent package at `0.85.0`;
+- `~/.pi/agent` references the local `~/engineering/pi-core` coding-agent package at `0.85.0`;
 - semver ranges inside that package resolve nested Pi packages at `0.85.1`;
 - older top-level Pi packages at `0.84.2` remain installed;
-- the wrapper defaults to `~/projects/pi-core/packages/coding-agent/dist/pi`, so rebuilding development source immediately changes the daily runtime;
+- the wrapper defaults to `~/engineering/pi-core/packages/coding-agent/dist/pi`, so rebuilding development source immediately changes the daily runtime;
 - the Herdr shell integration explicitly sets the same unstable source binary.
 
 A local `file:` dependency pins only the referenced package directory. It does not pin that package's semver dependencies to sibling packages from the same checkout. `bun install`, `bun update`, or a package install can therefore create a mixed Pi graph without running `pi update`.
@@ -42,7 +42,7 @@ Each release is created in a staging directory and contains:
 - an isolated Bun production installation using only those tarballs for internal Pi packages;
 - a manifest recording schema version, source commit, dirty state, creation time, executable path, coding-agent package root, package versions, and tarball SHA-256 hashes.
 
-Source builds never run from `~/projects/pi-core/**/dist` in normal operation. Editing or building the fork cannot affect the active runtime until an explicit deployment succeeds.
+Source builds never run from `~/engineering/pi-core/**/dist` in normal operation. Editing or building the fork cannot affect the active runtime until an explicit deployment succeeds.
 
 ### Promote only after executable verification
 
@@ -119,7 +119,7 @@ Rejected because it complicates TUI, local extensions, credentials, and filesyst
 Acceptance requires:
 
 - active runtime path resolves below `~/.pi/runtime/pi-core/releases/`;
-- modifying or rebuilding `~/projects/pi-core` does not change `pi --version` or active hashes;
+- modifying or rebuilding `~/engineering/pi-core` does not change `pi --version` or active hashes;
 - every installed internal Pi package matches active manifest version and tarball hash;
 - no `0.84.x` or registry-sourced `0.85.1` Pi package remains in `~/.pi/agent` after migration;
 - blocked self-update forms exit non-zero before invoking Pi;

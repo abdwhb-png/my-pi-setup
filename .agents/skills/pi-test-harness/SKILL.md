@@ -429,7 +429,7 @@ npm install --save-dev @abdwhb-png/pi-test-harness
 ```
 
 In `~/.pi/agent`, the fork is consumed as a local dev dependency:
-`bun add --dev file:../../projects/pi-integrations/pi-test-harness/dist/package.tgz`
+`bun add --dev file:../../engineering/pi-integrations/pi-test-harness/dist/package.tgz`
 
 Peer dependencies (Pi line `0.83.x` only):
 

@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { resolvePiInstallationPaths } from "./pi-installation-paths.ts";
 import {
   activateRelease,
   getPiRuntimeRoot,
@@ -116,7 +117,9 @@ export async function rollbackFork(
 
 function resolveDeploymentContext(options: DeployForkOptions): DeploymentContext {
   return {
-    sourceRoot: resolve(options.sourceRoot ?? join(homedir(), "projects", "pi-core")),
+    sourceRoot: resolve(
+      options.sourceRoot ?? resolvePiInstallationPaths(join(homedir(), ".pi")).sourceRoot,
+    ),
     runtimeRoot: resolve(options.runtimeRoot ?? getPiRuntimeRoot()),
     agentDir: resolve(options.agentDir ?? join(homedir(), ".pi", "agent")),
     nodeExecutable: options.nodeExecutable ?? "node",

@@ -18,7 +18,7 @@ const GUARD_EXTENSION_PATH = resolve(
 );
 const PI_SUBAGENTS_SOURCE_PATH = resolve(
 	homedir(),
-	"projects/pi-integrations/pi-subagents/src/extension/index.ts",
+	"engineering/pi-integrations/pi-subagents/src/extension/index.ts",
 );
 
 describe("subagent-wait-guard real Pi runtime", () => {

@@ -22,17 +22,21 @@
         "denyRead": ["~/.ssh", "~/.gnupg"],
         "allowWrite": [
             ".",
-            "~/projects/pi-integrations",
-            "~/projects/shared-services/cliproxy",
-            "~/projects/shared-services/compression",
-            "~/projects/shared-services/pi-lens"
+            "~/engineering/pi-integrations",
+            "~/engineering/shared-services/cliproxy",
+            "~/engineering/shared-services/compression",
+            "~/engineering/shared-services/pi-lens"
         ],
         "denyWrite": [".env", ".env.*", "*.pem", "*.key", "node_modules/*"],
         "allowRead": [
             ".",
             "~/.local/share/dev-services/secrets/dashboard-token",
             "/etc/machine-id",
-            "~/projects"
+            "~/projects",
+            "~/engineering/shared-services",
+            "~/engineering/pi-core",
+            "~/engineering/pi-integrations",
+            "~/engineering/agent-tools"
         ],
         "denyReadWhenExternal": [
             "~/projects/Foundry-AI",
@@ -71,7 +75,7 @@
                     "root": "~/",
                     "files": [
                         ".local/bin/dev-services",
-                        "projects/shared-services/dev-services/apps/cli/dist/index.js",
+                        "engineering/shared-services/dev-services/apps/cli/dist/index.js",
                         ".local/lib/node_modules/sfw/dist/sfw.mjs",
                         ".local/bin/sfw"
                     ],

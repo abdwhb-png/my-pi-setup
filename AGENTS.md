@@ -32,8 +32,8 @@ Inspect session files directly only when the tools are unavailable, fail, or can
 ## Workspace boundaries
 
 - `~/.pi/agent/` contains the installed harness logic and global Pi resources.
-- `~/projects/pi-integrations/` coordinates independent custom extension repositories; it is not a production-code monorepo.
-- `~/projects/shared-services/` contains cross-project infrastructure and external forks, not Pi extensions.
+- `~/engineering/pi-integrations/` coordinates independent custom extension repositories; it is not a production-code monorepo.
+- `~/engineering/shared-services/` contains cross-project infrastructure and external forks, not Pi extensions.
 - Keep each independent project in its own repository with its own package metadata, tests, documentation, and tooling. Integrate it through a clear package or import path instead of copying it into `~/.pi/agent/`.
 
 ## Guidelines and Best Practices

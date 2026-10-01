@@ -4,13 +4,13 @@
       {
         "tool_name": "editFiles",
         "type": "command",
-        "command": "~/projects/shared-services/pi-lens-dist/node_modules/.bin/pi-lens-analyze --hook"
+        "command": "~/engineering/shared-services/pi-lens-dist/node_modules/.bin/pi-lens-analyze --hook"
       }
     ],
     "Stop": [
       {
         "type": "command",
-        "command": "~/projects/shared-services/pi-lens-dist/node_modules/.bin/pi-lens-analyze --turn-end",
+        "command": "~/engineering/shared-services/pi-lens-dist/node_modules/.bin/pi-lens-analyze --turn-end",
         "timeout": 60
       }
     ]

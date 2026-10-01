@@ -55,7 +55,7 @@
             "*/.pi/agent/sessions/*": "ask",
             "*/.pi/agent/sessions/*/subagent-artifacts/*": "allow",
             "*/.pi/agent/pi-hermes-memory": "ask",
-            "~/projects/pi-core": "ask"
+            "~/engineering/pi-core": "ask"
         },
         "edit": {
             "*": "allow",
@@ -73,7 +73,7 @@
             "*/.pi/agent/sessions/*": "ask",
             "*/.pi/agent/sessions/*/subagent-artifacts/*": "allow",
             "*/.pi/agent/pi-hermes-memory": "ask",
-            "~/projects/pi-core": "ask"
+            "~/engineering/pi-core": "ask"
         },
         "external_directory": {
             "*": "ask",
@@ -87,7 +87,15 @@
             "~/.bun/install/global/node_modules/@earendil-works/*": "allow",
             "~/.agents/*": "allow",
             "~/projects": "allow",
-            "~/projects/*": "allow"
+            "~/projects/*": "allow",
+            "~/engineering/shared-services": "allow",
+            "~/engineering/shared-services/*": "allow",
+            "~/engineering/pi-core": "allow",
+            "~/engineering/pi-core/*": "allow",
+            "~/engineering/pi-integrations": "allow",
+            "~/engineering/pi-integrations/*": "allow",
+            "~/engineering/agent-tools": "allow",
+            "~/engineering/agent-tools/*": "allow"
         }
     },
     "shellTools": {
