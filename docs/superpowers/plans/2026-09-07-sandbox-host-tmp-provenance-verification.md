@@ -69,8 +69,8 @@ de socket Unix. Le budget de production n’a pas été assoupli.
 `bun run typecheck` échoue avec **21 erreurs hors du périmètre de cette tâche**.
 Aucune erreur TypeScript ne reste dans les fichiers de la tâche. Les fichiers
 concernés sont les tests Audit, Subagents, certains tests CPA, SDD,
-`quit-and-delete.ts`, `pi-skill-loader/index.ts` et le transport Unix de
-`pi-mcp-adapter`.
+`pi-skill-loader/index.ts`, le transport Unix de `pi-mcp-adapter` et une
+extension supprimée depuis.
 
 `bun run lint --format json` échoue avec **71 erreurs hors des fichiers de
 l’implémentation modifiée** et 673 avertissements à l’échelle du dépôt.

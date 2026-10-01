@@ -1,1 +1,0 @@
-Inspired from [ogulcancelik/pi-extensions](https://github.com/ogulcancelik/pi-extensions).

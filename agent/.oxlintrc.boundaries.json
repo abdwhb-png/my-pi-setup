@@ -4,8 +4,5 @@
     "rules": {
         "pi-boundaries/no-cross-extension-import": "error"
     },
-    "ignorePatterns": [
-        "extensions/aldoborrero-pi-agent-kit/",
-        "extensions/ogulcancelik-pi-extensions/"
-    ]
+    "ignorePatterns": ["extensions/aldoborrero-pi-agent-kit/"]
 }

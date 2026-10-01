@@ -1,10 +1,7 @@
 import { dirname, extname, relative, resolve } from 'node:path';
 
 const SOURCE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/i;
-const VENDORED_OWNERS = new Set([
-    'aldoborrero-pi-agent-kit',
-    'ogulcancelik-pi-extensions',
-]);
+const VENDORED_OWNERS = new Set(['aldoborrero-pi-agent-kit']);
 
 function normalized(path) {
     return path.replaceAll('\\', '/');

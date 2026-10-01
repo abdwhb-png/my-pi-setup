@@ -52,7 +52,7 @@ DevServices n'a donc reçu aucun changement de loader Vite ou de chemin de cache
 ## Échecs globaux non masqués
 
 - DevServices `bun run check` : les cinq typechecks passent sur l'hôte, puis ESLint échoue sur sept erreurs UI préexistantes (`badge`, `button-group`, `code-block`, `tabs`, `toast`). `format:check` n'est pas atteint.
-- Pi `bun run typecheck` : vingt erreurs hors des fichiers sandbox modifiés, dans audit-mode, délégation/subagents, provider guard, quit-and-delete, sdd-orchestrator et pi-mcp-adapter.
+- Pi `bun run typecheck` : vingt erreurs hors des fichiers sandbox modifiés, dans audit-mode, délégation/subagents, provider guard, sdd-orchestrator, pi-mcp-adapter et une extension supprimée depuis.
 - Oxlint ignore les fichiers de test ciblés. L'exécution forcée avec `--no-ignore` échoue dans tsgolint sur un chemin de `tsconfig.json` non absolu; aucun contournement ni suppression de diagnostic n'a été ajouté.
 - Clippy global avec `--all-targets -- -D warnings` : échec sur les `expect_used` préexistants des tests du protocole. Le contrôle des cibles de production Zerobox et linux-sandbox passe.
 - Les tests Docker qui nécessitent ou modifient un véritable moteur restent explicitement ignorés. Le benchmark FUSE est opt-in et a été exécuté séparément, sans assertion de durée arbitraire.

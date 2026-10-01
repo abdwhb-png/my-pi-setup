@@ -165,8 +165,8 @@ refactorisation.
 
 De même, `bun run typecheck` et `bun run lint` restent non nuls uniquement sur
 des zones hors périmètre, dont `_shared/audit-mode`, `ai-providers`,
-`audit-mode`, `ogulcancelik-pi-extensions`, `sdd-orchestrator`, `git` et
-`pi-overrides`. Les contrôles ciblés des fichiers refactorisés sont verts.
+`audit-mode`, `sdd-orchestrator`, `git`, `pi-overrides` et une extension
+supprimée depuis. Les contrôles ciblés des fichiers refactorisés sont verts.
 
 ## Bascule
 

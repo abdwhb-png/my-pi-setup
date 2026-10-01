@@ -123,7 +123,6 @@ et de sa connexion MCP passent, ainsi que `bun run typecheck` de ce paquet.
 
 ```sh
 bun test --isolate extensions/audit-mode/index.test.ts extensions/_shared/audit-mode/ \
-  extensions/ogulcancelik-pi-extensions/quit-and-delete.test.ts \
   extensions/ai-providers/providers/cpa-catalog-guard.test.ts \
   extensions/sdd-orchestrator/delegation-client.test.ts \
   extensions/sdd-orchestrator/workflow.test.ts
