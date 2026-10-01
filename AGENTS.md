@@ -1,6 +1,6 @@
 # .pi/AGENTS.md
 
-Apply these instructions only when working in the local Pi harness repository. Use [docs/ABOUT-PI.md](./docs/ABOUT-PI.md) when a task requires a general Pi architecture overview.
+Apply these instructions only when working in the local Pi harness repository. Frenquently read [docs/ABOUT-PI.md](./docs/ABOUT-PI.md) when a task requires a general Pi architecture overview.
 
 ## Context
 
@@ -22,12 +22,21 @@ Inspect session files directly only when the tools are unavailable, fail, or can
 
 - Never patch the global Bun installation to fix a Pi package issue. Prefer a Pi extension, wrapper, explicit finalizer, or repository-managed symlink.
 - The daily `pi` command is `~/.pi/bin/pi` and runs only the promoted release under `~/.pi/runtime/pi-core/releases/`. Use `pi-fork deploy` to build and promote the local fork, `pi-fork status` and `pi-fork verify` to inspect it, and `pi-fork rollback` to restore the previous release. Bare/self `pi update` is blocked; `PI_REAL_BIN` is only an explicit development override.
-- Install, remove, and update Pi packages through the daily Pi CLI (`pi install npm:<package>`, `pi remove <source>`, `pi update <source>`), not by running Bun/npm directly against Pi's managed package directory or editing its dependency manifest. Pin a version in the Pi source when the task requires one. Configure supply-chain scanning through Pi's `npmCommand` rather than bypassing Pi's package manager. Pi core updates are the exception: promote the local fork with `pi-fork deploy`, never `pi update self`.
+- Install, remove, and update Pi packages through the daily Pi CLI (`pi install npm:<package>`, `pi remove <source>`, `pi update <source>`), not by running Bun/npm directly against Pi's managed package directory (`~/.pi/agent/npm/` for npm installs, `~/.pi/agent/git/` for git installs) or editing its dependency manifest. Pin a version in the Pi source when the task requires one. Configure supply-chain scanning through Pi's `npmCommand` rather than bypassing Pi's package manager. Pi core updates are the exception: promote the local fork with `pi-fork deploy`, never `pi update self`.
 - Use the `pi-extensions` skill for Pi package and extension development and the `pi-cli` skill for Pi command-line flags or automation.
 - Before trusting a Pi package E2E result, verify the concrete package root resolved at runtime: installed `node_modules`, Git clone, or local path.
 - Treat `agent/settings.json` as the model-configuration source of truth for `pi-subagents` unless the configured model is factually unavailable in the harness.
 - **NEVER SPECULATE ON PI TYPES**: Inspect Pi's installed source or exported types before using a framework type or property. Never speculate about Pi internals or repair uncertainty with unsupported casts. That ensure the correct types are imported.
 - Interract autonomously with `pi-expert` subagent as an explorer for clarification on pi.
+-
+
+### Pi packages versus Pi extensions
+
+Per the [packages](https://pi.dev/docs/latest/packages) and [extensions](https://pi.dev/docs/latest/extensions) docs; fork-specific facts verified against `agent/package-finalizer-state.json` and `agent/settings.json`:
+
+- A **Pi package** is a distribution unit from npm, git, URL, or a local path (`pi install <source>`, or `pi -e <source>` once). It bundles extensions, skills, prompts, and themes from conventional directories or an explicit `pi` manifest with globs — resources are not guaranteed to sit in conventional locations. Declarations go to `agent/settings.json` (personal) or `.pi/settings.json` with `--local` (project, after trust); npm resolves under `~/.pi/agent/npm/node_modules/`, git under `~/.pi/agent/git/`, local sources load in place.
+- An **extension** is a TypeScript module (default factory on `ExtensionAPI`) auto-discovered from the user (`~/.pi/agent/extensions/`) or project (`.pi/extensions/`) extensions directory, plus any configured extra paths, or loaded once via `pi -e ./path.ts`. Packages contribute extensions through their declared resources, never by appearing in an extensions directory.
+- **Never infer a package's installation from `agent/extensions/` contents.** Verify the declaration and the resolved root.
 
 ## Workspace boundaries
 
