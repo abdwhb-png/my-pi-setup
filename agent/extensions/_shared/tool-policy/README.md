@@ -60,6 +60,12 @@ an external writer makes a restricted tool visible.
 
 Do not claim that the coordinator controls these two external packages.
 
+## Request tool selection
+
+In the owner's final `before_agent_start` hook, refresh and report policy normally, then copy `pi.getActiveTools()` into `event.systemPromptOptions.selectedTools`. Pi captures those options before running the hooks and gives explicit snapshot edits precedence over live `setActiveTools()` changes. Without this final synchronization, an earlier activation hook can edit the previous role's snapshot and undo a later role switch when Pi builds the request.
+
+Copy the live selection, not the cached policy result. This preserves external additions and removals without adopting them as role intent, forcing policy refreshes, or changing execution gates. The tool-groups owner must remain last in the resolved extension order so it observes preceding role and activation hooks. Request selection must match the live tools with either a default or custom system prompt, including an explicitly empty selection.
+
 ## Provider presentation
 
 Detect custom `SYSTEM.md` through `before_agent_start`, but do not build a

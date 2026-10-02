@@ -228,8 +228,10 @@ export function createToolGroupsExtension(
             report(ctx);
             return { action: "continue" };
         });
-        pi.on("before_agent_start", (_event, ctx) => {
+        pi.on("before_agent_start", (event, ctx) => {
             report(ctx);
+            // Earlier hooks may edit a snapshot captured before the role changed.
+            event.systemPromptOptions.selectedTools = pi.getActiveTools();
         });
         pi.on("tool_call", (event) => {
             const result = policy.refresh();

@@ -4,7 +4,7 @@ import { getToolPolicy, registerToolPolicyContribution } from '../_shared/tool-p
 import { getSharedVisibilityBroker } from '../_shared/tool-groups/broker.ts';
 import { TestHooks, trackPolicyCleanup } from '../_shared/testing/tool-policy-fixture.ts';
 import { SUBAGENT_EXTENSION_BINDINGS_ENV, TOOL_GROUPS_REQUESTED_TOOLS_ENV } from '../_shared/tool-groups/types.ts';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { BeforeAgentStartEvent, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 function fixture(options: { active?: string[]; registered?: string[]; groups?: Record<string, string[]>; requested?: string[]; child?: string[]; useEnv?: boolean } = {}) {
     let active = options.active ?? ['read', 'edit', 'write'];
@@ -31,7 +31,19 @@ function fixture(options: { active?: string[]; registered?: string[]; groups?: R
     trackPolicyCleanup(() => { hooks.get('session_shutdown')?.({}, ctx); });
     const start = () => hooks.get('session_start')!({}, ctx);
     const role = (names?: string[]) => pi.events.emit('pi-roles:tool-policy', { version: 1, roleName: 'fixture', mode: names === undefined ? 'all' : 'set', toolNames: names ?? [] });
-    return { pi, hooks, registry, ctx, notify, start, role, active: () => active, policy: getToolPolicy() };
+    const beforeAgentStart = (selectedTools = active) => {
+        const event: BeforeAgentStartEvent = {
+            type: 'before_agent_start', prompt: 'fixture', systemPrompt: '',
+            systemPromptOptions: {
+                selectedTools: [...selectedTools], toolSnippets: {}, toolGuidelines: {},
+                promptGuidelines: [], appendSystemPrompt: '', sections: {},
+                cwd: '.', contextFiles: [], skills: [],
+            },
+        };
+        hooks.get('before_agent_start')!(event, ctx);
+        return event.systemPromptOptions.selectedTools;
+    };
+    return { pi, hooks, registry, ctx, notify, start, role, beforeAgentStart, active: () => active, policy: getToolPolicy() };
 }
 
 describe('tool-groups runtime owner', () => {
@@ -73,10 +85,11 @@ describe('tool-groups runtime owner', () => {
     });
     test('preserves explicit empty roles', () => {
         const f = fixture(); f.start(); f.role([]); expect(f.active()).toEqual([]);
+        expect(f.beforeAgentStart(['read'])).toEqual([]);
     });
     test('reports unknown aliases and missing top-level role tools without executing placeholders', () => {
         const f = fixture(); f.start(); f.role(['@missing', 'not_installed']);
-        f.hooks.get('before_agent_start')!({}, f.ctx);
+        f.beforeAgentStart();
         expect(f.active()).toEqual([]);
         expect(JSON.stringify(f.notify.mock.calls)).toContain('missing');
         expect(JSON.stringify(f.notify.mock.calls)).toContain('not_installed');
@@ -99,11 +112,20 @@ describe('tool-groups runtime owner', () => {
     test('observes external O3 writes without adopting them or overwriting each request', () => {
         const f = fixture(); f.start(); f.role();
         f.pi.setActiveTools(['read']);
-        f.hooks.get('input')!({}, f.ctx); f.hooks.get('before_agent_start')!({}, f.ctx);
+        f.hooks.get('input')!({}, f.ctx);
+        expect(f.beforeAgentStart(['edit', 'write'])).toEqual(['read']);
         expect(f.active()).toEqual(['read']);
         expect(f.policy.inspect()?.externalDrift?.removed).toContain('edit');
         expect(f.notify).toHaveBeenCalledTimes(1);
         f.role(['edit']); expect(f.active()).toEqual(['edit']);
+    });
+    test('preserves external additions in the request without granting their execution', () => {
+        const f = fixture(); f.start(); f.role(['read']);
+        f.pi.setActiveTools(['read', 'herdr']);
+        expect(f.beforeAgentStart(['write'])).toEqual(['read', 'herdr']);
+        expect(f.active()).toEqual(['read', 'herdr']);
+        expect(f.policy.inspect()).toMatchObject({ names: ['read'], externalDrift: { added: ['herdr'], removed: [] } });
+        expect(f.hooks.get('tool_call')!({ toolName: 'herdr' }, f.ctx)).toMatchObject({ block: true });
     });
     test('CLI aliases and child ceilings constrain explicit grants', () => {
         const f = fixture({ groups: { inspect: ['read', 'edit', 'herdr'] }, requested: ['@inspect'], child: ['read', 'herdr'] });
@@ -111,6 +133,7 @@ describe('tool-groups runtime owner', () => {
         const grant = registerToolPolicyContribution(f.pi, 'manual-entry', () => ({ grants: enabled ? ['herdr', 'write'] : [] }));
         f.start(); f.role(['read']); enabled = true; grant.refresh();
         expect(f.active()).toEqual(['read', 'herdr']);
+        expect(f.beforeAgentStart(['read', 'edit', 'herdr', 'write'])).toEqual(['read', 'herdr']);
         expect(f.hooks.get('tool_call')!({ toolName: 'write' }, f.ctx)).toMatchObject({ block: true });
         enabled = false; grant.refresh(); expect(f.active()).toEqual(['read']);
     });
