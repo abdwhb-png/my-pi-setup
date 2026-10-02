@@ -4,7 +4,21 @@ Use `~/.pi/agent/sandbox.json` for global defaults and ceilings. Put project ove
 
 The global document requires `version: 2` and the local `machineId`. Use `/sandbox migrate` to preview and create a valid document from an existing installation. Preserve its machine identity when editing it. A copied authority from another machine is rejected.
 
-Keep this global authority local and ignored by Git. Its machine identity, installation paths, environment values and explicit access exceptions belong to this machine. The schema and documented examples remain versioned.
+Keep this global authority local and ignored by Git. Its machine identity, installation paths, environment values and explicit access exceptions belong to this machine. The schema and [sandbox.example.json](../../../sandbox.example.json) remain versioned. The example grants current-project filesystem access and local binding, keeps HOME and temporary storage private, and leaves host mode, outgoing network, external installations and Docker access disabled.
+
+For a fresh installation, create the local authority from the example with Pi's machine identity helper. Run this from `~/.pi/agent/`. It creates an owner-only file and refuses to overwrite an existing `sandbox.json`:
+
+```sh
+bun -e '
+import { readFileSync, writeFileSync } from "node:fs";
+import { localMachineId } from "./extensions/sandbox/capabilities/authority.ts";
+const config = JSON.parse(readFileSync("sandbox.example.json", "utf8"));
+config.machineId = localMachineId();
+writeFileSync("sandbox.json", JSON.stringify(config, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+'
+```
+
+Review any additional grants before enabling them. In particular, persistent Docker exec remains an explicit exception through `trustedExecTargets`, which is empty in the example.
 
 Use [sandbox.schema.json](sandbox.schema.json) for editor validation. It describes both document scopes. Runtime validation additionally checks ownership, machine identity, canonical resources and ceilings. A project document cannot carry `$schema`; associate the schema through the editor instead.
 

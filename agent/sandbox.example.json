@@ -1,0 +1,44 @@
+{
+  "$schema": "./extensions/sandbox/docs/sandbox.schema.json",
+  "version": 2,
+  "machineId": "REPLACE_WITH_LOCAL_MACHINE_ID",
+  "host": {
+    "allowed": false
+  },
+  "tmpNamespace": "lease-private",
+  "filesystem": {
+    "allowRead": ["."],
+    "allowWrite": ["."],
+    "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg"],
+    "denyWrite": [".env"]
+  },
+  "network": {
+    "allowedDomains": [],
+    "allowedHostDomains": [],
+    "deniedDomains": [],
+    "allowLocalBinding": true,
+    "mediatedDirectTcp": {
+      "allowed": false,
+      "ports": []
+    }
+  },
+  "environment": {
+    "allowedVariables": [],
+    "deniedVariables": [],
+    "variables": {},
+    "path": [],
+    "installations": {}
+  },
+  "resources": {
+    "unixSockets": [],
+    "tcpPublications": []
+  },
+  "docker": {
+    "allowed": false,
+    "mode": "targeted",
+    "endpoint": "unix:///var/run/docker.sock",
+    "unsafeTargets": [],
+    "trustedExecTargets": [],
+    "breakGlassMaxMinutes": 30
+  }
+}
