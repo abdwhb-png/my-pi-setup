@@ -13,6 +13,7 @@ models.json
 models-store.json
 model-thinking.json
 settings.json.*
+keybindings.json
 config/
 
 extensions/oc.ts

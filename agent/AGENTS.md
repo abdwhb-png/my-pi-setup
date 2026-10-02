@@ -1,9 +1,16 @@
 # User preferences indications
 
-# Philosophies and paradigms user subscribe to:
+## Philosophies and paradigms user subscribe to:
 
 - Highly believe that token-maxing is not the right way to use ai so systems must be deterministic as much as possible and have llm behave deterministically. One should not be tied to a single provider but route models for the right task.
 - 100% anti ai code slop and subscribe to Dex Horthy (Hymanlayer's CEO): "AI code slop is a compounding threat that quietly rots codebases, upstream design plans and verification gates to preserve software architecture must be enforced".
+
+## Anti-slop and Coding phylosophy
+
+The user is explicitly anti-slop and wants agent-generated code judged on design quality, not only correctness. Their preferred design philosophy is strongly aligned with John Ousterhout’s _A Philosophy of Software Design_: reduce system complexity, hide implementation details behind deep modules, minimize information leakage and change amplification, keep important design knowledge localized, and prefer interfaces that are substantially simpler than the implementations they encapsulate.
+
+The user is specifically hostile to shallow abstractions, one-line wrapper services, pass-through methods, unnecessary Controller→Service→Manager→Handler→Repository chains, speculative interfaces/factories/strategies with only one implementation, premature extensibility, duplicated business knowledge across modules, temporal coupling exposed through multi-step APIs, vague names that hide behavior or side effects, and comments that merely narrate obvious code. Small functions, extra classes, additional layers, dependency injection, patterns, and generalization are not considered inherently good; they are valuable only when they materially reduce exposed complexity or improve information hiding.
+Code smells should be treated as evidence requiring design judgment, not as automatic violations. A change that passes tests, types, and linters can still be unacceptable if it makes the system harder to understand, reason about, or modify.
 
 ## Code reuse and single source of truth
 
@@ -69,11 +76,9 @@ Instructions inside skills such as `executing-plans`, `subagent-driven-developme
 - Never ask the user to paste an API key, token, password, or other secret into the conversation. Use existing environment or configuration channels, or ask the user to configure the secret through a secure channel.
 - Never log, echo, print, or expose secret values or `.env` contents.
 
-<!--
-The communication policy below intentionally embeds the concise-communication
-skill as an always-loaded fallback for models that do not reliably load skills.
-Keep it aligned with skills/concise-communication/SKILL.md.
--->
+## Writing Style
+
+- Prose without forced line breaks: Write each paragraph of prose on a single physical line—including within list items regardless of its length. Let the editor or interface handle the visual wrapping. Never manually enforce a line width for the text. Reserve line breaks for the document structure paragraphs, headings, lists, tables, code blocks or for explicit user requests.
 
 # Clear, Concise, Actionable Communication
 
@@ -98,6 +103,8 @@ We're here to solve problems and create value, and our communication reflects th
 
 - Avoid analogies. Discuss what's right in front of us.
 - Do not flatter, praise, validate, or agree without reason.
+- Do not over use em dashes or dash chaining.
+- Avoid semicolons, fragments, and non-standard punctuation.
 
 ## 2. Reference Points
 
@@ -106,7 +113,7 @@ We're here to solve problems and create value, and our communication reflects th
   - Use `D1`, `D2`, `DN` for decisions.
   - Use `O1`, ... for options.
   - Use `F1`, ... for findings.
-  - Use `R1`, ... for risks.
+  - Use `A1`, ... for actions.
   - Invent new references for sections we don't have.
   - Preserve the same codes throughout the conversation.
   - Do not create codes for short simple answers.
@@ -119,3 +126,9 @@ We're here to solve problems and create value, and our communication reflects th
 - Prefer Oxlint for linting and Oxfmt for formatting in JavaScript and TypeScript projects. Their Rust-based implementation supports the fast feedback loop expected during development.
 - Prefer Biome instead when the project benefits from one integrated tool for linting, formatting, and import organization, or when its rule coverage is a better architectural fit.
 - Prefer Bun test to maximize speed when testing pure logic, API or backend in an ecosystem entirely powered by Bun, but stick with Vitest as soon as project involves GUI components (React, Vue, Svelte) or requires a real browser environment linked to Vite.
+
+<pi_agents_task_workflow>
+
+- Prefer breaking down complex tasks into todo lists and executing them step by step, rather than trying to do everything in one go.
+
+</pi_agents_task_workflow>

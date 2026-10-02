@@ -51,6 +51,7 @@ Per the [packages](https://pi.dev/docs/latest/packages) and [extensions](https:/
 - Write clear, concise code with meaningful variable and function names. Avoid unnecessary complexity.
 - Document any non-obvious logic with comments. Assume the reader is familiar with the codebase but not with your specific implementation.
 - Avoid duplicating code. If you find yourself copying and pasting, consider refactoring to create reusable functions or modules.
+- Use Bun for the Pi agent runtime. Preserve the established runtime and package manager in repositories outside the Pi harness.
 - Pi loads extension entrypoints through separate Jiti instances with `moduleCache:false`. Share cross-extension state through a process-global registry using `globalThis` with `Symbol.for(...)` or through Pi's shared event bus; never rely on a normal module singleton or key state by `ExtensionAPI` wrapper identity.
 
 **Important** Remember to avoid duplication, that's the most common source of silent errors and maintenance issues. Always prefer importing real modules over copying code.
