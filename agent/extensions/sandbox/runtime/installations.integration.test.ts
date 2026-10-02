@@ -59,6 +59,7 @@ test.skipIf(
         const tools = join(location==="project"?project:root, "local-tools");
         const outside = join(root, "outside");
         const resource = join(tools, "resource.txt");
+        const buildOutput = join(project, "build-output.js");
         const outsideHelper = join(outside, "helper");
         const machineId = localMachineId();
         let service: ReturnType<typeof createSandboxService> | undefined;
@@ -70,6 +71,7 @@ test.skipIf(
                 mkdir(outside, { recursive: true, mode: 0o700 }),
             ]);
             await writeFile(resource, "v1", { mode: 0o600 });
+            await writeFile(buildOutput, "source v1", { mode: 0o600 });
             await writeFile(join(tools, "unapproved"), "private sibling", { mode: 0o600 });
             const declaration = { root: tools, path: ["bin"], ...(files ? { files: ["bin/local-tool", "bin/tool-link", "bin/needs-outsider", "resource.txt"] } : {}) };
             await writeFile(
@@ -152,6 +154,11 @@ exec ${JSON.stringify(outsideHelper)}
                 output: "tool:v1",
             });
             expect(await execute(operations, "tool-link", project)).toEqual({ exitCode: 0, output: "tool:v1" });
+            expect(await readFile(resource, "utf8")).toBe("v1");
+            expect(
+                await execute(operations, `printf built > '${buildOutput}'`, project),
+            ).toEqual({ exitCode: 0, output: "" });
+            expect(await readFile(buildOutput, "utf8")).toBe("built");
             expect(await readFile(resource, "utf8")).toBe("v1");
             if (files && location === "external") {
                 expect((await execute(operations, `cat ${JSON.stringify(join(tools, "unapproved"))}`, project)).exitCode).not.toBe(0);

@@ -2,7 +2,9 @@
     "groups": {
         "inspect": ["read", "grep", "find", "ls"],
         "web": [
+            "web_enable",
             "web_search",
+            "source_check",
             "fetch_content",
             "get_search_content",
             "mcp:firecrawl"
@@ -36,12 +38,7 @@
             "lens_diagnostics"
         ],
         "lens-write": ["ast_grep_replace", "lens_diagnostic_mark"],
-        "lens": [
-            "@lens-inspect",
-            "@lens-write",
-            "lens_health",
-            "lens_project_scan"
-        ],
+        "lens": ["@lens-inspect", "@lens-write"],
         "think-inspect": ["think_artifact_search"],
         "think-exec": ["think_execute"],
         "think": ["@think-inspect", "@think-exec"],

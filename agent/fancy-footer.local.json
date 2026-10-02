@@ -19,13 +19,13 @@
         "extension-statuses": {
             "row": 1
         },
-        "pi-sandbox": {
-            "row": 2,
-            "placement": "aboveEditor",
-            "align": "left"
-        },
         "local-compressor": {
+            "row": 2,
+            "placement": "aboveEditor"
+        },
+        "brainstorm-forcer": {
             "row": 3,
+            "align": "left",
             "placement": "aboveEditor"
         }
     }

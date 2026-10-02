@@ -36,6 +36,10 @@
             "row": 0,
             "position": 4
         },
+        "cache-hit-rate": {
+            "row": 1,
+            "position": 9
+        },
         "provider-status": {
             "row": 1,
             "position": 0,
@@ -51,10 +55,6 @@
             "row": 1,
             "align": "right",
             "position": 3
-        },
-        "cache-hit-rate": {
-            "row": 1,
-            "position": 10
         },
         "cache-read": {
             "enabled": false
@@ -76,17 +76,14 @@
         }
     },
     "extensionWidgets": {
-        "local-compressor": {
-            "row": 1
-        },
         "git-status-widget": {
             "enabled": true,
             "row": 0,
             "align": "left"
         },
         "session-status-bar.context": {
-            "row": 0,
-            "position": 3
+            "row": 1,
+            "position": 1
         },
         "session-status-bar.cwd": {
             "enabled": false
@@ -97,16 +94,13 @@
             "position": 0
         },
         "session-status-bar.cost": {
+            "enabled": false,
             "row": 1
         },
         "session-status-bar.tokens": {
             "row": 1
         },
         "session-status-bar.session": {
-            "row": 2,
-            "align": "right"
-        },
-        "pi-glm-tweaks.status": {
             "row": 2,
             "align": "right"
         },
@@ -141,7 +135,7 @@
             "row": 2,
             "align": "right"
         },
-        "brainstorm-forcer": {
+        "pi-sandbox": {
             "row": 3,
             "align": "left"
         }

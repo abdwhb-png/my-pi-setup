@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DockerTargetAccess } from "./docker-access.ts";
 import { SANDBOX_SECTIONS } from "./command-ui.ts";
+import { formatDockerStartupSummary, formatDockerSummary, summarizeDockerAccess } from "./docker-presentation.ts";
 import { renderPanelTitle } from "../_shared/ui/framed-panels.ts";
 import type { SandboxProfileContextsV1, SandboxProfileContexts, SandboxExecutionContextV3 } from "../_shared/sandbox-runtime/execution-context.ts";
 import type {
@@ -136,7 +137,7 @@ mock.module("../_shared/fancy-footer.ts", () => ({
     },
 }));
 
-const { default: sandboxExtension } = await import("./index.ts");
+const { default: sandboxExtension, loadSandboxConfig } = await import("./index.ts");
 const {
     createSandboxBashOperations,
     getSandboxAnalysisPort,
@@ -1280,6 +1281,71 @@ describe("sandbox lifecycle", () => {
             expect(currentShellPolicy()?.mode).toBe("sandbox");
             await session.session.prompt("/sandbox status");
             expect(session.events.uiCallsFor("notify").at(-1)?.args[0]).toContain("Mode: sandbox");
+        } finally {
+            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+            session.dispose();
+        }
+    });
+
+    it("keeps startup compact while the Pi status command retains Docker permission details", async () => {
+        const api = { type: "container-name", name: "api" };
+        await writeGlobalConfig({ docker: {
+            allowed: true,
+            mode: "targeted",
+            endpoint: "unix:///tmp/docker-fixture.sock",
+            unsafeTargets: [api],
+            trustedExecTargets: [api],
+        } });
+        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ docker: {
+            enabled: true,
+            targets: [
+                { selector: api, operations: ["ps", "inspect", "logs", "stats", "exec"] },
+                { selector: { type: "container-name", name: "worker" }, operations: ["ps", "inspect", "logs", "stats"] },
+            ],
+        } }), { mode: 0o600 });
+        const summary = summarizeDockerAccess(loadSandboxConfig(cwd, { agentDir: isolatedAgentDirectory }).config.docker);
+        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
+        try {
+            expect(getSandboxRuntime().state).toBe("enabled");
+            const startup = String(session.events.uiCallsFor("notify").at(-1)?.args[0]);
+            expect(startup.split("\n")).toHaveLength(1);
+            expect(startup.endsWith(formatDockerStartupSummary(summary))).toBeTrue();
+            expect(startup).not.toContain("container-name:");
+            expect(startup).not.toContain("Operations:");
+            expect(startup).not.toContain("Mixed");
+            await session.session.prompt("/sandbox status");
+            const status = String(session.events.uiCallsFor("notify").at(-1)?.args[0]);
+            for (const line of formatDockerSummary("", summary).slice(1)) {
+                expect(status).toContain(line);
+            }
+        } finally {
+            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+            session.dispose();
+        }
+    });
+
+    it("keeps the full Docker host-control warning at startup", async () => {
+        await writeGlobalConfig({ docker: { allowed: true, mode: "full" } });
+        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ docker: { enabled: true } }), { mode: 0o600 });
+        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
+        try {
+            const startup = session.events.uiCallsFor("notify").at(-1);
+            expect(startup?.args[0]).toContain("Docker full access is active and is equivalent to host control.");
+            expect(startup?.args[1]).toBe("warning");
+        } finally {
+            await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+            session.dispose();
+        }
+    });
+
+    it("keeps startup initialization errors visible instead of reporting success", async () => {
+        initialize.mockRejectedValueOnce(new Error("startup fixture failed"));
+        const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
+        try {
+            expect(getSandboxRuntime().state).toBe("error");
+            const startup = session.events.uiCallsFor("notify").at(-1);
+            expect(startup?.args[0]).toContain("Sandbox initialization failed: startup fixture failed");
+            expect(startup?.args[1]).toBe("error");
         } finally {
             await session.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
             session.dispose();

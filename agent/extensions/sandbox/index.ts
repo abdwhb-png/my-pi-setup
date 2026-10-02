@@ -111,6 +111,7 @@ import {
     dockerSelectorLabel,
     summarizeDockerAccess,
     dockerSummaryLabel,
+    formatDockerStartupSummary,
     formatDockerSummary,
     formatActiveDocker,
     formatBreakGlassRemaining,
@@ -1682,13 +1683,7 @@ export function createSandboxExtension(
             return;
         }
         ctx.ui.notify(
-            [
-                message,
-                ...formatDockerSummary(
-                    "Active Docker",
-                    summarizeDockerAccess(docker),
-                ),
-            ].join("\n"),
+            `${message} · ${formatDockerStartupSummary(summarizeDockerAccess(docker))}`,
             "info",
         );
     }

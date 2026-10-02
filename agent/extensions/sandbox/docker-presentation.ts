@@ -31,6 +31,21 @@ export function dockerSummaryLabel(summary: DockerAccessSummary): string {
     return `targeted · ${summary.profile}${summary.boundedInspection ? " + inspection" : ""} · ${summary.targets.length} target${summary.targets.length === 1 ? "" : "s"}${summary.hostAccessException ? " · host-access exception" : ""}${summary.breakGlass?.length ? " · break-glass exec" : ""}`;
 }
 
+export function formatDockerStartupSummary(
+    summary: DockerAccessSummary,
+): string {
+    if (summary.mode !== "targeted") return `Docker ${summary.mode}`;
+    const permanentExec = summary.targets.filter(
+        (target) => target.permanentExec,
+    ).length;
+    return [
+        `Docker targeted: ${summary.targets.length} target${summary.targets.length === 1 ? "" : "s"}`,
+        ...(permanentExec ? [`permanent exec: ${permanentExec}`] : []),
+        ...(summary.hostAccessException ? ["host-access exception"] : []),
+        ...(summary.breakGlass?.length ? ["break-glass exec"] : []),
+    ].join(" · ");
+}
+
 export function formatDockerSummary(
     title: string,
     summary: DockerAccessSummary,

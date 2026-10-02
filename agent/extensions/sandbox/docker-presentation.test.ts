@@ -5,8 +5,53 @@ import {
     formatActiveDocker,
     formatBreakGlassRemaining,
     formatDockerGrantResult,
+    formatDockerStartupSummary,
     formatDockerSummary,
 } from "./docker-presentation.ts";
+
+test("startup summarizes mixed grants and permanent exec without listing permission details", () => {
+    const summary = summarizeDockerAccess({
+        mode: "targeted", endpoint: "unix:///hidden.sock", targets: [
+            { selector: { type: "container-name", name: "api" }, operations: ["exec"], allowUnsafeTarget: true, allowUnsafeExec: true },
+            { selector: { type: "container-name", name: "worker" }, operations: ["exec"], allowUnsafeTarget: true, allowUnsafeExec: true },
+            { selector: { type: "container-name", name: "database" }, operations: ["ps", "inspect", "logs", "stats"], allowUnsafeTarget: false },
+        ],
+    });
+    const output = formatDockerStartupSummary(summary);
+    expect(output.split(" · ")).toEqual(["Docker targeted: 3 targets", "permanent exec: 2", "host-access exception"]);
+    expect(output).not.toContain("\n");
+    for (const detail of ["Mixed", "Custom", "Observation", "container-name:", "hidden.sock", "Operations:"]) {
+        expect(output).not.toContain(detail);
+    }
+});
+
+test.each([0, 1, 2])("startup omits absent exceptions with %i targets", (count) => {
+    const summary = summarizeDockerAccess({
+        mode: "targeted", endpoint: "unix:///hidden.sock", targets: Array.from({ length: count }, (_, index) => ({
+            selector: { type: "container-name" as const, name: `service-${index}` },
+            operations: ["logs" as const], allowUnsafeTarget: false,
+        })),
+    });
+    expect(formatDockerStartupSummary(summary)).toBe(`Docker targeted: ${count} target${count === 1 ? "" : "s"}`);
+});
+
+test("startup distinguishes bounded inspection from permanent exec and flags temporary exec", () => {
+    const now = 1_000_000;
+    const summary = summarizeDockerAccess({
+        mode: "targeted", endpoint: "unix:///hidden.sock", targets: [
+            { selector: { type: "container-name", name: "api" }, operations: ["exec"], allowUnsafeTarget: true },
+            { selector: { type: "ephemeral-container", id: "temporary-container", unsafeExecExpiresAtMs: now + 60_000 }, operations: ["exec"], allowUnsafeTarget: true },
+        ],
+    }, now);
+    expect(formatDockerStartupSummary(summary).split(" · ")).toEqual(["Docker targeted: 1 target", "host-access exception", "break-glass exec"]);
+    expect(formatDockerStartupSummary(summary)).not.toContain("temporary-container");
+    expect(formatDockerStartupSummary({ ...summary, breakGlass: [] })).not.toContain("break-glass");
+});
+
+test("startup labels disabled and full Docker modes without target counts", () => {
+    expect(formatDockerStartupSummary(summarizeDockerAccess({ mode: "disabled" }))).toBe("Docker off");
+    expect(formatDockerStartupSummary(summarizeDockerAccess({ mode: "full", endpoint: "unix:///hidden.sock" }))).toBe("Docker full");
+});
 
 const authority = summarizeDockerAccess({ mode: "targeted", endpoint: "unix:///hidden.sock", targets: [
     { selector: { type: "container-name", name: "api" }, allowUnsafeTarget: true },
