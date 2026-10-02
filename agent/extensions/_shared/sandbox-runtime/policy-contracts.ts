@@ -30,6 +30,8 @@ export interface DockerTargetGrant {
     selector: DockerTargetSelector;
     operations?: DockerOperation[];
     allowUnsafeTarget: boolean;
+    /** Global-only permanent exec exception; absent means bounded inspection. */
+    allowUnsafeExec?: boolean;
 }
 
 export type SandboxDockerPolicy =

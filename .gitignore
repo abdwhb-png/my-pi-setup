@@ -54,6 +54,7 @@ save-tokens-telemetry/
 /agent/safe-bash-telemetry/
 
 # Machine-local sandbox authority
+/agent/sandbox.json
 /agent/sandbox.global.json
 
 .bash_profile

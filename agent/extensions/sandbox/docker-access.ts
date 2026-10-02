@@ -6,6 +6,7 @@ import {
     createSandboxService,
     type SandboxService,
 } from "./runtime/service.ts";
+import { PRIVATE_BASH } from "./runtime/shell-baseline.ts";
 import { createZeroboxBackend } from "./runtime/zerobox-backend.ts";
 
 /* oxlint-disable typescript/no-restricted-types -- Docker Engine responses are untrusted JSON. */
@@ -277,7 +278,7 @@ async function probeVisibleIds(
             detached: true,
             prepareSpawn: ({ command, cwd: commandCwd }) =>
                 service.prepareBash({
-                    file: "/bin/bash",
+                    file: PRIVATE_BASH,
                     args: ["-c", command],
                     cwd: commandCwd,
                 }),

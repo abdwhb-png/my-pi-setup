@@ -48,6 +48,9 @@ export function formatDockerSummary(
                       "  Arbitrary exec: unavailable; read-only inspection: test -r, stat, ls",
                   ]
                 : []),
+            ...(target.permanentExec
+                ? ["  Permanent exec: explicitly approved globally"]
+                : []),
             `  Host-access exception: ${target.hostAccessException ? "enabled by the confirmed grant" : "off"}`,
         ]),
         ...(summary.breakGlass ?? []).map(

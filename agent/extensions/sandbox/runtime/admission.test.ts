@@ -19,6 +19,16 @@ function receipt(): SandboxAdmissionReport {
         resources: { unixSockets: [], tcpPublications: [] }, path: ["/__zerobox/runtime/bin"],
         environment: { inherit: [], set: ["PATH", "HOME"], deny: [] }, home: {path: "/home/sandbox", namespace: "lease-private"}, tmp: {path: "/tmp", namespace: "lease-private"}, docker: {mode: "disabled"} };
 }
+test("rejects malformed or inapplicable permanent exec authority in admission", () => {
+    for (const target of [
+        { allowUnsafeTarget: true, allowUnsafeExec: "true" },
+        { allowUnsafeTarget: false, allowUnsafeExec: true },
+        { allowUnsafeTarget: true, allowUnsafeExec: true, selector: { type: "ephemeral-container", id: "abc", unsafeExecExpiresAtMs: 1 } },
+    ]) {
+        const report = { ...receipt(), docker: { mode: "targeted", endpoint: "unix:///run/docker.sock", targets: [{ selector: { type: "container-name", name: "api" }, operations: ["exec"], ...target }] } };
+        expect(() => parseSandboxAdmissionReport(report)).toThrow("invalid Docker rules");
+    }
+});
 
 test("admission is returned only after complete EOF with an exact digest", async () => {
     const stream = new PassThrough();

@@ -11,6 +11,16 @@ import {
 const authority = summarizeDockerAccess({ mode: "targeted", endpoint: "unix:///hidden.sock", targets: [
     { selector: { type: "container-name", name: "api" }, allowUnsafeTarget: true },
 ] });
+test("shows explicitly trusted permanent exec without describing it as bounded inspection", () => {
+    const summary = summarizeDockerAccess({ mode: "targeted", endpoint: "unix:///hidden.sock", targets: [{
+        selector: { type: "container-name", name: "api" }, operations: ["exec"], allowUnsafeTarget: true, allowUnsafeExec: true,
+    }] });
+    expect(summary.targets[0].operations).toEqual(["exec"]);
+    expect(summary.targets[0].boundedInspection).toBeUndefined();
+    const output = formatDockerSummary("Active Docker", summary).join("\n");
+    expect(output).toContain("Permanent exec: explicitly approved globally");
+    expect(output).not.toContain("Arbitrary exec: unavailable");
+});
 
 test("formats break-glass time remaining in minutes above 30s and in seconds below", () => {
     const now = 1_000_000;

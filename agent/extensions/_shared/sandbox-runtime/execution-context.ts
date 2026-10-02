@@ -197,6 +197,9 @@ function parseDockerSummary(value: unknown): DockerAccessSummary | undefined {
             ...(typeof target.boundedInspection === "boolean"
                 ? { boundedInspection: target.boundedInspection }
                 : {}),
+            ...(typeof target.permanentExec === "boolean"
+                ? { permanentExec: target.permanentExec }
+                : {}),
         });
     }
     const breakGlass = Array.isArray(docker.breakGlass)

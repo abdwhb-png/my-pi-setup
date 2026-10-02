@@ -2,6 +2,14 @@ import { expect, test } from "bun:test";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
 import { sandboxAccessRemoved } from "./revocation.ts";
 import { resolveShellPolicy } from "./policy.ts";
+test("removing permanent exec trust revokes admission while bounded exec remains requested", () => {
+ const base = validatePiSandboxConfig({});
+ const target = { selector: { type: "container-name" as const, name: "api" }, operations: ["exec" as const], allowUnsafeTarget: true };
+ const previous = { ...base, docker: { mode: "targeted" as const, endpoint: "unix:///run/docker.sock", targets: [{ ...target, allowUnsafeExec: true }] } };
+ const next = { ...base, docker: { ...previous.docker, targets: [target] } };
+ expect(sandboxAccessRemoved(previous, next)).toBe(true);
+ expect(sandboxAccessRemoved(next, previous)).toBe(false);
+});
 
 test("resolves relative grants against the admitted project when checking a new absolute denial", () => {
     const previous = validatePiSandboxConfig({ filesystem: { allowRead: ["."], allowWrite: ["."] } });

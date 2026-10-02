@@ -178,6 +178,15 @@
                 "$ref": "#/$defs/dockerSelector"
               }
             },
+            "trustedExecTargets": {
+              "type": "array",
+              "uniqueItems": true,
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/dockerSelector"
+              },
+              "description": "Global-only permanent exec exceptions. Each selector must also appear in unsafeTargets; runtime validation enforces this requirement."
+            },
             "breakGlassMaxMinutes": {
               "type": "integer",
               "minimum": 1,

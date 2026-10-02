@@ -16,6 +16,7 @@ export interface DockerAccessSummary {
         requestedProfile?: string;
         requestedOperations?: string[];
         boundedInspection?: boolean;
+        permanentExec?: boolean;
         hostAccessException: boolean;
     }[];
     hostAccessException: boolean;
@@ -98,6 +99,7 @@ export function summarizeDockerAccess(
                 )?.label ?? "Custom";
             const boundedInspection =
                 target.allowUnsafeTarget &&
+                target.allowUnsafeExec !== true &&
                 requestedOperations.includes("exec");
             const operations = boundedInspection
                 ? requestedOperations.filter(
@@ -123,6 +125,12 @@ export function summarizeDockerAccess(
                 summary.requestedOperations = requestedOperations;
             }
             if (boundedInspection) summary.boundedInspection = true;
+            if (
+                target.allowUnsafeTarget &&
+                target.allowUnsafeExec === true &&
+                requestedOperations.includes("exec")
+            )
+                summary.permanentExec = true;
             return summary;
         })
         .toSorted((a, b) => a.selector.localeCompare(b.selector));

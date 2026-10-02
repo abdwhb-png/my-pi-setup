@@ -330,6 +330,25 @@ test("does not annotate a failed-path message after a successful command", async
     expect(result.output).toBe(errorLine + libraryError);
 });
 
+test("does not infer Docker state from a caller-generated availability message", async () => {
+    const context = admitted();
+    context.docker = {
+        mode: "targeted",
+        profile: "None",
+        targets: [],
+        hostAccessException: false,
+    };
+    const original = "Docker is not running.\nPHP 8.5.0\n";
+    const result = await execute({
+        context,
+        command: printStdout(original, 0),
+    });
+
+    expect(result.failure).toBeUndefined();
+    expect(result.result).toEqual({ exitCode: 0 });
+    expect(result.output).toBe(original);
+});
+
 test.each(["local", "host", "host-mode", "missing-admission", "invalid-admission", "planned", "ready-failed", "status-failed", "think"])(
     "does not annotate %s executions",
     async (state) => {

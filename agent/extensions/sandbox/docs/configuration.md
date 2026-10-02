@@ -4,6 +4,8 @@ Use `~/.pi/agent/sandbox.json` for global defaults and ceilings. Put project ove
 
 The global document requires `version: 2` and the local `machineId`. Use `/sandbox migrate` to preview and create a valid document from an existing installation. Preserve its machine identity when editing it. A copied authority from another machine is rejected.
 
+Keep this global authority local and ignored by Git. Its machine identity, installation paths, environment values and explicit access exceptions belong to this machine. The schema and documented examples remain versioned.
+
 Use [sandbox.schema.json](sandbox.schema.json) for editor validation. It describes both document scopes. Runtime validation additionally checks ownership, machine identity, canonical resources and ceilings. A project document cannot carry `$schema`; associate the schema through the editor instead.
 
 Both files must be regular files owned by the current user and not writable by group or others. Symlink configuration files are rejected. Global identity fields and sensitive Docker fields are rejected in a project document, even when their value is false or the feature is disabled. Unknown fields and invalid inactive sections are errors.

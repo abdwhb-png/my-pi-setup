@@ -196,6 +196,12 @@ export function parseSandboxAdmissionReport(
                         record(target) &&
                         record(target.selector) &&
                         typeof target.allowUnsafeTarget === "boolean" &&
+                        (target.allowUnsafeExec === undefined ||
+                            typeof target.allowUnsafeExec === "boolean") &&
+                        (target.allowUnsafeExec !== true ||
+                            (target.allowUnsafeTarget === true &&
+                                target.selector.type !==
+                                    "ephemeral-container")) &&
                         (target.operations === undefined ||
                             strings(target.operations)),
                 )))

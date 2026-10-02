@@ -157,6 +157,8 @@ export function sandboxAccessRemoved(
                 return (
                     !current ||
                     (old.allowUnsafeTarget && !current.allowUnsafeTarget) ||
+                    (old.allowUnsafeExec === true &&
+                        current.allowUnsafeExec !== true) ||
                     removed(
                         old.operations ?? [...DOCKER_OPERATIONS],
                         current.operations ?? [...DOCKER_OPERATIONS],

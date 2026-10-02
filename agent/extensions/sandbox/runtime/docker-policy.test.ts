@@ -1,5 +1,35 @@
 import { expect, test } from "bun:test";
 import { dockerBreakGlassCeiling, resolveDockerPolicy } from "./docker-policy.ts";
+test("permanent unsafe exec requires exact global trust and a project exec request", () => {
+    const selector = { type: "compose-service", project: "fixture", service: "api" };
+    const other = { ...selector, service: "worker" };
+    const globalConfig = { allowed: true, unsafeTargets: [selector, other], trustedExecTargets: [selector] };
+    const projectConfig = { enabled: true, targets: [{ selector, operations: ["exec"] }, { selector: other, operations: ["exec"] }] };
+    const trusted = resolveDockerPolicy({ globalConfig, projectConfig });
+    expect(trusted).toMatchObject({ targets: [
+        { allowUnsafeTarget: true, allowUnsafeExec: true }, { allowUnsafeTarget: true },
+    ] });
+    if (trusted.mode !== "targeted") throw new Error("Expected targeted policy");
+    expect(trusted.targets[1]).not.toHaveProperty("allowUnsafeExec");
+    const observation = resolveDockerPolicy({ globalConfig, projectConfig: { enabled: true, targets: [{ selector, operations: ["logs"] }] } });
+    if (observation.mode !== "targeted") throw new Error("Expected targeted policy");
+    expect(observation.targets[0]).not.toHaveProperty("allowUnsafeExec");
+    const defaults = resolveDockerPolicy({ globalConfig: { allowed: true, unsafeTargets: [selector] }, projectConfig });
+    if (defaults.mode !== "targeted") throw new Error("Expected targeted policy");
+    expect(defaults.targets.every(target => !Object.hasOwn(target, "allowUnsafeExec"))).toBe(true);
+});
+
+test("permanent exec trust is validated globally and cannot be supplied by a project", () => {
+    const selector = { type: "container-name", name: "api" };
+    for (const trustedExecTargets of [null, "all", [selector, selector], [{ type: "ephemeral-container", id: "abc", unsafeExecExpiresAtMs: 1 }]]) {
+        expect(() => resolveDockerPolicy({ globalConfig: { allowed: false, unsafeTargets: [selector], trustedExecTargets } })).toThrow();
+    }
+    expect(() => resolveDockerPolicy({ globalConfig: { trustedExecTargets: [selector] } })).toThrow("requires an unsafe-target exception");
+    for (const allowUnsafeExec of [true, false]) {
+        expect(() => resolveDockerPolicy({ globalConfig: { allowed: true }, projectConfig: { enabled: false, targets: [{ selector, allowUnsafeExec }] } })).toThrow("Project cannot add a Docker exec exception");
+    }
+    expect(() => resolveDockerPolicy({ globalConfig: { allowed: true }, projectConfig: { enabled: false, trustedExecTargets: [selector] } })).toThrow("Unknown project docker field");
+});
 test("projects choose independent Docker targets without a global target registry", () => {
     for (const name of ["project-a", "project-b"]) {
         expect(resolveDockerPolicy({

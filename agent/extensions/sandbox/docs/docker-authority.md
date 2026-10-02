@@ -90,6 +90,12 @@ Compose inspection covers the private HOME plugin directory and the standard Lin
 
 The broker checks targets and operations against live engine metadata. A container with host bind mounts, privileged access or equivalent host access can be excluded despite a matching selector. `docker ps` can therefore succeed with an empty list.
 
+### Broker diagnostics
+
+The targeted broker permits connectivity checks through `docker version` and restricts daemon-wide API routes. Policy rejections produce a generic notice on Zerobox's own stderr, independently of a client's output redirection. Notices are bounded to one per authorization category per invocation. They preserve the caller's output and exit status and do not establish host daemon availability. No command is retried or granted access by a diagnostic.
+
+### Host-access targets
+
 To allow an exact target despite its host access, add its selector to global `docker.unsafeTargets`, for example `[{ "type": "container-name", "name": "my-service" }]`. A project must still select that target. The exception neither selects targets for other projects nor restricts their ordinary target choices. Removing the exception restores ordinary broker checks. It does not grant arbitrary persistent exec. The broker restricts such exec to these exact read-only probes below declared bind destinations:
 
 ```text
@@ -99,6 +105,8 @@ ls -la -- PATH
 ```
 
 Shells, interpreters, other commands, paths outside those destinations and exec option overrides remain rejected. On ordinary targets, authorized exec retains Docker's usual user selection. Targeted mode still refuses privileged or detached exec and non-empty detach keys.
+
+For an explicit permanent exec exception, also place the exact selector in global `docker.trustedExecTargets` (empty by default). It must already appear in `docker.unsafeTargets`; the project must still select it and request `exec`. Projects cannot set either the global trust list or the derived `allowUnsafeExec` field. Ordinary exec then remains available until trust is revoked, including for replacement containers matching the same Compose project/service. Privileged and detached exec remain forbidden. This exception does not grant other operations. Removing it invalidates existing admissions that used permanent trust and restores bounded inspection.
 
 Use `/sandbox docker break-glass [1m-<ceiling>m]` for a temporary exec exception. Select an eligible container and confirm the exception. The runtime rechecks the current global and project policy after confirmation and binds the exception to the exact current container ID. The accepted duration is bounded by the global `docker.breakGlassMaxMinutes` ceiling, which defaults to 30 minutes and cannot be raised from a project document. During the final 30 seconds before expiry the footer widget counts the remaining time down once per second.
 

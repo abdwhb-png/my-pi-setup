@@ -104,6 +104,7 @@ interface DockerCeiling {
     endpoint: string;
     operations?: DockerOperation[];
     unsafeTargets: DockerTargetSelector[];
+    trustedExecTargets: DockerTargetSelector[];
     breakGlassMaxMinutes: number;
 }
 function parseCeiling(value: unknown): DockerCeiling {
@@ -116,6 +117,7 @@ function parseCeiling(value: unknown): DockerCeiling {
             "endpoint",
             "operations",
             "unsafeTargets",
+            "trustedExecTargets",
             "breakGlassMaxMinutes",
         ],
         "global docker",
@@ -160,12 +162,37 @@ function parseCeiling(value: unknown): DockerCeiling {
         unsafeTargets.length
     )
         invalid("Duplicate unsafe Docker target");
+    if (
+        docker.trustedExecTargets !== undefined &&
+        !Array.isArray(docker.trustedExecTargets)
+    )
+        invalid("global docker.trustedExecTargets must be an array");
+    const trustedExecTargets = (
+        Array.isArray(docker.trustedExecTargets)
+            ? docker.trustedExecTargets
+            : []
+    ).map(selector);
+    if (
+        new Set(trustedExecTargets.map(dockerSelectorKey)).size !==
+        trustedExecTargets.length
+    )
+        invalid("Duplicate trusted Docker exec target");
+    const unsafeKeys = new Set(unsafeTargets.map(dockerSelectorKey));
+    if (
+        trustedExecTargets.some(
+            (target) => !unsafeKeys.has(dockerSelectorKey(target)),
+        )
+    )
+        invalid(
+            "A trusted Docker exec target requires an unsafe-target exception",
+        );
     return {
         allowed: docker.allowed === true,
         mode,
         endpoint,
         operations: limits,
         unsafeTargets,
+        trustedExecTargets,
         breakGlassMaxMinutes,
     };
 }
@@ -184,6 +211,13 @@ function parseProject(value: unknown): {
                   if (!Array.isArray(project.targets))
                       invalid("project docker.targets must be an array");
                   const parsed = project.targets.map((value) => {
+                      if (
+                          Object.hasOwn(
+                              record(value, "Docker target"),
+                              "allowUnsafeExec",
+                          )
+                      )
+                          invalid("Project cannot add a Docker exec exception");
                       if (
                           Object.hasOwn(
                               record(value, "Docker target"),
@@ -244,6 +278,9 @@ export function resolveDockerPolicy(
         return { mode: "full", endpoint: ceiling.endpoint };
     const permitted = new Set(ceiling.operations ?? DOCKER_OPERATIONS);
     const unsafe = new Set(ceiling.unsafeTargets.map(dockerSelectorKey));
+    const trustedExec = new Set(
+        ceiling.trustedExecTargets.map(dockerSelectorKey),
+    );
     const targets = (project.targets ?? []).map((item) => {
         if (item.operations?.some((operation) => !permitted.has(operation)))
             invalid("Project added a Docker operation beyond global limits");
@@ -251,6 +288,14 @@ export function resolveDockerPolicy(
             ...item,
             operations: item.operations ?? ceiling.operations,
             allowUnsafeTarget: unsafe.has(dockerSelectorKey(item.selector)),
+            ...((
+                item.operations ??
+                ceiling.operations ??
+                DOCKER_OPERATIONS
+            ).includes("exec") &&
+            trustedExec.has(dockerSelectorKey(item.selector))
+                ? { allowUnsafeExec: true }
+                : {}),
         };
     });
     return { mode: "targeted", endpoint: ceiling.endpoint, targets };

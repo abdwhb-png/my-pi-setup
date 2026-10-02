@@ -55,6 +55,24 @@ const policy: SandboxPolicy = {
 };
 
 describe("Sandbox execution context", () => {
+    test("preserves explicit permanent exec authority in serialized model context", () => {
+        const context = createSandboxExecutionContext({
+            ...policy,
+            docker: {
+                mode: "targeted",
+                endpoint: "unix:///run/docker.sock",
+                targets: [{
+                    selector: { type: "container-name", name: "api" },
+                    operations: ["exec"],
+                    allowUnsafeTarget: true,
+                    allowUnsafeExec: true,
+                }],
+            },
+        }, lease, { homeDir: "/home/test" });
+        expect(context.docker.targets[0].permanentExec).toBe(true);
+        expect(parseSandboxExecutionContext(JSON.parse(JSON.stringify(context)))).toEqual(context);
+    });
+
     test("preserves only canonical mediated direct TCP grants", () => {
         const context = createSandboxExecutionContext(
             {

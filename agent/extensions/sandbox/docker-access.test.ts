@@ -1,9 +1,50 @@
 import { expect, test } from "bun:test";
 import { inspectDockerAccess, formatDockerAccess } from "./docker-access.ts";
 import { validatePiSandboxConfig } from "./runtime/policies.ts";
+import { PRIVATE_BASH } from "./runtime/shell-baseline.ts";
+import { SANDBOX_CAPABILITIES } from "./runtime/contracts.ts";
+import type { SandboxService } from "./runtime/service.ts";
 
 const selector = { type: "compose-service", project: "cliproxy", service: "cli-proxy-api" } as const;
 const policy = { mode: "targeted", endpoint: "unix:///var/run/docker.sock", targets: [{ selector, operations: ["ps"], allowUnsafeTarget: false }] } as const;
+
+test("Docker inspection succeeds when the runtime exposes only its private shell", async () => {
+    const id = "a".repeat(64);
+    const config = validatePiSandboxConfig({}, {
+        mode: "targeted", endpoint: "unix:///fixture.sock",
+        targets: [{ selector: { type: "container-name", name: "fixture" }, operations: ["ps"], allowUnsafeTarget: false }],
+    });
+    let closed = false;
+    const unexpected = () => { throw new Error("Unexpected sandbox operation"); };
+    const service: SandboxService = {
+        probe: async () => SANDBOX_CAPABILITIES,
+        startBashSession: async () => {},
+        getProfileContexts: unexpected,
+        prepareThinkBash: unexpected,
+        prepareAnalysis: unexpected,
+        prepareBash: async command => {
+            if (command.file !== PRIVATE_BASH) throw new Error("The host shell is unavailable in this runtime");
+            // Substitute the external runtime process while exercising the real inspection pipeline.
+            return {
+                file: process.execPath,
+                args: ["-e", `process.stdout.write(${JSON.stringify(id + "\n")})`],
+                cwd: command.cwd,
+                env: {},
+                statusProtocol: { fd: 3, version: 2 },
+                extraStdio: [],
+                supervise: () => ({ ready: Promise.resolve(), settled: Promise.resolve() }),
+            };
+        },
+        shutdown: async () => { closed = true; },
+    };
+    const result = await inspectDockerAccess(process.cwd(), config, {
+        request: async path => path.startsWith("/containers/json") ? [{ Id: id, Names: ["/fixture"] }] : {},
+        createService: () => service,
+    });
+
+    expect(result[0].containers[0].access).toBe("accessible");
+    expect(closed).toBe(true);
+});
 
 test("preserves this for injected inspection and service factory methods", async () => {
     const config = validatePiSandboxConfig({}, { mode: "targeted", endpoint: "unix:///fixture.sock", targets: [

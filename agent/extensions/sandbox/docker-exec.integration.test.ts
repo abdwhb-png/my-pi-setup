@@ -106,6 +106,14 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
             try {
                 await service.startBashSession(root);
                 const operations = createSandboxedBashOps(service, supervisor);
+                if (profile.label === "Observation") {
+                    let output = "";
+                    const result = await operations.exec("docker info >/dev/null 2>&1; docker info >/dev/null 2>&1; true", root, { onData: chunk => { output += chunk.toString(); }, timeout: 15 });
+                    expect(result.exitCode).toBe(0);
+                    expect(output.split("Zerobox: Docker broker rejected request:")).toHaveLength(2);
+                    expect(output).toContain("operation is not granted or route is unsupported");
+                    expect(requests).not.toContain("GET /info");
+                }
                 for (const command of ["docker exec fixture-api true", "docker compose exec -T api true"]) {
                     const executionsBefore = bodies.length;
                     let output = "";
@@ -152,6 +160,35 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
             expect(output).toContain("Docker exec is restricted to read-only inspection");
         } finally { restrictedSupervisor.shutdown(); await restrictedService.shutdown(); }
 
+        const trustedService = createSandboxService({ ...serviceOptions, config: validatePiSandboxConfig(cliConfig, {
+            mode: "targeted", endpoint: `unix://${endpoint}`,
+            targets: [{ selector: { type: "compose-service", project: "fixtureexec", service: "api" }, operations: ["ps", "inspect", "exec"], allowUnsafeTarget: true, allowUnsafeExec: true }],
+        }) });
+        const trustedSupervisor = createBashProcessSupervisor();
+        try {
+            await trustedService.startBashSession(root);
+            const operations = createSandboxedBashOps(trustedService, trustedSupervisor);
+            for (const command of ["docker exec fixture-api sh -c true", "docker compose exec -T -u sandbox api true"]) {
+                let output = "";
+                const result = await operations.exec(command, root, { onData: chunk => { output += chunk.toString(); }, timeout: 15 });
+                expect(result.exitCode).toBe(0);
+                expect(output).toContain("fixture exec ok");
+            }
+            for (const command of ["docker exec --privileged fixture-api true", "docker exec unrelated true"]) {
+                const before = bodies.length;
+                const result = await operations.exec(command, root, { onData() {}, timeout: 15 });
+                expect(result.exitCode).not.toBe(0);
+                expect(bodies.length).toBe(before);
+            }
+            // Docker sends detach only when starting an already-created exec.
+            const startsBefore = requests.filter(request => request === `POST /exec/${execId}/start`).length;
+            const createsBefore = bodies.length;
+            const detached = await operations.exec("docker exec -d fixture-api true", root, { onData() {}, timeout: 15 });
+            expect(detached.exitCode).not.toBe(0);
+            expect(bodies.length).toBe(createsBefore + 1);
+            expect(requests.filter(request => request === `POST /exec/${execId}/start`)).toHaveLength(startsBefore);
+        } finally { trustedSupervisor.shutdown(); await trustedService.shutdown(); }
+
         const breakGlassExpiresAtMs = Date.now() + 2_000;
         const breakGlassService = createSandboxService({ ...serviceOptions, config: validatePiSandboxConfig(cliConfig, {
             mode: "targeted", endpoint: `unix://${endpoint}`,
@@ -176,7 +213,7 @@ test.skipIf(process.platform !== "linux" || !process.env.PI_SANDBOX_ZEROBOX_BINA
             expect(output).toContain("Docker break-glass exec expired");
         } finally { breakGlassSupervisor.shutdown(); await breakGlassService.shutdown(); }
 
-        expect(bodies).toHaveLength(5);
+        expect(bodies).toHaveLength(8);
         expect(bodies[0]).toMatchObject({ DetachKeys: "", Privileged: false });
         expect(unexpected).toEqual([]);
     } finally {
