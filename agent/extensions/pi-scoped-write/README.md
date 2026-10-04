@@ -8,6 +8,6 @@ Report attribution prefers the active public `pi-roles` role. In a `pi-subagents
 
 Policies define a root, allowed extensions, permitted operations, size limits, and directory behaviour. The extension validates paths, prevents traversal and symlink escapes, writes atomically, and records JSONL audit events under `<cwd>/.pi/artifacts/.audit/`.
 
-The initial adapters expose Markdown/JSON reports, migrate plan writes, and sandbox throwaway debug probes under `.pi/debug/<role>/<session>/`. In-source instrumentation (tagged logs in real source) is deliberately out of scope — use `safe_bash` for that. General source, configuration, and real test-file writes are also out of scope.
+The initial adapters expose Markdown/JSON reports, migrate plan writes, and sandbox throwaway debug probes under `.pi/artifacts/debug/<role>/<session>/`. In-source instrumentation (tagged logs in real source) is deliberately out of scope — use `safe_bash` for that. General source, configuration, and real test-file writes are also out of scope.
 
 Artefact roots can be registered explicitly for run-scoped purge. Purge refuses unsafe run IDs, requires an interactive confirmation, and is a slash command rather than a tool: the model never receives a schema that deletes artefacts. Audit events record the initiating surface as `command:/purge-artifacts`.

@@ -1,4 +1,6 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeOwnedSettingsFixture } from "../_shared/testing/config-fixture.ts";
+import { beforeEach, afterEach, describe, expect, it, mock } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +17,11 @@ describe('tool-summary extension (index.ts)', () => {
         { description: string; handler: (...args: any[]) => any }
     >;
     let emittedEvents: Array<{ channel: string; payload: unknown }>;
+
+    let agentDir: string;
+    let previousAgentDir: string | undefined;
+    beforeEach(()=>{previousAgentDir=process.env.PI_CODING_AGENT_DIR;agentDir=mkdtempSync(join(tmpdir(),"summary-agent-"));process.env.PI_CODING_AGENT_DIR=agentDir;});
+    afterEach(()=>{if(previousAgentDir===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=previousAgentDir;rmSync(agentDir,{recursive:true,force:true});});
 
     function createMockExtensionAPI(): ExtensionAPI {
         handlers = new Map();
@@ -45,6 +52,7 @@ describe('tool-summary extension (index.ts)', () => {
     function createMockCtx(cwd = '/fake/cwd') {
         return {
             cwd,
+            isProjectTrusted:()=>true,
             hasUI: true,
             ui: {
                 theme: {
@@ -107,11 +115,11 @@ describe('tool-summary extension (index.ts)', () => {
     it('loads toolSummary allowlist from project settings at session_start', async () => {
         const projectDir = mkdtempSync(join(tmpdir(), 'tool-summary-'));
         const configDir = join(projectDir, '.pi');
+        new ProjectTrustStore(agentDir).set(projectDir, true);
         mkdirSync(configDir);
-        writeFileSync(
+        writeOwnedSettingsFixture(
             join(configDir, 'settings.json'),
-            JSON.stringify({ toolSummary: { tools: ['read'] } }),
-        );
+            { toolSummary: { tools: ['read'] } });
 
         try {
             const { default: extension } = await import('./index.ts');

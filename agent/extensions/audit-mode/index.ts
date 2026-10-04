@@ -1,3 +1,7 @@
+import {
+    readExtensionConfig,
+    isProjectConfigTrusted,
+} from "../_shared/config-loader.ts";
 /**
  * Audit-mode owner extension.
  *
@@ -11,11 +15,7 @@
  *   /audit-mode status   — display active profile, resolved flags, config source
  */
 
-import {
-    SettingsManager,
-    type ExtensionAPI,
-    type Theme,
-} from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
 import {
     normalizeAuditSettings,
     mergeAuditSettings,
@@ -38,42 +38,25 @@ import {
 
 // ─── Config loading ───────────────────────────────────────────────────────────
 
-type SettingsRecord = Record<string, object | null | undefined>;
-
-function isAuditSettings(
-    value: object | null | undefined,
-): value is AuditSettings {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function loadMergedSettings(cwd: string): {
+function loadMergedSettings(
+    cwd: string,
+    projectTrusted: boolean,
+): {
     settings: AuditSettings;
     hasProjectOverride: boolean;
 } {
-    let globalRaw: AuditSettings | null = null;
-    let projectRaw: AuditSettings | null = null;
-
-    try {
-        const manager = SettingsManager.create(cwd);
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        const globalSettings = manager.getGlobalSettings() as SettingsRecord;
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        const projectSettings = manager.getProjectSettings() as SettingsRecord;
-        if (isAuditSettings(globalSettings.auditMode))
-            globalRaw = globalSettings.auditMode;
-        if (isAuditSettings(projectSettings.auditMode))
-            projectRaw = projectSettings.auditMode;
-    } catch {
-        // If settings cannot be loaded, fall back to defaults
-    }
-
-    const global = normalizeAuditSettings(globalRaw);
-    const project = normalizeAuditSettings(projectRaw);
-    const merged = mergeAuditSettings(global, project);
-
-    const hasProjectOverride = Object.keys(project).length > 0;
-
-    return { settings: merged, hasProjectOverride };
+    const global = normalizeAuditSettings(
+        readExtensionConfig("auditMode", { scope: "global" }),
+    );
+    const project = normalizeAuditSettings(
+        isProjectConfigTrusted(cwd, undefined, projectTrusted)
+            ? readExtensionConfig("auditMode", { scope: "project", cwd })
+            : undefined,
+    );
+    return {
+        settings: mergeAuditSettings(global, project),
+        hasProjectOverride: Object.keys(project).length > 0,
+    };
 }
 
 // ─── Status rendering ─────────────────────────────────────────────────────────
@@ -159,7 +142,10 @@ export default function activate(pi: ExtensionAPI) {
     });
 
     pi.on("session_start", (_event, ctx) => {
-        const { settings, hasProjectOverride } = loadMergedSettings(ctx.cwd);
+        const { settings, hasProjectOverride } = loadMergedSettings(
+            ctx.cwd,
+            ctx.isProjectTrusted(),
+        );
         sessionHasProjectOverride = hasProjectOverride;
         initAuditState(settings);
         w.update(ctx);

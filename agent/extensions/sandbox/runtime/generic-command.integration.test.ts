@@ -1,5 +1,7 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createBashOperations } from "../../_shared/command-execution/exec.ts";
@@ -91,7 +93,7 @@ test.skipIf(
                     allowWrite: [project.cwd, project.cache],
                 };
                 await writeFile(
-                    join(project.agentDir, "sandbox.json"),
+                    join(project.agentDir, "config", "sandbox.json"),
                     JSON.stringify({
                         version: 2,
                         machineId,
@@ -114,11 +116,12 @@ test.skipIf(
                     { mode: 0o600 },
                 );
                 await writeFile(
-                    join(project.cwd, ".pi/sandbox.json"),
+                    join(project.cwd, ".pi/config/sandbox.json"),
                     JSON.stringify({ filesystem, environment }),
                     { mode: 0o600 },
                 );
 
+                new ProjectTrustStore(project.agentDir).set(project.cwd, true);
                 const loaded = loadSandboxConfig(project.cwd, {
                     agentDir: project.agentDir,
                     machineId,

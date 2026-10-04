@@ -1,12 +1,4 @@
-/**
- * auto-translate config loader.
- *
- * Wraps the shared `_shared/config-loader.ts` `loadExtensionConfig<T>()` helper.
- *
- * Sources (merged in order, later wins):
- *   1. settings.json key "translate" (global -> project)
- *   2. legacy file translate.json (global -> project) — fallback only
- */
+/** Translation settings use config/translate.json in global and trusted project scopes. */
 
 import { loadExtensionConfig } from "../_shared/config-loader.ts";
 import {
@@ -72,18 +64,14 @@ export function mergeTranslateConfig(
 export function loadTranslateConfig(
     cwd: string,
     agentDir?: string,
+    projectTrusted?: boolean,
 ): TranslateConfig {
     return loadExtensionConfig<TranslateConfig>(cwd, {
         defaults: DEFAULT_CONFIG,
         normalize: normalizeTranslateConfig,
         merge: mergeTranslateConfig,
-        sources: [
-            {
-                settingsKey: "translate",
-                legacyFilename: "translate.json",
-                projectLocal: true,
-            },
-        ],
+        owner: "translate",
         agentDir,
+        projectTrusted,
     });
 }

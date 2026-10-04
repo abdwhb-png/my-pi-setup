@@ -1,3 +1,4 @@
+import { writeOwnedSettingsFixture } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -39,8 +40,8 @@ function createProject(): string {
     const cwd = mkdtempSync(join(tmpdir(), "plan-submission-guard-"));
     directories.push(cwd);
     process.env.PI_CODING_AGENT_DIR = cwd;
-    writeFileSync(join(cwd, "settings.json"), JSON.stringify({ plans: { planFileDir: "pi-plans" } }));
-    mkdirSync(join(cwd, "pi-plans"));
+    writeOwnedSettingsFixture(join(cwd, "settings.json"), { plans: { planFileDir: ".pi/planning/plans" } });
+    mkdirSync(join(cwd, ".pi/planning/plans"),{recursive:true});
     mkdirSync(join(cwd, "bin"));
     writeFileSync(
         join(cwd, "bin", "plannotator"),
@@ -52,16 +53,15 @@ function createProject(): string {
     mkdirSync(roles, { recursive: true });
     writeRole(roles, "plan", "plan-submission");
     writeRole(roles, "pi-agent");
-    writeFileSync(
+    writeOwnedSettingsFixture(
         join(cwd, ".pi", "settings.json"),
-        JSON.stringify({
+        {
             "pi-roles": {
                 defaultRole: "pi-agent",
                 roleScope: "project",
                 showWidget: false,
             },
-        }),
-    );
+        });
     return cwd;
 }
 
@@ -150,7 +150,7 @@ describe("plan submission guard real Pi lifecycle", () => {
         await session!.run(
             when("Write and approve the plan.", [
                 calls("write_plan", { path: "feature.md", content: "# Approved" }),
-                calls("submit_plan", { filePath: "pi-plans/feature.md" }),
+                calls("submit_plan", { filePath: ".pi/planning/plans/feature.md" }),
             ]),
         );
         await waitForEntry(

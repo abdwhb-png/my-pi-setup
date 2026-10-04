@@ -1,6 +1,7 @@
 {
     "$schema": "./node_modules/oxlint/configuration_schema.json",
     "plugins": ["typescript", "unicorn", "oxc"],
+    "extends": ["./.oxlintrc.storage.json"],
     "options": {
         "typeAware": true
     },

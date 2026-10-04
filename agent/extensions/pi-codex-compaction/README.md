@@ -50,7 +50,7 @@ Mid-run compaction is enabled at 90% by default:
 }
 ```
 
-Save this as `~/.pi/agent/pi-codex-compaction.json` or project-local `.pi/pi-codex-compaction.json`. Project configuration takes precedence. `thresholdRatio` must be greater than 0 and less than 1. Pi's `compaction.reserveTokens` setting still controls Pi's own threshold compaction.
+Save this as `~/.pi/agent/config/pi-codex-compaction.json` or project-local `.pi/config/pi-codex-compaction.json`. Project configuration takes precedence. `thresholdRatio` must be greater than 0 and less than 1. Pi's `compaction.reserveTokens` setting still controls Pi's own threshold compaction.
 
 ## Data handling
 

@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import {
     approvalDecisionDigest,
     type ApprovedManifest,
@@ -198,10 +199,29 @@ export class SddStore {
     private readonly sddRoot: string;
 
     constructor(agentDir: string = getAgentDir()) {
-        this.root = resolve(agentDir, ".sdd", "runs");
-        this.manifestRoot = resolve(agentDir, ".sdd", "manifests");
-        this.sddRoot = resolve(agentDir, ".sdd");
-        this.reviewRoot = resolve(agentDir, ".sdd", "reviews");
+        this.root = extensionPath(
+            { scope: "global", agentDir: agentDir },
+            "artifacts",
+            "sdd",
+            "runs",
+        );
+        this.manifestRoot = extensionPath(
+            { scope: "global", agentDir: agentDir },
+            "artifacts",
+            "sdd",
+            "manifests",
+        );
+        this.sddRoot = extensionPath(
+            { scope: "global", agentDir: agentDir },
+            "artifacts",
+            "sdd",
+        );
+        this.reviewRoot = extensionPath(
+            { scope: "global", agentDir: agentDir },
+            "artifacts",
+            "sdd",
+            "reviews",
+        );
     }
 
     create(snapshot: RunSnapshot): void {
@@ -540,10 +560,10 @@ export class SddStore {
 
     private attemptReviewCleanup(manifestId: string): ReviewCleanupResult {
         try {
-            assertNoSymlink(this.reviewRoot, ".sdd/reviews");
+            assertNoSymlink(this.reviewRoot, "artifacts/sdd/reviews");
             assertNoSymlink(
                 this.reviewPath(manifestId),
-                `.sdd/reviews/${manifestId}.json`,
+                `artifacts/sdd/reviews/${manifestId}.json`,
             );
             this.deleteReviewProgressUnderManifestTicket(manifestId);
             return { reviewCleanupPending: false };
@@ -810,16 +830,16 @@ export class SddStore {
     }
 
     private assertNoReviewBoundaries(manifestId: string): void {
-        assertNoSymlink(this.sddRoot, ".sdd");
-        assertNoSymlink(this.manifestRoot, ".sdd/manifests");
+        assertNoSymlink(this.sddRoot, "artifacts/sdd");
+        assertNoSymlink(this.manifestRoot, "artifacts/sdd/manifests");
         assertNoSymlink(
             this.manifestPath(manifestId),
-            `.sdd/manifests/${manifestId}.json`,
+            `artifacts/sdd/manifests/${manifestId}.json`,
         );
-        assertNoSymlink(this.reviewRoot, ".sdd/reviews");
+        assertNoSymlink(this.reviewRoot, "artifacts/sdd/reviews");
         assertNoSymlink(
             this.reviewPath(manifestId),
-            join(".sdd", "reviews", `${manifestId}.json`),
+            join("artifacts/sdd", "reviews", `${manifestId}.json`),
         );
     }
 }

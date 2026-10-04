@@ -4,7 +4,7 @@
  *
  * Based on amosblomqvist/pi-subagents safe-bash.ts
  *
- * Modes (settings.json `safeBash.mode`, default "coexist"):
+ * Modes (config/bash-execution.json `safeBash.mode`, default "coexist"):
  *   - "coexist": both `bash` and `safe_bash` are available.
  *   - "replace": built-in `bash` is removed from the active tool list AND any
  *     `bash` tool_call is blocked at execution time (hard guarantee). The LLM
@@ -16,7 +16,7 @@
  *     `tool_call` block here returns a clear error so the LLM switches to
  *     `safe_bash`. There is no extension API to strip tool calls from history.
  *   - Mode changes via `/safe-bash` are runtime-only and do not persist to
- *     settings.json; they reset to the configured value on next session start.
+ *     config/bash-execution.json; they reset to the configured value on next session start.
  */
 import { randomUUID } from "node:crypto";
 import { registerToolPolicyContribution } from "../../_shared/tool-policy/index.ts";
@@ -80,6 +80,7 @@ export function registerSafeBash(
     const bashDefinition = createBashToolDefinition(process.cwd());
 
     let currentMode: SafeBashMode = "coexist";
+    let configError: string | undefined;
     let currentAllowedShellCommands: AllowedShellCommand[] = [];
     let currentGuardPolicy: Record<string, SafeBashGuardPolicy> = {};
     const guardSessionApprovals = new GuardSessionApprovals();
@@ -87,7 +88,11 @@ export function registerSafeBash(
     let currentConfig: SafeBashConfig | null = null;
     let telemetryRecorder: SafeBashTelemetryRecorder | null = null;
     const visibility = registerToolPolicyContribution(pi, "safe-bash", () => ({
-        deny: currentMode === "replace" ? ["bash"] : [],
+        deny: configError
+            ? ["bash", "safe_bash"]
+            : currentMode === "replace"
+              ? ["bash"]
+              : [],
     }));
     let telemetrySequence = 0;
     let auditRecommendationTurnActive = false;
@@ -152,6 +157,7 @@ export function registerSafeBash(
             },
             async execute(toolCallId, params, signal, onUpdate, ctx) {
                 try {
+                    if (configError) throw new Error(configError);
                     if (hasHostCapabilityField(params)) {
                         throw new CapabilityError(
                             "migration-required",
@@ -187,21 +193,31 @@ export function registerSafeBash(
         pi.registerTool(createSafeBashTool());
     }
 
-    function reloadConfig(cwd: string): SafeBashMode {
+    function reloadConfig(cwd: string, projectTrusted: boolean): SafeBashMode {
         guardSessionApprovals.clear();
-        const config = loadSafeBashConfig(cwd);
-        currentConfig = config;
-        currentAllowedShellCommands = config.allowedShellCommands;
-        currentGuardPolicy = config.guardPolicy;
-        currentRewriteRules = loadBashRewrites(cwd).rules;
-        const mode = setMode(config.mode);
-        refreshSafeBashTool();
-        return mode;
+        try {
+            const config = loadSafeBashConfig(cwd, undefined, projectTrusted);
+            const rules = loadBashRewrites(cwd, projectTrusted).rules;
+            currentConfig = config;
+            currentAllowedShellCommands = config.allowedShellCommands;
+            currentGuardPolicy = config.guardPolicy;
+            currentRewriteRules = rules;
+            configError = undefined;
+            const mode = setMode(config.mode);
+            refreshSafeBashTool();
+            return mode;
+        } catch (error) {
+            configError = `Shell execution blocked by invalid configuration: ${error instanceof Error ? error.message : String(error)} Repair it and run /safe-bash reload.`;
+            visibility.refresh();
+            throw new Error(configError, { cause: error });
+        }
     }
 
     async function initializeTelemetry(ctx: ExtensionContext): Promise<void> {
         await telemetryRecorder?.flush();
-        const config = currentConfig ?? loadSafeBashConfig(ctx.cwd);
+        const config =
+            currentConfig ??
+            loadSafeBashConfig(ctx.cwd, undefined, ctx.isProjectTrusted());
         currentConfig = config;
         telemetryRecorder = createSafeBashTelemetryRecorder({
             config: config.telemetry,
@@ -239,11 +255,23 @@ export function registerSafeBash(
         telemetrySequence = 0;
         auditRecommendationTurnActive = false;
         guardSessionApprovals.clear();
-        reloadConfig(ctx.cwd);
-        await initializeTelemetry(ctx);
+        try {
+            reloadConfig(ctx.cwd, ctx.isProjectTrusted());
+            await initializeTelemetry(ctx);
+        } catch (error) {
+            ctx.ui.notify(
+                error instanceof Error ? error.message : String(error),
+                "error",
+            );
+        }
     });
 
     pi.on("tool_call", async (event) => {
+        if (
+            configError &&
+            (event.toolName === "bash" || event.toolName === "safe_bash")
+        )
+            return { block: true, reason: configError };
         if (auditRecommendationTurnActive) {
             return {
                 block: true as const,
@@ -300,7 +328,7 @@ export function registerSafeBash(
                 { value: "off", label: "off — alias for coexist" },
                 {
                     value: "reload",
-                    label: "reload — re-read safeBash from settings.json",
+                    label: "reload — re-read safeBash configuration",
                 },
                 { value: "status", label: "status — show current mode" },
             ];
@@ -311,12 +339,16 @@ export function registerSafeBash(
             const arg = args.trim().toLowerCase();
 
             if (arg === "reload" || arg === "refresh") {
-                const mode = reloadConfig(ctx.cwd);
+                const mode = reloadConfig(ctx.cwd, ctx.isProjectTrusted());
                 await initializeTelemetry(ctx);
                 ctx.ui.notify(
                     `safe-bash config reloaded (mode: ${mode})`,
                     "info",
                 );
+                return;
+            }
+            if (configError) {
+                ctx.ui.notify(configError, "error");
                 return;
             }
             if (arg === "status" || arg === "") {

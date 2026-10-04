@@ -2,7 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSandboxConfig } from "../index.ts";
+import { createTestSession } from "@abdwhb-png/pi-test-harness";
+import { applyLayoutMigration, planLayoutMigration, recoverLayoutMigration } from "../../_shared/scripts/extension-layout-migration.ts";
+import sandboxExtension, { loadSandboxConfig } from "../index.ts";
 import {
     cancelIncompleteMigration,
     previewLegacyMigration,
@@ -24,15 +26,17 @@ function fixture() {
     const project = join(projectRoot, ".pi");
     mkdirSync(agent, { recursive: true, mode: 0o700 });
     mkdirSync(project, { recursive: true, mode: 0o700 });
+    mkdirSync(join(agent,"config"));
+    mkdirSync(join(project,"config"));
     return { agent, projectRoot, project };
 }
 
 test("migration publishes host authorization without persisting a selected mode", () => {
     const { agent, projectRoot, project } = fixture();
-    const globalPath = join(agent, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
     writeFileSync(globalPath, JSON.stringify({ version: 2, machineId: "machine", mode: "host" }), { mode: 0o600 });
     const preview = previewLegacyMigration(agent, "machine", projectRoot);
-    publishLegacyMigration({ preview, globalPath, projectPath: join(project, "sandbox.json"), machineId: "machine", globalCeiling: preview.proposedGlobal });
+    publishLegacyMigration({ preview, globalPath, projectPath: join(project, "config", "sandbox.json"), machineId: "machine", globalCeiling: preview.proposedGlobal });
     const saved = JSON.parse(readFileSync(globalPath, "utf8"));
     expect(saved.host).toEqual({ allowed: true });
     expect(saved).not.toHaveProperty("mode");
@@ -41,8 +45,8 @@ test("migration publishes host authorization without persisting a selected mode"
 
 test("repeating migration leaves canonical configuration and archive count unchanged", () => {
     const { agent, projectRoot, project } = fixture();
-    const globalPath = join(agent, "sandbox.json");
-    const projectPath = join(project, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
+    const projectPath = join(project, "config", "sandbox.json");
     const original = JSON.stringify({ version: 2, machineId: "machine", host: { allowed: false }, resources: { unixSockets: [] } });
     writeFileSync(globalPath, original, { mode: 0o600 });
     writeFileSync(projectPath, "{}", { mode: 0o600 });
@@ -51,7 +55,7 @@ test("repeating migration leaves canonical configuration and archive count uncha
     expect(result.published).toBeFalse();
     expect(result.archives).toEqual([]);
     expect(readFileSync(globalPath, "utf8")).toBe(original);
-    expect(readdirSync(agent)).toEqual(["sandbox.json"]);
+    expect(readdirSync(join(agent,"config"))).toEqual(["sandbox.json"]);
 });
 
 test("migrates empty legacy additional paths without closing the project baseline", () => {
@@ -66,7 +70,7 @@ test("migrates empty legacy additional paths without closing the project baselin
     }), { mode: 0o600 });
     const preview = previewLegacyMigration(agent, "machine", projectRoot);
     expect(preview.inactive).toEqual([]);
-    publishLegacyMigration({ preview, globalPath: join(agent, "sandbox.json"), projectPath: join(project, "sandbox.json"), machineId: "machine", globalCeiling: {} });
+    publishLegacyMigration({ preview, globalPath: join(agent, "config", "sandbox.json"), projectPath: join(project, "config", "sandbox.json"), machineId: "machine", globalCeiling: {} });
     const resolved = loadSandboxConfig(projectRoot, { agentDir: agent, machineId: "machine" });
     expect(resolved.shell.state).toBe("ready");
     expect(resolved.config.filesystem.allowRead).toContain(projectRoot);
@@ -82,8 +86,8 @@ test("preview cancellation leaves historic sources and destinations untouched", 
 
     const result = publishLegacyMigration({
         preview,
-        globalPath: join(agent, "sandbox.json"),
-        projectPath: join(project, "sandbox.json"),
+        globalPath: join(agent, "config", "sandbox.json"),
+        projectPath: join(project, "config", "sandbox.json"),
         machineId: "machine",
         globalCeiling: {},
         cancelled: true,
@@ -91,8 +95,8 @@ test("preview cancellation leaves historic sources and destinations untouched", 
 
     expect(result.published).toBeFalse();
     expect(readFileSync(authority, "utf8")).toBe(bytes);
-    expect(existsSync(join(agent, "sandbox.json"))).toBeFalse();
-    expect(existsSync(join(project, "sandbox.json"))).toBeFalse();
+    expect(existsSync(join(agent, "config", "sandbox.json"))).toBeFalse();
+    expect(existsSync(join(project, "config", "sandbox.json"))).toBeFalse();
 });
 
 test("foreign and malformed historic authorities remain inactive without grants", () => {
@@ -110,11 +114,11 @@ test("foreign and malformed historic authorities remain inactive without grants"
 
 test("refuses an invalid selected destination before archives, markers, or publication", () => {
     const { agent, project } = fixture();
-    const globalPath = join(agent, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
     expect(() => publishLegacyMigration({
         preview: previewLegacyMigration(agent, "machine"),
         globalPath,
-        projectPath: join(project, "sandbox.json"),
+        projectPath: join(project, "config", "sandbox.json"),
         machineId: "machine",
         globalCeiling: { network: { allowedDomains: ["https://bad.test"] } },
     })).toThrow();
@@ -125,11 +129,11 @@ test("refuses an invalid selected destination before archives, markers, or publi
 
 test("rejects malformed nested selected settings through the active authority reader", () => {
     const { agent, project } = fixture();
-    const globalPath = join(agent, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
     expect(() => publishLegacyMigration({
         preview: previewLegacyMigration(agent, "machine"),
         globalPath,
-        projectPath: join(project, "sandbox.json"),
+        projectPath: join(project, "config", "sandbox.json"),
         machineId: "machine",
         globalCeiling: { environment: { variables: { LANG: false } } },
     })).toThrow("Sandbox policy is invalid");
@@ -139,8 +143,8 @@ test("rejects malformed nested selected settings through the active authority re
 
 test("migrates compatible settings and preserves exact bytes for every historic archive", () => {
     const { agent, projectRoot, project } = fixture();
-    const globalPath = join(agent, "sandbox.json");
-    const projectPath = join(project, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
+    const projectPath = join(project, "config", "sandbox.json");
     const globalSettings = join(agent, "settings.json");
     const projectSettings = join(project, "settings.json");
     const globalBytes = JSON.stringify({ filesystem: { allowRead: [projectRoot], allowWrite: [projectRoot] } });
@@ -191,18 +195,18 @@ test("does not union historical project Docker grants into the global ceiling", 
 
     publishLegacyMigration({
         preview,
-        globalPath: join(agent, "sandbox.json"),
-        projectPath: join(project, "sandbox.json"),
+        globalPath: join(agent, "config", "sandbox.json"),
+        projectPath: join(project, "config", "sandbox.json"),
         machineId: "machine",
         globalCeiling: {},
     });
-    expect(JSON.parse(readFileSync(join(agent, "sandbox.json"), "utf8")).docker).toBeUndefined();
+    expect(JSON.parse(readFileSync(join(agent, "config", "sandbox.json"), "utf8")).docker).toBeUndefined();
 });
 
 test("leaves a durable admission block after a real second rename failure and restores verified bytes", () => {
     const { agent, projectRoot, project } = fixture();
-    const globalPath = join(agent, "sandbox.json");
-    const projectPath = join(project, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
+    const projectPath = join(project, "config", "sandbox.json");
     const oldGlobal = "{\"enabled\":true}\n";
     const oldProject = "{\"network\":{\"allowedDomains\":[]}}\n";
     writeFileSync(globalPath, oldGlobal, { mode: 0o600 });
@@ -234,10 +238,126 @@ test("leaves a durable admission block after a real second rename failure and re
     expect(existsSync(globalPath + ".migration")).toBeFalse();
 });
 
-test("recovers when an already-proposed global destination also matches its pre-migration digest", () => {
+test("layout migration refuses an interrupted sandbox publication and preserves recovery", () => {
+    const { agent, projectRoot, project } = fixture();
+    const globalPath = join(agent, "config/sandbox.json");
+    const legacyPath = join(agent, "sandbox.json");
+    const legacy = JSON.stringify({ version: 2, machineId: "machine", host: { allowed: true } });
+    writeFileSync(legacyPath, legacy);
+    const layoutPlan = planLayoutMigration({ agentDir: agent, projects: [projectRoot] });
+    const preview = previewLegacyMigration(agent, "machine", projectRoot);
+    expect(() => publishLegacyMigration({
+        preview,
+        globalPath,
+        projectPath: join(project, "config/sandbox.json"),
+        machineId: "machine",
+        globalCeiling: {},
+        filesystem: {
+            rename(from, to) {
+                if (to === globalPath) throw new Error("interrupted publication");
+                renameSync(from, to);
+            },
+        },
+    })).toThrow("interrupted publication");
+    expect(existsSync(globalPath + ".migration")).toBeTrue();
+    const marker = readFileSync(globalPath + ".migration");
+    expect(() => applyLayoutMigration(planLayoutMigration({
+        agentDir: agent, projects: [projectRoot],
+    }))).toThrow("Finish the existing sandbox migration");
+    expect(() => applyLayoutMigration(layoutPlan)).toThrow("Finish the existing sandbox migration");
+    const layoutJournal = join(agent, "layout-journal.json");
+    writeFileSync(layoutJournal, JSON.stringify({ ...layoutPlan, state: "applying" }));
+    for (const action of ["resume", "rollback"] as const)
+        expect(() => recoverLayoutMigration(layoutJournal, action)).toThrow("Finish the existing sandbox migration");
+    expect(existsSync(globalPath)).toBeFalse();
+    expect(readFileSync(globalPath + ".migration")).toEqual(marker);
+    expect(readFileSync(legacyPath, "utf8")).toBe(legacy);
+    expect(recoverIncompleteMigration(globalPath)).toEqual({ recovered: "restored" });
+    expect(existsSync(globalPath + ".migration")).toBeFalse();
+});
+
+test("sandbox recover restores a legacy marker before the layout migration", async () => {
     const { agent, projectRoot, project } = fixture();
     const globalPath = join(agent, "sandbox.json");
     const projectPath = join(project, "sandbox.json");
+    const original = JSON.stringify({ version: 2, machineId: "machine", host: { allowed: true } });
+    writeFileSync(globalPath, original, { mode: 0o600 });
+    writeFileSync(projectPath, "{}", { mode: 0o600 });
+    expect(() => publishLegacyMigration({
+        preview: previewLegacyMigration(agent, "machine", projectRoot),
+        globalPath, projectPath, machineId: "machine", globalCeiling: {},
+        filesystem: { rename(from, to) {
+            if (to === projectPath) throw new Error("interrupted legacy publication");
+            renameSync(from, to);
+        } },
+    })).toThrow("interrupted legacy publication");
+    expect(() => planLayoutMigration({ agentDir: agent, projects: [projectRoot] })).toThrow("Finish the existing sandbox migration");
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    try {
+        process.env.PI_CODING_AGENT_DIR = agent;
+        const session = await createTestSession({ cwd: projectRoot, extensionFactories: [sandboxExtension] });
+        try {
+            await session.session.prompt("/sandbox recover");
+            expect(existsSync(globalPath + ".migration")).toBe(false);
+            expect(readFileSync(globalPath, "utf8")).toBe(original);
+            expect(session.events.uiCallsFor("notify").some(call => String(call.args[0]).includes("extension-layout migration"))).toBe(true);
+            applyLayoutMigration(planLayoutMigration({ agentDir: agent, projects: [projectRoot] }));
+            expect(loadSandboxConfig(projectRoot, { agentDir: agent, machineId: "machine" }).shell.state).toBe("ready");
+        } finally {
+            await session.session.extensionRunner!.emit({ type: "session_shutdown", reason: "quit" });
+            session.dispose();
+        }
+    } finally {
+        if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previous;
+    }
+});
+
+test("legacy migration marker blocks admissions even before its first config was published", () => {
+    const { agent, projectRoot, project } = fixture();
+    const globalPath = join(agent, "sandbox.json");
+    expect(() => publishLegacyMigration({
+        preview: previewLegacyMigration(agent, "machine", projectRoot),
+        globalPath, projectPath: join(project, "sandbox.json"), machineId: "machine", globalCeiling: {},
+        filesystem: { rename(from, to) {
+            if (to === globalPath) throw new Error("interrupted before first publication");
+            renameSync(from, to);
+        } },
+    })).toThrow("interrupted before first publication");
+    expect(existsSync(globalPath)).toBe(false);
+    expect(existsSync(globalPath + ".migration")).toBe(true);
+    expect(() => loadSandboxConfig(projectRoot, { agentDir: agent, machineId: "machine", projectTrusted: false })).toThrow("Sandbox policy is invalid");
+});
+
+test("sandbox migrate refuses unmoved legacy configuration before creating a conflicting destination", async () => {
+    const { agent, projectRoot } = fixture();
+    const original = JSON.stringify({ version: 2, machineId: "machine", host: { allowed: true } });
+    const legacyPath = join(agent, "sandbox.json");
+    writeFileSync(legacyPath, original, { mode: 0o600 });
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    try {
+        process.env.PI_CODING_AGENT_DIR = agent;
+        const session = await createTestSession({ cwd: projectRoot, extensionFactories: [sandboxExtension], mockUI: { select: 0 } });
+        try {
+            await session.session.prompt("/sandbox migrate");
+            expect(existsSync(join(agent, "config/sandbox.json"))).toBe(false);
+            expect(readFileSync(legacyPath, "utf8")).toBe(original);
+            expect(session.events.uiCallsFor("notify").some(call => String(call.args[0]).includes("extension-layout migration"))).toBe(true);
+            expect(planLayoutMigration({ agentDir: agent, projects: [projectRoot] }).changes.length).toBeGreaterThan(0);
+        } finally {
+            await session.session.extensionRunner!.emit({ type: "session_shutdown", reason: "quit" });
+            session.dispose();
+        }
+    } finally {
+        if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previous;
+    }
+});
+
+test("recovers when an already-proposed global destination also matches its pre-migration digest", () => {
+    const { agent, projectRoot, project } = fixture();
+    const globalPath = join(agent, "config", "sandbox.json");
+    const projectPath = join(project, "config", "sandbox.json");
     const globalBody = JSON.stringify({ version: 2, machineId: "machine", host: { allowed: false } }, null, 2) + "\n";
     const oldProject = "{\"network\":{\"allowedDomains\":[]}}\n";
     writeFileSync(globalPath, globalBody, { mode: 0o600 });
@@ -269,8 +389,8 @@ test("recovers when an already-proposed global destination also matches its pre-
 
 test("restores a non-UTF8 historic destination byte-for-byte after a partial publication", () => {
     const { agent, projectRoot, project } = fixture();
-    const globalPath = join(agent, "sandbox.json");
-    const projectPath = join(project, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
+    const projectPath = join(project, "config", "sandbox.json");
     const original = Buffer.from([0xff, 0x00, 0x80, 0x0a]);
     writeFileSync(globalPath, original, { mode: 0o600 });
     const preview = previewLegacyMigration(agent, "machine", projectRoot);
@@ -297,8 +417,8 @@ test("restores a non-UTF8 historic destination byte-for-byte after a partial pub
 
 test("refuses blind marker removal after an interrupted destination is edited", () => {
     const { agent, projectRoot, project } = fixture();
-    const globalPath = join(agent, "sandbox.json");
-    const projectPath = join(project, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
+    const projectPath = join(project, "config", "sandbox.json");
     const preview = previewLegacyMigration(agent, "machine", projectRoot);
     let publishedGlobal = false;
     expect(() => publishLegacyMigration({

@@ -27,11 +27,16 @@ function normalize(raw: unknown): Partial<AddonConfig> {
     return result;
 }
 
-export function loadConfig(cwd: string, agentDir?: string): AddonConfig {
+export function loadConfig(
+    cwd: string,
+    agentDir?: string,
+    projectTrusted?: boolean,
+): AddonConfig {
     return loadExtensionConfig(cwd, {
         defaults: { inherit: {} },
         normalize,
-        sources: [{ legacyFilename: "pi-permission-system-addons.json" }],
+        owner: "permissionAddons",
         agentDir,
+        projectTrusted,
     });
 }

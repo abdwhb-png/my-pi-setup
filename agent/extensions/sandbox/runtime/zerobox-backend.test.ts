@@ -1,16 +1,7 @@
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { describe, expect, it, mock } from "bun:test";
 import { existsSync } from "node:fs";
-import {
-    chmod,
-    lstat,
-    mkdir,
-    mkdtemp,
-    readFile,
-    readdir,
-    rm,
-    symlink,
-    writeFile,
-} from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -362,7 +353,7 @@ describe("Zerobox backend", () => {
                     "/proc/1/root",
                     join(parent, "r"),
                 ],
-                deny_read_globs: ["*.pem", join(parent, "secret"), join(getAgentDir(), "sandbox.json")],
+                deny_read_globs: ["*.pem", join(parent, "secret"), join(getAgentDir(), "config", "sandbox.json")],
                 allow_write: [
                     parent,
                     lease.homeDir,
@@ -373,7 +364,7 @@ describe("Zerobox backend", () => {
                     "/proc/1/root",
                     join(parent, "r"),
                 ],
-                deny_write_globs: ["private/**", join(parent, ".env"), ...(windowsMountExists ? [] : ["/mnt/c"]), "/__zerobox", join(getAgentDir(), "sandbox.json")],
+                deny_write_globs: ["private/**", join(parent, ".env"), ...(windowsMountExists ? [] : ["/mnt/c"]), "/__zerobox", join(getAgentDir(), "config", "sandbox.json")],
                 allow_net: ["example.com", "localhost:8317"],
                 allow_host_net: ["*.dev.test:443"],
                 deny_net: ["blocked.example.com"],

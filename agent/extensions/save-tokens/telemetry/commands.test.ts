@@ -70,6 +70,7 @@ function makeMockPi() {
 function makeMockCtx(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
     return {
         cwd: "/test",
+        isProjectTrusted: () => false,
         ui: {
             notify: mock(() => {}),
         },

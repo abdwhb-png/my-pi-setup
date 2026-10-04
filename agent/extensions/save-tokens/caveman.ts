@@ -1,3 +1,9 @@
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import {
+    extensionConfigPath,
+    readExtensionConfig,
+} from "../_shared/config-loader.ts";
 /**
  * pi-caveman — why use many token when few do trick
  *
@@ -11,7 +17,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
     ExtensionAPI,
@@ -100,31 +106,22 @@ async function saveCavemanSettings(
     updates: Partial<CavemanSettings>,
 ): Promise<void> {
     const agentDir = getAgentDir();
-    const settingsPath = join(agentDir, "settings.json");
+    const settingsPath = extensionConfigPath("saveTokens", {
+        scope: "global",
+        agentDir,
+    });
 
     saveSettingsQueue = saveSettingsQueue.then(async () => {
-        let settings: Record<string, unknown> = {};
-        try {
-            const raw = await readFile(settingsPath, "utf8");
-            const parsed: unknown = JSON.parse(raw);
-            if (isRecord(parsed)) settings = parsed;
-        } catch {
-            // empty or doesn't exist
-        }
-
-        const currentSaveTokens =
-            (settings.saveTokens as Record<string, unknown>) ?? {};
-        const currentCaveman =
-            (currentSaveTokens.caveman as Record<string, unknown>) ?? {};
-
-        settings.saveTokens = {
-            ...currentSaveTokens,
-            caveman: {
-                ...currentCaveman,
-                ...updates,
-            },
-        };
-
+        const raw = readExtensionConfig("saveTokens", {
+            scope: "global",
+            agentDir,
+        });
+        const settings = isRecord(raw) ? raw : {};
+        const currentCaveman = isRecord(settings.caveman)
+            ? settings.caveman
+            : {};
+        settings.caveman = { ...currentCaveman, ...updates };
+        await mkdir(dirname(settingsPath), { recursive: true });
         await writeFile(
             settingsPath,
             JSON.stringify(settings, null, 2) + "\n",
@@ -318,7 +315,7 @@ const CAVEMAN_LEVEL_RE = /ACTIVE LEVEL:\s*([\w-]+)/i;
 export function detectCavemanLevel(systemPrompt: string): string | null {
     if (typeof systemPrompt !== "string") return null;
     const match = systemPrompt.match(CAVEMAN_LEVEL_RE);
-    return match ? match[1]!.toLowerCase() : null;
+    return match ? match[1].toLowerCase() : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -333,10 +330,14 @@ export default function caveman(pi: ExtensionAPI) {
     let isActive = false;
     let configLoaded = false;
 
-    function ensureConfigLoaded() {
+    function ensureConfigLoaded(ctx: ExtensionContext) {
         if (configLoaded) return;
         configLoaded = true;
-        const cfg = loadCavemanConfig();
+        const cfg = loadCavemanConfig(
+            ctx.cwd,
+            undefined,
+            ctx.isProjectTrusted(),
+        );
         if (cfg.defaultLevel && LEVELS.includes(cfg.defaultLevel as Level)) {
             settings.defaultLevel = cfg.defaultLevel as Level;
         }
@@ -379,12 +380,12 @@ export default function caveman(pi: ExtensionAPI) {
         };
 
         if (!isActive) {
-            setFrame(anim.frames[0]!);
+            setFrame(anim.frames[0]);
             return;
         }
 
         const renderFrame = () => {
-            setFrame(anim.frames[frameIndex % anim.frames.length]!);
+            setFrame(anim.frames[frameIndex % anim.frames.length]);
             frameIndex++;
         };
 
@@ -398,7 +399,8 @@ export default function caveman(pi: ExtensionAPI) {
     // -- Restore state on session load --
 
     pi.on("session_start", async (_event, ctx) => {
-        ensureConfigLoaded();
+        configLoaded = false;
+        ensureConfigLoaded(ctx);
 
         // Check for session-level override first (resuming a session)
         let sessionLevel: Level | null = null;
@@ -485,7 +487,7 @@ export default function caveman(pi: ExtensionAPI) {
     // -- /caveman config: interactive SettingsList --
 
     async function openConfig(ctx: ExtensionContext) {
-        ensureConfigLoaded();
+        ensureConfigLoaded(ctx);
 
         await ctx.ui.custom((_tui, theme, _kb, done) => {
             const items: SettingItem[] = [
@@ -512,7 +514,11 @@ export default function caveman(pi: ExtensionAPI) {
                 ),
             );
             container.addChild(
-                new Text(theme.fg("dim", " Saved to settings.json"), 0, 0),
+                new Text(
+                    theme.fg("dim", " Saved to config/save-tokens.json"),
+                    0,
+                    0,
+                ),
             );
             container.addChild(
                 new Text(
@@ -573,7 +579,7 @@ export default function caveman(pi: ExtensionAPI) {
                 const nextIndex =
                     (currentIndex + direction + item.values.length) %
                     item.values.length;
-                const newValue = item.values[nextIndex]!;
+                const newValue = item.values[nextIndex];
                 item.currentValue = newValue;
                 settingsList.updateValue(item.id, newValue);
                 applySettingChange(item.id, newValue);
@@ -612,8 +618,8 @@ export default function caveman(pi: ExtensionAPI) {
 
     // -- Inject caveman rules into system prompt --
 
-    pi.on("before_agent_start", async (event) => {
-        ensureConfigLoaded();
+    pi.on("before_agent_start", async (event, ctx) => {
+        ensureConfigLoaded(ctx);
         const injection = buildCavemanPrompt(level);
         if (!injection) return;
         return {

@@ -1,11 +1,12 @@
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
     type ExtensionAPI,
     type ExtensionContext,
     withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import { getActiveRole } from "../_shared/pi-roles/index.ts";
 import {
     createArtifactRootRegistry,
@@ -38,7 +39,16 @@ export function createReportWriter(input: ReportWriterInput): ScopedWriter {
         projectRoot: input.cwd,
         policy: {
             id: "report-v1",
-            root: join(".pi", "artifacts", "reports", role, sessionId),
+            root: relative(
+                input.cwd,
+                extensionPath(
+                    { scope: "project", cwd: input.cwd },
+                    "artifacts",
+                    "reports",
+                    role,
+                    sessionId,
+                ),
+            ),
             allowedExtensions: [".md", ".json"],
             operations: ["create", "edit"],
             maxBytes: REPORT_MAX_BYTES,
@@ -59,9 +69,8 @@ export function createCommonArtifactRoots(): ArtifactRootRegistry {
         id: "common-reports",
         resolve(projectRoot, runId) {
             if (!SAFE_SEGMENT.test(runId)) return [];
-            const reportsRoot = join(
-                projectRoot,
-                ".pi",
+            const reportsRoot = extensionPath(
+                { scope: "project", cwd: projectRoot },
                 "artifacts",
                 "reports",
             );
@@ -102,9 +111,8 @@ function reportQueuePath(
     ctx: ExtensionContext,
     role: string | undefined,
 ): string {
-    return join(
-        ctx.cwd,
-        ".pi",
+    return extensionPath(
+        { scope: "project", cwd: ctx.cwd },
         "artifacts",
         "reports",
         safeSegment(role, "unassigned"),
@@ -219,16 +227,12 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
     // Purging run state is irreversible, so it is an operator command only: the
     // model never receives a schema that can delete artefacts.
     pi.registerCommand(PURGE_COMMAND, {
-        description:
-            "Purge the artefacts of one run. /purge-artifacts <runId>",
+        description: "Purge the artefacts of one run. /purge-artifacts <runId>",
         handler: async (args, ctx) => {
             const runId = args.trim();
             if (!runId) {
                 if (ctx.hasUI) {
-                    ctx.ui.notify(
-                        "Usage: /purge-artifacts <runId>",
-                        "warning",
-                    );
+                    ctx.ui.notify("Usage: /purge-artifacts <runId>", "warning");
                 }
                 return;
             }
@@ -243,10 +247,7 @@ export default function registerScopedWrite(pi: ExtensionAPI): void {
                 ["Purge", "Cancel"],
             );
             if (choice !== "Purge") {
-                ctx.ui.notify(
-                    `Purge cancelled for '${runId}'.`,
-                    "info",
-                );
+                ctx.ui.notify(`Purge cancelled for '${runId}'.`, "info");
                 return;
             }
             const role = currentRole(ctx);

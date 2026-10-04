@@ -1,4 +1,5 @@
-import { expect, test } from 'bun:test';
+import { configFixture } from "../_shared/testing/config-fixture.ts";
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { createHash } from 'node:crypto';
 import {
@@ -32,7 +33,10 @@ import {
     type VerificationRunner,
 } from './verification.ts';
 
-const context = { cwd: process.cwd() } as ExtensionContext;
+let originalAgentDir:string|undefined;
+beforeEach(()=>{originalAgentDir=process.env.PI_CODING_AGENT_DIR;process.env.PI_CODING_AGENT_DIR=configFixture("sddOrchestrator",{getGlobalSettings:()=>({}),getProjectSettings:()=>({})})[1];});
+afterEach(()=>{if(originalAgentDir===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=originalAgentDir;});
+const context = { cwd: process.cwd(), isProjectTrusted:()=>false } as ExtensionContext;
 
 function manifest(profile: 'direct' | 'light' | 'standard' | 'critical'):
     ApprovedManifest {
@@ -692,7 +696,7 @@ test('checks a relative approved plan from the source cwd, not the process cwd',
             store,
             client,
             () => approved,
-        ).run('run-1', { cwd: directory } as ExtensionContext);
+        ).run('run-1', { cwd: directory, isProjectTrusted:()=>false } as ExtensionContext);
 
         expect(result.state).toBe('completed');
         expect(client.requests).toHaveLength(1);
@@ -3845,4 +3849,28 @@ test('releases the agent gate on a failed/cancelled run', async () => {
 
     expect(result.state).toBe('needs_input');
     expect(calls).toEqual(['acquire', 'release']);
+});
+
+test('resolves migrated plans from the explicitly selected agent directory', async () => {
+    const { mkdirSync } = await import('node:fs');
+    const directory = mkdtempSync(join(tmpdir(), 'sdd-migrated-source-'));
+    try {
+        const agentDir = join(directory, 'agent');
+        const planPath = join(directory, 'old-plan.md');
+        const relocated = join(directory, 'new-plan.md');
+        const content = 'approved plan';
+        const digest = createHash('sha256').update(content).digest('hex');
+        mkdirSync(join(agentDir, 'artifacts'), { recursive: true });
+        writeFileSync(relocated, content);
+        writeFileSync(join(agentDir, 'artifacts/plan-path-map.json'), JSON.stringify({ [planPath]: { path: relocated, sha256: digest } }));
+        const approved = { ...manifest('light'), planPath, sourceDigest: digest };
+        const store = new MemoryStore(snapshot(1));
+        const client = new QueueDelegationClient([workerResponse('implemented')]);
+        const workflow = new SddWorkflow(store, client, () => approved, undefined, undefined, undefined, undefined, agentDir);
+        const result = await workflow.run('run-1', { cwd: directory, isProjectTrusted: () => false } as ExtensionContext);
+        expect(result.state).toBe('completed');
+        expect(client.requests).toHaveLength(1);
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
 });

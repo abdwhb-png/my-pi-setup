@@ -6,9 +6,7 @@
     "theme": "dark",
     "steeringMode": "all",
     "followUpMode": "all",
-    "npmCommand": [
-        "bun"
-    ],
+    "npmCommand": ["bun"],
     "extensions": [
         "~/.pi/agent/extensions/package-finalizer.ts",
         "~/engineering/shared-services/pi-lens-dist/index.js",
@@ -26,114 +24,6 @@
         "npm:@ogulcancelik/pi-herdr",
         "./extensions/tool-groups"
     ],
-    "packageLifecycleTrust": {
-        "confirm": false,
-        "showStatus": true
-    },
-    "plans": {
-        "planFileDir": "pi-plans"
-    },
-    "aiProviders": {
-        "providers": {
-            "cpa": true
-        }
-    },
-    "safeBash": {
-        "mode": "coexist",
-        "guardPolicy": {
-            "rm": "cwd-only",
-            "file-delete-api": "cwd-only"
-        }
-    },
-    "saveTokens": {
-        "caveman": {
-            "defaultLevel": "full"
-        },
-        "ponytail": {
-            "enabled": true,
-            "defaultMode": "full"
-        }
-    },
-    "thinkInCode": {
-        "languages": [
-            "javascript",
-            "typescript",
-            "python"
-        ],
-        "retentionHours": 24,
-        "projectQuotaBytes": 536870912,
-        "restoreTokenBudget": 1500,
-        "searchSnippetChars": 240,
-        "indexedSnippetChars": 1024,
-        "maxResultBytes": 65536,
-        "batchConcurrency": 2,
-        "maxBatchCommands": 16,
-        "network": false,
-        "commandPolicy": {
-            "guardPolicy": {},
-            "allowedShellCommands": [],
-            "rewrites": []
-        },
-        "telemetry": {
-            "enabled": true,
-            "retentionDays": 30,
-            "captureCommand": true,
-            "maxCommandLength": 10000,
-            "auditDays": 30,
-            "auditLimit": 100
-        }
-    },
-    "fileResolver": {
-        "fd": {
-            "respectGitignore": false,
-            "excludePatterns": [
-                ".git",
-                "node_modules",
-                ".cache"
-            ]
-        },
-        "rg": {
-            "respectGitignore": false
-        },
-        "ls": {
-            "respectGitignore": false
-        },
-        "additionalDirectories": [
-            "~/.pi",
-            "~/engineering/shared-services"
-        ],
-        "enableRealtimeFallback": true
-    },
-    "toolSummary": {
-        "tools": [
-            "edit_plan",
-            "write_plan",
-            "session_plan",
-            "safe_bash",
-            "bash",
-            "load_skill",
-            "subagent",
-            "mcp",
-            "@files-write",
-            "@memory",
-            "lens_diagnostics",
-            "ast_grep_replace"
-        ]
-    },
-    "translate": {
-        "model": "ocg/go-deepseek-v4-flash",
-        "defaultTargetLanguage": "en",
-        "languages": {
-            "en": "English",
-            "fr": "French"
-        }
-    },
-    "pi-roles": {
-        "roleScope": "both",
-        "defaultRole": "pi-agent",
-        "planApprovedRole": "pi-agent",
-        "showStatus": false
-    },
     "subagents": {
         "defaultModel": "cpa/ocg/go-deepseek-v4-flash",
         "turnBudget": {
@@ -157,12 +47,7 @@
             "scout": {
                 "model": "cpa/ocg/mimo-v2.5",
                 "thinking": "high",
-                "tools": [
-                    "@inspect",
-                    "@lens",
-                    "safe_bash",
-                    "write"
-                ]
+                "tools": ["@inspect", "@lens", "safe_bash", "write"]
             },
             "researcher": {
                 "model": "cpa/ocg/go-deepseek-v4-pro"
@@ -172,11 +57,7 @@
             },
             "planner": {
                 "model": "cpa/ocg/go-deepseek-v4-pro",
-                "tools": [
-                    "@inspect",
-                    "@lens",
-                    "write_plan"
-                ]
+                "tools": ["@inspect", "@lens", "write_plan"]
             },
             "oracle": {
                 "model": "zai/glm-5.2",
@@ -192,13 +73,7 @@
             },
             "context-builder": {
                 "model": "cpa/ocg/mimo-v2.5",
-                "tools": [
-                    "@inspect",
-                    "@lens",
-                    "safe_bash",
-                    "write",
-                    "@web"
-                ]
+                "tools": ["@inspect", "@lens", "safe_bash", "write", "@web"]
             },
             "plan-reviewer": {
                 "model": "openai-codex/gpt-5.6-luna"

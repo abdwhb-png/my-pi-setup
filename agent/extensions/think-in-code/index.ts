@@ -128,7 +128,11 @@ export function registerThinkInCode(
         const root = options.resolveRoot?.() ?? resolveThinkInCodeRoot();
         const storeRoot = join(root, "projects", segment);
         telemetryRoot = join(storeRoot, "telemetry");
-        config = loadThinkInCodeConfig(canonical);
+        config = loadThinkInCodeConfig(
+            ctx.cwd,
+            undefined,
+            ctx.isProjectTrusted(),
+        );
         store = new ThinkStore({
             config,
             storeRoot,

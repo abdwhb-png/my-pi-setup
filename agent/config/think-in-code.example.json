@@ -1,0 +1,25 @@
+{
+    "languages": ["javascript", "typescript", "python"],
+    "retentionHours": 24,
+    "projectQuotaBytes": 536870912,
+    "restoreTokenBudget": 1500,
+    "searchSnippetChars": 240,
+    "indexedSnippetChars": 1024,
+    "maxResultBytes": 65536,
+    "batchConcurrency": 2,
+    "maxBatchCommands": 16,
+    "network": false,
+    "commandPolicy": {
+        "guardPolicy": {},
+        "allowedShellCommands": [],
+        "rewrites": []
+    },
+    "telemetry": {
+        "enabled": true,
+        "retentionDays": 30,
+        "captureCommand": true,
+        "maxCommandLength": 10000,
+        "auditDays": 30,
+        "auditLimit": 100
+    }
+}

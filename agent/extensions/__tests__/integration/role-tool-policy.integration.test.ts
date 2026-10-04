@@ -1,3 +1,5 @@
+import { getAgentDir, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { useIsolatedAgentDir, writeOwnedSettingsFixture } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +21,8 @@ import {
     writeRoleSwitchRequest,
 } from "../../_shared/pi-roles/index.ts";
 import { publicExtensionEntrypoint } from "./public-extension-session.ts";
+
+useIsolatedAgentDir();
 
 function writeRole(cwd: string, name: string, tools?: string): void {
     const roles = join(cwd, ".pi", "roles");
@@ -46,17 +50,18 @@ test.each([
     const previousPane = process.env.HERDR_PANE_ID;
     process.env.HERDR_ENV = "1";
     process.env.HERDR_PANE_ID = "fixture";
+    new ProjectTrustStore(getAgentDir()).set(cwd, true);
     writeRole(cwd, "debug", "read");
     writeRole(cwd, "pi-agent");
-    writeFileSync(
+    writeOwnedSettingsFixture(
         join(cwd, ".pi", "settings.json"),
-        JSON.stringify({
+        {
             "pi-roles": {
                 defaultRole: "pi-agent",
                 roleScope: "project",
                 showWidget: false,
             },
-        }),
+        },
     );
     const transitionFixture = (pi: ExtensionAPI) => {
         pi.registerTool({
@@ -163,6 +168,7 @@ test.each(["default", "custom"] as const)(
             // Reproduce an external hook editing the snapshot, not the live role policy.
             writeFileSync(precedingExtension, `
 import { Type } from ${JSON.stringify(fileURLToPath(import.meta.resolve("@sinclair/typebox")))};
+
 export default function (pi) {
     pi.registerTool({
         name: "fixture_loader", label: "Fixture loader", description: "Diagnostic loader",

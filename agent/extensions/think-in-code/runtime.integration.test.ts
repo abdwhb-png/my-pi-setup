@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 /**
  * Real Pi-runtime integration tests for the Think-in-Code native extension.
  *
@@ -60,6 +61,8 @@ import {
     type RoleToolPolicyPayload,
 } from "../_shared/pi-roles/index.ts";
 import { getToolPolicy } from "../_shared/tool-policy/index.ts";
+
+useIsolatedAgentDir();
 
 function registerTestToolPolicyOwner(pi: ExtensionAPI): void {
     const policy = getToolPolicy();

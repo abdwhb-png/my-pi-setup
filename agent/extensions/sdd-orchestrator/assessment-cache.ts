@@ -7,7 +7,8 @@ import {
     unlinkSync,
     writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import { AssessmentSchema, type Assessment } from "./assessment.ts";
 import { parseAssessmentResponse } from "./prompts.ts";
 
@@ -64,7 +65,12 @@ export class AssessmentCache {
     private readonly inFlight = new Map<string, Promise<Assessment>>();
 
     constructor(agentDir: string) {
-        this.root = resolve(agentDir, ".sdd", "assessments");
+        this.root = extensionPath(
+            { scope: "global", agentDir: agentDir },
+            "artifacts",
+            "sdd",
+            "assessments",
+        );
     }
 
     async resolve(

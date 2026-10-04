@@ -1,12 +1,6 @@
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
-import {
-    mkdir,
-    mkdtemp,
-    readFile,
-    rm,
-    symlink,
-    writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
@@ -99,7 +93,7 @@ exec ${JSON.stringify(outsideHelper)}
             await symlink(outsideHelper, join(tools, "bin", "escape"));
             await symlink(join(tools, "bin", "local-tool"), join(tools, "bin", "tool-link"));
             await writeFile(
-                join(agentDir, "sandbox.json"),
+                join(agentDir, "config", "sandbox.json"),
                 `${JSON.stringify({
                     version: 2,
                     machineId,
@@ -120,11 +114,11 @@ exec ${JSON.stringify(outsideHelper)}
                 { name: "local", roots: [declaration] },
             ]);
             const global = JSON.parse(
-                await readFile(join(agentDir, "sandbox.json"), "utf8"),
+                await readFile(join(agentDir, "config", "sandbox.json"), "utf8"),
             ) as Record<string, unknown>;
             expect(global).not.toHaveProperty("filesystem");
             expect(global).not.toHaveProperty("environment.path");
-            expect(await Bun.file(join(project, ".pi", "sandbox.json")).exists()).toBe(
+            expect(await Bun.file(join(project, ".pi", "config", "sandbox.json")).exists()).toBe(
                 false,
             );
 

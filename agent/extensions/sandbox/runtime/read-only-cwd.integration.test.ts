@@ -1,5 +1,7 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createBashProcessSupervisor } from "../../_shared/command-execution/exec.ts";
@@ -23,10 +25,11 @@ test.skipIf(!hasCandidateRuntime())(
         try {
             await mkdir(join(cwd, ".pi"), { recursive: true });
             await mkdir(agentDir, { recursive: true });
+            new ProjectTrustStore(agentDir).set(cwd, true);
             await mkdir(external, { recursive: true });
             await writeFile(join(cwd, "visible.txt"), "visible");
             await writeFile(
-                join(agentDir, "sandbox.json"),
+                join(agentDir, "config", "sandbox.json"),
                 JSON.stringify({
                     version: 2,
                     machineId: localMachineId(),
@@ -39,7 +42,7 @@ test.skipIf(!hasCandidateRuntime())(
                 { mode: 0o600 },
             );
             await writeFile(
-                join(cwd, ".pi/sandbox.json"),
+                join(cwd, ".pi/config/sandbox.json"),
                 JSON.stringify({ filesystem: { allowWrite: [external] } }),
                 { mode: 0o600 },
             );

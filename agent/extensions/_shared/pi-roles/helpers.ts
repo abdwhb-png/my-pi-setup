@@ -1,10 +1,19 @@
 import { readFileSync } from "node:fs";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { readExtensionConfig } from "../config-loader.ts";
 import { getSettingsValue, type GetSettingsOptions } from "../settings.ts";
 import { findLatestActiveRoleState, type ActiveRoleState } from "./protocol.ts";
 
 export function getDefaultRole(options?: GetSettingsOptions): string {
-    return getSettingsValue("pi-roles.defaultRole", "pi-agent", options);
+    if (options?.path)
+        return getSettingsValue("defaultRole", "pi-agent", options);
+    const raw = readExtensionConfig("roles", { scope: "global" });
+    return raw &&
+        typeof raw === "object" &&
+        "defaultRole" in raw &&
+        typeof raw.defaultRole === "string"
+        ? raw.defaultRole
+        : "pi-agent";
 }
 
 export function readFrontmatter<

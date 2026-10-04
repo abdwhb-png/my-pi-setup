@@ -1,5 +1,7 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFile as writeFileSync } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadSandboxConfig } from "../index.ts";
@@ -13,9 +15,10 @@ function fixture(global: Record<string, unknown>, project: Record<string, unknow
     const agentDir = join(root, "agent");
     const cwd = join(root, "project");
     mkdirSync(agentDir);
+    new ProjectTrustStore(agentDir).set(cwd, true);
     mkdirSync(join(cwd, ".pi"), { recursive: true });
-    writeFileSync(join(agentDir, "sandbox.json"), JSON.stringify({ version: 2, machineId: "machine", ...global }), { mode: 0o600 });
-    writeFileSync(join(cwd, ".pi/sandbox.json"), JSON.stringify(project), { mode: 0o600 });
+    writeFileSync(join(agentDir, "config", "sandbox.json"), JSON.stringify({ version: 2, machineId: "machine", ...global }), { mode: 0o600 });
+    writeFileSync(join(cwd, ".pi/config/sandbox.json"), JSON.stringify(project), { mode: 0o600 });
     return { cwd, options: { agentDir, machineId: "machine" } };
 }
 

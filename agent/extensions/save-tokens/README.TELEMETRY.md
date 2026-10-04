@@ -14,23 +14,18 @@ Designed for offline analysis -- no network egress, no external service.
 
 ## Configuration
 
-Settings live in `~/.pi/agent/settings.json` (or project-local `.pi/settings.json`)
-under the `saveTokens.telemetry` key. All values are optional -- defaults apply
-when omitted.
+Settings live in `~/.pi/agent/config/save-tokens.json` or trusted project `<cwd>/.pi/config/save-tokens.json` under the `telemetry` key. All values are optional. Artifacts are stored in `<agentDir>/artifacts/save-tokens-telemetry`; directory overrides are retired.
 
 ```json
 {
-  "saveTokens": {
-    "telemetry": {
-      "enabled": true,
-      "directory": "/custom/path",
-      "captureContent": true,
-      "redactSecrets": true,
-      "retentionDays": 90,
-      "maxStringLength": 10000,
-      "maxArrayItems": 100,
-      "maxDepth": 20
-    }
+  "telemetry": {
+    "enabled": true,
+    "captureContent": true,
+    "redactSecrets": true,
+    "retentionDays": 90,
+    "maxStringLength": 10000,
+    "maxArrayItems": 100,
+    "maxDepth": 20
   }
 }
 ```
@@ -38,7 +33,6 @@ when omitted.
 | Key               | Type      | Default                             | Description                                                                                                                                                                             |
 | ----------------- | --------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `enabled`         | `boolean` | `true`                              | Master on/off switch. When `false`, no records are produced and all hooks are no-ops.                                                                                                   |
-| `directory`       | `string`  | `~/.pi/agent/save-tokens-telemetry` | Root directory for the telemetry archive. Created with `0700` permissions.                                                                                                              |
 | `captureContent`  | `boolean` | `true`                              | When `true`, captures `content`, `input`, and `details` fields from tool results (JSON-serialized, then redacted). When `false`, only metrics (content length, tool name) are recorded. |
 | `redactSecrets`   | `boolean` | `true`                              | Apply deterministic redaction to `content`/`input`/`details` before writing (see [Redaction](#redaction)).                                                                              |
 | `retentionDays`   | `integer` | `90`                                | Auto-purge threshold. Date directories older than this many days are deleted at session startup. Must be a finite positive integer.                                                     |
@@ -59,7 +53,7 @@ with defaults, even when the user provides an empty object.
 ## Archive Layout
 
 ```
-~/.pi/agent/save-tokens-telemetry/
+~/.pi/agent/artifacts/save-tokens-telemetry/
 ├── 2026-07-18/
 │   ├── abc123.jsonl
 │   └── def456.jsonl

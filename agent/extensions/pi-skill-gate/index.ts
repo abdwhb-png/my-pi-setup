@@ -1,3 +1,4 @@
+import { extensionPath } from "../_shared/extension-paths.ts";
 /**
  * pi-skill-gate — Interactive skill visibility manager.
  *
@@ -49,7 +50,11 @@ export {
 } from "../_shared/skill-visibility.ts";
 
 function analyticsPath(): string {
-    return path.join(getAgentDir(), "config", "skill-gate-analytics.json");
+    return extensionPath(
+        { scope: "global" },
+        "artifacts",
+        "skill-gate-analytics.json",
+    );
 }
 
 // ── Analytics persistence ──

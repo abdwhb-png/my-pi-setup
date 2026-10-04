@@ -1,3 +1,4 @@
+import { writeOwnedSettingsFixture } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, expect, test } from "bun:test";
 import {
     existsSync,
@@ -50,31 +51,30 @@ async function fixture(
     const cwd = mkdtempSync(join(tmpdir(), "plans-cli-integration-"));
     dirs.push(cwd);
     mkdirSync(join(cwd, ".pi/roles"), { recursive: true });
-    mkdirSync(join(cwd, "pi-plans"));
+    mkdirSync(join(cwd, ".pi/planning/plans"),{recursive:true});
     mkdirSync(join(cwd, "bin"));
     writeFileSync(
         join(cwd, "bin/plannotator"),
         `#!${process.execPath}\n${cli}`,
         { mode: 0o700 },
     );
-    writeFileSync(join(cwd, "pi-plans/test.md"), "# Plan\nInitial");
+    writeFileSync(join(cwd, ".pi/planning/plans/test.md"), "# Plan\nInitial");
     for (const name of ["plan", "implement", "other"])
         writeFileSync(
             join(cwd, ".pi/roles", `${name}.md`),
             `---\nname: ${name}\ndescription: Fixture\ntools: read, write_plan, edit_plan, submit_plan\n${name === "plan" ? "handoffGuard: plan-submission\n" : ""}---\nFixture ${name}`,
         );
-    writeFileSync(
+    writeOwnedSettingsFixture(
         join(cwd, "settings.json"),
-        JSON.stringify({
-            plans: { planFileDir: "pi-plans", ...(autoExecute === undefined ? {} : { autoExecute }) },
+        {
+            plans: { planFileDir: ".pi/planning/plans", ...(autoExecute === undefined ? {} : { autoExecute }) },
             "pi-roles": {
                 defaultRole: "other",
                 planApprovedRole: target,
                 roleScope: "project",
                 showWidget: false,
             },
-        }),
-    );
+        });
     process.env.PI_CODING_AGENT_DIR = cwd;
     process.env.PI_ROLE = role;
     process.env.PATH = `${join(cwd, "bin")}:${originalEnv.PATH}`;
@@ -118,7 +118,7 @@ const WAITING_REVIEW_CLI = `
     setInterval(() => {}, 1000);
 `;
 
-async function startSubmission(session: TestSession, cwd: string, tracked = true, filePath = "pi-plans/test.md") {
+async function startSubmission(session: TestSession, cwd: string, tracked = true, filePath = ".pi/planning/plans/test.md") {
     const completion = session.run(when("Review", [
         ...(tracked ? [calls("write_plan", { path: "test.md", content: "# Plan" })] : []),
         calls("submit_plan", { filePath }),
@@ -128,15 +128,11 @@ async function startSubmission(session: TestSession, cwd: string, tracked = true
     return { completion };
 }
 
-test("autocomplete supplies usable absolute paths for a configured external plan directory", async () => {
+test("autocomplete supplies usable absolute paths within managed plan storage", async () => {
     const { session, cwd } = await fixture("plan", WAITING_REVIEW_CLI);
-    const planDir = mkdtempSync(join(tmpdir(), "plans-external-"));
-    dirs.push(planDir);
+    const planDir = join(cwd,".pi/planning/plans");
     const filePath = join(planDir, "external.md");
     writeFileSync(filePath, "# External plan");
-    const settings = JSON.parse(readFileSync(join(cwd, "settings.json"), "utf8"));
-    settings.plans.planFileDir = planDir;
-    writeFileSync(join(cwd, "settings.json"), JSON.stringify(settings));
     const { completion } = await startSubmission(session, cwd, false, filePath);
     try {
         const command = session.session.extensionRunner!.getCommand("abandon-plan")!;
@@ -156,24 +152,24 @@ test("bare abandonment targets an untracked submission and explicit resubmission
     const { completion } = await startSubmission(session, cwd, false);
     try {
         const command = session.session.extensionRunner!.getCommand("abandon-plan")!;
-        expect(await command.getArgumentCompletions!("pi-plans/te")).toMatchObject([
-            { value: "pi-plans/test.md", label: "pi-plans/test.md" },
+        expect(await command.getArgumentCompletions!(".pi/planning/plans/te")).toMatchObject([
+            { value: ".pi/planning/plans/test.md", label: ".pi/planning/plans/test.md" },
         ]);
         await session.session.prompt("/abandon-plan");
         expect(await completion).toBeUndefined();
         expect(session.events.toolResultsFor("submit_plan")[0]).toMatchObject({ details: { decision: "abandoned" }, isError: false });
         expect(await command.getArgumentCompletions!("")).toEqual([]);
-        await session.session.prompt("/abandon-plan pi-plans/test.md");
+        await session.session.prompt("/abandon-plan .pi/planning/plans/test.md");
         expect(entries(session, "plan-review-guard:abandoned")).toHaveLength(1);
         expect(session.session.messages.filter((message) => message.role === "user" && JSON.stringify(message.content).includes("abandoned"))).toHaveLength(1);
         writeFileSync(join(cwd, "bin/plannotator"), `#!${process.execPath}\nconsole.log(JSON.stringify({decision:'approved'}));`, { mode: 0o700 });
         await session.run(when("Resume review", [
-            calls("read", { path: "pi-plans/test.md" }),
-            calls("submit_plan", { filePath: "pi-plans/test.md" }),
+            calls("read", { path: ".pi/planning/plans/test.md" }),
+            calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
         ]));
         expect(entries(session, "plan-review-guard:revision")).toMatchObject([
-            { data: { path: "pi-plans/test.md", revision: 1 } },
-            { data: { path: "pi-plans/test.md", revision: 2 } },
+            { data: { path: ".pi/planning/plans/test.md", revision: 1 } },
+            { data: { path: ".pi/planning/plans/test.md", revision: 2 } },
         ]);
         expect(entries(session, "plan-review-guard:submitted").at(-1)).toMatchObject({ data: { revision: 2, approved: true } });
         await session.session.prompt("/role implement");
@@ -191,13 +187,13 @@ test("editing an abandoned plan reinstates approval before leaving planning", as
         await session.session.prompt("/abandon-plan");
         expect(await completion).toBeUndefined();
         await session.run(when("Revise", [
-            calls("read", { path: "pi-plans/test.md" }),
+            calls("read", { path: ".pi/planning/plans/test.md" }),
             calls("edit_plan", { path: "test.md", edits: [{ oldText: "# Plan", newText: "# Revised plan" }] }),
             says("Ready for review"),
         ]));
         await session.session.prompt("/role implement");
         expect(entries(session, "pi-roles:active-role").at(-1)).toMatchObject({ data: { name: "plan" } });
-        expect(await session.session.extensionRunner!.getCommand("abandon-plan")!.getArgumentCompletions!("")).toMatchObject([{ value: "pi-plans/test.md" }]);
+        expect(await session.session.extensionRunner!.getCommand("abandon-plan")!.getArgumentCompletions!("")).toMatchObject([{ value: ".pi/planning/plans/test.md" }]);
     } finally {
         if (session.session.isStreaming) await session.session.abort();
         await completion;
@@ -218,7 +214,7 @@ test.each(["declined", "revision", "approved", "session"])("confirmation revalid
             }
             session.session.sessionManager.appendCustomEntry(
                 change === "revision" ? "plan-review-guard:revision" : "plan-review-guard:submitted",
-                { path: "pi-plans/test.md", revision: change === "revision" ? 2 : 1, approved: true },
+                { path: ".pi/planning/plans/test.md", revision: change === "revision" ? 2 : 1, approved: true },
             );
             return true;
         },
@@ -239,12 +235,12 @@ test("abandoning another draft leaves the active review open and its pending gua
     await session.run(when("Another draft", [calls("write_plan", { path: "other.md", content: "# Other" }), says("Draft saved") ]));
     const { completion } = await startSubmission(session, cwd);
     try {
-        await session.session.prompt("/abandon-plan pi-plans/other.md");
+        await session.session.prompt("/abandon-plan .pi/planning/plans/other.md");
         expect(existsSync(join(cwd, "terminated"))).toBe(false);
-        expect(entries(session, "plan-review-guard:abandoned")).toMatchObject([{ data: { path: "pi-plans/other.md" } }]);
+        expect(entries(session, "plan-review-guard:abandoned")).toMatchObject([{ data: { path: ".pi/planning/plans/other.md" } }]);
         await session.session.prompt("/role implement");
         expect(entries(session, "pi-roles:active-role").at(-1)).toMatchObject({ data: { name: "plan" } });
-        expect(await session.session.extensionRunner!.getCommand("abandon-plan")!.getArgumentCompletions!("")).toMatchObject([{ value: "pi-plans/test.md" }]);
+        expect(await session.session.extensionRunner!.getCommand("abandon-plan")!.getArgumentCompletions!("")).toMatchObject([{ value: ".pi/planning/plans/test.md" }]);
     } finally {
         if (session.session.isStreaming) await session.session.abort();
         await completion;
@@ -255,12 +251,12 @@ test("abandon-plan cancels the pending submission, informs the agent and release
     const { session, cwd } = await fixture("plan", WAITING_REVIEW_CLI);
     const run = session.run(when("Review", [
         calls("write_plan", { path: "test.md", content: "# Keep this plan" }),
-        calls("submit_plan", { filePath: "pi-plans/test.md" }),
+        calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
         says("Planning paused"),
     ])).catch((error: Error) => error);
     try {
         await waitUntil(() => existsSync(join(cwd, "started")), "review process");
-        await session.session.prompt("/abandon-plan pi-plans/test.md");
+        await session.session.prompt("/abandon-plan .pi/planning/plans/test.md");
         expect(entries(session, "plan-review-guard:abandoned")).toHaveLength(1);
         await waitUntil(() => session.events.toolResultsFor("submit_plan").length === 1, "abandoned tool result");
         const result = await run;
@@ -270,14 +266,14 @@ test("abandon-plan cancels the pending submission, informs the agent and release
             details: { decision: "abandoned", approved: false },
         });
         expect(existsSync(join(cwd, "terminated"))).toBe(true);
-        expect(readFileSync(join(cwd, "pi-plans/test.md"), "utf8")).toBe("# Keep this plan");
+        expect(readFileSync(join(cwd, ".pi/planning/plans/test.md"), "utf8")).toBe("# Keep this plan");
         expect(entries(session, "plan-review-guard:abandoned")).toHaveLength(1);
         expect(entries(session, "plans:approved")).toHaveLength(0);
         expect(entries(session, "pi-roles:switch-request")).toHaveLength(0);
         const notices = session.session.messages.filter((message) => message.role === "user" &&
             JSON.stringify(message.content).includes("abandoned"));
         expect(notices).toHaveLength(1);
-        expect(JSON.stringify(notices)).toContain("pi-plans/test.md");
+        expect(JSON.stringify(notices)).toContain(".pi/planning/plans/test.md");
         expect(entries(session, "pi-roles:active-role").at(-1)).toMatchObject({ data: { name: "plan" } });
         await session.session.prompt("/role implement");
         expect(entries(session, "pi-roles:active-role").at(-1)).toMatchObject({ data: { name: "implement" } });
@@ -313,7 +309,7 @@ test("submit_plan approval terminates planning and switches once to the explicit
                 path: "test.md",
                 content: "# Approved plan",
             }),
-            calls("submit_plan", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
         ]),
     );
     await waitFor(session, "pi-roles:switch-processed");
@@ -338,9 +334,9 @@ test("idle abandonment does not consume a paused approval's role switch", async 
     await session.run(when("Approve one plan", [
         calls("write_plan", { path: "test.md", content: "# Approved" }),
         calls("write_plan", { path: "other.md", content: "# Pending" }),
-        calls("submit_plan", { filePath: "pi-plans/test.md" }),
+        calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
     ]));
-    await session.session.prompt("/abandon-plan pi-plans/other.md");
+    await session.session.prompt("/abandon-plan .pi/planning/plans/other.md");
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(entries(session, "pi-roles:active-role").at(-1)).toMatchObject({ data: { name: "plan" } });
     expect(entries(session, "pi-roles:switch-processed")).toHaveLength(0);
@@ -355,7 +351,7 @@ test("autoExecute false pauses approval until the next user message, including r
     const { session } = await fixture("plan", "console.log(JSON.stringify({decision:'approved'}));", "implement", false);
     await session.run(when("Approve", [
         calls("write_plan", { path: "test.md", content: "# Plan" }),
-        calls("submit_plan", { filePath: "pi-plans/test.md" }),
+        calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
     ]));
     expect(entries(session, "plans:approved")).toMatchObject([{ data: { autoExecute: false } }]);
     await session.session.extensionRunner!.emit({ type: "agent_end", messages: [] });
@@ -378,7 +374,7 @@ test("missing implementation target leaves the planning role and records termina
     await session.run(
         when("Approve", [
             calls("write_plan", { path: "test.md", content: "# Plan" }),
-            calls("submit_plan", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
         ]),
     );
     await waitFor(session, "pi-roles:switch-failed");
@@ -408,7 +404,7 @@ test("a second pending plan prevents approval from bypassing the revision guard"
                 path: "pending.md",
                 content: "# Still a draft",
             }),
-            calls("submit_plan", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
         ]),
     );
     await waitFor(session, "pi-roles:switch-failed");
@@ -426,7 +422,7 @@ test("a target deleted during review is re-resolved before handoff", async () =>
     await session.run(
         when("Approve", [
             calls("write_plan", { path: "test.md", content: "# Plan" }),
-            calls("submit_plan", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
         ]),
     );
     await waitFor(session, "pi-roles:switch-failed");
@@ -443,7 +439,7 @@ test("guarded role exposes submit_plan; annotation does not approve or switch", 
                 path: "test.md",
                 content: "# Plan\nRevision",
             }),
-            calls("submit_plan", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
             says("Awaiting revision"),
         ]),
     );
@@ -461,7 +457,7 @@ test("unguarded role hides submit_plan and blocks forced calls", async () => {
         type: "tool_call",
         toolName: "submit_plan",
         toolCallId: "forced",
-        input: { filePath: "pi-plans/test.md" },
+        input: { filePath: ".pi/planning/plans/test.md" },
     });
     expect(blocked?.block).toBe(true);
 });
@@ -487,7 +483,7 @@ test.each(["", "Existing draft"])(
         const before = session.session.messages.length;
         expect(runner.getCommand("review-file")).toBeDefined();
         await session.session.prompt(
-            `/review-file ${join(cwd, "pi-plans/test.md")}`,
+            `/review-file ${join(cwd, ".pi/planning/plans/test.md")}`,
         );
         expect(draft).toBe(initial || "Review notes");
         expect(session.session.messages).toHaveLength(before);
@@ -522,7 +518,7 @@ test("changed file cannot be approved", async () => {
     );
     await session.run(
         when("Review", [
-            calls("submit_plan", { filePath: "pi-plans/test.md" }),
+            calls("submit_plan", { filePath: ".pi/planning/plans/test.md" }),
             says("Needs fresh review"),
         ]),
     );
@@ -537,10 +533,10 @@ test("changed file cannot be approved", async () => {
 test("a symlink escaping the plan directory cannot be submitted", async () => {
     const { session, cwd } = await fixture();
     writeFileSync(join(cwd, "outside.md"), "# Outside");
-    symlinkSync(join(cwd, "outside.md"), join(cwd, "pi-plans/escape.md"));
+    symlinkSync(join(cwd, "outside.md"), join(cwd, ".pi/planning/plans/escape.md"));
     await session.run(
         when("Review", [
-            calls("submit_plan", { filePath: "pi-plans/escape.md" }),
+            calls("submit_plan", { filePath: ".pi/planning/plans/escape.md" }),
             says("Rejected"),
         ]),
     );
@@ -571,13 +567,13 @@ test("shutdown cancels the open review; concurrent commands cannot replace it or
     );
     const command = runner.getCommand("review-file")!;
     const first = command.handler(
-        "pi-plans/test.md",
+        ".pi/planning/plans/test.md",
         runner.createCommandContext(),
     );
     for (let i = 0; !existsSync(join(cwd, "started")) && i < 100; i++)
         await new Promise((resolve) => setTimeout(resolve, 10));
     expect(existsSync(join(cwd, "started"))).toBe(true);
-    await command.handler("pi-plans/test.md", runner.createCommandContext());
+    await command.handler(".pi/planning/plans/test.md", runner.createCommandContext());
     expect(JSON.stringify(session.events.uiCallsFor("notify"))).toContain(
         "already open",
     );

@@ -12,7 +12,7 @@ P1 and P2 use the same backend. The effective configuration determines `default`
 
 ## Configuration ownership
 
-Use `~/.pi/agent/sandbox.json` for global defaults and ceilings. Place project restrictions in `<project>/.pi/sandbox.json`. Do not keep a global registry of projects or configure additional capability files.
+Use `~/.pi/agent/config/sandbox.json` for global defaults and ceilings. Place project restrictions in `<project>/.pi/config/sandbox.json`. Do not keep a global registry of projects or configure additional capability files.
 
 An absent project field inherits the global setting. An empty list closes that resource list. Restrictions take precedence over grants. Legacy PATH entries control lookup only and require separate read permission.
 

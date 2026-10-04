@@ -1,3 +1,5 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeOwnedSettingsFixture } from "../_shared/testing/config-fixture.ts";
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -388,9 +390,9 @@ describe('loadSaveTokensConfig', () => {
         const cwd = mkdtempSync(join(tmpdir(), 'save-tokens-project-'));
         try {
             mkdirSync(join(cwd, '.pi'));
-            writeFileSync(
+            writeOwnedSettingsFixture(
                 join(agentDir, 'settings.json'),
-                JSON.stringify({
+                {
                     saveTokens: {
                         compressor: {
                             backend: 'headroom',
@@ -403,21 +405,20 @@ describe('loadSaveTokensConfig', () => {
                             showStatus: true,
                         },
                     },
-                }),
-            );
-            writeFileSync(
+                });
+            writeOwnedSettingsFixture(
                 join(cwd, '.pi', 'settings.json'),
-                JSON.stringify({
+                {
                     saveTokens: {
                         compressor: {
                             backends: { headroom: { timeoutMs: 500 } },
                             capErrors: false,
                         },
                     },
-                }),
-            );
+                });
 
-            const cfg = loadSaveTokensConfig(cwd, agentDir);
+            new ProjectTrustStore(agentDir).set(cwd, true);
+            const cfg = loadSaveTokensConfig(cwd, agentDir, true);
             expect(cfg.compressor).toMatchObject({
                 backend: 'headroom',
                 showStatus: true,

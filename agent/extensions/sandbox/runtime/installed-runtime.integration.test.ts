@@ -1,6 +1,7 @@
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -90,7 +91,7 @@ test.skipIf(
             await Promise.all([
                 writeFile(marker, "host-only", { mode: 0o600 }),
                 writeFile(
-                    join(agentDir, "sandbox.json"),
+                    join(agentDir, "config", "sandbox.json"),
                     `${JSON.stringify({
                         version: 2,
                         machineId: localMachineId(),

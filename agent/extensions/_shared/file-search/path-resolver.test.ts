@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, it, expect } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,20 +10,26 @@ import {
 } from './path-resolver.ts';
 
 let configuredProject: string;
+let previousAgentDir: string | undefined;
 
 beforeAll(() => {
     configuredProject = mkdtempSync(join(tmpdir(), 'pi-path-config-'));
-    mkdirSync(join(configuredProject, '.pi'));
+    previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = configuredProject;
+    new ProjectTrustStore(configuredProject).set(configuredProject, true);
+    mkdirSync(join(configuredProject, '.pi/config'), { recursive: true });
     writeFileSync(
-        join(configuredProject, '.pi', 'settings.json'),
+        join(configuredProject, '.pi/config/pi-file-resolver.json'),
         JSON.stringify({
-            fileResolver: { additionalDirectories: ['/extra/root'] },
+            additionalDirectories: ['/extra/root'],
         }),
     );
     clearPathResolverCache();
 });
 
 afterAll(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     clearPathResolverCache();
     rmSync(configuredProject, { recursive: true, force: true });
 });

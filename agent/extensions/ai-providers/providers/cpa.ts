@@ -1,3 +1,4 @@
+import { extensionPath } from "../../_shared/extension-paths.ts";
 /**
  * CLIProxyAPI (CPA) provider for Pi.
  *
@@ -65,8 +66,9 @@ export interface CpaProviderHandle {
 }
 
 /** Persists informational drift from non-interactive CPA invocations. */
-const HEADLESS_DRIFT_DIAGNOSTIC_PATH = join(
-    getAgentDir(),
+const HEADLESS_DRIFT_DIAGNOSTIC_PATH = extensionPath(
+    { scope: "global" },
+    "artifacts",
     "cache",
     "ai-providers",
     "cpa-catalog-drift.v1.json",
@@ -233,8 +235,9 @@ export function registerCpaProvider(
     const buildModels = options?.buildModels ?? buildCpaModels;
     const getCatalog = options?.getCatalog ?? getModelsDevCatalog;
     const catalogCache = createCpaCatalogCache({
-        cachePath: join(
-            getAgentDir(),
+        cachePath: extensionPath(
+            { scope: "global" },
+            "artifacts",
             "cache",
             "ai-providers",
             "cpa-catalog.v1.json",

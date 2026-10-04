@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
 import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -10,6 +11,8 @@ import {
 } from "../_shared/shell-runtime/index.ts";
 import { claimSandboxRuntime, publishSandboxRuntime, releaseSandboxRuntime } from "../_shared/sandbox-runtime/index.ts";
 import bashExecution from "./index.ts";
+
+useIsolatedAgentDir();
 
 async function fixture() {
     const cwd = await mkdtemp(resolve(import.meta.dir, ".interruption-"));

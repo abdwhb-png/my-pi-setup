@@ -1,7 +1,12 @@
-import { describe, it, expect, mock } from 'bun:test';
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { afterAll, describe, it, expect, mock } from 'bun:test';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+const piCore = await import("@earendil-works/pi-coding-agent");
+const isolatedAgentDir = mkdtempSync(join(tmpdir(), "resolver-agent-"));
+afterAll(() => rmSync(isolatedAgentDir, { recursive: true, force: true }));
 // Mock pi-tui modules before importing the module under test
 mock.module('@earendil-works/pi-tui', () => ({
     fuzzyFilter: <T>(
@@ -24,8 +29,9 @@ mock.module('@earendil-works/pi-tui', () => ({
 
 // Mock pi-coding-agent settings to avoid loading the full TUI stack
 mock.module('@earendil-works/pi-coding-agent', () => {
-    const agentDir = '/tmp/pi-agent';
+    const agentDir = isolatedAgentDir;
     return {
+        ...piCore,
         getAgentDir: () => agentDir,
         SettingsManager: {
             create: () => ({

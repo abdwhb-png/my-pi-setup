@@ -18,7 +18,7 @@ function unsupportedOperation(): never {
 test("portable legacy fixture survives dynamic extension import and temporary-store status", async () => {
     const temporaryAgentDir = mkdtempSync(join(tmpdir(), "sdd-migration-"));
     try {
-        const queueDirectory = join(temporaryAgentDir, ".sdd", "queue");
+        const queueDirectory = join(temporaryAgentDir, "artifacts/sdd", "queue");
         mkdirSync(queueDirectory, { recursive: true });
         const temporaryQueuePath = join(queueDirectory, `${RUN_ID}.json`);
         const portablePlanPath = "~/work/plans/portable.md";

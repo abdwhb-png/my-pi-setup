@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -996,6 +996,7 @@ describe("extension registration", () => {
 
   function createMockContext(sessionEntries: Array<{ type: string; customType?: string; data?: object }> = []) {
     return {
+      isProjectTrusted:()=>false,
       hasUI: true,
       signal: undefined,
       sessionManager: {
@@ -1012,9 +1013,9 @@ describe("extension registration", () => {
 
   it("respects archiveOriginal false even when cap fallback is configured", async () => {
     const archiveRoot = mkdtempSync(join(tmpdir(), "compressor-opt-out-"));
-    const previousRoot = process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
+    const previousRoot = process.env.PI_CODING_AGENT_DIR;
     const realFetch = globalThis.fetch;
-    process.env.PI_TOOL_RESULT_ARCHIVE_DIR = archiveRoot;
+    process.env.PI_CODING_AGENT_DIR = archiveRoot;
     globalThis.fetch = mock(async () =>
       Response.json({ compressed_output: "x" }),
     ) as unknown as typeof fetch;
@@ -1042,18 +1043,19 @@ describe("extension registration", () => {
       expect(readdirSync(archiveRoot)).toEqual([]);
     } finally {
       globalThis.fetch = realFetch;
-      if (previousRoot === undefined) delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
-      else process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previousRoot;
+      if (previousRoot === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousRoot;
       rmSync(archiveRoot, { recursive: true, force: true });
     }
   });
 
   it("prunes managed archives once on session start", async () => {
     const archiveRoot = mkdtempSync(join(tmpdir(), "compressor-prune-"));
-    const previousRoot = process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
-    process.env.PI_TOOL_RESULT_ARCHIVE_DIR = archiveRoot;
+    const previousRoot = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = archiveRoot;
+    mkdirSync(join(archiveRoot, "artifacts/tool-result-archive"), {recursive:true});
     const oldPath = join(
-      archiveRoot,
+      archiveRoot, "artifacts/tool-result-archive",
       `${Date.now() - 31 * 86_400_000}-bash-call-aaaaaaaaaaaa.txt`,
     );
     writeFileSync(oldPath, "old");
@@ -1069,8 +1071,8 @@ describe("extension registration", () => {
       await handlers.get("session_start")?.({}, createMockContext() as any);
       expect(existsSync(oldPath)).toBe(false);
     } finally {
-      if (previousRoot === undefined) delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
-      else process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previousRoot;
+      if (previousRoot === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousRoot;
       rmSync(archiveRoot, { recursive: true, force: true });
     }
   });

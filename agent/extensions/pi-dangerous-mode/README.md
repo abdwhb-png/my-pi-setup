@@ -38,9 +38,9 @@ Unattended does not inspect plans, extract objectives, register completion tools
 
 ## Configuration
 
-Global configuration: `~/.pi/agent/pi-dangerous-mode.json`
+Global configuration: `~/.pi/agent/config/pi-dangerous-mode.json`
 
-Project configuration: `<cwd>/.pi/pi-dangerous-mode.json`
+Project configuration: `<cwd>/.pi/config/pi-dangerous-mode.json`
 
 ```json
 {

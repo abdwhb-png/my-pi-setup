@@ -1,7 +1,8 @@
+import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
 import { expect, spyOn, test } from "bun:test";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -47,7 +48,7 @@ test.skipIf(
             await writeFile(marker, "fixture-host\n");
             await writeFile(join(cwd, "private.txt"), "project-private\n");
             await writeFile(
-                join(agentDir, "sandbox.json"),
+                join(agentDir, "config", "sandbox.json"),
                 JSON.stringify({
                     version: 2,
                     machineId: localMachineId(),
@@ -56,7 +57,7 @@ test.skipIf(
                 { mode: 0o600 },
             );
             await writeFile(
-                join(cwd, ".pi/sandbox.json"),
+                join(cwd, ".pi/config/sandbox.json"),
                 JSON.stringify(
                     profile === "custom"
                         ? { filesystem: { denyRead: ["private.txt"] } }

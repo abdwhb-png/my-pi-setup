@@ -1,6 +1,7 @@
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
 import { createServer } from "node:http";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createSandboxService } from "./service.ts";
 import { createZeroboxBackend } from "./zerobox-backend.ts";
@@ -15,7 +16,7 @@ test.skipIf(process.platform !== "linux" || !hasCandidateRuntime())("real isolat
     const leaseRoot = await mkdtemp("/var/tmp/z-");
     const previous = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = cwd;
-    const authority = join(cwd, "sandbox.json");
+    const authority = join(cwd, "config", "sandbox.json");
     await writeFile(authority, "authority fixture", { mode: 0o600 });
     let requests = 0;
     const server = createServer((_request, response) => { requests++; response.end("host listener"); });

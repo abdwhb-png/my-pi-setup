@@ -31,6 +31,7 @@ export {
 
 import type {
     ExtensionAPI,
+    ExtensionContext,
     ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -99,8 +100,9 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
     /** Re-read settings + re-discover roles from disk. Centralized so every */
     /** entry point that needs fresh state ({@link session_start}, every `/role` */
     /** invocation, `/role reload`) goes through one path. */
-    const refreshFromDisk = (cwd: string): void => {
-        state.settings = loadSettings(cwd);
+    const refreshFromDisk = (ctx: ExtensionContext): void => {
+        const cwd = ctx.cwd;
+        state.settings = loadSettings(cwd, ctx.isProjectTrusted());
         const discovery = discoverRoles(
             cwd,
             state.settings.roleScope ?? "both",
@@ -135,7 +137,7 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
     // --------------------------------------------------------------- session_start
     pi.on("session_start", async (event, ctx) => {
         getToolPolicy().beginSession(ctx.sessionManager.getSessionId());
-        refreshFromDisk(ctx.cwd);
+        refreshFromDisk(ctx);
 
         const restored = findRestoredState(ctx);
         debugLog(
@@ -192,7 +194,7 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
         );
         if (switchReq) {
             const planApproval = isPlanApprovalReason(switchReq.data.reason);
-            if (planApproval) refreshFromDisk(ctx.cwd);
+            if (planApproval) refreshFromDisk(ctx);
             debugLog("index", "consumed switch-request", {
                 targetRole: switchReq.data.targetRole,
                 reason: switchReq.data.reason,
@@ -240,7 +242,7 @@ export default function registerPiRolesCore(pi: ExtensionAPI): void {
             // README guarantees "/role <name> always re-reads from disk". Refresh
             // before any subcommand so /list shows new files and /<name> picks up
             // edits without an explicit /role reload.
-            refreshFromDisk(ctx.cwd);
+            refreshFromDisk(ctx);
 
             const tokens = args.trim().split(/\s+/).filter(Boolean);
             const sub = tokens[0];
@@ -516,7 +518,8 @@ async function applyResolved(
         const message =
             err instanceof RoleResolutionError ? err.message : String(err);
         if (options.strict) {
-            if (ctx.hasUI) ctx.ui.notify(`pi-roles: ${message} Role unchanged.`, "error");
+            if (ctx.hasUI)
+                ctx.ui.notify(`pi-roles: ${message} Role unchanged.`, "error");
             return { applied: false, reason: message };
         }
         debugLog("index", `applyResolved fallback: ${message}`);

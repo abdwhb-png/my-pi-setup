@@ -1,3 +1,4 @@
+import { writeOwnedSettingsFixture } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 import {
     createTestSession,
@@ -12,10 +13,12 @@ import { publicExtensionEntrypoints } from "./public-extension-session.ts";
 
 const sessions: TestSession[] = [];
 const directories: string[] = [];
+const originalAgentDir=process.env.PI_CODING_AGENT_DIR;
 
 function createProject(): string {
     const cwd = mkdtempSync(join(tmpdir(), "session-plan-persistence-"));
     directories.push(cwd);
+    process.env.PI_CODING_AGENT_DIR=cwd;
     const roles = join(cwd, ".pi", "roles");
     mkdirSync(roles, { recursive: true });
     writeFileSync(
@@ -29,20 +32,20 @@ function createProject(): string {
             "# Quick planner fixture",
         ].join("\n"),
     );
-    writeFileSync(
+    writeOwnedSettingsFixture(
         join(cwd, ".pi", "settings.json"),
-        JSON.stringify({
+        {
             "pi-roles": {
                 defaultRole: "quick-planner",
                 roleScope: "project",
                 showWidget: false,
             },
-        }),
-    );
+        });
     return cwd;
 }
 
 afterEach(() => {
+    if(originalAgentDir===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=originalAgentDir;
     for (const session of sessions.splice(0)) session.dispose();
     for (const directory of directories.splice(0)) {
         rmSync(directory, { recursive: true, force: true });

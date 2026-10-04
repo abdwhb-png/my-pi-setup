@@ -29,7 +29,7 @@ describe("brainstorm artifact store", () => {
 
     expect(result).toMatchObject({
       revision: 1,
-      path: "docs/brainstorms/2026-07-24-safer-phase-workflow/01-discovery-r001.md",
+      path: ".pi/artifacts/brainstorms/2026-07-24-safer-phase-workflow/01-discovery-r001.md",
     });
     expect(await readFile(join(projectRoot, result.path), "utf8")).toBe("# Discovery\n\nVerified facts.\n");
 
@@ -46,7 +46,7 @@ describe("brainstorm artifact store", () => {
   it("reports an invalid existing manifest without leaking a JSON parser error", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "brainstorm-artifacts-"));
     temporaryDirectories.push(projectRoot);
-    const manifestDir = join(projectRoot, "docs/brainstorms/2026-07-24-invalid-manifest");
+    const manifestDir = join(projectRoot, ".pi/artifacts/brainstorms/2026-07-24-invalid-manifest");
     await mkdir(manifestDir, { recursive: true });
     await writeFile(join(manifestDir, "manifest.json"), "not json");
 
@@ -110,7 +110,7 @@ describe("brainstorm artifact store", () => {
     const revised = store.submit({ phase: "discovery", markdown: "revised discovery", tool: "brainstorm_submit_discovery" });
 
     expect(revised.revision).toBe(2);
-    expect(await readFile(join(projectRoot, "docs/brainstorms/2026-07-24-revision-history/01-discovery-r001.md"), "utf8")).toBe("first discovery\n");
+    expect(await readFile(join(projectRoot, ".pi/artifacts/brainstorms/2026-07-24-revision-history/01-discovery-r001.md"), "utf8")).toBe("first discovery\n");
     expect(store.getManifest().revisions).toMatchObject([
       { phase: "discovery", revision: 1, status: "stale" },
       { phase: "understanding", revision: 1, status: "stale" },
@@ -131,7 +131,7 @@ describe("brainstorm artifact store", () => {
     });
 
     const result = store.submit({ phase: "discovery", markdown: "resumed", tool: "brainstorm_submit_discovery" });
-    expect(result.path).toStartWith("docs/brainstorms/2026-07-24-long-brainstorm/");
+    expect(result.path).toStartWith(".pi/artifacts/brainstorms/2026-07-24-long-brainstorm/");
   });
 
   it("uses a distinct durable root when the same topic runs twice on one day", async () => {

@@ -125,7 +125,6 @@ describe('config loader', () => {
         const cfg = normalizeConfig({
             telemetry: {
                 enabled: 'yes',
-                directory: 123,
                 redactSecrets: 'no',
                 retentionDays: '90',
                 maxStringLength: -1,
@@ -146,7 +145,6 @@ describe('config loader', () => {
             normalizeConfig({
                 telemetry: {
                     enabled: true,
-                    directory: '/tmp/telemetry',
                     captureContent: true,
                     redactSecrets: true,
                     retentionDays: 90,
@@ -159,7 +157,7 @@ describe('config loader', () => {
         ).toEqual({
             telemetry: {
                 enabled: true,
-                directory: '/tmp/telemetry',
+                directory: resolveDefaultTelemetryDirectory(),
                 captureContent: true,
                 redactSecrets: true,
                 retentionDays: 90,
@@ -400,15 +398,15 @@ describe('telemetry default directory', () => {
     it('resolveDefaultTelemetryDirectory returns path ending with save-tokens-telemetry', async () => {
         const mod = await import('./config');
         const dir = mod.resolveDefaultTelemetryDirectory();
-        expect(dir.endsWith('.pi/agent/save-tokens-telemetry')).toBe(true);
+        expect(dir.endsWith('artifacts/save-tokens-telemetry')).toBe(true);
         expect(dir).toContain('save-tokens-telemetry');
     });
 
-    it('resolveDefaultTelemetryDirectory uses homedir portable resolution', async () => {
+    it('resolveDefaultTelemetryDirectory uses the active agent directory', async () => {
         const mod = await import('./config');
         const dir = mod.resolveDefaultTelemetryDirectory();
         // Must use os.homedir() or process.env.HOME, not hardcoded ~
         expect(dir).not.toContain('~');
-        expect(dir).toContain('.pi/agent/save-tokens-telemetry');
+        expect(dir).toBe(join(isolatedAgentDir!, 'artifacts/save-tokens-telemetry'));
     });
 });

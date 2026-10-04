@@ -1,12 +1,16 @@
+import { getAgentDir, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { useIsolatedAgentDir, writeOwnedSettingsFixture } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { registerToolPolicyContribution } from "../../_shared/tool-policy/index.ts";
 import { publicExtensionEntrypoints } from "./public-extension-session.ts";
+
+useIsolatedAgentDir();
 
 test.each([
     { active: "bash", prompt: "standard" },
@@ -18,11 +22,12 @@ test.each([
     async ({ active, prompt }) => {
         const cwd = await mkdtemp(join(tmpdir(), "pi-shell-visible-"));
         await mkdir(join(cwd, ".pi"));
-        await writeFile(
+        new ProjectTrustStore(getAgentDir()).set(cwd, true);
+        writeOwnedSettingsFixture(
             join(cwd, ".pi/settings.json"),
-            JSON.stringify({
+            {
                 safeBash: { mode: "coexist", telemetry: { enabled: false } },
-            }),
+            },
         );
         const session = await createTestSession({
             cwd,

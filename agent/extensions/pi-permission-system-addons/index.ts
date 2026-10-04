@@ -48,6 +48,7 @@ function errorMessage(error: unknown): string {
 export default function (pi: ExtensionAPI) {
     const sessionCache = new InMemorySessionCache();
     let config: AddonConfig = { inherit: {} };
+    let configError: string | undefined;
     let sessionYolo = false;
     let sessionId: string | null = null;
     const authorizerDisposers: Array<() => void> = [];
@@ -146,20 +147,18 @@ export default function (pi: ExtensionAPI) {
         },
     });
 
-    function reloadConfig(cwd: string) {
+    function reloadConfig(cwd: string, projectTrusted: boolean) {
         try {
-            config = loadConfig(cwd);
+            config = loadConfig(cwd, undefined, projectTrusted);
+            configError = undefined;
         } catch (err) {
-            config = { inherit: {} };
-            console.error(
-                "[pi-permission-system-addons] Config error:",
-                errorMessage(err),
-            );
+            configError = `Permission configuration failed: ${errorMessage(err)} Repair the configuration and reload Pi before running tools.`;
         }
     }
 
     pi.on("session_start", (event, ctx) => {
-        reloadConfig(ctx.cwd);
+        reloadConfig(ctx.cwd, ctx.isProjectTrusted());
+        if (configError) ctx.ui.notify(configError, "error");
         sessionCache.clear();
         sessionYolo =
             event.reason === "new" || event.reason === "fork"
@@ -183,6 +182,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.on("tool_call", async (event, ctx) => {
+        if (configError) return { block: true, reason: configError };
         if (!config.inherit[event.toolName]) return undefined;
 
         const result = await checkAndBlock(

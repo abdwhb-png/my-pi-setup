@@ -1,13 +1,25 @@
+import { tmpdir } from "node:os";
 import { emptyGrants, publishShellRuntime, releaseShellRuntime } from '../_shared/shell-runtime/index.ts';
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { claimSandboxRuntime, publishSandboxRuntime, releaseSandboxRuntime } from "../_shared/sandbox-runtime/index.ts";
+const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+let isolatedAgentDir: string;
+beforeEach(async () => {
+    isolatedAgentDir = await mkdtemp(resolve(tmpdir(), "bash-provenance-agent-"));
+    process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+});
+afterEach(async () => {
+    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    await rm(isolatedAgentDir, { recursive: true, force: true });
+});
 test("real Pi persists host execution provenance and exposes it to the model on success and failure", async () => {
     const cwd = await mkdtemp(resolve(import.meta.dir, ".provenance-"));
-    await mkdir(resolve(cwd, ".pi"));
-    await writeFile(resolve(cwd, ".pi/settings.json"), JSON.stringify({ safeBash: { mode: "coexist" } }));
+    await mkdir(resolve(isolatedAgentDir, "config"));
+    await writeFile(resolve(isolatedAgentDir, "config/bash-execution.json"), JSON.stringify({ safeBash: { mode: "coexist" } }));
     const owner = Symbol("provenance-test");
     claimSandboxRuntime(owner);
     publishSandboxRuntime(owner, { state: "disabled" });

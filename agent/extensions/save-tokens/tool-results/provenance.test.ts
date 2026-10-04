@@ -8,16 +8,16 @@ import { archiveOriginalToolResult } from './archive.ts';
 import { createToolResultHandler } from './core.ts';
 
 let root: string | undefined;
-const previous = process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
+const previous = process.env.PI_CODING_AGENT_DIR;
 afterEach(async () => {
-    if (previous === undefined) delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
-    else process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previous;
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
     if (root) await rm(root, { recursive: true, force: true });
 });
 
 test('compression preserves process facts before the provenance hook and bypasses archive pages', async () => {
     root = await mkdtemp(join(tmpdir(), 'pi-archive-provenance-'));
-    process.env.PI_TOOL_RESULT_ARCHIVE_DIR = root;
+    process.env.PI_CODING_AGENT_DIR = root;
     let calls = 0;
     const handler = createToolResultHandler({ backend: { id: 'headroom', compress: async () => { calls++; return { output: 'summary' }; } }, aggregates: false, archiveOriginal: archiveOriginalToolResult });
     const execution = { ...hostExecution('process'), backend: 'local' as const, exitCode: 0 };

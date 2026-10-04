@@ -28,7 +28,7 @@ The review tier covers the general code reviewer plus the security, architecture
 2. Primary = best model for the tier — priority: **availability > cost**.
 3. Always prefix with the provider lock (`cpa/`) to survive `/model` changes.
 4. Record the primary model in `MEMORY.md` and `settings.json` → `subagents.agentOverrides`.
-5. Record the per-agent advice candidates in `extensions/pi-subagents-addons/config.json` → `fallbackAdvice.fallbackModels`. Models themselves stay in `settings.json`; only the candidates belong to the addon.
+5. Record the per-agent advice candidates in `<agentDir>/config/pi-subagents-addons.json` → `fallbackAdvice.fallbackModels`. Resolve `<agentDir>` through Pi's `getAgentDir()`, which honors `PI_CODING_AGENT_DIR` and defaults to `~/.pi/agent`. Models themselves stay in `settings.json`; only the candidates belong to the addon.
 
 ### When a child fails on its provider
 

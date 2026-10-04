@@ -33,6 +33,7 @@ function fixture() {
     cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
     process.env.PI_CODING_AGENT_DIR = dir;
     mkdirSync(join(dir, "config"));
+    mkdirSync(join(dir, "artifacts"));
     return dir;
 }
 
@@ -122,7 +123,7 @@ test("a failed save does not change the active choices", () => {
 
 test("analytics failures remain visible instead of silently replacing counts", () => {
     const dir = fixture();
-    const path = join(dir, "config/skill-gate-analytics.json");
+    const path = join(dir, "artifacts/skill-gate-analytics.json");
     writeFileSync(path, "{broken");
     expect(() => loadAnalytics()).toThrow();
     expect(readFileSync(path, "utf8")).toBe("{broken");
@@ -133,7 +134,7 @@ test("usage counts once per name and reflects later external edits", () => {
     expect(incrementSkillUsage(["tdd", "tdd", "bun"])).toBe(2);
     expect(loadAnalytics()).toEqual({ counts: { tdd: 1, bun: 1 } });
     writeFileSync(
-        join(dir, "config/skill-gate-analytics.json"),
+        join(dir, "artifacts/skill-gate-analytics.json"),
         JSON.stringify({ counts: { tdd: 10 } }),
     );
     expect(loadAnalytics()).toEqual({ counts: { tdd: 10 } });

@@ -1,3 +1,5 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeOwnedSettingsFixture } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -150,6 +152,7 @@ function createFixtureProject(targetRole: string): string {
     const cwd = mkdtempSync(join(tmpdir(), 'plan-auto-switch-integration-'));
     tempDirectories.push(cwd);
     process.env.PI_CODING_AGENT_DIR = cwd;
+    new ProjectTrustStore(cwd).set(cwd, true);
 
     const rolesDirectory = join(cwd, '.pi', 'roles');
     mkdirSync(rolesDirectory, { recursive: true });
@@ -158,17 +161,16 @@ function createFixtureProject(targetRole: string): string {
         writeRole(rolesDirectory, targetRole, 'edit, write, safe_bash');
     }
 
-    writeFileSync(
+    writeOwnedSettingsFixture(
         join(cwd, '.pi', 'settings.json'),
-        JSON.stringify({
+        {
             'pi-roles': {
                 defaultRole: targetRole,
                 planApprovedRole: targetRole,
                 roleScope: 'project',
                 showWidget: false,
             },
-        }),
-    );
+        });
 
     return cwd;
 }

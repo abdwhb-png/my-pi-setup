@@ -43,7 +43,7 @@ Do not skip this step because a requirement appears obvious.
 
 ### 3. Write the Plan
 
-Choose a descriptive filename. Use `write_plan` and `edit_plan` with a path relative to the plans folder, then pass the path returned by the tool to `submit_plan`. Reuse the same file for revisions.
+Plans live under `<cwd>/.pi/planning/plans/`. Choose a descriptive filename. Use `write_plan` and `edit_plan` with a path relative to the plans folder, then pass the path returned by the tool to `submit_plan`. Reuse the same file for revisions.
 
 Write a rigorous implementation plan containing:
 

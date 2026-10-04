@@ -5,8 +5,8 @@ const getActiveRole = mock();
 const readFrontmatter = mock();
 
 mock.module("../_shared/plans-config.ts", () => ({
-    loadPlansConfig: () => ({ planFileDir: "pi-plans" }),
-    resolvePlanFileDir: () => "pi-plans",
+    loadPlansConfig: () => ({ planFileDir: ".pi/planning/plans" }),
+    resolvePlanFileDir: () => ".pi/planning/plans",
 }));
 const realRoles = await import("../_shared/pi-roles/index.ts");
 mock.module("../_shared/pi-roles/index.ts", () => ({
@@ -85,7 +85,7 @@ describe("plan submission guard", () => {
             {
                 toolName: "submit_plan",
                 isError: false,
-                input: { filePath: "pi-plans/feature.md" },
+                input: { filePath: ".pi/planning/plans/feature.md" },
                 details: { approved: true },
             },
             ctx,
@@ -94,12 +94,12 @@ describe("plan submission guard", () => {
         expect(entries).toEqual([
             expect.objectContaining({
                 customType: PLAN_REVIEW_REVISION_ENTRY,
-                data: expect.objectContaining({ path: "pi-plans/feature.md", revision: 1 }),
+                data: expect.objectContaining({ path: ".pi/planning/plans/feature.md", revision: 1 }),
             }),
             expect.objectContaining({
                 customType: PLAN_REVIEW_SUBMITTED_ENTRY,
                 data: expect.objectContaining({
-                    path: "pi-plans/feature.md",
+                    path: ".pi/planning/plans/feature.md",
                     revision: 1,
                     approved: true,
                 }),
@@ -123,14 +123,14 @@ describe("plan submission guard", () => {
             {
                 toolName: "plan_submit",
                 isError: false,
-                input: { filePath: "pi-plans/feature.md" },
+                input: { filePath: ".pi/planning/plans/feature.md" },
                 details: { approved: true },
             },
             ctx,
         );
         expect(entries.at(-1)).toMatchObject({
             customType: PLAN_REVIEW_SUBMITTED_ENTRY,
-            data: { approved: true, path: "pi-plans/feature.md" },
+            data: { approved: true, path: ".pi/planning/plans/feature.md" },
         });
     });
 
@@ -167,7 +167,7 @@ describe("plan submission guard", () => {
             {
                 toolName: "submit_plan",
                 isError: false,
-                input: { filePath: "pi-plans/approved.md" },
+                input: { filePath: ".pi/planning/plans/approved.md" },
                 details: { approved: true },
             },
             ctx,
@@ -192,7 +192,7 @@ describe("plan submission guard", () => {
             }),
         ).toEqual({
             allow: false,
-            reason: "Plan approval required for pi-plans/feature.md. Submit it for approval before leaving this planning role.",
+            reason: "Plan approval required for .pi/planning/plans/feature.md. Submit it for approval before leaving this planning role.",
         });
     });
 
@@ -211,7 +211,7 @@ describe("plan submission guard", () => {
             {
                 toolName: "submit_plan",
                 isError: false,
-                input: { filePath: "pi-plans/feature.md" },
+                input: { filePath: ".pi/planning/plans/feature.md" },
                 details: { approved: true },
             },
             ctx,
@@ -259,7 +259,7 @@ describe("plan submission guard", () => {
             ctx,
         );
 
-        await commands.get("abandon-plan")!.handler("pi-plans/feature.md", ctx);
+        await commands.get("abandon-plan")!.handler(".pi/planning/plans/feature.md", ctx);
 
         expect(ctx.ui.confirm).toHaveBeenCalledTimes(1);
         expect(entries).toEqual(
@@ -267,7 +267,7 @@ describe("plan submission guard", () => {
                 expect.objectContaining({
                     customType: "plan-review-guard:abandoned",
                     data: expect.objectContaining({
-                        path: "pi-plans/feature.md",
+                        path: ".pi/planning/plans/feature.md",
                         revision: 1,
                     }),
                 }),

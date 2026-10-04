@@ -1,3 +1,4 @@
+import { writeFixtureFile as writeFileSync } from "../_shared/testing/config-fixture.ts";
 import { afterEach, expect, test } from "bun:test";
 import {
     copyFileSync,
@@ -6,7 +7,7 @@ import {
     mkdtempSync,
     rmSync,
     symlinkSync,
-    writeFileSync,
+
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -43,7 +44,7 @@ function fixture() {
         real,
         configure(filesystem: object) {
             writeFileSync(
-                join(agentDir, "sandbox.json"),
+                join(agentDir, "config", "sandbox.json"),
                 JSON.stringify({
                     version: 2,
                     machineId: "fixture",

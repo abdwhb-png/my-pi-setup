@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter } from "node:path";
+import { extensionConfigPath } from "../_shared/config-loader.ts";
 import {
     parseSandboxExecutionContext,
     type SandboxExecutionContext,
@@ -51,7 +52,10 @@ export function inspectSandboxDoctor(
     const path =
         admitted?.environment.path.map(expandShellPathEntry).join(delimiter) ??
         buildShellPath(config.environment.path);
-    const projectPath = join(shell.projectRoot, ".pi/sandbox.json");
+    const projectPath = extensionConfigPath("sandbox", {
+        scope: "project",
+        cwd: shell.projectRoot,
+    });
     return {
         resolved,
         admitted,

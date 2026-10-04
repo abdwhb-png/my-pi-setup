@@ -129,13 +129,18 @@ function mergeConfig(
     };
 }
 
-export function loadSddConfig(cwd: string, agentDir?: string): SddConfig {
+export function loadSddConfig(
+    cwd: string,
+    agentDir?: string,
+    projectTrusted?: boolean,
+): SddConfig {
     const config = loadExtensionConfig<ConfigLayer>(cwd, {
         defaults: DEFAULT_CONFIG,
         normalize: normalizeConfig,
         merge: mergeConfig,
-        sources: [{ settingsKey: "sddOrchestrator" }],
+        owner: "sddOrchestrator",
         agentDir,
+        projectTrusted,
     });
     return {
         ...config,

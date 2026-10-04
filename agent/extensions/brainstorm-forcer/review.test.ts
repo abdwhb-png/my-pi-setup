@@ -43,7 +43,7 @@ describe("ArtifactReviewView", () => {
     const body = createBody(Array.from({ length: 8 }, (_, index) => `artifact line ${index + 1}`));
     const view = new ArtifactReviewView({
       title: "Discovery r002 → Understanding",
-      subtitle: "docs/brainstorms/run/01-discovery-r002.md",
+      subtitle: ".pi/artifacts/brainstorms/run/01-discovery-r002.md",
       body,
       viewportRows: 3,
       theme,
@@ -70,7 +70,7 @@ describe("ArtifactReviewView", () => {
     const createView = () =>
       new ArtifactReviewView({
         title: "Complete brainstorm",
-        subtitle: "docs/brainstorms/run/artifact.md",
+        subtitle: ".pi/artifacts/brainstorms/run/artifact.md",
         body,
         getTerminalRows: () => 20,
         theme,

@@ -1,12 +1,15 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 /**
  * Tests for the audit-mode owner extension.
  *
  * Exercises registration and commands through the real Pi runtime.
  */
 
-import { mock, describe, it, expect, beforeEach, afterAll, spyOn } from "bun:test";
+import { mock, describe, it, expect, beforeEach, afterAll } from "bun:test";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
-import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import activate, { renderAuditWidget } from "./index.ts";
 
 // ─── Mock pi framework ───────────────────────────────────────────────────────
@@ -15,14 +18,26 @@ type NotifySeverity = "info" | "warning" | "error";
 
 type NotifyCall = [message: string, severity: NotifySeverity];
 const mockNotify = mock<(...args: NotifyCall) => void>();
-const session = await createTestSession({ extensionFactories: [activate] });
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+const root = mkdtempSync(join(tmpdir(), "audit-config-"));
+const agentDir = join(root, "agent"), cwd = join(root, "project");
+afterAll(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    rmSync(root, { recursive: true, force: true });
+});
+mkdirSync(join(agentDir, "config"), { recursive: true });
+mkdirSync(join(cwd, ".pi/config"), { recursive: true });
+process.env.PI_CODING_AGENT_DIR = agentDir;
+new ProjectTrustStore(agentDir).set(cwd, true);
+const session = await createTestSession({ cwd, extensionFactories: [activate] });
 const runner = session.session.extensionRunner;
 if (!runner) throw new Error("Pi extension runtime unavailable");
 runner.setUIContext({ ...runner.createContext().ui, notify: mockNotify });
 const command = runner.getCommand("audit-mode");
 const completionsFn = command?.getArgumentCompletions;
 
-// ─── Configurable SettingsManager factory ────────────────────────────────────
+// ─── Configuration fixtures ────────────────────────────────────
 // Tests set `settingsFactory` to control what each `fireSessionStart` returns.
 
 type SettingsFactory = (cwd: string) => {
@@ -35,15 +50,7 @@ let settingsFactory: SettingsFactory = (_cwd) => ({
   getProjectSettings: () => ({}),
 });
 
-const settingsSpy = spyOn(SettingsManager, "create").mockImplementation(cwd => {
-  const fixture = settingsFactory(cwd ?? session.cwd);
-  const manager = SettingsManager.inMemory();
-  spyOn(manager, "getGlobalSettings").mockImplementation(fixture.getGlobalSettings);
-  spyOn(manager, "getProjectSettings").mockImplementation(fixture.getProjectSettings);
-  return manager;
-});
 afterAll(async () => {
-  settingsSpy.mockRestore();
   await runner.emit({ type: "session_shutdown", reason: "quit" });
   session.dispose();
 });
@@ -56,6 +63,9 @@ const { getActiveProfile, resetAuditState, getActivePolicy } = await import(
 );
 
 async function fireSessionStart(): Promise<void> {
+  const config = settingsFactory(cwd);
+  writeFileSync(join(agentDir, "config/audit-mode.json"), JSON.stringify(config.getGlobalSettings().auditMode ?? {}));
+  writeFileSync(join(cwd, ".pi/config/audit-mode.json"), JSON.stringify(config.getProjectSettings().auditMode ?? {}));
   await runner.emit({ type: "session_start", reason: "resume" });
 }
 
@@ -101,11 +111,9 @@ describe("audit-mode extension — session_start", () => {
     expect(getActiveProfile()).toBe("audit");
   });
 
-  it("falls back to standard profile when settings load throws", async () => {
-    settingsFactory = (_cwd) => {
-      throw new Error("settings unavailable");
-    };
-    await fireSessionStart();
+  it("falls back to standard profile when configuration is malformed", async () => {
+    writeFileSync(join(agentDir, "config/audit-mode.json"), "{bad");
+    await runner.emit({ type: "session_start", reason: "resume" });
     expect(getActiveProfile()).toBe("standard");
   });
 

@@ -9,8 +9,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 mock.module("../_shared/plans-config.ts", () => ({
-    loadPlansConfig: () => ({ planFileDir: "pi-plans" }),
-    resolvePlanFileDir: () => "pi-plans",
+    loadPlansConfig: () => ({ planFileDir: ".pi/planning/plans" }),
+    resolvePlanFileDir: () => ".pi/planning/plans",
 }));
 
 const { default: registerPlans } = await import("./index.ts");
@@ -119,7 +119,7 @@ describe("/show-saved-plans", () => {
         expect(message).toContain("active topic");
         expect(message).toContain("v2");
         expect(message.match(/active topic/g)).toHaveLength(1);
-        expect(message).toContain("pi-plans/active.md");
+        expect(message).toContain(".pi/planning/plans/active.md");
         expect(message).not.toContain("other topic");
     });
 });

@@ -5,7 +5,7 @@ import { resolveToolAliases } from "../_shared/tool-groups/resolver.ts";
 
 const AGENT_DIR = join(import.meta.dir, "..", "..");
 const GROUPS: Record<string, string[]> = JSON.parse(
-    readFileSync(join(AGENT_DIR, "tool-groups.json"), "utf8"),
+    readFileSync(join(AGENT_DIR, "config/tool-groups.json"), "utf8"),
 ).groups;
 
 function isStringArray(value: unknown): value is string[] {

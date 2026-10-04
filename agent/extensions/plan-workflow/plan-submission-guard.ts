@@ -1,19 +1,17 @@
 // oxlint-disable typescript/no-restricted-types -- Pi tool results and session entries intentionally expose unknown at extension boundaries.
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import type {
     ExtensionAPI,
     ExtensionCommandContext,
     ExtensionContext,
     ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import {
     requiresPlanSubmission as roleRequiresPlanSubmission,
     registerRoleTransitionPolicy,
 } from "../_shared/pi-roles/index.ts";
-import {
-    loadPlansConfig,
-    resolvePlanFileDir,
-} from "../_shared/plans-config.ts";
+
 import { getToolPolicy } from "../_shared/tool-policy/index.ts";
 import {
     getPlanReviewState,
@@ -59,7 +57,7 @@ function asLifecycleEntries(entries: readonly unknown[]): LifecycleEntry[] {
 }
 
 function getPlanDir(ctx: ExtensionContext): string | undefined {
-    return resolvePlanFileDir(loadPlansConfig(ctx.cwd, ctx.isProjectTrusted()));
+    return extensionPath({ scope: "project", cwd: ctx.cwd }, "plans");
 }
 
 function requiresPlanSubmission(): boolean {
@@ -220,9 +218,10 @@ export default function registerPlanSubmissionGuard(
             return listPlanReviewStates(ctx.sessionManager.getEntries())
                 .filter(isPending)
                 .map((state) => ({
-                    value: state.path.startsWith("../")
-                        ? resolve(ctx.cwd, state.path)
-                        : state.path,
+                    value:
+                        isAbsolute(prefix) || state.path.startsWith("../")
+                            ? resolve(ctx.cwd, state.path)
+                            : state.path,
                     label: state.path,
                     description: `Revision ${state.revision} · ${state.status}`,
                 }))

@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
 import {
     calls,
@@ -19,6 +20,8 @@ import {
     publishShellRuntime,
     releaseShellRuntime,
 } from "../_shared/shell-runtime/index.ts";
+useIsolatedAgentDir();
+
 test("real Pi permission extension blocks an ordinary host-mode command before process launch", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-permission-mode-"));
     const cwd = join(root, "project");

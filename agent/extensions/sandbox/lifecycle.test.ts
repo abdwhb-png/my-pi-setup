@@ -1,3 +1,5 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
 /// <reference types="bun" />
 
 import {
@@ -16,7 +18,7 @@ import {
     SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DockerTargetAccess } from "./docker-access.ts";
@@ -313,17 +315,18 @@ afterEach(async () => {
 const { localMachineId } = await import("./capabilities/authority.ts");
 
 async function writeActiveConfig(cwd: string): Promise<void> {
+    new ProjectTrustStore(isolatedAgentDirectory).set(cwd, true);
     await writeFile(
-        join(isolatedAgentDirectory, "sandbox.json"),
+        join(isolatedAgentDirectory, "config", "sandbox.json"),
         JSON.stringify({ version: 2, machineId: localMachineId(), docker: { allowed: false } }),
         { mode: 0o600 },
     );
-    await writeFile(join(cwd, ".pi", "sandbox.json"), "{}", { mode: 0o600 });
+    await writeFile(join(cwd, ".pi", "config", "sandbox.json"), "{}", { mode: 0o600 });
 }
 
 async function writeGlobalConfig(config: Record<string, unknown>): Promise<void> {
     await writeFile(
-        join(isolatedAgentDirectory, "sandbox.json"),
+        join(isolatedAgentDirectory, "config", "sandbox.json"),
         JSON.stringify({ version: 2, machineId: localMachineId(), ...config }),
         { mode: 0o600 },
     );
@@ -342,7 +345,7 @@ async function writeEnabledBreakGlassPolicy(cwd: string, breakGlassMaxMinutes?: 
                 : { breakGlassMaxMinutes }),
         },
     });
-    await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({
+    await writeFile(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({
         docker: {
             enabled: true,
             targets: [{
@@ -385,7 +388,7 @@ async function writeHostCeiling(
     includeNetwork = true,
 ): Promise<void> {
     await writeFile(
-        join(isolatedAgentDirectory, "sandbox.json"),
+        join(isolatedAgentDirectory, "config", "sandbox.json"),
         JSON.stringify({
             version: 2,
             machineId: localMachineId(),
@@ -398,7 +401,7 @@ async function writeHostCeiling(
         { mode: 0o600 },
     );
     await writeFile(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify(project),
         { mode: 0o600 },
     );
@@ -423,7 +426,7 @@ describe("sandbox lifecycle", () => {
     it("blocks writes to the active global authority", async () => {
         const registered = registerSandbox();
         const result = await registered.handlers.get("tool_call")?.(
-            { toolName: "write", input: { path: join(isolatedAgentDirectory, "sandbox.json"), content: "{}" } },
+            { toolName: "write", input: { path: join(isolatedAgentDirectory, "config", "sandbox.json"), content: "{}" } },
             context(cwd),
         );
         expect(result).toMatchObject({ block: true });
@@ -462,8 +465,8 @@ describe("sandbox lifecycle", () => {
         const ctx = context(cwd, undefined, "session-a", true, {
             select: ["Cancel"],
         });
-        const globalPath = join(isolatedAgentDirectory, "sandbox.json");
-        const projectPath = join(cwd, ".pi", "sandbox.json");
+        const globalPath = join(isolatedAgentDirectory, "config", "sandbox.json");
+        const projectPath = join(cwd, ".pi", "config", "sandbox.json");
         const beforeGlobal = await readFile(globalPath);
         const beforeProject = await readFile(projectPath);
 
@@ -486,11 +489,11 @@ describe("sandbox lifecycle", () => {
         await sandboxCommand(registered).handler("migrate", ctx);
 
         const global = JSON.parse(
-            await readFile(join(isolatedAgentDirectory, "sandbox.json"), "utf8"),
+            await readFile(join(isolatedAgentDirectory, "config", "sandbox.json"), "utf8"),
         );
         expect(global).toMatchObject({ version: 2, machineId: localMachineId() });
         expect(
-            JSON.parse(await readFile(join(cwd, ".pi", "sandbox.json"), "utf8")),
+            JSON.parse(await readFile(join(cwd, ".pi", "config", "sandbox.json"), "utf8")),
         ).toEqual({});
         expect(createSandboxService.mock.calls.length).toBe(before + 1);
         expect(notifyCalls(ctx).at(-1)?.[0]).toContain("completed");
@@ -515,8 +518,8 @@ describe("sandbox lifecycle", () => {
         await writeGlobalConfig({ mode: "sandbox" });
         const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
-        const globalPath = join(isolatedAgentDirectory, "sandbox.json");
-        const projectPath = join(cwd, ".pi", "sandbox.json");
+        const globalPath = join(isolatedAgentDirectory, "config", "sandbox.json");
+        const projectPath = join(cwd, ".pi", "config", "sandbox.json");
         const beforeGlobal = await readFile(globalPath);
         const beforeProject = await readFile(projectPath);
         const preview = previewLegacyMigration(
@@ -622,7 +625,7 @@ describe("sandbox lifecycle", () => {
         const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
         const before = createSandboxService.mock.calls.length;
-        const globalPath = join(isolatedAgentDirectory, "sandbox.json");
+        const globalPath = join(isolatedAgentDirectory, "config", "sandbox.json");
 
         await writeFile(globalPath, "{", { mode: 0o600 });
         const supervisor = createBashProcessSupervisor();
@@ -657,7 +660,7 @@ describe("sandbox lifecycle", () => {
             network: { allowedDomains: ["first.example", "second.example"] },
             docker: { allowed: false },
         });
-        const projectPath = join(cwd, ".pi", "sandbox.json");
+        const projectPath = join(cwd, ".pi", "config", "sandbox.json");
         await writeFile(
             projectPath,
             JSON.stringify({ network: { allowedDomains: ["first.example"] } }),
@@ -742,13 +745,13 @@ describe("sandbox lifecycle", () => {
     });
 
     it("preserves project Docker restrictions when toggling enabled", async () => {
-        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ docker: { enabled: false, targets: [{ selector: { type: "container-name", name: "api" }, operations: ["ps"] }] } }));
+        await writeFile(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ docker: { enabled: false, targets: [{ selector: { type: "container-name", name: "api" }, operations: ["ps"] }] } }));
         const registered = registerSandbox(); const ctx = context(cwd);
         await registered.handlers.get("session_start")?.({}, ctx);
         await sandboxCommand(registered).handler("docker on", ctx);
         await sandboxCommand(registered).handler("docker off", ctx);
         await sandboxCommand(registered).handler("docker on", ctx);
-        const saved = JSON.parse(await readFile(join(cwd, ".pi", "sandbox.json"), "utf8"));
+        const saved = JSON.parse(await readFile(join(cwd, ".pi", "config", "sandbox.json"), "utf8"));
         expect(saved.docker).toMatchObject({ enabled: true, targets: [{ selector: { name: "api" }, operations: ["ps"] }] });
         await registered.handlers.get("session_shutdown")?.({}, ctx);
     });
@@ -788,7 +791,7 @@ describe("sandbox lifecycle", () => {
             },
         });
         await writeFile(
-            join(cwd, ".pi", "sandbox.json"),
+            join(cwd, ".pi", "config", "sandbox.json"),
             JSON.stringify({ docker: { enabled: false } }),
             { mode: 0o600 },
         );
@@ -1296,7 +1299,7 @@ describe("sandbox lifecycle", () => {
             unsafeTargets: [api],
             trustedExecTargets: [api],
         } });
-        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ docker: {
+        await writeFile(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ docker: {
             enabled: true,
             targets: [
                 { selector: api, operations: ["ps", "inspect", "logs", "stats", "exec"] },
@@ -1326,7 +1329,7 @@ describe("sandbox lifecycle", () => {
 
     it("keeps the full Docker host-control warning at startup", async () => {
         await writeGlobalConfig({ docker: { allowed: true, mode: "full" } });
-        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ docker: { enabled: true } }), { mode: 0o600 });
+        await writeFile(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ docker: { enabled: true } }), { mode: 0o600 });
         const session = await createTestSession({ cwd, extensionFactories: [sandboxExtension] });
         try {
             const startup = session.events.uiCallsFor("notify").at(-1);
@@ -1354,7 +1357,7 @@ describe("sandbox lifecycle", () => {
 
     it("updates Docker client availability only after admission through the Pi lifecycle", async () => {
         await writeGlobalConfig({ host: { allowed: true }, docker: { allowed: true } });
-        await writeFile(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ docker: { enabled: true } }), { mode: 0o600 });
+        await writeFile(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ docker: { enabled: true } }), { mode: 0o600 });
         const session = await createTestSession({
             cwd,
             extensionFactories: [sandboxExtension],

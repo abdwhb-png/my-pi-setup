@@ -1,3 +1,4 @@
+import { loadExtensionConfig } from "./_shared/config-loader.ts";
 /**
  * Session Status Bar Extension
  *
@@ -9,11 +10,9 @@
  *
  * Pure rendering lives in ./_shared/status-segments.ts (unit-tested).
  *
- * Config: ~/.pi/agent/session-status-bar.json
+ * Config: ~/.pi/agent/config/session-status-bar.json
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
@@ -23,7 +22,7 @@ import type {
     SessionEntry,
     SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createWidget, getSessionUsageMetrics } from "./_shared/fancy-footer";
 import { getBranch } from "./_shared/git-helper";
@@ -139,21 +138,12 @@ const SEGMENTS: readonly SegmentDef[] = [
     },
 ];
 
-function getConfigPath(): string {
-    return join(getAgentDir(), "session-status-bar.json");
-}
-
 function loadConfig(): StatusBarConfig {
-    const path = getConfigPath();
-    if (!existsSync(path)) return { ...DEFAULT_CONFIG };
-    try {
-        const raw = JSON.parse(
-            readFileSync(path, "utf-8"),
-        ) as Partial<StatusBarConfig>;
-        return { ...DEFAULT_CONFIG, ...raw };
-    } catch {
-        return { ...DEFAULT_CONFIG };
-    }
+    return loadExtensionConfig(process.cwd(), {
+        owner: "sessionStatusBar",
+        defaults: DEFAULT_CONFIG,
+        normalize: (raw) => raw as Partial<StatusBarConfig>,
+    });
 }
 
 function isSessionMessageEntry(e: SessionEntry): e is SessionMessageEntry {

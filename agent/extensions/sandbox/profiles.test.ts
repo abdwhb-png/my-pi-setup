@@ -1,27 +1,30 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFile as writeFileSync } from "../_shared/testing/config-fixture.ts";
 import { afterEach, expect, test } from "bun:test";
-import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadSandboxConfig } from "./index.ts";
 const roots: string[] = []; afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
-function fixture() { const root = mkdtempSync(join(tmpdir(), "pi-profiles-")); roots.push(root); const agentDir = join(root, "agent"); const cwd = join(root, "project"); mkdirSync(agentDir); mkdirSync(join(cwd, ".pi"), { recursive: true }); return { root, agentDir, cwd }; }
-function global(agentDir: string, machineId: string, policy: Record<string, unknown>) { writeFileSync(join(agentDir, "sandbox.json"), JSON.stringify({ version: 2, machineId, ...policy }), { mode: 0o600 }); }
+function fixture() { const root = mkdtempSync(join(tmpdir(), "pi-profiles-")); roots.push(root); const agentDir = join(root, "agent"); const cwd = join(root, "project"); mkdirSync(agentDir); new ProjectTrustStore(agentDir).set(cwd, true); mkdirSync(join(cwd, ".pi"), { recursive: true }); return { root, agentDir, cwd }; }
+function global(agentDir: string, machineId: string, policy: Record<string, unknown>) { writeFileSync(join(agentDir, "config", "sandbox.json"), JSON.stringify({ version: 2, machineId, ...policy }), { mode: 0o600 }); }
 test("real configuration files keep ordinary Docker targets in each project", () => {
     const { root, agentDir, cwd } = fixture();
     const second = join(root, "second");
     mkdirSync(join(second, ".pi"), { recursive: true });
     global(agentDir, "machine", { docker: { allowed: true, unsafeTargets: [{ type: "container-name", name: "sensitive" }] } });
     for (const [project, name] of [[cwd, "first"], [second, "second"]]) {
-        writeFileSync(join(project, ".pi/sandbox.json"), JSON.stringify({ docker: { enabled: true, targets: [{ selector: { type: "container-name", name }, operations: ["logs"] }] } }), { mode: 0o600 });
+        writeFileSync(join(project, ".pi/config/sandbox.json"), JSON.stringify({ docker: { enabled: true, targets: [{ selector: { type: "container-name", name }, operations: ["logs"] }] } }), { mode: 0o600 });
+        new ProjectTrustStore(agentDir).set(project, true);
         expect(loadSandboxConfig(project, { agentDir, machineId: "machine" }).config.docker).toMatchObject({ mode: "targeted", targets: [{ selector: { type: "container-name", name }, operations: ["logs"], allowUnsafeTarget: false }] });
     }
-    writeFileSync(join(second, ".pi/sandbox.json"), JSON.stringify({ docker: { enabled: true, unsafeTargets: [] } }), { mode: 0o600 });
+    writeFileSync(join(second, ".pi/config/sandbox.json"), JSON.stringify({ docker: { enabled: true, unsafeTargets: [] } }), { mode: 0o600 });
     expect(() => loadSandboxConfig(second, { agentDir, machineId: "machine" })).toThrow("Unknown project docker field");
     expect(loadSandboxConfig(cwd, { agentDir, machineId: "machine" }).config.docker).toMatchObject({ targets: [{ selector: { name: "first" } }] });
 });
-test("project restrictions derive custom while preserving the global ceiling", () => { const { root, agentDir, cwd } = fixture(); mkdirSync(join(cwd, "src")); global(agentDir, "machine", { network: { allowedDomains: ["example.com"] }, filesystem: { allowWrite: [cwd] }, tmpNamespace: "host" }); writeFileSync(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ network: { allowedDomains: [] }, filesystem: { allowWrite: ["src"] }, tmpNamespace: "lease-private" })); const result = loadSandboxConfig(cwd, { agentDir, machineId: "machine" }); expect(result.shell.profile).toBe("custom"); expect(result.config.tmpNamespace).toBe("lease-private"); expect(result.config.filesystem.allowWrite).toEqual([join(cwd, "src")]); expect(result.config.network.allowedDomains).toEqual([]); });
+test("project restrictions derive custom while preserving the global ceiling", () => { const { root, agentDir, cwd } = fixture(); mkdirSync(join(cwd, "src")); global(agentDir, "machine", { network: { allowedDomains: ["example.com"] }, filesystem: { allowWrite: [cwd] }, tmpNamespace: "host" }); writeFileSync(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ network: { allowedDomains: [] }, filesystem: { allowWrite: ["src"] }, tmpNamespace: "lease-private" })); const result = loadSandboxConfig(cwd, { agentDir, machineId: "machine" }); expect(result.shell.profile).toBe("custom"); expect(result.config.tmpNamespace).toBe("lease-private"); expect(result.config.filesystem.allowWrite).toEqual([join(cwd, "src")]); expect(result.config.network.allowedDomains).toEqual([]); });
 test("a new installation defaults to sandbox mode with no network destinations", () => { const { agentDir, cwd } = fixture(); const result = loadSandboxConfig(cwd, { agentDir, machineId: "machine" }); expect(result.shell.mode).toBe("sandbox"); expect(result.shell.profile).toBe("default"); expect(result.config.network.allowedDomains).toEqual([]); });
-test("a project cannot auto-select host mode", () => { const { agentDir, cwd } = fixture(); global(agentDir, "machine", { mode: "host" }); writeFileSync(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ mode: "host" })); expect(() => loadSandboxConfig(cwd, { agentDir, machineId: "machine" })).toThrow("explicit current-session"); });
+test("a project cannot auto-select host mode", () => { const { agentDir, cwd } = fixture(); global(agentDir, "machine", { mode: "host" }); writeFileSync(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ mode: "host" })); expect(() => loadSandboxConfig(cwd, { agentDir, machineId: "machine" })).toThrow("explicit current-session"); });
 test("explicit empty project ceilings close project reads and writes", () => {
     const { agentDir, cwd } = fixture();
     global(agentDir, "machine", { filesystem: { allowRead: [], allowWrite: [] } });
@@ -35,7 +38,7 @@ test("resources inherit the global ceiling and explicit project lists close it",
     const publication = { transport: "tcp" as const, scope: "host" as const, listen: "127.0.0.1:41001", target: "127.0.0.1:41002" };
     global(agentDir, "machine", { resources: { unixSockets: [socket], tcpPublications: [publication] } });
     expect(loadSandboxConfig(cwd, { agentDir, machineId: "machine" }).config.resources).toEqual({ unixSockets: [socket], tcpPublications: [publication] });
-    writeFileSync(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ resources: { unixSockets: [], tcpPublications: [] } }));
+    writeFileSync(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ resources: { unixSockets: [], tcpPublications: [] } }));
     const closed = loadSandboxConfig(cwd, { agentDir, machineId: "machine" });
     expect(closed.config.resources).toEqual({ unixSockets: [], tcpPublications: [] });
 });
@@ -44,7 +47,7 @@ test("a resource leaf inherits when its project and session leaves are absent", 
     const socket = join(cwd, "service.sock");
     const publication = { transport: "tcp" as const, scope: "host" as const, listen: "127.0.0.1:41003", target: "127.0.0.1:41004" };
     global(agentDir, "machine", { resources: { unixSockets: [socket], tcpPublications: [publication] } });
-    writeFileSync(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ resources: { unixSockets: [] } }));
+    writeFileSync(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ resources: { unixSockets: [] } }));
     const result = loadSandboxConfig(cwd, { agentDir, machineId: "machine", session: { resources: { unixSockets: [] } } });
     expect(result.config.resources).toEqual({ unixSockets: [], tcpPublications: [publication] });
 });
@@ -60,7 +63,7 @@ test("canonicalizes equivalent IPv6 publication tuples before project restrictio
             }],
         },
     });
-    writeFileSync(join(cwd, ".pi", "sandbox.json"), JSON.stringify({
+    writeFileSync(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({
         resources: {
             tcpPublications: [{
                 transport: "tcp",
@@ -81,7 +84,7 @@ test("canonicalizes a home-relative Unix socket before comparing project restric
     const { agentDir, cwd } = fixture();
     const socket = join(homedir(), "run", "pi-resource.sock");
     global(agentDir, "machine", { resources: { unixSockets: ["~/run/pi-resource.sock"] } });
-    writeFileSync(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ resources: { unixSockets: [socket] } }));
+    writeFileSync(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ resources: { unixSockets: [socket] } }));
     expect(loadSandboxConfig(cwd, { agentDir, machineId: "machine" }).config.resources?.unixSockets).toEqual([socket]);
 });
 test("active loading rejects invalid resource fields and UDP", () => {
@@ -118,15 +121,15 @@ test("loader rejects raw Docker daemon sockets and accepts an unrelated exact so
 test("a domain beneath a wildcard ceiling remains a valid project restriction", () => {
     const { agentDir, cwd } = fixture();
     global(agentDir, "machine", { network: { allowedDomains: ["*.example.com"] } });
-    writeFileSync(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ network: { allowedDomains: ["api.example.com"] } }));
+    writeFileSync(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ network: { allowedDomains: ["api.example.com"] } }));
     expect(loadSandboxConfig(cwd, { agentDir, machineId: "machine" }).config.network.allowedDomains).toEqual(["api.example.com"]);
 });
 test("a restriction alone derives custom and returning to the effective baseline derives default", () => {
     const { agentDir, cwd } = fixture();
-    writeFileSync(join(cwd, ".pi", "sandbox.json"), JSON.stringify({ filesystem: { allowRead: [], denyWrite: ["src"] } }));
+    writeFileSync(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({ filesystem: { allowRead: [], denyWrite: ["src"] } }));
     const restricted = loadSandboxConfig(cwd, { agentDir, machineId: "machine" });
     expect(restricted.shell.profile).toBe("custom");
-    writeFileSync(join(cwd, ".pi", "sandbox.json"), JSON.stringify({}));
+    writeFileSync(join(cwd, ".pi", "config", "sandbox.json"), JSON.stringify({}));
     const restored = loadSandboxConfig(cwd, { agentDir, machineId: "machine" });
     expect(restored.shell.profile).toBe("default");
 });
@@ -169,9 +172,9 @@ test("active loading expands PATH entries before comparing global, project and s
     const tools = join(homedir(), ".pi-path-fixture", "bin");
     global(agentDir, "machine", { environment: { path: ["~/.pi-path-fixture/bin"] } });
     expect(loadSandboxConfig(cwd, { agentDir, machineId: "machine" }).config.environment.path).toEqual([tools]);
-    writeFileSync(join(cwd, ".pi/sandbox.json"), JSON.stringify({ environment: { path: [tools] } }));
+    writeFileSync(join(cwd, ".pi/config/sandbox.json"), JSON.stringify({ environment: { path: [tools] } }));
     expect(loadSandboxConfig(cwd, { agentDir, machineId: "machine", session: { environment: { path: ["~/.pi-path-fixture/bin"] } } }).config.environment.path).toEqual([tools]);
-    writeFileSync(join(cwd, ".pi/sandbox.json"), JSON.stringify({ environment: { path: ["~/.pi-ungranted-path/bin"] } }));
+    writeFileSync(join(cwd, ".pi/config/sandbox.json"), JSON.stringify({ environment: { path: ["~/.pi-ungranted-path/bin"] } }));
     expect(loadSandboxConfig(cwd, { agentDir, machineId: "machine" }).config.environment.path).toEqual([]);
 });
 
@@ -184,7 +187,7 @@ test("a project can restrict, but not add, globally configured environment value
         },
     });
     writeFileSync(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify({
             environment: {
                 allowedVariables: ["LANG"],
@@ -208,7 +211,7 @@ test("a project cannot inject an environment value outside the global ceiling", 
         environment: { variables: { LANG: "C" } },
     });
     writeFileSync(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify({ environment: { variables: { NEW_VALUE: "unsafe" } } }),
     );
     expect(() =>
@@ -222,7 +225,7 @@ test("a project cannot reopen globally disabled local binding", () => {
         network: { allowLocalBinding: false },
     });
     writeFileSync(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify({ network: { allowLocalBinding: true } }),
     );
     expect(() =>
@@ -243,7 +246,7 @@ test("mediated direct TCP requires a project opt-in beneath the global port ceil
     ).toEqual({ enabled: false, ports: [] });
 
     writeFileSync(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify({
             network: {
                 mediatedDirectTcp: { enabled: true, ports: [443, 80, 443] },
@@ -264,7 +267,7 @@ test("mediated direct TCP rejects project expansion and lets a session only narr
         },
     });
     writeFileSync(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify({
             network: {
                 mediatedDirectTcp: { enabled: true, ports: [80, 443] },
@@ -287,7 +290,7 @@ test("mediated direct TCP rejects project expansion and lets a session only narr
     ).toEqual({ enabled: false, ports: [] });
 
     writeFileSync(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify({
             network: {
                 mediatedDirectTcp: { enabled: true, ports: [22] },
@@ -305,7 +308,7 @@ test("a disabled session cannot retain mediated direct TCP ports", () => {
         network: { mediatedDirectTcp: { allowed: true, ports: [443] } },
     });
     writeFileSync(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify({
             network: {
                 mediatedDirectTcp: { enabled: true, ports: [443] },
@@ -335,7 +338,7 @@ test("the sandbox fingerprint includes the effective mediated direct TCP grant",
         machineId: "machine",
     });
     writeFileSync(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify({
             network: {
                 mediatedDirectTcp: { enabled: true, ports: [443] },
@@ -429,7 +432,7 @@ test.each([
         filesystem: { allowRead: [cwd], allowWrite: [cwd] },
     });
     writeFileSync(
-        join(cwd, ".pi", "sandbox.json"),
+        join(cwd, ".pi", "config", "sandbox.json"),
         JSON.stringify({ filesystem: { [field]: [cwd] } }),
     );
     expect(() =>

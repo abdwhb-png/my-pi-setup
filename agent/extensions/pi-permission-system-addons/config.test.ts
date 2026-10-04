@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import {
+    mkdirSync,
     mkdtempSync,
     rmSync,
     writeFileSync,
@@ -15,8 +16,9 @@ function withAgentConfig(
 ) {
     const agentDir = mkdtempSync(join(tmpdir(), 'perm-addon-test-'));
     if (configData !== null) {
+        mkdirSync(join(agentDir,"config"));
         writeFileSync(
-            join(agentDir, 'pi-permission-system-addons.json'),
+            join(agentDir, 'config', 'pi-permission-system-addons.json'),
             JSON.stringify(configData),
         );
     }

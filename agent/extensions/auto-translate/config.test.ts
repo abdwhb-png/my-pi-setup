@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { describe, it, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,11 +13,12 @@ function makeAgentDir(): string {
 }
 
 function writeGlobal(agentDir: string, data: unknown): void {
-    writeFileSync(join(agentDir, 'translate.json'), JSON.stringify(data));
+    mkdirSync(join(agentDir,"config"),{recursive:true});
+    writeFileSync(join(agentDir, 'config', 'translate.json'), JSON.stringify(data));
 }
 
 function writeProject(cwd: string, data: unknown): void {
-    const piDir = join(cwd, '.pi');
+    const piDir = join(cwd, '.pi', 'config');
     mkdirSync(piDir, { recursive: true });
     writeFileSync(join(piDir, 'translate.json'), JSON.stringify(data));
 }
@@ -29,7 +31,8 @@ describe('loadTranslateConfig', () => {
     it('returns DEFAULT_CONFIG when no config file exists', () => {
         const agentDir = makeAgentDir();
         try {
-            const cfg = loadTranslateConfig(agentDir, agentDir);
+            new ProjectTrustStore(agentDir).set(agentDir, true);
+            const cfg = loadTranslateConfig(agentDir, agentDir, true);
             expect(cfg).toEqual(DEFAULT_CONFIG);
         } finally {
             cleanup(agentDir);
@@ -44,7 +47,8 @@ describe('loadTranslateConfig', () => {
                 defaultTargetLanguage: 'fr',
                 languages: { en: 'English', fr: 'French' },
             });
-            const cfg = loadTranslateConfig(agentDir, agentDir);
+            new ProjectTrustStore(agentDir).set(agentDir, true);
+            const cfg = loadTranslateConfig(agentDir, agentDir, true);
             expect(cfg.model).toBe('openai/gpt-5-nano');
             expect(cfg.defaultTargetLanguage).toBe('fr');
             expect(cfg.languages).toEqual({ en: 'English', fr: 'French' });
@@ -63,7 +67,8 @@ describe('loadTranslateConfig', () => {
                 languages: { fr: 'Français', ar: 'Arabic' },
                 defaultTargetLanguage: 'ar',
             });
-            const cfg = loadTranslateConfig(agentDir, agentDir);
+            new ProjectTrustStore(agentDir).set(agentDir, true);
+            const cfg = loadTranslateConfig(agentDir, agentDir, true);
             expect(cfg.languages).toEqual({
                 en: 'English',
                 fr: 'Français',

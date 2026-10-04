@@ -13,16 +13,13 @@
  *   receives a closure that reads the completed refresher list (every enabled
  *   provider handle is pushed into `refreshers` after registration).
  *
- * Provider availability can be controlled via settings:
- * - ~/.pi/agent/settings.json under key "aiProviders"
- * - <cwd>/.pi/settings.json under key "aiProviders"
- * - legacy fallback: ~/.pi/agent/ai-providers.json and <cwd>/.pi/ai-providers.json
+ * Provider configuration: ~/.pi/agent/config/ai-providers.json and trusted <cwd>/.pi/config/ai-providers.json
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getModelsDevCatalog } from "../_shared/models-dev/catalog";
 import { registerProvidersCommand } from "./commands/providers.ts";
-import { isProviderEnabled, isWidgetEnabled } from "./config.ts";
+import { isProviderEnabled } from "./config.ts";
 import {
     registerModelsDevIntegration,
     type ProviderProjectionHandle,

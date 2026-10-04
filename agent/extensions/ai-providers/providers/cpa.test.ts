@@ -8,16 +8,30 @@
  *   - Exposes a stable provider projection handle
  */
 
-import { describe, test, expect, mock } from 'bun:test';
+import { afterAll, describe, test, expect, mock } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { STATIC_FALLBACK_MODELS } from '../constants/cpa-static-models';
-import {
-    registerCpaProvider as registerCpaProviderProduction,
-    getCliproxyApiKey,
-} from './cpa.ts';
+
 import type { CpaModelEntry } from './cpa-models.ts';
 import type { LifecycleCtx } from './cpa.ts';
+
+// The diagnostic path is captured at module load, so isolate before importing.
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+const agentDir = mkdtempSync(join(tmpdir(), 'cpa-provider-test-'));
+afterAll(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    rmSync(agentDir, { recursive: true, force: true });
+});
+process.env.PI_CODING_AGENT_DIR = agentDir;
+const {
+    registerCpaProvider: registerCpaProviderProduction,
+    getCliproxyApiKey,
+} = await import('./cpa.ts');
 
 interface RegisteredProvider {
     name: string;

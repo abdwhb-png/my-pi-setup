@@ -1,0 +1,8 @@
+{
+    "model": "ocg/go-deepseek-v4-flash",
+    "defaultTargetLanguage": "en",
+    "languages": {
+        "en": "English",
+        "fr": "French"
+    }
+}

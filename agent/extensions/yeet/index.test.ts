@@ -1,6 +1,9 @@
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 import { describe, it, expect, mock } from 'bun:test';
 
 // Mock fd-utils to avoid spawning real fd in tests
+useIsolatedAgentDir();
+
 let mockFdResults: string[] = [];
 mock.module('../_shared/file-search/fd-utils', () => ({
     fdSearch: async () => mockFdResults,

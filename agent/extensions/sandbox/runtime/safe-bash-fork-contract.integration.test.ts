@@ -1,7 +1,8 @@
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { candidateRuntimeFixture, hasCandidateRuntime, hostToolReadClosure } from "./integration-fixtures.ts";
@@ -28,7 +29,7 @@ const PERMISSION_EXTENSION = resolve(
 const SESSION_STATUS_ENV = "PI_SANDBOX_SESSION_STATUS";
 async function writeActivePolicy(agentDir: string, cwd: string, policy: Record<string, unknown> = {}) {
     await mkdir(resolve(cwd, ".pi"), { recursive: true });
-    await writeFile(resolve(agentDir, "sandbox.json"), JSON.stringify({ version: 2, machineId: localMachineId(), docker: { allowed: false }, ...policy }), { mode: 0o600 });
+    await writeFile(resolve(agentDir, "config", "sandbox.json"), JSON.stringify({ version: 2, machineId: localMachineId(), docker: { allowed: false }, ...policy }), { mode: 0o600 });
 }
 
 async function writePermissionConfig(agentDir: string): Promise<void> {
@@ -79,7 +80,7 @@ describe("Pi Permission System policy contract", () => {
             "sandbox.json",
             "agent/sandbox.json",
             ".pi/agent/sandbox.json",
-            resolve(AGENT_ROOT, "sandbox.json"),
+            resolve(AGENT_ROOT, "config", "sandbox.json"),
         ];
         const actions = deniedPaths.flatMap((path) => [
             calls("write", { path, content: "blocked" }),
@@ -219,8 +220,8 @@ describe.skipIf(process.platform !== "linux" ||
             // curl must run so a closed-network result cannot be an ENOENT.
             filesystem: { allowRead: curlRead },
         });
-        const authorityPath = resolve(testAgentDir, "sandbox.json");
-        const authority = await readFile(resolve(testAgentDir, "sandbox.json"), "utf8");
+        const authorityPath = resolve(testAgentDir, "config", "sandbox.json");
+        const authority = await readFile(resolve(testAgentDir, "config", "sandbox.json"), "utf8");
         let requests = 0;
         const server = createServer((_request, response) => {
             requests++;

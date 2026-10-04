@@ -140,7 +140,7 @@ test('creates, loads, and atomically replaces snapshots', () => {
     store.save(snapshot(1));
     store.save(snapshot(2));
     expect(store.load('run-1')).toEqual(snapshot(2));
-    const runDir = join(agentDir, '.sdd', 'runs', 'run-1');
+    const runDir = join(agentDir, 'artifacts/sdd', 'runs', 'run-1');
     expect(
         readdirSync(runDir).filter(
             (name) => name.endsWith('.tmp') || name.includes('.candidate'),
@@ -168,7 +168,7 @@ test('locks saves and rejects stale or conflicting persisted revisions', () => {
 
 test('publishes a complete ticket before snapshot serialization', () => {
     const runId = 'observable-run';
-    const runDir = join(agentDir, '.sdd', 'runs', runId);
+    const runDir = join(agentDir, 'artifacts/sdd', 'runs', runId);
     let observedOwner: unknown;
     const inspectable = {
         ...snapshot(),
@@ -203,7 +203,7 @@ test('publishes a complete ticket before snapshot serialization', () => {
 test('orders contenders and blocks behind live or malformed lower tickets', () => {
     const store = new SddStore(agentDir);
     store.create(snapshot(1));
-    const runDir = join(agentDir, '.sdd', 'runs', 'run-1');
+    const runDir = join(agentDir, 'artifacts/sdd', 'runs', 'run-1');
     const liveTicket = seedTicket(runDir, 1, {
         pid: process.pid,
         createdAt: '2026-07-21T12:00:00.000Z',
@@ -228,7 +228,7 @@ test('orders contenders and blocks behind live or malformed lower tickets', () =
 test('ignores but retains a crashed dead lower ticket', () => {
     const store = new SddStore(agentDir);
     store.create(snapshot(1));
-    const runDir = join(agentDir, '.sdd', 'runs', 'run-1');
+    const runDir = join(agentDir, 'artifacts/sdd', 'runs', 'run-1');
     seedTicket(runDir, 1, {
         pid: 2_147_483_647,
         createdAt: '2026-07-21T12:00:00.000Z',
@@ -245,7 +245,7 @@ test('ignores but retains a crashed dead lower ticket', () => {
 test('ticket release cannot delete a replacement at the same path', () => {
     const store = new SddStore(agentDir);
     store.create(snapshot(1));
-    const runDir = join(agentDir, '.sdd', 'runs', 'run-1');
+    const runDir = join(agentDir, 'artifacts/sdd', 'runs', 'run-1');
     const replacementOwner = {
         pid: process.pid,
         createdAt: '2026-07-21T12:01:00.000Z',
@@ -283,16 +283,16 @@ test('removes a newly-created empty run directory when its first save fails', ()
     } as unknown as RunSnapshot;
 
     expect(() => store.create(unserializable)).toThrow();
-    expect(existsSync(join(agentDir, '.sdd', 'runs', runId))).toBe(false);
+    expect(existsSync(join(agentDir, 'artifacts/sdd', 'runs', runId))).toBe(false);
     expect(() => store.create({ ...snapshot(), runId })).not.toThrow();
 });
 
 test('lists only run directories containing snapshots and ignores legacy state', () => {
     const store = new SddStore(agentDir);
     store.create(snapshot());
-    mkdirSync(join(agentDir, '.sdd', 'runs', 'empty'));
+    mkdirSync(join(agentDir, 'artifacts/sdd', 'runs', 'empty'));
     for (const legacyDir of ['queue', 'progress']) {
-        const path = join(agentDir, '.sdd', legacyDir, 'legacy-run');
+        const path = join(agentDir, 'artifacts/sdd', legacyDir, 'legacy-run');
         mkdirSync(path, { recursive: true });
         writeFileSync(join(path, 'snapshot.json'), '{"legacy":true}');
     }
@@ -301,7 +301,7 @@ test('lists only run directories containing snapshots and ignores legacy state',
 });
 
 test('fails visibly when a run snapshot is malformed', () => {
-    const badRunDir = join(agentDir, '.sdd', 'runs', 'run-bad');
+    const badRunDir = join(agentDir, 'artifacts/sdd', 'runs', 'run-bad');
     mkdirSync(badRunDir, { recursive: true });
     writeFileSync(join(badRunDir, 'snapshot.json'), '{bad json');
     const store = new SddStore(agentDir);
@@ -346,7 +346,7 @@ test('rejects traversal and invalid run IDs at every store boundary', () => {
             expect(operation).toThrow('Invalid run ID');
         }
     }
-    expect(existsSync(join(agentDir, '.sdd', 'runs'))).toBe(false);
+    expect(existsSync(join(agentDir, 'artifacts/sdd', 'runs'))).toBe(false);
 });
 
 test('appends complete transition records and computes canonical digests', () => {
@@ -401,7 +401,7 @@ test('appends complete transition records and computes canonical digests', () =>
     const lines = readFileSync(
         join(
             agentDir,
-            '.sdd',
+            'artifacts/sdd',
             'runs',
             'run-1',
             'transitions.jsonl',
@@ -461,7 +461,7 @@ test('saves and loads review progress with optimistic revisions', () => {
         'Review progress revision conflict: expected 2, received 1.',
     );
     expect(
-        readdirSync(join(agentDir, '.sdd', 'reviews')).filter((name) =>
+        readdirSync(join(agentDir, 'artifacts/sdd', 'reviews')).filter((name) =>
             name.endsWith('.tmp'),
         ),
     ).toEqual([]);
@@ -486,7 +486,7 @@ test('rejects review saves without an awaiting manifest', () => {
 test('fails visibly for corrupt review progress', () => {
     const store = new SddStore(agentDir);
     const draft = draftManifest();
-    const reviewDir = join(agentDir, '.sdd', 'reviews');
+    const reviewDir = join(agentDir, 'artifacts/sdd', 'reviews');
     const manifestId = 'manifest-1';
     mkdirSync(reviewDir, { recursive: true });
     store.createManifest(draft);
@@ -519,7 +519,7 @@ test('rejects persisted review progress with unknown task keys', () => {
     store.createManifest(draft);
 
     const manifestId = 'manifest-1';
-    const reviewDir = join(agentDir, '.sdd', 'reviews');
+    const reviewDir = join(agentDir, 'artifacts/sdd', 'reviews');
     const base = createInitialReviewProgress(draft);
     mkdirSync(reviewDir, { recursive: true });
     writeFileSync(
@@ -546,33 +546,34 @@ test('blocks symlinked review boundaries before read/write/delete', () => {
     const expectSymlinkError = (operation: () => unknown) =>
         expect(operation).toThrow(/symbolic link/i);
 
-    rmSync(join(agentDir, '.sdd'), { force: true, recursive: true });
+    rmSync(join(agentDir, 'artifacts/sdd'), { force: true, recursive: true });
     const sddReal = join(agentDir, 'real-sdd');
     mkdirSync(sddReal, { recursive: true });
-    symlinkSync(sddReal, join(agentDir, '.sdd'), 'dir');
+    mkdirSync(join(agentDir,'artifacts'),{recursive:true});
+    symlinkSync(sddReal, join(agentDir, 'artifacts/sdd'), 'dir');
     expectSymlinkError(() => store.loadReviewProgress('manifest-1'));
     expectSymlinkError(() =>
         store.saveReviewProgress('manifest-1', 0, draftState),
     );
     expectSymlinkError(() => store.deleteReviewProgress('manifest-1'));
 
-    rmSync(join(agentDir, '.sdd'), { force: true, recursive: true });
-    mkdirSync(join(agentDir, '.sdd'), { recursive: true });
+    rmSync(join(agentDir, 'artifacts/sdd'), { force: true, recursive: true });
+    mkdirSync(join(agentDir, 'artifacts/sdd'), { recursive: true });
     const reviewsReal = join(agentDir, 'real-reviews');
     mkdirSync(reviewsReal, { recursive: true });
-    symlinkSync(reviewsReal, join(agentDir, '.sdd', 'reviews'), 'dir');
+    symlinkSync(reviewsReal, join(agentDir, 'artifacts/sdd', 'reviews'), 'dir');
     expectSymlinkError(() => store.loadReviewProgress('manifest-1'));
     expectSymlinkError(() =>
         store.saveReviewProgress('manifest-1', 0, draftState),
     );
     expectSymlinkError(() => store.deleteReviewProgress('manifest-1'));
 
-    rmSync(join(agentDir, '.sdd', 'reviews'), { force: true });
-    mkdirSync(join(agentDir, '.sdd', 'reviews'), { recursive: true });
+    rmSync(join(agentDir, 'artifacts/sdd', 'reviews'), { force: true });
+    mkdirSync(join(agentDir, 'artifacts/sdd', 'reviews'), { recursive: true });
     const reviewFileTarget = join(agentDir, 'manifest-review-target.json');
     writeFileSync(reviewFileTarget, JSON.stringify(draftState));
     store.createManifest(manifest);
-    symlinkSync(reviewFileTarget, join(agentDir, '.sdd', 'reviews', 'manifest-1.json'), 'file');
+    symlinkSync(reviewFileTarget, join(agentDir, 'artifacts/sdd', 'reviews', 'manifest-1.json'), 'file');
     expectSymlinkError(() => store.loadReviewProgress('manifest-1'));
     expectSymlinkError(() =>
         store.saveReviewProgress('manifest-1', 0, draftState),
@@ -584,25 +585,25 @@ test('deleteManifest refuses review-boundary symlinks and preserves manifest and
     const store = new SddStore(agentDir);
     const draft = draftManifest();
     store.createManifest(draft);
-    const manifestPath = join(agentDir, '.sdd', 'manifests', 'manifest-1.json');
+    const manifestPath = join(agentDir, 'artifacts/sdd', 'manifests', 'manifest-1.json');
     const reviewDirTarget = join(agentDir, 'real-reviews');
     const reviewDirMarker = join(reviewDirTarget, 'marker.txt');
     const fileReviewTarget = join(agentDir, 'review-file-target.json');
 
-    rmSync(join(agentDir, '.sdd', 'reviews'), { force: true, recursive: true });
-    mkdirSync(join(agentDir, '.sdd'), { recursive: true });
+    rmSync(join(agentDir, 'artifacts/sdd', 'reviews'), { force: true, recursive: true });
+    mkdirSync(join(agentDir, 'artifacts/sdd'), { recursive: true });
     mkdirSync(reviewDirTarget, { recursive: true });
     writeFileSync(reviewDirMarker, 'keep');
-    symlinkSync(reviewDirTarget, join(agentDir, '.sdd', 'reviews'), 'dir');
+    symlinkSync(reviewDirTarget, join(agentDir, 'artifacts/sdd', 'reviews'), 'dir');
 
     expect(() => store.deleteManifest('manifest-1')).toThrow(/symbolic link/i);
     expect(existsSync(manifestPath)).toBe(true);
     expect(readFileSync(reviewDirMarker, 'utf8')).toBe('keep');
 
-    rmSync(join(agentDir, '.sdd', 'reviews'), { force: true, recursive: true });
-    mkdirSync(join(agentDir, '.sdd', 'reviews'), { recursive: true });
+    rmSync(join(agentDir, 'artifacts/sdd', 'reviews'), { force: true, recursive: true });
+    mkdirSync(join(agentDir, 'artifacts/sdd', 'reviews'), { recursive: true });
     writeFileSync(fileReviewTarget, JSON.stringify({ keep: 'target' }));
-    const reviewFilePath = join(agentDir, '.sdd', 'reviews', 'manifest-1.json');
+    const reviewFilePath = join(agentDir, 'artifacts/sdd', 'reviews', 'manifest-1.json');
     symlinkSync(fileReviewTarget, reviewFilePath, 'file');
 
     expect(() => store.deleteManifest('manifest-1')).toThrow(/symbolic link/i);
@@ -617,7 +618,8 @@ test('deleteManifest rejects a symlinked .sdd root before creating lock files', 
     const marker = join(externalSdd, 'marker.txt');
     mkdirSync(externalSdd, { recursive: true });
     writeFileSync(marker, 'keep');
-    symlinkSync(externalSdd, join(agentDir, '.sdd'), 'dir');
+    mkdirSync(join(agentDir,'artifacts'),{recursive:true});
+    symlinkSync(externalSdd, join(agentDir, 'artifacts/sdd'), 'dir');
 
     expect(() => store.deleteManifest('manifest-1')).toThrow(/symbolic link/i);
     expect(readFileSync(marker, 'utf8')).toBe('keep');
@@ -627,7 +629,7 @@ test('deleteManifest rejects a symlinked .sdd root before creating lock files', 
 test('review operations reject symlinked manifest storage before reading or locking it', () => {
     const store = new SddStore(agentDir);
     const externalManifests = join(agentDir, 'external-manifests');
-    mkdirSync(join(agentDir, '.sdd'), { recursive: true });
+    mkdirSync(join(agentDir, 'artifacts/sdd'), { recursive: true });
     mkdirSync(externalManifests, { recursive: true });
     writeFileSync(
         join(externalManifests, 'manifest-1.json'),
@@ -635,7 +637,7 @@ test('review operations reject symlinked manifest storage before reading or lock
     );
     symlinkSync(
         externalManifests,
-        join(agentDir, '.sdd', 'manifests'),
+        join(agentDir, 'artifacts/sdd', 'manifests'),
         'dir',
     );
 
@@ -658,7 +660,7 @@ test('review operations reject a symlinked manifest file path', () => {
     const state = reviewStateFromDraft(manifest);
     store.createManifest(manifest);
 
-    const manifestPath = join(agentDir, '.sdd', 'manifests', 'manifest-1.json');
+    const manifestPath = join(agentDir, 'artifacts/sdd', 'manifests', 'manifest-1.json');
     const target = join(agentDir, 'external-manifest-file.json');
     writeFileSync(target, JSON.stringify(manifest, null, 2));
     unlinkSync(manifestPath);
@@ -678,7 +680,7 @@ test('loadReviewProgress rejects review data whose manifestId does not match the
     const store = new SddStore(agentDir);
     const draft = draftManifest();
     const reviewState = reviewStateFromDraft(draft);
-    const reviewRoot = join(agentDir, '.sdd', 'reviews');
+    const reviewRoot = join(agentDir, 'artifacts/sdd', 'reviews');
     const reviewPath = join(reviewRoot, 'manifest-1.json');
 
     mkdirSync(reviewRoot, { recursive: true });
@@ -699,11 +701,11 @@ test('loadReviewProgress rejects persisted review for invalid manifest state', (
     const store = new SddStore(agentDir);
     const draft = draftManifest();
     const reviewState = reviewStateFromDraft(draft);
-    const manifestPath = join(agentDir, '.sdd', 'manifests', 'manifest-1.json');
-    const reviewPath = join(agentDir, '.sdd', 'reviews', 'manifest-1.json');
+    const manifestPath = join(agentDir, 'artifacts/sdd', 'manifests', 'manifest-1.json');
+    const reviewPath = join(agentDir, 'artifacts/sdd', 'reviews', 'manifest-1.json');
 
-    mkdirSync(join(agentDir, '.sdd', 'manifests'), { recursive: true });
-    mkdirSync(join(agentDir, '.sdd', 'reviews'), { recursive: true });
+    mkdirSync(join(agentDir, 'artifacts/sdd', 'manifests'), { recursive: true });
+    mkdirSync(join(agentDir, 'artifacts/sdd', 'reviews'), { recursive: true });
     writeFileSync(
         manifestPath,
         JSON.stringify({ ...draft, state: 'invalid_state' }),
@@ -795,10 +797,10 @@ test('approving a draft keeps success even when review cleanup cannot remove sym
     store.createManifest(manifest);
     store.saveReviewProgress('manifest-1', 0, reviewStateFromDraft(manifest));
     writeFileSync(reviewTarget, JSON.stringify(reviewTargetPayload));
-    unlinkSync(join(agentDir, '.sdd', 'reviews', 'manifest-1.json'));
+    unlinkSync(join(agentDir, 'artifacts/sdd', 'reviews', 'manifest-1.json'));
     symlinkSync(
         reviewTarget,
-        join(agentDir, '.sdd', 'reviews', 'manifest-1.json'),
+        join(agentDir, 'artifacts/sdd', 'reviews', 'manifest-1.json'),
         'file',
     );
 
@@ -829,7 +831,7 @@ test('rejects traversal at every review progress boundary', () => {
             expect(operation).toThrow('Invalid manifest ID');
         }
     }
-    expect(existsSync(join(agentDir, '.sdd'))).toBe(false);
+    expect(existsSync(join(agentDir, 'artifacts/sdd'))).toBe(false);
 });
 
 test('approves a draft and initial run once with identical retry idempotency', () => {

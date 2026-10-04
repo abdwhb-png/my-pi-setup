@@ -1,3 +1,5 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeOwnedSettingsFixture } from "../_shared/testing/config-fixture.ts";
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
     createEventBus,
@@ -87,23 +89,22 @@ describe("Markdown links configuration", () => {
         const agentDir = join(root, "agent");
         const cwd = join(root, "project");
         mkdirSync(agentDir);
+        new ProjectTrustStore(agentDir).set(cwd, true);
         mkdirSync(join(cwd, ".pi"), { recursive: true });
-        writeFileSync(
+        writeOwnedSettingsFixture(
             join(agentDir, "settings.json"),
-            JSON.stringify({
+            {
                 markdownLinks: {
                     allowedRoots: ["$agentDir"],
                     scope: "context",
                     maxDepth: 1,
                 },
-            }),
-        );
-        writeFileSync(
+            });
+        writeOwnedSettingsFixture(
             join(cwd, ".pi", "settings.json"),
-            JSON.stringify({
+            {
                 markdownLinks: { allowedRoots: ["$cwd", "$sourceDir"] },
-            }),
-        );
+            });
 
         await expect(
             loadMarkdownLinksConfig(cwd, agentDir, true),

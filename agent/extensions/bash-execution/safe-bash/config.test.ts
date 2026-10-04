@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { configFixture } from "../../_shared/testing/config-fixture.ts";
 import { describe, expect, it } from 'bun:test';
 import { SettingsManager } from '@earendil-works/pi-coding-agent';
 import {
@@ -295,8 +297,9 @@ describe('normalizeSafeBashConfig', () => {
 describe('loadSafeBashConfig', () => {
     it("returns default 'coexist' when no settings", () => {
         const sm = SettingsManager.inMemory({} as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
-        expect(config).toEqual(DEFAULT_SAFE_BASH_CONFIG);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
+        expect(config).toEqual({...DEFAULT_SAFE_BASH_CONFIG,telemetry:{...DEFAULT_SAFE_BASH_CONFIG.telemetry,directory:join(fixture[1],"artifacts/safe-bash-telemetry")}});
         expect(config.mode).toBe('coexist');
     });
 
@@ -304,7 +307,8 @@ describe('loadSafeBashConfig', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { mode: 'replace' },
         } as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.mode).toBe('replace');
     });
 
@@ -312,7 +316,8 @@ describe('loadSafeBashConfig', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { mode: 'coexist' },
         } as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.mode).toBe('coexist');
     });
 
@@ -320,7 +325,8 @@ describe('loadSafeBashConfig', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { mode: 'nuke' },
         } as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.mode).toBe('coexist');
     });
 
@@ -328,7 +334,8 @@ describe('loadSafeBashConfig', () => {
         const sm = SettingsManager.inMemory({
             safeBash: 'not-an-object',
         } as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.mode).toBe('coexist');
     });
 
@@ -336,13 +343,14 @@ describe('loadSafeBashConfig', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { mode: 'replace' },
         } as any);
-        const config: SafeBashConfig = loadSafeBashConfig(cwd, undefined, sm);
+        const config: SafeBashConfig = loadSafeBashConfig(...configFixture("safeBash", sm));
         expect(config.mode).toBe('replace');
     });
 
     it('defaults allowedShellCommands to empty array', () => {
         const sm = SettingsManager.inMemory({} as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.allowedShellCommands).toEqual([]);
     });
 
@@ -350,22 +358,25 @@ describe('loadSafeBashConfig', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { allowedShellCommands: ['grep', 'rg'] },
         } as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.allowedShellCommands).toEqual(['grep', 'rg']);
     });
 
     it('defaults guardPolicy to chmod cwd-only (deny for every other group)', () => {
         const sm = SettingsManager.inMemory({} as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.guardPolicy).toEqual({ chmod: 'cwd-only' });
     });
 
     it('defaults telemetry to a bounded local archive', () => {
         const sm = SettingsManager.inMemory({} as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.telemetry).toEqual({
             enabled: true,
-            directory: '~/.pi/agent/safe-bash-telemetry',
+            directory: join(fixture[1],"artifacts/safe-bash-telemetry"),
             retentionDays: 30,
             captureCommand: true,
             maxCommandLength: 10_000,
@@ -378,10 +389,12 @@ describe('loadSafeBashConfig', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { telemetry: { auditDays: 7 } },
         } as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
 
         expect(config.telemetry).toEqual({
             ...DEFAULT_SAFE_BASH_CONFIG.telemetry,
+            directory: join(fixture[1],"artifacts/safe-bash-telemetry"),
             auditDays: 7,
         });
     });
@@ -391,7 +404,6 @@ describe('loadSafeBashConfig', () => {
             normalizeSafeBashConfig({
                 telemetry: {
                     enabled: false,
-                    directory: '/tmp/safe-bash-audit',
                     retentionDays: 14,
                     captureCommand: false,
                     maxCommandLength: 2_000,
@@ -399,10 +411,9 @@ describe('loadSafeBashConfig', () => {
                     auditLimit: 25,
                 },
             }),
-        ).toEqual({
+        ).toMatchObject({
             telemetry: {
                 enabled: false,
-                directory: '/tmp/safe-bash-audit',
                 retentionDays: 14,
                 captureCommand: false,
                 maxCommandLength: 2_000,
@@ -427,7 +438,8 @@ describe('loadSafeBashConfig', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { guardPolicy: { sudo: 'allow', rm: 'ask' } },
         } as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.guardPolicy).toEqual({
             chmod: 'cwd-only',
             sudo: 'allow',
@@ -439,7 +451,8 @@ describe('loadSafeBashConfig', () => {
         const sm = SettingsManager.inMemory({
             safeBash: { guardPolicy: { chmod: 'deny' } },
         } as any);
-        const config = loadSafeBashConfig(cwd, undefined, sm);
+        const fixture = configFixture("safeBash", sm);
+        const config = loadSafeBashConfig(...fixture);
         expect(config.guardPolicy).toEqual({ chmod: 'deny' });
     });
 });

@@ -1,7 +1,7 @@
 /**
  * Generic, project-configurable command rewrite engine.
  *
- * Project declares regex match → rewrite rules under `.pi/settings.json`
+ * Project declares regex match → rewrite rules under `.pi/config/bash-execution.json`
  * key `bashRewrites`. Pi applies the first matching rule to the command
  * before spawn, after safety guards have already run on the original.
  *
@@ -112,15 +112,19 @@ function mergeConfigs(
 }
 
 /**
- * Load bash rewrite rules from settings.json (global + project).
+ * Load bashRewrites from config/bash-execution.json in global and trusted project scopes.
  * Project rules are concatenated after global rules (first-match-wins ordering).
  */
-export function loadBashRewrites(cwd: string): BashRewritesConfig {
+export function loadBashRewrites(
+    cwd: string,
+    projectTrusted?: boolean,
+): BashRewritesConfig {
     return loadExtensionConfig<BashRewritesConfig>(cwd, {
         defaults: { rules: [] },
         normalize,
         merge: mergeConfigs,
-        sources: [{ settingsKey: "bashRewrites" }],
+        owner: "bashRewrites",
+        projectTrusted,
     });
 }
 

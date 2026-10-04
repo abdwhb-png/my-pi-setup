@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
@@ -26,6 +27,7 @@ beforeEach(() => {
     cwd = join(root, "project");
     mkdirSync(join(agentDir, "agents"), { recursive: true });
     mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+    new ProjectTrustStore(agentDir).set(cwd, true);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -36,8 +38,9 @@ function agent(directory: string, name: string, tools?: string) {
     return { path, source };
 }
 function groups(directory: string, definitions: Record<string, string[]>) {
+    mkdirSync(join(directory, "config"), { recursive: true });
     writeFileSync(
-        join(directory, "tool-groups.json"),
+        join(directory, "config", "tool-groups.json"),
         JSON.stringify({ groups: definitions }),
     );
 }

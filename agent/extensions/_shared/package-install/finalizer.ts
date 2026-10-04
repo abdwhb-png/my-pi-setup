@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from "node:child_process";
 import {
     existsSync,
     lstatSync,
@@ -10,27 +10,27 @@ import {
     symlinkSync,
     unlinkSync,
     writeFileSync,
-} from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
+} from "node:fs";
+import { extensionPath } from "../extension-paths.ts";
+
+import { dirname, join, resolve } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type {
     ConfiguredPackageSource,
     PackageJsonLike,
     PackageScope,
-} from './configured-packages.js';
+} from "./configured-packages.js";
 import {
-    readConfiguredPackageSources,
     readPackageJson,
     resolveInstalledPackageRoot,
-} from './configured-packages.js';
+} from "./configured-packages.js";
 
 export type {
     ConfiguredPackageSource,
     PackageJsonLike,
     PackageScope,
-} from './configured-packages.js';
-export { parsePackageSource } from './configured-packages.js';
+} from "./configured-packages.js";
+export { parsePackageSource } from "./configured-packages.js";
 
 export interface RepairLogger {
     info(message: string): void;
@@ -82,12 +82,12 @@ export function getDefaultAgentDir(): string {
 }
 
 function stripGitSuffixAndRef(pathWithRef: string): string {
-    const refIndex = pathWithRef.lastIndexOf('@');
+    const refIndex = pathWithRef.lastIndexOf("@");
     const withoutRef =
-        refIndex > pathWithRef.indexOf('/')
+        refIndex > pathWithRef.indexOf("/")
             ? pathWithRef.slice(0, refIndex)
             : pathWithRef;
-    return withoutRef.replace(/\.git$/, '');
+    return withoutRef.replace(/\.git$/, "");
 }
 
 export function collectExpectedArtifactPaths(
@@ -110,13 +110,13 @@ export function collectExpectedArtifactPaths(
 }
 
 function collectExportTargets(
-    exportsField: PackageJsonLike['exports'],
+    exportsField: PackageJsonLike["exports"],
 ): string[] {
     const targets = new Set<string>();
     const visit = (value: PackageExports | undefined) => {
         if (!value) return;
-        if (typeof value === 'string') {
-            if (value.startsWith('./')) targets.add(value);
+        if (typeof value === "string") {
+            if (value.startsWith("./")) targets.add(value);
             return;
         }
         for (const nested of Object.values(value)) {
@@ -132,19 +132,19 @@ export function chooseScriptRunner(
     pkg: PackageJsonLike,
 ): { command: string; args: string[] } {
     if (
-        pkg.packageManager?.startsWith('bun@') ||
-        existsSync(join(packageRoot, 'bun.lock')) ||
-        existsSync(join(packageRoot, 'bun.lockb'))
+        pkg.packageManager?.startsWith("bun@") ||
+        existsSync(join(packageRoot, "bun.lock")) ||
+        existsSync(join(packageRoot, "bun.lockb"))
     ) {
-        return { command: 'bun', args: ['run'] };
+        return { command: "bun", args: ["run"] };
     }
     if (
-        pkg.packageManager?.startsWith('pnpm@') ||
-        existsSync(join(packageRoot, 'pnpm-lock.yaml'))
+        pkg.packageManager?.startsWith("pnpm@") ||
+        existsSync(join(packageRoot, "pnpm-lock.yaml"))
     ) {
-        return { command: 'pnpm', args: ['run'] };
+        return { command: "pnpm", args: ["run"] };
     }
-    return { command: 'npm', args: ['run'] };
+    return { command: "npm", args: ["run"] };
 }
 
 export function isReplaceablePackageShim(
@@ -164,12 +164,12 @@ export function isReplaceablePackageShim(
     if (!pkg || pkg.name !== packageName) return false;
 
     const files = readdirSync(linkPath);
-    const jsFiles = files.filter((file) => file.endsWith('.js'));
+    const jsFiles = files.filter((file) => file.endsWith(".js"));
     if (jsFiles.length === 0) return false;
 
     return jsFiles.every((file) => {
         try {
-            const content = readFileSync(join(linkPath, file), 'utf-8').trim();
+            const content = readFileSync(join(linkPath, file), "utf-8").trim();
             return /^export \* from ["'].+["'];?$/.test(content);
         } catch {
             return false;
@@ -197,7 +197,7 @@ export function ensurePackageLinks(
         try {
             stats = lstatSync(linkPath);
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
         if (stats) {
             if (stats.isSymbolicLink()) {
@@ -206,7 +206,7 @@ export function ensurePackageLinks(
                 try {
                     currentRealPath = realpathSync(linkPath);
                 } catch (error) {
-                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+                    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
                         throw error;
                 }
                 if (currentRealPath === targetRealPath) continue;
@@ -221,7 +221,7 @@ export function ensurePackageLinks(
             }
         }
 
-        symlinkSync(targetPath, linkPath, 'dir');
+        symlinkSync(targetPath, linkPath, "dir");
         changed.push(linkPath);
     }
     return changed;
@@ -233,12 +233,12 @@ export function getPackageLinkRoots(
     agentDir: string,
 ): string[] {
     const roots = new Set<string>();
-    roots.add(join(agentDir, 'node_modules'));
+    roots.add(join(agentDir, "node_modules"));
     if (resolve(cwd) !== resolve(dirname(agentDir))) {
-        roots.add(join(cwd, '.pi', 'node_modules'));
+        roots.add(join(cwd, ".pi", "node_modules"));
     }
-    if (scope === 'project') {
-        roots.add(join(cwd, 'node_modules'));
+    if (scope === "project") {
+        roots.add(join(cwd, "node_modules"));
     }
     return [...roots];
 }
@@ -293,13 +293,13 @@ export function finalizePackageRoot(
 
     if (missingArtifacts.length > 0) {
         const scriptName = pkg.scripts?.prepare
-            ? 'prepare'
+            ? "prepare"
             : pkg.scripts?.build
-              ? 'build'
+              ? "build"
               : null;
         if (!scriptName) {
             warnings.push(
-                `Missing artifacts for ${pkg.name}: ${missingArtifacts.join(', ')}`,
+                `Missing artifacts for ${pkg.name}: ${missingArtifacts.join(", ")}`,
             );
         } else {
             const runner = chooseScriptRunner(packageRoot, pkg);
@@ -308,14 +308,14 @@ export function finalizePackageRoot(
                 [...runner.args, scriptName],
                 {
                     cwd: packageRoot,
-                    stdio: 'pipe',
-                    encoding: 'utf-8',
+                    stdio: "pipe",
+                    encoding: "utf-8",
                 },
             );
             if (result.status !== 0) {
                 warnings.push(
-                    `Failed to build ${pkg.name} with '${runner.command} ${[...runner.args, scriptName].join(' ')}'` +
-                        (result.stderr ? `: ${result.stderr.trim()}` : ''),
+                    `Failed to build ${pkg.name} with '${runner.command} ${[...runner.args, scriptName].join(" ")}'` +
+                        (result.stderr ? `: ${result.stderr.trim()}` : ""),
                 );
             } else {
                 built = true;
@@ -343,7 +343,11 @@ export function finalizePackageRoot(
 }
 
 export function getStateFilePath(agentDir: string): string {
-    return join(agentDir, 'package-finalizer-state.json');
+    return extensionPath(
+        { scope: "global", agentDir },
+        "artifacts",
+        "package-finalizer-state.json",
+    );
 }
 
 export function loadFinalizerState(agentDir: string): PackageFinalizerState {
@@ -353,12 +357,12 @@ export function loadFinalizerState(agentDir: string): PackageFinalizerState {
     }
     try {
         const parsed = JSON.parse(
-            readFileSync(statePath, 'utf-8'),
+            readFileSync(statePath, "utf-8"),
         ) as PackageFinalizerState;
         if (
             parsed.version !== STATE_VERSION ||
             !parsed.packages ||
-            typeof parsed.packages !== 'object'
+            typeof parsed.packages !== "object"
         ) {
             return { version: STATE_VERSION, packages: {} };
         }
@@ -372,6 +376,7 @@ export function saveFinalizerState(
     agentDir: string,
     state: PackageFinalizerState,
 ): void {
+    mkdirSync(dirname(getStateFilePath(agentDir)), { recursive: true });
     writeFileSync(getStateFilePath(agentDir), JSON.stringify(state, null, 2));
 }
 
@@ -390,7 +395,7 @@ function computeStateEntry(
     cwd: string,
     agentDir: string,
 ): PackageFinalizerStateEntry | null {
-    const packageJsonPath = join(packageRoot, 'package.json');
+    const packageJsonPath = join(packageRoot, "package.json");
     if (!existsSync(packageJsonPath)) return null;
     const packageJsonStats = lstatSync(packageJsonPath);
     return {
@@ -400,10 +405,10 @@ function computeStateEntry(
         packageJsonMtimeMs: packageJsonStats.mtimeMs,
         packageJsonSize: packageJsonStats.size,
         globalSettingsMtimeMs: getSettingsMtimeMs(
-            join(agentDir, 'settings.json'),
+            join(agentDir, "settings.json"),
         ),
         projectSettingsMtimeMs: getSettingsMtimeMs(
-            join(cwd, '.pi', 'settings.json'),
+            join(cwd, ".pi", "settings.json"),
         ),
     };
 }
@@ -448,7 +453,7 @@ export async function repairConfiguredPiPackages(
     };
 
     const { forEachConfiguredPackage } =
-        await import('./configured-packages.js');
+        await import("./configured-packages.js");
 
     await forEachConfiguredPackage(env, (visit) => {
         const { entry, packageRoot, pkg } = visit;
@@ -546,14 +551,14 @@ export function writeManagedShim(
 ): void {
     mkdirSync(linkPath, { recursive: true });
     writeFileSync(
-        join(linkPath, 'package.json'),
+        join(linkPath, "package.json"),
         JSON.stringify(
             {
                 name: packageName,
-                version: '0.0.0-shim',
-                type: 'module',
+                version: "0.0.0-shim",
+                type: "module",
                 exports: {
-                    '.': './index.js',
+                    ".": "./index.js",
                     ...Object.fromEntries(
                         Object.keys(subpathTargets).map((key) => [
                             key,
@@ -567,7 +572,7 @@ export function writeManagedShim(
         ),
     );
     writeFileSync(
-        join(linkPath, 'index.js'),
+        join(linkPath, "index.js"),
         `export * from ${JSON.stringify(targetIndexPath)};\n`,
     );
     for (const [subpath, target] of Object.entries(subpathTargets)) {

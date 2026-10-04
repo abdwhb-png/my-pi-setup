@@ -1,5 +1,7 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createBashOperations } from "../../_shared/command-execution/exec.ts";
@@ -45,7 +47,7 @@ test.skipIf(
                 "/etc/ssl/certs/ca-certificates.crt",
             ];
             await writeFile(
-                join(agentDir, "sandbox.json"),
+                join(agentDir, "config", "sandbox.json"),
                 JSON.stringify({
                     version: 2,
                     machineId,
@@ -68,7 +70,7 @@ test.skipIf(
                     mode: 0o700,
                 });
                 await writeFile(
-                    join(cwd, ".pi", "sandbox.json"),
+                    join(cwd, ".pi", "config", "sandbox.json"),
                     JSON.stringify({
                         network: {
                             allowedDomains: [project.domain],
@@ -80,6 +82,7 @@ test.skipIf(
                     }),
                     { mode: 0o600 },
                 );
+                new ProjectTrustStore(agentDir).set(cwd, true);
                 const loaded = loadSandboxConfig(cwd, {
                     agentDir,
                     machineId,

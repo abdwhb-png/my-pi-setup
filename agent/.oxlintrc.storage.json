@@ -1,0 +1,8 @@
+{
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "jsPlugins": ["./tooling/extension-storage/oxlint-plugin.mjs"],
+    "categories": { "correctness": "off", "suspicious": "off", "perf": "off" },
+    "rules": {
+        "pi-storage/managed-paths": "error"
+    }
+}

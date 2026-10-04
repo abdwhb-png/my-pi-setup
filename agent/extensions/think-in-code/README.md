@@ -292,7 +292,7 @@ fetching. The `thinkInCode.network` configuration key is locked to
 ## Tool groups
 
 `think_*` tools are exposed through three groups in
-`agent/tool-groups.json` so roles can opt in with least-privilege:
+`agent/config/tool-groups.json` so roles can opt in with least-privilege:
 
 | Group            | Members                         |
 | ---------------- | ------------------------------- |
@@ -328,7 +328,7 @@ active.
 ## Storage
 
 Per-project stores live under
-`~/.pi/agent/think-in-code/projects/<sha256(realpath(cwd))>`.
+`~/.pi/agent/artifacts/think-in-code/projects/<sha256(realpath(cwd))>`.
 
 - Directories: mode `0700`
 - Files (DB + archives): mode `0600`
@@ -347,7 +347,7 @@ The store never opens, migrates, moves, or deletes existing Context
 Mode databases under `~/.pi/context-mode/`.
 
 Command telemetry for the same canonical project is stored separately under
-`~/.pi/agent/think-in-code/projects/<project-hash>/telemetry/`. It records only
+`~/.pi/agent/artifacts/think-in-code/projects/<project-hash>/telemetry/`. It records only
 command and batch execution events, redacts captured commands,
 limits them to 10,000 characters, uses directory/file modes `0700`/`0600`, and
 never changes an execution decision when writing fails. An interactive session
@@ -386,35 +386,37 @@ analyzer isolation are fail-closed.
 
 ## Configuration
 
-`settings.json → thinkInCode` (downward-clamped defaults shown):
+`config/think-in-code.json` in the global agent directory or trusted `<cwd>/.pi` directory (downward-clamped defaults shown):
 
 ```json
 {
-    "thinkInCode": {
-        "languages": ["javascript", "typescript", "python"],
-        "retentionHours": 24,
-        "projectQuotaBytes": 536870912,
-        "restoreTokenBudget": 1500,
-        "searchSnippetChars": 240,
-        "indexedSnippetChars": 1024,
-        "maxResultBytes": 65536,
-        "batchConcurrency": 2,
-        "maxBatchCommands": 16,
-        "network": false,
-        "commandPolicy": {
-            "guardPolicy": {},
-            "allowedShellCommands": [],
-            "rewrites": []
-        },
-        "telemetry": {
-            "enabled": true,
-            "retentionDays": 30,
-            "captureCommand": true,
-            "maxCommandLength": 10000,
-            "auditDays": 30,
-            "auditLimit": 100
-        }
-    }
+  "languages": [
+    "javascript",
+    "typescript",
+    "python"
+  ],
+  "retentionHours": 24,
+  "projectQuotaBytes": 536870912,
+  "restoreTokenBudget": 1500,
+  "searchSnippetChars": 240,
+  "indexedSnippetChars": 1024,
+  "maxResultBytes": 65536,
+  "batchConcurrency": 2,
+  "maxBatchCommands": 16,
+  "network": false,
+  "commandPolicy": {
+    "guardPolicy": {},
+    "allowedShellCommands": [],
+    "rewrites": []
+  },
+  "telemetry": {
+    "enabled": true,
+    "retentionDays": 30,
+    "captureCommand": true,
+    "maxCommandLength": 10000,
+    "auditDays": 30,
+    "auditLimit": 100
+  }
 }
 ```
 
@@ -426,7 +428,7 @@ to 30 days, 10,000 characters, 30 days and 100 events respectively. Other
 limits are also clamped downward; malformed or out-of-range values fall back to
 defaults rather than widening the ceiling.
 
-The installed `settings.json` preserves the previous effective Think behavior
+The installed `config/think-in-code.json` preserves the previous effective Think behavior
 with `sudo: "allow"`, an empty shell allowlist and no rewrites. The example
 configuration stays conservative with no allowed guard group.
 
@@ -468,7 +470,7 @@ Tasks 1–8 established coexistence; Task 9 performed the cutover:
    `agent/settings.example.json`.
 3. Removed the `context-mode` MCP server block from `agent/mcp.json`.
 4. Removed the active `@ctx-inspect`, `@ctx-exec`, and `@ctx` group
-   definitions from `agent/tool-groups.json` after every role and
+   definitions from `agent/config/tool-groups.json` after every role and
    agent consumer migrated to the matching `@think*` groups.
 
 Context Mode databases, package directories, skills,
@@ -480,7 +482,7 @@ deleted. Rollback does not require data conversion.
 To roll back the Task 9 cutover:
 
 1. Restore the `ctx-inspect`, `ctx-exec`, and `ctx` group definitions
-   in `agent/tool-groups.json` and revert `@think-inspect` references
+   in `agent/config/tool-groups.json` and revert `@think-inspect` references
    back to `@ctx-inspect` in the affected roles and agents.
 2. Re-add the `context-mode` MCP server block to `agent/mcp.json`.
 3. Re-add `"npm:context-mode"` to the `packages` list in

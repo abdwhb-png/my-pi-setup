@@ -4,7 +4,7 @@ Pi extension that runs brainstorming as a controlled, artifact-backed state mach
 
 ## Workflow
 
-`/brainstorm <prompt>` starts in Discovery. Discovery derives a concise canonical `topic` after minimum research; first submission fixes `docs/brainstorms/YYYY-MM-DD-<topic>/`. Opening prompt no longer names normal artifact roots. Existing roots are never renamed.
+`/brainstorm <prompt>` starts in Discovery. Discovery derives a concise canonical `topic` after minimum research; first submission fixes `.pi/artifacts/brainstorms/YYYY-MM-DD-<topic>/`. Opening prompt no longer names normal artifact roots. Existing roots are never renamed.
 
 Every phase requires a complete structured artifact and only adjacent LLM transitions are accepted. Generic mutation, shell, planning, `subagent`, and `subagent_wait` calls are blocked. Exploring recommendations are gated by append-only evidence, claims, verification audits, waivers, and final user-choice provenance.
 
@@ -72,4 +72,4 @@ Reusable RPC transport lives at `agent/extensions/_shared/subagents/rpc-client.t
 6. Submit two or three claim-linked approaches.
 7. Transition to Presenting.
 
-Artifacts live under `docs/brainstorms/` as immutable revisions. A blocked submission writes nothing. Completion stops after the final design; the user decides whether planning continues.
+Artifacts live under `.pi/artifacts/brainstorms/` as immutable revisions. A blocked submission writes nothing. Completion stops after the final design; the user decides whether planning continues.

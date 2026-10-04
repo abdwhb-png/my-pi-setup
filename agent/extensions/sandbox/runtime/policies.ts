@@ -1,7 +1,8 @@
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { extensionConfigPath } from "../../_shared/config-loader.ts";
+
 import type { SelectedInstallation } from "../capabilities/installations.ts";
 
 import {
@@ -313,7 +314,7 @@ function parseSocketAddress(
     const plain = /^([^:]+):(\d+)$/.exec(value);
     const match = bracketed ?? plain;
     if (!match) invalid(new Error(`${field} must be an IP socket address`));
-    const detectedFamily = isIP(match[1]!);
+    const detectedFamily = isIP(match[1]);
     if (
         detectedFamily === 0 ||
         (bracketed !== null && detectedFamily !== 6) ||
@@ -321,7 +322,7 @@ function parseSocketAddress(
     )
         invalid(new Error(`${field} must be an IP socket address`));
     const family: 4 | 6 = detectedFamily === 4 ? 4 : 6;
-    let host = match[1]!;
+    let host = match[1];
     if (family === 6) {
         try {
             const canonical = new URL(`http://[${host}]/`).hostname;
@@ -617,7 +618,7 @@ export function validatePiSandboxConfig(
     }
 
     return {
-        enabled: raw.enabled as boolean | undefined,
+        enabled: raw.enabled,
         tmpNamespace: raw.tmpNamespace,
         filesystem: normalizedFilesystem,
         network: normalizedNetwork,
@@ -760,7 +761,7 @@ function createShellPolicy(
         // impossible to materialize in bubblewrap's read-only intermediate root.
         "/proc/1/root",
         leaseParent,
-        resolve(getAgentDir(), "sandbox.json"),
+        extensionConfigPath("sandbox", { scope: "global" }),
     ];
     const fixedDeniedWriteRoots = [
         "/mnt/c",

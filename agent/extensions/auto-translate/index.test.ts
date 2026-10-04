@@ -1,5 +1,8 @@
 import { describe, expect, it, mock } from 'bun:test';
+import { useIsolatedAgentDir } from '../_shared/testing/config-fixture.ts';
 import { buildStatusRenderText, translatingText } from './state.ts';
+
+useIsolatedAgentDir();
 
 // Stub heavy deps so the factory loads cleanly outside the pi runtime.
 // pi-ai is mocked globally via __tests__/setup.ts preload.

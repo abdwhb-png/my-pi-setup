@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import type { IsolatedWorkspace } from "./state-machine.ts";
 
 export interface GitWorkspaceManagerOptions {
@@ -523,13 +524,20 @@ export class GitWorkspaceManager implements SddWorkspaceExecution {
     }
 
     private ledgerPath(runId: string): string {
-        return join(this.agentDir, ".sdd", "workspaces", `${runId}.json`);
+        return extensionPath(
+            { scope: "global", agentDir: this.agentDir },
+            "artifacts",
+            "sdd",
+            "workspaces",
+            `${runId}.json`,
+        );
     }
 
     private workspaceLockPath(runId: string): string {
-        return join(
-            this.agentDir,
-            ".sdd",
+        return extensionPath(
+            { scope: "global", agentDir: this.agentDir },
+            "artifacts",
+            "sdd",
             "workspaces",
             `${runId}.kernel-lock`,
         );

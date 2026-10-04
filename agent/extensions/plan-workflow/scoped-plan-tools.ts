@@ -1,3 +1,4 @@
+import { extensionPath } from "../_shared/extension-paths.ts";
 /**
  * plan-tools — plan directory-guarded write_plan / edit_plan tools.
  *
@@ -16,10 +17,7 @@ import {
     getActiveRole,
     requiresPlanSubmission,
 } from "../_shared/pi-roles/index.ts";
-import {
-    loadPlansConfig,
-    resolvePlanFileDir,
-} from "../_shared/plans-config.ts";
+import { loadPlansConfig } from "../_shared/plans-config.ts";
 import {
     createScopedWriter,
     type ScopedWriteActor,
@@ -111,7 +109,7 @@ export function resolvePlanPath(
     if (!planDir || !planDir.trim()) {
         return {
             resolved: null,
-            error: "No plan directory configured. Set 'plans.planFileDir' in settings.json.",
+            error: "Plan directory is unavailable.",
         };
     }
 
@@ -292,14 +290,14 @@ export function registerPlanTools(pi: ExtensionAPI): void {
         name: "write_plan",
         label: "Write Plan",
         description:
-            "Write a Markdown plan inside the configured planFileDir and return its resolved cwd-relative path.",
+            "Write a Markdown plan inside the project planning/plans directory and return its resolved cwd-relative path.",
         parameters: writePlanSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-            const config = loadPlansConfig(ctx.cwd, ctx.isProjectTrusted());
+            loadPlansConfig(ctx.cwd, ctx.isProjectTrusted());
             const result = writePlan(
                 params.path,
                 ctx.cwd,
-                resolvePlanFileDir(config),
+                extensionPath({ scope: "project", cwd: ctx.cwd }, "plans"),
                 params.content,
                 planWriteActor(ctx),
             );
@@ -329,14 +327,14 @@ export function registerPlanTools(pi: ExtensionAPI): void {
         name: "edit_plan",
         label: "Edit Plan",
         description:
-            "Edit a Markdown plan inside the configured planFileDir and return its resolved cwd-relative path.",
+            "Edit a Markdown plan inside the project planning/plans directory and return its resolved cwd-relative path.",
         parameters: editPlanSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-            const config = loadPlansConfig(ctx.cwd, ctx.isProjectTrusted());
+            loadPlansConfig(ctx.cwd, ctx.isProjectTrusted());
             const result = editPlan(
                 params.path,
                 ctx.cwd,
-                resolvePlanFileDir(config),
+                extensionPath({ scope: "project", cwd: ctx.cwd }, "plans"),
                 params.edits,
                 planWriteActor(ctx),
             );

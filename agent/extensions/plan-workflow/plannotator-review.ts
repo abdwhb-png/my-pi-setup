@@ -7,11 +7,9 @@ import type {
     ExtensionAPI,
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import { requiresPlanSubmission } from "../_shared/pi-roles/index.ts";
-import {
-    loadPlansConfig,
-    resolvePlanFileDir,
-} from "../_shared/plans-config.ts";
+import { loadPlansConfig } from "../_shared/plans-config.ts";
 import {
     getToolPolicy,
     registerToolPolicyContribution,
@@ -141,11 +139,10 @@ export function registerReviews(pi: ExtensionAPI): SubmissionReviews {
             const file =
                 mode === "code" ? undefined : resolveFile(ctx.cwd, raw ?? "");
             if (mode === "submit") {
-                const dir = resolvePlanFileDir(config);
-                if (!dir)
-                    throw new Error(
-                        "Set plans.planFileDir in settings.json before submitting a plan.",
-                    );
+                const dir = extensionPath(
+                    { scope: "project", cwd: ctx.cwd },
+                    "plans",
+                );
                 const root = realpathSync(resolve(ctx.cwd, dir));
                 if (
                     !file ||
@@ -153,14 +150,14 @@ export function registerReviews(pi: ExtensionAPI): SubmissionReviews {
                     !within(root, file)
                 )
                     throw new Error(
-                        "Plan must be a Markdown file inside plans.planFileDir (including symlink targets).",
+                        "Plan must be a Markdown file inside the project planning/plans directory (including symlink targets).",
                     );
                 if (statSync(file).size > 1_048_576)
                     throw new Error("Plan exceeds 1 MiB.");
                 const path = normalizeSubmittedPlanPath(raw!, ctx.cwd, dir);
                 if (!path)
                     throw new Error(
-                        "Plan path must be inside plans.planFileDir without traversal.",
+                        "Plan path must be inside the project planning/plans directory without traversal.",
                     );
                 const entries = ctx.sessionManager.getEntries();
                 const state = getPlanReviewState(entries, path);

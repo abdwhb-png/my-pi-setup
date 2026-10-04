@@ -14,8 +14,8 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdtemp, mkdir, readFile, writeFile, symlink, rm } from 'node:fs/promises';
+import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
     sanitizeSessionId,
@@ -58,6 +58,37 @@ function makeEvent(
 async function tempDir(): Promise<string> {
     return await mkdtemp(join(tmpdir(), 'st-test-'));
 }
+
+it('layout migration preserves real telemetry records, purge markers, and exports', async () => {
+    const root = await tempDir();
+    try {
+        const { planLayoutMigration, applyLayoutMigration } = await import('../../_shared/scripts/extension-layout-migration.ts');
+        const { resolveExportPath, writeExportFile } = await import('./commands.ts');
+        const agentDir = join(root, 'agent');
+        const cwd = join(root, 'project');
+        await mkdir(agentDir);
+        await mkdir(cwd);
+        const source = join(agentDir, 'save-tokens-telemetry');
+        const destination = join(agentDir, 'artifacts/save-tokens-telemetry');
+        const timestamp = '2026-10-03T00:00:00.000Z';
+        const event = makeEvent({ timestamp, sessionId: 'migration' });
+        await createWriter(source, 'migration').append(event);
+        await purgeTelemetry(source, { retentionDays: 30, now: new Date(timestamp) });
+        const files = [join(source, '2026-10-03/migration.jsonl'), join(source, '.last-purge')];
+        for (const format of ['json', 'csv']) {
+            const output = resolveExportPath(source, undefined, format, cwd, new Date(timestamp));
+            files.push(await writeExportFile(output.path, 'export bytes', output.isExplicit));
+        }
+        const before = await Promise.all(files.map((path) => readFile(path)));
+        applyLayoutMigration(planLayoutMigration({ agentDir, projects: [cwd] }));
+        for (const [i, path] of files.entries())
+            expect(await readFile(join(destination, relative(source, path)))).toEqual(before[i]);
+        expect((await readTelemetryFile(destination, '2026-10-03', 'migration')).records).toEqual([event]);
+        expect(planLayoutMigration({ agentDir, projects: [cwd] }).changes).toEqual([]);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
 
 /**
  * Check if the current platform appears to support POSIX permissions.

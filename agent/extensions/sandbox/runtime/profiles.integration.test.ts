@@ -1,5 +1,7 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createSandboxedBashOps, loadSandboxConfig } from "../index.ts";
@@ -133,7 +135,7 @@ test.skipIf(
         await mkdir(siblingProject, { recursive: true });
         await writeFile(protectedFile, "protected");
         await writeFile(
-            join(agentDir, "sandbox.json"),
+            join(agentDir, "config", "sandbox.json"),
             JSON.stringify({
                 version: 2,
                 machineId,
@@ -178,8 +180,8 @@ test.skipIf(
     const leaseRoot = await mkdtemp("/var/tmp/z-");
     const marker = join(hostTmp, "from-host");
     const hostOutput = join(hostTmp, "from-bash");
-    const globalPath = join(agentDir, "sandbox.json");
-    const projectPath = join(cwd, ".pi", "sandbox.json");
+    const globalPath = join(agentDir, "config", "sandbox.json");
+    const projectPath = join(cwd, ".pi", "config", "sandbox.json");
     const machineId = localMachineId();
     const run = async (config: ReturnType<typeof loadSandboxConfig>["config"], command: string, thinkCommand: string) => {
         const service = createSandboxService({
@@ -208,6 +210,7 @@ test.skipIf(
         await writeFile(marker, "host");
         await writeFile(globalPath, JSON.stringify({ version: 2, machineId, tmpNamespace: "host" }), { mode: 0o600 });
         await writeFile(projectPath, "{}");
+        new ProjectTrustStore(agentDir).set(cwd, true);
         const globalHost = loadSandboxConfig(cwd, { agentDir, machineId });
         expect(globalHost.config.tmpNamespace).toBe("host");
         const host = await run(

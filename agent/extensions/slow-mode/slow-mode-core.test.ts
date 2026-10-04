@@ -1,3 +1,5 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { configFixture } from "../_shared/testing/config-fixture.ts";
 /**
  * Tests for the slow-mode pure helpers.
  *
@@ -441,12 +443,12 @@ describe('loadSlowModeConfig', () => {
 
     const writeSlowModeJson = (dir: string, content: unknown) => {
         mkdirSync(dir, { recursive: true });
-        writeFileSync(join(dir, 'slow-mode.json'), JSON.stringify(content));
+        writeFileSync(join(dir, 'config', 'slow-mode.json'), JSON.stringify(content));
     };
 
     const writeRawSlowModeJson = (dir: string, content: string) => {
         mkdirSync(dir, { recursive: true });
-        writeFileSync(join(dir, 'slow-mode.json'), content);
+        writeFileSync(join(dir, 'config', 'slow-mode.json'), content);
     };
 
     const cleanup = () => {
@@ -466,13 +468,15 @@ describe('loadSlowModeConfig', () => {
 
     beforeEach(() => {
         agentDir = makeTempDir();
+        mkdirSync(join(agentDir,"config"),{recursive:true});
         cwd = makeTempDir();
     });
 
     afterEach(cleanup);
 
     it('returns defaults when no config sources present', () => {
-        const result = loadSlowModeConfig(cwd, agentDir);
+        new ProjectTrustStore(agentDir).set(cwd, true);
+        const result = loadSlowModeConfig(cwd, agentDir, true);
         expect(result).toEqual({
             write: true,
             edit: true,
@@ -483,14 +487,14 @@ describe('loadSlowModeConfig', () => {
 
     it('loads valid config from agent dir', () => {
         writeSlowModeJson(agentDir, { write: true, edit: false, grep: true });
-        const result = loadSlowModeConfig(cwd, agentDir);
+        new ProjectTrustStore(agentDir).set(cwd, true);
+        const result = loadSlowModeConfig(cwd, agentDir, true);
         expect(result).toEqual({ ...DEFAULT_SLOW_MODE_CONFIG, write: true, edit: false, grep: true });
     });
 
-    it('returns defaults for malformed JSON', () => {
+    it('reports malformed JSON', () => {
         writeRawSlowModeJson(agentDir, '{ not valid json }');
-        const result = loadSlowModeConfig(cwd, agentDir);
-        expect(result).toEqual(DEFAULT_SLOW_MODE_CONFIG);
+        expect(() => loadSlowModeConfig(cwd, agentDir)).toThrow("Invalid configuration");
     });
 
     it('filters out non-boolean values', () => {
@@ -500,24 +504,25 @@ describe('loadSlowModeConfig', () => {
             read: 1,
             find: false,
         });
-        const result = loadSlowModeConfig(cwd, agentDir);
+        new ProjectTrustStore(agentDir).set(cwd, true);
+        const result = loadSlowModeConfig(cwd, agentDir, true);
         expect(result).toEqual({ ...DEFAULT_SLOW_MODE_CONFIG, write: true, find: false });
     });
 
-    it('returns defaults when file contains a JSON array', () => {
+    it('ignores a JSON array as invalid owner fields', () => {
         writeRawSlowModeJson(agentDir, '[1, 2, 3]');
-        const result = loadSlowModeConfig(cwd, agentDir);
-        expect(result).toEqual(DEFAULT_SLOW_MODE_CONFIG);
+        expect(loadSlowModeConfig(cwd, agentDir)).toEqual(DEFAULT_SLOW_MODE_CONFIG);
     });
 
     it('merges project-local config over global', () => {
         writeSlowModeJson(agentDir, { write: true, edit: false });
-        mkdirSync(join(cwd, '.pi'), { recursive: true });
+        mkdirSync(join(cwd, '.pi', 'config'), { recursive: true });
         writeFileSync(
-            join(cwd, '.pi', 'slow-mode.json'),
+            join(cwd, '.pi', 'config', 'slow-mode.json'),
             JSON.stringify({ edit: true, grep: true }),
         );
-        const result = loadSlowModeConfig(cwd, agentDir);
+        new ProjectTrustStore(agentDir).set(cwd, true);
+        const result = loadSlowModeConfig(cwd, agentDir, true);
         expect(result).toEqual({ ...DEFAULT_SLOW_MODE_CONFIG, write: true, edit: true, grep: true });
     });
 
@@ -525,7 +530,7 @@ describe('loadSlowModeConfig', () => {
         const sm = SettingsManager.inMemory({
             slowMode: { write: true, grep: true },
         } as any);
-        const result = loadSlowModeConfig(cwd, agentDir, sm);
+        const result = loadSlowModeConfig(...configFixture("slowMode", sm));
         expect(result).toEqual({ ...DEFAULT_SLOW_MODE_CONFIG, write: true, grep: true });
     });
 
@@ -533,27 +538,13 @@ describe('loadSlowModeConfig', () => {
         const sm = SettingsManager.inMemory({
             slowMode: { write: true, grep: 'yes', find: false, read: 1 },
         } as any);
-        const result = loadSlowModeConfig(cwd, agentDir, sm);
+        const result = loadSlowModeConfig(...configFixture("slowMode", sm));
         expect(result).toEqual({ ...DEFAULT_SLOW_MODE_CONFIG, write: true, find: false });
     });
 
-    it('cumulative: legacy + settings merge, settings wins on shared keys', () => {
-        writeSlowModeJson(agentDir, { write: true, edit: true, bash: true });
-        const sm = SettingsManager.inMemory({
-            slowMode: { edit: false, grep: true },
-        } as any);
-        const result = loadSlowModeConfig(cwd, agentDir, sm);
-        // legacy provides write/bash (unchanged), settings provides grep (new),
-        // settings edit:false overrides legacy edit:true (settings wins by default).
-        // safe_bash comes from defaults (not in legacy/settings).
-        expect(result).toEqual({ ...DEFAULT_SLOW_MODE_CONFIG, write: true, edit: false, bash: true, grep: true });
-    });
-
-    it('cascades: legacy file used when settings key is absent', () => {
-        writeSlowModeJson(agentDir, { write: true, grep: true });
-        const sm = SettingsManager.inMemory({} as any);
-        const result = loadSlowModeConfig(cwd, agentDir, sm);
-        expect(result).toEqual({ ...DEFAULT_SLOW_MODE_CONFIG, write: true, grep: true });
+    it('rejects unmigrated legacy sources', () => {
+        writeFileSync(join(agentDir,'slow-mode.json'),'{}');
+        expect(()=>loadSlowModeConfig(cwd,agentDir)).toThrow('needs migration');
     });
 });
 

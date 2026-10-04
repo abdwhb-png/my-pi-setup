@@ -22,6 +22,10 @@ import { Container, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { getActivePolicy } from "../_shared/audit-mode/audit-state";
 import { appendCompressionFooter } from "../_shared/compression-render";
+import {
+    isProjectConfigTrusted,
+    projectConfigTrustNotice,
+} from "../_shared/config-loader.ts";
 import { executeOnHost } from "../_shared/execution-provenance/index.ts";
 import { expandHomePath } from "../_shared/home-path.ts";
 import { managedOutputArchive } from "../_shared/tool-output-archive.ts";
@@ -396,6 +400,7 @@ function registerCompactSessionNames(
 }
 
 export default function piOverrides(pi: ExtensionAPI): void {
+    const projectTrustedAtLaunch = isProjectConfigTrusted(process.cwd());
     registerToolPresentation(pi, "pi-overrides", (tools) => {
         const names = new Set(
             tools.filter((tool) => !tool.deferred).map((tool) => tool.name),
@@ -428,9 +433,17 @@ export default function piOverrides(pi: ExtensionAPI): void {
     const restoreCompactSessionNameState = registerCompactSessionNames(pi);
 
     pi.on("session_start", async (_event, ctx) => {
+        const trustNotice = projectConfigTrustNotice(
+            ctx.cwd,
+            undefined,
+            projectTrustedAtLaunch,
+        );
+        if (trustNotice) ctx.ui.notify(trustNotice, "warning");
         restoreCompactSessionNameState(ctx.sessionManager.getEntries());
         // Load config fresh each session
-        setFileResolverConfig(loadFileResolverConfig(ctx.cwd));
+        setFileResolverConfig(
+            loadFileResolverConfig(ctx.cwd, undefined, ctx.isProjectTrusted()),
+        );
 
         const readDef = createReadToolDefinition(ctx.cwd);
         // grep: factory only exposes isDirectory/readFile helpers — no hook to

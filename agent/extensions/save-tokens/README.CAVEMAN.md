@@ -62,7 +62,7 @@ The config dialog lets you:
 - **Default level** — Set a level that activates automatically on every new session (e.g. `full` to always start in caveman mode)
 - **Show status bar** — Toggle the animated campfire indicator in the footer
 
-Settings are saved to `~/.pi/agent/settings.json` under `saveTokens.caveman` and persist across all sessions.
+Settings are saved to `~/.pi/agent/config/save-tokens.json` under `caveman` and persist across all sessions.
 
 ### Subagent ultra profile
 
@@ -112,7 +112,7 @@ The extension is a thin orchestrator over the canonical **`caveman` skill** — 
 
 > **Requirement:** the `caveman` skill must be installed under `~/.pi/agent/skills/caveman/SKILL.md`. The extension auto-detects it at load time; if the skill is missing, no prompt is injected and the extension emits no error (graceful no-op). `micro` is the only level not documented by the skill — it falls back to a small local prompt.
 
-Within a session, the active level is stored as a custom session entry and restored on resume. Across sessions, persistent config (`settings.json` → `saveTokens.caveman`) provides the default level and status bar preference. Auto-clarity rules (defined in the skill itself) tell the model to drop caveman mode for security warnings or irreversible actions.
+Within a session, the active level is stored as a custom session entry and restored on resume. Across sessions, persistent config (`config/save-tokens.json` → `caveman`) provides the default level and status bar preference. Auto-clarity rules (defined in the skill itself) tell the model to drop caveman mode for security warnings or irreversible actions.
 
 ## Warning
 

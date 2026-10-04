@@ -1,6 +1,7 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { extensionPath } from "./extension-paths.ts";
+
+import { basename, dirname, resolve } from "node:path";
 
 import {
     hostExecution,
@@ -62,9 +63,10 @@ export function managedOutputArchiveTimestamp(
 }
 
 export function resolveToolResultArchiveRoot(): string {
-    return (
-        process.env.PI_TOOL_RESULT_ARCHIVE_DIR?.trim() ||
-        join(homedir(), ".pi", "agent", "tool-result-archive")
+    return extensionPath(
+        { scope: "global" },
+        "artifacts",
+        "tool-result-archive",
     );
 }
 

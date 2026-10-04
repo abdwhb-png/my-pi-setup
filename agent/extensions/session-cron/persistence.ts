@@ -1,12 +1,17 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import type { StoredCronTask } from "./types";
 
 interface PersistedCronTasksFile {
     tasks: StoredCronTask[];
 }
 
-const CRON_TASKS_FILE = join(process.cwd(), ".pi", "session-cron.json");
+const CRON_TASKS_FILE = extensionPath(
+    { scope: "project", cwd: process.cwd() },
+    "artifacts",
+    "session-cron.json",
+);
 
 export function getCronTasksFilePath(): string {
     return CRON_TASKS_FILE;

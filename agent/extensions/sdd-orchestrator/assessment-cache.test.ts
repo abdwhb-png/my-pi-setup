@@ -119,7 +119,7 @@ describe('AssessmentCache', () => {
             planContent: '# Corrupt cache',
             assessorAgent: 'orchestration-assessor',
         });
-        const cacheDir = join(agentDir, '.sdd', 'assessments');
+        const cacheDir = join(agentDir, 'artifacts/sdd', 'assessments');
         mkdirSync(cacheDir, { recursive: true });
         writeFileSync(join(cacheDir, `${key}.json`), '{not-json');
         let launches = 0;

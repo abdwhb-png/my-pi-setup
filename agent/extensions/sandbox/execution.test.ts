@@ -1,7 +1,8 @@
+import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
 /// <reference types="bun" />
 
 import { beforeEach, afterEach, describe, expect, it, mock } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type {
     ExtensionAPI,
@@ -105,7 +106,7 @@ describe("sandbox runtime publication", () => {
         await rm(leaseRoot, { recursive: true, force: true });
     });
     it.skipIf(!realBackendEnabled)("keeps the strict engine enabled when the legacy flag requests host shell", async () => {
-        await writeFile(join(agentDir, "sandbox.json"), JSON.stringify({
+        await writeFile(join(agentDir, "config", "sandbox.json"), JSON.stringify({
             version: 2, machineId: localMachineId(), mode: "host",
         }));
         const hostContext = { ...context, cwd: fixtureRoot } as ExtensionContext;
@@ -121,7 +122,7 @@ describe("sandbox runtime publication", () => {
     it("publishes a bounded error snapshot for malformed config", async () => {
         const cwd = await mkdtemp(join(fixtureRoot, "malformed-"));
         await mkdir(join(cwd, ".pi"));
-        await writeFile(join(cwd, ".pi", "sandbox.json"), "{ invalid");
+        await writeFile(join(cwd, ".pi", "config", "sandbox.json"), "{ invalid");
         const malformedContext = { ...context, cwd } as ExtensionContext;
 
         const registered = registerSandbox({ noSandbox: false });
@@ -154,7 +155,7 @@ describe("sandbox runtime publication", () => {
         const cwd = await mkdtemp(join(fixtureRoot, "project-"));
         await mkdir(join(cwd, ".pi"));
         await writeFile(
-            join(cwd, ".pi", "sandbox.json"),
+            join(cwd, ".pi", "config", "sandbox.json"),
             JSON.stringify({
                 filesystem: { allowWrite: ["."], denyWrite: [".env"] },
                 network: { allowedDomains: [], deniedDomains: [] },
