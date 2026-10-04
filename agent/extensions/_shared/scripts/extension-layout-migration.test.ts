@@ -72,6 +72,18 @@ test.each(['absolute', 'home-relative'])('rejects a second project claiming a pr
     expect(readFileSync(join(cwd, '.pi/planning/plans/p.md'), 'utf8')).toBe('# plan');
     expect(planLayoutMigration({ agentDir, projects: [cwd] }).changes).toEqual([]);
 });
+test('leaves external subagent transcripts inside session artifacts untouched', () => {
+    const { agentDir, cwd } = fixture();
+    const directory = join(agentDir, 'sessions/--project--/subagent-artifacts');
+    mkdirSync(directory, { recursive: true });
+    const transcript = join(directory, 'run_reviewer_transcript.jsonl');
+    const bytes = JSON.stringify({ role: 'assistant', content: 'Historical transcript' }) + '\n';
+    writeFileSync(transcript, bytes);
+    const plan = planLayoutMigration({ agentDir, projects: [cwd] });
+    expect(plan.changes).toEqual([]);
+    expect(readFileSync(transcript, 'utf8')).toBe(bytes);
+});
+
 test('dry run identifies owned settings and preserves every input byte', () => {
     const { agentDir, cwd } = fixture();
     const settings =
@@ -520,6 +532,26 @@ test('relocates SQLite archive references without changing project identity', as
     } finally {
         migrated.close();
     }
+});
+
+test('moves historical Think repair backups byte-for-byte without repairing their references', async () => {
+    const { Database } = await import('bun:sqlite');
+    const { applyLayoutMigration, recoverLayoutMigration } = await import('./extension-layout-migration.ts');
+    const { agentDir, cwd } = fixture();
+    const source = join(agentDir, 'think-in-code/repair-backups/old-repair/store.sqlite');
+    const destination = join(agentDir, 'artifacts/think-in-code/repair-backups/old-repair/store.sqlite');
+    mkdirSync(join(source, '..'), { recursive: true });
+    const db = new Database(source);
+    db.run('CREATE TABLE archives (id TEXT PRIMARY KEY, archive_path TEXT)');
+    db.query('INSERT INTO archives VALUES (?, ?)').run('lost', join(agentDir, 'think-in-code/projects/old/archives/missing.bin'));
+    db.close();
+    const bytes = readFileSync(source);
+    const journal = applyLayoutMigration(planLayoutMigration({ agentDir, projects: [cwd] }));
+    expect(readFileSync(destination)).toEqual(bytes);
+    expect(existsSync(source)).toBe(false);
+    recoverLayoutMigration(journal!, 'rollback');
+    expect(readFileSync(source)).toEqual(bytes);
+    expect(existsSync(destination)).toBe(false);
 });
 
 test('recovery resumes an interrupted write and refuses subsequent edits', async () => {

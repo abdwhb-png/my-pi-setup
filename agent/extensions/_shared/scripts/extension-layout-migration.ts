@@ -20,6 +20,7 @@ import {
     relative,
     isAbsolute,
     basename,
+    sep,
 } from "node:path";
 import {
     CONFIG_OWNERS,
@@ -654,7 +655,15 @@ export function planLayoutMigration(
                 entry.from === source || source.startsWith(entry.from + "/"),
         )!;
         let content: Buffer = readFileSync(source);
-        if (move.kind === "think" && source.endsWith("store.sqlite")) {
+        // Historical repair snapshots must retain their original database bytes and references.
+        const repairBackup = relative(move.from, source).startsWith(
+            `repair-backups${sep}`,
+        );
+        if (
+            move.kind === "think" &&
+            !repairBackup &&
+            source.endsWith("store.sqlite")
+        ) {
             for (const suffix of ["-wal", "-journal"])
                 if (
                     existsSync(source + suffix) &&
@@ -740,6 +749,13 @@ export function planLayoutMigration(
     const sessionRoot = join(agentDir, "sessions");
     if (existsSync(sessionRoot))
         for (const path of files(sessionRoot)) {
+            // pi-subagents owns these transcripts, which are not Pi session entries.
+            if (
+                relative(sessionRoot, path)
+                    .split(sep)
+                    .includes("subagent-artifacts")
+            )
+                continue;
             if (/\.(sqlite|db)(-|$)/.test(path))
                 throw new Error(
                     `Unsupported session backend: ${path}. This migration supports Pi JSONL sessions only.`,

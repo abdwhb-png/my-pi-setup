@@ -42,7 +42,7 @@ bun agent/bin/migrate-extension-layout.ts --resume /path/to/journal.json --pi-st
 bun agent/bin/migrate-extension-layout.ts --rollback /path/to/journal.json --pi-stopped
 ```
 
-The migration updates session-plan and brainstorm manifests, operational plan/brainstorm entries in Pi JSONL sessions, and Think-in-Code SQLite archive references. It also updates SDD queue references already in the canonical directory when projects migrate in separate runs. Session entry identities, revisions, approval hashes, continuation preferences, and historical conversation text are preserved. SQLite transformations occur on an in-memory database during preflight.
+The migration updates session-plan and brainstorm manifests, operational plan/brainstorm entries in Pi JSONL sessions, and Think-in-Code SQLite archive references. Historical Think-in-Code `repair-backups` move byte-for-byte, retaining their original references. It also updates SDD queue references already in the canonical directory when projects migrate in separate runs. Session entry identities, revisions, approval hashes, continuation preferences, and historical conversation text are preserved. SQLite transformations occur on an in-memory database during preflight.
 
 SDD's hashed manifests remain byte-identical. `<agentDir>/artifacts/plan-path-map.json` records exact relocated Markdown paths and content digests from ordinary plans, versioned session plans, and brainstorms. SDD resolves that mapping when checking or reading an approved source. Modified content still invalidates approval. External Plannotator history and arbitrary historical prose are not rewritten.
 
