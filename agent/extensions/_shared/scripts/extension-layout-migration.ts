@@ -69,6 +69,18 @@ export interface LayoutMigration {
 interface Journal extends LayoutMigration {
     state: "applying" | "complete" | "rolled-back";
 }
+interface StoredImage {
+    sha256: string;
+    mode: number;
+}
+interface StoredJournal extends Omit<Journal, "version" | "changes"> {
+    version: 2;
+    changes: Array<{
+        path: string;
+        before: StoredImage | null;
+        after: StoredImage | null;
+    }>;
+}
 
 function object(value: unknown, path: string): Record<string, unknown> {
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -128,7 +140,7 @@ function assertSandboxMigrationComplete(agentDir: string): void {
         );
 }
 
-function assertSourceInventory(plan: LayoutMigration): void {
+function assertSourceInventory(plan: LayoutMigration | StoredJournal): void {
     const removed = new Set(
         plan.changes
             .filter((change) => change.after === null)
@@ -859,8 +871,63 @@ function writeImage(path: string, value: FileImage | null): void {
         rmSync(temp, { force: true });
     }
 }
-function persistJournal(path: string, journal: Journal): void {
+function persistJournal(path: string, journal: Journal | StoredJournal): void {
     writeImage(path, { data: json(journal).toString("base64"), mode: 0o600 });
+}
+
+/** Keep recovery metadata bounded even when the artifact payload exceeds JSON string limits. */
+function storeJournalImages(
+    path: string,
+    plan: LayoutMigration,
+): StoredJournal {
+    const root = `${path}.files`;
+    assertNoSymlinkPath(root);
+    mkdirSync(root, { mode: 0o700 });
+    const written = new Set<string>();
+    function store(value: FileImage | null): StoredImage | null {
+        if (!value) return null;
+        const bytes = Buffer.from(value.data, "base64");
+        const sha256 = hash(bytes);
+        if (!written.has(sha256)) {
+            const file = join(root, sha256);
+            writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+            if (hash(readFileSync(file)) !== sha256)
+                throw new Error(
+                    `Migration backup verification failed: ${file}`,
+                );
+            written.add(sha256);
+        }
+        return { sha256, mode: value.mode };
+    }
+    return {
+        ...plan,
+        version: 2,
+        state: "applying",
+        changes: plan.changes.map((change) => ({
+            path: change.path,
+            before: store(change.before),
+            after: store(change.after),
+        })),
+    };
+}
+
+function readJournalImage(
+    path: string,
+    journal: Journal | StoredJournal,
+    index: number,
+    side: "before" | "after",
+): FileImage | null {
+    if (journal.version === 1) return journal.changes[index][side];
+    const value = journal.changes[index][side];
+    if (!value) return null;
+    if (!/^[a-f0-9]{64}$/.test(value.sha256))
+        throw new Error(`Invalid migration backup digest: ${path}`);
+    const file = join(`${path}.files`, value.sha256);
+    assertNoSymlinkPath(file);
+    const bytes = readFileSync(file);
+    if (hash(bytes) !== value.sha256)
+        throw new Error(`Migration backup verification failed: ${file}`);
+    return { data: bytes.toString("base64"), mode: value.mode };
 }
 
 function withMigrationLock<T>(agentDir: string, action: () => T): T {
@@ -929,7 +996,6 @@ export function applyLayoutMigration(
                 );
         }
     if (!plan.changes.length) return undefined;
-    const journal: Journal = { ...plan, state: "applying" };
     const path = join(root, `${Date.now()}-${randomUUID()}.json`);
     withMigrationLock(plan.agentDir, () => {
         assertSourceInventory(plan);
@@ -945,7 +1011,7 @@ export function applyLayoutMigration(
                     `Unfinished migration: resume or roll back ${join(root, name)}`,
                 );
         }
-        persistJournal(path, journal);
+        persistJournal(path, storeJournalImages(path, plan));
     });
     recoverLayoutMigration(path, "resume");
     return path;
@@ -957,25 +1023,32 @@ export function recoverLayoutMigration(
     action: "resume" | "rollback",
 ): void {
     const raw = parse(path);
-    if (raw.version !== 1 || !Array.isArray(raw.changes))
+    if ((raw.version !== 1 && raw.version !== 2) || !Array.isArray(raw.changes))
         throw new Error(`Invalid migration journal: ${path}`);
-    const journal = raw as unknown as Journal;
+    const journal = raw as unknown as Journal | StoredJournal;
     if (journal.state === "rolled-back" && action === "resume")
         throw new Error("Cannot resume a rolled-back migration");
     withMigrationLock(journal.agentDir, () => {
         if (action === "resume") assertSourceInventory(journal);
-        for (const change of journal.changes) {
+        for (const [index, change] of journal.changes.entries()) {
             const current = image(change.path);
-            if (!same(current, change.before) && !same(current, change.after))
+            const before = readJournalImage(path, journal, index, "before");
+            const after = readJournalImage(path, journal, index, "after");
+            if (!same(current, before) && !same(current, after))
                 throw new Error(`Migration recovery conflict: ${change.path}`);
         }
-        const ordered = [...journal.changes].sort(
-            (a, b) =>
+        const ordered = [...journal.changes.entries()].sort(
+            ([, a], [, b]) =>
                 Number((action === "resume" ? a.after : a.before) === null) -
                 Number((action === "resume" ? b.after : b.before) === null),
         );
-        for (const change of ordered) {
-            const desired = action === "resume" ? change.after : change.before;
+        for (const [index, change] of ordered) {
+            const desired = readJournalImage(
+                path,
+                journal,
+                index,
+                action === "resume" ? "after" : "before",
+            );
             if (!same(image(change.path), desired))
                 writeImage(change.path, desired);
             if (!same(image(change.path), desired))
