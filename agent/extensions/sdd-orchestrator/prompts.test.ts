@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import type { Assessment } from './assessment.ts';
 import type { SddConfig } from './config.ts';
 import type { SddDelegationResponse } from './delegation-contract.ts';
@@ -588,34 +588,11 @@ describe('read-only request builders', () => {
 });
 
 describe('read-only agent contracts', () => {
-    const readAgent = (name: string) =>
-        readFileSync(new URL(`../../agents/${name}.md`, import.meta.url), 'utf8');
     const readRuntimeAgent = (name: string) => {
         const entry = getSddAgentEntry(name);
         if (!entry) throw new Error(`Runtime agent not found: ${name}`);
         return entry.markdown;
     };
-
-    test('defines the assessor as a fresh read-only JSON-only role', () => {
-        const agent = readAgent('orchestration-assessor');
-        expect(agent).toContain('name: orchestration-assessor');
-        expect(agent).toContain(
-            'description: Read-only SDD complexity and risk signal assessor',
-        );
-        expect(agent).toContain("tools: '@inspect, @lens-inspect'");
-        expect(agent).toContain('thinking: medium');
-        expect(agent).toContain('systemPromptMode: replace');
-        expect(agent).toContain('inheritProjectContext: true');
-        expect(agent).toContain('inheritSkills: false');
-        expect(agent).toContain('defaultContext: fresh');
-        expect(agent).toContain('acceptanceRole: read-only');
-        expect(agent).toContain('completionGuard: false');
-        expect(agent).toContain('version-1 JSON only');
-        expect(agent).toContain('verified plan or code evidence');
-        expect(agent).toContain('Never choose dependencies or parallelism');
-        expect(agent).toContain('Never edit');
-        expect(agent).toContain('advisoryMinimum is non-authoritative');
-    });
 
     test('defines stage-specific fresh read-only reviewer roles', () => {
         const contracts = {
@@ -676,35 +653,6 @@ describe('read-only agent contracts', () => {
         expect(md).toContain('Use only the listed tools.');
     });
 
-    test('defines browser-tester as a fresh medium AXI-first read-only role', () => {
-        const agent = readAgent('browser-tester');
-
-        expect(agent).toContain('name: browser-tester');
-        expect(agent).toContain('description: Read-only browser validation tester');
-        expect(agent).toContain('@inspect, safe_bash, write_report, contact_supervisor');
-        expect(agent).toContain('skills: chrome-devtools-axi, agent-browser');
-        expect(agent).toContain('thinking: medium');
-        expect(agent).toContain('systemPromptMode: replace');
-        expect(agent).toContain('inheritProjectContext: true');
-        expect(agent).toContain('inheritSkills: false');
-        expect(agent).toContain('defaultContext: fresh');
-        expect(agent).toContain('acceptanceRole: read-only');
-        expect(agent).toContain('completionGuard: false');
-        expect(agent).toContain('Version-1 JSON only');
-        expect(agent).toContain('AXI-first');
-        expect(agent).toContain('isolated named session');
-        expect(agent).toContain('fresh snapshot');
-        expect(agent).toContain('cleanup');
-        expect(agent).toContain('fallback only for technical unavailability');
-        expect(agent).toContain(
-            'Persist the final JSON payload with `write_report` at `browser-result.json`.',
-        );
-        expect(agent).toContain('No prose');
-        expect(agent).toContain('Do not edit');
-        expect(agent).toContain('contact_supervisor');
-        expect(agent).not.toContain('@lens-inspect');
-    });
-
     test('lets the combined reviewer return the supplied integration stage', () => {
         const request = buildReviewRequest({
             requestId: 'run-1:integration:1',
@@ -734,25 +682,6 @@ describe('read-only agent contracts', () => {
 });
 
 describe('writer agent contracts', () => {
-    const agentUrl = (name: string) =>
-        new URL(`../../agents/${name}.md`, import.meta.url);
-
-    test('defines quick-worker as a strict bounded medium-thinking writer', () => {
-        const agent = readFileSync(agentUrl('quick-worker'), 'utf8');
-
-        expect(agent).toContain('name: quick-worker');
-        expect(agent).toContain('thinking: medium');
-        expect(agent).toContain('inheritProjectContext: true');
-        expect(agent).toContain('defaultContext: fresh');
-        expect(agent).toContain('turnBudget: { "maxTurns": 20, "graceTurns": 5 }');
-        expect(agent).toContain('acceptanceRole: writer');
-        expect(agent).not.toContain('contact_supervisor');
-        expect(agent).toContain('DONE:');
-        expect(agent).toContain('BLOCKED:');
-        expect(agent).toMatch(/do not promote yourself/i);
-        expect(existsSync(agentUrl('task-doer'))).toBeFalse();
-    });
-
     test('defines sdd-worker as a high-thinking autonomous SDD writer', () => {
         const definition = getSddAgentEntry('sdd-worker');
         if (!definition) throw new Error('sdd-worker not in runtime set');

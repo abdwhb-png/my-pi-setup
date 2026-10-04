@@ -125,6 +125,8 @@ const { validatePlanPath } = await import("./index.ts");
 ### Configuration and fixture isolation
 
 - Treat files under `~/.pi/agent/`, including `sandbox.json`, `settings.json`, `plannotator.json`, and `slow-mode.json`, as user state. Never use or mutate them as ordinary test fixtures.
+- Treat user-editable prompts, agent definitions, descriptions, model selections, tool lists, and configuration values as mutable input. Standard tests must not read personal files to enforce their current wording, metadata, values, or the presence of particular personal agents. This includes definitions rewritten by `harness-sync` (`agent-sync`). Never change personal content just to satisfy a test.
+- Test customization with minimal temporary fixtures and enforce required schemas, permissions, and workflow behavior through the owning runtime APIs. Keep assertions about extension-owned generated definitions separate from personal definitions. When a personal edit breaks a test, establish whether it violates an actual runtime contract before changing either the test or the content.
 - Create a unique temporary agent directory for tests that load configuration. Prefer passing `agentDir` explicitly; otherwise set `PI_CODING_AGENT_DIR` before dynamically importing the module.
 - Capture process-global state before mutation and register its restoration before any fallible setup. Restore it in `finally` or `afterEach`, then remove temporary files.
 - Write the smallest fixture that expresses the tested scenario. Use fixed values only when they encode a deliberate behavior, edge case, or security invariant; never copy mutable personal configuration into expectations.

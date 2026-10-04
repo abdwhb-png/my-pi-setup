@@ -22,9 +22,9 @@ import { KeybindingsManager } from "../../node_modules/@earendil-works/pi-coding
 import { getThemeByName } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { isolateSkillHome } from "../_shared/testing/skill-home.ts";
 
-const cleanup: Array<() => void> = [];
-afterEach(() => {
-    for (const dispose of cleanup.splice(0).reverse()) dispose();
+const cleanup: Array<() => void | Promise<void>> = [];
+afterEach(async () => {
+    for (const dispose of cleanup.splice(0).reverse()) await dispose();
 });
 
 test("editing yields the terminal and restores it after a failed editor", async () => {
@@ -39,7 +39,7 @@ test("editing yields the terminal and restores it after a failed editor", async 
     const root = mkdtempSync(join(tmpdir(), "skill-gate-editor-"));
     cleanup.push(() => rmSync(root, { recursive: true, force: true }));
     process.env.PI_CODING_AGENT_DIR = root;
-    isolateSkillHome(root, cleanup);
+    await isolateSkillHome(root, cleanup);
     const skillPath = join(root, "skills/alpha/SKILL.md");
     mkdirSync(join(root, "skills/alpha"), { recursive: true });
     writeFileSync(
@@ -111,7 +111,7 @@ test("skill discovery never initializes another extension set", async () => {
     const root = mkdtempSync(join(tmpdir(), "skill-gate-runtime-"));
     cleanup.push(() => rmSync(root, { recursive: true, force: true }));
     process.env.PI_CODING_AGENT_DIR = root;
-    isolateSkillHome(root, cleanup);
+    await isolateSkillHome(root, cleanup);
     const symbol = Symbol.for("pi-test.skill-gate-factory-count");
     const old = Reflect.get(globalThis, symbol);
     cleanup.push(() => {
@@ -142,7 +142,7 @@ test("the registered command redraws and persists toggles through the original c
     const root = mkdtempSync(join(tmpdir(), "skill-gate-ui-"));
     cleanup.push(() => rmSync(root, { recursive: true, force: true }));
     process.env.PI_CODING_AGENT_DIR = root;
-    isolateSkillHome(root, cleanup);
+    await isolateSkillHome(root, cleanup);
     mkdirSync(join(root, "skills/alpha"), { recursive: true });
     writeFileSync(
         join(root, "skills/alpha/SKILL.md"),
@@ -205,7 +205,7 @@ test("filters the outgoing skill catalog without changing surrounding instructio
     const root = mkdtempSync(join(tmpdir(), "skill-gate-prompt-"));
     cleanup.push(() => rmSync(root, { recursive: true, force: true }));
     process.env.PI_CODING_AGENT_DIR = root;
-    isolateSkillHome(root, cleanup);
+    await isolateSkillHome(root, cleanup);
     for (const [name, manual] of [
         ["visible", false],
         ["hidden", false],
