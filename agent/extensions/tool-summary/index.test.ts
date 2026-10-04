@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { writeOwnedSettingsFixture } from "../_shared/testing/config-fixture.ts";
 import { beforeEach, afterEach, describe, expect, it, mock } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -114,6 +115,7 @@ describe('tool-summary extension (index.ts)', () => {
     it('loads toolSummary allowlist from project settings at session_start', async () => {
         const projectDir = mkdtempSync(join(tmpdir(), 'tool-summary-'));
         const configDir = join(projectDir, '.pi');
+        new ProjectTrustStore(agentDir).set(projectDir, true);
         mkdirSync(configDir);
         writeOwnedSettingsFixture(
             join(configDir, 'settings.json'),

@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { writeOwnedSettingsFixture } from "../_shared/testing/config-fixture.ts";
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
@@ -88,6 +89,7 @@ describe("Markdown links configuration", () => {
         const agentDir = join(root, "agent");
         const cwd = join(root, "project");
         mkdirSync(agentDir);
+        new ProjectTrustStore(agentDir).set(cwd, true);
         mkdirSync(join(cwd, ".pi"), { recursive: true });
         writeOwnedSettingsFixture(
             join(agentDir, "settings.json"),

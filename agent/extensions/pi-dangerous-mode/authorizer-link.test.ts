@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type {
     AuthorizerLog,
@@ -5,6 +6,8 @@ import type {
     PermissionQuery,
     PromptPermissionDetails,
 } from "@gotgenes/pi-permission-system";
+
+useIsolatedAgentDir();
 
 const registerAuthorizer = mock(() => (): void => {});
 let service: {
@@ -90,6 +93,7 @@ function activate(flagValue: boolean | undefined): Fixture {
                     { reason: "startup" },
                     {
                         cwd: "/tmp",
+                        isProjectTrusted: () => false,
                         hasPendingMessages: () => false,
                         ui: { notify() {} },
                     },

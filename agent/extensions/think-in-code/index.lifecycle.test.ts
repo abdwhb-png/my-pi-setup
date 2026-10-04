@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 import { mountPolicy } from "../_shared/testing/tool-policy-fixture.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -21,6 +22,8 @@ import {
 import { registerThinkInCode } from "./index.ts";
 import { __getRawDatabase, ThinkStore } from "./storage/store.ts";
 
+useIsolatedAgentDir();
+
 type EventHandler = (...args: unknown[]) => unknown;
 
 let fixture: string | undefined;
@@ -33,6 +36,7 @@ afterEach(async () => {
 function context(cwd: string, sessionId: string): ExtensionContext {
     return {
         cwd,
+        isProjectTrusted: () => false,
         hasUI: false,
         ui: {},
         sessionManager: {

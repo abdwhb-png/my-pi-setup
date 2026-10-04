@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,6 +14,8 @@ import { hashProjectPath } from "./config.ts";
 import { registerThinkInCode } from "./index.ts";
 import { createThinkTelemetryWriter } from "./telemetry/storage.ts";
 import type { ThinkTelemetryEvent } from "./telemetry/types.ts";
+
+useIsolatedAgentDir();
 
 type EventHandler = (...args: unknown[]) => unknown;
 type CommandDefinition = {
@@ -70,6 +73,7 @@ describe("think-in-code audit lifecycle", () => {
 
         const context = {
             cwd: fixture,
+            isProjectTrusted: () => false,
             hasUI: true,
             ui: { notify: mock(() => undefined) },
             sessionManager: {

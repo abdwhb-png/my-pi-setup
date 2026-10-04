@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { describe, it, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,18 +12,20 @@ const {
 const { DEFAULT_CONFIG } = await import('./config.ts');
 
 function makeAgentDir(): string {
-    return mkdtempSync(join(tmpdir(), 'pi-fr-config-test-'));
+    const dir = mkdtempSync(join(tmpdir(), 'pi-fr-config-test-'));
+    mkdirSync(join(dir, 'config'));
+    return dir;
 }
 
 function writeGlobal(agentDir: string, data: unknown): void {
     writeFileSync(
-        join(agentDir, 'pi-file-resolver.json'),
+        join(agentDir, 'config/pi-file-resolver.json'),
         JSON.stringify(data),
     );
 }
 
 function writeProject(cwd: string, data: unknown): void {
-    const piDir = join(cwd, '.pi');
+    const piDir = join(cwd, '.pi/config');
     mkdirSync(piDir, { recursive: true });
     writeFileSync(join(piDir, 'pi-file-resolver.json'), JSON.stringify(data));
 }
@@ -345,7 +348,7 @@ describe('loadFileResolverConfig', () => {
         }
     });
 
-    it('loads fd flags from legacy global file', () => {
+    it('loads fd flags from canonical global file', () => {
         const agentDir = makeAgentDir();
         try {
             writeGlobal(agentDir, {
@@ -370,7 +373,7 @@ describe('loadFileResolverConfig', () => {
         }
     });
 
-    it('loads rg flags from legacy global file', () => {
+    it('loads rg flags from canonical global file', () => {
         const agentDir = makeAgentDir();
         try {
             writeGlobal(agentDir, {
@@ -384,7 +387,7 @@ describe('loadFileResolverConfig', () => {
         }
     });
 
-    it('loads ls flags from legacy global file', () => {
+    it('loads ls flags from canonical global file', () => {
         const agentDir = makeAgentDir();
         try {
             writeGlobal(agentDir, {
@@ -404,6 +407,7 @@ describe('loadFileResolverConfig', () => {
             writeGlobal(agentDir, {
                 fd: { respectGitignore: false, followSymlinks: false },
             });
+            new ProjectTrustStore(agentDir).set(agentDir, true);
             writeProject(agentDir, {
                 fd: { followSymlinks: true, includeHidden: false },
             });
@@ -416,15 +420,14 @@ describe('loadFileResolverConfig', () => {
         }
     });
 
-    it('returns defaults for malformed JSON', () => {
+    it('reports malformed canonical JSON', () => {
         const agentDir = makeAgentDir();
         try {
             writeFileSync(
-                join(agentDir, 'pi-file-resolver.json'),
+                join(agentDir, 'config/pi-file-resolver.json'),
                 'not json {{{',
             );
-            const cfg = loadFileResolverConfig(agentDir, agentDir);
-            expect(cfg).toEqual(DEFAULT_CONFIG);
+            expect(() => loadFileResolverConfig(agentDir, agentDir)).toThrow('Invalid configuration');
         } finally {
             cleanup(agentDir);
         }

@@ -27,8 +27,9 @@ it("generated snapshot reaches the SDK allowlist and enforces native tool calls"
     try {
         process.env.PI_CODING_AGENT_DIR = tempDir;
         process.chdir(tempDir);
+        await mkdir(join(tempDir, "config"));
         await writeFile(
-            join(tempDir, "tool-groups.json"),
+            join(tempDir, "config", "tool-groups.json"),
             JSON.stringify({ groups: { inspect: ["read", "grep"] } }),
         );
         await mkdir(join(tempDir, "agents"));

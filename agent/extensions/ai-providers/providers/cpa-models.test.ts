@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../../_shared/testing/config-fixture.ts";
 /**
  * Tests for CPA model enrichment engine.
  *
@@ -28,6 +29,8 @@ import {
 import type { CpaModelEntry } from './cpa-models.ts';
 
 // ── Catalog lookup stub ──
+
+useIsolatedAgentDir();
 
 function refKey(ref: ModelsDevRef): string {
     return ref.scope === 'provider'

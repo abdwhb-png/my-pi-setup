@@ -45,8 +45,9 @@ test("real Brainstorm and SDD factories publish before activation without changi
                 },
             }),
         );
+        mkdirSync(join(root, "config"));
         writeFileSync(
-            join(root, "tool-groups.json"),
+            join(root, "config", "tool-groups.json"),
             JSON.stringify({
                 groups: {
                     inspect: ["read"],

@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { writeFixtureFile as writeFileSync, writeOwnedSettingsFixture } from "../_shared/testing/config-fixture.ts";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
@@ -234,6 +235,7 @@ test("untrusted project bytes are ignored until trusted reload", async () => {
     });
     expect(resolveSubagentCapabilityCeiling(id)?.allowedAgents).toEqual([]);
     expect(readFileSync(projectPath, "utf8")).toBe("{");
+    new ProjectTrustStore(agentDir).set(cwd, true);
     writeOwnedSettingsFixture(projectPath,{toolGroups:{groups:{inspect:["ls"]}}});
     await running.session.extensionRunner!.emit({
         type: "session_start",

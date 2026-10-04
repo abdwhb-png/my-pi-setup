@@ -463,18 +463,19 @@ test('serializes concurrent applies from separate processes for one isolated run
     try {
         const workspace = await workspaceManager.prepare('run-concurrent-apply', source);
         writeFileSync(join(workspace.worktreePath, 'keep.txt'), 'after\n');
+        const releasePath = join(root, 'release-delivery-lock');
         const child = spawn(
             process.execPath,
             [
                 '-e',
-                `import { GitWorkspaceManager } from ${JSON.stringify(join(import.meta.dir, 'workspace.ts'))};
+                `import { existsSync } from "node:fs";
+import { GitWorkspaceManager } from ${JSON.stringify(join(import.meta.dir, 'workspace.ts'))};
 const manager = new GitWorkspaceManager(process.env.SDD_TEST_AGENT_DIR, {
     stateHome: process.env.SDD_TEST_STATE_HOME,
     onDeliveryCheckpoint(checkpoint) {
         if (checkpoint === 'delivery-intent-recorded') {
             process.stdout.write('delivery-intent-recorded\\n');
-            const until = Date.now() + 1_500;
-            while (Date.now() < until) {}
+            while (!existsSync(process.env.SDD_TEST_RELEASE_PATH)) Bun.sleepSync(10);
         }
     },
 });
@@ -485,6 +486,7 @@ await manager.apply(JSON.parse(process.env.SDD_TEST_WORKSPACE), process.env.SDD_
                 env: {
                     ...process.env,
                     SDD_TEST_AGENT_DIR: agentDir,
+                    SDD_TEST_RELEASE_PATH: releasePath,
                     SDD_TEST_SOURCE: source,
                     SDD_TEST_STATE_HOME: stateHome,
                     SDD_TEST_WORKSPACE: JSON.stringify(workspace),
@@ -535,9 +537,13 @@ await manager.apply(JSON.parse(process.env.SDD_TEST_WORKSPACE), process.env.SDD_
 
         await reachedDeliveryIntent;
 
-        await expect(workspaceManager.apply(workspace, source)).rejects.toThrow(
-            'SDD workspace lock is already held',
-        );
+        try {
+            await expect(workspaceManager.apply(workspace, source)).rejects.toThrow(
+                'SDD workspace lock is already held',
+            );
+        } finally {
+            writeFileSync(releasePath, 'release');
+        }
         expect(await childExit).toBe(0);
         expect(readFileSync(join(source, 'keep.txt'), 'utf8')).toBe('after\n');
     } finally {

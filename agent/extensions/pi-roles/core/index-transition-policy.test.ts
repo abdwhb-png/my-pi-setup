@@ -80,6 +80,7 @@ function setup() {
   } as any;
   const ctx = {
     cwd: "/workspace",
+    isProjectTrusted: () => false,
     hasUI: false,
     sessionManager: { getEntries: () => entries },
     ui: { notify: mock(), setStatus: mock(), setWidget: mock() },

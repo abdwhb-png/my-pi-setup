@@ -40,7 +40,9 @@ const loadSkillsFromDirMock = mock(
     (_opts: { dir: string; source: string }) => mockSkillsResult,
 );
 
+const actualPi = await import('@earendil-works/pi-coding-agent');
 mock.module('@earendil-works/pi-coding-agent', () => ({
+    ...actualPi,
     // Skill loader — returns whatever mockSkillsResult currently holds
     loadSkillsFromDir: loadSkillsFromDirMock,
 

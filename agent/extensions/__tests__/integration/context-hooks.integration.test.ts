@@ -1,7 +1,10 @@
+import { useIsolatedAgentDir } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from 'bun:test';
 import { createTestSession } from '@abdwhb-png/pi-test-harness';
 
 import { publicExtensionEntrypoint } from './public-extension-session.ts';
+
+useIsolatedAgentDir();
 
 for (const order of ['first', 'last'] as const) test(`catalog ${order}: real Pi hooks preserve context/Codex options across requests and model changes`, async () => {
     const context = publicExtensionEntrypoint('context');

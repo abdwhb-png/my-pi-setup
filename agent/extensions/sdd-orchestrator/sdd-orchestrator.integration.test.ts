@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -22,6 +23,8 @@ import { registerSddExtension } from './index.ts';
 import type { IsolatedWorkspace, RunSnapshot } from './state-machine.ts';
 import { SddStore } from './store.ts';
 import { SddWorkflow } from './workflow.ts';
+
+useIsolatedAgentDir();
 
 const config: SddConfig = {
     agents: {
@@ -640,7 +643,7 @@ async function runProfile(
             config: () => config,
             now: () => '2026-07-21T12:00:00.000Z',
         });
-        const ctx = { cwd, mode: 'print' } as ExtensionContext;
+        const ctx = { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext;
         const prepared = await execute(
             pi.tools,
             'sdd_prepare',
@@ -697,7 +700,7 @@ test('Direct uses no execution child and completes only after exact evidence', a
             config: () => config,
             now: () => '2026-07-21T12:00:00.000Z',
         });
-        const ctx = { cwd, mode: 'print' } as ExtensionContext;
+        const ctx = { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext;
 
         expect([...pi.tools.keys()]).toEqual([
             'sdd_prepare',
@@ -959,7 +962,7 @@ test('worker and reviewer restart boundaries require explicit public-tool attest
                 workflow,
                 config: () => config,
             });
-            const ctx = { cwd, mode: 'print' } as ExtensionContext;
+            const ctx = { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext;
             const start = pi.handlers.get('session_start')?.[0];
             if (!start) throw new Error('session_start was not registered.');
 
@@ -1147,7 +1150,7 @@ test('public recovery retries survive injected crashes after atomic save and con
                     stage: 'worker',
                 },
             };
-            const ctx = { cwd, mode: 'print' } as ExtensionContext;
+            const ctx = { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext;
 
             await expect(
                 execute(
@@ -1265,7 +1268,7 @@ test('persisted terminal restart continues exactly once from the next transition
         });
         const start = pi.handlers.get('session_start')?.[0];
         if (!start) throw new Error('session_start was not registered.');
-        const ctx = { cwd, mode: 'print' } as ExtensionContext;
+        const ctx = { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext;
 
         await start(
             { type: 'session_start', reason: 'resume' } as never,
@@ -1374,7 +1377,7 @@ test('post-apply pre-run restart continues from the durable reconciled snapshot'
 
         await start(
             { type: 'session_start', reason: 'resume' } as never,
-            { cwd, mode: 'print' } as never,
+            { cwd, mode: 'print', isProjectTrusted: () => false } as never,
         );
 
         expect(events.requests.map((request) => request.requestId)).toEqual([
@@ -1487,7 +1490,7 @@ test('assessor gets one repair and plan drift blocks public approval', async () 
             config: () => config,
             now: () => '2026-07-21T12:00:00.000Z',
         });
-        const ctx = { cwd, mode: 'print' } as ExtensionContext;
+        const ctx = { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext;
         const prepared = await execute(
             pi.tools,
             'sdd_prepare',
@@ -1559,7 +1562,7 @@ for (const target of ['standard', 'light', 'direct'] as const) {
                 config: () => config,
                 now: () => '2026-07-21T12:00:00.000Z',
             });
-            const ctx = { cwd, mode: 'print' } as ExtensionContext;
+            const ctx = { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext;
             const prepared = await execute(
                 pi.tools,
                 'sdd_prepare',
@@ -1690,7 +1693,7 @@ for (const parallelismEnabled of [true, false]) {
                 config: () => config,
                 now: () => '2026-07-21T12:00:00.000Z',
             });
-            const ctx = { cwd, mode: 'print' } as ExtensionContext;
+            const ctx = { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext;
             const prepared = await execute(
                 pi.tools,
                 'sdd_prepare',
@@ -1801,7 +1804,7 @@ test('duplicate and late terminal responses cannot change a cancelled public run
             config: () => config,
             now: () => '2026-07-21T12:00:00.000Z',
         });
-        const ctx = { cwd, mode: 'print' } as ExtensionContext;
+        const ctx = { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext;
         const prepared = await execute(
             pi.tools,
             'sdd_prepare',
@@ -1880,7 +1883,7 @@ test('eight-task legacy shape previews exactly 36 launches without a polling age
             pi.tools,
             'sdd_prepare',
             { planPath: 'plan.md', globalProfile: 'standard' },
-            { cwd, mode: 'print' } as ExtensionContext,
+            { cwd, mode: 'print', isProjectTrusted: () => false } as ExtensionContext,
         );
         const draft = (prepared.details as { manifest: DraftManifest }).manifest;
 

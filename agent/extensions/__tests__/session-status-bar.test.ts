@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 import { describe, expect, it, mock } from "bun:test";
 import { buildSessionTokenContent } from "../_shared/status-segments.ts";
 import { createUiColors } from "../_shared/ui/ui-colors.ts";
@@ -10,6 +11,8 @@ import { createUiColors } from "../_shared/ui/ui-colors.ts";
  *
  * Captures every widget def passed to createWidget — one entry per call.
  */
+useIsolatedAgentDir();
+
 const widgetDefs: any[] = [];
 const fakeHandle = {
   active: true,

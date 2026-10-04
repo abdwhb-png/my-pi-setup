@@ -671,7 +671,7 @@ describe("brainstorm-forcer redesign", () => {
       );
 
       const path = result.details.artifact.path as string;
-      expect(path).toMatch(/docs\/brainstorms\/.+\/01-discovery-r001\.md$/);
+      expect(path).toMatch(/\.pi\/artifacts\/brainstorms\/.+\/01-discovery-r001\.md$/);
       expect(await readFile(join(projectRoot, path), "utf8")).toContain("## Key Findings\n\n- Transitions are user commands only.");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });

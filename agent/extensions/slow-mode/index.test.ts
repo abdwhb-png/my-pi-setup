@@ -28,6 +28,7 @@ test("slow-mode loads and starts with the installed MCP adapter", async () => {
         expect(start).toBeDefined();
         await start!({}, {
             cwd: agentDir,
+            isProjectTrusted: () => false,
             hasUI: false,
             ui: { notify },
             sessionManager: { getEntries: () => [] },
