@@ -278,7 +278,7 @@ describe('pi-subagents-overview', () => {
             expect(Array.isArray(workerTools)).toBe(true);
             expect(workerTools).not.toContain('bash');
 
-            const groupsPath = path.join(HOME, '.pi', 'agent', 'tool-groups.json');
+            const groupsPath = path.resolve(import.meta.dir, '../../../config/tool-groups.json');
             const groups = JSON.parse(fs.readFileSync(groupsPath, 'utf8')).groups;
             const available = [
                 ...new Set(
