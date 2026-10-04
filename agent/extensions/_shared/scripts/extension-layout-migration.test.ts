@@ -554,6 +554,69 @@ test('moves historical Think repair backups byte-for-byte without repairing thei
     expect(existsSync(destination)).toBe(false);
 });
 
+test('keeps recovery metadata bounded for large artifacts and restores exact bytes', async () => {
+    const { applyLayoutMigration, recoverLayoutMigration } = await import('./extension-layout-migration.ts');
+    const { agentDir, cwd } = fixture();
+    const source = join(agentDir, 'safe-bash-telemetry/session.jsonl');
+    const destination = join(agentDir, 'artifacts/safe-bash-telemetry/session.jsonl');
+    mkdirSync(join(agentDir, 'safe-bash-telemetry'));
+    const bytes = Buffer.alloc(64 * 1024, 'a');
+    writeFileSync(source, bytes);
+    const journal = applyLayoutMigration(planLayoutMigration({ agentDir, projects: [cwd] }));
+    expect(readFileSync(journal!).length).toBeLessThan(bytes.length / 4);
+    expect(readFileSync(destination)).toEqual(bytes);
+    recoverLayoutMigration(journal!, 'rollback');
+    expect(readFileSync(source)).toEqual(bytes);
+    expect(existsSync(destination)).toBe(false);
+});
+
+test.each(['corrupt', 'missing', 'symlink', 'traversal'])('refuses %s recovery images before modifying migrated files', async (kind) => {
+    const { applyLayoutMigration, recoverLayoutMigration } = await import('./extension-layout-migration.ts');
+    const { agentDir, cwd, root } = fixture();
+    const source = join(agentDir, 'safe-bash-telemetry/session.jsonl');
+    const destination = join(agentDir, 'artifacts/safe-bash-telemetry/session.jsonl');
+    mkdirSync(join(agentDir, 'safe-bash-telemetry'));
+    writeFileSync(source, 'original bytes');
+    const journal = applyLayoutMigration(planLayoutMigration({ agentDir, projects: [cwd] }))!;
+    const metadata = JSON.parse(readFileSync(journal, 'utf8'));
+    const image = metadata.changes.find((change: {path: string}) => change.path === source).before;
+    const backup = join(journal + '.files', image.sha256);
+    if (kind === 'corrupt') writeFileSync(backup, 'damaged bytes');
+    else if (kind === 'missing') rmSync(backup);
+    else if (kind === 'symlink') {
+        const outside = join(root, 'outside');
+        writeFileSync(outside, 'original bytes');
+        rmSync(backup);
+        symlinkSync(outside, backup);
+    } else {
+        image.sha256 = '../outside';
+        writeFileSync(journal, JSON.stringify(metadata));
+    }
+    expect(() => recoverLayoutMigration(journal, 'rollback')).toThrow();
+    expect(existsSync(source)).toBe(false);
+    expect(readFileSync(destination, 'utf8')).toBe('original bytes');
+    expect(JSON.parse(readFileSync(journal, 'utf8')).state).toBe('complete');
+});
+
+test('resumes a version-2 journal after an interrupted file move', async () => {
+    const { applyLayoutMigration, recoverLayoutMigration } = await import('./extension-layout-migration.ts');
+    const { agentDir, cwd } = fixture();
+    const source = join(agentDir, 'safe-bash-telemetry/session.jsonl');
+    const destination = join(agentDir, 'artifacts/safe-bash-telemetry/session.jsonl');
+    mkdirSync(join(agentDir, 'safe-bash-telemetry'));
+    writeFileSync(source, 'original bytes');
+    const journal = applyLayoutMigration(planLayoutMigration({ agentDir, projects: [cwd] }))!;
+    const metadata = JSON.parse(readFileSync(journal, 'utf8'));
+    metadata.state = 'applying';
+    writeFileSync(journal, JSON.stringify(metadata));
+    writeFileSync(source, 'original bytes');
+    rmSync(destination);
+    recoverLayoutMigration(journal, 'resume');
+    expect(existsSync(source)).toBe(false);
+    expect(readFileSync(destination, 'utf8')).toBe('original bytes');
+    expect(JSON.parse(readFileSync(journal, 'utf8')).state).toBe('complete');
+});
+
 test('recovery resumes an interrupted write and refuses subsequent edits', async () => {
     const { agentDir, cwd } = fixture();
     const { recoverLayoutMigration } =
