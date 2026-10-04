@@ -224,7 +224,7 @@ describe('extension entry point', () => {
 
         expect(await authorize(details, query, log)).toEqual({ kind: 'defer' });
         await command.handler('on', ctx);
-        await listeners.get('session_start')!({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent' });
+        await listeners.get('session_start')!({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
         expect(await authorize(details, query, log)).toEqual({ kind: 'allow' });
         await command.handler('off', ctx);
         expect(await authorize(details, query, log)).toEqual({ kind: 'defer' });
@@ -246,7 +246,7 @@ describe('extension entry point', () => {
             async reload() {},
         };
 
-        await onSessionStart({ reason: 'startup' }, { ...ctx, cwd: '/nonexistent' });
+        await onSessionStart({ reason: 'startup' }, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
         await command.handler('on', ctx);
         expect(entries).toEqual([
             {
@@ -259,20 +259,20 @@ describe('extension entry point', () => {
         expect(entries).toHaveLength(1);
 
         for (const reason of ['reload', 'resume', 'startup']) {
-            await onSessionStart({ reason }, { ...ctx, cwd: '/nonexistent' });
+            await onSessionStart({ reason }, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
             await command.handler('status', ctx);
             expect(notifications.at(-1)?.[0]).toContain('ON');
         }
         await command.handler('off', ctx);
         await command.handler('off', ctx);
         expect(entries).toHaveLength(2);
-        await onSessionStart({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent' });
+        await onSessionStart({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
         await command.handler('status', ctx);
         expect(notifications.at(-1)?.[0]).toContain('OFF');
 
         await command.handler('on', ctx);
         for (const reason of ['new', 'fork']) {
-            await onSessionStart({ reason }, { ...ctx, cwd: '/nonexistent' });
+            await onSessionStart({ reason }, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
             await command.handler('status', ctx);
             expect(notifications.at(-1)?.[0]).toContain('OFF');
         }
@@ -295,7 +295,7 @@ describe('extension entry point', () => {
             customType: 'pi-permission-system-addons:yolo-session',
             data: { sessionId: 'other-session', enabled: true },
         });
-        await start({ reason: 'startup' }, { ...ctx, cwd: '/nonexistent' });
+        await start({ reason: 'startup' }, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
         await command.handler('status', ctx);
         expect(notices.at(-1)).toContain('OFF');
 
@@ -305,7 +305,7 @@ describe('extension entry point', () => {
             customType: 'pi-permission-system-addons:yolo-session',
             data: { sessionId: 'session-1', enabled: 'true' },
         });
-        await start({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent' });
+        await start({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
         await command.handler('status', ctx);
         expect(notices.at(-1)).toContain('OFF');
     });
@@ -324,13 +324,13 @@ describe('extension entry point', () => {
         await command.handler('on', ctx);
         await command.handler('off', ctx);
         entries.pop(); // Navigate to the branch where ON was the last decision.
-        await tree!({}, { ...ctx, cwd: '/nonexistent' });
+        await tree!({}, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
         await command.handler('status', {
             ...ctx,
             ui: { notify(message) { expect(message).toContain('ON'); } },
         });
         entries.pop(); // Navigate before the first decision.
-        await tree!({}, { ...ctx, cwd: '/nonexistent' });
+        await tree!({}, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
         await command.handler('status', {
             ...ctx,
             ui: { notify(message) { expect(message).toContain('OFF'); } },
@@ -368,6 +368,7 @@ describe('extension entry point', () => {
             const first = setup(firstManager);
             const ctx = (sessionManager: SessionManager) => ({
                 cwd: directory,
+                isProjectTrusted: () => false,
                 sessionManager,
                 ui: { notify() {} },
                 async waitForIdle() {},
@@ -431,7 +432,7 @@ describe('extension entry point', () => {
         };
         const toolCtx = { hasUI: false };
 
-        await onSessionStart({ reason: 'startup' }, { cwd: '/nonexistent', sessionManager });
+        await onSessionStart({ reason: 'startup' }, { cwd: '/nonexistent', isProjectTrusted: () => false, sessionManager });
         await command.handler('on', commandCtx);
         expect(
             await onToolCall(
@@ -466,13 +467,13 @@ describe('extension entry point', () => {
             async reload() {},
         };
 
-        await onSessionStart({ reason: 'startup' }, { ...ctx, cwd: '/nonexistent' });
+        await onSessionStart({ reason: 'startup' }, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
         expect(setWidget).toHaveBeenLastCalledWith('yolo-permission', [
             expect.stringContaining('yoloSession: off'),
         ]);
 
         await command.handler('on', ctx);
-        await onSessionStart({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent' });
+        await onSessionStart({ reason: 'reload' }, { ...ctx, cwd: '/nonexistent', isProjectTrusted: () => false });
         expect(setWidget).toHaveBeenLastCalledWith('yolo-permission', [
             expect.stringContaining('yoloSession: on'),
         ]);

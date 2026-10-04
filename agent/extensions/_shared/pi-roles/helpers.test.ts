@@ -174,7 +174,7 @@ describe('getDefaultRole', () => {
         const settingsPath = join(tempDir, 'settings.json');
         writeFileSync(
             settingsPath,
-            JSON.stringify({ 'pi-roles': { defaultRole: 'architect' } }),
+            JSON.stringify({ defaultRole: 'architect' }),
         );
 
         expect(getDefaultRole({ path: settingsPath })).toBe('architect');

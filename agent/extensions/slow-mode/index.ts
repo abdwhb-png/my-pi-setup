@@ -60,8 +60,12 @@ export default function slowMode(pi: ExtensionAPI) {
     let toolConfig = new Map<string, boolean>();
 
     /** Reload the slow-mode tool config from disk. */
-    function reloadToolConfig(): SlowModeConfigResult {
-        const raw = loadSlowModeConfig();
+    function reloadToolConfig(ctx: ExtensionContext): SlowModeConfigResult {
+        const raw = loadSlowModeConfig(
+            ctx.cwd,
+            undefined,
+            ctx.isProjectTrusted(),
+        );
         const result = validateSlowModeConfig(
             raw,
             pi.getActiveTools(),
@@ -152,7 +156,7 @@ export default function slowMode(pi: ExtensionAPI) {
         originalEdit = createEditTool(ctx.cwd);
 
         // Load tool config first (needed for widget display)
-        const result = reloadToolConfig();
+        const result = reloadToolConfig(ctx);
         for (const warning of result.warnings) {
             ctx.ui.notify(warning, "warning");
         }
@@ -207,7 +211,7 @@ export default function slowMode(pi: ExtensionAPI) {
             const arg = args.trim().toLowerCase();
 
             if (arg === "reload" || arg === "refresh") {
-                const result = reloadToolConfig();
+                const result = reloadToolConfig(ctx);
                 w.update(ctx, buildWidgetText(enabled, toolConfig));
                 for (const warning of result.warnings) {
                     ctx.ui.notify(warning, "warning");

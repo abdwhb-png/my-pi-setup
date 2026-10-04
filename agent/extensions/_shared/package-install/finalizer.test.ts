@@ -1,3 +1,4 @@
+import { writeFixtureFile as writeFileSync } from "../testing/config-fixture.ts";
 import { describe, expect, it, mock } from 'bun:test';
 import {
     chmodSync,
@@ -8,7 +9,7 @@ import {
     realpathSync,
     rmSync,
     symlinkSync,
-    writeFileSync,
+
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';

@@ -1,19 +1,17 @@
+import { extensionPath } from "../_shared/extension-paths.ts";
 /**
  * Per-project Think-in-Code configuration.
  *
- * Storage location: ~/.pi/agent/think-in-code/projects/<sha256(realpath(cwd))>
- * Loaded via loadExtensionConfig (settings.json key "thinkInCode" with legacy
- * "think-in-code.json" fallback). The home is always resolved through
- * `homedir()` at runtime — never hardcoded — so test fixtures can target a
- * disposable directory.
+ * Storage location: ~/.pi/agent/artifacts/think-in-code/projects/<sha256(realpath(cwd))>
+ * Configuration uses config/think-in-code.json in the global agent directory
+ * and trusted cwd/.pi directory. getAgentDir() selects global artifact storage.
  *
  * Limits are downward-only: malformed or out-of-range user values fall back to
  * defaults rather than widening the ceiling.
  */
 
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import type { SettingsManager } from "@earendil-works/pi-coding-agent";
+
 import {
     DANGER_GROUP_IDS,
     isAllowedShellCommand,
@@ -30,9 +28,6 @@ import {
 } from "../_shared/command-execution/rewrites.ts";
 import { loadExtensionConfig } from "../_shared/config-loader.ts";
 import { THINK_AUDIT_BOUNDS } from "./telemetry/types.ts";
-
-export const THINK_IN_CODE_SETTINGS_KEY = "thinkInCode";
-export const THINK_IN_CODE_LEGACY_FILE = "think-in-code.json";
 
 export const DEFAULT_THINK_IN_CODE_CONFIG: ThinkInCodeConfig = Object.freeze({
     languages: ["javascript", "typescript", "python"],
@@ -388,7 +383,7 @@ function normalizeThinkInCodeOverlay(raw: unknown): Partial<ThinkInCodeConfig> {
 export function loadThinkInCodeConfig(
     cwd: string,
     agentDir?: string,
-    settingsManager?: SettingsManager,
+    projectTrusted?: boolean,
 ): ThinkInCodeConfig {
     return loadExtensionConfig(cwd, {
         defaults: DEFAULT_THINK_IN_CODE_CONFIG,
@@ -410,30 +405,28 @@ export function loadThinkInCodeConfig(
                     ...overlay.telemetry,
                 },
             }),
-        sources: [
-            {
-                settingsKey: THINK_IN_CODE_SETTINGS_KEY,
-                legacyFilename: THINK_IN_CODE_LEGACY_FILE,
-                projectLocal: true,
-            },
-        ],
+        owner: "thinkInCode",
         agentDir,
-        _settingsManager: settingsManager,
+        projectTrusted,
     });
 }
 
 /** Resolve the on-disk root for the Think-in-Code store. */
-export function resolveThinkInCodeRoot(home: string = homedir()): string {
-    return `${home}/.pi/agent/think-in-code`;
+export function resolveThinkInCodeRoot(agentDir?: string): string {
+    return extensionPath(
+        { scope: "global", agentDir },
+        "artifacts",
+        "think-in-code",
+    );
 }
 
 export interface ProjectStorePathOptions {
-    home?: string;
+    agentDir?: string;
 }
 
 /**
  * Per-project canonical store directory:
- * `<home>/.pi/agent/think-in-code/projects/<sha256(realpath(cwd))>`.
+ * `<agentDir>/artifacts/think-in-code/projects/<sha256(realpath(cwd))>`.
  *
  * The canonical project path is captured alongside so the store can detect an
  * impossible hash/path mismatch on reopen.
@@ -442,9 +435,9 @@ export function resolveProjectStorePath(
     canonicalPath: string,
     options: ProjectStorePathOptions = {},
 ): string {
-    const home = options.home ?? homedir();
+    const agentDir = options.agentDir;
     const segment = hashProjectPath(canonicalPath);
-    return `${resolveThinkInCodeRoot(home)}/projects/${segment}`;
+    return `${resolveThinkInCodeRoot(agentDir)}/projects/${segment}`;
 }
 
 /** SHA-256 (lowercase hex) of the canonical project path. */

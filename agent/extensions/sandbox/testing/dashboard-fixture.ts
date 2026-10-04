@@ -18,9 +18,9 @@ export function dashboardFixture() {
         const cwd = join(root, "example-project");
         const agentDir = join(root, "agent");
         mkdirSync(cwd);
-        mkdirSync(agentDir);
+        mkdirSync(join(agentDir, "config"), { recursive: true });
         writeFileSync(
-            join(agentDir, "sandbox.json"),
+            join(agentDir, "config", "sandbox.json"),
             JSON.stringify({
                 version: 2,
                 machineId: "fixture",

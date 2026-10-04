@@ -169,7 +169,7 @@ The request hook reads saved configuration again for each model request. If that
 
 ### Usage counts
 
-Counts are independent of visibility and live in `~/.pi/agent/config/skill-gate-analytics.json`:
+Counts are independent of visibility and live in `~/.pi/agent/artifacts/skill-gate-analytics.json`:
 
 ```json
 {

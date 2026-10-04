@@ -147,6 +147,9 @@ export function registerBuiltinBash(
         options.localSupervisor.shutdown();
         projectCwd = ctx.cwd;
         bashDefinition = createBashToolDefinition(projectCwd);
-        rewriteRules = loadBashRewrites(projectCwd).rules;
+        rewriteRules = loadBashRewrites(
+            projectCwd,
+            ctx.isProjectTrusted(),
+        ).rules;
     });
 }

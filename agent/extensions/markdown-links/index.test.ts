@@ -1,3 +1,4 @@
+import { writeOwnedSettingsFixture } from "../_shared/testing/config-fixture.ts";
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
     createEventBus,
@@ -88,22 +89,20 @@ describe("Markdown links configuration", () => {
         const cwd = join(root, "project");
         mkdirSync(agentDir);
         mkdirSync(join(cwd, ".pi"), { recursive: true });
-        writeFileSync(
+        writeOwnedSettingsFixture(
             join(agentDir, "settings.json"),
-            JSON.stringify({
+            {
                 markdownLinks: {
                     allowedRoots: ["$agentDir"],
                     scope: "context",
                     maxDepth: 1,
                 },
-            }),
-        );
-        writeFileSync(
+            });
+        writeOwnedSettingsFixture(
             join(cwd, ".pi", "settings.json"),
-            JSON.stringify({
+            {
                 markdownLinks: { allowedRoots: ["$cwd", "$sourceDir"] },
-            }),
-        );
+            });
 
         await expect(
             loadMarkdownLinksConfig(cwd, agentDir, true),

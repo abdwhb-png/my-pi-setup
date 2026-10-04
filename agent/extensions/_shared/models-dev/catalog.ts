@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import {
     clearTimeout as clearAbortTimer,
     setTimeout as scheduleAbortTimer,
 } from "node:timers";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { extensionPath } from "../extension-paths.ts";
 
 /** models.dev catalog endpoint carrying provider-aware and base records plus an ETag. */
 export const MODELS_DEV_CATALOG_URL = "https://models.dev/catalog.json";
@@ -13,7 +13,12 @@ export const MODELS_DEV_CATALOG_URL = "https://models.dev/catalog.json";
 const CACHE_TTL_MS = 86_400_000;
 const CACHE_TIMEOUT_MS = 5_000;
 const CACHE_FILE_NAME = "models-dev-catalog-v1.json";
-const DEFAULT_CACHE_PATH = join(getAgentDir(), "cache", CACHE_FILE_NAME);
+const DEFAULT_CACHE_PATH = extensionPath(
+    { scope: "global" },
+    "artifacts",
+    "cache",
+    CACHE_FILE_NAME,
+);
 
 /** Unique global slot so separately evaluated extensions share one catalog instance. */
 const CATALOG_SLOT: symbol = Symbol.for("pi.models-dev-catalog.v1");

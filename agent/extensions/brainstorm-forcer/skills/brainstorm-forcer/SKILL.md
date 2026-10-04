@@ -34,7 +34,7 @@ Route precise research questions to the narrowest reliable source:
 
 Delegated findings are secondary evidence. Re-check decision-critical claims against direct code, tests, runtime output, APIs, or authoritative documentation.
 
-After enough evidence exists to name the work accurately, choose a short canonical topic. It must describe the design subject, not repeat the opening prompt. Submit it through `brainstorm_submit_discovery`; this topic fixes the `docs/brainstorms/YYYY-MM-DD-<topic>/` directory for the run.
+After enough evidence exists to name the work accurately, choose a short canonical topic. It must describe the design subject, not repeat the opening prompt. Submit it through `brainstorm_submit_discovery`; this topic fixes the `.pi/artifacts/brainstorms/YYYY-MM-DD-<topic>/` directory for the run.
 
 Submit:
 
@@ -124,7 +124,7 @@ After successful submission, call `brainstorm_transition(next)` to finish. User 
 
 ## Artifact revisions
 
-Artifacts live under the canonical topic in `docs/brainstorms/`. Returning to an earlier phase and resubmitting creates a new immutable revision. Existing roots are never renamed. A blocked Exploring submission does not write, increment revision, mutate manifest, or stale downstream artifacts.
+Artifacts live under the canonical topic in `.pi/artifacts/brainstorms/`. Returning to an earlier phase and resubmitting creates a new immutable revision. Existing roots are never renamed. A blocked Exploring submission does not write, increment revision, mutate manifest, or stale downstream artifacts.
 
 ## Principles
 

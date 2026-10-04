@@ -182,7 +182,7 @@ export default function dangerousModeExtension(pi: ExtensionAPI): void {
                 isReload: event.reason === "reload",
                 dangerousFlag:
                     pi.getFlag("dangerously-skip-permissions") === true,
-                config: loadConfig(ctx.cwd),
+                config: loadConfig(ctx.cwd, undefined, ctx.isProjectTrusted()),
             });
         } catch (error) {
             disableForInvalidConfig();

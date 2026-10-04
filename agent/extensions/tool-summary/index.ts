@@ -35,7 +35,11 @@ export default function (pi: ExtensionAPI) {
     let toolResults: Array<{ toolName: string; isError: boolean }> = [];
 
     pi.on("session_start", async (_event, ctx) => {
-        const config = loadToolSummaryConfig(ctx.cwd);
+        const config = loadToolSummaryConfig(
+            ctx.cwd,
+            undefined,
+            ctx.isProjectTrusted(),
+        );
         filter.reset();
         if (config.tools.length > 0) {
             filter.add(...config.tools);

@@ -1,0 +1,6 @@
+{
+    "roleScope": "both",
+    "defaultRole": "pi-agent",
+    "planApprovedRole": "pi-agent",
+    "showStatus": false
+}

@@ -28,8 +28,8 @@ function entry(
 }
 
 const cwd = "/workspace";
-const planDir = "pi-plans";
-const path = "pi-plans/feature.md";
+const planDir = ".pi/planning/plans";
+const path = ".pi/planning/plans/feature.md";
 
 describe("plan submission lifecycle", () => {
     it("normalizes write and submit paths to the same cwd-relative identity", () => {
@@ -117,7 +117,7 @@ describe("plan submission lifecycle", () => {
     });
 
     it("returns the latest state for every tracked plan path", () => {
-        const otherPath = "pi-plans/other.md";
+        const otherPath = ".pi/planning/plans/other.md";
         const entries = [
             entry(PLAN_REVIEW_REVISION_ENTRY, { path, revision: 1 }, "write-1"),
             entry(

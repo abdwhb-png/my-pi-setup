@@ -12,7 +12,7 @@
   ],
   "$defs": {
     "globalConfig": {
-      "title": "Global ~/.pi/agent/sandbox.json",
+      "title": "Global ~/.pi/agent/config/sandbox.json",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -237,7 +237,7 @@
       }
     },
     "projectConfig": {
-      "title": "Project .pi/sandbox.json",
+      "title": "Project .pi/config/sandbox.json",
       "type": "object",
       "additionalProperties": false,
       "properties": {

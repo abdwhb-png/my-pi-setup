@@ -1633,7 +1633,7 @@ test('status merges legacy queue read-only and operational tools return snapshot
         tasks: [approvedTask('task-1', 'light')],
     };
     seedApproved(store, observableManifest, snapshot('new-run'));
-    const queueDir = join(agentDir, '.sdd', 'queue');
+    const queueDir = join(agentDir, 'artifacts/sdd', 'queue');
     mkdirSync(queueDir, { recursive: true });
     const legacyPath = join(queueDir, 'legacy-run.json');
     const legacy = {
@@ -2293,7 +2293,7 @@ test('legacy submit delegates to prepare with Standard and never writes queue st
     const draft = result.details.manifest as DraftManifest;
     expect(result.content[0].text).toStartWith('Deprecated:');
     expect(draft.globalProfile).toBe('standard');
-    expect(existsSync(join(agentDir, '.sdd', 'queue'))).toBe(false);
+    expect(existsSync(join(agentDir, 'artifacts/sdd', 'queue'))).toBe(false);
 });
 
 function runtimeWithProgress(

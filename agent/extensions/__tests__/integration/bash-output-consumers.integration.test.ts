@@ -1,3 +1,4 @@
+import { writeOwnedSettingsFixture } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, expect, test } from "bun:test";
 import {
     calls,
@@ -29,7 +30,7 @@ import { publicExtensionEntrypoints } from "./public-extension-session.ts";
 const sessions: Array<Awaited<ReturnType<typeof createTestSession>>> = [];
 const roots: string[] = [];
 const owners: symbol[] = [];
-const previousArchiveRoot = process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
+const previousArchiveRoot = process.env.PI_CODING_AGENT_DIR;
 
 afterEach(async () => {
     for (const session of sessions.splice(0)) session.dispose();
@@ -40,8 +41,8 @@ afterEach(async () => {
     for (const root of roots.splice(0))
         await rm(root, { recursive: true, force: true });
     if (previousArchiveRoot === undefined)
-        delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
-    else process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previousArchiveRoot;
+        delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousArchiveRoot;
 });
 
 test.each(["before", "after"] as const)(
@@ -50,9 +51,9 @@ test.each(["before", "after"] as const)(
         const cwd = await mkdtemp(join(tmpdir(), "pi-compressed-provenance-"));
         roots.push(cwd);
         await mkdir(join(cwd, ".pi"));
-        await writeFile(
+        writeOwnedSettingsFixture(
             join(cwd, ".pi/settings.json"),
-            JSON.stringify({
+            {
                 safeBash: {
                     mode: "coexist",
                     telemetry: { enabled: false },
@@ -66,9 +67,9 @@ test.each(["before", "after"] as const)(
                     },
                     telemetry: { enabled: false },
                 },
-            }),
+            },
         );
-        process.env.PI_TOOL_RESULT_ARCHIVE_DIR = join(cwd, "archives");
+        process.env.PI_CODING_AGENT_DIR = join(cwd, "archives");
         const owner = Symbol("compressed-provenance");
         owners.push(owner);
         claimSandboxRuntime(owner);
@@ -129,9 +130,9 @@ test.each(["before", "after"] as const)(
 test("Pi Overrides preserves exact archive pagination and source provenance", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "pi-archive-pages-"));
     roots.push(cwd);
-    const archiveRoot = join(cwd, "archives");
-    await mkdir(archiveRoot);
-    process.env.PI_TOOL_RESULT_ARCHIVE_DIR = archiveRoot;
+    const archiveRoot = join(cwd, "artifacts/tool-result-archive");
+    await mkdir(archiveRoot,{recursive:true});
+    process.env.PI_CODING_AGENT_DIR = cwd;
     const sourceExecution = hostExecution("process");
     const archivePath = join(
         archiveRoot,
@@ -190,6 +191,7 @@ test("Pi Overrides preserves exact archive pagination and source provenance", as
 test("Pi Overrides native file tools identify their host namespace", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "pi-native-provenance-"));
     roots.push(cwd);
+    process.env.PI_CODING_AGENT_DIR = cwd;
     await writeFile(resolve(cwd, "sample.txt"), "needle\n");
     const session = await createTestSession({
         cwd,

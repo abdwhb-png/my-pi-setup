@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { loadToolGroupsConfig } from "./config.ts";
 import type { ToolGroupsConfig } from "./types.ts";
 
@@ -24,6 +24,7 @@ describe("loadToolGroupsConfig", () => {
     beforeEach(() => {
         agentDir = tmpDir("tg-agent-");
         cwd = tmpDir("tg-cwd-");
+        new ProjectTrustStore(agentDir).set(cwd, true);
     });
 
     afterEach(() => {
@@ -42,36 +43,28 @@ describe("loadToolGroupsConfig", () => {
     // ── defaults ──────────────────────────────────────────
 
     it("returns empty groups when no config exists", () => {
-        const cfg = loadToolGroupsConfig(cwd, { agentDir });
-        expect(cfg).toEqual(EMPTY);
-    });
-
-    it("returns empty groups when sources array is empty", () => {
-        const cfg = loadToolGroupsConfig(cwd, {
-            agentDir,
-            _settingsManager: SettingsManager.inMemory({} as any),
-        });
+        const cfg = loadToolGroupsConfig(cwd, { agentDir, projectTrusted:true });
         expect(cfg).toEqual(EMPTY);
     });
 
     // ── legacy file ───────────────────────────────────────
 
-    it("loads global legacy tool-groups.json", () => {
-        writeJson(join(agentDir, "tool-groups.json"), {
+    it("loads global config/tool-groups.json", () => {
+        writeJson(join(agentDir, "config", "tool-groups.json"), {
             groups: { read: ["write", "edit"] },
         });
-        const cfg = loadToolGroupsConfig(cwd, { agentDir });
+        const cfg = loadToolGroupsConfig(cwd, { agentDir, projectTrusted:true });
         expect(cfg.groups).toEqual({ read: ["write", "edit"] });
     });
 
-    it("merges project-local legacy over global legacy (deep merge)", () => {
-        writeJson(join(agentDir, "tool-groups.json"), {
+    it("merges project-local configuration over global (deep merge)", () => {
+        writeJson(join(agentDir, "config", "tool-groups.json"), {
             groups: { read: ["write"], base: ["grep"] },
         });
-        writeJson(join(cwd, ".pi", "tool-groups.json"), {
+        writeJson(join(cwd, ".pi", "config", "tool-groups.json"), {
             groups: { read: ["edit", "find"], extra: ["read"] },
         });
-        const cfg = loadToolGroupsConfig(cwd, { agentDir });
+        const cfg = loadToolGroupsConfig(cwd, { agentDir, projectTrusted:true });
         expect(cfg.groups).toEqual({
             read: ["edit", "find"], // later replaces same key
             base: ["grep"],
@@ -79,48 +72,11 @@ describe("loadToolGroupsConfig", () => {
         });
     });
 
-    // ── settings.json ─────────────────────────────────────
-
-    it("loads from settings.json key toolGroups", () => {
-        const sm = SettingsManager.inMemory({
-            toolGroups: { groups: { api: ["read", "grep"] } },
-        } as any);
-        const cfg = loadToolGroupsConfig(cwd, { _settingsManager: sm });
-        expect(cfg.groups).toEqual({ api: ["read", "grep"] });
-    });
-
-    it("settings wins over legacy (cascade)", () => {
-        writeJson(join(agentDir, "tool-groups.json"), {
-            groups: { from_legacy: ["write"] },
-        });
-        const sm = SettingsManager.inMemory({
-            toolGroups: { groups: { from_settings: ["read"] } },
-        } as any);
-        const cfg = loadToolGroupsConfig(cwd, {
-            agentDir,
-            _settingsManager: sm,
-        });
-        // settings has data → legacy skipped entirely
-        expect(cfg.groups).toEqual({ from_settings: ["read"] });
-    });
-
-    it("falls back to legacy when settings key is absent", () => {
-        const sm = SettingsManager.inMemory({} as any);
-        writeJson(join(agentDir, "tool-groups.json"), {
-            groups: { fallback: ["write"] },
-        });
-        const cfg = loadToolGroupsConfig(cwd, {
-            agentDir,
-            _settingsManager: sm,
-        });
-        expect(cfg.groups).toEqual({ fallback: ["write"] });
-    });
-
     it("ignores project sources when projectTrusted is false", () => {
-        writeJson(join(agentDir, "tool-groups.json"), {
+        writeJson(join(agentDir, "config", "tool-groups.json"), {
             groups: { inspect: ["read"] },
         });
-        writeJson(join(cwd, ".pi", "tool-groups.json"), {
+        writeJson(join(cwd, ".pi", "config", "tool-groups.json"), {
             groups: { inspect: ["write"] },
         });
         expect(
@@ -144,26 +100,14 @@ describe("loadToolGroupsConfig", () => {
             { groups: { inspect: [] } },
         ].map((raw) => ({ raw })),
     )("rejects malformed group declarations in strict mode: %j", ({ raw }) => {
-        writeJson(join(agentDir, "tool-groups.json"), raw);
+        writeJson(join(agentDir, "config", "tool-groups.json"), raw);
         expect(() =>
-            loadToolGroupsConfig(cwd, { agentDir, strict: true }),
+            loadToolGroupsConfig(cwd, { agentDir, strict: true, projectTrusted:true }),
         ).toThrow("Invalid tool-groups");
     });
 
-    it("strict settings still skip all legacy layers when settings groups exist", () => {
-        writeJson(join(agentDir, "settings.json"), {
-            toolGroups: { groups: { inspect: ["read"] } },
-        });
-        writeJson(join(cwd, ".pi", "tool-groups.json"), {
-            groups: { inspect: ["write"] },
-        });
-        expect(
-            loadToolGroupsConfig(cwd, { agentDir, strict: true }).groups,
-        ).toEqual({ inspect: ["read"] });
-    });
-
     it("strict mode rejects malformed JSON and skips untrusted project settings", () => {
-        writeJson(join(agentDir, "tool-groups.json"), {
+        writeJson(join(agentDir, "config", "tool-groups.json"), {
             groups: { inspect: ["read"] },
         });
         mkdirSync(join(cwd, ".pi"), { recursive: true });
@@ -176,14 +120,14 @@ describe("loadToolGroupsConfig", () => {
             }).groups,
         ).toEqual({ inspect: ["read"] });
         expect(() =>
-            loadToolGroupsConfig(cwd, { agentDir, strict: true }),
+            loadToolGroupsConfig(cwd, { agentDir, strict: true, projectTrusted:true }),
         ).toThrow("settings.json");
     });
 
     // ── normalization ─────────────────────────────────────
 
     it("drops groups with invalid names (not matching /^[a-z][a-z0-9_-]*$/)", () => {
-        writeJson(join(agentDir, "tool-groups.json"), {
+        writeJson(join(agentDir, "config", "tool-groups.json"), {
             groups: {
                 valid_group: ["write"],
                 InvalidName: ["read"],
@@ -192,32 +136,32 @@ describe("loadToolGroupsConfig", () => {
                 "has spaces": ["edit"],
             },
         });
-        const cfg = loadToolGroupsConfig(cwd, { agentDir });
+        const cfg = loadToolGroupsConfig(cwd, { agentDir, projectTrusted:true });
         expect(cfg.groups).toEqual({ valid_group: ["write"] });
     });
 
     it("drops invalid members (non-string, empty, whitespace-only)", () => {
-        writeJson(join(agentDir, "tool-groups.json"), {
+        writeJson(join(agentDir, "config", "tool-groups.json"), {
             groups: {
                 tools: ["write", "", "  ", null, 42, "read"],
             },
         });
-        const cfg = loadToolGroupsConfig(cwd, { agentDir });
+        const cfg = loadToolGroupsConfig(cwd, { agentDir, projectTrusted:true });
         expect(cfg.groups).toEqual({ tools: ["write", "read"] });
     });
 
     it("trims whitespace from member names", () => {
-        writeJson(join(agentDir, "tool-groups.json"), {
+        writeJson(join(agentDir, "config", "tool-groups.json"), {
             groups: {
                 tools: ["  write  ", "read"],
             },
         });
-        const cfg = loadToolGroupsConfig(cwd, { agentDir });
+        const cfg = loadToolGroupsConfig(cwd, { agentDir, projectTrusted:true });
         expect(cfg.groups).toEqual({ tools: ["write", "read"] });
     });
 
     it("ignores non-object groups", () => {
-        writeJson(join(agentDir, "tool-groups.json"), {
+        writeJson(join(agentDir, "config", "tool-groups.json"), {
             groups: {
                 ok: ["write"],
                 bad: "string",
@@ -225,19 +169,19 @@ describe("loadToolGroupsConfig", () => {
                 nullVal: null,
             },
         });
-        const cfg = loadToolGroupsConfig(cwd, { agentDir });
+        const cfg = loadToolGroupsConfig(cwd, { agentDir, projectTrusted:true });
         expect(cfg.groups).toEqual({ ok: ["write"] });
     });
 
     it("deep merge: later group array fully replaces same-key group", () => {
         // verified in the project-local test, but explicit:
-        writeJson(join(agentDir, "tool-groups.json"), {
+        writeJson(join(agentDir, "config", "tool-groups.json"), {
             groups: { same: ["write", "edit"] },
         });
-        writeJson(join(cwd, ".pi", "tool-groups.json"), {
+        writeJson(join(cwd, ".pi", "config", "tool-groups.json"), {
             groups: { same: ["grep"] },
         });
-        const cfg = loadToolGroupsConfig(cwd, { agentDir });
+        const cfg = loadToolGroupsConfig(cwd, { agentDir, projectTrusted:true });
         expect(cfg.groups).toEqual({ same: ["grep"] }); // replaced, not merged
     });
 });

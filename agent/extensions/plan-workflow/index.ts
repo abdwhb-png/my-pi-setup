@@ -4,6 +4,7 @@ import {
     withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import {
     extractFirstHeading,
     listVersions,
@@ -89,7 +90,7 @@ export default function planWorkflowExtension(pi: ExtensionAPI): void {
         name: "session_plan",
         label: "Session Plan",
         description:
-            "Versioned Markdown plans stored by topic in {cwd}/.pi/session-plans/. Actions: save (create new version), read (get content by version), clear (delete all versions), history (list versions). topic is required for read, clear, and history; read defaults to the latest version unless version is given. Each save appends a new version and never overwrites.",
+            "Versioned Markdown plans stored by topic in {cwd}/.pi/planning/session-plans/. Actions: save (create new version), read (get content by version), clear (delete all versions), history (list versions). topic is required for read, clear, and history; read defaults to the latest version unless version is given. Each save appends a new version and never overwrites.",
         promptSnippet: "Versioned planning documents by topic",
         promptGuidelines: [
             "Pass a stable, descriptive topic when saving a plan, then reuse that exact topic for read, clear, and history of the same plan.",
@@ -212,7 +213,10 @@ export default function planWorkflowExtension(pi: ExtensionAPI): void {
                     }
 
                     const saveResult = await withFileMutationQueue(
-                        `${ctx.cwd}/.pi/session-plans`,
+                        extensionPath(
+                            { scope: "project", cwd: ctx.cwd },
+                            "session-plans",
+                        ),
                         () =>
                             Promise.resolve(
                                 storeSavePlan(

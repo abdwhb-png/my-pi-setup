@@ -1,3 +1,9 @@
+import { randomUUID } from "node:crypto";
+import {
+    extensionConfigPath,
+    isProjectConfigTrusted,
+    CONFIG_OWNERS,
+} from "../_shared/config-loader.ts";
 /**
  * Sandbox Extension - OS-level isolation runtime for Bash operations and
  * analysis workers.
@@ -6,8 +12,8 @@
  * and process restrictions on Linux. Bash tool registration belongs to the
  * separate bash-execution extension.
  *
- * Configuration: ~/.pi/agent/sandbox.json supplies global defaults and ceilings;
- * <project>/.pi/sandbox.json supplies optional project restrictions.
+ * Configuration: ~/.pi/agent/config/sandbox.json supplies global defaults and ceilings;
+ * <project>/.pi/config/sandbox.json supplies optional project restrictions.
  * Use /sandbox for status and actions, /sandbox mode for explicit session mode
  * selection, and /sandbox doctor [executable] for read-only diagnostics.
  * Host execution requires global host.allowed; a configuration change never
@@ -65,6 +71,7 @@ import {
 } from "./analysis/client.ts";
 import { createAuthorityWatch } from "./capabilities/authority-watch.ts";
 import {
+    assertSandboxConfigMigrated,
     localMachineId,
     readGlobalSandboxConfig,
     readProjectSandboxConfig,
@@ -596,21 +603,22 @@ export function loadSandboxConfig(
     options: LoadSandboxConfigOptions = {},
 ): LoadSandboxConfigResult {
     const agentDir = options.agentDir ?? getAgentDir();
+    const projectTrusted = isProjectConfigTrusted(
+        cwd,
+        agentDir,
+        options.projectTrusted,
+    );
+    assertSandboxConfigMigrated(agentDir, projectTrusted ? cwd : undefined);
     const globalPath = sandboxConfigPath(agentDir);
-    const projectPath = join(cwd, ".pi", "sandbox.json");
-    const migrationMarker = `${globalPath}.migration`;
-    if (existsSync(migrationMarker))
-        throw new SandboxExecutionError("invalid-policy", {
-            cause: new Error(
-                "Sandbox migration is incomplete; resume or cancel it explicitly",
-            ),
-        });
+    const projectPath = extensionConfigPath("sandbox", {
+        scope: "project",
+        cwd,
+    });
     const machineId = options.machineId ?? localMachineId();
     const global = readGlobalSandboxConfig(globalPath, machineId);
-    const project =
-        options.projectTrusted === false
-            ? undefined
-            : readProjectSandboxConfig(projectPath);
+    const project = !projectTrusted
+        ? undefined
+        : readProjectSandboxConfig(projectPath);
     const docker = resolveDockerPolicy({
         globalConfig: global?.docker,
         projectConfig: project?.docker,
@@ -641,8 +649,16 @@ export async function persistProjectDockerPreference(
     preference: DockerProjectPreference,
     agentDir = getAgentDir(),
 ): Promise<LoadSandboxConfigResult> {
-    const projectPath = join(cwd, ".pi", "sandbox.json");
+    const projectPath = extensionConfigPath("sandbox", {
+        scope: "project",
+        cwd: cwd,
+    });
     return withFileMutationQueue(projectPath, async () => {
+        if (!isProjectConfigTrusted(cwd, agentDir))
+            throw new Error(
+                "Project configuration changes require saved project trust. Use /trust and restart Pi.",
+            );
+        assertSandboxConfigMigrated(agentDir, cwd);
         const current = readProjectSandboxConfig(projectPath) ?? {};
         const currentDocker = current.docker;
         const dockerFields =
@@ -672,11 +688,12 @@ export async function persistProjectDockerPreference(
             authorityPath: sandboxConfigPath(agentDir),
         });
         mkdirSync(dirname(projectPath), { recursive: true, mode: 0o700 });
-        const temporaryPath = `${projectPath}.${process.pid}.tmp`;
+        const temporaryPath = `${projectPath}.${randomUUID()}.tmp`;
         try {
             writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
                 encoding: "utf8",
                 mode: 0o600,
+                flag: "wx",
             });
             renameSync(temporaryPath, projectPath);
         } catch (error) {
@@ -1814,7 +1831,10 @@ export function createSandboxExtension(
         authorityWatch = createAuthorityWatch({
             paths: [
                 sandboxConfigPath(getAgentDir()),
-                join(ctx.cwd, ".pi/sandbox.json"),
+                extensionConfigPath("sandbox", {
+                    scope: "project",
+                    cwd: ctx.cwd,
+                }),
             ],
             read: async () => {
                 const resolved = loadShell(ctx);
@@ -2232,6 +2252,17 @@ export function createSandboxExtension(
                     return;
                 }
                 try {
+                    assertSandboxConfigMigrated(getAgentDir(), ctx.cwd);
+                    if (
+                        !isProjectConfigTrusted(
+                            ctx.cwd,
+                            getAgentDir(),
+                            ctx.isProjectTrusted(),
+                        )
+                    )
+                        throw new Error(
+                            "Sandbox migration requires saved project trust. Use /trust and restart Pi.",
+                        );
                     const globalPath = sandboxConfigPath(getAgentDir());
                     const preview = previewLegacyMigration(
                         getAgentDir(),
@@ -2260,18 +2291,29 @@ export function createSandboxExtension(
                         choice === useProposed ? preview.proposedGlobal : {};
                     const result = await withFileMutationQueue(
                         globalPath,
-                        async () =>
-                            publishLegacyMigration({
+                        async () => {
+                            assertSandboxConfigMigrated(getAgentDir(), ctx.cwd);
+                            if (
+                                !isProjectConfigTrusted(
+                                    ctx.cwd,
+                                    getAgentDir(),
+                                    ctx.isProjectTrusted(),
+                                )
+                            )
+                                throw new Error(
+                                    "Sandbox migration requires saved project trust.",
+                                );
+                            return publishLegacyMigration({
                                 preview,
                                 globalPath,
-                                projectPath: join(
-                                    ctx.cwd,
-                                    ".pi",
-                                    "sandbox.json",
-                                ),
+                                projectPath: extensionConfigPath("sandbox", {
+                                    scope: "project",
+                                    cwd: ctx.cwd,
+                                }),
                                 machineId,
                                 globalCeiling,
-                            }),
+                            });
+                        },
                     );
                     const resolved = loadShell(ctx);
                     await reconfigureServices(ctx, resolved);
@@ -2296,7 +2338,25 @@ export function createSandboxExtension(
                     return;
                 }
                 try {
-                    const globalPath = sandboxConfigPath(getAgentDir());
+                    const agentDir = getAgentDir();
+                    const canonicalPath = sandboxConfigPath(agentDir);
+                    const legacyPath = join(
+                        agentDir,
+                        CONFIG_OWNERS.sandbox.legacyFile,
+                    );
+                    const legacyRecovery = existsSync(
+                        legacyPath + ".migration",
+                    );
+                    if (
+                        legacyRecovery &&
+                        existsSync(canonicalPath + ".migration")
+                    )
+                        throw new Error(
+                            "Both legacy and current sandbox migrations are interrupted. Resolve the conflicting transactions before recovery.",
+                        );
+                    const globalPath = legacyRecovery
+                        ? legacyPath
+                        : canonicalPath;
                     const recovery = await withFileMutationQueue(
                         globalPath,
                         async () => recoverIncompleteMigration(globalPath),
@@ -2304,6 +2364,13 @@ export function createSandboxExtension(
                     if (!recovery) {
                         ctx.ui.notify(
                             "No interrupted sandbox migration was found.",
+                            "info",
+                        );
+                        return;
+                    }
+                    if (legacyRecovery) {
+                        ctx.ui.notify(
+                            `Legacy sandbox migration ${recovery.recovered}. Stop Pi and run the extension-layout migration before using the sandbox.`,
                             "info",
                         );
                         return;

@@ -7,9 +7,9 @@ import {
     unlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { loadExtensionConfig } from "./config-loader.ts";
+import { loadExtensionConfig, extensionConfigPath } from "./config-loader.ts";
 import { resolveRuntimePath, toPortableHomePath } from "./home-path.ts";
 
 export type ToggleState = "enabled" | "disabled";
@@ -56,10 +56,7 @@ export function loadConfig(agentDir = getAgentDir()): SkillGateConfig {
         agentDir,
         defaults: { skills: {}, projects: {} },
         normalize: normalizeConfig,
-        sources: [
-            { legacyFilename: "config/skill-gate.json", projectLocal: false },
-        ],
-        strict: true,
+        owner: "skillGate",
     });
 }
 
@@ -68,7 +65,10 @@ export function saveConfig(
     config: SkillGateConfig,
     agentDir = getAgentDir(),
 ): void {
-    const path = join(agentDir, "config/skill-gate.json");
+    const path = extensionConfigPath("skillGate", {
+        scope: "global",
+        agentDir,
+    });
     mkdirSync(dirname(path), { recursive: true });
     const temporary = `${path}.${randomUUID()}.tmp`;
     try {

@@ -1,0 +1,14 @@
+{
+    "fd": {
+        "respectGitignore": false,
+        "excludePatterns": [".git", "node_modules", ".cache"]
+    },
+    "rg": {
+        "respectGitignore": false
+    },
+    "ls": {
+        "respectGitignore": false
+    },
+    "additionalDirectories": ["~/.pi", "~/engineering/shared-services"],
+    "enableRealtimeFallback": true
+}

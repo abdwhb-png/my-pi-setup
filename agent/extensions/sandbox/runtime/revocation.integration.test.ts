@@ -1,5 +1,6 @@
+import { writeFixtureFileAsync as writeFile } from "../../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import { createSandboxBashOperations, getSandboxRuntime } from "../../_shared/sandbox-runtime/index.ts";
@@ -28,7 +29,7 @@ test.skipIf(process.platform !== "linux" || !hasCandidateRuntime()).each([false,
             await Promise.all([cwd, agentDir, tools].map(path => mkdir(path, { mode: 0o700 })));
             await writeFile(join(tools, "resource"), "retained descriptor fixture", { mode: 0o600 });
             const global = { version: 2, machineId: localMachineId(), docker: { allowed: false } };
-            const authority = join(agentDir, "sandbox.json");
+            const authority = join(agentDir, "config", "sandbox.json");
             await writeFile(authority, JSON.stringify({ ...global, environment: { installations: { local: [{ root: tools, path: [], ...(files ? { files: ["resource"] } : {}) }] } } }), { mode: 0o600 });
             process.env.PI_CODING_AGENT_DIR = agentDir;
             session = await createTestSession({ cwd, extensionFactories: [pi => createSandboxExtension(pi, {
@@ -102,8 +103,8 @@ test.skipIf(
                     mkdir(path, { recursive: true, mode: 0o700 }),
                 ),
             );
-            const authority = join(agentDir, "sandbox.json");
-            const project = join(cwd, ".pi", "sandbox.json");
+            const authority = join(agentDir, "config", "sandbox.json");
+            const project = join(cwd, ".pi", "config", "sandbox.json");
             await writeFile(
                 authority,
                 JSON.stringify({

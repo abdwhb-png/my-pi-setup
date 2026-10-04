@@ -475,6 +475,7 @@ export function compileToolGroupOverrides(
     const effective = new Map([...user, ...local, ...explicit]);
     const projectGroups = loadToolGroupsConfig(cwd, {
         agentDir,
+        projectTrusted: true,
         strict: true,
     }).groups;
     const project = compileLayer(effective, projectGroups, Object.keys(global));

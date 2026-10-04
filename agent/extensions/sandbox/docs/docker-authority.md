@@ -5,7 +5,7 @@ Docker requires two independent choices:
 ```text
 Global sandbox.json: docker.allowed = true + security limits
                          ↓
-Project .pi/sandbox.json: docker.enabled = true + targets/operations
+Project .pi/config/sandbox.json: docker.enabled = true + targets/operations
                          ↓
 Broker access to the project's targets within global security limits
 ```
@@ -14,7 +14,7 @@ An absent or false global authorization disables Docker everywhere. An absent pr
 
 ## Configure the global ceiling
 
-Add a Docker section to the existing `~/.pi/agent/sandbox.json`, preserving its version and machine identity:
+Add a Docker section to the existing `~/.pi/agent/config/sandbox.json`, preserving its version and machine identity:
 
 ```json
 {
@@ -45,7 +45,7 @@ Global `mode: "full"` permits engine control for an enabled project without targ
 
 ## Activate a project
 
-Put this in `<project>/.pi/sandbox.json`:
+Put this in `<project>/.pi/config/sandbox.json`:
 
 ```json
 {
@@ -118,4 +118,4 @@ Check global and project deactivation before every admission, through filesystem
 
 Use `/sandbox docker` and `/sandbox doctor` to inspect configured policy and runtime state. Configuration acceptance is not proof that every engine operation succeeds. File permissions, target eligibility and container process permissions remain separate checks.
 
-Historical `sandbox.global.json` is a migration input, not an active authority file. Migrate ordinary targets and operations to each project's `.pi/sandbox.json`. Review sensitive exceptions separately before placing their exact selectors in global `docker.unsafeTargets`. Never turn ordinary project targets into a global target registry.
+Historical `sandbox.global.json` is a migration input, not an active authority file. Migrate ordinary targets and operations to each project's `.pi/config/sandbox.json`. Review sensitive exceptions separately before placing their exact selectors in global `docker.unsafeTargets`. Never turn ordinary project targets into a global target registry.

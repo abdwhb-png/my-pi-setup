@@ -1,3 +1,4 @@
+import { writeFixtureFile as writeFileSync, writeOwnedSettingsFixture } from "../_shared/testing/config-fixture.ts";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import {
@@ -6,7 +7,7 @@ import {
     mkdtempSync,
     readFileSync,
     rmSync,
-    writeFileSync,
+
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,7 +47,7 @@ beforeEach(() => {
         }),
     );
     writeFileSync(
-        join(agentDir, "tool-groups.json"),
+        join(agentDir, "config/tool-groups.json"),
         JSON.stringify({ groups: { inspect: ["read", "grep"] } }),
     );
     writeFileSync(
@@ -89,7 +90,7 @@ test("startup and reload publish snapshots while ordinary turns do not", async (
         "grep",
     ]);
     writeFileSync(
-        join(agentDir, "tool-groups.json"),
+        join(agentDir, "config/tool-groups.json"),
         JSON.stringify({ groups: { inspect: ["ls"] } }),
     );
     await running.run(when("Read snapshot only", [says("unchanged")]));
@@ -152,7 +153,7 @@ test("failed recompilation retains last snapshot, blocks launches, and releases 
     const settingsPath = join(agentDir, "settings.json");
     const snapshot = readFileSync(settingsPath, "utf8");
     writeFileSync(
-        join(agentDir, "tool-groups.json"),
+        join(agentDir, "config/tool-groups.json"),
         JSON.stringify({ groups: { inspect: ["@missing"] } }),
     );
     await running.session.extensionRunner!.emit({
@@ -233,10 +234,7 @@ test("untrusted project bytes are ignored until trusted reload", async () => {
     });
     expect(resolveSubagentCapabilityCeiling(id)?.allowedAgents).toEqual([]);
     expect(readFileSync(projectPath, "utf8")).toBe("{");
-    writeFileSync(
-        projectPath,
-        JSON.stringify({ toolGroups: { groups: { inspect: ["ls"] } } }),
-    );
+    writeOwnedSettingsFixture(projectPath,{toolGroups:{groups:{inspect:["ls"]}}});
     await running.session.extensionRunner!.emit({
         type: "session_start",
         reason: "reload",

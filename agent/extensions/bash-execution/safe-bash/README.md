@@ -134,7 +134,7 @@ The description and `promptSnippet` stay stable. Before each model request, the 
 
 ### Global default with project override
 
-Setting `cwd-only` in the global `settings.json` makes in-cwd deletes the default for every project; a project `settings.json` under the same `safeBash.guardPolicy` key overrides it per group (project settings win over global):
+Setting `cwd-only` in `<agentDir>/config/bash-execution.json` makes in-cwd deletes the default for every project. A trusted project's `<cwd>/.pi/config/bash-execution.json` overrides it per group under the same `safeBash.guardPolicy` key:
 
 ```json
 {
@@ -172,14 +172,13 @@ Verify with `/safe-bash status`, or read the `AllowedShell (native-redirect exce
 
 ## Telemetry configuration
 
-Configure under `safeBash.telemetry` in global or project `settings.json`:
+Configure under `safeBash.telemetry` in `<agentDir>/config/bash-execution.json` or trusted `<cwd>/.pi/config/bash-execution.json`:
 
 ```json
 {
     "safeBash": {
         "telemetry": {
             "enabled": true,
-            "directory": "~/.pi/agent/safe-bash-telemetry",
             "retentionDays": 30,
             "captureCommand": true,
             "maxCommandLength": 10000,
@@ -190,14 +189,14 @@ Configure under `safeBash.telemetry` in global or project `settings.json`:
 }
 ```
 
-All fields are optional. Positive integer bounds reject zero, negative, fractional, `NaN`, and infinite values.
+All fields are optional. Positive integer bounds reject zero, negative, fractional, `NaN`, and infinite values. Telemetry always uses `<agentDir>/artifacts/safe-bash-telemetry`; directory overrides are rejected. Pi's `getAgentDir()` honors `PI_CODING_AGENT_DIR` and defaults to `~/.pi/agent`.
 
 ## Storage and privacy
 
 Telemetry is local JSONL:
 
 ```text
-~/.pi/agent/safe-bash-telemetry/
+~/.pi/agent/artifacts/safe-bash-telemetry/
 └── YYYY-MM-DD/
     └── <session-id>.jsonl
 ```

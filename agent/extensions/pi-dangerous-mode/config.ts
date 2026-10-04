@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { loadExtensionConfig } from "../_shared/config-loader.ts";
+import {
+    loadExtensionConfig,
+    isProjectConfigTrusted,
+    extensionConfigPath,
+} from "../_shared/config-loader.ts";
 
 export interface YoloConfig {
     protectedTools: string[];
@@ -75,17 +79,30 @@ function mergeConfig(
     };
 }
 
-export function loadConfig(cwd: string, agentDir?: string): YoloConfig {
+export function loadConfig(
+    cwd: string,
+    agentDir?: string,
+    projectTrusted = false,
+): YoloConfig {
     const resolvedAgentDir = agentDir ?? getAgentDir();
-    validateConfigFile(join(resolvedAgentDir, "pi-dangerous-mode.json"));
-    validateConfigFile(join(cwd, ".pi", "pi-dangerous-mode.json"));
+    validateConfigFile(
+        extensionConfigPath("dangerousMode", {
+            scope: "global",
+            agentDir: resolvedAgentDir,
+        }),
+    );
+    if (isProjectConfigTrusted(cwd, resolvedAgentDir, projectTrusted))
+        validateConfigFile(
+            extensionConfigPath("dangerousMode", { scope: "project", cwd }),
+        );
 
     const loaded = loadExtensionConfig<YoloConfig>(cwd, {
         defaults: { protectedTools: [], protectedExtensions: [] },
         normalize,
         merge: mergeConfig,
-        sources: [{ legacyFilename: "pi-dangerous-mode.json" }],
+        owner: "dangerousMode",
         agentDir: resolvedAgentDir,
+        projectTrusted,
     });
 
     return {

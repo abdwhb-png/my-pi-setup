@@ -221,7 +221,7 @@ test('recreates a worktree when preparation was interrupted after its ledger was
             'simulated preparation interruption',
         );
         expect(
-            existsSync(join(agentDir, '.sdd', 'workspaces', 'run-interrupted.json')),
+            existsSync(join(agentDir, 'artifacts/sdd', 'workspaces', 'run-interrupted.json')),
         ).toBe(true);
 
         const recovered = await workspaceManager.prepare('run-interrupted', source);
@@ -389,7 +389,7 @@ test('recovers an apply interrupted after the source patch without applying it t
         expect(
             JSON.parse(
                 readFileSync(
-                    join(agentDir, '.sdd', 'workspaces', 'run-apply-interrupted.json'),
+                    join(agentDir, 'artifacts/sdd', 'workspaces', 'run-apply-interrupted.json'),
                     'utf8',
                 ),
             ).delivery,

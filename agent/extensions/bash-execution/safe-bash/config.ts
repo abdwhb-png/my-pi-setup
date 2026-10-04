@@ -1,13 +1,4 @@
-/**
- * Config loader for the safe-bash extension.
- *
- * Reads the `safeBash` key from settings.json (global + project) via the
- * shared config-loader. Project settings override global.
- *
- * Schema is documented in `safe-bash/README.md`. Unknown or invalid values
- * fall back to defaults while valid global/project fields merge per layer.
- */
-import type { SettingsManager } from "@earendil-works/pi-coding-agent";
+/** Safe Bash settings use the safeBash section of config/bash-execution.json. */
 import {
     DANGER_GROUP_IDS,
     isAllowedShellCommand,
@@ -21,6 +12,7 @@ import {
     type GuardPolicyValue,
 } from "../../_shared/command-execution/policy.ts";
 import { loadExtensionConfig } from "../../_shared/config-loader.ts";
+import { extensionPath } from "../../_shared/extension-paths.ts";
 import { SAFE_BASH_AUDIT_BOUNDS } from "./telemetry/types.ts";
 
 export type SafeBashMode = "coexist" | "replace";
@@ -71,7 +63,11 @@ export const DEFAULT_SAFE_BASH_CONFIG: SafeBashConfig = {
     guardPolicyNotes: [],
     telemetry: {
         enabled: true,
-        directory: "~/.pi/agent/safe-bash-telemetry",
+        directory: extensionPath(
+            { scope: "global" },
+            "artifacts",
+            "safe-bash-telemetry",
+        ),
         retentionDays: 30,
         captureCommand: true,
         maxCommandLength: 10_000,
@@ -97,9 +93,10 @@ function normalizeTelemetry(raw: unknown): Partial<SafeBashTelemetryConfig> {
     const result: Partial<SafeBashTelemetryConfig> = {};
 
     if (typeof obj.enabled === "boolean") result.enabled = obj.enabled;
-    if (typeof obj.directory === "string" && obj.directory.trim()) {
-        result.directory = obj.directory;
-    }
+    if (obj.directory !== undefined)
+        throw new Error(
+            "safeBash.telemetry.directory is retired. Run the extension-layout migration.",
+        );
     if (typeof obj.captureCommand === "boolean") {
         result.captureCommand = obj.captureCommand;
     }
@@ -193,19 +190,28 @@ export function normalizeSafeBashConfig(raw: unknown): Partial<SafeBashConfig> {
 }
 
 /**
- * Load safe-bash config from settings.json via the shared config-loader.
+ * Load Safe Bash settings through the shared configuration owner.
  *
  * @param cwd - Working directory (defaults to process.cwd())
  * @param agentDir - Agent directory override (for testing)
- * @param _settingsManager - Injected SettingsManager (for testing)
  */
 export function loadSafeBashConfig(
     cwd: string = process.cwd(),
     agentDir?: string,
-    _settingsManager?: SettingsManager,
+    projectTrusted?: boolean,
 ): SafeBashConfig {
     return loadExtensionConfig<SafeBashConfig>(cwd, {
-        defaults: DEFAULT_SAFE_BASH_CONFIG,
+        defaults: {
+            ...DEFAULT_SAFE_BASH_CONFIG,
+            telemetry: {
+                ...DEFAULT_SAFE_BASH_CONFIG.telemetry,
+                directory: extensionPath(
+                    { scope: "global", agentDir },
+                    "artifacts",
+                    "safe-bash-telemetry",
+                ),
+            },
+        },
         normalize: normalizeSafeBashConfig,
         merge: (base, overlay) => ({
             ...base,
@@ -223,8 +229,8 @@ export function loadSafeBashConfig(
                 ...overlay.telemetry,
             },
         }),
-        sources: [{ settingsKey: "safeBash" }],
+        owner: "safeBash",
         agentDir,
-        _settingsManager,
+        projectTrusted,
     });
 }

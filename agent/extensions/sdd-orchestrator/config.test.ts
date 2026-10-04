@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,7 +9,7 @@ test('loads the SDD defaults when settings are absent', () => {
     const agentDir = mkdtempSync(join(tmpdir(), 'sdd-config-'));
     const cwd = mkdtempSync(join(tmpdir(), 'sdd-project-'));
     try {
-        expect(loadSddConfig(cwd, agentDir)).toEqual({
+        expect(loadSddConfig(cwd, agentDir, true)).toEqual({
             agents: {
                 assessor: 'orchestration-assessor',
                 quickWorker: 'quick-worker',
@@ -38,10 +39,11 @@ test('deep-merges valid global and project settings and ignores invalid fields',
     const agentDir = mkdtempSync(join(tmpdir(), 'sdd-config-'));
     const cwd = mkdtempSync(join(tmpdir(), 'sdd-project-'));
     try {
+        new ProjectTrustStore(agentDir).set(cwd, true);
+        mkdirSync(join(agentDir,'config'));
         writeFileSync(
-            join(agentDir, 'settings.json'),
+            join(agentDir, 'config/sdd-orchestrator.json'),
             JSON.stringify({
-                sddOrchestrator: {
                     agents: {
                         assessor: 'custom-assessor',
                         quickWorker: 'custom-quick-worker',
@@ -51,14 +53,12 @@ test('deep-merges valid global and project settings and ignores invalid fields',
                     timeoutsMs: { assessor: 1_000, reviewer: -1 },
                     maxConcurrentWriters: 4,
                     structuredOutputRetries: 0,
-                },
             }),
         );
-        mkdirSync(join(cwd, '.pi'));
+        mkdirSync(join(cwd, '.pi/config'),{recursive:true});
         writeFileSync(
-            join(cwd, '.pi', 'settings.json'),
+            join(cwd, '.pi/config/sdd-orchestrator.json'),
             JSON.stringify({
-                sddOrchestrator: {
                     agents: { assessor: '   ', worker: 'custom-worker' },
                     models: {
                         worker: '   ',
@@ -67,11 +67,10 @@ test('deep-merges valid global and project settings and ignores invalid fields',
                     timeoutsMs: { assessor: 1.5, worker: 2_000 },
                     maxConcurrentWriters: 5,
                     structuredOutputRetries: 2,
-                },
             }),
         );
 
-        expect(loadSddConfig(cwd, agentDir)).toEqual({
+        expect(loadSddConfig(cwd, agentDir, true)).toEqual({
             agents: {
                 assessor: 'custom-assessor',
                 quickWorker: 'custom-quick-worker',

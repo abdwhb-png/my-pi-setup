@@ -1,3 +1,4 @@
+import { writeOwnedSettingsFixture } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -158,17 +159,16 @@ function createFixtureProject(targetRole: string): string {
         writeRole(rolesDirectory, targetRole, 'edit, write, safe_bash');
     }
 
-    writeFileSync(
+    writeOwnedSettingsFixture(
         join(cwd, '.pi', 'settings.json'),
-        JSON.stringify({
+        {
             'pi-roles': {
                 defaultRole: targetRole,
                 planApprovedRole: targetRole,
                 roleScope: 'project',
                 showWidget: false,
             },
-        }),
-    );
+        });
 
     return cwd;
 }

@@ -231,8 +231,9 @@ export function resolveCompressorConfig(
 
 export function getLocalCompressorConfig(
     cwd = process.cwd(),
+    projectTrusted?: boolean,
 ): LocalCompressorConfig {
-    const cfg = loadCompressorConfig(cwd);
+    const cfg = loadCompressorConfig(cwd, undefined, projectTrusted);
 
     // oxlint-disable -- typescript/no-deprecated: intentional reads of legacy fields for backward compat
     const baseUrl =

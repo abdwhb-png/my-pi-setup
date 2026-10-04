@@ -12,8 +12,8 @@ const getActiveRole = mock();
 const readFrontmatter = mock();
 
 mock.module("../_shared/plans-config.ts", () => ({
-    loadPlansConfig: () => ({ planFileDir: "pi-plans" }),
-    resolvePlanFileDir: () => "pi-plans",
+    loadPlansConfig: () => ({ planFileDir: ".pi/planning/plans" }),
+    resolvePlanFileDir: () => ".pi/planning/plans",
 }));
 const realRoles = await import("../_shared/pi-roles/index.ts");
 mock.module("../_shared/pi-roles/index.ts", () => ({
@@ -92,7 +92,7 @@ describe("plan review hint", () => {
         );
 
         expect(result.isError).toBe(false);
-        expect(result.content[0]?.text).toContain("to pi-plans/feature.md");
+        expect(result.content[0]?.text).toContain("to .pi/planning/plans/feature.md");
         expect(result.content[0]?.text).toContain(
             "Plan revision pending review: submit it with submit_plan for approval.",
         );

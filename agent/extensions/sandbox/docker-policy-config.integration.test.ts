@@ -1,7 +1,9 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
 import { expect, test } from "bun:test";
 import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { createBashProcessSupervisor } from "../_shared/command-execution/exec.ts";
@@ -74,10 +76,11 @@ test.skipIf(
         response.end("{}");
     });
     await mkdir(agentDir, { recursive: true });
+    new ProjectTrustStore(agentDir).set(cwd, true);
     await mkdir(join(cwd, ".pi"), { recursive: true });
     await new Promise<void>((resolve) => server.listen(socket, resolve));
-    const globalPath = join(agentDir, "sandbox.json");
-    const projectPath = join(cwd, ".pi", "sandbox.json");
+    const globalPath = join(agentDir, "config", "sandbox.json");
+    const projectPath = join(cwd, ".pi", "config", "sandbox.json");
     const global = (allowed: boolean) => ({
         version: 2,
         machineId: localMachineId(),

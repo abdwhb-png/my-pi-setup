@@ -644,7 +644,9 @@ export default function (pi: ExtensionAPI): void {
     pi.on("session_start", (_event, ctx) => {
         // Refresh CWD every session so /new ~/other-project/ uses right CWD
         sessionCwd = ctx.cwd;
-        setFileResolverConfig(loadFileResolverConfig(ctx.cwd));
+        setFileResolverConfig(
+            loadFileResolverConfig(ctx.cwd, undefined, ctx.isProjectTrusted()),
+        );
 
         if (!autocompleteRegistered) {
             ctx.ui.addAutocompleteProvider((current) => ({

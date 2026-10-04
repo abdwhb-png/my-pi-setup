@@ -8,10 +8,12 @@ import type {
     ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import {
     resolveRuntimePath,
     toPortableHomePath,
 } from "../_shared/home-path.ts";
+import { resolveMigratedPlanPath } from "../_shared/migrated-plan-path.ts";
 import { getSharedVisibilityBroker } from "../_shared/tool-groups/broker.ts";
 import type { SddActivityStore } from "./activity-store.ts";
 import {
@@ -382,7 +384,12 @@ export function collectRunStatuses(
 ): ObservableRun[] {
     const snapshots = store.list();
     const known = new Set(snapshots.map((snapshot) => snapshot.runId));
-    const queueDir = join(agentDir, ".sdd", "queue");
+    const queueDir = extensionPath(
+        { scope: "global", agentDir: agentDir },
+        "artifacts",
+        "sdd",
+        "queue",
+    );
     if (!existsSync(queueDir)) return snapshots;
     const legacy: LegacyQueuedRun[] = [];
     for (const name of readdirSync(queueDir)
@@ -698,7 +705,11 @@ async function approveDraft(
         snapshot = approval.snapshot;
     } else {
         const currentPlanContent = readFileSync(
-            resolveRuntimePath(manifest.planPath, ctx.cwd),
+            resolveMigratedPlanPath(
+                manifest.planPath,
+                ctx.cwd,
+                runtime.agentDir,
+            ),
             "utf8",
         );
         const candidate = applyApproval(manifest, decision, currentPlanContent);
@@ -1506,7 +1517,11 @@ export function registerSddExtension(
                 params.taskId,
                 evidence,
                 readFileSync(
-                    resolveRuntimePath(manifest.planPath, ctx.cwd),
+                    resolveMigratedPlanPath(
+                        manifest.planPath,
+                        ctx.cwd,
+                        runtime.agentDir,
+                    ),
                     "utf8",
                 ),
                 params.recovery as RecoveryAttestation | undefined,

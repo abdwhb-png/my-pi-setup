@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { resolveRuntimePath } from "../_shared/home-path.ts";
+import { resolveMigratedPlanPath } from "../_shared/migrated-plan-path.ts";
+
 import { redactValue } from "../_shared/redaction.ts";
 import { loadSddConfig } from "./config.ts";
 import type { DelegationClient } from "./delegation-client.ts";
@@ -163,6 +164,7 @@ export class SddWorkflow {
         private readonly workspace?: SddWorkspaceExecution,
         private readonly verificationRunner: VerificationRunner = new ChildProcessVerificationRunner(),
         private readonly agentGate?: { acquire(): void; release(): void },
+        private readonly agentDir?: string,
     ) {}
 
     run(
@@ -252,7 +254,11 @@ export class SddWorkflow {
         snapshot = this.reconcile(runId, ctx.cwd);
         if (snapshot.state !== "running") return snapshot;
 
-        const config = loadSddConfig(ctx.cwd);
+        const config = loadSddConfig(
+            ctx.cwd,
+            undefined,
+            ctx.isProjectTrusted(),
+        );
         while (true) {
             snapshot = this.requireSnapshot(runId);
             if (snapshot.state !== "running") break;
@@ -1556,9 +1562,10 @@ export class SddWorkflow {
     ): boolean {
         try {
             const source = readFileSync(
-                resolveRuntimePath(
+                resolveMigratedPlanPath(
                     manifest.planPath,
                     this.sourceCwds.get(runId) ?? sourceCwd ?? process.cwd(),
+                    this.agentDir,
                 ),
             );
             return (

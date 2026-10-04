@@ -1,0 +1,16 @@
+{
+    "tools": [
+        "edit_plan",
+        "write_plan",
+        "session_plan",
+        "safe_bash",
+        "bash",
+        "load_skill",
+        "subagent",
+        "mcp",
+        "@files-write",
+        "@memory",
+        "lens_diagnostics",
+        "ast_grep_replace"
+    ]
+}

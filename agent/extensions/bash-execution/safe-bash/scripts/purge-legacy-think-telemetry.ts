@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { extensionPath } from "../../../_shared/extension-paths.ts";
 
 const MANAGED_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const THINK_ORIGINS = new Set(["think_execute", "think_batch_execute"]);
@@ -230,14 +231,18 @@ export function formatPurgeSummary(summary: PurgeLegacyThinkSummary): string {
 async function main(args: string[]): Promise<void> {
     if (args.includes("--help")) {
         console.log(
-            "Usage: bun purge-legacy-think-telemetry.ts [--apply]\nDefault: dry-run. The target is ~/.pi/agent/safe-bash-telemetry.",
+            "Usage: bun purge-legacy-think-telemetry.ts [--apply]\nDefault: dry-run. The target is <agentDir>/artifacts/safe-bash-telemetry.",
         );
         return;
     }
     if (args.length > 1 || (args.length === 1 && args[0] !== "--apply")) {
         throw new Error("Only the explicit --apply option is supported");
     }
-    const root = join(homedir(), ".pi", "agent", "safe-bash-telemetry");
+    const root = extensionPath(
+        { scope: "global" },
+        "artifacts",
+        "safe-bash-telemetry",
+    );
     const summary = await purgeLegacyThinkEvents(root, {
         apply: args[0] === "--apply",
     });

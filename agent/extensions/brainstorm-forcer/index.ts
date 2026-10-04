@@ -1584,7 +1584,7 @@ export default function brainstormForcer(
                 ? startedAt.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
                 : undefined;
         const artifactDate = Object.values(artifacts)[0]?.path.match(
-            /docs\/brainstorms\/(\d{4}-\d{2}-\d{2})-/,
+            /\.pi\/artifacts\/brainstorms\/(\d{4}-\d{2}-\d{2})-/,
         )?.[1];
         artifactStore ??= createBrainstormArtifactStore({
             projectRoot: ctx.cwd,

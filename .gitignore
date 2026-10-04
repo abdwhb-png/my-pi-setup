@@ -95,3 +95,6 @@ agent/tool-result-archive/
 
 # Runtime builder bytecode cache
 /agent/extensions/sandbox/runtime/distribution/__pycache__/
+
+# Extension-owned runtime data, including migration journals and backups
+/agent/artifacts/

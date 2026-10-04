@@ -1,5 +1,7 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFile as writeFileSync } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadSandboxConfig } from "../index.ts";
@@ -17,10 +19,11 @@ function fixture() {
     const project = join(root, "project");
     const installation = join(root, "tools");
     mkdirSync(agentDir);
+    new ProjectTrustStore(agentDir).set(project, true);
     mkdirSync(join(project, ".pi"), { recursive: true });
     mkdirSync(join(installation, "bin"), { recursive: true });
-    const writeGlobal = (value: object) => writeFileSync(join(agentDir, "sandbox.json"), JSON.stringify({ version: 2, machineId: "test-machine", ...value }), { mode: 0o600 });
-    const writeProject = (value: object) => writeFileSync(join(project, ".pi", "sandbox.json"), JSON.stringify(value), { mode: 0o600 });
+    const writeGlobal = (value: object) => writeFileSync(join(agentDir, "config", "sandbox.json"), JSON.stringify({ version: 2, machineId: "test-machine", ...value }), { mode: 0o600 });
+    const writeProject = (value: object) => writeFileSync(join(project, ".pi", "config", "sandbox.json"), JSON.stringify(value), { mode: 0o600 });
     const load = () => loadSandboxConfig(project, { agentDir, machineId: "test-machine" });
     return { root, agentDir, project, installation, writeGlobal, writeProject, load };
 }
@@ -128,7 +131,7 @@ test("an unavailable installation can be inspected for revocation while shell ad
     const f = fixture();
     f.writeGlobal({ environment: { installations: { tools: [{ root: f.installation, path: ["bin"] }] } } });
     rmSync(f.installation, { recursive: true });
-    expect(readGlobalSandboxConfig(join(f.agentDir, "sandbox.json"), "test-machine")?.environment?.installations).toEqual({ tools: [{ root: f.installation, path: ["bin"] }] });
+    expect(readGlobalSandboxConfig(join(f.agentDir, "config", "sandbox.json"), "test-machine")?.environment?.installations).toEqual({ tools: [{ root: f.installation, path: ["bin"] }] });
     expect(() => f.load()).toThrow("root is unavailable");
 });
 

@@ -1,7 +1,8 @@
+import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
 import { expect, spyOn, test } from "bun:test";
 import { createTestSession } from "@abdwhb-png/pi-test-harness";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -108,12 +109,12 @@ async function fixture() {
     const pending = new Set<Promise<BashResult>>();
     await mkdir(join(cwd, ".pi"), { recursive: true });
     await mkdir(agentDir, { mode: 0o700 });
-    const projectConfig = join(cwd, ".pi/sandbox.json");
+    const projectConfig = join(cwd, ".pi/config/sandbox.json");
     return {
         root, cwd, projectConfig,
         async start(resources: object) {
             const nodeRead = await hostToolReadClosure("/usr/bin/node");
-            await writeFile(join(agentDir, "sandbox.json"), JSON.stringify({
+            await writeFile(join(agentDir, "config", "sandbox.json"), JSON.stringify({
                 version: 2,
                 machineId: localMachineId(),
                 filesystem: { allowRead: [".", ...nodeRead] },

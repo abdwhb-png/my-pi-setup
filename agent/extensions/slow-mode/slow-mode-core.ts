@@ -7,7 +7,6 @@
  */
 
 import { relative, resolve } from "node:path";
-import type { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { loadExtensionConfig } from "../_shared/config-loader.ts";
 import { normalizeBooleanMap } from "../_shared/settings.ts";
 
@@ -421,7 +420,7 @@ export interface SlowModeConfigResult {
 /**
  * Load slow-mode config.
  *
- * Reads the `slowMode` key from settings.json (global + project) via the
+ * Reads config/slow-mode.json in global and trusted project scopes via the
  * shared config-loader, with a cascade fallback to the legacy standalone
  * `slow-mode.json` file when the key is absent. Project settings override
  * global. Non-boolean values are silently filtered out.
@@ -449,20 +448,14 @@ export const DEFAULT_SLOW_MODE_CONFIG: SlowModeConfig = {
 export function loadSlowModeConfig(
     cwd: string = process.cwd(),
     agentDir?: string,
-    _settingsManager?: SettingsManager,
+    projectTrusted?: boolean,
 ): SlowModeConfig {
     return loadExtensionConfig<SlowModeConfig>(cwd, {
         defaults: DEFAULT_SLOW_MODE_CONFIG,
         normalize: normalizeBooleanMap,
-        sources: [
-            {
-                settingsKey: "slowMode",
-                legacyFilename: "slow-mode.json",
-                cumulative: true,
-            },
-        ],
+        owner: "slowMode",
         agentDir,
-        _settingsManager,
+        projectTrusted,
     });
 }
 

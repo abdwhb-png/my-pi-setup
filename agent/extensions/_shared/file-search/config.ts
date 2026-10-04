@@ -1,14 +1,4 @@
-/**
- * Shared file-resolver configuration.
- *
- * Wraps the shared `_shared/config-loader.ts` `loadExtensionConfig<T>()` helper.
- * Sources (merged in order, later wins):
- *   1. settings.json key "fileResolver" (global -> project)
- *   2. legacy file pi-file-resolver.json (global -> project) — fallback only
- *
- * Runtime state remains owned by pi-overrides; this module only owns the
- * portable contract and configuration loading behavior.
- */
+/** File resolver settings use config/pi-file-resolver.json in global and trusted project scopes. */
 
 import { loadExtensionConfig } from "../config-loader.ts";
 
@@ -231,18 +221,14 @@ export function mergeFileResolverConfig(
 export function loadFileResolverConfig(
     cwd: string,
     agentDir?: string,
+    projectTrusted?: boolean,
 ): FileResolverConfig {
     return loadExtensionConfig<FileResolverConfig>(cwd, {
         defaults: DEFAULT_CONFIG,
         normalize: normalizeFileResolverConfig,
         merge: mergeFileResolverConfig,
-        sources: [
-            {
-                settingsKey: "fileResolver",
-                legacyFilename: "pi-file-resolver.json",
-                projectLocal: true,
-            },
-        ],
+        owner: "fileResolver",
         agentDir,
+        projectTrusted,
     });
 }

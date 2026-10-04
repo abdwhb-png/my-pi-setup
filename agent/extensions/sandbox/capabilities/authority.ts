@@ -1,6 +1,17 @@
-import { lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import {
+    existsSync,
+    lstatSync,
+    readFileSync,
+    readlinkSync,
+    realpathSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import {
+    extensionConfigPath,
+    assertExtensionConfigMigrated,
+    CONFIG_OWNERS,
+} from "../../_shared/config-loader.ts";
 import type { SandboxMode } from "../../_shared/shell-runtime/contracts.ts";
 import { SandboxExecutionError } from "../runtime/contracts.ts";
 import {
@@ -59,8 +70,27 @@ export function persistedCapabilityPath(value: string): string {
           ? `~/${value.slice(home.length + 1)}`
           : value;
 }
+export function assertSandboxConfigMigrated(
+    agentDir: string,
+    cwd?: string,
+): void {
+    assertExtensionConfigMigrated("sandbox", { scope: "global", agentDir });
+    if (cwd)
+        assertExtensionConfigMigrated("sandbox", { scope: "project", cwd });
+    const paths = [
+        sandboxConfigPath(agentDir),
+        join(agentDir, CONFIG_OWNERS.sandbox.legacyFile),
+    ];
+    if (paths.some((path) => existsSync(path + ".migration")))
+        throw new SandboxExecutionError("invalid-policy", {
+            cause: new Error(
+                "Sandbox migration is incomplete. Run /sandbox recover before editing its configuration.",
+            ),
+        });
+}
+
 export function sandboxConfigPath(agentDir: string): string {
-    return resolve(agentDir, "sandbox.json");
+    return extensionConfigPath("sandbox", { scope: "global", agentDir });
 }
 function invalid(message: string): never {
     throw new SandboxExecutionError("invalid-policy", {
@@ -212,11 +242,11 @@ function validateLayer(
             } catch (error) {
                 invalid(error instanceof Error ? error.message : String(error));
             }
-            if (direct[switchName] === true && ports.length === 0)
+            if (direct[switchName] && ports.length === 0)
                 invalid(
                     `${scope}.network.mediatedDirectTcp requires at least one port when ${switchName} is true`,
                 );
-            if (direct[switchName] === false && ports.length > 0)
+            if (!direct[switchName] && ports.length > 0)
                 invalid(
                     `${scope}.network.mediatedDirectTcp cannot declare ports when ${switchName} is false`,
                 );

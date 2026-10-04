@@ -1,3 +1,4 @@
+import { configFixture } from "../_shared/testing/config-fixture.ts";
 import { describe, expect, it } from "bun:test";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 
@@ -171,11 +172,7 @@ describe("think-in-code config", () => {
             getProjectSettings: () => ({}),
         } as unknown as SettingsManager;
 
-        const loaded = loadThinkInCodeConfig(
-            "/workspace/project",
-            undefined,
-            settings,
-        );
+        const loaded = loadThinkInCodeConfig(...configFixture("thinkInCode", settings));
 
         expect(loaded.commandPolicy).toEqual(
             DEFAULT_THINK_IN_CODE_CONFIG.commandPolicy,
@@ -191,7 +188,7 @@ describe("think-in-code config", () => {
                 thinkInCode: { maxResultBytes: 4096, batchConcurrency: 99 },
             }),
         } as unknown as SettingsManager;
-        const loaded = loadThinkInCodeConfig("/workspace/project", undefined, settings);
+        const loaded = loadThinkInCodeConfig(...configFixture("thinkInCode", settings));
         expect(loaded.maxResultBytes).toBe(4096);
         expect(loaded.batchConcurrency).toBe(2);
     });
@@ -221,11 +218,7 @@ describe("think-in-code config", () => {
             }),
         } as unknown as SettingsManager;
 
-        const loaded = loadThinkInCodeConfig(
-            "/workspace/project",
-            undefined,
-            settings,
-        );
+        const loaded = loadThinkInCodeConfig(...configFixture("thinkInCode", settings));
 
         expect(loaded.commandPolicy.allowedShellCommands).toEqual(["grep"]);
         expect(loaded.commandPolicy.guardPolicy).toEqual({
@@ -240,9 +233,9 @@ describe("think-in-code config", () => {
 
     it("places the project store under the resolved home root", () => {
         const root = resolveThinkInCodeRoot("/tmp/fake-home");
-        expect(root).toBe("/tmp/fake-home/.pi/agent/think-in-code");
+        expect(root).toBe("/tmp/fake-home/artifacts/think-in-code");
         const projectPath = resolveProjectStorePath("/workspace/foo", {
-            home: "/tmp/fake-home",
+            agentDir: "/tmp/fake-home",
         });
         expect(projectPath.startsWith(root + "/projects/")).toBe(true);
         const expectedHash = hashProjectPath("/workspace/foo");
@@ -264,14 +257,9 @@ describe("think-in-code config", () => {
         );
     });
 
-    it("falls back to defaults when the global settings manager is unavailable", () => {
-        const settings = {
-            getGlobalSettings: () => {
-                throw new Error("settings unavailable");
-            },
-            getProjectSettings: () => ({}),
-        } as unknown as SettingsManager;
-        const loaded = loadThinkInCodeConfig("/workspace/project", undefined, settings);
+    it("returns defaults when owned config is absent", () => {
+        const settings = {getGlobalSettings:()=>({}),getProjectSettings:()=>({})};
+        const loaded=loadThinkInCodeConfig(...configFixture("thinkInCode",settings));
         expect(loaded).toEqual(DEFAULT_THINK_IN_CODE_CONFIG);
     });
 
@@ -291,7 +279,7 @@ describe("think-in-code config", () => {
             }),
             getProjectSettings: () => ({}),
         } as unknown as SettingsManager;
-        const loaded = loadThinkInCodeConfig("/workspace/project", undefined, settings);
+        const loaded = loadThinkInCodeConfig(...configFixture("thinkInCode", settings));
         expect(loaded.retentionHours).toBe(24);
         expect(loaded.projectQuotaBytes).toBe(512 * 1024 * 1024);
         expect(loaded.restoreTokenBudget).toBe(1500);

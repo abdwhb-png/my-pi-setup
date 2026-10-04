@@ -1,3 +1,4 @@
+import { writeFixtureFileAsync as writeFile } from "../_shared/testing/config-fixture.ts";
 import { expect, spyOn, test } from "bun:test";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import {
@@ -6,15 +7,7 @@ import {
     says,
     when,
 } from "@abdwhb-png/pi-test-harness";
-import {
-    link,
-    mkdtemp,
-    mkdir,
-    readFile,
-    rm,
-    symlink,
-    writeFile,
-} from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import { localMachineId } from "./capabilities/authority.ts";
@@ -43,7 +36,7 @@ test.skipIf(
         await mkdir(cwd);
         const previous = process.env.PI_CODING_AGENT_DIR;
         process.env.PI_CODING_AGENT_DIR = root;
-        const authority = join(root, "sandbox.json");
+        const authority = join(root, "config", "sandbox.json");
         const original = JSON.stringify({
             version: 2,
             machineId: localMachineId(),

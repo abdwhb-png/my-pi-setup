@@ -1,19 +1,7 @@
-/**
- * tool-summary config loader.
- *
- * Wraps the shared `_shared/config-loader.ts` `loadExtensionConfig<T>()` helper.
- *
- * Sources (merged in order, later wins):
- *   1. settings.json key "toolSummary" (global -> project)
- *   2. legacy file tool-summary.json (global -> project) — fallback only
- */
+/** Tool summary settings use config/tool-summary.json in global and trusted project scopes. */
 
 import { loadExtensionConfig } from "../_shared/config-loader.ts";
-import {
-    DEFAULT_CONFIG,
-    type ToolSummaryConfig,
-    SETTINGS_KEY,
-} from "./types.ts";
+import { DEFAULT_CONFIG, type ToolSummaryConfig } from "./types.ts";
 
 /** Type guard: a plain object (not an array). */
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -51,18 +39,14 @@ export function mergeConfig(
 export function loadToolSummaryConfig(
     cwd: string,
     agentDir?: string,
+    projectTrusted?: boolean,
 ): ToolSummaryConfig {
     return loadExtensionConfig<ToolSummaryConfig>(cwd, {
         defaults: DEFAULT_CONFIG,
         normalize: normalizeConfig,
         merge: mergeConfig,
-        sources: [
-            {
-                settingsKey: SETTINGS_KEY,
-                legacyFilename: "tool-summary.json",
-                projectLocal: true,
-            },
-        ],
+        owner: "toolSummary",
         agentDir,
+        projectTrusted,
     });
 }

@@ -62,23 +62,21 @@ system prompt.
 
 The `session-plan-persistence` guard enforces persistence **before handoff only**. It never withholds, rewrites, or delays an assistant answer, so a planning role asked to stop and explain can answer without first manufacturing a plan. A guarded turn is released by either a successful `session_plan` save or `/session-plan-abandon`.
 
-Startup precedence is pending reset, `--role`, `PI_ROLE`, `settings.json["pi-roles"].defaultRole`, then built-in `pi-agent`.
+Startup precedence is pending reset, `--role`, `PI_ROLE`, `config/pi-roles.json` → `defaultRole`, then built-in `pi-agent`.
 
 ## Settings
 
-User settings live in `~/.pi/agent/settings.json`; project settings live in the nearest `.pi/settings.json`. Project fields override user fields.
+User settings live in `~/.pi/agent/config/pi-roles.json`; trusted project settings live in `<cwd>/.pi/config/pi-roles.json`. Project fields override user fields.
 
 ```json
 {
-    "pi-roles": {
-        "roleScope": "both",
-        "defaultRole": "pi-agent",
-        "systemPromptMode": "strict-additive",
-        "intercomMode": "off",
-        "warnOnMissingMcp": true,
-        "showStatus": true,
-        "showWidget": true
-    }
+  "roleScope": "both",
+  "defaultRole": "pi-agent",
+  "systemPromptMode": "strict-additive",
+  "intercomMode": "off",
+  "warnOnMissingMcp": true,
+  "showStatus": true,
+  "showWidget": true
 }
 ```
 

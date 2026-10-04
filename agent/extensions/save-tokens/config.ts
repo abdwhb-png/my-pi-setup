@@ -1,41 +1,7 @@
-/**
- * save-tokens config loader
- *
- * Reads config from settings.json under the "saveTokens" key.
- * Merges global (~/.pi/agent/settings.json) and project-local (<cwd>/.pi/settings.json).
- *
- * Example settings.json:
- * {
- *   "saveTokens": {
- *     "compressor": {
- *       "showStatus": false
- *     },
- *     "caveman": {
- *       "defaultLevel": "full",
- *       "showStatus": true
- *     },
- *     "ponytail": {
- *       "enabled": true,
- *       "defaultMode": "full",
- *       "showStatus": true
- *     },
- *     "telemetry": {
- *       "enabled": true,
- *       "directory": "/custom/path",
- *       "captureContent": true,
- *       "redactSecrets": true,
- *       "retentionDays": 90,
- *       "maxStringLength": 10000,
- *       "maxArrayItems": 100,
- *       "maxDepth": 20
- *     }
- *   }
- * }
- */
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
+import { extensionPath } from "../_shared/extension-paths.ts";
+/** Save Tokens settings use config/save-tokens.json in global and trusted project scopes. */
 
-import { homedir } from "os";
-import { join } from "path";
-import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import type {
     ArchiveRetentionConfig,
     CompressionBackendId,
@@ -116,7 +82,11 @@ export interface SaveTokensConfig {
 // ---------------------------------------------------------------------------
 
 export function resolveDefaultTelemetryDirectory(): string {
-    return join(homedir(), ".pi", "agent", "save-tokens-telemetry");
+    return extensionPath(
+        { scope: "global" },
+        "artifacts",
+        "save-tokens-telemetry",
+    );
 }
 
 const DEFAULT_TELEMETRY: TelemetryConfig = {
@@ -139,7 +109,7 @@ const DEFAULT_CONFIG: SaveTokensConfig = {
 };
 
 // ---------------------------------------------------------------------------
-// Normalization (from raw settings.json values)
+// Normalization of owned configuration
 // ---------------------------------------------------------------------------
 
 /** Non-recursive loose dict for safe property reads (avoids `any`/`unknown`). */
@@ -322,15 +292,24 @@ export function isFinitePositive(v: unknown): v is number {
 
 export function normalizeTelemetry(raw: object): TelemetryConfig {
     if (!raw || typeof raw !== "object") {
-        return { ...DEFAULT_TELEMETRY };
+        return {
+            ...DEFAULT_TELEMETRY,
+            directory: resolveDefaultTelemetryDirectory(),
+        };
     }
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const r = raw as LooseDict;
     // Start with defaults, overlay valid overrides
-    const out: TelemetryConfig = { ...DEFAULT_TELEMETRY };
+    const out: TelemetryConfig = {
+        ...DEFAULT_TELEMETRY,
+        directory: resolveDefaultTelemetryDirectory(),
+    };
 
     if (typeof r.enabled === "boolean") out.enabled = r.enabled;
-    if (typeof r.directory === "string") out.directory = r.directory;
+    if (r.directory !== undefined)
+        throw new Error(
+            "saveTokens.telemetry.directory is retired. Run the extension-layout migration.",
+        );
     if (typeof r.captureContent === "boolean")
         out.captureContent = r.captureContent;
     if (typeof r.redactSecrets === "boolean")
@@ -445,57 +424,70 @@ export function mergeConfig(
 export function loadSaveTokensConfig(
     cwd = process.cwd(),
     agentDir?: string,
+    projectTrusted?: boolean,
 ): SaveTokensConfig {
-    let globalConfig: Partial<SaveTokensConfig> = {};
-    let projectConfig: Partial<SaveTokensConfig> = {};
-
-    try {
-        const manager = SettingsManager.create(cwd, agentDir);
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        const globalSettings = manager.getGlobalSettings() as LooseDict;
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        const projectSettings = manager.getProjectSettings() as LooseDict;
-        const st = globalSettings.saveTokens;
-        const sp = projectSettings.saveTokens;
-        globalConfig =
-            typeof st === "object" && st !== null ? normalizeConfig(st) : {};
-        projectConfig =
-            typeof sp === "object" && sp !== null ? normalizeConfig(sp) : {};
-    } catch {
-        // not in pi runtime or settings inaccessible
-    }
-
-    return mergeConfig(
-        mergeConfig(DEFAULT_CONFIG, globalConfig),
-        projectConfig,
-    );
+    const config = loadExtensionConfig(cwd, {
+        owner: "saveTokens",
+        defaults: mergeConfig(
+            {
+                ...DEFAULT_CONFIG,
+                telemetry: {
+                    directory: extensionPath(
+                        { scope: "global", agentDir },
+                        "artifacts",
+                        "save-tokens-telemetry",
+                    ),
+                },
+            },
+            {},
+        ),
+        normalize: (raw) => normalizeConfig(raw as object),
+        merge: mergeConfig,
+        agentDir,
+        projectTrusted,
+    });
+    return {
+        ...config,
+        telemetry: {
+            ...config.telemetry,
+            directory: extensionPath(
+                { scope: "global", agentDir },
+                "artifacts",
+                "save-tokens-telemetry",
+            ),
+        },
+    };
 }
 
 export function loadCompressorConfig(
     cwd = process.cwd(),
     agentDir?: string,
+    projectTrusted?: boolean,
 ): CompressorConfig {
-    return loadSaveTokensConfig(cwd, agentDir).compressor ?? {};
+    return loadSaveTokensConfig(cwd, agentDir, projectTrusted).compressor ?? {};
 }
 
 export function loadCavemanConfig(
     cwd = process.cwd(),
     agentDir?: string,
+    projectTrusted?: boolean,
 ): CavemanConfig {
-    return loadSaveTokensConfig(cwd, agentDir).caveman ?? {};
+    return loadSaveTokensConfig(cwd, agentDir, projectTrusted).caveman ?? {};
 }
 
 export function loadPonytailConfig(
     cwd = process.cwd(),
     agentDir?: string,
+    projectTrusted?: boolean,
 ): PonytailConfig {
-    return loadSaveTokensConfig(cwd, agentDir).ponytail ?? {};
+    return loadSaveTokensConfig(cwd, agentDir, projectTrusted).ponytail ?? {};
 }
 
 export function loadTelemetryConfig(
     cwd = process.cwd(),
     agentDir?: string,
+    projectTrusted?: boolean,
 ): TelemetryConfig {
-    const cfg = loadSaveTokensConfig(cwd, agentDir).telemetry;
+    const cfg = loadSaveTokensConfig(cwd, agentDir, projectTrusted).telemetry;
     return cfg ?? DEFAULT_TELEMETRY;
 }

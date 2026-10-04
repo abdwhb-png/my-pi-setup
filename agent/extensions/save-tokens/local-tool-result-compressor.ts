@@ -121,7 +121,10 @@ export default function localToolResultCompressor(
     configOverride?: Partial<LocalCompressorConfig>,
 ): void {
     const loadConfig = (): LocalCompressorConfig => {
-        const loaded = getLocalCompressorConfig();
+        const loaded = getLocalCompressorConfig(
+            latestCtx?.cwd,
+            latestCtx?.isProjectTrusted(),
+        );
         if (!configOverride) return loaded;
         return {
             ...loaded,

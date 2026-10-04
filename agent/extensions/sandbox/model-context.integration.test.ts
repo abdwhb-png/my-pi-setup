@@ -1,9 +1,10 @@
+import { writeFixtureFile as writeFileSync } from "../_shared/testing/config-fixture.ts";
 import type { Context } from "@earendil-works/pi-ai";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expect, test } from "bun:test";
 import { calls, createTestSession, says, when } from "@abdwhb-png/pi-test-harness";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerProviderCatalogFinalizer } from "../_shared/tool-policy/provider-catalog-finalizer.ts";
@@ -58,7 +59,7 @@ function fixture() {
     mkdirSync(join(cwd, ".pi"), { recursive: true });
     mkdirSync(agentDir);
     writeFileSync(join(cwd, ".pi/settings.json"), JSON.stringify({ safeBash: { mode: "coexist", telemetry: { enabled: false } } }));
-    const globalPath = join(agentDir, "sandbox.json");
+    const globalPath = join(agentDir, "config", "sandbox.json");
     const writeGlobal = (allowedDomains: string[] = []) => writeFileSync(globalPath, JSON.stringify({ version: 2, machineId: "fixture", host: { allowed: true }, network: { allowedDomains } }), { mode: 0o600 });
     writeGlobal();
     const sessionPolicy: { mode: "sandbox" | "host" } = { mode: "sandbox" };

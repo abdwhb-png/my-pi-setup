@@ -36,7 +36,7 @@ describe('scoped debug probe tools', () => {
         expect(result.kind).toBe('success');
         expect(
             readFileSync(
-                join(cwd, '.pi/debug/debug/session-1/repro.mjs'),
+                join(cwd, '.pi/artifacts/debug/debug/session-1/repro.mjs'),
                 'utf8',
             ),
         ).toBe("console.log('probe')\n");
@@ -109,7 +109,7 @@ describe('scoped debug probe tools', () => {
         expect(result.kind).toBe('success');
         expect(
             readFileSync(
-                join(cwd, '.pi/debug/debug/session-1/harness.ts'),
+                join(cwd, '.pi/artifacts/debug/debug/session-1/harness.ts'),
                 'utf8',
             ),
         ).toBe('const x = 2\n');
@@ -190,7 +190,7 @@ describe('scoped debug probe tools', () => {
         });
         const roots = createCommonDebugRoots();
         expect(roots.resolve(cwd, 'session-1')).toContain(
-            join(cwd, '.pi/debug', 'debug', 'session-1'),
+            join(cwd, '.pi/artifacts/debug', 'debug', 'session-1'),
         );
     });
 });

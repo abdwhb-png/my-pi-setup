@@ -10,7 +10,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { savePlan, readPlan, clearPlan, PLAN_ROOT } from './plan-store';
+import { savePlan, readPlan, clearPlan } from './plan-store';
+const PLAN_ROOT = '.pi/planning/session-plans';
 
 describe('plan-store', () => {
     const temporaryDirectories: string[] = [];

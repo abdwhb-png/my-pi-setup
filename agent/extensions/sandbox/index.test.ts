@@ -1,3 +1,5 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFile as writeFileSync } from "../_shared/testing/config-fixture.ts";
 import { emptyGrants } from './capabilities/authority.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
@@ -6,7 +8,7 @@ import {
     mkdtempSync,
     readFileSync,
     rmSync,
-    writeFileSync,
+
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,31 +64,31 @@ function fakeTheme(): Theme {
 
 describe('active sandbox files', () => {
     let root: string; let agentDir: string; let cwd: string;
-    beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'sandbox-active-config-')); agentDir = join(root, 'agent'); cwd = join(root, 'project'); mkdirSync(agentDir); mkdirSync(join(cwd, '.pi'), { recursive: true }); });
+    beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'sandbox-active-config-')); agentDir = join(root, 'agent'); cwd = join(root, 'project'); mkdirSync(agentDir); mkdirSync(join(cwd, '.pi'), { recursive: true }); new ProjectTrustStore(agentDir).set(cwd, true); });
     afterEach(() => rmSync(root, { recursive: true, force: true }));
-    const writeGlobal = (value: Record<string, unknown>) => writeFileSync(join(agentDir, 'sandbox.json'), JSON.stringify({ version: 2, machineId: 'machine', ...value }), { mode: 0o600 });
+    const writeGlobal = (value: Record<string, unknown>) => writeFileSync(join(agentDir, "config", "sandbox.json"), JSON.stringify({ version: 2, machineId: 'machine', ...value }), { mode: 0o600 });
     const load = () => loadSandboxConfig(cwd, { agentDir, machineId: 'machine' });
     it('keeps absent global lists, closes explicit empty project lists, and preserves exclusions', () => {
         writeGlobal({ network: { allowedDomains: ['example.com'] } });
-        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ network: { allowedDomains: [], deniedDomains: ['example.com'] } }));
+        writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), JSON.stringify({ network: { allowedDomains: [], deniedDomains: ['example.com'] } }));
         expect(load().config.network.allowedDomains).toEqual([]); expect(load().config.network.deniedDomains).toContain('example.com');
     });
     it('rejects invalid active files and never falls back to host', () => {
-        writeGlobal({ mode: 'sandbox' }); writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ mode: 'host' }));
+        writeGlobal({ mode: 'sandbox' }); writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), JSON.stringify({ mode: 'host' }));
         expect(() => load()).toThrow('explicit current-session');
-        writeFileSync(join(cwd, '.pi', 'sandbox.json'), '{'); expect(() => load()).toThrow('Could not parse project');
+        writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), '{'); expect(() => load()).toThrow('Could not parse project');
     });
     it('blocks admission while a migration marker remains', () => {
         writeGlobal({});
-        writeFileSync(join(agentDir, 'sandbox.json.migration'), 'migration in progress\n');
+        writeFileSync(join(agentDir, 'config/sandbox.json.migration'), 'migration in progress\n');
         expect(() => load()).toThrow();
     });
     it('toggles Docker activation without discarding project target restrictions', async () => {
-        writeFileSync(join(agentDir, 'sandbox.json'), JSON.stringify({ version: 2, machineId: localMachineId(), docker: { allowed: true, operations: ['logs'] } }), { mode: 0o600 });
-        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ docker: { enabled: true, targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['logs'] }] } }));
+        writeFileSync(join(agentDir, "config", "sandbox.json"), JSON.stringify({ version: 2, machineId: localMachineId(), docker: { allowed: true, operations: ['logs'] } }), { mode: 0o600 });
+        writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), JSON.stringify({ docker: { enabled: true, targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['logs'] }] } }));
         await persistProjectDockerPreference(cwd, 'off', agentDir);
         await persistProjectDockerPreference(cwd, 'on', agentDir);
-        expect(JSON.parse(readFileSync(join(cwd, '.pi', 'sandbox.json'), 'utf8')).docker).toEqual({ enabled: true, targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['logs'] }] });
+        expect(JSON.parse(readFileSync(join(cwd, '.pi', "config", "sandbox.json"), 'utf8')).docker).toEqual({ enabled: true, targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['logs'] }] });
     });
 });
 
@@ -521,11 +523,11 @@ describe('envSandboxStatus', () => {
 
 describe('loadSandboxConfig resolution priority', () => {
     let root: string; let agentDir: string; let cwd: string;
-    beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'sandbox-config-resolution-')); agentDir = join(root, 'agent'); cwd = join(root, 'project'); mkdirSync(agentDir); mkdirSync(join(cwd, '.pi'), { recursive: true }); });
+    beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'sandbox-config-resolution-')); agentDir = join(root, 'agent'); cwd = join(root, 'project'); mkdirSync(agentDir); mkdirSync(join(cwd, '.pi'), { recursive: true }); new ProjectTrustStore(agentDir).set(cwd, true); });
     afterEach(() => rmSync(root, { recursive: true, force: true }));
     it('resolves the versioned global file and project restriction without settings or a capabilities registry', () => {
-        writeFileSync(join(agentDir, 'sandbox.json'), JSON.stringify({ version: 2, machineId: 'test-machine', mode: 'sandbox', network: { allowedDomains: ['example.com', 'api.example.com'] }, filesystem: { allowRead: [cwd, join(root, 'cache')] }, docker: { allowed: false } }), { mode: 0o600 });
-        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ network: { allowedDomains: ['api.example.com'], deniedDomains: ['api.example.com'] }, filesystem: { allowRead: ['src'] }, docker: { enabled: true } }));
+        writeFileSync(join(agentDir, "config", "sandbox.json"), JSON.stringify({ version: 2, machineId: 'test-machine', mode: 'sandbox', network: { allowedDomains: ['example.com', 'api.example.com'] }, filesystem: { allowRead: [cwd, join(root, 'cache')] }, docker: { allowed: false } }), { mode: 0o600 });
+        writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), JSON.stringify({ network: { allowedDomains: ['api.example.com'], deniedDomains: ['api.example.com'] }, filesystem: { allowRead: ['src'] }, docker: { enabled: true } }));
         const result = loadSandboxConfig(cwd, { agentDir, machineId: 'test-machine' });
         expect(result.config.network.allowedDomains).toEqual([]); expect(result.config.filesystem.allowRead).toEqual([join(cwd, 'src')]); expect(result.config.docker).toEqual({ mode: 'disabled' }); expect(result.shell.mode).toBe('sandbox'); expect(result.shell.profile).toBe('custom');
     });
@@ -533,9 +535,9 @@ describe('loadSandboxConfig resolution priority', () => {
 
 describe('loadSandboxConfig break-glass ceiling', () => {
     let root: string; let agentDir: string; let cwd: string;
-    beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'sandbox-break-glass-ceiling-')); agentDir = join(root, 'agent'); cwd = join(root, 'project'); mkdirSync(agentDir); mkdirSync(join(cwd, '.pi'), { recursive: true }); });
+    beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'sandbox-break-glass-ceiling-')); agentDir = join(root, 'agent'); cwd = join(root, 'project'); mkdirSync(agentDir); mkdirSync(join(cwd, '.pi'), { recursive: true }); new ProjectTrustStore(agentDir).set(cwd, true); });
     afterEach(() => rmSync(root, { recursive: true, force: true }));
-    const writeGlobal = (docker: Record<string, unknown>) => writeFileSync(join(agentDir, 'sandbox.json'), JSON.stringify({ version: 2, machineId: 'machine', docker }), { mode: 0o600 });
+    const writeGlobal = (docker: Record<string, unknown>) => writeFileSync(join(agentDir, "config", "sandbox.json"), JSON.stringify({ version: 2, machineId: 'machine', docker }), { mode: 0o600 });
     const load = () => loadSandboxConfig(cwd, { agentDir, machineId: 'machine' });
 
     it('defaults the break-glass duration ceiling to 30 minutes', () => {
@@ -545,7 +547,7 @@ describe('loadSandboxConfig break-glass ceiling', () => {
 
     it('reports the globally configured ceiling without leaking it into the Docker policy', () => {
         writeGlobal({ allowed: true, breakGlassMaxMinutes: 60 });
-        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ docker: { enabled: true, targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['exec'] }] } }));
+        writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), JSON.stringify({ docker: { enabled: true, targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['exec'] }] } }));
         const result = load();
         expect(result.breakGlassMaxMinutes).toBe(60);
         expect(result.config.docker).toEqual({ mode: 'targeted', endpoint: 'unix:///var/run/docker.sock', targets: [{ selector: { type: 'container-name', name: 'api' }, operations: ['exec'], allowUnsafeTarget: false }] });
@@ -553,7 +555,7 @@ describe('loadSandboxConfig break-glass ceiling', () => {
 
     it('rejects a project document that tries to set the ceiling', () => {
         writeGlobal({ allowed: true });
-        writeFileSync(join(cwd, '.pi', 'sandbox.json'), JSON.stringify({ docker: { enabled: true, breakGlassMaxMinutes: 60 } }));
+        writeFileSync(join(cwd, '.pi', "config", "sandbox.json"), JSON.stringify({ docker: { enabled: true, breakGlassMaxMinutes: 60 } }));
         expect(() => load()).toThrow();
     });
 });

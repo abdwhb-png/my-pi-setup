@@ -1,6 +1,6 @@
 import { TestHooks, mountPolicy } from '../_shared/testing/tool-policy-fixture.ts';
 import { toolPresentation } from '../_shared/tool-policy/presentation.ts';
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import nodePath from 'node:path';
@@ -18,31 +18,24 @@ import {
     MARKDOWN_LINKS_TRANSFORM_EVENT,
 } from '../_shared/markdown-links.ts';
 
+const piCore = await import("@earendil-works/pi-coding-agent");
+const isolatedAgentDir = await mkdtemp(nodePath.join(tmpdir(), "overrides-agent-"));
+afterAll(async () => { await rm(isolatedAgentDir, { recursive: true, force: true }); });
 const {
     createFindToolDefinition,
     createGrepToolDefinition,
     createLsToolDefinition,
     createReadToolDefinition,
 } = await import('@earendil-works/pi-coding-agent');
-const settingsManagerCreate = mock(() => ({
-    getGlobalSettings: () => ({}),
-    getProjectSettings: () => ({}),
-}));
-
 // Register before loading index.ts so config.ts never reads real settings.json.
 void mock.module('@earendil-works/pi-coding-agent', () => ({
+    ...piCore,
     createFindToolDefinition,
     createGrepToolDefinition,
     createLsToolDefinition,
     createReadToolDefinition,
-    getAgentDir: () => '/tmp/pi-agent',
-    SettingsManager: {
-        create: settingsManagerCreate,
-        inMemory: (data: unknown) => ({
-            getGlobalSettings: () => data,
-            getProjectSettings: () => data,
-        }),
-    },
+    getAgentDir: () => isolatedAgentDir,
+
 }));
 
 const {
@@ -103,6 +96,7 @@ function createMockExtensionApi(
         ) {
             handlers.set(event, (value, ctx) =>
                 handler(value, {
+                    isProjectTrusted: () => false,
                     ui: { addAutocompleteProvider() {}, notify() {} },
                     sessionManager: { getEntries: () => [] },
                     ...ctx,
@@ -173,7 +167,6 @@ describe('pi-overrides', () => {
     });
     beforeEach(() => {
         resetAuditState('standard');
-        settingsManagerCreate.mockClear();
     });
 
     afterEach(() => {
@@ -202,10 +195,6 @@ describe('pi-overrides', () => {
         expect(getActiveTools()).toContain('bash');
         expect(getActiveTools()).toContain('edit');
         expect(getActiveTools()).toContain('write');
-        expect(settingsManagerCreate).toHaveBeenCalledWith(
-            '~/.pi/agent',
-            '/tmp/pi-agent',
-        );
     });
 
     it('names an unnamed session from a skill-prefixed user message', async () => {

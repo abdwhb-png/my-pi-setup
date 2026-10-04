@@ -20,17 +20,19 @@ let previousArchiveRoot: string | undefined;
 
 beforeEach(() => {
     archiveRoot = mkdtempSync(join(tmpdir(), "pi-shared-tool-archive-"));
-    previousArchiveRoot = process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
-    process.env.PI_TOOL_RESULT_ARCHIVE_DIR = archiveRoot;
+    previousArchiveRoot = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = archiveRoot;
+    archiveRoot = join(archiveRoot, "artifacts", "tool-result-archive");
+    mkdirSync(archiveRoot, {recursive:true});
 });
 
 afterEach(() => {
     if (previousArchiveRoot === undefined) {
-        delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
+        delete process.env.PI_CODING_AGENT_DIR;
     } else {
-        process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previousArchiveRoot;
+        process.env.PI_CODING_AGENT_DIR = previousArchiveRoot;
     }
-    rmSync(archiveRoot, { recursive: true, force: true });
+    rmSync(join(archiveRoot, "../.."), { recursive: true, force: true });
 });
 
 describe("managed tool-output archives", () => {

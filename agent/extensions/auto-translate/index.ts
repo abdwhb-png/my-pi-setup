@@ -5,8 +5,8 @@
  * configured target language using a direct LLM API call (NOT a pi execution
  * agent). See README.md for commands and configuration.
  *
- * Config: ~/.pi/agent/settings.json key "translate" (or legacy translate.json),
- * with project-local override in <cwd>/.pi/. Loaded via the shared
+ * Config: ~/.pi/agent/config/translate.json, with a saved-trust project override
+ * in <cwd>/.pi/config/translate.json. Loaded via the shared
  * `_shared/config-loader.ts`.
  */
 
@@ -34,7 +34,7 @@ function effectiveModel(
 export default function (pi: ExtensionAPI): void {
     const cwd = process.cwd();
     const agentDir = getAgentDir();
-    const config = loadTranslateConfig(cwd, agentDir);
+    const config = loadTranslateConfig(cwd, agentDir, false);
     const state = createState(config);
 
     const widgetText = (): string =>
@@ -49,6 +49,12 @@ export default function (pi: ExtensionAPI): void {
     registerCommands(pi, { state, config, refresh });
 
     pi.on("session_start", async (_event, ctx) => {
+        Object.assign(
+            config,
+            loadTranslateConfig(ctx.cwd, agentDir, ctx.isProjectTrusted()),
+        );
+        Object.assign(state, createState(config));
+        registerCommands(pi, { state, config, refresh });
         refresh(ctx);
     });
 
@@ -67,7 +73,7 @@ export default function (pi: ExtensionAPI): void {
         const modelSpec = effectiveModel(config, ctx.model);
         if (!modelSpec) {
             ctx.ui.notify(
-                "auto-translate: no model configured (set translate.model in settings.json)",
+                "auto-translate: no model configured (set model in config/translate.json)",
                 "warning",
             );
             return { action: "continue" };

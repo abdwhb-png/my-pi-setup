@@ -21,9 +21,11 @@ trace="$output_dir/provider-trace.jsonl"
 pi_command="$pi_root/bin/pi"
 real_pi_bun="$script_dir/real-pi-bun.ts"
 store_root=""
+think_root=""
+store_segment=""
 
 cleanup() {
-    if [[ -n "$store_root" && "$store_root" == "$HOME/.pi/agent/think-in-code/projects/"* ]]; then
+    if [[ -n "$think_root" && "$store_segment" =~ ^[a-f0-9]{64}$ && "$store_root" == "$think_root/projects/$store_segment" ]]; then
         rm -rf -- "$store_root"
     fi
     if [[ "$fixture_root" == "$pi_root/.smoke/think-real-pi-"* ]]; then
@@ -33,30 +35,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$project/.pi/extensions" "$sessions" "$bash_sessions"
+mkdir -p "$project/.pi/extensions" "$project/.pi/config" "$sessions" "$bash_sessions"
 ln -s "$agent_root/node_modules" "$project/node_modules"
 cp "$script_dir/provider.ts" "$project/.pi/extensions/smoke-provider.ts"
 printf 'FILE SMOKE PAYLOAD\n' >"$project/fixture.txt"
 printf 'DENIED SANDBOX FIXTURE\n' >"$project/.pi/sandbox-denied.txt"
 printf '%s\n' '{' \
-    '  "sandbox": {' \
-    '    "enabled": true,' \
-    '    "filesystem": { "denyRead": [".pi/sandbox-denied.txt"] },' \
-    '    "network": { "allowedDomains": [], "deniedDomains": [] }' \
-    '  },' \
+    '  "filesystem": { "denyRead": [".pi/sandbox-denied.txt"] },' \
+    '  "network": { "allowedDomains": [], "deniedDomains": [] }' \
+    '}' >"$project/.pi/config/sandbox.json"
+printf '%s\n' '{' \
     '  "safeBash": {' \
     '    "mode": "coexist",' \
     '    "telemetry": { "enabled": false }' \
     '  }' \
-    '}' >"$project/.pi/settings.json"
+    '}' >"$project/.pi/config/bash-execution.json"
+chmod 600 "$project/.pi/config/sandbox.json" "$project/.pi/config/bash-execution.json"
 
 canonical_project="$(cd "$project" && pwd -P)"
-store_segment="$(printf '%s' "$canonical_project" | sha256sum | cut -d ' ' -f 1)"
-if [[ ! "$store_segment" =~ ^[a-f0-9]{64}$ ]]; then
-    echo "invalid project store hash" >&2
+store_paths="$(bun -e '
+    const { resolveThinkInCodeRoot, resolveProjectStorePath } = await import(process.argv[1]);
+    console.log(JSON.stringify({ root: resolveThinkInCodeRoot(), project: resolveProjectStorePath(process.argv[2]) }));
+' "$agent_root/extensions/think-in-code/config.ts" "$canonical_project")"
+think_root="$(jq -er '.root' <<<"$store_paths")"
+store_root="$(jq -er '.project' <<<"$store_paths")"
+store_segment="${store_root##*/}"
+if [[ ! "$store_segment" =~ ^[a-f0-9]{64}$ || "$store_root" != "$think_root/projects/$store_segment" ]]; then
+    echo "invalid project store path" >&2
     exit 1
 fi
-store_root="$HOME/.pi/agent/think-in-code/projects/$store_segment"
 
 common=(
     --provider think-smoke

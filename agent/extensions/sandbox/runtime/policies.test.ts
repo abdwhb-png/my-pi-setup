@@ -275,7 +275,7 @@ describe("sandbox policies", () => {
 
         expect(policy.filesystem.allowWrite).toContain(piRoot);
         expect(policy.filesystem.denyWrite).toContain(
-            join(getAgentDir(), "sandbox.json"),
+            join(getAgentDir(), "config", "sandbox.json"),
         );
     });
 

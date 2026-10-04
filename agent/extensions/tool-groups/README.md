@@ -25,7 +25,7 @@ and globs, then applies the resolved list before the first model turn.
 
 ### Primary: `tool-groups.json`
 
-Global definitions live in `~/.pi/agent/tool-groups.json`:
+Global definitions live in `~/.pi/agent/config/tool-groups.json`:
 
 ```json
 {
@@ -38,7 +38,7 @@ Global definitions live in `~/.pi/agent/tool-groups.json`:
 }
 ```
 
-A project may add `<cwd>/.pi/tool-groups.json`. Project groups replace global
+A project may add `<cwd>/.pi/config/tool-groups.json`. Project groups replace global
 groups with the same name.
 
 ### Optional settings override
@@ -65,7 +65,7 @@ values, and empty members are discarded during normalization.
 
 ### Mutable policy and stable invariants
 
-`agent/tool-groups.json` is the source of truth for user-owned group policy.
+`agent/config/tool-groups.json` is the source of truth for user-owned group policy.
 Role frontmatter and subagent overrides may change over time without updating a
 hardcoded test snapshot. `settings.json` contains no duplicate group definitions.
 

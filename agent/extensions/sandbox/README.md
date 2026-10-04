@@ -6,8 +6,8 @@ Sandbox runs shell commands and Think-in-Code through Zerobox on Linux and WSL2 
 
 Use exactly two active configuration locations:
 
-- `~/.pi/agent/sandbox.json`: global defaults and authorization ceilings.
-- `<project>/.pi/sandbox.json`: optional project restrictions and explicit Docker activation.
+- `~/.pi/agent/config/sandbox.json`: global defaults and authorization ceilings.
+- `<project>/.pi/config/sandbox.json`: optional project restrictions and explicit Docker activation.
 
 Choose the execution mode with `/sandbox mode sandbox` or `/sandbox mode host`. Host mode requires global `host.allowed: true` and an explicit selection in the current session. The displayed profiles `default`, `custom` and `host` describe the result. Do not store a profile selector.
 
@@ -39,7 +39,7 @@ Use ordinary shell commands. Native file tools, extensions, MCP tools, and brows
 
 ## Local installations
 
-Declare machine-local installations only in `~/.pi/agent/sandbox.json` under `environment.installations`. An installation maps a name to one or more canonical host roots and optional command directories relative to each root. Add an optional `files` list to authorize exact files relative to a root without exposing the containing directory. Selecting its name in `<project>/.pi/sandbox.json` adds the declared resources read-only and their command directories to PATH once, in global declaration order. A project can select or narrow global names, but cannot introduce a root. An omitted project selection inherits all global installations. An empty list selects none. No separate profile activation is required.
+Declare machine-local installations only in `~/.pi/agent/config/sandbox.json` under `environment.installations`. An installation maps a name to one or more canonical host roots and optional command directories relative to each root. Add an optional `files` list to authorize exact files relative to a root without exposing the containing directory. Selecting its name in `<project>/.pi/config/sandbox.json` adds the declared resources read-only and their command directories to PATH once, in global declaration order. A project can select or narrow global names, but cannot introduce a root. An omitted project selection inherits all global installations. An empty list selects none. No separate profile activation is required.
 
 A declared installation adds its whole root read-only when `files` is absent, or only its selected regular files when `files` is present, including when it has no command directory. Legacy `environment.path` entries only change command lookup. The runtime revalidates roots and command-directory targets before admission. Filesystem isolation blocks access to undeclared external dependencies. Use `/sandbox installations` to preview canonical roots before saving; a redirected root must be authorized by its canonical location. See [Configuration](docs/configuration.md#local-installations).
 

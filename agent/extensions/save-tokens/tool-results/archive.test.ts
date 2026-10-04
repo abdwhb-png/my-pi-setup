@@ -8,6 +8,7 @@ import {
 } from 'bun:test';
 import {
     lstatSync,
+    mkdirSync,
     mkdtempSync,
     readFileSync,
     rmSync,
@@ -26,21 +27,24 @@ const ARCHIVE_NAME = (timestamp: number, suffix: string) =>
     `${timestamp}-bash-call-${suffix.padStart(12, 'a')}.txt`;
 
 let archiveRoot: string;
+let agentDir: string;
 let previousArchiveRoot: string | undefined;
 
 beforeEach(() => {
-    archiveRoot = mkdtempSync(join(tmpdir(), 'pi-tool-archive-'));
-    previousArchiveRoot = process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
-    process.env.PI_TOOL_RESULT_ARCHIVE_DIR = archiveRoot;
+    agentDir = mkdtempSync(join(tmpdir(), 'pi-tool-archive-'));
+    archiveRoot = join(agentDir, 'artifacts', 'tool-result-archive');
+    mkdirSync(archiveRoot, {recursive:true,mode:0o700});
+    previousArchiveRoot = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
 });
 
 afterEach(() => {
     if (previousArchiveRoot === undefined) {
-        delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
+        delete process.env.PI_CODING_AGENT_DIR;
     } else {
-        process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previousArchiveRoot;
+        process.env.PI_CODING_AGENT_DIR = previousArchiveRoot;
     }
-    rmSync(archiveRoot, { recursive: true, force: true });
+    rmSync(agentDir, { recursive: true, force: true });
 });
 
 describe('archiveOriginalToolResult', () => {

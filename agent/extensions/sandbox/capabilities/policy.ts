@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { extensionConfigPath } from "../../_shared/config-loader.ts";
 import type { ShellCapabilityResolution } from "../../_shared/shell-runtime/contracts.ts";
 import { DEFAULT_DOCKER_ENDPOINT } from "../runtime/docker-policy.ts";
 import type { PiSandboxConfig } from "../runtime/policies.ts";
@@ -510,7 +511,10 @@ function mergeLayers(input: ShellPolicyInput): {
         globalRead,
         {
             name: "filesystem.allowRead",
-            configPath: join(projectRoot, ".pi", "sandbox.json"),
+            configPath: extensionConfigPath("sandbox", {
+                scope: "project",
+                cwd: projectRoot,
+            }),
             authorityPath: input.authorityPath,
         },
     );
@@ -519,7 +523,10 @@ function mergeLayers(input: ShellPolicyInput): {
         globalWrite,
         {
             name: "filesystem.allowWrite",
-            configPath: join(projectRoot, ".pi", "sandbox.json"),
+            configPath: extensionConfigPath("sandbox", {
+                scope: "project",
+                cwd: projectRoot,
+            }),
             authorityPath: input.authorityPath,
         },
     );
@@ -615,14 +622,16 @@ function mergeLayers(input: ShellPolicyInput): {
         .map((endpoint) =>
             canonicalPotentialPath(endpoint.slice("unix://".length)),
         );
-    const dockerIdentities = dockerSocketPaths.flatMap((path) => {
-        try {
-            const stat = lstatSync(path);
-            return [`${stat.dev}:${stat.ino}`];
-        } catch {
-            return [];
-        }
-    });
+    const dockerIdentities = new Set(
+        dockerSocketPaths.flatMap((path) => {
+            try {
+                const stat = lstatSync(path);
+                return [`${stat.dev}:${stat.ino}`];
+            } catch {
+                return [];
+            }
+        }),
+    );
     for (const socket of unixSockets) {
         const canonical = canonicalPotentialPath(socket);
         let identity: string | undefined;
@@ -634,7 +643,7 @@ function mergeLayers(input: ShellPolicyInput): {
         }
         if (
             dockerSocketPaths.includes(canonical) ||
-            (identity !== undefined && dockerIdentities.includes(identity))
+            (identity !== undefined && dockerIdentities.has(identity))
         )
             throw new Error(
                 "Raw Docker daemon sockets are reserved for the Docker broker",

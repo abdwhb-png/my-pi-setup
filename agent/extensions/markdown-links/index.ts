@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 import {
@@ -7,6 +6,7 @@ import {
     stripFrontmatter,
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
+import { loadExtensionConfig } from "../_shared/config-loader.ts";
 import {
     isMarkdownLinkTransformRequest,
     MARKDOWN_LINKS_TRANSFORM_EVENT,
@@ -46,24 +46,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readSettings(
-    filePath: string,
-): Promise<Record<string, unknown>> {
-    try {
-        const parsed: unknown = JSON.parse(await readFile(filePath, "utf8"));
-        return isRecord(parsed) ? parsed : {};
-    } catch {
-        return {};
-    }
-}
-
-function markdownLinksSettings(
-    settings: Record<string, unknown>,
-): Record<string, unknown> {
-    const value = settings.markdownLinks;
-    return isRecord(value) ? value : {};
-}
-
 function configuredRoots(
     settings: Record<string, unknown>,
 ): string[] | undefined {
@@ -79,19 +61,16 @@ export async function loadMarkdownLinksConfig(
     agentDir: string = getAgentDir(),
     projectTrusted = true,
 ): Promise<MarkdownLinksConfig> {
-    const globalSettings = markdownLinksSettings(
-        await readSettings(join(agentDir, "settings.json")),
-    );
-    const projectSettings = projectTrusted
-        ? markdownLinksSettings(
-              await readSettings(join(cwd, ".pi", "settings.json")),
-          )
-        : {};
-
-    return {
-        allowedRoots: configuredRoots(projectSettings) ??
-            configuredRoots(globalSettings) ?? [...DEFAULT_CONFIG.allowedRoots],
-    };
+    return loadExtensionConfig(cwd, {
+        owner: "markdownLinks",
+        defaults: DEFAULT_CONFIG,
+        agentDir,
+        projectTrusted,
+        normalize: (raw) => {
+            const roots = isRecord(raw) ? configuredRoots(raw) : undefined;
+            return roots ? { allowedRoots: roots } : {};
+        },
+    });
 }
 
 export interface ExpandAllowedRootsOptions {

@@ -1,8 +1,9 @@
+import { extensionPath } from "../_shared/extension-paths.ts";
 /**
  * debug-tools — scoped write_debug_probe / edit_debug_probe tools.
  *
  * Throwaway probe/repro/harness/test scripts and notes for the `diagnose`
- * feedback loop, sandboxed under `.pi/debug/<role>/<session>/` so they can
+ * feedback loop, sandboxed under `.pi/artifacts/debug/<role>/<session>/` so they can
  * never clobber real source. Registered for per-run purge (diagnose Phase 6).
  *
  * In-source instrumentation (tagged logs in real source) is deliberately out
@@ -10,7 +11,7 @@
  */
 
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
@@ -50,7 +51,16 @@ export function createDebugProbeWriter(
         projectRoot: input.cwd,
         policy: {
             id: "debug-probe-v1",
-            root: join(".pi", "debug", role, sessionId),
+            root: relative(
+                input.cwd,
+                extensionPath(
+                    { scope: "project", cwd: input.cwd },
+                    "artifacts",
+                    "debug",
+                    role,
+                    sessionId,
+                ),
+            ),
             allowedExtensions: DEBUG_EXTENSIONS,
             operations: ["create", "edit"],
             maxBytes: DEBUG_MAX_BYTES,
@@ -69,7 +79,11 @@ export const commonDebugRoot: ArtifactRunRoot = {
     id: "common-debug",
     resolve(projectRoot, runId) {
         if (!SAFE_SEGMENT.test(runId)) return [];
-        const debugRoot = join(projectRoot, ".pi", "debug");
+        const debugRoot = extensionPath(
+            { scope: "project", cwd: projectRoot },
+            "artifacts",
+            "debug",
+        );
         if (!existsSync(debugRoot)) return [];
         return readdirSync(debugRoot, { withFileTypes: true })
             .filter(
@@ -98,9 +112,9 @@ function debugQueuePath(
     ctx: ExtensionContext,
     role: string | undefined,
 ): string {
-    return join(
-        ctx.cwd,
-        ".pi",
+    return extensionPath(
+        { scope: "project", cwd: ctx.cwd },
+        "artifacts",
         "debug",
         safeSegment(role, "unassigned"),
         safeSegment(ctx.sessionManager.getSessionId(), "unassigned-session"),
@@ -141,7 +155,7 @@ export function registerDebugTools(pi: ExtensionAPI): void {
         name: "write_debug_probe",
         label: "Write Debug Probe",
         description:
-            "Create a throwaway probe, repro, harness, test script, or note under the active role/session debug root (.pi/debug/<role>/<session>/). For diagnose feedback loops; never touches real source.",
+            "Create a throwaway probe, repro, harness, test script, or note under the active role/session debug root (.pi/artifacts/debug/<role>/<session>/). For diagnose feedback loops; never touches real source.",
         parameters: writeDebugProbeSchema,
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
             const role = currentRole(ctx);

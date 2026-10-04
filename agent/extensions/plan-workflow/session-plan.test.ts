@@ -56,7 +56,7 @@ describe("session_plan extension", () => {
         }
     });
 
-    it("saves a versioned plan in CWD under .pi/session-plans", async () => {
+    it("saves a versioned plan in CWD under .pi/planning/session-plans", async () => {
         const cwd = tmpDir("sp-cwd-");
         dirs.push(cwd);
         const sess = tmpDir("sp-sess-");
@@ -71,11 +71,11 @@ describe("session_plan extension", () => {
             undefined, undefined, ctx,
         );
 
-        const planDirs = readdirSync(join(cwd, ".pi", "session-plans"));
+        const planDirs = readdirSync(join(cwd, ".pi", "planning", "session-plans"));
         expect(planDirs.length).toBe(1);
         expect(planDirs[0]).toBe("my-plan");
 
-        const planPath = join(cwd, ".pi", "session-plans", planDirs[0]);
+        const planPath = join(cwd, ".pi", "planning", "session-plans", planDirs[0]);
         expect(existsSync(join(planPath, "manifest.json"))).toBe(true);
         expect(readFileSync(join(planPath, "v001.md"), "utf8")).toBe("# My plan\n\nDo things.\n");
 
@@ -97,8 +97,8 @@ describe("session_plan extension", () => {
         await tool.execute("s1", { action: "save", topic: "rev plan", content: "# Rev plan\n\nv1." }, undefined, undefined, ctx);
         const result = await tool.execute("s2", { action: "save", topic: "rev plan", content: "# Rev plan\n\nv2." }, undefined, undefined, ctx);
 
-        const dirs2 = readdirSync(join(cwd, ".pi", "session-plans"));
-        const planPath = join(cwd, ".pi", "session-plans", dirs2[0]);
+        const dirs2 = readdirSync(join(cwd, ".pi", "planning", "session-plans"));
+        const planPath = join(cwd, ".pi", "planning", "session-plans", dirs2[0]);
         expect(existsSync(join(planPath, "v001.md"))).toBe(true);
         expect(existsSync(join(planPath, "v002.md"))).toBe(true);
         expect(readFileSync(join(planPath, "v002.md"), "utf8")).toBe("# Rev plan\n\nv2.\n");
@@ -174,7 +174,7 @@ describe("session_plan extension", () => {
         await tool.execute("s2", { action: "save", topic: "clear plan", content: "# Clear plan v2" }, undefined, undefined, ctx);
         await tool.execute("c1", { action: "clear", topic: "clear plan" }, undefined, undefined, ctx);
 
-        const planDirs = readdirSync(join(cwd, ".pi", "session-plans"));
+        const planDirs = readdirSync(join(cwd, ".pi", "planning", "session-plans"));
         expect(planDirs.length).toBe(0);
     });
 
@@ -224,7 +224,7 @@ describe("session_plan extension", () => {
 
         await tool.execute("s1", { action: "save", content: "# My Heading\n\nBody text." }, undefined, undefined, ctx);
 
-        const planDirs = readdirSync(join(cwd, ".pi", "session-plans"));
+        const planDirs = readdirSync(join(cwd, ".pi", "planning", "session-plans"));
         expect(planDirs.length).toBe(1);
         expect(planDirs[0]).toBe("my-heading");
     });
@@ -240,7 +240,7 @@ describe("session_plan extension", () => {
 
         await tool.execute("s1", { action: "save", content: "No heading here." }, undefined, undefined, ctx);
 
-        const planDirs = readdirSync(join(cwd, ".pi", "session-plans"));
+        const planDirs = readdirSync(join(cwd, ".pi", "planning", "session-plans"));
         expect(planDirs.length).toBe(1);
         expect(planDirs[0]).toBe("plan-abc12345");
     });

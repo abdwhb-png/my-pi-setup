@@ -10,10 +10,13 @@
  * so they never crash the agent loop.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { mkdir, open, chmod, rm } from "node:fs/promises";
-import { join, resolve, isAbsolute } from "node:path";
 import { homedir } from "node:os";
+import { join, resolve, isAbsolute } from "node:path";
+import type {
+    ExtensionAPI,
+    ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 import { loadTelemetryConfig } from "../config";
 import {
     scanTelemetryArchive,
@@ -119,7 +122,10 @@ export function parseArgs(raw: string): ParseResult {
     for (const token of tokens) {
         const eqIdx = token.indexOf("=");
         if (eqIdx === -1) {
-            return { ok: false, error: `Missing "=" in argument: "${token}". Use key=value syntax.` };
+            return {
+                ok: false,
+                error: `Missing "=" in argument: "${token}". Use key=value syntax.`,
+            };
         }
 
         const key = token.slice(0, eqIdx);
@@ -130,7 +136,10 @@ export function parseArgs(raw: string): ParseResult {
         }
 
         if (value === "") {
-            return { ok: false, error: `Empty value for key "${key}". Provide a value after "=".` };
+            return {
+                ok: false,
+                error: `Empty value for key "${key}". Provide a value after "=".`,
+            };
         }
 
         if (!VALID_KEYS.has(key)) {
@@ -141,7 +150,10 @@ export function parseArgs(raw: string): ParseResult {
         }
 
         if (seen.has(key)) {
-            return { ok: false, error: `Duplicate key: "${key}". Each key may only appear once.` };
+            return {
+                ok: false,
+                error: `Duplicate key: "${key}". Each key may only appear once.`,
+            };
         }
         seen.add(key);
 
@@ -188,29 +200,45 @@ function buildFilterOptions(parsed: ParsedArgs): FilterOptions {
 
 function formatSummary(result: AnalyticsResult): string {
     const lines: string[] = [];
-    lines.push("");  // blank line before table for readability
+    lines.push(""); // blank line before table for readability
     lines.push("=== Save-Tokens Telemetry Summary ===");
 
     // Query info
     const filters: string[] = [];
     if (result.query.from) filters.push(`from=${result.query.from}`);
     if (result.query.to) filters.push(`to=${result.query.to}`);
-    if (result.query.experimentTag) filters.push(`tag=${result.query.experimentTag}`);
-    if (result.query.provider) filters.push(`provider=${result.query.provider}`);
+    if (result.query.experimentTag)
+        filters.push(`tag=${result.query.experimentTag}`);
+    if (result.query.provider)
+        filters.push(`provider=${result.query.provider}`);
     if (result.query.model) filters.push(`model=${result.query.model}`);
     if (result.query.project) filters.push(`project=${result.query.project}`);
-    if (result.query.thinkingLevel) filters.push(`thinking=${result.query.thinkingLevel}`);
+    if (result.query.thinkingLevel)
+        filters.push(`thinking=${result.query.thinkingLevel}`);
     if (result.query.caveman) filters.push(`caveman=${result.query.caveman}`);
-    if (result.query.ponytail) filters.push(`ponytail=${result.query.ponytail}`);
+    if (result.query.ponytail)
+        filters.push(`ponytail=${result.query.ponytail}`);
     const filterStr = filters.length > 0 ? filters.join(" ") : "none";
     lines.push(`Filters: ${filterStr}`);
 
     // Diagnostics
     const d = result.diagnostics;
-    lines.push(`Scanned: ${d.totalSessionsScanned} sessions, ${d.totalEventsScanned} events in ${d.totalFilesScanned} files`);
+    lines.push(
+        `Scanned: ${d.totalSessionsScanned} sessions, ${d.totalEventsScanned} events in ${d.totalFilesScanned} files`,
+    );
 
     // Group rows
-    const headers = ["Group", "Sessions", "Runs", "Turns", "Tools", "Errors", "Tokens", "Cost", "Compression"];
+    const headers = [
+        "Group",
+        "Sessions",
+        "Runs",
+        "Turns",
+        "Tools",
+        "Errors",
+        "Tokens",
+        "Cost",
+        "Compression",
+    ];
 
     // Compute column widths
     const colWidths = headers.map((h) => h.length);
@@ -231,19 +259,19 @@ function formatSummary(result: AnalyticsResult): string {
         ];
         rows.push(cells);
         for (let i = 0; i < cells.length; i++) {
-            colWidths[i] = Math.max(colWidths[i]!, cells[i]!.length);
+            colWidths[i] = Math.max(colWidths[i], cells[i].length);
         }
     }
 
     // Format header
-    const padHeader = headers.map((h, i) => h.padEnd(colWidths[i]!)).join(" | ");
+    const padHeader = headers.map((h, i) => h.padEnd(colWidths[i])).join(" | ");
     lines.push("");
     lines.push(padHeader);
     lines.push(colWidths.map((w) => "-".repeat(w)).join("-+-"));
 
     // Format rows
     for (const row of rows) {
-        const padded = row.map((c, i) => c.padEnd(colWidths[i]!)).join(" | ");
+        const padded = row.map((c, i) => c.padEnd(colWidths[i])).join(" | ");
         lines.push(padded);
     }
 
@@ -276,7 +304,9 @@ function resolveExportPath(
             expanded = join(homedir(), expanded.slice(2));
         }
         // Resolve relative paths from ctx.cwd; absolute (including expanded ~) stay as-is
-        const resolved = isAbsolute(expanded) ? expanded : resolve(cwd, expanded);
+        const resolved = isAbsolute(expanded)
+            ? expanded
+            : resolve(cwd, expanded);
         return { path: resolved, isExplicit: true };
     }
 
@@ -355,7 +385,10 @@ async function writeExportFile(
     }
 }
 
-async function writeExplicitFile(exportPath: string, content: string): Promise<string> {
+async function writeExplicitFile(
+    exportPath: string,
+    content: string,
+): Promise<string> {
     let fh: Awaited<ReturnType<typeof open>> | null = null;
     let created = false;
     try {
@@ -368,23 +401,35 @@ async function writeExplicitFile(exportPath: string, content: string): Promise<s
         return exportPath;
     } catch (err: unknown) {
         if (fh) {
-            try { await fh.close(); } catch { /* best-effort */ }
+            try {
+                await fh.close();
+            } catch {
+                /* best-effort */
+            }
         }
         if ((err as NodeJS.ErrnoException)?.code === "EEXIST") {
             // EEXIST before handle creation: never touch the pre-existing file
             throw new Error(
                 `Export file already exists: "${exportPath}". Remove it or use a different path.`,
+                { cause: err },
             );
         }
         // Cleanup partial file only if THIS invocation created it (write/chmod failure)
         if (created) {
-            try { await rm(exportPath, { force: true }); } catch { /* best-effort */ }
+            try {
+                await rm(exportPath, { force: true });
+            } catch {
+                /* best-effort */
+            }
         }
         throw err;
     }
 }
 
-async function writeOneFile(exportPath: string, content: string): Promise<string> {
+async function writeOneFile(
+    exportPath: string,
+    content: string,
+): Promise<string> {
     let fh: Awaited<ReturnType<typeof open>> | null = null;
     let created = false;
     try {
@@ -397,12 +442,20 @@ async function writeOneFile(exportPath: string, content: string): Promise<string
         return exportPath;
     } catch (err: unknown) {
         if (fh) {
-            try { await fh.close(); } catch { /* best-effort */ }
+            try {
+                await fh.close();
+            } catch {
+                /* best-effort */
+            }
         }
         // Only remove the file if THIS invocation created it (open succeeded).
         // On EEXIST before handle creation (created=false), never touch the pre-existing file.
         if (created) {
-            try { await rm(exportPath, { force: true }); } catch { /* best-effort */ }
+            try {
+                await rm(exportPath, { force: true });
+            } catch {
+                /* best-effort */
+            }
         }
         throw err;
     }
@@ -413,7 +466,10 @@ async function writeOneFile(exportPath: string, content: string): Promise<string
 // ---------------------------------------------------------------------------
 
 function createStatsHandler(telemetry: TelemetryController) {
-    return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    return async (
+        args: string,
+        ctx: ExtensionCommandContext,
+    ): Promise<void> => {
         try {
             const parsed = parseArgs(args);
             if (!parsed.ok) {
@@ -421,10 +477,17 @@ function createStatsHandler(telemetry: TelemetryController) {
                 return;
             }
 
-            const config = loadTelemetryConfig();
+            const config = loadTelemetryConfig(
+                ctx.cwd,
+                undefined,
+                ctx.isProjectTrusted(),
+            );
             const root = config.directory;
             if (!root) {
-                ctx.ui.notify("save-tokens-stats: telemetry directory not configured", "error");
+                ctx.ui.notify(
+                    "save-tokens-stats: telemetry directory not configured",
+                    "error",
+                );
                 return;
             }
 
@@ -438,7 +501,10 @@ function createStatsHandler(telemetry: TelemetryController) {
             });
 
             // Filter + annotate
-            const { annotated } = filterAndAnnotate(scanResult.records, filterOptions);
+            const { annotated } = filterAndAnnotate(
+                scanResult.records,
+                filterOptions,
+            );
 
             // Aggregate
             const { rows } = aggregateGroups(annotated);
@@ -459,7 +525,11 @@ function createStatsHandler(telemetry: TelemetryController) {
             ctx.ui.notify(summary, "info");
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            try { ctx.ui.notify(`save-tokens-stats error: ${message}`, "error"); } catch { /* double-fault — suppress */ }
+            try {
+                ctx.ui.notify(`save-tokens-stats error: ${message}`, "error");
+            } catch {
+                /* double-fault — suppress */
+            }
         }
     };
 }
@@ -469,7 +539,10 @@ function createStatsHandler(telemetry: TelemetryController) {
 // ---------------------------------------------------------------------------
 
 function createExportHandler(telemetry: TelemetryController) {
-    return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    return async (
+        args: string,
+        ctx: ExtensionCommandContext,
+    ): Promise<void> => {
         try {
             const parsed = parseArgs(args);
             if (!parsed.ok) {
@@ -488,10 +561,17 @@ function createExportHandler(telemetry: TelemetryController) {
                 return;
             }
 
-            const config = loadTelemetryConfig();
+            const config = loadTelemetryConfig(
+                ctx.cwd,
+                undefined,
+                ctx.isProjectTrusted(),
+            );
             const root = config.directory;
             if (!root) {
-                ctx.ui.notify("save-tokens-export: telemetry directory not configured", "error");
+                ctx.ui.notify(
+                    "save-tokens-export: telemetry directory not configured",
+                    "error",
+                );
                 return;
             }
 
@@ -505,7 +585,10 @@ function createExportHandler(telemetry: TelemetryController) {
             });
 
             // Filter + annotate
-            const { annotated } = filterAndAnnotate(scanResult.records, filterOptions);
+            const { annotated } = filterAndAnnotate(
+                scanResult.records,
+                filterOptions,
+            );
 
             // Aggregate
             const { rows } = aggregateGroups(annotated);
@@ -523,7 +606,8 @@ function createExportHandler(telemetry: TelemetryController) {
             };
 
             // Export
-            const exportContent = format === "csv" ? exportCsv(result) : exportJson(result);
+            const exportContent =
+                format === "csv" ? exportCsv(result) : exportJson(result);
             const resolved = resolveExportPath(root, p.out, format, ctx.cwd);
 
             const writtenPath = await writeExportFile(
@@ -538,7 +622,11 @@ function createExportHandler(telemetry: TelemetryController) {
             );
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            try { ctx.ui.notify(`save-tokens-export error: ${message}`, "error"); } catch { /* double-fault — suppress */ }
+            try {
+                ctx.ui.notify(`save-tokens-export error: ${message}`, "error");
+            } catch {
+                /* double-fault — suppress */
+            }
         }
     };
 }
@@ -548,19 +636,29 @@ function createExportHandler(telemetry: TelemetryController) {
 // ---------------------------------------------------------------------------
 
 function createExperimentHandler(telemetry: TelemetryController) {
-    return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    return async (
+        args: string,
+        ctx: ExtensionCommandContext,
+    ): Promise<void> => {
         try {
             const trimmed = args.trim();
 
             if (trimmed === "") {
-                ctx.ui.notify("save-tokens-experiment: tag required. Usage: /save-tokens-experiment <tag> [value]", "error");
+                ctx.ui.notify(
+                    "save-tokens-experiment: tag required. Usage: /save-tokens-experiment <tag> [value]",
+                    "error",
+                );
                 return;
             }
 
             // Split on whitespace: first token is tag, rest (joined) is optional value
             const spaceIdx = trimmed.search(/\s/);
-            const tagStr = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
-            const valueStr = spaceIdx === -1 ? undefined : trimmed.slice(spaceIdx + 1).trim();
+            const tagStr =
+                spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
+            const valueStr =
+                spaceIdx === -1
+                    ? undefined
+                    : trimmed.slice(spaceIdx + 1).trim();
 
             if (!validateTag(tagStr)) {
                 ctx.ui.notify(
@@ -577,7 +675,10 @@ function createExperimentHandler(telemetry: TelemetryController) {
                 else if (valueStr === "false") value = false;
                 else {
                     const num = Number(valueStr);
-                    value = Number.isFinite(num) && valueStr.trim() !== "" ? num : valueStr;
+                    value =
+                        Number.isFinite(num) && valueStr.trim() !== ""
+                            ? num
+                            : valueStr;
                 }
             }
 
@@ -590,11 +691,22 @@ function createExperimentHandler(telemetry: TelemetryController) {
                 return;
             }
 
-            const displayValue = value !== undefined ? ` = ${JSON.stringify(value)}` : "";
-            ctx.ui.notify(`save-tokens-experiment: tag set → "${tagStr}"${displayValue}`, "info");
+            const displayValue =
+                value !== undefined ? ` = ${JSON.stringify(value)}` : "";
+            ctx.ui.notify(
+                `save-tokens-experiment: tag set → "${tagStr}"${displayValue}`,
+                "info",
+            );
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            try { ctx.ui.notify(`save-tokens-experiment error: ${message}`, "error"); } catch { /* double-fault — suppress */ }
+            try {
+                ctx.ui.notify(
+                    `save-tokens-experiment error: ${message}`,
+                    "error",
+                );
+            } catch {
+                /* double-fault — suppress */
+            }
         }
     };
 }

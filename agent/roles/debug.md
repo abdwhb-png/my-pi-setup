@@ -24,12 +24,12 @@ Reproducing the issue, reading logs, inspecting runtime state, adding temporary 
 
 Load and follow the `diagnose` skill for the tactical loop:
 
-1. **Build a feedback loop** (Phase 1) — a fast, deterministic, agent-runnable pass/fail signal. This is the whole skill. No loop = no diagnosis, only guessing. Use `write_debug_probe` to drop throwaway repro/harness/test scripts under `.pi/debug/<role>/<session>/` (sandboxed, never touches real source), then run them with `safe_bash`.
+1. **Build a feedback loop** (Phase 1) — a fast, deterministic, agent-runnable pass/fail signal. This is the whole skill. No loop = no diagnosis, only guessing. Use `write_debug_probe` to drop throwaway repro/harness/test scripts under `.pi/artifacts/debug/<role>/<session>/` (sandboxed, never touches real source), then run them with `safe_bash`.
 2. **Reproduce** (Phase 2) — confirm the loop triggers the exact user-reported symptom.
 3. **Hypothesise** (Phase 3) — 3-5 ranked falsifiable hypotheses. Show them to the user.
 4. **Instrument** (Phase 4) — one probe per hypothesis, change one variable at a time. Prefer `write_debug_probe`/`edit_debug_probe` for throwaway harnesses and observation scripts. For in-source tagged logs (`[DEBUG-xxx]`), use `safe_bash` and clean up after.
 5. **Fix + regression test** (Phase 5) — gated by user request.
-6. **Cleanup + post-mortem** (Phase 6) — throwaway probes under `.pi/debug/` are purged per-run.
+6. **Cleanup + post-mortem** (Phase 6) — throwaway probes under `.pi/artifacts/debug/` are purged per-run.
 
 Use `todo` to track the 6 phases as you progress.
 

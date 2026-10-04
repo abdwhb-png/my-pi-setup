@@ -9,8 +9,6 @@ export interface LoadToolGroupsOptions {
     projectTrusted?: boolean;
     /** Reject malformed sources instead of silently dropping them. */
     strict?: boolean;
-    /** Inject a pre-built SettingsManager (for testing). */
-    _settingsManager?: import("../config-loader.ts").LoadConfigOptions<unknown>["_settingsManager"];
 }
 
 const DEFAULTS: ToolGroupsConfig = { groups: {} };
@@ -18,7 +16,7 @@ const DEFAULTS: ToolGroupsConfig = { groups: {} };
 const GROUP_NAME_RE = /^[a-z][a-z0-9_-]*$/;
 
 function normalize(raw: unknown, strict = false): Partial<ToolGroupsConfig> {
-    // An absent settings key permits legacy fallback; a present malformed value does not.
+    // Missing configuration uses defaults; malformed configuration is rejected.
     if (raw === undefined) return {};
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
         if (strict) throw new Error("Invalid tool-groups: expected an object");
@@ -81,9 +79,7 @@ function mergeGroups(
 /**
  * Load tool-groups configuration.
  *
- * Sources (cascade per source: settings wins, legacy fallback):
- *   1. Settings key `toolGroups`
- *   2. Legacy file `tool-groups.json`
+ * Reads config/tool-groups.json in global and trusted project scopes.
  *
  * Group names are validated against `/^[a-z][a-z0-9_-]*$/`.
  * Invalid group names and members are silently dropped unless strict is true.
@@ -96,16 +92,9 @@ export function loadToolGroupsConfig(
     return loadExtensionConfig(cwd, {
         defaults: DEFAULTS,
         normalize: (raw) => normalize(raw, options.strict),
-        sources: [
-            {
-                settingsKey: "toolGroups",
-                legacyFilename: "tool-groups.json",
-            },
-        ],
+        owner: "toolGroups",
         merge: mergeGroups,
         agentDir: options.agentDir,
         projectTrusted: options.projectTrusted,
-        strict: options.strict,
-        _settingsManager: options._settingsManager,
     });
 }

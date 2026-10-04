@@ -14,7 +14,15 @@ models-store.json
 model-thinking.json
 settings.json.*
 keybindings.json
-config/
+/config/*
+!/config/*.example.json
+!/config/pi-dangerous-mode.json
+!/config/pi-permission-system-addons.json
+!/config/session-status-bar.json
+!/config/slow-mode.json
+!/config/tool-groups.json
+!/config/pi-subagents-addons.json
+/artifacts/
 
 extensions/oc.ts
 extensions/tx9/
@@ -25,7 +33,7 @@ mcp-*/
 mcp-*
 mcp.json
 git/
-npm/
+/npm
 pi-hermes-memory/
 hermes-memory-config.json
 .pi-hermes-locks.*

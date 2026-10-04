@@ -1,3 +1,4 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,15 +25,16 @@ describe("pi-dangerous-mode configuration", () => {
     it("loads only Dangerous protection lists and merges project overrides", () => {
         const agentDir = directory("dangerous-agent-");
         const cwd = directory("dangerous-cwd-");
-        writeJson(join(agentDir, "pi-dangerous-mode.json"), {
+        writeJson(join(agentDir, "config", "pi-dangerous-mode.json"), {
             protectedTools: ["safe_bash"],
             protectedExtensions: ["permission-system"],
         });
-        writeJson(join(cwd, ".pi", "pi-dangerous-mode.json"), {
+        writeJson(join(cwd, ".pi", "config", "pi-dangerous-mode.json"), {
             protectedTools: ["bash"],
         });
 
-        expect(loadConfig(cwd, agentDir)).toEqual({
+        new ProjectTrustStore(agentDir).set(cwd, true);
+        expect(loadConfig(cwd, agentDir, true)).toEqual({
             protectedTools: ["bash"],
             protectedExtensions: ["permission-system"],
         });
@@ -41,9 +43,9 @@ describe("pi-dangerous-mode configuration", () => {
     it("rejects malformed protection lists", () => {
         const agentDir = directory("dangerous-agent-");
         const cwd = directory("dangerous-cwd-");
-        writeJson(join(agentDir, "pi-dangerous-mode.json"), {
+        writeJson(join(agentDir, "config", "pi-dangerous-mode.json"), {
             protectedTools: ["bash", 42],
         });
-        expect(() => loadConfig(cwd, agentDir)).toThrow("Invalid configuration");
+        expect(() => loadConfig(cwd, agentDir, true)).toThrow("Invalid configuration");
     });
 });

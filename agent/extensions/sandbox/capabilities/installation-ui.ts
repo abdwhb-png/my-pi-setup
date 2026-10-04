@@ -12,6 +12,12 @@ import { dirname, join } from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import {
+    extensionConfigPath,
+    isProjectConfigTrusted,
+} from "../../_shared/config-loader.ts";
+import { SandboxExecutionError } from "../runtime/contracts.ts";
+import {
+    assertSandboxConfigMigrated,
     persistedCapabilityPath,
     readGlobalSandboxConfig,
     readProjectSandboxConfig,
@@ -45,6 +51,11 @@ const ACTIONS = [
 type Action = (typeof ACTIONS)[number];
 
 function toMessage(error: unknown): string {
+    if (
+        error instanceof SandboxExecutionError &&
+        error.getCause() !== undefined
+    )
+        return toMessage(error.getCause());
     return error instanceof Error ? error.message : String(error);
 }
 
@@ -178,31 +189,6 @@ function persistInstallations(
     return persisted;
 }
 
-async function saveConfig(
-    path: string,
-    before: Buffer | undefined,
-    next: Record<string, unknown>,
-) {
-    await withFileMutationQueue(path, async () => {
-        const current = readBytes(path);
-        if (!sameBytes(before, current)) {
-            throw new Error(`Configuration changed while editing: ${path}`);
-        }
-        mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-        const temporary = join(dirname(path), `.sandbox-${randomUUID()}.tmp`);
-        try {
-            writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, {
-                mode: 0o600,
-                flag: "wx",
-            });
-            renameSync(temporary, path);
-        } catch (error) {
-            if (existsSync(temporary)) unlinkSync(temporary);
-            throw error;
-        }
-    });
-}
-
 function parseAddOrEditPayload(
     name: string,
     body: string,
@@ -245,14 +231,69 @@ export async function manageInstallations(
     }
 
     const globalPath = sandboxConfigPath(options.agentDir);
-    const projectPath = join(ctx.cwd, ".pi", "sandbox.json");
+    const projectPath = extensionConfigPath("sandbox", {
+        scope: "project",
+        cwd: ctx.cwd,
+    });
+
+    async function saveConfig(
+        path: string,
+        before: Buffer | undefined,
+        next: Record<string, unknown>,
+    ) {
+        await withFileMutationQueue(path, async () => {
+            const trusted = isProjectConfigTrusted(
+                ctx.cwd,
+                options.agentDir,
+                ctx.isProjectTrusted(),
+            );
+            if (path === projectPath && !trusted)
+                throw new Error(
+                    "Project configuration changes require saved project trust. Use /trust and restart Pi.",
+                );
+            assertSandboxConfigMigrated(
+                options.agentDir,
+                trusted ? ctx.cwd : undefined,
+            );
+            const current = readBytes(path);
+            if (!sameBytes(before, current)) {
+                throw new Error(`Configuration changed while editing: ${path}`);
+            }
+            mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+            const temporary = join(
+                dirname(path),
+                `.sandbox-${randomUUID()}.tmp`,
+            );
+            try {
+                writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, {
+                    mode: 0o600,
+                    flag: "wx",
+                });
+                renameSync(temporary, path);
+            } catch (error) {
+                if (existsSync(temporary)) unlinkSync(temporary);
+                throw error;
+            }
+        });
+    }
 
     try {
+        const projectTrusted = isProjectConfigTrusted(
+            ctx.cwd,
+            options.agentDir,
+            ctx.isProjectTrusted(),
+        );
+        assertSandboxConfigMigrated(
+            options.agentDir,
+            projectTrusted ? ctx.cwd : undefined,
+        );
         const globalConfig = readGlobalSandboxConfig(
             globalPath,
             options.machineId,
         );
-        const projectConfig = readProjectSandboxConfig(projectPath);
+        const projectConfig = projectTrusted
+            ? readProjectSandboxConfig(projectPath)
+            : undefined;
 
         const globalSource = globalSummary(
             globalConfig?.environment?.installations,
@@ -388,9 +429,15 @@ export async function manageInstallations(
             return;
         }
 
-        if (!ctx.isProjectTrusted()) {
+        if (
+            !isProjectConfigTrusted(
+                ctx.cwd,
+                options.agentDir,
+                ctx.isProjectTrusted(),
+            )
+        ) {
             ctx.ui.notify(
-                "Project installation changes require trusted-project context.",
+                "Project installation changes require saved project trust. Use /trust and restart Pi.",
                 "warning",
             );
             return;

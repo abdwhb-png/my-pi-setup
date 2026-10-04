@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { extensionPath } from "../_shared/extension-paths.ts";
 import { createScopedWriter } from "../_shared/scoped-write.ts";
 
 export const BRAINSTORM_PHASES = [
@@ -129,18 +130,26 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
     const now = options.now ?? (() => new Date().toISOString());
     const createdAt = now();
     const date = options.date ?? createdAt.slice(0, 10);
+    const artifactRoot = relative(
+        options.projectRoot,
+        extensionPath(
+            { scope: "project", cwd: options.projectRoot },
+            "artifacts",
+            "brainstorms",
+        ),
+    );
     let relativeRoot = `${date}-${slugify(options.topic)}`;
-    let manifestPath = `docs/brainstorms/${relativeRoot}/manifest.json`;
+    let manifestPath = `${artifactRoot}/${relativeRoot}/manifest.json`;
     let absoluteManifestPath = join(options.projectRoot, manifestPath);
     if (existsSync(absoluteManifestPath)) {
         const existing = readManifest(absoluteManifestPath);
         if (existing.runId !== options.runId) {
             relativeRoot = `${relativeRoot}-${slugify(options.runId)}`;
-            manifestPath = `docs/brainstorms/${relativeRoot}/manifest.json`;
+            manifestPath = `${artifactRoot}/${relativeRoot}/manifest.json`;
             absoluteManifestPath = join(options.projectRoot, manifestPath);
         }
     }
-    const root = `docs/brainstorms/${relativeRoot}`;
+    const root = `${artifactRoot}/${relativeRoot}`;
     const manifestRelativePath = `${relativeRoot}/manifest.json`;
     const writer = createScopedWriter({
         projectRoot: options.projectRoot,
@@ -151,7 +160,7 @@ export function createBrainstormArtifactStore(options: StoreOptions) {
         },
         policy: {
             id: "brainstorm-artifacts",
-            root: "docs/brainstorms",
+            root: artifactRoot,
             allowedExtensions: [".md", ".json"],
             operations: ["create", "edit"],
             maxBytes: 512_000,

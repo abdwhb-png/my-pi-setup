@@ -1,5 +1,6 @@
+import { writeFixtureFile as writeFileSync } from "../../_shared/testing/config-fixture.ts";
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readGlobalSandboxConfig, readProjectSandboxConfig } from "./authority.ts";
@@ -13,13 +14,13 @@ test("reads only a versioned global authority and rejects global fields from a p
     const agent = join(root, "agent");
     const project = join(root, "project");
     mkdirSync(agent); mkdirSync(join(project, ".pi"), { recursive: true });
-    const globalPath = join(agent, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
     writeFileSync(globalPath, JSON.stringify({ version: 2, machineId: "machine", network: { allowedDomains: ["example.com"] } }), { mode: 0o600 });
     chmodSync(globalPath, 0o600);
-    writeFileSync(join(project, ".pi", "sandbox.json"), JSON.stringify({ machineId: "machine", network: { allowedDomains: [] } }), { mode: 0o600 });
+    writeFileSync(join(project, ".pi", "config", "sandbox.json"), JSON.stringify({ machineId: "machine", network: { allowedDomains: [] } }), { mode: 0o600 });
 
     expect(readGlobalSandboxConfig(globalPath, "machine")?.network).toEqual({ allowedDomains: ["example.com"] });
-    expect(() => readProjectSandboxConfig(join(project, ".pi", "sandbox.json"))).toThrow("reserved to global");
+    expect(() => readProjectSandboxConfig(join(project, ".pi", "config", "sandbox.json"))).toThrow("reserved to global");
 });
 
 test("rejects unknown and malformed nested active settings", () => {
@@ -29,7 +30,7 @@ test("rejects unknown and malformed nested active settings", () => {
     const project = join(root, "project");
     mkdirSync(agent);
     mkdirSync(project);
-    const globalPath = join(agent, "sandbox.json");
+    const globalPath = join(agent, "config", "sandbox.json");
     writeFileSync(
         globalPath,
         JSON.stringify({
@@ -44,11 +45,11 @@ test("rejects unknown and malformed nested active settings", () => {
         "Sandbox policy is invalid",
     );
     writeFileSync(
-        join(project, "sandbox.json"),
+        join(project, "config", "sandbox.json"),
         JSON.stringify({ network: { allowLocalBnding: false } }),
         { mode: 0o600 },
     );
-    expect(() => readProjectSandboxConfig(join(project, "sandbox.json"))).toThrow(
+    expect(() => readProjectSandboxConfig(join(project, "config", "sandbox.json"))).toThrow(
         "Unknown project.network field",
     );
 });

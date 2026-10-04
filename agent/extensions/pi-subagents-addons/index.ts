@@ -4,6 +4,7 @@ import {
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { registerSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
+import { readExtensionConfig } from "../_shared/config-loader.ts";
 import { collectWorkflowAgentDefinitions } from "../_shared/subagents/workflow-agents.ts";
 import {
     parseFallbackAdviceConfig,
@@ -21,10 +22,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function readAddonsConfig(
-    path: string | URL = new URL("./config.json", import.meta.url),
-) {
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+export function readAddonsConfig(path?: string | URL) {
+    const parsed: unknown =
+        path === undefined
+            ? (readExtensionConfig("subagentsAddons", { scope: "global" }) ??
+              {})
+            : JSON.parse(readFileSync(path, "utf8"));
     if (!isRecord(parsed)) throw new Error("Invalid subagents addon config");
     return {
         subagentWaitGuard:

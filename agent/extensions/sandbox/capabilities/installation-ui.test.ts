@@ -1,3 +1,5 @@
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { writeFixtureFile as writeFileSync } from "../../_shared/testing/config-fixture.ts";
 import {
     afterEach,
     describe,
@@ -11,7 +13,7 @@ import {
     mkdtempSync,
     readFileSync,
     rmSync,
-    writeFileSync,
+
     openSync,
     closeSync,
 } from "node:fs";
@@ -52,10 +54,11 @@ function fixture() {
     const agentDir = join(root, "agent");
     const projectDir = join(root, "project");
     const globalPath = sandboxConfigPath(agentDir);
-    const projectPath = join(projectDir, ".pi", "sandbox.json");
+    const projectPath = join(projectDir, ".pi", "config", "sandbox.json");
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(projectDir, ".pi"), { recursive: true });
 
+    new ProjectTrustStore(agentDir).set(projectDir, true);
     const writeGlobal = (value: unknown) =>
         writeFileSync(globalPath, JSON.stringify(value), { mode: 0o600 });
     const writeProject = (value: unknown) =>

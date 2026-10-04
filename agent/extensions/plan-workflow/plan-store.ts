@@ -7,11 +7,11 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { extensionPath } from "../_shared/extension-paths.ts";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-export const PLAN_ROOT = ".pi/session-plans";
 export const MIGRATED_MARKER = ".migrated";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -61,7 +61,11 @@ export function extractFirstHeading(content: string): string | undefined {
 }
 
 export function resolvePlanDir(cwd: string, topic: string): string {
-    return join(cwd, PLAN_ROOT, slugify(topic));
+    return extensionPath(
+        { scope: "project", cwd },
+        "session-plans",
+        slugify(topic),
+    );
 }
 
 export function resolvePlanDirForDate(
@@ -70,7 +74,11 @@ export function resolvePlanDirForDate(
     date: string,
 ): string {
     const slug = slugify(topic);
-    return join(cwd, PLAN_ROOT, `${date}-${slug}`);
+    return extensionPath(
+        { scope: "project", cwd },
+        "session-plans",
+        `${date}-${slug}`,
+    );
 }
 
 function readManifestSafe(manifestPath: string): PlanManifest | undefined {
@@ -102,7 +110,7 @@ type PlanRecord = {
 };
 
 function listPlanRecords(cwd: string, topic: string): PlanRecord[] {
-    const plansRoot = join(cwd, PLAN_ROOT);
+    const plansRoot = extensionPath({ scope: "project", cwd }, "session-plans");
     if (!existsSync(plansRoot)) return [];
 
     const stablePlanDir = resolvePlanDir(cwd, topic);
@@ -150,11 +158,10 @@ export function savePlan(
     const now = new Date().toISOString();
     const normalizedContent = `${content.trimEnd()}\n`;
     const existingManifest = existingRecord?.manifest;
-    const dirName = planDir.split("/").pop()!;
     let manifest: PlanManifest = existingManifest ?? {
         version: 1,
         topic,
-        root: join(PLAN_ROOT, dirName),
+        root: relative(cwd, planDir),
         createdAt: now,
         updatedAt: now,
         latestVersion: 0,

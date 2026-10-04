@@ -1,2 +1,2 @@
 [test]
-pathIgnorePatterns = ["git/**", "npm/**", "think-in-code/**"]
+pathIgnorePatterns = ["git/**", "npm/**", "think-in-code/**", "artifacts/**"]

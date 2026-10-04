@@ -1,20 +1,24 @@
 # Sandbox configuration
 
-Use `~/.pi/agent/sandbox.json` for global defaults and ceilings. Put project overrides in `<project>/.pi/sandbox.json`. Do not add a global project registry or another active configuration file.
+Use `~/.pi/agent/config/sandbox.json` for global defaults and ceilings. Put project overrides in `<project>/.pi/config/sandbox.json`. Do not add a global project registry or another active configuration file.
 
 The global document requires `version: 2` and the local `machineId`. Use `/sandbox migrate` to preview and create a valid document from an existing installation. Preserve its machine identity when editing it. A copied authority from another machine is rejected.
 
-Keep this global authority local and ignored by Git. Its machine identity, installation paths, environment values and explicit access exceptions belong to this machine. The schema and [sandbox.example.json](../../../sandbox.example.json) remain versioned. The example grants current-project filesystem access and local binding, keeps HOME and temporary storage private, and leaves host mode, outgoing network, external installations and Docker access disabled.
+Keep this global authority local and ignored by Git. Its machine identity, installation paths, environment values and explicit access exceptions belong to this machine. The schema and [sandbox.example.json](../../../config/sandbox.example.json) remain versioned. The example grants current-project filesystem access and local binding, keeps HOME and temporary storage private, and leaves host mode, outgoing network, external installations and Docker access disabled.
 
-For a fresh installation, create the local authority from the example with Pi's machine identity helper. Run this from `~/.pi/agent/`. It creates an owner-only file and refuses to overwrite an existing `sandbox.json`:
+For a fresh installation, create the local authority from the example with Pi's machine identity helper. Run this from `~/.pi/agent/`. It creates an owner-only `config/sandbox.json` in the configured agent directory and refuses to overwrite an existing file:
 
 ```sh
 bun -e '
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { localMachineId } from "./extensions/sandbox/capabilities/authority.ts";
-const config = JSON.parse(readFileSync("sandbox.example.json", "utf8"));
+import { extensionConfigPath } from "./extensions/_shared/config-loader.ts";
+const config = JSON.parse(readFileSync("config/sandbox.example.json", "utf8"));
 config.machineId = localMachineId();
-writeFileSync("sandbox.json", JSON.stringify(config, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+const path = extensionConfigPath("sandbox", { scope: "global" });
+mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+writeFileSync(path, JSON.stringify(config, null, 2) + "\n", { flag: "wx", mode: 0o600 });
 '
 ```
 

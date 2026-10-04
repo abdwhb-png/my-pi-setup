@@ -1,0 +1,9 @@
+{
+    "caveman": {
+        "defaultLevel": "full"
+    },
+    "ponytail": {
+        "enabled": true,
+        "defaultMode": "full"
+    }
+}

@@ -142,8 +142,8 @@ async function verifyBackend(backendId: CompressionBackendId): Promise<void> {
     const archiveRoot = mkdtempSync(
         join(tmpdir(), `pi-compression-${backendId}-`),
     );
-    const previousArchiveRoot = process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
-    process.env.PI_TOOL_RESULT_ARCHIVE_DIR = archiveRoot;
+    const previousArchiveRoot = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = archiveRoot;
     const handlerOptions: ToolResultHandlerOptions = {
         backend,
         archiveOriginal: archiveOriginalToolResult,
@@ -200,8 +200,8 @@ async function verifyBackend(backendId: CompressionBackendId): Promise<void> {
         }
     } finally {
         if (previousArchiveRoot === undefined)
-            delete process.env.PI_TOOL_RESULT_ARCHIVE_DIR;
-        else process.env.PI_TOOL_RESULT_ARCHIVE_DIR = previousArchiveRoot;
+            delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousArchiveRoot;
         rmSync(archiveRoot, { recursive: true, force: true });
     }
     console.log(

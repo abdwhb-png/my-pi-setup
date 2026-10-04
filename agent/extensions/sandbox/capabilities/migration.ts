@@ -12,6 +12,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { extensionConfigPath } from "../../_shared/config-loader.ts";
 import { createDefaultSandboxBaseline } from "../runtime/default-config.ts";
 import { resolveDockerPolicy } from "../runtime/docker-policy.ts";
 import { validatePiSandboxConfig } from "../runtime/policies.ts";
@@ -379,7 +380,7 @@ function readMarker(markerPath: string, globalPath: string): MigrationMarker {
             path: value.path,
             body: value.body,
             digest: value.digest,
-            before: { digest: before.digest as string | undefined },
+            before: { digest: before.digest },
             ...(value.archivePath === undefined
                 ? {}
                 : { archivePath: value.archivePath }),
@@ -506,9 +507,12 @@ export function previewLegacyMigration(
 ): LegacyMigrationPreview {
     const legacyAuthorityPath = join(agentDir, "sandbox.capabilities.json");
     const legacyDockerPath = join(agentDir, "sandbox.global.json");
-    const globalPath = join(agentDir, "sandbox.json");
+    const globalPath = extensionConfigPath("sandbox", {
+        scope: "global",
+        agentDir,
+    });
     const projectPath = projectRoot
-        ? join(projectRoot, ".pi", "sandbox.json")
+        ? extensionConfigPath("sandbox", { scope: "project", cwd: projectRoot })
         : undefined;
     const globalSettingsPath = join(agentDir, "settings.json");
     const projectSettingsPath = projectRoot

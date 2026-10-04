@@ -20,6 +20,7 @@ import {
     resolve,
     sep,
 } from "node:path";
+import { extensionPath } from "./extension-paths.ts";
 
 export type ScopedWriteOperation = "create" | "edit";
 
@@ -225,9 +226,8 @@ function appendAuditEvent(
     runId: string,
     event: ScopedWriteAuditEvent,
 ): string {
-    const auditPath = join(
-        projectRoot,
-        ".pi",
+    const auditPath = extensionPath(
+        { scope: "project", cwd: projectRoot },
         "artifacts",
         ".audit",
         `${runId}.jsonl`,
@@ -338,9 +338,8 @@ export function purgeArtifacts(
 
 export function createScopedWriter(options: ScopedWriterOptions): ScopedWriter {
     const projectRoot = resolve(options.projectRoot);
-    const auditPath = join(
-        projectRoot,
-        ".pi",
+    const auditPath = extensionPath(
+        { scope: "project", cwd: projectRoot },
         "artifacts",
         ".audit",
         `${options.actor.runId}.jsonl`,

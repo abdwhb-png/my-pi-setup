@@ -1,0 +1,9 @@
+{
+    "safeBash": {
+        "mode": "coexist",
+        "guardPolicy": {
+            "rm": "cwd-only",
+            "file-delete-api": "cwd-only"
+        }
+    }
+}

@@ -114,15 +114,15 @@ export function mergeAiProvidersConfig(
 }
 
 /**
- * Loads only dedicated legacy config files:
- * `~/.pi/agent/ai-providers.json`, then `<cwd>/.pi/ai-providers.json`.
+ * Loads dedicated extension config files:
+ * `~/.pi/agent/config/ai-providers.json`, then `<cwd>/.pi/config/ai-providers.json`.
  */
 export function loadAiProvidersConfig(cwd = process.cwd()): AiProvidersConfig {
     return loadExtensionConfig(cwd, {
         defaults: DEFAULT_CONFIG,
         normalize: normalizeAiProvidersConfig,
         merge: mergeAiProvidersConfig,
-        sources: [{ legacyFilename: "ai-providers.json" }],
+        owner: "aiProviders",
     });
 }
 

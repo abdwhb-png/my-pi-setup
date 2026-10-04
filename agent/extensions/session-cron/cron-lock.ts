@@ -1,5 +1,6 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { extensionPath } from "../_shared/extension-paths.ts";
 
 interface CronSchedulerLock {
     sessionId: string;
@@ -7,7 +8,11 @@ interface CronSchedulerLock {
     acquiredAt: number;
 }
 
-const LOCK_FILE = join(process.cwd(), ".pi", "session-cron.lock");
+const LOCK_FILE = extensionPath(
+    { scope: "project", cwd: process.cwd() },
+    "artifacts",
+    "session-cron.lock",
+);
 
 export async function tryAcquireCronSchedulerLock(
     sessionId: string,

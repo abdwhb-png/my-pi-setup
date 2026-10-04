@@ -40,6 +40,7 @@ export function createRuntime(
         workspace,
         undefined,
         createSddAgentGate(),
+        agentDir,
     );
     return {
         agentDir,

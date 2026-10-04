@@ -5,27 +5,24 @@ automatic fallback switches to Edgee.
 
 ## Configuration
 
-Set `saveTokens.compressor.backend` in `~/.pi/agent/settings.json` or
-`<project>/.pi/settings.json`. Project settings deep-merge over global settings.
+Set `compressor.backend` in `~/.pi/agent/config/save-tokens.json` or `<cwd>/.pi/config/save-tokens.json`. Trusted project settings deep-merge over global settings.
 
 ```json
 {
-    "saveTokens": {
-        "compressor": {
-            "backend": "headroom",
-            "archiveOriginal": true,
-            "backends": {
-                "headroom": {
-                    "baseUrl": "http://127.0.0.1:8787",
-                    "timeoutMs": 1000
-                },
-                "edgee": {
-                    "baseUrl": "http://127.0.0.1:8320",
-                    "timeoutMs": 800
-                }
-            }
-        }
+  "compressor": {
+    "backend": "headroom",
+    "archiveOriginal": true,
+    "backends": {
+      "headroom": {
+        "baseUrl": "http://127.0.0.1:8787",
+        "timeoutMs": 1000
+      },
+      "edgee": {
+        "baseUrl": "http://127.0.0.1:8320",
+        "timeoutMs": 800
+      }
     }
+  }
 }
 ```
 
@@ -149,8 +146,8 @@ invalid response preserves the original tool result. No automatic inter-engine
 fallback occurs. Configured caps may replace a large failed result only after
 archiving the original and embedding its recovery path.
 
-Original results are stored under `~/.pi/agent/tool-result-archive` by default.
+Original results are stored under `~/.pi/agent/artifacts/tool-result-archive` by default.
 Compression telemetry is local under
-`~/.pi/agent/save-tokens-telemetry`. Both directories can contain sensitive
+`~/.pi/agent/artifacts/save-tokens-telemetry`. Both directories can contain sensitive
 content; protect them and keep retention settings appropriate. Telemetry write
 failures do not block tool execution.

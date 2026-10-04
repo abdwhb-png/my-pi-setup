@@ -1,3 +1,4 @@
+import { useIsolatedAgentDir } from "../../_shared/testing/config-fixture.ts";
 /// <reference types="bun" />
 
 import { TestHooks, mountPolicy } from "../../_shared/testing/tool-policy-fixture.ts";
@@ -9,6 +10,8 @@ import type {
 
 import { createBashOperations } from "../../_shared/command-execution/exec.ts";
 import type { SafeBashRecordInput } from "./telemetry/recorder.ts";
+
+useIsolatedAgentDir();
 
 const record = mock(async (_input: SafeBashRecordInput) => undefined);
 const flush = mock(async () => undefined);
@@ -96,6 +99,7 @@ function setup(options: {
     });
     if (!tool) throw new Error("safe_bash was not registered");
     const ctx = {
+        isProjectTrusted: () => false,
         cwd: "/tmp",
         hasUI: options.select !== undefined,
         sessionManager: {

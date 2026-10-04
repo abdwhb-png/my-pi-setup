@@ -13,14 +13,13 @@ test("/safe-bash status reports rejected guard policies from loaded settings", a
     try {
         const agentDir = join(root, "agent");
         const cwd = join(root, "project");
-        await mkdir(agentDir);
+        await mkdir(join(agentDir, "config"), { recursive: true });
         await mkdir(cwd);
         await writeFile(
-            join(agentDir, "settings.json"),
+            join(agentDir, "config/bash-execution.json"),
             JSON.stringify({
                 safeBash: {
                     guardPolicy: { sudo: "cwd-only" },
-                    telemetry: { directory: join(root, "telemetry") },
                 },
             }),
         );
