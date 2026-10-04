@@ -241,6 +241,9 @@ function messagesToResponseItems(model: Model<any>, messages: Message[], tools: 
 					continue;
 				}
 				if (block.type === "toolCall" && typeof block.id === "string") {
+					if (typeof block.name !== "string" || block.name.trim().length === 0) {
+						throw new Error(`Tool call ${block.id} has an invalid name.`);
+					}
 					const [callId, rawItemId] = block.id.split("|");
 					const itemId = isSameProviderAndApi ? normalizedItemId(rawItemId) : undefined;
 					pendingToolCalls.set(block.id, callId);
@@ -248,7 +251,7 @@ function messagesToResponseItems(model: Model<any>, messages: Message[], tools: 
 						type: "function_call",
 						call_id: callId,
 						...(itemId ? { id: itemId } : {}),
-						name: String(block.name ?? ""),
+						name: block.name,
 						arguments: JSON.stringify(block.arguments ?? {}),
 					});
 				}

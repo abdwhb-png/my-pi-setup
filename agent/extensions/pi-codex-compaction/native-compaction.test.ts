@@ -92,3 +92,38 @@ test("native checkpoint uses the edited tail content", () => {
 		{ role: "user", content: [{ type: "input_text", text: "Revised" }] },
 	]);
 });
+
+function branchWithToolCall(name: unknown): SessionEntry[] {
+	// Model a persisted session JSON boundary, including malformed historical data.
+	return JSON.parse(JSON.stringify([{
+		type: "message",
+		id: "a1",
+		parentId: null,
+		timestamp: "2026-09-23T00:00:00.000Z",
+		message: {
+			role: "assistant",
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			content: [{ type: "toolCall", id: "call_1|fc_1", name, arguments: { path: "fixture.txt" } }],
+			usage: {
+				input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: 1,
+		},
+	}]));
+}
+
+test.each([undefined, null, {}, 42, "", " "])("rejects a malformed persisted tool name: %j", (name) => {
+	expect(() => effectiveInputForBranch({ branch: branchWithToolCall(name), model, tools: [] }))
+		.toThrow("Tool call call_1|fc_1 has an invalid name.");
+});
+
+test("preserves a valid tool call and its orphan result during compaction", () => {
+	expect(effectiveInputForBranch({ branch: branchWithToolCall("read"), model, tools: [] })).toEqual([
+		{ type: "function_call", call_id: "call_1", id: "fc_1", name: "read", arguments: '{"path":"fixture.txt"}' },
+		{ type: "function_call_output", call_id: "call_1", output: "No result provided" },
+	]);
+});

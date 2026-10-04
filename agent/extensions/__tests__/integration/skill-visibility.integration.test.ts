@@ -7,9 +7,9 @@ import { buildSystemPrompt } from "../../../node_modules/@earendil-works/pi-codi
 import { isolateSkillHome } from "../../_shared/testing/skill-home.ts";
 import { publicExtensionEntrypoint } from "./public-extension-session.ts";
 
-const cleanup: Array<() => void> = [];
-afterEach(() => {
-    for (const dispose of cleanup.splice(0).reverse()) dispose();
+const cleanup: Array<() => void | Promise<void>> = [];
+afterEach(async () => {
+    for (const dispose of cleanup.splice(0).reverse()) await dispose();
 });
 
 test.each([false, true])(
@@ -22,7 +22,7 @@ test.each([false, true])(
         });
         const root = mkdtempSync(join(tmpdir(), "skill-composition-"));
         cleanup.push(() => rmSync(root, { recursive: true, force: true }));
-        isolateSkillHome(root, cleanup);
+        await isolateSkillHome(root, cleanup);
         process.env.PI_CODING_AGENT_DIR = root;
         const skillsDir = join(root, ".agents/skills");
         mkdirSync(skillsDir, { recursive: true });

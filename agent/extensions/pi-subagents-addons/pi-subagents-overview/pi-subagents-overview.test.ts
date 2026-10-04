@@ -1,6 +1,6 @@
-import { describe, expect, it, spyOn } from 'bun:test';
+import { afterAll, describe, expect, it, mock, spyOn } from 'bun:test';
 import * as fs from 'node:fs';
-import { homedir } from 'node:os';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import type {
     ExtensionAPI,
@@ -9,11 +9,22 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { resolveToolAliases } from '../../_shared/tool-groups/resolver';
-import registerSubagentsOverview from './index';
 import { resolvePiSubagentsPackageRoot } from './package-path';
-import { AgentDetailView, icon, SubagentsOverviewView } from './ui';
+import { AgentDetailView, SubagentsOverviewView } from './ui';
 
-const HOME = homedir();
+const realOs = { ...os };
+const fixtureHome = fs.mkdtempSync(path.join(os.tmpdir(), 'subagents-overview-'));
+afterAll(async () => {
+    try {
+        await mock.module('node:os', () => realOs);
+    } finally {
+        fs.rmSync(fixtureHome, { recursive: true, force: true });
+    }
+});
+await mock.module('node:os', () => ({ ...realOs, homedir: () => fixtureHome }));
+const { default: registerSubagentsOverview } = await import('./index');
+const userAgentsDir = path.join(fixtureHome, '.pi', 'agent', 'agents');
+fs.mkdirSync(userAgentsDir, { recursive: true });
 const EXAMPLE_SETTINGS_PATH = path.resolve(
     import.meta.dir,
     '../../../settings.example.json',
@@ -358,56 +369,44 @@ describe('pi-subagents-overview', () => {
         });
     });
 
-    describe('videographer agent', () => {
-        const filePath = path.join(
-            HOME,
-            '.pi',
-            'agent',
-            'agents',
-            'videographer.md',
-        );
-
-        it('videographer.md file exists', () => {
-            expect(fs.existsSync(filePath)).toBe(true);
-        });
-
-        it('videographer.md has valid frontmatter', () => {
-            const raw = fs.readFileSync(filePath, 'utf-8');
-            const fm = parseFrontmatterSimple(raw);
-            expect(fm).not.toBeNull();
-            expect(fm!.name).toBe('videographer');
-            expect(fm!.description).toBeTruthy();
-            expect(fm!.tools).toBeTruthy();
-        });
-    });
-
-    describe('widget line formatting', () => {
-        it('widget line does not exceed reasonable length', () => {
-            const raw = fs.readFileSync(EXAMPLE_SETTINGS_PATH, 'utf-8');
-            const parsed = JSON.parse(raw);
-            const overrides = parsed?.subagents?.agentOverrides ?? {};
-            const overrideCount = Object.keys(overrides).length;
-
-            const BUILTIN_AGENTS_DIR = path.join(
-                resolvePiSubagentsPackageRoot(),
-                'agents',
-            );
-            const builtinCount = fs
-                .readdirSync(BUILTIN_AGENTS_DIR)
-                .filter((f) => f.endsWith('.md')).length;
-            const userAgentsDir = path.join(HOME, '.pi', 'agent', 'agents');
-            const userCount = fs.existsSync(userAgentsDir)
-                ? fs.readdirSync(userAgentsDir).filter((f) => f.endsWith('.md'))
-                      .length
-                : 0;
-
-            const parts: string[] = [];
-            parts.push(`${icon} Subagents: ${builtinCount}B/${userCount}U`);
-            if (overrideCount > 0) parts.push(`${overrideCount} ovr`);
-            parts.push(`total ${builtinCount + userCount}`);
-
-            const widgetLine = parts.join(' · ');
-            expect(widgetLine.length).toBeLessThan(120);
+    describe('personal agent discovery', () => {
+        it('renders an empty agent directory and subsequent customized definitions', async () => {
+            type CommandHandler = (args: string, ctx: ExtensionCommandContext) => void | Promise<void>;
+            const handlers = new Map<string, CommandHandler>();
+            const pi = {
+                events: { on: () => {}, emit: () => {} },
+                registerMessageRenderer: () => {},
+                on: () => {},
+                registerCommand: (name: string, command: { handler: CommandHandler }) => handlers.set(name, command.handler),
+            } as unknown as ExtensionAPI;
+            registerSubagentsOverview(pi);
+            const handler = handlers.get('subagents-overview');
+            if (!handler) throw new Error('Overview command missing');
+            const ctx = { hasUI: false } as ExtensionCommandContext;
+            const log = spyOn(console, 'log').mockImplementation(() => {});
+            const filePath = path.join(userAgentsDir, 'custom-role.md');
+            try {
+                await handler('', ctx);
+                expect(log.mock.calls.at(-1)?.[0]).toContain('No user agents configured.');
+                for (const [name, description, tools, body] of [
+                    ['custom-reviewer', 'Inspect my application', 'read, grep', 'My preferred review instructions.'],
+                    ['custom-planner', 'Prepare a rollout', 'find, safe_bash', 'Entirely revised instructions from agent-sync.'],
+                ]) {
+                    fs.writeFileSync(filePath, `---\nname: ${name}\ndescription: ${description}\ntools: ${tools}\n---\n${body}\n`);
+                    await handler('', ctx);
+                    const output = String(log.mock.calls.at(-1)?.[0] ?? '');
+                    expect(output).toContain(name);
+                    expect(output).toContain(description);
+                    expect(output).toContain(tools);
+                    expect(output).not.toContain('No user agents configured.');
+                }
+                fs.unlinkSync(filePath);
+                await handler('', ctx);
+                expect(log.mock.calls.at(-1)?.[0]).toContain('No user agents configured.');
+            } finally {
+                log.mockRestore();
+                fs.rmSync(filePath, { force: true });
+            }
         });
     });
 });
