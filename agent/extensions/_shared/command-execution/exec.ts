@@ -17,6 +17,7 @@ import {
     type ExecutionProvenance,
 } from "../execution-provenance/types.ts";
 import type { SandboxExecutionContext } from "../sandbox-runtime/execution-context.ts";
+import { ExecutionDeadline } from "./deadline.ts";
 import { sandboxShellDiagnostic } from "./diagnostics.ts";
 
 export const MAX_STDIN_BYTES = 1_048_576;
@@ -41,6 +42,8 @@ export interface BashPreparationContext {
     command: string;
     cwd: string;
     env: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
+    deadlineMs?: number;
 }
 
 export type BashSpawn = (
@@ -71,6 +74,8 @@ interface ResolvedBashSpawn extends Omit<PreparedBashSpawn, "supervise"> {
 }
 
 export interface CreateBashOperationsOptions {
+    deadline?: ExecutionDeadline;
+    beforeSpawn?: () => void;
     onExecution?: ExecutionObserver;
     execution?: ExecutionProvenance;
     stdin?: string;
@@ -107,17 +112,25 @@ function waitForClose(child: ChildProcess): Promise<void> {
 }
 
 async function waitForPreparedClose(
-    closePromise: Promise<void>,
-): Promise<void> {
-    await Promise.race([
-        closePromise,
-        new Promise<void>((resolve) =>
-            setTimeout(resolve, PREPARED_CLOSE_GRACE_MS),
-        ),
-    ]);
+    closePromise: Promise<unknown>,
+): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            closePromise.then(() => true),
+            new Promise<boolean>((resolve) => {
+                timer = setTimeout(
+                    () => resolve(false),
+                    PREPARED_CLOSE_GRACE_MS,
+                );
+            }),
+        ]);
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
 }
 
-function killProcessTree(
+export function killProcessTree(
     pid: number,
     signal: NodeJS.Signals = "SIGKILL",
 ): void {
@@ -287,294 +300,370 @@ function createTrackedBashOperations(
             : Buffer.byteLength(options.stdin, "utf8");
 
     return {
-        async exec(command, cwd, { onData, signal, timeout, env }) {
-            let execution = { ...(options.execution ?? unknownExecution()) };
-            const report = (patch: Partial<ExecutionProvenance>) => {
-                execution = { ...execution, ...patch };
-                options.onExecution?.({ ...execution });
-            };
-            report({});
-            if (stdinBytes > MAX_STDIN_BYTES) {
-                report({ outcome: "failed" });
-                throw new Error(`stdin exceeds ${MAX_STDIN_BYTES} UTF-8 bytes`);
-            }
-            if (signal?.aborted) {
-                report({ outcome: "aborted" });
-                throw new Error("aborted");
-            }
-
-            let prepared: BashPreparationContext;
+        async exec(
+            command,
+            cwd,
+            { onData, signal: externalSignal, timeout, env },
+        ) {
+            const deadline =
+                options.deadline ??
+                new ExecutionDeadline(timeout, externalSignal);
+            const signal = deadline.signal;
             try {
-                prepared = options.prepareCommand
-                    ? await options.prepareCommand({
-                          command,
-                          cwd,
-                          env: env ?? options.env ?? process.env,
-                      })
-                    : {
-                          command,
-                          cwd,
-                          env: env ?? options.env ?? process.env,
-                      };
-
-                // Apply project-configured rewrites after prepareCommand, before spawn.
-                // Guards in execute() already ran on the original command.
-                if (options.rewriteCommand) {
-                    const rewritten = options.rewriteCommand(prepared.command);
-                    if (typeof rewritten === "string") {
-                        prepared.command = rewritten;
-                    } else if (
-                        rewritten &&
-                        typeof rewritten === "object" &&
-                        "command" in rewritten
-                    ) {
-                        prepared.command = rewritten.command;
-                    }
-                }
-            } catch (error) {
-                report({ outcome: signal?.aborted ? "aborted" : "failed" });
-                throw error;
-            }
-
-            let spawnSpec: ResolvedBashSpawn | undefined;
-            let primaryFailure: unknown;
-            let hasPrimaryFailure = false;
-            let executionResult: { exitCode: number | null } | undefined;
-            try {
-                spawnSpec = options.prepareSpawn
-                    ? await options.prepareSpawn(prepared)
-                    : (() => {
-                          const shell = getShellConfig(options.shellPath);
-                          return {
-                              file: shell.shell,
-                              args: [...shell.args, prepared.command],
-                              cwd: prepared.cwd,
-                              env: prepared.env,
-                              extraStdio: [] as const,
-                              supervise: undefined,
-                              cleanup: undefined,
-                          };
-                      })();
-                if (spawnSpec.execution) report(spawnSpec.execution);
-                try {
-                    await access(spawnSpec.cwd, constants.F_OK);
-                } catch {
+                let execution = {
+                    ...(options.execution ?? unknownExecution()),
+                };
+                const report = (patch: Partial<ExecutionProvenance>) => {
+                    execution = {
+                        ...execution,
+                        ...patch,
+                        timingsMs: { ...deadline.timingsMs },
+                    };
+                    options.onExecution?.({ ...execution });
+                };
+                report({});
+                if (stdinBytes > MAX_STDIN_BYTES) {
+                    report({ outcome: "failed" });
                     throw new Error(
-                        `Working directory does not exist: ${spawnSpec.cwd}\nCannot execute bash commands.`,
+                        `stdin exceeds ${MAX_STDIN_BYTES} UTF-8 bytes`,
                     );
                 }
-                if (signal?.aborted) throw new Error("aborted");
-                spawnSpec.beforeSpawn?.();
-
-                const spawn = options.spawn ?? nodeSpawn;
-                const child = spawn(spawnSpec.file, spawnSpec.args, {
-                    cwd: spawnSpec.cwd,
-                    detached: options.detached ?? process.platform !== "win32",
-                    env: spawnSpec.env,
-                    stdio: [
-                        options.stdin === undefined ? "ignore" : "pipe",
-                        "pipe",
-                        "pipe",
-                        ...spawnSpec.extraStdio,
-                    ],
-                    windowsHide: true,
-                });
-                const pid = child.pid;
-                if (!options.prepareSpawn && pid !== undefined)
-                    report({
-                        status: "unsandboxed",
-                        backend: "local",
-                        profile: "none",
-                        tmpNamespace: "host",
-                        phase: "process",
-                    });
-                if (pid !== undefined) {
-                    activeProcessIds.add(pid);
-                    report({ localProcess: "running" });
+                if (signal?.aborted) {
+                    report({ outcome: "aborted" });
+                    deadline.check();
                 }
-                const closePromise = options.prepareSpawn
-                    ? waitForClose(child)
-                    : Promise.resolve();
 
-                let exited = false;
-                let timedOut = false;
-                let timeoutHandle: Timer | undefined;
-                let hardKillHandle: Timer | undefined;
-                const markExited = () => {
-                    exited = true;
-                    report({ localProcess: "exited" });
-                };
-                const killChild = (hard = false) => {
-                    const terminationSignal =
-                        options.prepareSpawn && !hard ? "SIGTERM" : "SIGKILL";
-                    if (pid !== undefined)
-                        killProcessTree(pid, terminationSignal);
-                    else child.kill(terminationSignal);
-                    if (options.prepareSpawn && !hard && !hardKillHandle) {
-                        hardKillHandle = setTimeout(() => {
-                            if (!exited) killChild(true);
-                        }, PREPARED_TERMINATION_GRACE_MS);
+                let prepared: BashPreparationContext;
+                try {
+                    prepared = options.prepareCommand
+                        ? await deadline.wait(
+                              Promise.resolve(
+                                  options.prepareCommand({
+                                      command,
+                                      cwd,
+                                      env: env ?? options.env ?? process.env,
+                                      signal,
+                                      deadlineMs: deadline.deadlineMs,
+                                  }),
+                              ),
+                          )
+                        : {
+                              command,
+                              cwd,
+                              env: env ?? options.env ?? process.env,
+                          };
+
+                    // Apply project-configured rewrites after prepareCommand, before spawn.
+                    // Guards in execute() already ran on the original command.
+                    if (options.rewriteCommand) {
+                        const rewritten = options.rewriteCommand(
+                            prepared.command,
+                        );
+                        if (typeof rewritten === "string") {
+                            prepared.command = rewritten;
+                        } else if (
+                            rewritten &&
+                            typeof rewritten === "object" &&
+                            "command" in rewritten
+                        ) {
+                            prepared.command = rewritten.command;
+                        }
                     }
-                };
-                const onAbort = () => killChild();
-                const collectPathErrors =
-                    spawnSpec.execution?.backend === "zerobox" &&
-                    spawnSpec.execution.profile === "bash-general";
-                let diagnosticTail = Buffer.alloc(0);
-                let diagnosticTailTruncated = false;
-                const relayData = (chunk: Buffer) => {
-                    if (collectPathErrors) {
-                        diagnosticTailTruncated ||=
-                            diagnosticTail.length + chunk.length >
-                            PATH_DIAGNOSTIC_TAIL_BYTES;
-                        diagnosticTail = Buffer.from(
-                            Buffer.concat([
-                                diagnosticTail,
-                                chunk.subarray(-PATH_DIAGNOSTIC_TAIL_BYTES),
-                            ]).subarray(-PATH_DIAGNOSTIC_TAIL_BYTES),
+                } catch (error) {
+                    report({
+                        outcome: signal.aborted
+                            ? (deadline.interruptionOutcome ?? "aborted")
+                            : "failed",
+                    });
+                    throw error;
+                }
+
+                let spawnSpec: ResolvedBashSpawn | undefined;
+                let primaryFailure: unknown;
+                let hasPrimaryFailure = false;
+                let executionResult: { exitCode: number | null } | undefined;
+                try {
+                    spawnSpec = options.prepareSpawn
+                        ? await deadline.wait(
+                              Promise.resolve(
+                                  options.prepareSpawn({
+                                      ...prepared,
+                                      signal,
+                                      deadlineMs: deadline.deadlineMs,
+                                  }),
+                              ),
+                              (late) => late.cleanup?.(),
+                              () =>
+                                  report({
+                                      phase: "cleanup",
+                                      outcome: "failed",
+                                  }),
+                          )
+                        : (() => {
+                              const shell = getShellConfig(options.shellPath);
+                              return {
+                                  file: shell.shell,
+                                  args: [...shell.args, prepared.command],
+                                  cwd: prepared.cwd,
+                                  env: prepared.env,
+                                  extraStdio: [] as const,
+                                  supervise: undefined,
+                                  cleanup: undefined,
+                              };
+                          })();
+                    if (spawnSpec.execution) report(spawnSpec.execution);
+                    try {
+                        await deadline.wait(
+                            access(spawnSpec.cwd, constants.F_OK),
+                        );
+                    } catch {
+                        deadline.check();
+                        throw new Error(
+                            `Working directory does not exist: ${spawnSpec.cwd}\nCannot execute bash commands.`,
                         );
                     }
-                    onData(chunk);
-                };
+                    deadline.check();
+                    spawnSpec.beforeSpawn?.();
+                    options.beforeSpawn?.();
+                    deadline.check();
 
-                child.once("exit", markExited);
-                child.stdout?.on("data", relayData);
-                child.stderr?.on("data", relayData);
-                if (signal)
-                    signal.addEventListener("abort", onAbort, { once: true });
-                if (timeout !== undefined && timeout > 0) {
-                    // oxlint-disable-next-line typescript/no-unsafe-assignment -- Bun exposes setTimeout as any with mixed Bun/Node globals
-                    timeoutHandle = setTimeout(() => {
-                        timedOut = true;
-                        killChild();
-                    }, timeout * 1000);
-                }
-
-                try {
-                    const supervision = spawnSpec.supervise?.(child);
-                    const readyPromise =
-                        supervision?.ready ?? Promise.resolve();
-                    const settledPromise =
-                        supervision?.settled ?? Promise.resolve();
-                    void settledPromise.catch(() => {
-                        if (!exited) killChild();
+                    const executionStarted = performance.now();
+                    const spawn = options.spawn ?? nodeSpawn;
+                    const child = spawn(spawnSpec.file, spawnSpec.args, {
+                        cwd: spawnSpec.cwd,
+                        detached:
+                            options.detached ?? process.platform !== "win32",
+                        env: spawnSpec.env,
+                        stdio: [
+                            options.stdin === undefined ? "ignore" : "pipe",
+                            "pipe",
+                            "pipe",
+                            ...spawnSpec.extraStdio,
+                        ],
+                        windowsHide: true,
                     });
-                    const exitPromise = waitForChildProcess(child);
-                    await readyPromise;
-                    if (supervision && spawnSpec.execution)
+                    const pid = child.pid;
+                    if (!options.prepareSpawn && pid !== undefined)
                         report({
-                            status:
-                                spawnSpec.execution.backend === "host"
-                                    ? "unsandboxed"
-                                    : "sandboxed",
+                            status: "unsandboxed",
+                            backend: "local",
+                            profile: "none",
+                            tmpNamespace: "host",
                             phase: "process",
                         });
-                    const stdinPromise =
-                        options.stdin === undefined
-                            ? Promise.resolve()
-                            : writeStdin(child, options.stdin, () => exited);
-                    const [exitCode] = await Promise.all([
-                        exitPromise,
-                        stdinPromise,
-                    ]);
-                    report({ exitCode });
-                    await settledPromise;
-                    await closePromise;
-                    if (signal?.aborted) throw new Error("aborted");
-                    if (timedOut) throw new Error(`timeout:${timeout}`);
-                    // Readiness and settlement above prove startup and validate the protocol for this command.
-                    if (
-                        supervision &&
-                        execution.status === "sandboxed" &&
-                        execution.backend === "zerobox" &&
-                        execution.mode !== "host" &&
-                        exitCode !== null &&
-                        exitCode !== 0
-                    ) {
-                        const diagnostic = sandboxShellDiagnostic(
-                            (diagnosticTailTruncated
-                                ? diagnosticTail.subarray(
-                                      diagnosticTail.includes(10)
-                                          ? diagnosticTail.indexOf(10) + 1
-                                          : diagnosticTail.length,
-                                  )
-                                : diagnosticTail
-                            ).toString("utf8"),
-                            spawnSpec.getSandboxContext?.() ??
-                                spawnSpec.sandboxContext,
-                        );
-                        if (diagnostic)
-                            onData(Buffer.from(`\n${diagnostic}\n`));
+                    if (pid !== undefined) {
+                        activeProcessIds.add(pid);
+                        report({ localProcess: "running" });
                     }
-                    executionResult = { exitCode };
-                    report({
-                        outcome: exitCode === 0 ? "succeeded" : "failed",
-                    });
+                    const closePromise = options.prepareSpawn
+                        ? waitForClose(child)
+                        : Promise.resolve();
+
+                    let exited = false;
+                    let timedOut = false;
+                    let hardKillHandle: Timer | undefined;
+                    const markExited = () => {
+                        exited = true;
+                        report({ localProcess: "exited" });
+                    };
+                    const killChild = (hard = false) => {
+                        const terminationSignal =
+                            options.prepareSpawn && !hard
+                                ? "SIGTERM"
+                                : "SIGKILL";
+                        if (pid !== undefined)
+                            killProcessTree(pid, terminationSignal);
+                        else child.kill(terminationSignal);
+                        if (options.prepareSpawn && !hard && !hardKillHandle) {
+                            hardKillHandle = setTimeout(() => {
+                                if (!exited) killChild(true);
+                            }, PREPARED_TERMINATION_GRACE_MS);
+                        }
+                    };
+                    const onAbort = () => {
+                        timedOut = deadline.interruptionOutcome === "timed-out";
+                        killChild();
+                    };
+                    const collectPathErrors =
+                        spawnSpec.execution?.backend === "zerobox" &&
+                        spawnSpec.execution.profile === "bash-general";
+                    let diagnosticTail = Buffer.alloc(0);
+                    let diagnosticTailTruncated = false;
+                    const relayData = (chunk: Buffer) => {
+                        if (collectPathErrors) {
+                            diagnosticTailTruncated ||=
+                                diagnosticTail.length + chunk.length >
+                                PATH_DIAGNOSTIC_TAIL_BYTES;
+                            diagnosticTail = Buffer.from(
+                                Buffer.concat([
+                                    diagnosticTail,
+                                    chunk.subarray(-PATH_DIAGNOSTIC_TAIL_BYTES),
+                                ]).subarray(-PATH_DIAGNOSTIC_TAIL_BYTES),
+                            );
+                        }
+                        onData(chunk);
+                    };
+
+                    child.once("exit", markExited);
+                    child.stdout?.on("data", relayData);
+                    child.stderr?.on("data", relayData);
+                    if (signal)
+                        signal.addEventListener("abort", onAbort, {
+                            once: true,
+                        });
+
+                    const exitPromise = waitForChildProcess(child);
+                    try {
+                        const supervision = spawnSpec.supervise?.(child);
+                        const readyPromise =
+                            supervision?.ready ?? Promise.resolve();
+                        const settledPromise =
+                            supervision?.settled ?? Promise.resolve();
+                        void settledPromise.catch(() => {
+                            if (!exited) killChild();
+                        });
+                        await deadline.wait(readyPromise);
+                        if (supervision && spawnSpec.execution)
+                            report({
+                                status:
+                                    spawnSpec.execution.backend === "host"
+                                        ? "unsandboxed"
+                                        : "sandboxed",
+                                phase: "process",
+                            });
+                        const stdinPromise =
+                            options.stdin === undefined
+                                ? Promise.resolve()
+                                : writeStdin(
+                                      child,
+                                      options.stdin,
+                                      () => exited,
+                                  );
+                        const [exitCode] = await deadline.wait(
+                            Promise.all([exitPromise, stdinPromise]),
+                        );
+                        report({ exitCode });
+                        await deadline.wait(settledPromise);
+                        await deadline.wait(closePromise);
+                        if (signal.aborted) deadline.check();
+                        if (timedOut) throw new Error(`timeout:${timeout}`);
+                        // Readiness and settlement above prove startup and validate the protocol for this command.
+                        if (
+                            supervision &&
+                            execution.status === "sandboxed" &&
+                            execution.backend === "zerobox" &&
+                            execution.mode !== "host" &&
+                            exitCode !== null &&
+                            exitCode !== 0
+                        ) {
+                            const diagnostic = sandboxShellDiagnostic(
+                                (diagnosticTailTruncated
+                                    ? diagnosticTail.subarray(
+                                          diagnosticTail.includes(10)
+                                              ? diagnosticTail.indexOf(10) + 1
+                                              : diagnosticTail.length,
+                                      )
+                                    : diagnosticTail
+                                ).toString("utf8"),
+                                spawnSpec.getSandboxContext?.() ??
+                                    spawnSpec.sandboxContext,
+                            );
+                            if (diagnostic)
+                                onData(Buffer.from(`\n${diagnostic}\n`));
+                        }
+                        executionResult = { exitCode };
+                        deadline.timingsMs.execution =
+                            performance.now() - executionStarted;
+                        report({
+                            outcome: exitCode === 0 ? "succeeded" : "failed",
+                        });
+                    } catch (error) {
+                        deadline.timingsMs.execution =
+                            performance.now() - executionStarted;
+                        if (!exited) killChild();
+                        const terminated = await waitForPreparedClose(
+                            exitPromise.then((exitCode) => {
+                                report({ exitCode });
+                            }),
+                        );
+                        if (!terminated) {
+                            const cleanup = new Error(
+                                "Bash process termination was not confirmed within the cleanup grace period",
+                            );
+                            attachCleanupFailure(error, cleanup);
+                            report({ phase: "cleanup", outcome: "failed" });
+                        }
+                        if (options.prepareSpawn && pid !== undefined) {
+                            await waitForPreparedClose(closePromise);
+                        }
+                        if (signal.aborted && !timedOut) {
+                            report({ outcome: "aborted" });
+                            deadline.check();
+                        }
+                        if (timedOut) {
+                            report({ outcome: "timed-out" });
+                            throw new Error(`timeout:${timeout}`, {
+                                cause: error,
+                            });
+                        }
+                        throw error;
+                    } finally {
+                        child.removeListener("exit", markExited);
+                        child.stdout?.removeListener("data", relayData);
+                        child.stderr?.removeListener("data", relayData);
+                        if (hardKillHandle) clearTimeout(hardKillHandle);
+                        signal?.removeEventListener("abort", onAbort);
+                        if (pid !== undefined) activeProcessIds.delete(pid);
+                    }
                 } catch (error) {
-                    if (!exited) killChild();
-                    if (options.prepareSpawn && pid !== undefined) {
-                        await waitForPreparedClose(closePromise);
-                    }
-                    if (signal?.aborted) {
-                        report({ outcome: "aborted" });
-                        throw new Error("aborted");
-                    }
-                    if (timedOut) {
-                        report({ outcome: "timed-out" });
-                        throw new Error(`timeout:${timeout}`);
-                    }
-                    throw error;
-                } finally {
-                    child.removeListener("exit", markExited);
-                    child.stdout?.removeListener("data", relayData);
-                    child.stderr?.removeListener("data", relayData);
-                    if (timeoutHandle) clearTimeout(timeoutHandle);
-                    if (hardKillHandle) clearTimeout(hardKillHandle);
-                    signal?.removeEventListener("abort", onAbort);
-                    if (pid !== undefined) activeProcessIds.delete(pid);
+                    if (
+                        execution.outcome === "pending" ||
+                        (execution.phase === "setup" &&
+                            execution.localProcess === undefined)
+                    )
+                        report({
+                            outcome: signal.aborted
+                                ? (deadline.interruptionOutcome ?? "aborted")
+                                : "failed",
+                        });
+                    hasPrimaryFailure = true;
+                    primaryFailure = error;
                 }
-            } catch (error) {
-                if (
-                    execution.outcome === "pending" ||
-                    (execution.phase === "setup" &&
-                        execution.localProcess === undefined)
-                )
-                    report({ outcome: "failed" });
-                hasPrimaryFailure = true;
-                primaryFailure = error;
+                const cleanupFailures: unknown[] = [];
+                try {
+                    await spawnSpec?.cleanup?.();
+                } catch (error) {
+                    cleanupFailures.push(error);
+                }
+                try {
+                    await options.afterClose?.(prepared);
+                } catch (error) {
+                    cleanupFailures.push(error);
+                }
+                const cleanupFailure =
+                    cleanupFailures.length === 0
+                        ? undefined
+                        : cleanupFailures.length === 1
+                          ? cleanupFailures[0]
+                          : new AggregateError(
+                                cleanupFailures,
+                                "Multiple Bash cleanup operations failed",
+                            );
+                if (hasPrimaryFailure) {
+                    if (cleanupFailures.length > 0)
+                        attachCleanupFailure(primaryFailure, cleanupFailure);
+                    throw primaryFailure;
+                }
+                if (cleanupFailures.length > 0) {
+                    report({ phase: "cleanup", outcome: "failed" });
+                    throw cleanupFailure;
+                }
+                if (!executionResult)
+                    throw new Error("Bash execution produced no result");
+                return executionResult;
+            } finally {
+                if (!options.deadline) deadline.dispose();
             }
-            const cleanupFailures: unknown[] = [];
-            try {
-                await spawnSpec?.cleanup?.();
-            } catch (error) {
-                cleanupFailures.push(error);
-            }
-            try {
-                await options.afterClose?.(prepared);
-            } catch (error) {
-                cleanupFailures.push(error);
-            }
-            const cleanupFailure =
-                cleanupFailures.length === 0
-                    ? undefined
-                    : cleanupFailures.length === 1
-                      ? cleanupFailures[0]
-                      : new AggregateError(
-                            cleanupFailures,
-                            "Multiple Bash cleanup operations failed",
-                        );
-            if (hasPrimaryFailure) {
-                if (cleanupFailures.length > 0)
-                    attachCleanupFailure(primaryFailure, cleanupFailure);
-                throw primaryFailure;
-            }
-            if (cleanupFailures.length > 0) {
-                report({ phase: "cleanup", outcome: "failed" });
-                throw cleanupFailure;
-            }
-            if (!executionResult)
-                throw new Error("Bash execution produced no result");
-            return executionResult;
         },
     };
 }

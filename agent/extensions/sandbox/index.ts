@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ExecutionDeadline } from "../_shared/command-execution/deadline.ts";
 import {
     extensionConfigPath,
     isProjectConfigTrusted,
@@ -712,6 +713,8 @@ export function createSandboxedBashOps(
 ): BashOperations {
     return supervisor.createOperations({
         onExecution: options.onExecution,
+        deadline: options.deadline,
+        beforeSpawn: options.beforeSpawn,
         execution: {
             status: "unknown",
             profile,
@@ -738,8 +741,8 @@ export function createSandboxedBashOps(
                 stdin: options.stdin,
             };
             const spawn = await (profile === "think-strict"
-                ? service.prepareThinkBash(sandboxCommand)
-                : service.prepareBash(sandboxCommand));
+                ? service.prepareThinkBash(sandboxCommand, options.deadline)
+                : service.prepareBash(sandboxCommand, options.deadline));
             return {
                 ...spawn,
                 supervise: (child) => {
@@ -830,6 +833,7 @@ export function createSandboxExtension(
     };
 
     let transitionGeneration = 0;
+    const startupDeadlines = new Map<number, ExecutionDeadline>();
     let analysisRetryTimer: ReturnType<typeof setTimeout> | undefined;
     let analysisRetryAttempt = 0;
     let analysisAttemptGeneration: number | undefined;
@@ -870,6 +874,8 @@ export function createSandboxExtension(
         drain = false,
     ): number | undefined => {
         clearAnalysisRecovery();
+        for (const deadline of startupDeadlines.values())
+            deadline.cancel(new Error("Sandbox startup was superseded"));
         transitionGeneration += 1;
         const generation = transitionGeneration;
         const published = publishSandboxRuntime(
@@ -899,7 +905,7 @@ export function createSandboxExtension(
         return generation;
     };
     const isCurrentTransition = (generation: number): boolean =>
-        transitionGeneration === generation;
+        transitionGeneration === generation && ownsSandboxRuntime(runtimeOwner);
     const publishError = (error: unknown) =>
         publishSandboxRuntime(
             runtimeOwner,
@@ -918,6 +924,9 @@ export function createSandboxExtension(
     const retiredSandbox = new Set<SandboxService>();
     const retiredAnalysis = new Set<AnalysisSandboxService>();
     let authorityWatch: ReturnType<typeof createAuthorityWatch> | undefined;
+    let watchedShell:
+        | { resolved: LoadSandboxConfigResult; session: typeof sessionConfig }
+        | undefined;
 
     const createCleanupCoordinator = <T extends { shutdown(): Promise<void> }>(
         pending: Set<T>,
@@ -984,72 +993,84 @@ export function createSandboxExtension(
         excludedAnalysis?: AnalysisSandboxService,
         includeRetired = false,
     ): Promise<void> => {
-        const currentSandbox = sandboxService;
-        const currentAnalysis = analysisService;
-        const analysisTargets = [
-            ...new Set([
-                ...pendingAnalysisCleanup,
-                ...inFlightAnalysisCandidates,
-                ...(currentAnalysis ? [currentAnalysis] : []),
-                ...(includeRetired ? retiredAnalysis : []),
-            ]),
-        ].filter(
-            (service) =>
-                service !== excludedAnalysis &&
-                (includeRetired || !retiredAnalysis.has(service)),
-        );
-        const sandboxTargets = [
-            ...new Set([
-                ...pendingSandboxCleanup,
-                ...inFlightSandboxCandidates,
-                ...(currentSandbox ? [currentSandbox] : []),
-                ...(includeRetired ? retiredSandbox : []),
-            ]),
-        ].filter(
-            (service) =>
-                service !== excludedSandbox &&
-                (includeRetired || !retiredSandbox.has(service)),
-        );
-        const [analysisResults, sandboxResults] = await Promise.all([
-            Promise.allSettled(analysisTargets.map(cleanupAnalysisService)),
-            Promise.allSettled(sandboxTargets.map(cleanupSandboxService)),
-        ]);
-        let failure: unknown;
-        for (const result of analysisResults) {
-            if (result.status === "rejected" && failure === undefined) {
-                failure = result.reason;
-            } else if (result.status === "rejected") {
-                attachCleanupFailure(failure, result.reason);
+        const deadline = new ExecutionDeadline(30);
+        try {
+            const currentSandbox = sandboxService;
+            const currentAnalysis = analysisService;
+            const analysisTargets = [
+                ...new Set([
+                    ...pendingAnalysisCleanup,
+                    ...inFlightAnalysisCandidates,
+                    ...(currentAnalysis ? [currentAnalysis] : []),
+                    ...(includeRetired ? retiredAnalysis : []),
+                ]),
+            ].filter(
+                (service) =>
+                    service !== excludedAnalysis &&
+                    (includeRetired || !retiredAnalysis.has(service)),
+            );
+            const sandboxTargets = [
+                ...new Set([
+                    ...pendingSandboxCleanup,
+                    ...inFlightSandboxCandidates,
+                    ...(currentSandbox ? [currentSandbox] : []),
+                    ...(includeRetired ? retiredSandbox : []),
+                ]),
+            ].filter(
+                (service) =>
+                    service !== excludedSandbox &&
+                    (includeRetired || !retiredSandbox.has(service)),
+            );
+            const [analysisResults, sandboxResults] = await deadline.wait(
+                Promise.all([
+                    Promise.allSettled(
+                        analysisTargets.map(cleanupAnalysisService),
+                    ),
+                    Promise.allSettled(
+                        sandboxTargets.map(cleanupSandboxService),
+                    ),
+                ]),
+            );
+            let failure: unknown;
+            for (const result of analysisResults) {
+                if (result.status === "rejected" && failure === undefined) {
+                    failure = result.reason;
+                } else if (result.status === "rejected") {
+                    attachCleanupFailure(failure, result.reason);
+                }
             }
-        }
-        for (const result of sandboxResults) {
-            if (result.status === "rejected" && failure === undefined) {
-                failure = result.reason;
-            } else if (result.status === "rejected") {
-                attachCleanupFailure(failure, result.reason);
+            for (const result of sandboxResults) {
+                if (result.status === "rejected" && failure === undefined) {
+                    failure = result.reason;
+                } else if (result.status === "rejected") {
+                    attachCleanupFailure(failure, result.reason);
+                }
             }
+            if (
+                currentAnalysis &&
+                !pendingAnalysisCleanup.has(currentAnalysis) &&
+                analysisResults[analysisTargets.indexOf(currentAnalysis)]
+                    ?.status === "fulfilled"
+            ) {
+                if (analysisService === currentAnalysis) analysisService = null;
+            }
+            if (
+                currentSandbox &&
+                !pendingSandboxCleanup.has(currentSandbox) &&
+                sandboxResults[sandboxTargets.indexOf(currentSandbox)]
+                    ?.status === "fulfilled"
+            ) {
+                if (sandboxService === currentSandbox) sandboxService = null;
+            }
+            if (failure !== undefined) throw failure;
+        } finally {
+            deadline.dispose();
         }
-        if (
-            currentAnalysis &&
-            !pendingAnalysisCleanup.has(currentAnalysis) &&
-            analysisResults[analysisTargets.indexOf(currentAnalysis)]
-                ?.status === "fulfilled"
-        ) {
-            if (analysisService === currentAnalysis) analysisService = null;
-        }
-        if (
-            currentSandbox &&
-            !pendingSandboxCleanup.has(currentSandbox) &&
-            sandboxResults[sandboxTargets.indexOf(currentSandbox)]?.status ===
-                "fulfilled"
-        ) {
-            if (sandboxService === currentSandbox) sandboxService = null;
-        }
-        if (failure !== undefined) throw failure;
     };
 
     const cleanupSandboxCandidate = async (
         candidate: SandboxService,
+        ctx: ExtensionContext,
     ): Promise<void> => {
         if (
             !inFlightSandboxCandidates.has(candidate) &&
@@ -1057,7 +1078,15 @@ export function createSandboxExtension(
         ) {
             return;
         }
-        await cleanupSandboxService(candidate);
+        try {
+            await cleanupSandboxService(candidate);
+        } catch (error) {
+            ctx.ui.notify(
+                `Sandbox candidate cleanup failed: ${errorMessage(error)}`,
+                "error",
+            );
+            throw error;
+        }
     };
 
     const startAnalysisAttempt = (
@@ -1150,7 +1179,9 @@ export function createSandboxExtension(
         generation: number,
         ctx: ExtensionContext,
         drain = false,
+        deadline = new ExecutionDeadline(30),
     ): Promise<boolean> => {
+        startupDeadlines.set(generation, deadline);
         const candidateSandbox = createConfiguredService(config);
         const candidateSupervisor = createBashProcessSupervisor();
         bashProcessSupervisors.add(candidateSupervisor);
@@ -1159,14 +1190,19 @@ export function createSandboxExtension(
         inFlightSandboxCandidates.add(candidateSandbox);
         const abandonStaleCandidate = async (): Promise<false> => {
             try {
-                await cleanupSandboxCandidate(candidateSandbox);
+                await deadline.wait(
+                    cleanupSandboxCandidate(candidateSandbox, ctx),
+                );
             } catch {
                 // Cleanup is retained for the next transition.
             }
             return false;
         };
         try {
-            await candidateSandbox.startBashSession(cwd);
+            await deadline.wait(
+                candidateSandbox.startBashSession(cwd, deadline),
+            );
+            deadline.check();
             if (!isCurrentTransition(generation)) {
                 return abandonStaleCandidate();
             }
@@ -1199,8 +1235,13 @@ export function createSandboxExtension(
                     });
                 analysisService = null;
                 // Retry failed candidates without terminating admitted retired operations.
-                await shutdownServices(candidateSandbox);
-            } else await shutdownServices(candidateSandbox);
+                await deadline.measure("shutdown", () =>
+                    shutdownServices(candidateSandbox),
+                );
+            } else
+                await deadline.measure("shutdown", () =>
+                    shutdownServices(candidateSandbox),
+                );
             if (!isCurrentTransition(generation)) {
                 return abandonStaleCandidate();
             }
@@ -1227,10 +1268,19 @@ export function createSandboxExtension(
                     }
                 },
             });
+            deadline.check();
             const published = publishSandboxRuntime(runtimeOwner, {
+                preparationTimingsMs: { ...deadline.timingsMs },
                 state: "enabled",
                 sandboxFingerprint: shellSandboxFingerprint(config),
-                beforeAdmission: () => prepareShellExecution(ctx, ctx.cwd),
+                beforeAdmission: async (deadline, prepared) => {
+                    if (
+                        prepared?.sandboxFingerprint ===
+                        shellSandboxFingerprint(config)
+                    )
+                        return;
+                    await prepareShellExecution(ctx, ctx.cwd, deadline);
+                },
                 contexts: candidateSandbox.getProfileContexts(),
                 dockerAccess: summarizeDockerAccess(config.docker),
                 createBashOperations: (options) =>
@@ -1249,7 +1299,9 @@ export function createSandboxExtension(
                     ),
             });
             if (!published) {
-                await cleanupSandboxCandidate(candidateSandbox);
+                await deadline.wait(
+                    cleanupSandboxCandidate(candidateSandbox, ctx),
+                );
                 return false;
             }
             sandboxService = candidateSandbox;
@@ -1260,12 +1312,17 @@ export function createSandboxExtension(
             return true;
         } catch (error) {
             try {
-                await cleanupSandboxCandidate(candidateSandbox);
+                await deadline.wait(
+                    cleanupSandboxCandidate(candidateSandbox, ctx),
+                );
             } catch (cleanup) {
                 attachCleanupFailure(error, cleanup);
             }
             if (!isCurrentTransition(generation)) return false;
             throw error;
+        } finally {
+            startupDeadlines.delete(generation);
+            deadline.dispose();
         }
     };
 
@@ -1379,23 +1436,28 @@ export function createSandboxExtension(
     };
 
     /** Only additive changes may retain the previous admitted generation. */
-    const reconfigureServices = async (
+    const performReconfiguration = async (
         ctx: ExtensionContext,
         resolved: LoadSandboxConfigResult,
-        presentation = resolved.shell,
+        presentation: ShellCapabilityResolution,
+        deadline: ExecutionDeadline,
     ): Promise<boolean> => {
+        deadline.check();
         if (
             [...sandboxConfigs.values()].some((previous) =>
                 sandboxAccessRemoved(previous, resolved.config, ctx.cwd),
             )
         ) {
-            await revokeServices(
-                ctx,
-                new Error(
-                    "Sandbox authority was revoked; replacement admission is required",
+            await deadline.measure("shutdown", () =>
+                revokeServices(
+                    ctx,
+                    new Error(
+                        "Sandbox authority was revoked; replacement admission is required",
+                    ),
                 ),
             );
         }
+        deadline.check();
         const previous = getSandboxRuntime();
         const previousFooter = {
             state: sandboxFooterState,
@@ -1411,6 +1473,7 @@ export function createSandboxExtension(
                 generation,
                 ctx,
                 true,
+                deadline,
             );
             if (!isCurrentTransition(generation) || !enabled) return false;
             sandboxEnabled = true;
@@ -1443,6 +1506,41 @@ export function createSandboxExtension(
             }
             throw error;
         }
+    };
+
+    let pendingReplacement:
+        | {
+              key: string;
+              deadline: ExecutionDeadline;
+              promise: Promise<boolean>;
+          }
+        | undefined;
+    const reconfigureServices = (
+        ctx: ExtensionContext,
+        resolved: LoadSandboxConfigResult,
+        presentation = resolved.shell,
+    ): Promise<boolean> => {
+        const key = JSON.stringify([
+            modeSessionEpoch,
+            realpathSync(ctx.cwd),
+            resolved.shell.mode,
+            presentation.mode,
+            shellSandboxFingerprint(resolved.config),
+        ]);
+        if (pendingReplacement?.key === key) return pendingReplacement.promise;
+        pendingReplacement?.deadline.cancel(
+            new Error("Sandbox startup was superseded"),
+        );
+        const deadline = new ExecutionDeadline(30);
+        const promise = deadline
+            .wait(performReconfiguration(ctx, resolved, presentation, deadline))
+            .finally(() => {
+                deadline.dispose();
+                if (pendingReplacement?.promise === promise)
+                    pendingReplacement = undefined;
+            });
+        pendingReplacement = { key, deadline, promise };
+        return promise;
     };
 
     const selectSessionMode = async (
@@ -1535,7 +1633,8 @@ export function createSandboxExtension(
     const prepareShellExecution = async (
         ctx: ExtensionContext,
         cwd: string,
-    ): Promise<void> => {
+        deadline?: ExecutionDeadline,
+    ): Promise<ShellCapabilityResolution | void> => {
         const projectRoot = realpathSync(ctx.cwd);
         const executionRoot = realpathSync(cwd);
         if (
@@ -1543,29 +1642,42 @@ export function createSandboxExtension(
             !executionRoot.startsWith(`${projectRoot}/`)
         )
             return;
-        await waitForModeChange();
-        await authorityWatch?.check();
-        await waitForModeChange();
-        const resolved = loadShell(ctx);
+        const check = async () => {
+            await waitForModeChange();
+            await authorityWatch?.check();
+            await waitForModeChange();
+        };
+        await (deadline ? deadline.measure("configuration", check) : check());
+        deadline?.check();
+        const resolved =
+            watchedShell && watchedShell.session === sessionConfig
+                ? watchedShell.resolved
+                : loadShell(ctx);
         const fingerprint = shellSandboxFingerprint(resolved.config);
         const runtime = getSandboxRuntime();
         if (
             runtime.state === "enabled" &&
             runtime.sandboxFingerprint === fingerprint
         ) {
-            return;
+            return resolved.shell;
         }
-        if (!(await reconfigureServices(ctx, resolved))) {
+        const replacement = reconfigureServices(ctx, resolved);
+        if (!(await (deadline ? deadline.wait(replacement) : replacement))) {
             throw new Error(
                 "Sandbox configuration changed but the replacement runtime was not admitted",
             );
         }
+        const admitted = getSandboxRuntime();
+        if (deadline && admitted.state === "enabled")
+            Object.assign(deadline.timingsMs, admitted.preparationTimingsMs);
+        return resolved.shell;
     };
 
     const prepareForcedSandboxExecution = async (
         ctx: ExtensionContext,
         cwd: string,
-    ): Promise<void> => {
+        deadline?: ExecutionDeadline,
+    ): Promise<ShellCapabilityResolution | void> => {
         const projectRoot = realpathSync(ctx.cwd);
         const executionRoot = realpathSync(cwd);
         if (
@@ -1574,9 +1686,13 @@ export function createSandboxExtension(
         ) {
             return;
         }
-        await waitForModeChange();
-        await authorityWatch?.check();
-        await waitForModeChange();
+        const check = async () => {
+            await waitForModeChange();
+            await authorityWatch?.check();
+            await waitForModeChange();
+        };
+        await (deadline ? deadline.measure("configuration", check) : check());
+        deadline?.check();
         const forced = loadShell(ctx, {
             ...sessionConfig,
             mode: "sandbox",
@@ -1587,13 +1703,22 @@ export function createSandboxExtension(
             runtime.sandboxFingerprint ===
                 shellSandboxFingerprint(forced.config)
         ) {
-            return;
+            return forced.shell;
         }
-        if (!(await reconfigureServices(ctx, forced, loadShell(ctx).shell))) {
+        const replacement = reconfigureServices(
+            ctx,
+            forced,
+            watchedShell?.resolved.shell ?? loadShell(ctx).shell,
+        );
+        if (!(await (deadline ? deadline.wait(replacement) : replacement))) {
             throw new Error(
                 "Sandbox configuration changed but the replacement runtime was not admitted",
             );
         }
+        const admitted = getSandboxRuntime();
+        if (deadline && admitted.state === "enabled")
+            Object.assign(deadline.timingsMs, admitted.preparationTimingsMs);
+        return forced.shell;
     };
 
     pi.registerFlag("no-sandbox", {
@@ -1838,6 +1963,7 @@ export function createSandboxExtension(
             ],
             read: async () => {
                 const resolved = loadShell(ctx);
+                watchedShell = { resolved, session: sessionConfig };
                 const key = shellSandboxFingerprint(resolved.config);
                 policies.set(key, resolved.config);
                 return { key, grants: [] };
@@ -1892,9 +2018,10 @@ export function createSandboxExtension(
         publishShellRuntime(
             runtimeOwner,
             () => loadShell(ctx).shell,
-            (cwd) => prepareShellExecution(ctx, cwd),
+            (cwd, deadline) => prepareShellExecution(ctx, cwd, deadline),
             () => loadShell(ctx, { ...sessionConfig, mode: "sandbox" }).shell,
-            (cwd) => prepareForcedSandboxExecution(ctx, cwd),
+            (cwd, deadline) =>
+                prepareForcedSandboxExecution(ctx, cwd, deadline),
         );
         const generation = beginTransition(ctx, true);
         if (generation === undefined) return;

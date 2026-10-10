@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import type { ExecutionDeadline } from "../../_shared/command-execution/deadline.ts";
 import type { ExecutionProvenance } from "../../_shared/execution-provenance/types.ts";
 import {
     SANDBOX_ERROR_CODES,
@@ -96,10 +97,11 @@ export const SANDBOX_CAPABILITIES: SandboxCapabilities = Object.freeze({
 });
 
 export interface SandboxBackend {
-    probe(): Promise<SandboxCapabilities>;
+    probe(deadline?: ExecutionDeadline): Promise<SandboxCapabilities>;
     prepare(
         command: SandboxCommand,
         policy: SandboxPolicy,
         lease: PrivateTempLease,
+        deadline?: ExecutionDeadline,
     ): Promise<SandboxSpawnSpec>;
 }

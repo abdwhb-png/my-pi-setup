@@ -9,11 +9,11 @@ const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 async function fixture() {
  const parent=await mkdtemp(join(tmpdir(), "bundle-"));
  const root=join(parent,"runtimes/zerobox/test");
- for (const dir of ["bin", "helper", "components/shell/bin", "components/analysis/bin"]) await mkdir(join(root,dir),{recursive:true});
+ for (const dir of ["bin", "helper", "components/shell/bin", "components/analysis/bin"]) await mkdir(join(root,dir),{recursive:true,mode:0o700});
  const files={"bin/zerobox":"engine", "helper/zerobox-linux-sandbox":"helper", "components/shell/bin/bash":"bash", "components/shell/bin/env":"env", "components/analysis/bin/node":"node"};
  for (const [path,content] of Object.entries(files)) await writeFile(join(root,path),content,{mode:0o700});
  const manifest={schema:1,target:"x86_64-unknown-linux-gnu",version:"test",helper:{path:"helper/zerobox-linux-sandbox",sha256:sha("helper")},components:{shell:{root:"components/shell",files:[{path:"bin/bash",sha256:sha("bash")},{path:"bin/env",sha256:sha("env")}]},analysis:{root:"components/analysis",files:[{path:"bin/node",sha256:sha("node")}]}}};
- await writeFile(join(root,"manifest.json"),JSON.stringify(manifest));
+ await writeFile(join(root,"manifest.json"),JSON.stringify(manifest),{mode:0o600});
  await mkdir(join(parent,"bin"));
  const entry=join(parent,"bin/zerobox"); await symlink(join(root,"bin/zerobox"),entry);
  return {parent,root,entry,manifest};

@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import type { ExecutionDeadline } from "../../_shared/command-execution/deadline.ts";
 import {
     createSandboxExecutionContext,
     type SandboxProfileContexts,
@@ -28,11 +29,17 @@ export interface SandboxExecutionHandle {
 }
 
 export interface SandboxService {
-    probe(): Promise<SandboxCapabilities>;
-    startBashSession(cwd: string): Promise<void>;
+    probe(deadline?: ExecutionDeadline): Promise<SandboxCapabilities>;
+    startBashSession(cwd: string, deadline?: ExecutionDeadline): Promise<void>;
     getProfileContexts(): SandboxProfileContexts;
-    prepareBash(command: SandboxCommand): Promise<SandboxSpawnSpec>;
-    prepareThinkBash(command: SandboxCommand): Promise<SandboxSpawnSpec>;
+    prepareBash(
+        command: SandboxCommand,
+        deadline?: ExecutionDeadline,
+    ): Promise<SandboxSpawnSpec>;
+    prepareThinkBash(
+        command: SandboxCommand,
+        deadline?: ExecutionDeadline,
+    ): Promise<SandboxSpawnSpec>;
     prepareAnalysis(
         command: SandboxCommand,
         readablePaths: string[],
@@ -100,8 +107,8 @@ class DefaultSandboxService implements SandboxService {
         return this.#recovery;
     }
 
-    probe(): Promise<SandboxCapabilities> {
-        return this.#backend.probe();
+    probe(deadline?: ExecutionDeadline): Promise<SandboxCapabilities> {
+        return this.#backend.probe(deadline);
     }
 
     #serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -117,11 +124,15 @@ class DefaultSandboxService implements SandboxService {
         if (this.#closed) throw new SandboxExecutionError("setup-failed");
     }
 
-    startBashSession(cwd: string): Promise<void> {
-        return this.#serialize(async () => {
+    startBashSession(cwd: string, deadline?: ExecutionDeadline): Promise<void> {
+        const startup = this.#serialize(async () => {
             this.#assertOpen();
-            await this.probe();
-            await this.#recoverOnce();
+            deadline?.check();
+            await this.probe(deadline);
+            const recovery = this.#recoverOnce();
+            await (deadline ? deadline.wait(recovery) : recovery);
+            this.#assertOpen();
+            deadline?.check();
             if (this.#bashLease && this.#bashCwd === cwd) return;
             if (this.#thinkLease) {
                 await this.#thinkLease.dispose();
@@ -135,8 +146,12 @@ class DefaultSandboxService implements SandboxService {
                     this.#bashCwd = undefined;
                 }
             }
+            // Lease creation remains in the lifecycle even after the caller times out.
+            // Shutdown must retain ownership until this lease and any failed cleanup settle.
             const lease = await this.#createLease();
             try {
+                deadline?.check();
+                this.#assertOpen();
                 createBashPolicy({
                     cwd,
                     lease,
@@ -156,6 +171,7 @@ class DefaultSandboxService implements SandboxService {
             this.#bashCwd = cwd;
             this.#contexts = undefined;
         });
+        return deadline ? deadline.wait(startup) : startup;
     }
 
     getProfileContexts(): SandboxProfileContexts {
@@ -215,20 +231,28 @@ class DefaultSandboxService implements SandboxService {
         };
     }
 
-    prepareBash(command: SandboxCommand): Promise<SandboxSpawnSpec> {
-        return this.#prepareShell(command, false);
+    prepareBash(
+        command: SandboxCommand,
+        deadline?: ExecutionDeadline,
+    ): Promise<SandboxSpawnSpec> {
+        return this.#prepareShell(command, false, deadline);
     }
 
-    prepareThinkBash(command: SandboxCommand): Promise<SandboxSpawnSpec> {
-        return this.#prepareShell(command, true);
+    prepareThinkBash(
+        command: SandboxCommand,
+        deadline?: ExecutionDeadline,
+    ): Promise<SandboxSpawnSpec> {
+        return this.#prepareShell(command, true, deadline);
     }
 
     #prepareShell(
         command: SandboxCommand,
         think: boolean,
+        deadline?: ExecutionDeadline,
     ): Promise<SandboxSpawnSpec> {
         return this.#serialize(async () => {
             this.#assertOpen();
+            deadline?.check();
             if (!this.#bashLease || this.#bashCwd !== command.cwd) {
                 throw new SandboxExecutionError("setup-failed");
             }
@@ -242,7 +266,7 @@ class DefaultSandboxService implements SandboxService {
                 hostEnv: this.#hostEnv,
             });
             const spawn = this.#observeAdmission(
-                await this.#backend.prepare(command, policy, lease),
+                await this.#backend.prepare(command, policy, lease, deadline),
             );
             return {
                 ...spawn,

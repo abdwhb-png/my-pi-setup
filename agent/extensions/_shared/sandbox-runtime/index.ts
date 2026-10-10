@@ -1,5 +1,7 @@
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
+import type { ShellCapabilityResolution } from "../shell-runtime/contracts.ts";
 
+import type { ExecutionDeadline } from "../command-execution/deadline.ts";
 import type { CreateBashOperationsOptions } from "../command-execution/exec.ts";
 import type { ExecutionObserver } from "../execution-provenance/types.ts";
 import type { AnalysisRequest, AnalysisResult } from "./analysis-protocol.ts";
@@ -35,6 +37,9 @@ export interface SandboxAnalysisRuntime {
 }
 
 export interface SandboxBashOperationOptions {
+    deadline?: ExecutionDeadline;
+    preparedPolicy?: ShellCapabilityResolution;
+    beforeSpawn?: () => void;
     beforeDispatch?: (sandboxFingerprint: string | undefined) => void;
     onExecution?: ExecutionObserver;
     onSandboxContext?: (context: SandboxExecutionContext) => void;
@@ -49,10 +54,14 @@ export type SandboxRuntimeSnapshot =
     | { state: "error" }
     | {
           state: "enabled";
+          preparationTimingsMs?: import("../execution-provenance/types.ts").ExecutionProvenance["timingsMs"];
           contexts?: SandboxProfileContexts;
           dockerAccess?: DockerAccessSummary;
           sandboxFingerprint?: string;
-          beforeAdmission?(): Promise<void>;
+          beforeAdmission?(
+              deadline?: ExecutionDeadline,
+              preparedPolicy?: ShellCapabilityResolution,
+          ): Promise<void>;
           createBashOperations(
               options: SandboxBashOperationOptions,
           ): BashOperations;
@@ -293,12 +302,15 @@ async function withActiveRuntime<T>(
         snapshot: Extract<SandboxRuntimeSnapshot, { state: "enabled" }>,
         remainingMs: number,
     ) => Promise<T>,
+    executionDeadline?: ExecutionDeadline,
+    preparedPolicy?: ShellCapabilityResolution,
 ): Promise<T> {
     const started = performance.now();
     const deadline = started + Math.min(30_000, budgetMs);
     let waited = false;
     let authorityChecked = false;
     while (true) {
+        executionDeadline?.check();
         if (signal?.aborted)
             throw new Error("aborted; the request was not executed");
         const current = registry();
@@ -316,7 +328,14 @@ async function withActiveRuntime<T>(
             const snapshot = current.snapshot;
             if (!authorityChecked && snapshot.beforeAdmission) {
                 authorityChecked = true;
-                await snapshot.beforeAdmission();
+                const admission = () =>
+                    snapshot.beforeAdmission!(
+                        executionDeadline,
+                        preparedPolicy,
+                    );
+                await (executionDeadline
+                    ? executionDeadline.measure("admission", admission)
+                    : admission());
                 continue;
             }
             const remaining = budgetMs - (performance.now() - started);
@@ -396,14 +415,33 @@ function bashOperations(
             return withActiveRuntime(
                 owner,
                 session,
-                executionOptions.signal,
+                options.deadline?.signal ?? executionOptions.signal,
                 budget,
                 async (snapshot, remaining) => {
                     if (!think)
                         options.beforeDispatch?.(snapshot.sandboxFingerprint);
+                    const guarded = {
+                        ...options,
+                        beforeSpawn: () => {
+                            const current = registry();
+                            if (
+                                current.owner !== owner ||
+                                current.session !== session
+                            )
+                                throw new SandboxUnavailableError(
+                                    "session-changed",
+                                );
+                            if (current.snapshot !== snapshot)
+                                throw new SandboxUnavailableError(
+                                    "execution-interrupted",
+                                );
+                            options.deadline?.check();
+                            options.beforeSpawn?.();
+                        },
+                    };
                     const operations = think
-                        ? snapshot.createThinkBashOperations(options)
-                        : snapshot.createBashOperations(options);
+                        ? snapshot.createThinkBashOperations(guarded)
+                        : snapshot.createBashOperations(guarded);
                     const result = await operations.exec(command, cwd, {
                         ...executionOptions,
                         ...(Number.isFinite(budget)
@@ -420,6 +458,8 @@ function bashOperations(
                         );
                     return result;
                 },
+                options.deadline,
+                options.preparedPolicy,
             );
         },
     };

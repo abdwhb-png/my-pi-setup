@@ -20,6 +20,7 @@ export interface PrivateRuntimeBundle {
     };
 }
 export interface ResolvePrivateRuntimeOptions {
+    signal?: AbortSignal;
     binaryPath: string;
     expectedBinarySha256: string;
     bundlePath?: string;
@@ -150,6 +151,7 @@ export async function readPrivateRuntimeEntry(
 async function tree(
     root: string,
     value: unknown,
+    signal?: AbortSignal,
 ): Promise<PrivateRuntimeComponent> {
     if (
         !record(value) ||
@@ -166,6 +168,7 @@ async function tree(
     const files: PrivateRuntimeComponent["files"] = [];
     const declared = new Set<string>();
     for (const item of value.files) {
+        signal?.throwIfAborted();
         if (!record(item) || !onlyKeys(item, ["path", "sha256", "symlink"]))
             throw new Error("Invalid component entry");
         const path = child(componentRoot, item.path);
@@ -176,6 +179,7 @@ async function tree(
             throw new Error("Component entry has a redirected parent");
         if (digest(item.sha256) && item.symlink === undefined) {
             await secure(path);
+            // Cancellation is checked between files. The outer deadline bounds the caller while a pending read settles.
             if (hash(await readFile(path)) !== item.sha256)
                 throw new Error(`Runtime file digest mismatch: ${name}`);
             files.push({ path: name, sha256: item.sha256 });
@@ -201,6 +205,7 @@ async function tree(
     }
     async function checkListed(directory: string): Promise<void> {
         for (const item of await readdir(directory, { withFileTypes: true })) {
+            signal?.throwIfAborted();
             const path = join(directory, item.name);
             if (item.isDirectory()) {
                 await secure(path, true);
@@ -220,6 +225,7 @@ export async function resolvePrivateRuntime(
     options: ResolvePrivateRuntimeOptions,
 ): Promise<PrivateRuntimeBundle> {
     try {
+        options.signal?.throwIfAborted();
         const binaryPath = await realpath(options.binaryPath);
         await secure(binaryPath);
         if (((await lstat(binaryPath)).mode & 0o111) === 0)
@@ -276,12 +282,13 @@ export async function resolvePrivateRuntime(
         )
             throw new Error("Runtime helper digest mismatch");
         const [shell, analysis] = await Promise.all([
-            tree(root, manifest.components.shell),
-            tree(root, manifest.components.analysis),
+            tree(root, manifest.components.shell, options.signal),
+            tree(root, manifest.components.analysis, options.signal),
         ]);
         for (const command of ["bin/bash", "bin/env"])
             if (!shell.files.some((file) => file.path === command))
                 throw new Error(`Private shell command missing: ${command}`);
+        options.signal?.throwIfAborted();
         return {
             root,
             binaryPath,
@@ -292,6 +299,7 @@ export async function resolvePrivateRuntime(
             components: { shell, analysis },
         };
     } catch (error) {
+        options.signal?.throwIfAborted();
         throw new SandboxExecutionError("provenance-mismatch", {
             diagnostic:
                 error instanceof Error

@@ -1,5 +1,18 @@
+export const EXECUTION_TIMING_PHASES = [
+    "preparation",
+    "configuration",
+    "verification",
+    "shutdown",
+    "admission",
+    "execution",
+] as const;
+export type ExecutionTimings = Partial<
+    Record<(typeof EXECUTION_TIMING_PHASES)[number], number>
+>;
+
 /** Facts about one execution, independent of its output text. */
 export interface ExecutionProvenance {
+    timingsMs?: ExecutionTimings;
     /** Effective configuration mode when the execution boundary observed it. */
     mode?: "sandbox" | "host";
     /** Describes the effective shell policy without changing execution proof. */

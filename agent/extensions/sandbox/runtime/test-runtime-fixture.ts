@@ -15,7 +15,7 @@ export async function createRuntimeBundleFixture(
         "components/shell/bin",
         "components/analysis",
     ])
-        await mkdir(join(root, path), { recursive: true });
+        await mkdir(join(root, path), { recursive: true, mode: 0o700 });
     for (const [name, bytes] of Object.entries({
         "helper/zerobox-linux-sandbox": "helper",
         "components/shell/bin/bash": "bash",
@@ -43,6 +43,7 @@ export async function createRuntimeBundleFixture(
                 analysis: { root: "components/analysis", files: [] },
             },
         }),
+        { mode: 0o600 },
     );
     return {
         runtimeBundlePath: root,

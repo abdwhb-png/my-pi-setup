@@ -499,3 +499,39 @@ describe("sandbox service", () => {
         expect(lease.dispose).toHaveBeenCalledTimes(1);
     });
 });
+
+it("keeps ownership of a late startup lease until cleanup settles", async () => {
+    const { ExecutionDeadline } = await import("../../_shared/command-execution/deadline.ts");
+    const deadline = new ExecutionDeadline(0.01);
+    const pendingLease = deferred<PrivateTempLease>();
+    const lease = fakeLease(1);
+    const cleanup = new Error("late lease cleanup failed");
+    let attempts = 0;
+    lease.dispose = mock(async () => { if (++attempts === 1) throw cleanup; });
+    const service = createSandboxService({
+        config: validatePiSandboxConfig({}), createLease: () => pendingLease.promise,
+        recoverStaleLeases: async () => {},
+        backend: { probe: async () => SANDBOX_CAPABILITIES, prepare: async () => { throw new Error("unused"); } },
+    });
+    const startup = service.startBashSession("/workspace", deadline).catch(error => error);
+    let shutdown: Promise<void> | undefined;
+    try {
+        const failure = await startup;
+        expect(failure.message).toContain("timeout:");
+        let finished = false;
+        shutdown = service.shutdown().then(() => { finished = true; });
+        await Bun.sleep(10);
+        expect(finished).toBe(false);
+        pendingLease.resolve(lease);
+        await shutdown;
+        expect(attempts).toBe(2);
+        expect(failure.cleanupError).toBe(cleanup);
+    } finally {
+        pendingLease.resolve(lease);
+        await startup;
+        await shutdown;
+        await Bun.sleep(10);
+        await service.shutdown();
+        deadline.dispose();
+    }
+});

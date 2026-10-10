@@ -12,6 +12,7 @@ import {
 import {
     hostExecution,
     unknownExecution,
+    EXECUTION_TIMING_PHASES,
     type ExecutionProvenance,
 } from "./types.ts";
 export {
@@ -156,6 +157,23 @@ export function parseExecutionProvenance(
             !Number.isSafeInteger(record.exitCode))
     )
         return;
+    const timings = record.timingsMs;
+    if (
+        record.timingsMs !== undefined &&
+        (!timings ||
+            typeof timings !== "object" ||
+            Array.isArray(timings) ||
+            Object.entries(timings).some(
+                ([phase, duration]) =>
+                    !EXECUTION_TIMING_PHASES.some(
+                        (allowed) => phase === allowed,
+                    ) ||
+                    typeof duration !== "number" ||
+                    !Number.isFinite(duration) ||
+                    duration < 0,
+            ))
+    )
+        return;
     // All members of the owned wire contract have been validated above.
     const observedHost =
         record.status === "unsandboxed" &&
@@ -179,6 +197,7 @@ export function parseExecutionProvenance(
         tmpNamespace: record.tmpNamespace,
         phase: record.phase,
         outcome: record.outcome,
+        ...(timings ? { timingsMs: { ...timings } } : {}),
         ...(record.exitCode !== undefined ? { exitCode: record.exitCode } : {}),
         ...(record.localProcess !== undefined
             ? { localProcess: record.localProcess }

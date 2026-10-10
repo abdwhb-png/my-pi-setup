@@ -13,6 +13,14 @@ Choose the execution mode with `/sandbox mode sandbox` or `/sandbox mode host`. 
 
 A change to either configuration file is checked before each model request and shell admission. The model sees valid changes as pending until the next shell call admits the replacement. Invalid configuration blocks new calls. Setup failures never switch automatically to host execution. While processes remain active, the watcher also polls once per second: a removed grant interrupts every existing descendant that retained it before the replacement is used; additive changes let existing work drain.
 
+## Preparation and deadlines
+
+The shell timeout covers configuration preparation, replacement admission, spawn setup and execution in one monotonic budget. An unchanged sandbox command resolves configuration during preparation and checks it again immediately before spawn. No configuration result is reused across commands, and a policy change during asynchronous setup blocks dispatch. Host dispatch also checks its current authorization immediately before spawn.
+
+Concurrent requests for the same session, project, mode and configuration share one replacement. Cancelling one caller stops that command without cancelling a startup another caller may need. A different configuration, a new owner or session shutdown supersedes the candidate. Startup and service shutdown each have a separate 30-second ceiling. Timed-out cleanup stays owned for retry and cannot publish a replacement. Version, strict-mode and feature probes run asynchronously with cancellation. Every replacement still verifies all runtime file hashes. Permission removal revokes the old generation before replacement, and cleanup failures remain visible and retained for retry.
+
+Execution provenance includes `timingsMs` for preparation, configuration, verification, shutdown, admission and execution when those phases ran. Preparation is the total before command dispatch and includes nested replacement work. Verification and shutdown timings describe a replacement this command awaited, rather than an earlier cached startup. A timeout can report partial phase timings. These fields contain durations, not commands or environment values.
+
 ## Commands
 
 | Command                                       | Purpose                                                                                                                                     |

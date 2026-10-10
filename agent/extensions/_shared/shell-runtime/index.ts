@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
+import type { ExecutionDeadline } from "../command-execution/deadline.ts";
 import { CapabilityError } from "../shell-capability-error.ts";
 import type { ShellCapabilityResolution } from "./contracts.ts";
 
@@ -15,9 +16,15 @@ export {
 interface ShellRuntime {
     owner: symbol;
     resolve(): ShellCapabilityResolution;
-    prepare?(cwd: string): Promise<void>;
+    prepare?(
+        cwd: string,
+        deadline?: ExecutionDeadline,
+    ): Promise<ShellCapabilityResolution | void>;
     resolveForcedSandbox?(): ShellCapabilityResolution;
-    prepareForcedSandbox?(cwd: string): Promise<void>;
+    prepareForcedSandbox?(
+        cwd: string,
+        deadline?: ExecutionDeadline,
+    ): Promise<ShellCapabilityResolution | void>;
 }
 export interface ActiveShellOperation {
     id: number;
@@ -63,6 +70,13 @@ export function requireShellPolicy(cwd: string): ShellCapabilityResolution {
             "authorization-required",
             "Shell policy is not initialized",
         );
+    return validateShellPolicy(cwd, policy);
+}
+
+function validateShellPolicy(
+    cwd: string,
+    policy: ShellCapabilityResolution,
+): ShellCapabilityResolution {
     const actual = realpathSync(cwd);
     if (
         actual !== policy.projectRoot &&
@@ -82,10 +96,14 @@ export function requireShellPolicy(cwd: string): ShellCapabilityResolution {
 /** Refresh an active runtime before admitting a new Bash operation. */
 export async function resolveShellPolicyForExecution(
     cwd: string,
+    deadline?: ExecutionDeadline,
 ): Promise<ShellCapabilityResolution> {
     const runtime = registry().runtime;
     if (!runtime) return requireShellPolicy(cwd);
-    await runtime.prepare?.(cwd);
+    const preparation = runtime.prepare?.(cwd, deadline);
+    const prepared = preparation
+        ? await (deadline ? deadline.wait(preparation) : preparation)
+        : undefined;
     const current = registry().runtime;
     if (
         current === undefined ||
@@ -96,7 +114,10 @@ export async function resolveShellPolicyForExecution(
             "authorization-required",
             "Shell runtime changed during policy preparation. The command was not executed.",
         );
-    return requireShellPolicy(cwd);
+    deadline?.check();
+    return prepared
+        ? validateShellPolicy(cwd, prepared)
+        : requireShellPolicy(cwd);
 }
 
 /**
@@ -130,14 +151,17 @@ export function resolveWritableRoots(
 /** Resolve an explicit !s request without changing the selected session mode. */
 export async function resolveForcedSandboxPolicyForExecution(
     cwd: string,
+    deadline?: ExecutionDeadline,
 ): Promise<ShellCapabilityResolution> {
     const runtime = registry().runtime;
     if (!runtime) return requireShellPolicy(cwd);
-    if (runtime.prepareForcedSandbox) {
-        await runtime.prepareForcedSandbox(cwd);
-    } else {
-        await runtime.prepare?.(cwd);
-    }
+    const preparation = runtime.prepareForcedSandbox
+        ? runtime.prepareForcedSandbox(cwd, deadline)
+        : runtime.prepare?.(cwd, deadline);
+    const prepared = preparation
+        ? await (deadline ? deadline.wait(preparation) : preparation)
+        : undefined;
+    deadline?.check();
     const current = registry().runtime;
     if (!current || current !== runtime || current.owner !== runtime.owner) {
         throw new CapabilityError(
@@ -145,7 +169,8 @@ export async function resolveForcedSandboxPolicyForExecution(
             "Shell runtime changed during policy preparation. The command was not executed.",
         );
     }
-    const policy = runtime.resolveForcedSandbox?.() ?? runtime.resolve();
+    const policy =
+        prepared ?? runtime.resolveForcedSandbox?.() ?? runtime.resolve();
     if (policy.mode !== "sandbox") {
         throw new CapabilityError(
             "authorization-required",

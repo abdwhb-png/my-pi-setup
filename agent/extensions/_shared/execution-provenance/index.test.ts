@@ -155,3 +155,11 @@ test('sandbox context is omitted from successes, host tools and pre-sandbox bloc
     expect(mergeSandboxContextForFailure('host', {}, hostExecution(), true)).toEqual({});
     expect(mergeSandboxContextForFailure('blocked', {}, { ...unknownExecution(), phase: 'policy', outcome: 'blocked' }, true)).toEqual({});
 });
+
+test("execution provenance preserves validated phase durations", () => {
+    const timingsMs = { preparation: 25, configuration: 2, verification: 20, shutdown: 1, admission: 0, execution: 7 };
+    expect(parseExecutionProvenance({ ...hostExecution(), timingsMs })?.timingsMs).toEqual(timingsMs);
+    for (const value of [{ execution: -1 }, { verification: Infinity }, { preparation: NaN }, { configuration: "2" }, { command: "secret input" }]) {
+        expect(parseExecutionProvenance({ ...hostExecution(), timingsMs: value })).toBeUndefined();
+    }
+});

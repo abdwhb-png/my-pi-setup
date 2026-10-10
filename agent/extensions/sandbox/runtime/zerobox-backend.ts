@@ -12,6 +12,8 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { ExecutionDeadline } from "../../_shared/command-execution/deadline.ts";
+import { killProcessTree } from "../../_shared/command-execution/exec.ts";
 
 import {
     createAdmittedSandboxExecutionContext,
@@ -61,8 +63,12 @@ export interface ZeroboxBackendOptions {
     runCommand?: (
         file: string,
         args: string[],
-        options: { cwd: string; env: Record<string, string> },
-    ) => ZeroboxCommandResult;
+        options: {
+            cwd: string;
+            env: Record<string, string>;
+            signal?: AbortSignal;
+        },
+    ) => ZeroboxCommandResult | Promise<ZeroboxCommandResult>;
     expectedProvenance?: ZeroboxProvenance;
     createStatusChannel?: typeof createZeroboxStatusChannel;
     createAdmissionChannel?: typeof createZeroboxAdmissionChannel;
@@ -126,23 +132,35 @@ async function defaultHashFile(path: string): Promise<string> {
         .digest("hex");
 }
 
-function defaultRunCommand(
+async function defaultRunCommand(
     file: string,
     args: string[],
-    options: { cwd: string; env: Record<string, string> },
-): ZeroboxCommandResult {
-    const result = Bun.spawnSync([file, ...args], {
+    options: { cwd: string; env: Record<string, string>; signal?: AbortSignal },
+): Promise<ZeroboxCommandResult> {
+    options.signal?.throwIfAborted();
+    const child = Bun.spawn([file, ...args], {
         cwd: options.cwd,
         env: options.env,
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
+        detached: true,
+        signal: options.signal,
+        killSignal: "SIGKILL",
     });
-    return {
-        exitCode: result.exitCode,
-        stdout: result.stdout.toString(),
-        stderr: result.stderr.toString(),
-    };
+    const abort = () => killProcessTree(child.pid, "SIGKILL");
+    options.signal?.addEventListener("abort", abort, { once: true });
+    try {
+        const [exitCode, stdout, stderr] = await Promise.all([
+            child.exited,
+            new Response(child.stdout).text(),
+            new Response(child.stderr).text(),
+        ]);
+        options.signal?.throwIfAborted();
+        return { exitCode, stdout, stderr };
+    } finally {
+        options.signal?.removeEventListener("abort", abort);
+    }
 }
 
 function compileProfile(policy: SandboxPolicy): ZeroboxProfile {
@@ -460,12 +478,24 @@ class ZeroboxBackend implements SandboxBackend {
         this.#runtimeBundlePath = options.runtimeBundlePath;
     }
 
-    probe(): Promise<SandboxCapabilities> {
-        this.#probePromise ??= this.#probe();
-        return this.#probePromise;
+    probe(deadline?: ExecutionDeadline): Promise<SandboxCapabilities> {
+        if (!this.#probePromise) {
+            const budget = deadline ?? new ExecutionDeadline(30);
+            this.#probePromise = budget.measure("verification", () =>
+                this.#probe(budget),
+            );
+            if (!deadline)
+                this.#probePromise = this.#probePromise.finally(() =>
+                    budget.dispose(),
+                );
+        }
+        return deadline
+            ? deadline.wait(this.#probePromise)
+            : this.#probePromise;
     }
 
-    async #probe(): Promise<SandboxCapabilities> {
+    async #probe(deadline: ExecutionDeadline): Promise<SandboxCapabilities> {
+        deadline.check();
         if (this.#platform !== "linux" || process.arch !== "x64") {
             throw new SandboxExecutionError("unsupported-platform");
         }
@@ -494,8 +524,9 @@ class ZeroboxBackend implements SandboxBackend {
         const expected = pinned.provenance;
         let hash: string;
         try {
-            hash = await this.#hashFile(this.#binaryPath);
+            hash = await deadline.wait(this.#hashFile(this.#binaryPath));
         } catch (error) {
+            deadline.check();
             throw new SandboxExecutionError("backend-unavailable", {
                 cause: error,
             });
@@ -507,17 +538,25 @@ class ZeroboxBackend implements SandboxBackend {
             binaryPath: this.#binaryPath,
             expectedBinarySha256: expected.binarySha256,
             bundlePath: this.#runtimeBundlePath,
+            signal: deadline.signal,
         });
+        deadline.check();
         this.#binaryPath = this.#runtime.binaryPath;
         assertRuntimeProvenance(this.#runtime, expected);
 
         let version: ZeroboxCommandResult;
         try {
-            version = this.#runCommand(this.#binaryPath, ["--version"], {
-                cwd: homedir(),
-                env: { HOME: homedir(), PATH: ZEROBOX_LAUNCHER_PATH },
-            });
+            version = await deadline.wait(
+                Promise.resolve(
+                    this.#runCommand(this.#binaryPath, ["--version"], {
+                        cwd: homedir(),
+                        env: { HOME: homedir(), PATH: ZEROBOX_LAUNCHER_PATH },
+                        signal: deadline.signal,
+                    }),
+                ),
+            );
         } catch (error) {
+            deadline.check();
             throw new SandboxExecutionError("spawn-failed", { cause: error });
         }
         if (
@@ -535,31 +574,37 @@ class ZeroboxBackend implements SandboxBackend {
             await mkdir(join(probeHome, "home"), { mode: 0o700 });
             let strict: ZeroboxCommandResult;
             try {
-                strict = this.#runCommand(
-                    this.#binaryPath,
-                    [
-                        "--strict-sandbox",
-                        `--runtime-bundle=${this.#runtime.root}`,
-                        "--runtime-component=shell",
-                        `--private-tmp=${join(probeHome, "tmp")}`,
-                        `--private-home=${join(probeHome, "home")}`,
-                        `--allow-read=${probeHome}`,
-                        "-C",
-                        probeHome,
-                        "--",
-                        `${PRIVATE_SHELL_PATH}/true`,
-                    ],
-                    {
-                        cwd: homedir(),
-                        env: {
-                            HOME: probeHome,
-                            TMPDIR: join(probeHome, "tmp"),
-                            ZEROBOX_HOME: probeHome,
-                            PATH: ZEROBOX_LAUNCHER_PATH,
-                        },
-                    },
+                strict = await deadline.wait(
+                    Promise.resolve(
+                        this.#runCommand(
+                            this.#binaryPath,
+                            [
+                                "--strict-sandbox",
+                                `--runtime-bundle=${this.#runtime.root}`,
+                                "--runtime-component=shell",
+                                `--private-tmp=${join(probeHome, "tmp")}`,
+                                `--private-home=${join(probeHome, "home")}`,
+                                `--allow-read=${probeHome}`,
+                                "-C",
+                                probeHome,
+                                "--",
+                                `${PRIVATE_SHELL_PATH}/true`,
+                            ],
+                            {
+                                cwd: homedir(),
+                                signal: deadline.signal,
+                                env: {
+                                    HOME: probeHome,
+                                    TMPDIR: join(probeHome, "tmp"),
+                                    ZEROBOX_HOME: probeHome,
+                                    PATH: ZEROBOX_LAUNCHER_PATH,
+                                },
+                            },
+                        ),
+                    ),
                 );
             } catch (error) {
+                deadline.check();
                 throw new SandboxExecutionError("spawn-failed", {
                     cause: error,
                 });
@@ -572,11 +617,17 @@ class ZeroboxBackend implements SandboxBackend {
         }
         let help: ZeroboxCommandResult;
         try {
-            help = this.#runCommand(this.#binaryPath, ["--help"], {
-                cwd: homedir(),
-                env: { HOME: homedir(), PATH: ZEROBOX_LAUNCHER_PATH },
-            });
+            help = await deadline.wait(
+                Promise.resolve(
+                    this.#runCommand(this.#binaryPath, ["--help"], {
+                        cwd: homedir(),
+                        env: { HOME: homedir(), PATH: ZEROBOX_LAUNCHER_PATH },
+                        signal: deadline.signal,
+                    }),
+                ),
+            );
         } catch (error) {
+            deadline.check();
             throw new SandboxExecutionError("spawn-failed", { cause: error });
         }
         return {
@@ -596,8 +647,10 @@ class ZeroboxBackend implements SandboxBackend {
         command: SandboxCommand,
         policy: SandboxPolicy,
         lease: PrivateTempLease,
+        deadline?: ExecutionDeadline,
     ): Promise<SandboxSpawnSpec> {
-        const capabilities = await this.probe();
+        const capabilities = await this.probe(deadline);
+        deadline?.check();
         const runtime = this.#runtime;
         if (!runtime) throw new SandboxExecutionError("provenance-mismatch");
         const component =
@@ -658,6 +711,7 @@ class ZeroboxBackend implements SandboxBackend {
                     throw new AggregateError(
                         [error, ...failures],
                         "Sandbox channel preparation and cleanup failed",
+                        { cause: error },
                     );
                 throw error;
             }
