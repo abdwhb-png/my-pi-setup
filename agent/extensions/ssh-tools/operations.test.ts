@@ -376,10 +376,33 @@ describe("createRemoteBashOps", () => {
         await pending;
     });
 
-    it("continues after an intermediate failure without errexit", async () => {
+    it.each([
+        "false\necho SHOULD_NOT_RUN",
+        "false | true\necho SHOULD_NOT_RUN",
+    ])("stops on an unhandled failure by default: %s", async (command) => {
         const harness = fakeLaunch();
         const localTarget = { ...target, remoteCwd: process.cwd() };
-        const ops = createRemoteBashOps(localTarget, { spawnFn: harness.launch });
+        const ops = createRemoteBashOps(localTarget, {
+            spawnFn: harness.launch,
+        });
+        const pending = ops.exec(command, LOCAL_CWD, { onData: noData });
+        const result = spawnSync("sh", ["-c", commandOf(harness)], {
+            input: harness.process.stdinWrites[0],
+            encoding: "utf8",
+        });
+        harness.process.emitClose(result.status);
+        await pending;
+        expect(result.status).toBe(1);
+        expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
+    });
+
+    it("continues after an intermediate failure when failFast is false", async () => {
+        const harness = fakeLaunch();
+        const localTarget = { ...target, remoteCwd: process.cwd() };
+        const ops = createRemoteBashOps(localTarget, {
+            spawnFn: harness.launch,
+            failFast: false,
+        });
         const pending = ops.exec("false\necho RECOVERED", LOCAL_CWD, {
             onData: noData,
         });
@@ -391,6 +414,28 @@ describe("createRemoteBashOps", () => {
         expect(result.stdout.trim()).toBe("RECOVERED");
         harness.process.emitClose(0);
         await pending;
+    });
+
+    it.each([
+        "if false; then echo UNEXPECTED; else echo HANDLED; fi",
+        "false || echo HANDLED",
+        "if false | true; then echo UNEXPECTED; else echo HANDLED; fi",
+        'unset SSH_TEST_UNSET; printf "%s" "$SSH_TEST_UNSET"; echo HANDLED',
+    ])("allows handled failures and unset variables: %s", async (command) => {
+        const harness = fakeLaunch();
+        const ops = createRemoteBashOps(
+            { ...target, remoteCwd: process.cwd() },
+            { spawnFn: harness.launch },
+        );
+        const pending = ops.exec(command, LOCAL_CWD, { onData: noData });
+        const result = spawnSync("sh", ["-c", commandOf(harness)], {
+            input: harness.process.stdinWrites[0],
+            encoding: "utf8",
+        });
+        harness.process.emitClose(result.status);
+        await pending;
+        expect(result.status).toBe(0);
+        expect(result.stdout.trim()).toBe("HANDLED");
     });
 
     it("keeps the command off the ssh command line", async () => {

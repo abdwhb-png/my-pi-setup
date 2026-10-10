@@ -66,7 +66,14 @@ This is the part that is easy to get wrong, so it is spelled out.
 | `ssh_edit`  | resolves under the remote working directory | **rejected** unless it is lexically inside the remote working directory |
 | `ssh_bash`  | runs in the remote working directory        | n/a                                                                     |
 
-`ssh_bash` does not enable Bash `errexit`: an intermediate failing command does not stop later commands by default, as with local Bash. If the initial change to the remote working directory fails, the command stops rather than running from the SSH login directory. A `cd` written inside the command still applies, so `cd /etc && ls` works in one call. The command script is fully read before execution; commands that read stdin see EOF rather than consuming subsequent script lines. Use a here-document or pipe when a command needs input.
+`ssh_bash` defaults to `failFast: true`, enabling Bash `errexit` and `pipefail`. An unhandled failing command or pipeline stops execution and produces a tool error rather than letting a later successful command hide it. Set `failFast: false` to disable both options for a call that deliberately continues after failures. Bash's usual `errexit` exceptions apply, including conditions in `if` and failures handled with `||`. This does not enable `nounset`, and commands can change shell options themselves.
+
+If the initial change to the remote working directory fails, the command stops in either mode rather than running from the SSH login directory. A `cd` written inside the command still applies, so `cd /etc && ls` works in one call. The command script is fully read before execution; commands that read stdin see EOF rather than consuming subsequent script lines. Use a here-document or pipe when a command needs input.
+
+```json
+{ "command": "build-command\ncheck-command", "failFast": true }
+{ "command": "optional-command\nprintf 'continuing\\n'", "failFast": false }
+```
 
 For a file outside the remote working directory, use an absolute path with `ssh_read` or `ssh_write`; `ssh_edit` cannot target it directly. `ssh_bash` can also operate on it explicitly.
 
@@ -114,7 +121,9 @@ ssh_bash  find /var/log -name '*.log' -mtime -1
 - the byte count is sent alongside and verified with `wc -c` **before** the rename, so a connection that drops mid-transfer cannot publish a truncated file over an intact one. `cat` exits 0 on an early EOF, so exit status alone does not prove the content arrived
 - a **directory** target is refused: `mv -f file dir` succeeds by moving the file _inside_ the directory. This is re-checked immediately before the rename, which narrows the window to the rename itself, but a concurrent writer that turns the target into a directory in that instant is still possible. Closing it entirely needs descriptor-based resolution (`openat2(RESOLVE_BENEATH)` or similar), which this does not attempt
 - a **symlink** target is refused by `ssh_write` and `ssh_edit`. Renaming over a link replaces the link, not the file it points to, and the tool would report success while the file you meant is untouched. Edit the resolved path, or use `ssh_bash`
-- consequence: the resulting file is owned by the SSH user. `mktemp -d` creates the staging _directory_; the payload itself is created by `cat` under the `umask 077` set above, so the renamed file ends up `0600`. The previous implementation (`cat >` in place) preserved the original mode and owner. **If you rewrite a file that another user or service must read, restore the mode yourself** (`ssh_bash` `chmod`), because `0600` will break it.
+- `ssh_write` and `ssh_edit` preserve an existing regular file's Unix permission bits (including setuid, setgid, and sticky bits), numeric UID, and numeric GID. Ownership is applied before permissions because `chown` may clear special bits. Both are verified on the staged file before the rename. If metadata cannot be read, applied, or verified, the call fails with an actionable error and leaves the original intact
+- new files are owned by the SSH user and default to `0600`. The optional `ssh_write.mode` overrides permissions for a new or existing file without changing the existing ownership. Supply a four-digit octal string with a leading zero, such as `"0644"` or `"0755"`. Values outside `0000`–`0777` are rejected before SSH starts. `ssh_edit` always preserves permissions and has no mode override
+- ACLs, extended attributes, security labels, and timestamps are not preserved by the atomic replacement. Metadata is sampled after the transfer; a concurrent editor can still change content or metadata between that sample and the rename
 - a single write is capped at **16 MiB**, the same ceiling a read uses, and is refused before anything is spawned. `ssh_edit` must first read the existing file, so it cannot edit a remote file larger than 16 MiB. Node transcodes the whole payload to a Buffer and holds it again until drain, so an unbounded write would peak at two to three times its size for the whole transfer. Write larger files in ranges, or use `ssh_bash`
 
 ### Interrupted writes report an unknown outcome
@@ -146,6 +155,7 @@ An `ssh_bash` exit code of 255 is reported as an SSH transport, host-key, or aut
 - local `ssh` client available in `$PATH`
 - **key-based or agent-based SSH auth** — the transport passes `-o BatchMode=yes`, so a password or host-key prompt fails immediately instead of hanging the tool call
 - `bash` available on the remote host
+- atomic writes require remote `mktemp`, `cat`, `wc`, `mv`, `rm`, `chmod`, and GNU or BSD `stat`. Preserving a different UID or GID also requires `chown` and sufficient SSH-user privileges. Insufficient permissions cause a failure before replacement
 
 ## Connection reuse
 

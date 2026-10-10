@@ -110,7 +110,7 @@ async function writeRemoteFile(
     remote: string,
     absolutePath: string,
     content: string,
-    options: SshExecOptions,
+    options: SshExecOptions & { mode?: string },
     onCommit?: () => void,
 ): Promise<Buffer> {
     const payloadBytes = assertWriteSize(absolutePath, content);
@@ -118,7 +118,7 @@ async function writeRemoteFile(
     try {
         result = await sshExec(
             remote,
-            buildWriteScript(absolutePath, payloadBytes),
+            buildWriteScript(absolutePath, payloadBytes, options.mode),
             { ...options, stdin: content },
         );
     } catch (error) {
@@ -222,7 +222,7 @@ export function createRemoteReadOps(
 
 export function createRemoteWriteOps(
     target: ActiveSshTarget,
-    options: SshExecOptions = {},
+    options: SshExecOptions & { mode?: string } = {},
     onCommit?: () => void,
 ): WriteOperations {
     return {
@@ -292,7 +292,7 @@ function assertValidTimeout(timeout: number | undefined): void {
 
 export function createRemoteBashOps(
     target: ActiveSshTarget,
-    options: SshExecOptions = {},
+    options: SshExecOptions & { failFast?: boolean } = {},
 ): BashOperations {
     return {
         /**
@@ -312,9 +312,13 @@ export function createRemoteBashOps(
             // preserves trailing newlines stripped by command substitution.
             // Evaluate the captured text with stdin closed, so a command in
             // the script cannot consume later script lines.
+            const failureOptions =
+                options.failFast === false
+                    ? "set +e +o pipefail"
+                    : "set -e -o pipefail";
             const result = await sshExec(
                 target.remote,
-                `exec bash -c 'script=$(cat; printf .); eval "\${script%.}" </dev/null'`,
+                `exec bash -c 'script=$(cat; printf .); ${failureOptions}; eval "\${script%.}" </dev/null'`,
                 {
                     spawnFn: options.spawnFn,
                     stdin: script,

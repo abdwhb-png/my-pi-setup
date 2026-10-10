@@ -142,6 +142,20 @@ export function buildSshArgs(remote: string, command: string): string[] {
     return [...SSH_OPTIONS.flat(), remote, command];
 }
 
+export const WRITE_MODE_PATTERN = "^0[0-7]{3}$";
+const writeModePattern = new RegExp(WRITE_MODE_PATTERN);
+
+export function assertWriteMode(mode: string | undefined): void {
+    if (
+        mode !== undefined &&
+        (typeof mode !== "string" || !writeModePattern.test(mode))
+    ) {
+        throw new Error(
+            "Invalid file mode: use a four-digit octal string such as 0644 or 0755.",
+        );
+    }
+}
+
 /**
  * Write content to `absolutePath` atomically and completely.
  *
@@ -158,7 +172,9 @@ export function buildSshArgs(remote: string, command: string): string[] {
 export function buildWriteScript(
     absolutePath: string,
     expectedBytes: number,
+    mode?: string,
 ): string {
+    assertWriteMode(mode);
     const target = shellQuote(absolutePath);
     // The template is a literal, so it is single quoted; only the command
     // substitution in the assignment needs double quotes to expand.
@@ -176,6 +192,25 @@ export function buildWriteScript(
         `refusing to write: ${absolutePath} became a directory during the transfer`,
     );
     return [
+        // stat formats differ on GNU and BSD hosts. Only numeric metadata is
+        // accepted before any value can reach arithmetic, chmod, or chown.
+        `read_metadata() {`,
+        `  info=$(stat -c '%a %u %g' "$1" 2>/dev/null) || info=$(stat -f '%Op %u %g' "$1" 2>/dev/null) || return 1`,
+        `  set -- $info`,
+        `  [ "$#" -eq 3 ] || return 1`,
+        `  case "$1" in ''|*[!0-7]*) return 1 ;; esac`,
+        `  [ "\${#1}" -le 7 ] || return 1`,
+        `  case "$2" in ''|*[!0-9]*) return 1 ;; esac`,
+        `  case "$3" in ''|*[!0-9]*) return 1 ;; esac`,
+        // BSD's %Op includes the file type; the permission mask also keeps
+        // existing setuid, setgid, and sticky bits.
+        `  mode=$(printf '%o' "$((0$1 & 07777))") || return 1`,
+        `  printf '%s %s %s\\n' "$mode" "$2" "$3"`,
+        `}`,
+        `metadata_failure() {`,
+        `  printf 'Cannot %s for %s. No file was replaced. Check stat/chown/chmod support and SSH-user permissions.\\n' "$1" ${target} >&2`,
+        `  exit 1`,
+        `}`,
         // Refuse before allocating anything, so a rejected target leaves no
         // trace in the remote directory.
         // mv into a directory succeeds by moving the file inside it, and a
@@ -198,12 +233,36 @@ export function buildWriteScript(
         `cat > "$tmpdir/payload" || exit 1`,
         `actual=$(wc -c < "$tmpdir/payload")`,
         `[ "$actual" -eq ${expectedBytes} ] || { rm -rf "$tmpdir"; echo "short write: got $actual of ${expectedBytes} bytes" >&2; exit 1; }`,
+        `mode=600`,
+        `owner=`,
+        `if [ -e ${target} ]; then`,
+        `  [ -f ${target} ] || metadata_failure 'replace a non-regular file'`,
+        `  metadata=$(read_metadata ${target}) || metadata_failure 'read existing metadata'`,
+        `  set -- $metadata`,
+        `  mode=$1`,
+        `  owner="$2:$3"`,
+        `fi`,
+        ...(mode === undefined
+            ? []
+            : [`mode=${Number.parseInt(mode, 8).toString(8)}`]),
+        `metadata=$(read_metadata "$tmpdir/payload") || metadata_failure 'read staged metadata'`,
+        `set -- $metadata`,
+        `if [ -n "$owner" ] && [ "$2:$3" != "$owner" ]; then`,
+        // chown can clear setuid/setgid bits, so restore permissions after it.
+        `  chown "$owner" "$tmpdir/payload" || metadata_failure 'preserve ownership'`,
+        `fi`,
+        `chmod "$mode" "$tmpdir/payload" || metadata_failure 'apply permissions'`,
+        `metadata=$(read_metadata "$tmpdir/payload") || metadata_failure 'verify staged metadata'`,
+        `set -- $metadata`,
+        `[ "$1" = "$mode" ] || metadata_failure 'verify permissions'`,
+        `[ -z "$owner" ] || [ "$2:$3" = "$owner" ] || metadata_failure 'verify ownership'`,
         // Re-checked immediately before the rename. The first check leaves a
         // window the length of the whole transfer in which the target could
         // become a directory, and `mv -f file dir` would then succeed by moving
         // the payload inside it. This narrows the window to the rename; it does
         // not close it, because that needs descriptor-based resolution.
         `[ -d ${target} ] && { printf '%s\\n' ${becameDirectoryRefusal} >&2; exit 1; }`,
+        `[ -L ${target} ] && { printf '%s\\n' ${symlinkRefusal} >&2; exit 1; }`,
         `mv -f "$tmpdir/payload" ${target} || exit 1`,
     ].join("\n");
 }

@@ -7,6 +7,7 @@ import {
     type ExtensionCommandContext,
     type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { registerToolPolicyContribution } from "../_shared/tool-policy/index.ts";
 import {
     assertWriteSize,
@@ -28,6 +29,7 @@ import {
     resolveSandboxedRemotePath,
 } from "./remote-path.ts";
 import { createRemoteRenderCall } from "./render.ts";
+import { assertWriteMode, WRITE_MODE_PATTERN } from "./transport.ts";
 
 const SSH_STATUS_KEY = "ssh-tools";
 const SSH_TOOL_NAMES = [
@@ -45,9 +47,11 @@ const bashBase = createBashToolDefinition("/");
 const SSH_MODE_GUIDANCE = [
     "There are no remote grep, find, or ls tools. Run ls, grep, find, cat, and sed as commands inside ssh_bash.",
     "ssh_bash starts in the remote working directory, and a cd inside the command still applies.",
+    "ssh_bash defaults to failFast=true (Bash errexit and pipefail). Handle expected failures with if or ||, or set failFast=false to disable both options. Bash's usual errexit exceptions still apply.",
     "Relative paths in ssh_read, ssh_write, and ssh_edit resolve under the remote working directory.",
     "ssh_edit refuses absolute paths outside the remote working directory; use an absolute path with ssh_read, or ssh_bash, to reach other system files.",
     "Writes are atomic: content goes over stdin and lands via a rename, so a write refused before the rename leaves the previous file intact. An interrupted write, or one whose SSH connection died, reports outcome UNKNOWN because the rename may already have landed: read the remote file before retrying rather than retrying blind.",
+    "ssh_write and ssh_edit preserve existing Unix permissions and numeric ownership. New files default to 0600. Set ssh_write.mode to a four-digit octal string such as 0644 or 0755 when different permissions are needed. Metadata failures stop before replacement.",
     "A single write is capped at 16 MiB, the same ceiling as a read. Write larger files in ranges, or use ssh_bash.",
     "Key-based or agent-based SSH auth is required. There is no interactive password or host-key prompt.",
 ];
@@ -156,21 +160,31 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         name: "ssh_write",
         label: "ssh_write",
         description:
-            "Write a text file on the active SSH host. Relative paths are resolved against the active remote working directory; absolute paths are written as given.",
+            "Write a text file on the active SSH host. Preserve existing Unix permissions and ownership; new files default to 0600. Optional mode overrides permissions. Relative paths are resolved against the active remote working directory; absolute paths are written as given.",
         promptSnippet: "Create or overwrite files on the active SSH host",
         promptGuidelines: [
             "Use ssh_write only for new files or full rewrites on the active SSH host.",
         ],
-        parameters: writeBase.parameters,
+        parameters: Type.Object({
+            ...writeBase.parameters.properties,
+            mode: Type.Optional(
+                Type.String({
+                    pattern: WRITE_MODE_PATTERN,
+                    description:
+                        "Unix permissions as a four-digit octal string, e.g. 0644 or 0755. Omit to preserve an existing mode or use 0600 for a new file.",
+                }),
+            ),
+        }),
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             const target = requireActiveTarget();
             const path = resolveRemotePath(params.path, target.remoteCwd);
             assertWriteSize(path, params.content);
+            assertWriteMode(params.mode);
             return reportRemoteCommit(signal, (onCommit) => {
                 const tool = createWriteToolDefinition(target.remoteCwd, {
                     operations: createRemoteWriteOps(
                         target,
-                        { signal },
+                        { signal, mode: params.mode },
                         onCommit,
                     ),
                 });
@@ -238,17 +252,27 @@ export default function sshToolsExtension(pi: ExtensionAPI) {
         name: "ssh_bash",
         label: "ssh_bash",
         description:
-            "Execute a bash command on the active SSH host, starting in the active remote working directory. This is also the only way to run ls, grep, find, cat, sed, and other CLI tools remotely.",
+            "Execute a bash command on the active SSH host, starting in the active remote working directory. Default failFast=true enables Bash errexit and pipefail. Set false to disable both. This is also the only way to run ls, grep, find, cat, sed, and other CLI tools remotely.",
         promptSnippet: "Execute bash commands on the active SSH host",
         promptGuidelines: [
             "Use ssh_bash when the command must run on the active SSH host rather than locally.",
             "Run ls, grep, and find as commands here; there are no separate remote search tools.",
         ],
-        parameters: bashBase.parameters,
+        parameters: Type.Object({
+            ...bashBase.parameters.properties,
+            failFast: Type.Optional(
+                Type.Boolean({
+                    description:
+                        "Default true: enable Bash errexit and pipefail. False disables both. Handle expected failures with if or ||; Bash's usual errexit exceptions apply.",
+                }),
+            ),
+        }),
         async execute(toolCallId, params, signal, onUpdate, ctx) {
             const target = requireActiveTarget();
             const tool = createBashToolDefinition(target.remoteCwd, {
-                operations: createRemoteBashOps(target),
+                operations: createRemoteBashOps(target, {
+                    failFast: params.failFast,
+                }),
             });
             return tool.execute(toolCallId, params, signal, onUpdate, ctx);
         },

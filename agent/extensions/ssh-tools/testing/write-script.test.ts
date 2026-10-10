@@ -1,8 +1,19 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+    chmodSync,
+    existsSync,
+    mkdtempSync,
+    readFileSync,
+    readdirSync,
+    rmSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { shellQuote } from "../remote-path.ts";
 import { buildWriteScript } from "../transport.ts";
 
 /**
@@ -20,17 +31,43 @@ function scratch(): string {
     return dir;
 }
 
+function commandEnvironment(
+    commands: Record<string, string>,
+): NodeJS.ProcessEnv {
+    const bin = scratch();
+    for (const [name, body] of Object.entries(commands)) {
+        writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    }
+    return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+}
+
+function statExecutable(): string {
+    const executable = Bun.which("stat");
+    if (!executable) throw new Error("These shell tests require stat in PATH");
+    return shellQuote(executable);
+}
+
 /** Runs the script the same way ssh would: content on stdin. */
-function runWrite(target: string, content: string | Buffer): {
+function runWrite(
+    target: string,
+    content: string | Buffer,
+    mode?: string,
+    env?: NodeJS.ProcessEnv,
+): {
     status: number;
     stderr: string;
 } {
     const expectedBytes = Buffer.byteLength(content);
     // No encoding: stdout/stderr stay Buffers so a large payload is never
     // transcoded, and stderr is decoded explicitly below.
-    const result = spawnSync("sh", ["-c", buildWriteScript(target, expectedBytes)], {
-        input: content,
-    });
+    const result = spawnSync(
+        "sh",
+        ["-c", buildWriteScript(target, expectedBytes, mode)],
+        {
+            input: content,
+            env,
+        },
+    );
     return {
         status: result.status ?? -1,
         stderr: result.stderr?.toString("utf8") ?? "",
@@ -76,6 +113,191 @@ afterAll(() => {
 });
 
 describe("generated write script", () => {
+    it.each([
+        ["0000", 0o000],
+        ["0644", 0o644],
+        ["0755", 0o755],
+        ["0777", 0o777],
+    ] as const)(
+        "publishes a new file with explicitly requested mode %s",
+        (mode, expected) => {
+            const dir = scratch();
+            const target = join(dir, "shared.conf");
+            const result = runWrite(target, "data", mode);
+            expect(result.status).toBe(0);
+            expect(statSync(target).mode & 0o7777).toBe(expected);
+        },
+    );
+
+    it("overrides an existing mode only when explicitly requested", () => {
+        const dir = scratch();
+        const target = join(dir, "script");
+        writeFileSync(target, "OLD\n", { mode: 0o600 });
+        const before = statSync(target);
+        const result = runWrite(target, "NEW\n", "0755");
+        const after = statSync(target);
+        expect(result.status).toBe(0);
+        expect(after.mode & 0o7777).toBe(0o755);
+        expect([after.uid, after.gid]).toEqual([before.uid, before.gid]);
+    });
+
+    it.each(["755", "4777", "0648", "0xFF", "0644; touch BAD"])(
+        "rejects invalid mode %s before building a command",
+        (mode) => {
+            expect(() => buildWriteScript("/remote/file", 4, mode)).toThrow(
+                "Invalid file mode",
+            );
+        },
+    );
+
+    it("preserves an existing file's permissions and numeric ownership", () => {
+        const dir = scratch();
+        const target = join(dir, "app.conf");
+        writeFileSync(target, "OLD\n");
+        chmodSync(target, 0o644);
+        const before = statSync(target);
+        const result = runWrite(target, "NEW\n");
+        const after = statSync(target);
+        expect(result.status).toBe(0);
+        expect(readFileSync(target, "utf8")).toBe("NEW\n");
+        expect(after.mode & 0o7777).toBe(before.mode & 0o7777);
+        expect([after.uid, after.gid]).toEqual([before.uid, before.gid]);
+        expect(readdirSync(dir)).toEqual(["app.conf"]);
+    });
+
+    it.each([0o755, 0o4644, 0o2644, 0o1644])(
+        "preserves existing executable and special permission bits: %o",
+        (mode) => {
+            const target = join(scratch(), "script");
+            writeFileSync(target, "OLD");
+            expect(spawnSync("chmod", [mode.toString(8), target]).status).toBe(
+                0,
+            );
+            expect(statSync(target).mode & 0o7777).toBe(mode);
+            expect(runWrite(target, "NEW").status).toBe(0);
+            expect(statSync(target).mode & 0o7777).toBe(mode);
+        },
+    );
+
+    it("accepts BSD stat metadata including the file-type bits", () => {
+        const target = join(scratch(), "script");
+        writeFileSync(target, "OLD");
+        expect(spawnSync("chmod", ["4755", target]).status).toBe(0);
+        // Emulate BSD stat at the command boundary. The staged permissions
+        // still come from the real file, so a missing chmod cannot pass.
+        const env = commandEnvironment({
+            stat: [
+                '[ "$1" = -f ] || exit 1',
+                `metadata=$(${statExecutable()} -c '%a %u %g' "$3") || exit 1`,
+                "set -- $metadata",
+                'printf "%o %s %s\\n" "$((0100000 | 0$1))" "$2" "$3"',
+            ].join("\n"),
+        });
+        expect(runWrite(target, "NEW", undefined, env).status).toBe(0);
+        expect(statSync(target).mode & 0o7777).toBe(0o4755);
+        expect(readFileSync(target, "utf8")).toBe("NEW");
+    });
+
+    it("restores permission bits after changing the staged ownership", () => {
+        const target = join(scratch(), "script");
+        const marker = join(scratch(), "chowned");
+        writeFileSync(target, "OLD");
+        expect(spawnSync("chmod", ["4755", target]).status).toBe(0);
+        // Emulate a different owner's file without requiring privileged tests.
+        // chown clears the mode here just as a host may clear setuid/setgid.
+        const env = commandEnvironment({
+            stat: [
+                "file=$3",
+                `metadata=$(${statExecutable()} "$@") || exit 1`,
+                "set -- $metadata",
+                `if [ "$file" = ${shellQuote(target)} ] || [ -f ${shellQuote(marker)} ]; then`,
+                '  printf "%s 999999 999998\\n" "$1"',
+                'else printf "%s %s %s\\n" "$1" "$2" "$3"; fi',
+            ].join("\n"),
+            chown: [
+                '[ "$1" = 999999:999998 ] || exit 1',
+                'chmod 600 "$2" || exit 1',
+                `: > ${shellQuote(marker)}`,
+            ].join("\n"),
+        });
+        expect(runWrite(target, "NEW", undefined, env).status).toBe(0);
+        expect(existsSync(marker)).toBe(true);
+        expect(statSync(target).mode & 0o7777).toBe(0o4755);
+        expect(readFileSync(target, "utf8")).toBe("NEW");
+    });
+
+    it.each([
+        ["stat unavailable", "read existing metadata", { stat: "exit 1" }],
+        [
+            "malformed stat",
+            "read existing metadata",
+            { stat: "printf 'invalid 1 2\\n'" },
+        ],
+        ["chmod denied", "apply permissions", { chmod: "exit 1" }],
+        [
+            "chmod silently ineffective",
+            "verify permissions",
+            { chmod: "exit 0" },
+        ],
+    ] as const)(
+        "leaves the original intact and removes staging when %s",
+        (_label, failure, commands) => {
+            const dir = scratch();
+            const target = join(dir, "app.conf");
+            writeFileSync(target, "OLD");
+            chmodSync(target, 0o644);
+            const before = statSync(target);
+            const result = runWrite(
+                target,
+                "NEW",
+                undefined,
+                commandEnvironment(commands),
+            );
+            expect(result.status).not.toBe(0);
+            expect(result.stderr).toContain(`Cannot ${failure}`);
+            expect(result.stderr).toContain("No file was replaced");
+            expect(readFileSync(target, "utf8")).toBe("OLD");
+            const after = statSync(target);
+            expect([after.ino, after.mode, after.uid, after.gid]).toEqual([
+                before.ino,
+                before.mode,
+                before.uid,
+                before.gid,
+            ]);
+            expect(readdirSync(dir)).toEqual(["app.conf"]);
+        },
+    );
+
+    it.each([
+        ["denied", "exit 1", "preserve ownership"],
+        ["silently ineffective", "exit 0", "verify ownership"],
+    ])(
+        "leaves the original intact when chown is %s",
+        (_label, chown, failure) => {
+            const dir = scratch();
+            const target = join(dir, "app.conf");
+            writeFileSync(target, "OLD");
+            chmodSync(target, 0o644);
+            const before = statSync(target);
+            const env = commandEnvironment({
+                stat: `if [ "$3" = ${shellQuote(target)} ]; then printf '644 999999 999998\\n'; else exec ${statExecutable()} "$@"; fi`,
+                chown,
+            });
+            const result = runWrite(target, "NEW", undefined, env);
+            expect(result.status).not.toBe(0);
+            expect(result.stderr).toContain(`Cannot ${failure}`);
+            expect(readFileSync(target, "utf8")).toBe("OLD");
+            const after = statSync(target);
+            expect([after.ino, after.mode, after.uid, after.gid]).toEqual([
+                before.ino,
+                before.mode,
+                before.uid,
+                before.gid,
+            ]);
+            expect(readdirSync(dir)).toEqual(["app.conf"]);
+        },
+    );
+
     it("writes the content and leaves no temp file behind", () => {
         const dir = scratch();
         const target = join(dir, "app.conf");
