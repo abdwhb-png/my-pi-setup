@@ -5,6 +5,7 @@ import { Type } from "@earendil-works/pi-ai";
 import {
     defineTool,
     type ExtensionAPI,
+    type ExecResult,
     type AgentToolResult,
     type ExtensionCommandContext,
     type ExtensionContext,
@@ -130,58 +131,94 @@ export function validateCommitFiles(
 export const GIT_TIMEOUT_MS = 30_000;
 
 export async function executeCommit(
-    execFn: (
-        cmd: string,
-        args: string[],
-        opts?: any,
-    ) => Promise<{ stdout: string; stderr?: string }>,
+    execFn: ExtensionAPI["exec"],
     files: string[],
     message: string,
     cwd: string,
 ): Promise<
     | { success: true; sha: string; branch: string }
-    | { success: false; error: string; stderr?: string }
+    | {
+          success: false;
+          error: string;
+          commitState: NonNullable<CommitPlanResult["commitState"]>;
+          operation: string;
+          sha?: string;
+          code?: number;
+          killed?: boolean;
+          stdout?: string;
+          stderr?: string;
+      }
 > {
+    let operation = "git rev-parse";
+    let execution: ExecResult | undefined;
+    let commitState: NonNullable<CommitPlanResult["commitState"]> =
+        "not-created";
+    let sha: string | undefined;
+    const runGit = async (args: string[]) => {
+        operation =
+            args[0] === "rev-parse"
+                ? `git ${args.join(" ")}`
+                : `git ${args[0]}`;
+        execution = undefined;
+        execution = await execFn("git", args, { cwd, timeout: GIT_TIMEOUT_MS });
+        if (execution.killed || execution.code !== 0) {
+            throw new Error(
+                execution.killed
+                    ? "Command timed out or was interrupted"
+                    : `Command failed with exit code ${execution.code}`,
+            );
+        }
+        return execution;
+    };
     try {
-        await execFn("git", ["rev-parse", "--is-inside-work-tree"], {
-            cwd,
-            timeout: GIT_TIMEOUT_MS,
-        });
-        await execFn("git", ["add", "--", ...files], {
-            cwd,
-            timeout: GIT_TIMEOUT_MS,
-        });
-        await execFn("git", ["commit", "-m", message], {
-            cwd,
-            timeout: GIT_TIMEOUT_MS,
-        });
-        const { stdout } = await execFn(
-            "git",
-            ["rev-parse", "--short", "HEAD"],
-            { cwd, timeout: GIT_TIMEOUT_MS },
-        );
-        const branchResult = await execFn(
-            "git",
-            ["rev-parse", "--abbrev-ref", "HEAD"],
-            { cwd, timeout: GIT_TIMEOUT_MS },
-        );
+        await runGit(["rev-parse", "--is-inside-work-tree"]);
+        await runGit(["add", "--", ...files]);
+        commitState = "unknown";
+        await runGit(["commit", "-m", message]);
+        commitState = "created";
+        sha = (await runGit(["rev-parse", "--short", "HEAD"])).stdout.trim();
+        if (!sha) throw new Error("Git returned an empty commit SHA");
+        const branchResult = await runGit([
+            "rev-parse",
+            "--abbrev-ref",
+            "HEAD",
+        ]);
+        const branch = branchResult.stdout.trim();
+        if (!branch) throw new Error("Git returned an empty branch name");
         return {
             success: true,
-            sha: stdout.trim(),
-            branch: branchResult.stdout.trim() || "unknown",
+            sha,
+            branch,
         };
     } catch (error) {
-        let stderr: string | undefined;
+        if (
+            commitState === "unknown" &&
+            execution &&
+            !execution.killed &&
+            execution.code !== 0
+        ) {
+            commitState = "not-created";
+        }
+        let stderr = execution?.stderr;
         if (typeof error === "object" && error !== null && "stderr" in error) {
             const value = Reflect.get(error, "stderr");
             if (typeof value === "string" && value.trim()) {
-                stderr = value.slice(0, 400);
+                stderr = value;
             }
         }
         return {
             success: false,
-            error: error instanceof Error ? error.message : String(error),
-            ...(stderr ? { stderr } : {}),
+            error: `${operation} in ${cwd}: ${error instanceof Error ? error.message : String(error)}`,
+            commitState,
+            operation,
+            ...(sha ? { sha } : {}),
+            ...(execution
+                ? { code: execution.code, killed: execution.killed }
+                : {}),
+            ...(execution?.stdout
+                ? { stdout: execution.stdout.slice(0, 2000) }
+                : {}),
+            ...(stderr ? { stderr: stderr.slice(0, 2000) } : {}),
         };
     }
 }
@@ -584,14 +621,38 @@ export default function (pi: ExtensionAPI) {
                     };
                 }
 
+                const failureSummary =
+                    outcome.commitState === "created"
+                        ? "Commit command succeeded, but verification failed."
+                        : outcome.commitState === "unknown"
+                          ? "Commit outcome UNKNOWN. The commit may already have been created."
+                          : "Commit FAILED. The approved plan could not be committed automatically.";
+                const recovery =
+                    outcome.commitState === "not-created"
+                        ? "Investigate the Git error and repository state before proposing a revised plan."
+                        : "Inspect git status and git log before retrying. Do not automatically retry this commit.";
                 return {
                     content: [
                         {
                             type: "text" as const,
                             text: [
-                                "Commit FAILED. The approved plan could not be committed automatically.",
+                                failureSummary,
                                 "",
+                                "Repo path: " + result.cwd,
+                                "Operation: " + outcome.operation,
+                                ...(outcome.code !== undefined
+                                    ? ["Exit code: " + outcome.code]
+                                    : []),
+                                ...(outcome.sha
+                                    ? ["Commit SHA: " + outcome.sha]
+                                    : []),
                                 "Error: " + outcome.error,
+                                ...(outcome.stdout
+                                    ? [
+                                          "",
+                                          "stdout (excerpt): " + outcome.stdout,
+                                      ]
+                                    : []),
                                 ...(outcome.stderr
                                     ? [
                                           "",
@@ -599,13 +660,21 @@ export default function (pi: ExtensionAPI) {
                                       ]
                                     : []),
                                 "",
-                                "You may need to investigate (e.g., run git status, check for conflicts) and propose a revised plan.",
+                                recovery,
                             ].join("\n"),
                         },
                     ],
                     details: {
                         ...result,
                         commitError: outcome.error,
+                        commitState: outcome.commitState,
+                        commitOperation: outcome.operation,
+                        commitExitCode: outcome.code,
+                        commitKilled: outcome.killed,
+                        ...(outcome.sha ? { sha: outcome.sha } : {}),
+                        ...(outcome.stdout
+                            ? { commitStdout: outcome.stdout }
+                            : {}),
                         ...(outcome.stderr
                             ? { commitStderr: outcome.stderr }
                             : {}),
@@ -654,15 +723,7 @@ export default function (pi: ExtensionAPI) {
             };
         },
         renderResult: (result, _options, theme, _context) => {
-            const details = result.details as
-                | (CommitPlanResult & {
-                      sha?: string;
-                      branch?: string;
-                      durationMs?: number;
-                      commitError?: string;
-                      commitStderr?: string;
-                  })
-                | undefined;
+            const details = result.details as CommitPlanResult | undefined;
             const fg = (color: Parameters<typeof theme.fg>[0], text: string) =>
                 typeof theme?.fg === "function" ? theme.fg(color, text) : text;
 
@@ -681,7 +742,10 @@ export default function (pi: ExtensionAPI) {
                     0,
                 );
             }
-            if (details.sha) {
+            const unverified =
+                details.commitState === "created" ||
+                details.commitState === "unknown";
+            if (details.sha && !unverified) {
                 const seconds = ((details.durationMs ?? 0) / 1000).toFixed(1);
                 const lines = [
                     fg("success", `✓ commit ${details.sha}`) +
@@ -693,10 +757,21 @@ export default function (pi: ExtensionAPI) {
                 ];
                 return new Text(lines.join("\n"), 0, 0);
             }
-            const failureLines = [fg("error", "✗ commit failed")];
+            const color = unverified ? "warning" : "error";
+            const label =
+                details.commitState === "created"
+                    ? `⚠ commit created${details.sha ? ` (${details.sha})` : ""}; verification failed`
+                    : details.commitState === "unknown"
+                      ? "⚠ commit outcome unknown"
+                      : "✗ commit failed";
+            const failureLines = [fg(color, label)];
             if (details.commitError)
                 failureLines.push(
-                    fg("error", `  ${details.commitError.slice(0, 200)}`),
+                    fg(color, `  ${details.commitError.slice(0, 200)}`),
+                );
+            if (details.commitStdout)
+                failureLines.push(
+                    fg("dim", `  ${details.commitStdout.slice(0, 200)}`),
                 );
             if (details.commitStderr)
                 failureLines.push(

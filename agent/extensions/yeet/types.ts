@@ -23,9 +23,15 @@ export interface CommitPlanResult {
     sha?: string;
     branch?: string;
     durationMs?: number;
-    /** Populated when the automatic commit of an accepted plan failed. */
+    /** Populated when execution or verification of an accepted plan failed. */
     commitError?: string;
     commitStderr?: string;
+    commitStdout?: string;
+    commitOperation?: string;
+    commitExitCode?: number;
+    commitKilled?: boolean;
+    /** Creation status when execution or verification did not complete successfully. */
+    commitState?: "not-created" | "created" | "unknown";
 }
 
 export interface CommitPlanSessionState {

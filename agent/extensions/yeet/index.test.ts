@@ -1,5 +1,6 @@
 import { useIsolatedAgentDir } from "../_shared/testing/config-fixture.ts";
 import { describe, it, expect, mock } from 'bun:test';
+import type { ExecResult, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 // Mock fd-utils to avoid spawning real fd in tests
 useIsolatedAgentDir();
@@ -822,22 +823,22 @@ describe('executeCommit', () => {
                 if (cmd === 'git' && args[0] === 'add') {
                     addArgs.push(args);
                     addOpts.push(opts);
-                    return { stdout: '' };
+                    return { stdout: '', stderr: '', code: 0, killed: false };
                 }
                 if (cmd === 'git' && args[0] === 'commit') {
                     commitArgs.push(args);
                     commitOpts.push(opts);
-                    return { stdout: '' };
+                    return { stdout: '', stderr: '', code: 0, killed: false };
                 }
                 if (
                     cmd === 'git' &&
                     args[0] === 'rev-parse' &&
                     args[1] === '--is-inside-work-tree'
                 ) {
-                    return { stdout: 'true\n' };
+                    return { stdout: 'true\n', stderr: '', code: 0, killed: false };
                 }
                 if (cmd === 'git' && args[0] === 'rev-parse') {
-                    return { stdout: args[1] === '--short' ? 'abc1234\n' : 'main\n' };
+                    return { stdout: args[1] === '--short' ? 'abc1234\n' : 'main\n', stderr: '', code: 0, killed: false };
                 }
                 throw new Error(
                     'unexpected call: ' + cmd + ' ' + args.join(' '),
@@ -895,10 +896,10 @@ describe('executeCommit', () => {
                     args[0] === 'rev-parse' &&
                     args[1] === '--is-inside-work-tree'
                 ) {
-                    return { stdout: 'true\n' };
+                    return { stdout: 'true\n', stderr: '', code: 0, killed: false };
                 }
                 if (cmd === 'git' && args[0] === 'add') {
-                    return { stdout: '' };
+                    return { stdout: '', stderr: '', code: 0, killed: false };
                 }
                 throw new Error('nothing to commit');
             },
@@ -913,7 +914,9 @@ describe('executeCommit', () => {
 
         expect(result.success).toBe(false);
         if (!result.success) {
-            expect(result.error).toBe('nothing to commit');
+            expect(result.error).toContain('nothing to commit');
+            expect(result.operation).toBe('git commit');
+            expect(result.error).toContain('/test/cwd');
         }
     });
 
@@ -925,16 +928,16 @@ describe('executeCommit', () => {
                     args[0] === 'rev-parse' &&
                     args[1] === '--is-inside-work-tree'
                 ) {
-                    return { stdout: 'true\n' };
+                    return { stdout: 'true\n', stderr: '', code: 0, killed: false };
                 }
                 if (cmd === 'git' && args[0] === 'add') {
-                    return { stdout: '' };
+                    return { stdout: '', stderr: '', code: 0, killed: false };
                 }
                 if (cmd === 'git' && args[0] === 'commit') {
-                    return { stdout: '' };
+                    return { stdout: '', stderr: '', code: 0, killed: false };
                 }
                 if (cmd === 'git' && args[0] === 'rev-parse') {
-                    return { stdout: args[1] === '--short' ? 'def5678\n' : 'main\n' };
+                    return { stdout: args[1] === '--short' ? 'def5678\n' : 'main\n', stderr: '', code: 0, killed: false };
                 }
                 throw new Error('unexpected: ' + cmd + ' ' + args.join(' '));
             },
@@ -1050,11 +1053,7 @@ describe('propose_commit_plan commit feedback', () => {
     }
 
     function registerFeedbackTool(
-        execImpl?: (
-            cmd: string,
-            args: string[],
-            opts?: Record<string, unknown>,
-        ) => Promise<{ stdout: string; stderr?: string }>,
+        execImpl?: ExtensionAPI["exec"],
     ): {
         tool: ToolWithRender;
         setWorkingMessage: ReturnType<typeof mock>;
@@ -1070,17 +1069,17 @@ describe('propose_commit_plan commit feedback', () => {
                     (async (
                         _cmd: string,
                         args: string[],
-                    ): Promise<{ stdout: string; stderr: string }> => {
+                    ): Promise<ExecResult> => {
                         if (
                             args[0] === 'rev-parse' &&
                             args[1] === '--is-inside-work-tree'
                         )
-                            return { stdout: 'true\n', stderr: '' };
+                            return { stdout: 'true\n', stderr: '', code: 0, killed: false };
                         if (args[0] === 'rev-parse' && args[1] === '--short')
-                            return { stdout: 'abc1234\n', stderr: '' };
+                            return { stdout: 'abc1234\n', stderr: '', code: 0, killed: false };
                         if (args[0] === 'rev-parse')
-                            return { stdout: 'main\n', stderr: '' };
-                        return { stdout: '', stderr: '' };
+                            return { stdout: 'main\n', stderr: '', code: 0, killed: false };
+                        return { stdout: '', stderr: '', code: 0, killed: false };
                     }),
             ),
             appendEntry: mock(),
@@ -1180,8 +1179,8 @@ describe('propose_commit_plan commit feedback', () => {
         );
         const { tool } = registerFeedbackTool(async (_cmd, args) => {
             if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree')
-                return { stdout: 'true\n', stderr: '' };
-            if (args[0] === 'add') return { stdout: '', stderr: '' };
+                return { stdout: 'true\n', stderr: '', code: 0, killed: false };
+            if (args[0] === 'add') return { stdout: '', stderr: '', code: 0, killed: false };
             throw failErr;
         });
 
@@ -1207,10 +1206,10 @@ describe('propose_commit_plan commit feedback', () => {
         const mockExec = mock(async (_c: string, _a: string[], o?: Record<string, unknown>) => {
             optsSeen.push(o);
             if (optsSeen.length >= 5)
-                return { stdout: 'main\n', stderr: '' };
+                return { stdout: 'main\n', stderr: '', code: 0, killed: false };
             if (_a[0] === 'rev-parse' && _a[1] === '--short')
-                return { stdout: 'abc1234\n', stderr: '' };
-            return { stdout: 'true\n', stderr: '' };
+                return { stdout: 'abc1234\n', stderr: '', code: 0, killed: false };
+            return { stdout: 'true\n', stderr: '', code: 0, killed: false };
         });
 
         await executeCommit(mockExec, ['a.ts'], 'msg', '/test/cwd');
@@ -1252,6 +1251,23 @@ describe('propose_commit_plan commit feedback', () => {
         const rendered = component.render(100).join('\n');
         expect(rendered).toContain('error');
         expect(rendered).toContain('fatal: bad');
+    });
+
+    it.each(['created', 'unknown'] as const)('renders a warning for the %s commit state', (commitState) => {
+        const { tool } = registerFeedbackTool();
+        if (!tool.renderResult) throw new Error('renderResult missing');
+        const component = tool.renderResult(
+            { content: [], details: { accepted: true, cancelled: false, commitState, sha: commitState === 'created' ? 'abc1234' : undefined, commitError: 'verification interrupted', cwd: '/repo', files: ['a.ts'], plan_summary: '', commit_message: '' } },
+            { expanded: true, isPartial: false },
+            { fg: (color: string, text: string) => `[${color}]${text}` },
+            { toolCallId: 'warning' },
+        );
+
+        const rendered = component.render(100).join('\n');
+        expect(rendered).toContain('[warning]');
+        expect(rendered).not.toContain('✓ commit');
+        expect(rendered).not.toContain('✗ commit failed');
+        expect(rendered).toContain('verification interrupted');
     });
 
     it('renders a cancelled summary from details', () => {
